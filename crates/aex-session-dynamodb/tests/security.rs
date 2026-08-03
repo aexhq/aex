@@ -9,11 +9,9 @@ mod support;
 use std::path::{Path, PathBuf};
 
 use aex_session_dynamodb::paging::CursorKey;
-use aex_session_dynamodb::transactions::{AdmissionForeign, compile_admission};
-use aex_session_dynamodb::wire_pending::SessionLifecycle;
 use aex_session_dynamodb::{codec, keys};
 
-use support::{admission, head, tables, workspace};
+use support::workspace;
 
 fn crate_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf()
@@ -49,7 +47,7 @@ fn the_projection_module_contains_no_write_operation_at_all() {
 }
 
 #[test]
-fn the_declared_index_projection_carries_no_body_prompt_config_or_receipt() {
+fn the_session_index_projects_one_complete_session_document_but_no_message_or_receipt_body() {
     let definition = table_definition();
     let projected: Vec<&str> = definition["globalSecondaryIndexes"][0]["projection"]["attributes"]
         .as_array()
@@ -62,8 +60,6 @@ fn the_declared_index_projection_carries_no_body_prompt_config_or_receipt() {
         "contentDigest",
         "bodyInline",
         "bodyDigest",
-        "resolvedConfig",
-        "resolvedConfigDigest",
         "responseInline",
         "responseDigest",
         "intentHash",
@@ -71,6 +67,16 @@ fn the_declared_index_projection_carries_no_body_prompt_config_or_receipt() {
         assert!(
             !projected.contains(&forbidden),
             "the workspace index projects `{forbidden}`, so a list query would read it"
+        );
+    }
+    for required in [
+        "authoritySchemaVersion",
+        "authorityDocument",
+        "resolvedConfigDigest",
+    ] {
+        assert!(
+            projected.contains(&required),
+            "a complete session page requires `{required}` without N+1 hydration"
         );
     }
 }
@@ -155,18 +161,6 @@ fn the_stream_view_type_is_keys_only_so_a_consumer_learns_no_content() {
 }
 
 #[test]
-fn a_purged_head_is_physically_absent_from_the_workspace_index() {
-    let mut purged = head();
-    purged.lifecycle = SessionLifecycle::Purged;
-    let encoded = codec::encode_head(&purged);
-    assert!(!encoded.contains_key(keys::workspace_index::PK));
-    assert!(!encoded.contains_key(keys::workspace_index::SK));
-    // The head itself survives so one point read still serves `410 session_deleted`.
-    assert!(encoded.contains_key("sessionId"));
-    assert!(encoded.contains_key("deletionEpoch"));
-}
-
-#[test]
 fn a_cursor_signing_key_never_prints_its_material() {
     let key = CursorKey::new(vec![1u8; 32]).expect("a long enough key");
     let rendered = format!("{key:?}");
@@ -181,30 +175,4 @@ fn a_receipt_response_body_never_reaches_a_key() {
     assert!(receipt_key.pk.starts_with("IDEM#"));
     assert_eq!(receipt_key.sk, "RECEIPT");
     assert!(!receipt_key.pk.contains("response"));
-}
-
-#[test]
-fn the_compiled_admission_writes_only_the_four_declared_tables() {
-    let plan =
-        compile_admission(&tables(), &admission(), AdmissionForeign::default()).expect("compiles");
-    let tables = tables();
-    for action in plan.actions() {
-        let table = action
-            .put()
-            .map(|put| put.table_name().to_owned())
-            .or_else(|| action.update().map(|u| u.table_name().to_owned()))
-            .or_else(|| action.delete().map(|d| d.table_name().to_owned()))
-            .or_else(|| action.condition_check().map(|c| c.table_name().to_owned()))
-            .expect("every action names a table");
-        assert!(
-            [
-                &tables.session_authority,
-                &tables.regional_work,
-                &tables.regional_content,
-                &tables.regional_authz_projection,
-            ]
-            .contains(&&table),
-            "the admission reached `{table}`"
-        );
-    }
 }

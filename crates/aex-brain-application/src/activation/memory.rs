@@ -17,26 +17,31 @@ use super::{AdmissionControl, AdmissionDecision};
 use crate::ports::{
     AgentHead, BoxFuture, CancelToken, CatalogDigest, CatalogError, CatalogPort, Claim, ClaimError,
     ClockPort, CommitError, CommitReceipt, ConditionFailure, DecisionContext, DetachedStatus,
-    DispatchTicket, DurableWake, EffectStore, FenceGuard, HandsAccepted, HandsEndpoint, HandsError,
-    HandsOperationStart, HandsOperationStatus, HandsPort, IdPort, JournalPage, JournalStore,
-    LeaseStore, PreparedToolCall, PreviewSink, ProviderDispatchError, ProviderOutcome,
+    DispatchTicket, DueRowIsolation, DueRowIsolationReason, DueScanCursor, DueScanPage,
+    DurableWake, EffectStore, FenceGuard, FoldSnapshotStore, HandsAccepted, HandsEndpoint,
+    HandsError, HandsOperationStart, HandsOperationStatus, HandsPort, IdPort, JournalCursor,
+    JournalPage, JournalStore, LeaseStore, MAX_DUE_ROW_ISOLATIONS, MalformedWakeDelivery,
+    MalformedWakeReason, PreparedToolCall, PreviewSink, ProviderDispatchError, ProviderOutcome,
     ProviderPort, ReadBudget, RedactedDetail, ReleaseDisposition, ResultBounds, SessionAuthority,
-    SteadyInstant, StoreError, StreamBudget, ToolDispatchError, ToolOutcome, ToolPort, ToolRoute,
-    ToolRoutingError, WakeDelivery, WakeOrigin, WakeQueue, WakeState,
+    SnapshotPublishOutcome, SteadyInstant, StoreError, StreamBudget, ToolDispatchError,
+    ToolOutcome, ToolPort, ToolRoute, ToolRoutingError, WakeBatch, WakeDelivery, WakeOrigin,
+    WakeQueue, WakeState,
 };
 use aex_brain_domain::budget::BudgetNode;
 use aex_brain_domain::commit::{DecisionCommit, EffectWrite};
-use aex_brain_domain::effect::{DispatchEvidence, DurableEffect, EffectState, SettledOutcome};
+use aex_brain_domain::effect::{
+    DetachedOperationRef, DispatchEvidence, DurableEffect, EffectState, SettledOutcome,
+};
 use aex_brain_domain::ids::{
-    AgentId, AgentKey, AgentRevision, CancelEpoch, CatalogPin, DetachedOperationId, EffectId,
-    Fence, HandsOperationId, JournalSeq, ModelSlug, OwnerToken, SessionId, Timestamp, ToolName,
-    WakeId, WorkShard,
+    AgentId, AgentKey, AgentRevision, CancelEpoch, CatalogPin, ContentHash, DetachedOperationId,
+    EffectId, Fence, HandsOperationId, JournalSeq, ModelSlug, OwnerToken, SessionId, Timestamp,
+    ToolName, WakeId, WorkShard,
 };
 use aex_brain_domain::journal::{FinishReason, JournalEntry, ParkReason};
-use aex_brain_domain::wire_pending::{
-    CanonicalModelRequest, DurableOperationSupport, ModelCapability, ProviderId, ToolManifestEntry,
-};
-use aex_wire::ids::{GenerationId, PrefixedId, Uuid7};
+use aex_brain_domain::snapshot::{FoldSnapshotArtifact, FoldSnapshotPointer};
+use aex_brain_domain::wire_pending::{CanonicalModelRequest, DurableOperationSupport, ProviderId};
+use aex_model_catalog::{CatalogError as ModelCatalogError, QualifiedModel};
+use aex_wire::ids::{ContentHash as BodyDigest, GenerationId, PrefixedId, Uuid7};
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -117,6 +122,38 @@ impl ClockPort for FixedClock {
     fn steady(&self) -> SteadyInstant {
         SteadyInstant(u64::try_from(self.millis.load(Ordering::SeqCst)).unwrap_or(0))
     }
+
+    fn sleep(&self, duration: core::time::Duration) -> BoxFuture<'_, ()> {
+        Box::pin(FixedSleep {
+            clock: self,
+            duration,
+            armed: false,
+        })
+    }
+}
+
+struct FixedSleep<'clock> {
+    clock: &'clock FixedClock,
+    duration: core::time::Duration,
+    armed: bool,
+}
+
+impl core::future::Future for FixedSleep<'_> {
+    type Output = ();
+
+    fn poll(
+        mut self: core::pin::Pin<&mut Self>,
+        context: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<Self::Output> {
+        if self.armed {
+            self.clock
+                .advance(i64::try_from(self.duration.as_millis()).unwrap_or(i64::MAX));
+            return core::task::Poll::Ready(());
+        }
+        self.armed = true;
+        context.waker().wake_by_ref();
+        core::task::Poll::Pending
+    }
 }
 
 /// Identifiers that are deterministic where the contract says so and counted where it does
@@ -168,38 +205,36 @@ impl IdPort for CountingIds {
 /// A catalog holding exactly the entries a test installed.
 #[derive(Debug)]
 pub struct FixedCatalog {
-    models: Mutex<BTreeMap<(ProviderId, String), ModelCapability>>,
+    models: Mutex<BTreeMap<(ProviderId, String), QualifiedModel>>,
     support: Mutex<DurableOperationSupport>,
 }
 
 impl FixedCatalog {
     /// A catalog with one admitted model.
     #[must_use]
-    pub fn with_model(capability: ModelCapability) -> Self {
+    pub fn with_model(model: QualifiedModel) -> Self {
         let catalog = Self {
             models: Mutex::new(BTreeMap::new()),
             support: Mutex::new(DurableOperationSupport::None),
         };
-        catalog.models.lock().expect("not poisoned").insert(
-            (capability.provider, capability.model.0.clone()),
-            capability,
-        );
+        catalog
+            .models
+            .lock()
+            .expect("not poisoned")
+            .insert((model.provider(), model.model().as_str().to_owned()), model);
         catalog
     }
 
     /// Declares that this catalog's models expose a proven durable operation.
     pub fn prove_durable_operations(&self) {
-        *self.support.lock().expect("not poisoned") = DurableOperationSupport::Proven;
+        *self.support.lock().expect("not poisoned") =
+            DurableOperationSupport::ResultLookup { ttl_ms: 60_000 };
     }
 }
 
 impl CatalogPort for FixedCatalog {
     fn digest(&self, pin: &CatalogPin) -> Result<CatalogDigest, CatalogError> {
-        Ok(CatalogDigest {
-            digest: pin.0,
-            revision: 1,
-            signature_verified: true,
-        })
+        Ok(CatalogDigest(pin.0))
     }
 
     fn model(
@@ -207,24 +242,19 @@ impl CatalogPort for FixedCatalog {
         pin: &CatalogPin,
         provider: ProviderId,
         model: &ModelSlug,
-    ) -> Result<ModelCapability, CatalogError> {
+    ) -> Result<QualifiedModel, CatalogError> {
         self.models
             .lock()
             .expect("not poisoned")
-            .get(&(provider, model.0.clone()))
+            .get(&(provider, model.as_str().to_owned()))
             .cloned()
-            .ok_or_else(|| CatalogError::UnknownModel {
-                pin: pin.0,
-                provider,
-                model: model.clone(),
+            .filter(|qualified| qualified.catalog() == *pin)
+            .ok_or_else(|| {
+                CatalogError::Lookup(ModelCatalogError::UnknownModel {
+                    provider,
+                    model: model.clone(),
+                })
             })
-    }
-
-    fn tool(&self, pin: &CatalogPin, name: &ToolName) -> Result<ToolManifestEntry, CatalogError> {
-        Err(CatalogError::UnknownTool {
-            pin: pin.0,
-            name: name.clone(),
-        })
     }
 
     fn durable_operation_support(
@@ -254,6 +284,8 @@ pub enum ProviderScript {
 pub struct ScriptedProvider {
     script: Mutex<VecDeque<ProviderScript>>,
     dispatched: Mutex<Vec<(EffectId, Fence, u16)>>,
+    credentials: Mutex<Vec<aex_brain_domain::wire_pending::SessionCredentialPin>>,
+    requests: Mutex<Vec<CanonicalModelRequest>>,
 }
 
 impl ScriptedProvider {
@@ -263,6 +295,8 @@ impl ScriptedProvider {
         Self {
             script: Mutex::new(script.into_iter().collect()),
             dispatched: Mutex::new(Vec::new()),
+            credentials: Mutex::new(Vec::new()),
+            requests: Mutex::new(Vec::new()),
         }
     }
 
@@ -271,18 +305,39 @@ impl ScriptedProvider {
     pub fn dispatched(&self) -> Vec<(EffectId, Fence, u16)> {
         self.dispatched.lock().expect("not poisoned").clone()
     }
+
+    /// Every canonical request it was asked to perform.
+    #[must_use]
+    pub fn requests(&self) -> Vec<CanonicalModelRequest> {
+        self.requests.lock().expect("not poisoned").clone()
+    }
+
+    /// Every immutable credential pin it was asked to dispatch under.
+    #[must_use]
+    pub fn credentials(&self) -> Vec<aex_brain_domain::wire_pending::SessionCredentialPin> {
+        self.credentials.lock().expect("not poisoned").clone()
+    }
 }
 
 impl ProviderPort for ScriptedProvider {
     fn dispatch<'a>(
         &'a self,
         ticket: &'a DispatchTicket,
-        _request: &'a CanonicalModelRequest,
+        credential: aex_brain_domain::wire_pending::SessionCredentialPin,
+        request: &'a CanonicalModelRequest,
         _budget: &'a StreamBudget,
         _preview: &'a dyn PreviewSink,
         _cancel: &'a CancelToken,
     ) -> BoxFuture<'a, Result<ProviderOutcome, ProviderDispatchError>> {
         Box::pin(async move {
+            self.credentials
+                .lock()
+                .expect("not poisoned")
+                .push(credential);
+            self.requests
+                .lock()
+                .expect("not poisoned")
+                .push(request.clone());
             self.dispatched.lock().expect("not poisoned").push((
                 ticket.effect(),
                 ticket.fence(),
@@ -294,10 +349,13 @@ impl ProviderPort for ScriptedProvider {
                 None => Err(ProviderDispatchError {
                     stage: aex_brain_domain::effect::DispatchStage::Dispatched,
                     proof: aex_brain_domain::effect::DispatchProof::PossiblySent,
-                    class: crate::ports::ProviderFailureClass::Transient,
+                    kind: crate::ports::ProviderFailureKind::ServerError,
                     provider_request_id: None,
                     retry_after: None,
-                    detail: RedactedDetail::new("the script is exhausted"),
+                    detail: RedactedDetail::internal(
+                        crate::ports::ProviderFailureKind::ServerError,
+                        "the script is exhausted",
+                    ),
                 }),
             }
         })
@@ -317,8 +375,10 @@ impl ProviderPort for ScriptedProvider {
 pub struct ScriptedTools {
     routes: Mutex<BTreeMap<String, ToolRoute>>,
     invocations: Mutex<VecDeque<Result<ToolOutcome, ToolDispatchError>>>,
-    queries: Mutex<VecDeque<DetachedStatus>>,
+    queries: Mutex<VecDeque<Result<DetachedStatus, ToolDispatchError>>>,
     invoked: Mutex<Vec<String>>,
+    queried: Mutex<Vec<DetachedOperationRef>>,
+    cancelled: Mutex<Vec<(DetachedOperationRef, Fence)>>,
 }
 
 impl ScriptedTools {
@@ -332,17 +392,22 @@ impl ScriptedTools {
             routes: Mutex::new(
                 routes
                     .into_iter()
-                    .map(|route| (route.name.0.clone(), route))
+                    .map(|route| (route.name.as_str().to_owned(), route))
                     .collect(),
             ),
             invocations: Mutex::new(script.into_iter().collect()),
             queries: Mutex::new(VecDeque::new()),
             invoked: Mutex::new(Vec::new()),
+            queried: Mutex::new(Vec::new()),
+            cancelled: Mutex::new(Vec::new()),
         }
     }
 
     /// Scripts what a durable-operation query answers, in order.
-    pub fn script_queries(&self, script: impl IntoIterator<Item = DetachedStatus>) {
+    pub fn script_queries(
+        &self,
+        script: impl IntoIterator<Item = Result<DetachedStatus, ToolDispatchError>>,
+    ) {
         *self.queries.lock().expect("not poisoned") = script.into_iter().collect();
     }
 
@@ -351,6 +416,18 @@ impl ScriptedTools {
     pub fn invoked(&self) -> Vec<String> {
         self.invoked.lock().expect("not poisoned").clone()
     }
+
+    /// Every executor-bound durable operation it was asked to query.
+    #[must_use]
+    pub fn queried(&self) -> Vec<DetachedOperationRef> {
+        self.queried.lock().expect("not poisoned").clone()
+    }
+
+    /// Every executor-bound durable operation it was asked to cancel.
+    #[must_use]
+    pub fn cancelled(&self) -> Vec<(DetachedOperationRef, Fence)> {
+        self.cancelled.lock().expect("not poisoned").clone()
+    }
 }
 
 impl ToolPort for ScriptedTools {
@@ -358,12 +435,12 @@ impl ToolPort for ScriptedTools {
         self.routes
             .lock()
             .expect("not poisoned")
-            .get(&name.0)
+            .get(name.as_str())
             .cloned()
             .ok_or_else(|| {
                 let _ = pin;
                 ToolRoutingError::Unknown {
-                    name: name.0.clone(),
+                    name: name.as_str().to_owned(),
                 }
             })
     }
@@ -378,7 +455,7 @@ impl ToolPort for ScriptedTools {
             self.invoked
                 .lock()
                 .expect("not poisoned")
-                .push(call.call.0.clone());
+                .push(call.call.as_str().to_owned());
             self.invocations
                 .lock()
                 .expect("not poisoned")
@@ -388,7 +465,10 @@ impl ToolPort for ScriptedTools {
                         stage: aex_brain_domain::effect::DispatchStage::Dispatched,
                         proof: aex_brain_domain::effect::DispatchProof::PossiblySent,
                         retryable: false,
-                        detail: RedactedDetail::new("the script is exhausted"),
+                        detail: RedactedDetail::internal(
+                            crate::ports::ProviderFailureKind::ServerError,
+                            "the script is exhausted",
+                        ),
                     })
                 })
         })
@@ -396,24 +476,33 @@ impl ToolPort for ScriptedTools {
 
     fn query<'a>(
         &'a self,
-        _operation: &'a DetachedOperationId,
+        operation: &'a DetachedOperationRef,
     ) -> BoxFuture<'a, Result<DetachedStatus, ToolDispatchError>> {
         Box::pin(async move {
-            Ok(self
-                .queries
+            self.queried
+                .lock()
+                .expect("not poisoned")
+                .push(operation.clone());
+            self.queries
                 .lock()
                 .expect("not poisoned")
                 .pop_front()
-                .unwrap_or(DetachedStatus::Unknown))
+                .unwrap_or(Ok(DetachedStatus::Unknown))
         })
     }
 
     fn cancel<'a>(
         &'a self,
-        _operation: &'a DetachedOperationId,
-        _fence: Fence,
+        operation: &'a DetachedOperationRef,
+        fence: Fence,
     ) -> BoxFuture<'a, Result<(), ToolDispatchError>> {
-        Box::pin(async { Ok(()) })
+        Box::pin(async move {
+            self.cancelled
+                .lock()
+                .expect("not poisoned")
+                .push((operation.clone(), fence));
+            Ok(())
+        })
     }
 }
 
@@ -430,7 +519,10 @@ impl AbsentHands {
         HandsError::Transport {
             stage: aex_brain_domain::effect::DispatchStage::PreDispatch,
             proof: aex_brain_domain::effect::DispatchProof::NotSent,
-            detail: RedactedDetail::new("the activation test did not bind a Hands peer"),
+            detail: RedactedDetail::internal(
+                crate::ports::ProviderFailureKind::ServerError,
+                "the activation test did not bind a Hands peer",
+            ),
         }
     }
 }
@@ -490,7 +582,7 @@ impl AdmissionControl for AlwaysAdmit {
         true
     }
 
-    fn admit(&self) -> AdmissionDecision {
+    fn admit(&self, _restore_bytes: u64) -> AdmissionDecision {
         AdmissionDecision::Admitted(Vec::new())
     }
 }
@@ -502,6 +594,7 @@ struct AgentRow {
     revision: AgentRevision,
     fence: Fence,
     tail: Option<JournalSeq>,
+    tail_hash: Option<ContentHash>,
     cancel_epoch: CancelEpoch,
     finish: Option<FinishReason>,
     phase: String,
@@ -511,6 +604,12 @@ struct AgentRow {
     lease_expires_at: Timestamp,
     entries: Vec<JournalEntry>,
     effects: BTreeMap<EffectId, DurableEffect>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum DispatchHeadRace {
+    Cancel,
+    Delete,
 }
 
 /// The in-memory `DynamoDB` stand-in: journal, effects and leases over one map.
@@ -523,6 +622,11 @@ pub struct MemoryStore {
     authorities: Mutex<BTreeMap<SessionId, SessionAuthority>>,
     commit_faults: Mutex<VecDeque<Option<CommitError>>>,
     read_faults: Mutex<VecDeque<StoreError>>,
+    read_pages: Mutex<VecDeque<JournalPage>>,
+    snapshot_pointers: Mutex<BTreeMap<AgentKey, FoldSnapshotPointer>>,
+    snapshot_bodies: Mutex<BTreeMap<BodyDigest, Vec<u8>>>,
+    snapshot_faults: Mutex<VecDeque<StoreError>>,
+    dispatch_head_races: Mutex<VecDeque<DispatchHeadRace>>,
     clock: Arc<FixedClock>,
     queue: Arc<MemoryQueue>,
     log: Arc<Recorder>,
@@ -537,6 +641,11 @@ impl MemoryStore {
             authorities: Mutex::new(BTreeMap::new()),
             commit_faults: Mutex::new(VecDeque::new()),
             read_faults: Mutex::new(VecDeque::new()),
+            read_pages: Mutex::new(VecDeque::new()),
+            snapshot_pointers: Mutex::new(BTreeMap::new()),
+            snapshot_bodies: Mutex::new(BTreeMap::new()),
+            snapshot_faults: Mutex::new(VecDeque::new()),
+            dispatch_head_races: Mutex::new(VecDeque::new()),
             clock,
             queue,
             log,
@@ -553,6 +662,7 @@ impl MemoryStore {
     /// Panics if the lock is poisoned.
     pub fn seed(&self, key: AgentKey, entries: Vec<JournalEntry>) {
         let tail = entries.last().map(|entry| entry.envelope.seq);
+        let tail_hash = entries.last().map(|entry| entry.envelope.content_hash);
         self.agents.lock().expect("not poisoned").insert(
             key,
             AgentRow {
@@ -560,6 +670,7 @@ impl MemoryStore {
                 revision: AgentRevision::ZERO,
                 fence: Fence::ZERO,
                 tail,
+                tail_hash,
                 cancel_epoch: CancelEpoch::ZERO,
                 finish: None,
                 phase: "awaiting_model".to_owned(),
@@ -578,12 +689,73 @@ impl MemoryStore {
             .or_insert_with(fixture_authority);
     }
 
+    /// Forces a successor ownership generation, modelling another mux task after expiry.
+    ///
+    /// This is intentionally stronger than editing only the expiry: the returned claim is a
+    /// real `(owner, fence)` pair the predecessor's next conditional renewal must observe.
+    #[must_use]
+    pub fn force_takeover(
+        &self,
+        key: AgentKey,
+        owner: OwnerToken,
+        ttl: core::time::Duration,
+    ) -> Claim {
+        let authority = self
+            .authorities
+            .lock()
+            .expect("not poisoned")
+            .get(&key.session)
+            .cloned()
+            .expect("the seeded session has authority");
+        let mut agents = self.agents.lock().expect("not poisoned");
+        let row = agents.get_mut(&key).expect("the seeded agent exists");
+        row.fence = row.fence.advance();
+        row.lease_owner = Some(owner);
+        row.lease_expires_at = self
+            .clock
+            .now()
+            .plus_millis(i64::try_from(ttl.as_millis()).unwrap_or(i64::MAX));
+        Claim {
+            key,
+            owner,
+            fence: row.fence,
+            expires_at: row.lease_expires_at,
+            authority,
+            head: Self::head_of(row, key),
+        }
+    }
+
     /// Replaces the session-head authority a subsequent claim observes.
     pub fn set_authority(&self, session: SessionId, authority: SessionAuthority) {
         self.authorities
             .lock()
             .expect("not poisoned")
             .insert(session, authority);
+    }
+
+    /// Advances the session cancellation epoch observed by the next renewal.
+    pub fn cancel_session(&self, key: AgentKey) {
+        let mut agents = self.agents.lock().expect("not poisoned");
+        let row = agents.get_mut(&key).expect("the seeded agent exists");
+        row.cancel_epoch = CancelEpoch(row.cancel_epoch.0.saturating_add(1));
+    }
+
+    /// Advances cancellation after the next effect preparation commits but before its
+    /// pre-dispatch transaction checks the session head.
+    pub fn cancel_before_next_dispatch(&self) {
+        self.dispatch_head_races
+            .lock()
+            .expect("not poisoned")
+            .push_back(DispatchHeadRace::Cancel);
+    }
+
+    /// Advances deletion after the next effect preparation commits but before its
+    /// pre-dispatch transaction checks the session head.
+    pub fn delete_before_next_dispatch(&self) {
+        self.dispatch_head_races
+            .lock()
+            .expect("not poisoned")
+            .push_back(DispatchHeadRace::Delete);
     }
 
     /// Places `effect` in the agent's effect partition, as a dead owner would have left it.
@@ -622,6 +794,72 @@ impl MemoryStore {
             .lock()
             .expect("not poisoned")
             .push_back(error);
+    }
+
+    /// Supplies one exact page for the next journal read.
+    ///
+    /// Used for continuation/EOF boundary tests where the authoritative head and the
+    /// service page must deliberately disagree.
+    pub fn page_next_read(&self, page: JournalPage) {
+        self.read_pages
+            .lock()
+            .expect("not poisoned")
+            .push_back(page);
+    }
+
+    /// Scripts the next snapshot pointer/body read to fail.
+    pub fn fail_next_snapshot_read(&self, error: StoreError) {
+        self.snapshot_faults
+            .lock()
+            .expect("not poisoned")
+            .push_back(error);
+    }
+
+    /// Replaces an immutable body in the fixture to model storage corruption.
+    pub fn corrupt_snapshot_body(&self, digest: BodyDigest, body: Vec<u8>) {
+        self.snapshot_bodies
+            .lock()
+            .expect("not poisoned")
+            .insert(digest, body);
+    }
+
+    /// Installs an exact pointer/body pair without publication validation.
+    ///
+    /// This is a hostile-storage fixture: restore tests use it to prove that a pointer
+    /// ahead of the claim, a same-sequence fork, or malformed bytes fail closed. Normal
+    /// tests should call [`FoldSnapshotStore::publish`] instead.
+    pub fn seed_snapshot_unchecked(&self, pointer: FoldSnapshotPointer, body: Vec<u8>) {
+        self.snapshot_bodies
+            .lock()
+            .expect("not poisoned")
+            .insert(pointer.body_digest, body);
+        self.snapshot_pointers
+            .lock()
+            .expect("not poisoned")
+            .insert(pointer.agent, pointer);
+    }
+
+    /// Returns the currently selected snapshot pointer.
+    #[must_use]
+    pub fn snapshot_pointer(&self, key: AgentKey) -> Option<FoldSnapshotPointer> {
+        self.snapshot_pointers
+            .lock()
+            .expect("not poisoned")
+            .get(&key)
+            .cloned()
+    }
+
+    /// Replaces the tail pair returned with the next claim without changing stored pages.
+    pub fn set_claimed_tail(
+        &self,
+        key: AgentKey,
+        tail: Option<JournalSeq>,
+        tail_hash: Option<ContentHash>,
+    ) {
+        let mut agents = self.agents.lock().expect("not poisoned");
+        let row = agents.get_mut(&key).expect("the agent was seeded");
+        row.tail = tail;
+        row.tail_hash = tail_hash;
     }
 
     /// The agent's journal, as the authority holds it.
@@ -680,6 +918,7 @@ impl MemoryStore {
             revision: row.revision,
             fence: row.fence,
             journal_tail: row.tail,
+            journal_tail_hash: row.tail_hash,
             cancel_epoch: row.cancel_epoch,
             finish: row.finish,
             phase: row.phase.clone(),
@@ -717,31 +956,72 @@ impl JournalStore for MemoryStore {
         key: &'a AgentKey,
         from: JournalSeq,
         budget: ReadBudget,
+        after: Option<JournalCursor>,
     ) -> BoxFuture<'a, Result<JournalPage, StoreError>> {
         Box::pin(async move {
             self.log.note("read_page");
             if let Some(fault) = self.read_faults.lock().expect("not poisoned").pop_front() {
                 return Err(fault);
             }
+            if let Some(page) = self.read_pages.lock().expect("not poisoned").pop_front() {
+                return Ok(page);
+            }
+            if after.as_ref().is_some_and(|cursor| cursor.next() != from) {
+                return Err(StoreError::Undecodable {
+                    location: "memory journal continuation".to_owned(),
+                    reason: "the continuation sequence does not match the requested page"
+                        .to_owned(),
+                });
+            }
             let agents = self.agents.lock().expect("not poisoned");
             let Some(row) = agents.get(key) else {
                 return Ok(JournalPage {
                     entries: Vec::new(),
+                    hydrated_bytes: 0,
                     next: None,
                 });
             };
-            let entries: Vec<JournalEntry> = row
+            let mut entries = Vec::new();
+            let mut hydrated_bytes = 0_usize;
+            for entry in row
                 .entries
                 .iter()
                 .filter(|entry| entry.envelope.seq >= from)
                 .take(budget.max_entries)
-                .cloned()
-                .collect();
+            {
+                let body_bytes =
+                    entry
+                        .record
+                        .canonical_bytes()
+                        .map_err(|error| StoreError::Undecodable {
+                            location: "memory journal entry".to_owned(),
+                            reason: error.to_string(),
+                        })?;
+                hydrated_bytes = hydrated_bytes.saturating_add(body_bytes.len());
+                if hydrated_bytes > budget.max_bytes {
+                    return Err(StoreError::ReadBudgetExhausted {
+                        entries: entries.len(),
+                        bytes: hydrated_bytes,
+                    });
+                }
+                entries.push(entry.clone());
+            }
             let next = entries
                 .last()
                 .map(|entry| entry.envelope.seq.next())
-                .filter(|_| entries.len() >= budget.max_entries);
-            Ok(JournalPage { entries, next })
+                .filter(|next| row.entries.iter().any(|entry| entry.envelope.seq >= *next))
+                .map(|next| {
+                    JournalCursor::new(
+                        [("offset", next.get().saturating_sub(1).to_string())],
+                        after.as_ref().map_or(from, JournalCursor::start),
+                        next,
+                    )
+                });
+            Ok(JournalPage {
+                entries,
+                hydrated_bytes,
+                next,
+            })
         })
     }
 
@@ -877,6 +1157,9 @@ impl JournalStore for MemoryStore {
             if !commit.is_retirement_only() {
                 row.revision = commit.control.next_revision;
                 row.tail = Some(commit.control.next_tail);
+                if let Some(last) = row.entries.last() {
+                    row.tail_hash = Some(last.envelope.content_hash);
+                }
                 row.phase.clone_from(&commit.control.phase);
                 if let Some(finish) = commit.control.finish {
                     row.finish = Some(finish);
@@ -913,28 +1196,218 @@ impl JournalStore for MemoryStore {
     }
 }
 
+impl FoldSnapshotStore for MemoryStore {
+    fn load_latest<'a>(
+        &'a self,
+        key: &'a AgentKey,
+    ) -> BoxFuture<'a, Result<Option<FoldSnapshotPointer>, StoreError>> {
+        Box::pin(async move {
+            self.log.note("snapshot_load_latest");
+            if let Some(fault) = self
+                .snapshot_faults
+                .lock()
+                .expect("not poisoned")
+                .pop_front()
+            {
+                return Err(fault);
+            }
+            Ok(self
+                .snapshot_pointers
+                .lock()
+                .expect("not poisoned")
+                .get(key)
+                .cloned())
+        })
+    }
+
+    fn load_body<'a>(
+        &'a self,
+        workspace: aex_wire::ids::WorkspaceId,
+        pointer: &'a FoldSnapshotPointer,
+        max_bytes: usize,
+    ) -> BoxFuture<'a, Result<Vec<u8>, StoreError>> {
+        Box::pin(async move {
+            self.log.note("snapshot_load_body");
+            if let Some(fault) = self
+                .snapshot_faults
+                .lock()
+                .expect("not poisoned")
+                .pop_front()
+            {
+                return Err(fault);
+            }
+            if self
+                .authorities
+                .lock()
+                .expect("not poisoned")
+                .get(&pointer.agent.session)
+                .is_none_or(|authority| authority.workspace != workspace)
+            {
+                return Err(StoreError::SessionWorkspaceMismatch);
+            }
+            if pointer.body_bytes > u64::try_from(max_bytes).unwrap_or(u64::MAX) {
+                return Err(StoreError::SnapshotBodyTooLarge {
+                    declared: pointer.body_bytes,
+                    max: max_bytes,
+                });
+            }
+            self.snapshot_bodies
+                .lock()
+                .expect("not poisoned")
+                .get(&pointer.body_digest)
+                .cloned()
+                .ok_or_else(|| StoreError::ContentUnavailable {
+                    reference: pointer.body_digest.to_wire(),
+                    reason: "the immutable snapshot body is absent".to_owned(),
+                })
+        })
+    }
+
+    fn publish<'a>(
+        &'a self,
+        workspace: aex_wire::ids::WorkspaceId,
+        artifact: &'a FoldSnapshotArtifact,
+    ) -> BoxFuture<'a, Result<SnapshotPublishOutcome, StoreError>> {
+        Box::pin(async move {
+            self.log.note("snapshot_publish");
+            let pointer = artifact.pointer();
+            let body = artifact.body();
+            if self
+                .authorities
+                .lock()
+                .expect("not poisoned")
+                .get(&pointer.agent.session)
+                .is_none_or(|authority| authority.workspace != workspace)
+            {
+                return Err(StoreError::SessionWorkspaceMismatch);
+            }
+            pointer
+                .verify(pointer.agent, body, body.len())
+                .map_err(|diagnostic| StoreError::SnapshotRejected {
+                    diagnostic: diagnostic.into(),
+                })?;
+
+            let agents = self.agents.lock().expect("not poisoned");
+            let row = agents
+                .get(&pointer.agent)
+                .ok_or(StoreError::SnapshotHistoricalMismatch)?;
+            let historical = row.entries.iter().find(|entry| {
+                entry.envelope.seq == pointer.absorbed.seq
+                    && entry.envelope.content_hash == pointer.absorbed.hash
+            });
+            if historical.is_none() || row.tail.is_none_or(|tail| tail < pointer.absorbed.seq) {
+                return Err(StoreError::SnapshotHistoricalMismatch);
+            }
+            drop(agents);
+
+            let mut bodies = self.snapshot_bodies.lock().expect("not poisoned");
+            if let Some(existing) = bodies.get(&pointer.body_digest) {
+                if existing != body {
+                    return Err(StoreError::Undecodable {
+                        location: "snapshot content address".to_owned(),
+                        reason: "two bodies claimed one SHA-256 digest".to_owned(),
+                    });
+                }
+            } else {
+                bodies.insert(pointer.body_digest, body.to_vec());
+            }
+            drop(bodies);
+
+            let mut pointers = self.snapshot_pointers.lock().expect("not poisoned");
+            if let Some(current) = pointers.get(&pointer.agent) {
+                if current.absorbed.seq > pointer.absorbed.seq {
+                    return Ok(SnapshotPublishOutcome::Superseded {
+                        current: current.absorbed,
+                    });
+                }
+                if current.absorbed.seq == pointer.absorbed.seq {
+                    if current == pointer {
+                        return Ok(SnapshotPublishOutcome::AlreadyCurrent);
+                    }
+                    return Err(StoreError::SnapshotPointerConflict {
+                        seq: current.absorbed.seq,
+                    });
+                }
+            }
+            pointers.insert(pointer.agent, pointer.clone());
+            Ok(SnapshotPublishOutcome::Published)
+        })
+    }
+}
+
 impl EffectStore for MemoryStore {
     fn mark_dispatch_started<'a>(
         &'a self,
         guard: &'a FenceGuard,
+        authority: &'a SessionAuthority,
         effect: &'a EffectId,
         attempt: u16,
         at: Timestamp,
     ) -> BoxFuture<'a, Result<DispatchTicket, CommitError>> {
         Box::pin(async move {
             self.log.note("mark_dispatch_started");
+            match self
+                .dispatch_head_races
+                .lock()
+                .expect("not poisoned")
+                .pop_front()
+            {
+                Some(DispatchHeadRace::Cancel) => {
+                    let mut agents = self.agents.lock().expect("not poisoned");
+                    let row = agents
+                        .get_mut(&guard.key())
+                        .ok_or(CommitError::Condition(ConditionFailure::StaleFence))?;
+                    row.cancel_epoch = CancelEpoch(row.cancel_epoch.0.saturating_add(1));
+                }
+                Some(DispatchHeadRace::Delete) => {
+                    let mut authorities = self.authorities.lock().expect("not poisoned");
+                    let current = authorities.get_mut(&guard.key().session).ok_or_else(|| {
+                        CommitError::Store(StoreError::Undecodable {
+                            location: "session head".to_owned(),
+                            reason: "the session does not exist".to_owned(),
+                        })
+                    })?;
+                    current.deletion_epoch = current.deletion_epoch.saturating_add(1);
+                }
+                None => {}
+            }
+            let current_authority = self
+                .authorities
+                .lock()
+                .expect("not poisoned")
+                .get(&guard.key().session)
+                .cloned()
+                .ok_or_else(|| {
+                    CommitError::Store(StoreError::Undecodable {
+                        location: "session head".to_owned(),
+                        reason: "the session does not exist".to_owned(),
+                    })
+                })?;
+            if &current_authority != authority {
+                return Err(ConditionFailure::CancelEpochAdvanced.into());
+            }
             let mut agents = self.agents.lock().expect("not poisoned");
             let row = agents
                 .get_mut(&guard.key())
                 .ok_or(CommitError::Condition(ConditionFailure::StaleFence))?;
-            if row.fence != guard.fence() {
+            if row.cancel_epoch != guard.cancel_epoch() {
+                return Err(ConditionFailure::CancelEpochAdvanced.into());
+            }
+            if row.fence != guard.fence() || row.lease_owner != Some(guard.as_ref().owner) {
                 return Err(ConditionFailure::StaleFence.into());
             }
             let durable = row.effects.get_mut(effect).ok_or(CommitError::Condition(
                 ConditionFailure::EffectStateMismatch { effect: *effect },
             ))?;
-            // One durable pre-send write authorizes exactly one attempt.
-            if !matches!(durable.state, EffectState::Prepared { .. }) {
+            // Ownership takeover is not a retry: no byte left the predecessor. The
+            // prepared attempt is immutable and the successor must mint its ticket for
+            // that exact attempt rather than rewriting durable history.
+            if !matches!(
+                durable.state,
+                EffectState::Prepared {
+                    attempt: prepared_attempt
+                } if prepared_attempt == attempt
+            ) {
                 return Err(ConditionFailure::EffectStateMismatch { effect: *effect }.into());
             }
             durable.state = EffectState::DispatchStarted { attempt };
@@ -942,7 +1415,14 @@ impl EffectStore for MemoryStore {
                 attempt,
                 aex_brain_domain::effect::DispatchStage::Dispatched,
             ));
-            Ok(DispatchTicket::mint(guard, *effect, attempt, at))
+            Ok(DispatchTicket::mint(
+                guard,
+                authority.workspace,
+                authority.organization,
+                *effect,
+                attempt,
+                at,
+            ))
         })
     }
 
@@ -1018,7 +1498,7 @@ impl LeaseStore for MemoryStore {
             let row = agents.get_mut(key).ok_or(ClaimError::HeldByOther {
                 expires_at: Timestamp::from_millis(0),
             })?;
-            if row.lease_owner.is_some() && row.lease_expires_at.millis() > now.millis() {
+            if row.lease_expires_at.millis() > now.millis() && row.lease_owner != Some(owner) {
                 return Err(ClaimError::HeldByOther {
                     expires_at: row.lease_expires_at,
                 });
@@ -1045,8 +1525,22 @@ impl LeaseStore for MemoryStore {
         now: Timestamp,
     ) -> BoxFuture<'a, Result<Claim, ClaimError>> {
         Box::pin(async move {
+            self.log.note("renew_lease");
+            let authority = self
+                .authorities
+                .lock()
+                .expect("not poisoned")
+                .get(&claim.key.session)
+                .cloned()
+                .ok_or(ClaimError::Terminal)?;
+            if authority != claim.authority {
+                return Err(ClaimError::Terminal);
+            }
             let mut agents = self.agents.lock().expect("not poisoned");
             let row = agents.get_mut(&claim.key).ok_or(ClaimError::Terminal)?;
+            if row.cancel_epoch != claim.head.cancel_epoch {
+                return Err(ClaimError::Terminal);
+            }
             if row.fence != claim.fence || row.lease_owner != Some(claim.owner) {
                 return Err(ClaimError::Fenced { current: row.fence });
             }
@@ -1062,7 +1556,7 @@ impl LeaseStore for MemoryStore {
     fn release(
         &self,
         claim: Claim,
-        disposition: ReleaseDisposition,
+        _disposition: ReleaseDisposition,
     ) -> BoxFuture<'_, Result<(), StoreError>> {
         Box::pin(async move {
             self.log.note("release_lease");
@@ -1072,11 +1566,7 @@ impl LeaseStore for MemoryStore {
                 && row.lease_owner == Some(claim.owner)
             {
                 row.lease_owner = None;
-                row.lease_expires_at = if matches!(disposition, ReleaseDisposition::Drain) {
-                    Timestamp::from_millis(0)
-                } else {
-                    row.lease_expires_at
-                };
+                row.lease_expires_at = Timestamp::from_millis(0);
             }
             Ok(())
         })
@@ -1091,10 +1581,16 @@ impl LeaseStore for MemoryStore {
 #[derive(Debug, Default)]
 pub struct MemoryQueue {
     durable: Mutex<BTreeMap<WakeId, (DurableWake, WorkShard)>>,
+    malformed_due: Mutex<BTreeMap<WakeId, WorkShard>>,
     visible: Mutex<VecDeque<WakeDelivery>>,
+    malformed_visible: Mutex<VecDeque<MalformedWakeDelivery>>,
     acked: Mutex<Vec<WakeDelivery>>,
+    receive_faults: Mutex<VecDeque<StoreError>>,
     ack_faults: Mutex<VecDeque<StoreError>>,
     receipts: AtomicU64,
+    visibility_extensions: AtomicU64,
+    malformed_released: AtomicU64,
+    malformed_acked: AtomicU64,
     log: Mutex<Option<Arc<Recorder>>>,
 }
 
@@ -1104,10 +1600,16 @@ impl MemoryQueue {
     pub fn new(log: Arc<Recorder>) -> Self {
         Self {
             durable: Mutex::new(BTreeMap::new()),
+            malformed_due: Mutex::new(BTreeMap::new()),
             visible: Mutex::new(VecDeque::new()),
+            malformed_visible: Mutex::new(VecDeque::new()),
             acked: Mutex::new(Vec::new()),
+            receive_faults: Mutex::new(VecDeque::new()),
             ack_faults: Mutex::new(VecDeque::new()),
             receipts: AtomicU64::new(0),
+            visibility_extensions: AtomicU64::new(0),
+            malformed_released: AtomicU64::new(0),
+            malformed_acked: AtomicU64::new(0),
             log: Mutex::new(Some(log)),
         }
     }
@@ -1115,6 +1617,20 @@ impl MemoryQueue {
     /// Projects one durable wake onto the queue, as the work stream does.
     pub fn project(&self, wake: DurableWake) {
         self.project_in_shard(wake, WorkShard(0));
+    }
+
+    /// Projects one malformed queue record beside valid siblings.
+    pub fn project_malformed(&self, receive_count: u32) {
+        let receipt = self.receipts.fetch_add(1, Ordering::SeqCst);
+        self.malformed_visible
+            .lock()
+            .expect("not poisoned")
+            .push_back(MalformedWakeDelivery {
+                receipt: Some(format!("bad-rh-{receipt}")),
+                receive_count,
+                reason: MalformedWakeReason::InvalidProjection,
+                fingerprint: format!("{receipt:016x}"),
+            });
     }
 
     /// Persists a durable wake without projecting its stream hint.
@@ -1125,6 +1641,17 @@ impl MemoryQueue {
             .lock()
             .expect("not poisoned")
             .insert(wake.id, (wake, shard));
+    }
+
+    /// Persists one malformed due-index projection for isolation/starvation tests.
+    ///
+    /// It has an index identity and shard but no decodable wake body, matching a malformed
+    /// projected row closely enough to assert that the page cursor advances past it.
+    pub fn persist_malformed_due(&self, id: WakeId, shard: WorkShard) {
+        self.malformed_due
+            .lock()
+            .expect("not poisoned")
+            .insert(id, shard);
     }
 
     fn project_in_shard(&self, wake: DurableWake, shard: WorkShard) {
@@ -1170,6 +1697,14 @@ impl MemoryQueue {
             .retain(|_, (stored, _)| stored.work_id != wake.work_id);
     }
 
+    /// Scripts the next queue receive to fail before the due backstop may advance.
+    pub fn fail_next_receive(&self, error: StoreError) {
+        self.receive_faults
+            .lock()
+            .expect("not poisoned")
+            .push_back(error);
+    }
+
     /// Scripts the next ack to fail, which is the crash between the commit and the ack.
     pub fn fail_next_ack(&self, error: StoreError) {
         self.ack_faults
@@ -1190,6 +1725,24 @@ impl MemoryQueue {
         self.acked.lock().expect("not poisoned").clone()
     }
 
+    /// How many times a live queue delivery had its visibility extended.
+    #[must_use]
+    pub fn visibility_extensions(&self) -> u64 {
+        self.visibility_extensions.load(Ordering::SeqCst)
+    }
+
+    /// How many malformed records were explicitly returned for another receive.
+    #[must_use]
+    pub fn malformed_released(&self) -> u64 {
+        self.malformed_released.load(Ordering::SeqCst)
+    }
+
+    /// How many malformed records reached the poison threshold and were acknowledged.
+    #[must_use]
+    pub fn malformed_acked(&self) -> u64 {
+        self.malformed_acked.load(Ordering::SeqCst)
+    }
+
     fn note(&self, what: &str) {
         if let Some(log) = self.log.lock().expect("not poisoned").as_ref() {
             log.note(what);
@@ -1202,12 +1755,54 @@ impl WakeQueue for MemoryQueue {
         &self,
         max: usize,
         _wait: core::time::Duration,
-    ) -> BoxFuture<'_, Result<Vec<WakeDelivery>, StoreError>> {
+    ) -> BoxFuture<'_, Result<WakeBatch, StoreError>> {
         Box::pin(async move {
             self.note("receive");
+            if let Some(fault) = self
+                .receive_faults
+                .lock()
+                .expect("not poisoned")
+                .pop_front()
+            {
+                return Err(fault);
+            }
             let mut visible = self.visible.lock().expect("not poisoned");
-            let taken = visible.len().min(max);
-            Ok(visible.drain(..taken).collect())
+            let mut malformed = self.malformed_visible.lock().expect("not poisoned");
+            let valid_taken = visible.len().min(max);
+            let remaining = max.saturating_sub(valid_taken);
+            let malformed_taken = malformed.len().min(remaining);
+            Ok(WakeBatch {
+                deliveries: visible.drain(..valid_taken).collect(),
+                malformed: malformed.drain(..malformed_taken).collect(),
+            })
+        })
+    }
+
+    fn release_malformed(
+        &self,
+        mut delivery: MalformedWakeDelivery,
+        _after: core::time::Duration,
+    ) -> BoxFuture<'_, Result<(), StoreError>> {
+        Box::pin(async move {
+            self.note("release_malformed");
+            self.malformed_released.fetch_add(1, Ordering::SeqCst);
+            delivery.receive_count = delivery.receive_count.saturating_add(1);
+            self.malformed_visible
+                .lock()
+                .expect("not poisoned")
+                .push_back(delivery);
+            Ok(())
+        })
+    }
+
+    fn ack_malformed(
+        &self,
+        _delivery: MalformedWakeDelivery,
+    ) -> BoxFuture<'_, Result<(), StoreError>> {
+        Box::pin(async move {
+            self.note("ack_malformed");
+            self.malformed_acked.fetch_add(1, Ordering::SeqCst);
+            Ok(())
         })
     }
 
@@ -1234,10 +1829,16 @@ impl WakeQueue for MemoryQueue {
 
     fn extend_visibility<'a>(
         &'a self,
-        _delivery: &'a WakeDelivery,
+        delivery: &'a WakeDelivery,
         _by: core::time::Duration,
     ) -> BoxFuture<'a, Result<(), StoreError>> {
-        Box::pin(async { Ok(()) })
+        Box::pin(async move {
+            if matches!(delivery.origin, WakeOrigin::Queue { .. }) {
+                self.note("extend_visibility");
+                self.visibility_extensions.fetch_add(1, Ordering::SeqCst);
+            }
+            Ok(())
+        })
     }
 
     fn release(
@@ -1278,21 +1879,88 @@ impl WakeQueue for MemoryQueue {
         shard: WorkShard,
         now: Timestamp,
         max: usize,
-    ) -> BoxFuture<'_, Result<Vec<DurableWake>, StoreError>> {
+        after: Option<DueScanCursor>,
+    ) -> BoxFuture<'_, Result<DueScanPage, StoreError>> {
         Box::pin(async move {
             self.note("due_scan");
-            Ok(self
+            let after = after
+                .as_ref()
+                .map(|cursor| {
+                    cursor
+                        .parts()
+                        .get("wakeId")
+                        .ok_or_else(|| StoreError::Undecodable {
+                            location: "memory due cursor".to_owned(),
+                            reason: "`wakeId` is absent".to_owned(),
+                        })?
+                        .parse::<Uuid>()
+                        .map(WakeId)
+                        .map_err(|_| StoreError::Undecodable {
+                            location: "memory due cursor".to_owned(),
+                            reason: "`wakeId` is malformed".to_owned(),
+                        })
+                })
+                .transpose()?;
+            let mut rows: Vec<(WakeId, Option<DurableWake>)> = self
                 .durable
                 .lock()
                 .expect("not poisoned")
-                .values()
-                .filter(|(wake, stored_shard)| {
-                    *stored_shard == shard
+                .iter()
+                .filter(|(id, (wake, stored_shard))| {
+                    after.is_none_or(|after| **id > after)
+                        && *stored_shard == shard
                         && wake.due.is_some_and(|due| due.millis() <= now.millis())
                 })
-                .take(max)
-                .map(|(wake, _)| wake.clone())
-                .collect())
+                .map(|(id, (wake, _))| (*id, Some(wake.clone())))
+                .collect();
+            rows.extend(
+                self.malformed_due
+                    .lock()
+                    .expect("not poisoned")
+                    .iter()
+                    .filter(|(id, stored_shard)| {
+                        after.is_none_or(|after| **id > after) && **stored_shard == shard
+                    })
+                    .map(|(id, _)| (*id, None)),
+            );
+            rows.sort_by_key(|(id, _)| *id);
+            let has_more = rows.len() > max;
+            rows.truncate(max);
+            let last = rows.last().map(|(id, _)| *id);
+            let malformed = rows.iter().filter(|(_, wake)| wake.is_none()).count();
+            let isolations = rows
+                .iter()
+                .filter(|(_, wake)| wake.is_none())
+                .take(MAX_DUE_ROW_ISOLATIONS)
+                .map(|(id, _)| {
+                    let digest =
+                        id.0.as_bytes()
+                            .iter()
+                            .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+                                (hash ^ u64::from(*byte)).wrapping_mul(0x100_0000_01b3)
+                            });
+                    DueRowIsolation {
+                        reason: DueRowIsolationReason::MalformedProjection,
+                        fingerprint: format!("{digest:016x}"),
+                    }
+                })
+                .collect();
+            let wakes = rows.into_iter().filter_map(|(_, wake)| wake).collect();
+            let next = has_more.then(|| {
+                DueScanCursor::new([(
+                    "wakeId",
+                    last.expect("a truncated page has a last row")
+                        .0
+                        .as_hyphenated()
+                        .to_string(),
+                )])
+            });
+            Ok(DueScanPage {
+                wakes,
+                next,
+                malformed,
+                isolations,
+            })
         })
     }
 }

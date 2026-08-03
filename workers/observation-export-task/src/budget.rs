@@ -18,8 +18,8 @@
 //! the same bytes.
 
 use aex_observation_domain::limits::OBSERVATION_NORMALIZED_MAX;
-use aex_otlp_admission::wire_pending::PendingErrorCode;
 use aex_otlp_admission::{MemoryBudget, MemoryLease};
+use aex_wire::error::ErrorCode;
 
 /// The per-observation ceiling one page slot is sized at.
 ///
@@ -45,7 +45,7 @@ pub const PART_BUFFER: &str = "part_buffer";
 pub const ROW_GROUP_BUFFER: &str = "row_group_buffer";
 
 /// The wire code a capacity refusal is reported as.
-pub const CAPACITY_CODE: &str = PendingErrorCode::ExportCapacity.as_str();
+pub const CAPACITY_CODE: &str = ErrorCode::ExportCapacity.as_str();
 
 /// Why an export could not reserve the memory it needs.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
@@ -62,11 +62,11 @@ pub struct CapacityError {
 }
 
 impl CapacityError {
-    /// The pending wire code every capacity refusal is published as.
+    /// The wire code every capacity refusal is published as.
     ///
     /// `503 export_capacity` is retryable, so a launcher may re-run the export
     /// against a larger task instead of failing the customer's request.
-    pub const CODE: PendingErrorCode = PendingErrorCode::ExportCapacity;
+    pub const CODE: ErrorCode = ErrorCode::ExportCapacity;
 }
 
 /// One named reservation.
@@ -224,7 +224,7 @@ impl Reserved {
 #[cfg(test)]
 mod tests {
     use aex_otlp_admission::MemoryBudget;
-    use aex_otlp_admission::wire_pending::PendingErrorCode;
+    use aex_wire::error::ErrorCode;
 
     use super::{
         CAPACITY_CODE, CapacityError, ENCODER_SCRATCH, ENCODER_SCRATCH_BYTES, MemoryPlan,
@@ -277,9 +277,9 @@ mod tests {
         let plan = plan();
         let budget = MemoryBudget::new(plan.total_bytes() - 1);
         let error = plan.acquire(&budget).expect_err("a short budget refuses");
-        assert_eq!(CapacityError::CODE, PendingErrorCode::ExportCapacity);
+        assert_eq!(CapacityError::CODE, ErrorCode::ExportCapacity);
         assert_eq!(CapacityError::CODE.as_str(), CAPACITY_CODE);
-        assert_eq!(CapacityError::CODE.status(), 503);
+        assert_eq!(CapacityError::CODE.http_status(), 503);
         assert!(CapacityError::CODE.retryable());
         assert_eq!(error.capacity, plan.total_bytes() - 1);
         assert_eq!(

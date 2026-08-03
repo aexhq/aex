@@ -237,6 +237,7 @@ fn context(request_id: RequestId, route_id: RouteId, if_match: Option<ETag>) -> 
         },
         limits: EffectiveLimits {
             json_body_bytes: 65_536,
+            otlp_body_bytes: 4 * 1_024 * 1_024,
             query_page_items: 100,
             query_page_bytes: 1_048_576,
         },
@@ -320,6 +321,29 @@ fn the_served_set_is_a_subset_of_the_owned_set() {
             "`{id}`"
         );
     }
+}
+
+#[test]
+fn the_served_set_matches_the_generated_actual_mount_authority() {
+    let registry: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../api/generated/registries/routes.json"
+    ))
+    .expect("generated route registry");
+    let generated: Vec<RouteId> = registry["routes"]
+        .as_array()
+        .expect("route rows")
+        .iter()
+        .filter(|route| route["servedArtifact"] == "regional-secret-api")
+        .map(|route| {
+            RouteId::parse(route["operationId"].as_str().expect("operation id"))
+                .expect("generated operation id")
+        })
+        .collect();
+    assert_eq!(Routes::served(), generated);
+    assert_eq!(
+        generated,
+        vec![RouteId::SecretDelete, RouteId::SecretRevoke]
+    );
 }
 
 #[test]

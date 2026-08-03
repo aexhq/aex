@@ -35,3 +35,4 @@ release/policy/** text eol=lf
 # are rebuilt byte-for-byte by `aex-regional-test-support`'s bundler and asserted
 # against the checked-in file. Same rule, same reason.
 migrations/regional/** text eol=lf
+migrations/central/** text eol=lf

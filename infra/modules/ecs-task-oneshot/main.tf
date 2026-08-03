@@ -3,6 +3,7 @@
 # to run once, succeed or fail, and stop.
 resource "aws_ecs_task_definition" "this" {
   family                   = var.family
+  skip_destroy             = true
   cpu                      = tostring(var.cpu)
   memory                   = tostring(var.memory)
   network_mode             = "awsvpc"

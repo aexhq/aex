@@ -196,6 +196,14 @@ pub enum CatalogLoadError {
         /// The missing probe.
         probe: ProbeId,
     },
+    /// An Active receipt was earned for different entry bytes.
+    #[error("`{provider}` / `{model}` carries a receipt for a different catalog entry")]
+    ReceiptEntryMismatch {
+        /// The provider half.
+        provider: ProviderId,
+        /// The model half.
+        model: ModelSlug,
+    },
     /// An entry declares an in-call retry for a status D-20 does not permit.
     ///
     /// Only 429 and 503 are definitive non-generation rejections; retrying
@@ -656,6 +664,37 @@ fn check_receipt_gate(
                 });
             }
         }
+        if entry.receipt.catalog_entry_digest != catalog_entry_digest(entry)? {
+            return Err(CatalogLoadError::ReceiptEntryMismatch {
+                provider: entry.provider,
+                model: entry.model.clone(),
+            });
+        }
     }
     Ok(())
+}
+
+/// Hashes the canonical entry projection a conformance receipt proves.
+///
+/// The receipt itself is removed before hashing, preventing the impossible
+/// recursive definition `digest(entry including digest(entry))`.
+///
+/// # Errors
+///
+/// Returns [`CatalogLoadError::Malformed`] if the closed entry schema cannot
+/// be rendered into canonical JSON.
+pub fn catalog_entry_digest(entry: &ModelEntry) -> Result<aex_wire::ContentHash, CatalogLoadError> {
+    let mut value = serde_json::to_value(entry).map_err(|error| CatalogLoadError::Malformed {
+        reason: BoundedString::truncating(&error.to_string()),
+    })?;
+    let Some(object) = value.as_object_mut() else {
+        return Err(CatalogLoadError::Malformed {
+            reason: BoundedString::truncating("a model entry did not encode as an object"),
+        });
+    };
+    object.remove("receipt");
+    let bytes = to_jcs_bytes(&value).map_err(|error| CatalogLoadError::Malformed {
+        reason: BoundedString::truncating(&error.to_string()),
+    })?;
+    Ok(aex_wire::ContentHash::of(&bytes))
 }

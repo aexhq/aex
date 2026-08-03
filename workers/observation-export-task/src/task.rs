@@ -30,7 +30,7 @@ use aex_observation_export::{
     ManifestError, MemberEncoder, PartRecord, Publication, ResumeError,
 };
 use aex_otlp_admission::MemoryBudget;
-use aex_otlp_admission::wire_pending::PendingErrorCode;
+use aex_wire::error::ErrorCode;
 use aex_wire::types::Timestamp;
 
 use crate::budget::{CapacityError, MemoryPlan, PAGE_SLOT_BYTES};
@@ -103,9 +103,9 @@ pub enum TaskError {
 }
 
 impl TaskError {
-    /// The pending wire code this failure is published as, when it has one.
+    /// The wire code this failure is published as, when it has one.
     #[must_use]
-    pub const fn pending_code(&self) -> Option<PendingErrorCode> {
+    pub const fn code(&self) -> Option<ErrorCode> {
         match self {
             Self::Capacity(_) => Some(CapacityError::CODE),
             _ => None,
@@ -924,7 +924,7 @@ mod tests {
         ResumeError,
     };
     use aex_otlp_admission::MemoryBudget;
-    use aex_otlp_admission::wire_pending::PendingErrorCode;
+    use aex_wire::error::ErrorCode;
     use aex_wire::ids::WorkspaceId;
     use aex_wire::types::Timestamp;
 
@@ -1303,11 +1303,7 @@ mod tests {
         );
 
         let error = task.run(now()).await.expect_err("a short budget refuses");
-        assert_eq!(
-            error.pending_code(),
-            Some(PendingErrorCode::ExportCapacity),
-            "{error}"
-        );
+        assert_eq!(error.code(), Some(ErrorCode::ExportCapacity), "{error}");
         assert_eq!(task.authority.page_calls(), 0, "nothing was streamed");
         assert_eq!(task.authority.lease_calls(), 0, "nothing was even leased");
         assert_eq!(task.objects.parts(), 0);

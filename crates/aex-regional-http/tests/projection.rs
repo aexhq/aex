@@ -16,7 +16,7 @@ use aex_regional_http::projection::{
     ProjectionError, entity_tag, position_tuple, provider_credential, provider_credential_page,
     registered_file, registered_instruction, registered_mcp_server, registered_skill,
     registered_skill_page, registered_tool, secret_metadata, secret_metadata_page,
-    secret_plaintext, secret_revocation, tuple_position,
+    secret_plaintext, secret_revocation, session_run, session_run_page, tuple_position,
 };
 use aex_secret_custody_dynamodb::codec::{
     CredentialState, ProviderCredential as StoredCredential, SecretMetadata as StoredSecret,
@@ -91,6 +91,49 @@ where
 {
     let encoded = serde_json::to_vec(value).expect("a projected model always encodes");
     serde_json::from_slice(&encoded).expect("a projected model always decodes as itself")
+}
+
+// --- sessions ---------------------------------------------------------------------
+
+#[test]
+fn a_failed_canonical_run_survives_the_public_wire() {
+    let (_session, mut run, _agent, _message) = aex_session_domain::testing::running_session();
+    run.status = aex_session_domain::RunStatus::Failed;
+    run.terminal_at = Some(aex_session_domain::testing::moment(10));
+    run.outcome = Some(aex_session_domain::RunOutcome::Failed {
+        error: aex_session_domain::DomainError {
+            code: ErrorCode::UpstreamError,
+            message: "provider unavailable".to_owned(),
+            detail: Some(aex_wire::CanonicalJson::parse(r#"{"phase":"dispatch"}"#).expect("JSON")),
+            retryable: true,
+        },
+    });
+    run.telemetry_complete = Some(false);
+    run.telemetry_gaps = Some(vec![aex_session_domain::testing::id(12)]);
+
+    let projected = session_run(&run);
+    assert_eq!(round_trip(&projected), projected);
+    assert_eq!(projected.status, models::RunStatus::Failed);
+    let error = projected.error.expect("a typed failure");
+    assert_eq!(error.code.known(), Some(ErrorCode::UpstreamError));
+    assert!(error.retryable);
+    assert_eq!(projected.telemetry_complete, Some(false));
+}
+
+#[test]
+fn only_a_successful_run_publishes_output_message_ids() {
+    let (_session, mut run, _agent, _message) = aex_session_domain::testing::running_session();
+    let output = aex_session_domain::testing::id(13);
+    run.status = aex_session_domain::RunStatus::Succeeded;
+    run.terminal_at = Some(aex_session_domain::testing::moment(10));
+    run.outcome = Some(aex_session_domain::RunOutcome::Succeeded {
+        output_messages: vec![output],
+    });
+
+    let page = session_run_page(&[run], None);
+    assert_eq!(round_trip(&page), page);
+    assert_eq!(page.items[0].output_message_ids, Some(vec![output]));
+    assert!(page.items[0].error.is_none());
 }
 
 // --- secrets ------------------------------------------------------------------------

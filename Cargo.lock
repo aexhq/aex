@@ -14,7 +14,9 @@ version = "0.1.0"
 dependencies = [
  "aex-brain-domain",
  "aex-brain-test-support",
+ "aex-model-catalog",
  "aex-wire",
+ "futures",
  "loom",
  "serde",
  "serde_json",
@@ -27,6 +29,7 @@ name = "aex-brain-domain"
 version = "0.1.0"
 dependencies = [
  "aex-brain-test-support",
+ "aex-model-catalog",
  "aex-wire",
  "blake3",
  "hex",
@@ -43,12 +46,18 @@ version = "0.1.0"
 dependencies = [
  "aex-brain-application",
  "aex-brain-domain",
+ "aex-brain-tool-catalog",
  "aex-hands-agent",
+ "aex-hands-control-aws",
  "aex-hands-protocol",
  "aex-hands-tools",
+ "aex-internal-contracts",
+ "aex-model-catalog",
  "aex-runtime-control",
+ "aex-runtime-control-aws",
  "aex-wire",
  "blake3",
+ "reqwest",
  "serde",
  "serde_json",
  "thiserror",
@@ -60,6 +69,10 @@ dependencies = [
 name = "aex-brain-managed-web"
 version = "0.1.0"
 dependencies = [
+ "aex-brain-application",
+ "aex-brain-domain",
+ "aex-brain-tool-catalog",
+ "aex-model-catalog",
  "aex-wire",
  "async-trait",
  "brotli",
@@ -75,6 +88,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "url",
+ "uuid",
 ]
 
 [[package]]
@@ -94,12 +108,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "aex-brain-provider-custody"
+version = "0.1.0"
+dependencies = [
+ "aex-brain-application",
+ "aex-brain-provider-gateway",
+ "aex-secret-aws",
+ "aex-secret-custody-dynamodb",
+ "aex-secret-domain",
+ "aex-wire",
+ "async-trait",
+ "futures",
+ "proptest",
+ "tokio",
+]
+
+[[package]]
 name = "aex-brain-provider-gateway"
 version = "0.1.0"
 dependencies = [
+ "aex-brain-application",
+ "aex-brain-domain",
  "aex-model-catalog",
+ "aex-secret-domain",
  "aex-wire",
  "async-trait",
+ "aws-lc-rs",
+ "blake3",
  "bytes",
  "futures",
  "proptest",
@@ -111,6 +146,7 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+ "uuid",
  "wiremock",
  "zeroize",
 ]
@@ -122,19 +158,22 @@ dependencies = [
  "aex-brain-application",
  "aex-brain-domain",
  "aex-brain-test-support",
+ "aex-content-aws",
+ "aex-session-domain",
  "aex-session-dynamodb",
  "aex-wire",
  "aex-work-dynamodb",
  "async-trait",
  "aws-config",
  "aws-sdk-dynamodb",
- "aws-sdk-s3",
  "aws-sdk-sqs",
  "aws-smithy-http-client",
  "aws-smithy-types",
+ "base64 0.23.0",
  "blake3",
  "bytes",
  "futures",
+ "http 1.5.0",
  "serde",
  "serde_json",
  "thiserror",
@@ -148,6 +187,7 @@ name = "aex-brain-test-support"
 version = "0.1.0"
 dependencies = [
  "aex-brain-domain",
+ "aex-model-catalog",
  "aex-test-harness",
  "aex-wire",
  "proptest",
@@ -163,6 +203,7 @@ version = "0.1.0"
 dependencies = [
  "aex-brain-application",
  "aex-brain-domain",
+ "aex-model-catalog",
  "aex-wire",
  "insta",
  "jsonschema",
@@ -172,6 +213,24 @@ dependencies = [
  "sha2 0.11.0",
  "thiserror",
  "time",
+]
+
+[[package]]
+name = "aex-capacity-dynamodb"
+version = "0.1.0"
+dependencies = [
+ "aex-session-dynamodb",
+ "aex-wire",
+ "aws-sdk-dynamodb",
+ "aws-smithy-http-client",
+ "aws-smithy-runtime-api",
+ "aws-smithy-types",
+ "hex",
+ "http 1.5.0",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "thiserror",
 ]
 
 [[package]]
@@ -322,7 +381,9 @@ dependencies = [
  "serde_norway",
  "sha2 0.11.0",
  "similar-asserts",
+ "tempfile",
  "thiserror",
+ "walkdir",
 ]
 
 [[package]]
@@ -654,6 +715,10 @@ name = "aex-live-provider-cost-reconciler"
 version = "0.1.0"
 
 [[package]]
+name = "aex-live-regional-capacity-controller"
+version = "0.1.0"
+
+[[package]]
 name = "aex-live-regional-control"
 version = "0.1.0"
 dependencies = [
@@ -932,6 +997,7 @@ dependencies = [
  "aex-registry-dynamodb",
  "aex-secret-custody-dynamodb",
  "aex-secret-domain",
+ "aex-session-domain",
  "aex-session-dynamodb",
  "aex-wire",
  "aex-workspace-domain",
@@ -1001,12 +1067,14 @@ dependencies = [
 name = "aex-release-tool"
 version = "0.1.0"
 dependencies = [
+ "aex-contract-gen",
  "aex-workspace-check",
  "anyhow",
  "clap",
  "flate2",
  "hex",
  "jsonschema",
+ "p256 0.14.0",
  "proptest",
  "regex",
  "serde",
@@ -1025,6 +1093,7 @@ name = "aex-runtime-activity-dynamodb"
 version = "0.1.0"
 dependencies = [
  "aex-hands-protocol",
+ "aex-internal-contracts",
  "aex-runtime-control",
  "aex-session-dynamodb",
  "aex-test-harness",
@@ -1186,10 +1255,14 @@ dependencies = [
 name = "aex-session-dynamodb"
 version = "0.1.0"
 dependencies = [
+ "aex-content-domain",
  "aex-internal-contracts",
  "aex-observation-domain",
  "aex-operation-domain",
  "aex-runtime-control",
+ "aex-secret-domain",
+ "aex-session-app",
+ "aex-session-domain",
  "aex-wire",
  "async-trait",
  "aws-config",
@@ -2743,19 +2816,33 @@ dependencies = [
  "aex-brain-application",
  "aex-brain-domain",
  "aex-brain-hands",
+ "aex-brain-provider-custody",
+ "aex-brain-provider-gateway",
  "aex-brain-store-aws",
  "aex-brain-tool-catalog",
+ "aex-model-catalog",
  "aex-platform-telemetry",
+ "aex-secret-aws",
+ "aex-secret-custody-dynamodb",
+ "aex-secret-domain",
  "aex-telemetry-schema",
  "aex-usage-application",
  "aex-usage-domain",
  "aex-wire",
  "aws-config",
  "aws-sdk-dynamodb",
+ "aws-sdk-kms",
  "aws-sdk-sqs",
+ "futures",
+ "hex",
+ "p256 0.14.0",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
  "thiserror",
  "time",
  "tokio",
+ "toml",
  "uuid",
 ]
 
@@ -3043,6 +3130,7 @@ dependencies = [
  "clap",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "sqlx",
  "thiserror",
  "tokio",
@@ -3864,11 +3952,15 @@ name = "finance-reconcile"
 version = "0.1.0"
 dependencies = [
  "aex-finance-domain",
+ "aex-internal-contracts",
+ "aex-payment-contracts",
  "aex-platform-telemetry",
  "aex-rds-data",
  "aex-telemetry-schema",
+ "aex-wire",
  "async-trait",
  "aws-config",
+ "aws-sdk-lambda",
  "aws-sdk-rdsdata",
  "aws-sdk-sns",
  "lambda_runtime",
@@ -4260,6 +4352,7 @@ name = "hands-image"
 version = "0.1.0"
 dependencies = [
  "aex-hands-agent",
+ "cargo_metadata",
  "clap",
  "serde",
  "serde_json",
@@ -6066,6 +6159,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
+name = "regional-capacity-controller"
+version = "0.1.0"
+dependencies = [
+ "aex-capacity-dynamodb",
+ "aex-wire",
+ "async-trait",
+ "aws-config",
+ "aws-sdk-dynamodb",
+ "lambda_runtime",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "time",
+ "tokio",
+]
+
+[[package]]
 name = "regional-control"
 version = "0.1.0"
 dependencies = [
@@ -6226,6 +6336,7 @@ dependencies = [
  "aex-runtime-activity-dynamodb",
  "aex-secret-custody-dynamodb",
  "aex-secret-domain",
+ "aex-session-domain",
  "aex-session-dynamodb",
  "aex-telemetry-schema",
  "aex-wire",

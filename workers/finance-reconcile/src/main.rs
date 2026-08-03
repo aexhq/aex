@@ -9,6 +9,7 @@ use aex_telemetry_schema::generated::{
     EVENT_AEX_PROCESS_STARTED,
 };
 use finance_reconcile::config::Config;
+use finance_reconcile::gateway::LambdaEffectRecoveryGateway;
 use finance_reconcile::handler::{ReconcileRequest, handle};
 use finance_reconcile::sweep::{
     AuroraReconcileAuthority, ReconcileAuthority as _, SnsOperationsAlarm,
@@ -64,9 +65,14 @@ async fn run(config: Config) -> Result<(), lambda_runtime::Error> {
         Arc::new(transport),
         config.data_api.clone(),
     ));
+    let recovery = Arc::new(LambdaEffectRecoveryGateway::new(
+        aws_sdk_lambda::Client::new(&aws),
+        config.command_edge_arn.clone(),
+    ));
     let authority = Arc::new(AuroraReconcileAuthority::new(
         Arc::clone(&client),
         config.database_role.clone(),
+        recovery,
     ));
     let alarm = Arc::new(SnsOperationsAlarm::new(
         aws_sdk_sns::Client::new(&aws),

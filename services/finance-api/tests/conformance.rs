@@ -94,6 +94,15 @@ impl BillingAuthority for UnreachableAuthority {
         unreachable!("no case in this suite passes the edge")
     }
 
+    async fn bind_effect_command(
+        &self,
+        _effect: aex_payment_contracts::EffectId,
+        _intent_hash: [u8; 32],
+        _envelope: &aex_payment_contracts::PaymentCommandEnvelope,
+    ) -> Result<(), AuthorityError> {
+        unreachable!("no case in this suite passes the edge")
+    }
+
     async fn finalize_effect(
         &self,
         _effect: aex_payment_contracts::EffectId,

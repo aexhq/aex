@@ -64,7 +64,7 @@ fn receipt(class: &str) -> Receipt {
     value["class"] = serde_json::json!(class);
     value["receiptId"] = serde_json::json!(format!("rc_{class}"));
     value["subject"] = serde_json::json!({
-        "artifactEnvelopeDigest": digest(1),
+        "artifactSubjectDigest": digest(1),
         "unitIds": [UNIT]
     });
     serde_json::from_value::<Receipt>(value)
@@ -244,7 +244,7 @@ fn mutable_tag_exits_31() {
 #[test]
 fn an_environment_identity_exits_31() {
     let mut value = valid_manifest();
-    value["infra"]["sourceArchiveUri"] =
+    value["units"][UNIT]["location"]["uri"] =
         serde_json::json!("arn:aws:s3:::aex-prd-artifacts/modules.tar.gz");
     let manifest = serde_json::from_value::<CompositionManifest>(value)
         .unwrap()

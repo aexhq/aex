@@ -67,9 +67,9 @@ pub struct Inputs {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Subject {
-    /// Artifact envelope this receipt is bound to.
+    /// Receipt-independent artifact subject this receipt is bound to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub artifact_envelope_digest: Option<String>,
+    pub artifact_subject_digest: Option<String>,
     /// Release this receipt is bound to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub release_id: Option<String>,
@@ -577,6 +577,125 @@ pub fn new_receipt(context: RunContext, junit: &JunitSummary) -> Result<Receipt>
     .seal()
 }
 
+/// The terminal verdict emitted by one Cargo command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CargoCommandSummary {
+    /// Cargo's own `build-finished.success` value.
+    pub success: bool,
+}
+
+/// Read the terminal verdict from Cargo's JSON message stream.
+///
+/// Every non-empty line must be one Cargo JSON message and the stream must
+/// contain exactly one `build-finished` record. The workflow therefore cannot
+/// turn an empty, truncated or concatenated log into a passing command receipt.
+///
+/// # Errors
+/// Returns [`Exit::EvidenceMissing`] when Cargo emitted no terminal verdict and
+/// [`Exit::EvidenceUnsound`] when the message stream is malformed or carries
+/// more than one terminal verdict.
+pub fn parse_cargo_messages(messages: &str) -> Result<CargoCommandSummary> {
+    let mut verdict = None;
+    for (index, line) in messages.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let message: serde_json::Value = serde_json::from_str(line).map_err(|err| {
+            ToolError::single(
+                Exit::EvidenceUnsound,
+                "cargo-output-invalid",
+                format!("Cargo message line {} is not JSON: {err}", index + 1),
+            )
+        })?;
+        if message.get("reason").and_then(serde_json::Value::as_str) != Some("build-finished") {
+            continue;
+        }
+        let success = message
+            .get("success")
+            .and_then(serde_json::Value::as_bool)
+            .ok_or_else(|| {
+                ToolError::single(
+                    Exit::EvidenceUnsound,
+                    "cargo-verdict-invalid",
+                    format!(
+                        "Cargo build-finished message on line {} has no boolean success field",
+                        index + 1
+                    ),
+                )
+            })?;
+        if verdict.replace(success).is_some() {
+            return Err(ToolError::single(
+                Exit::EvidenceUnsound,
+                "cargo-verdict-ambiguous",
+                "Cargo output contains more than one build-finished verdict",
+            ));
+        }
+    }
+    verdict
+        .map(|success| CargoCommandSummary { success })
+        .ok_or_else(|| {
+            ToolError::single(
+                Exit::EvidenceMissing,
+                "cargo-verdict-missing",
+                "Cargo output contains no build-finished verdict",
+            )
+        })
+}
+
+/// Build one receipt for one Cargo command from Cargo's terminal verdict.
+///
+/// `declared` must be exactly one because the inventory counts the selected
+/// command, not compiler targets inferred after execution. Package and unit
+/// scope remain explicit in the context's selection and subject blocks.
+///
+/// # Errors
+/// Returns [`Exit::EvidenceUnsound`] when the context does not declare exactly
+/// one command and propagates canonicalization failures from sealing.
+pub fn new_command_receipt(context: RunContext, summary: CargoCommandSummary) -> Result<Receipt> {
+    if context.declared != 1 {
+        return Err(ToolError::single(
+            Exit::EvidenceUnsound,
+            "command-inventory-invalid",
+            format!(
+                "command receipt `{}` declares {} commands; exactly one command was observed",
+                context.receipt_id, context.declared
+            ),
+        ));
+    }
+    Receipt {
+        schema: "aex.evidence-receipt.v1".to_owned(),
+        receipt_digest: "sha256:0".to_owned(),
+        receipt_id: context.receipt_id,
+        class: context.class,
+        layer: context.layer,
+        lane: context.lane,
+        concerns: context.concerns,
+        source: context.source,
+        inputs: context.inputs,
+        subject: context.subject,
+        selection: context.selection,
+        inventory: Inventory {
+            declared: 1,
+            collected: 1,
+            passed: u64::from(summary.success),
+            failed: u64::from(!summary.success),
+            ..Inventory::default()
+        },
+        failures: Vec::new(),
+        attachments: Vec::new(),
+        data: context.data,
+        started_at: context.started_at,
+        completed_at: context.completed_at,
+        conclusion: if summary.success {
+            "passed".to_owned()
+        } else {
+            "failed".to_owned()
+        },
+    }
+    .seal()
+}
+
 /// Hash a file and record it on a receipt, then reseal.
 ///
 /// The digest is computed here rather than accepted as an argument, because an
@@ -601,6 +720,69 @@ pub fn attach(receipt: Receipt, kind: &str, file: &std::path::Path, uri: &str) -
     receipt.seal()
 }
 
+/// Bind an already-earned receipt to one receipt-independent artifact subject.
+///
+/// This is an explicit, auditable transformation: the input receipt must be
+/// sound, the draft subject must recompute exactly, and source plus unit scope
+/// must already agree. Certification never performs this mutation implicitly.
+///
+/// # Errors
+/// Returns a classified refusal for an unsound receipt, tampered artifact
+/// subject, cross-source/unit binding or attempted rebind.
+pub fn bind_artifact(
+    mut receipt: Receipt,
+    envelope: &crate::artifact::ArtifactEnvelope,
+) -> Result<Receipt> {
+    receipt.verify()?;
+    let artifact_subject_digest = envelope.compute_artifact_subject_digest()?;
+    if envelope.artifact_subject_digest != artifact_subject_digest {
+        return Err(ToolError::single(
+            Exit::ArtifactMismatch,
+            "bind-artifact-subject-mismatch",
+            format!(
+                "envelope artifactSubjectDigest `{}` does not match the canonical artifact subject `{artifact_subject_digest}`",
+                envelope.artifact_subject_digest
+            ),
+        ));
+    }
+    if receipt.source.repository != envelope.source.repository
+        || receipt.source.commit_sha != envelope.source.commit_sha
+        || !receipt
+            .subject
+            .unit_ids
+            .iter()
+            .any(|unit| unit == &envelope.unit.id)
+    {
+        return Err(ToolError::single(
+            Exit::EvidenceUnsound,
+            "bind-artifact-scope",
+            format!(
+                "receipt `{}` does not cover unit `{}` at the envelope's exact repository and commit",
+                receipt.receipt_id, envelope.unit.id
+            ),
+        ));
+    }
+    if receipt
+        .subject
+        .artifact_subject_digest
+        .as_deref()
+        .is_some_and(|bound| bound != artifact_subject_digest)
+    {
+        return Err(ToolError::single(
+            Exit::EvidenceUnsound,
+            "bind-artifact-rebind",
+            format!(
+                "receipt `{}` is already bound to another artifact subject",
+                receipt.receipt_id
+            ),
+        ));
+    }
+    receipt.subject.artifact_subject_digest = Some(artifact_subject_digest);
+    let bound = receipt.seal()?;
+    bound.verify()?;
+    Ok(bound)
+}
+
 /// Freshness classes and their requirement.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -616,7 +798,7 @@ pub struct FreshnessPolicy {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FreshnessRule {
-    /// What the receipt must be bound to: `envelope`, `commit`, `release` or
+    /// What the receipt must be bound to: `artifact`, `commit`, `release` or
     /// `none`.
     pub bound_to: String,
     /// Maximum age in hours, where one applies.
@@ -661,11 +843,11 @@ pub fn check_freshness(
             ),
         ));
     }
-    if rule.bound_to == "envelope" && receipt.subject.artifact_envelope_digest.is_none() {
+    if rule.bound_to == "artifact" && receipt.subject.artifact_subject_digest.is_none() {
         violations.push(Violation::new(
             "evidence-stale",
             format!(
-                "receipt `{}` of class `{}` must be bound to an artifact envelope digest",
+                "receipt `{}` of class `{}` must be bound to an artifact subject digest",
                 receipt.receipt_id, receipt.class
             ),
         ));
@@ -1010,6 +1192,61 @@ mod tests {
         );
     }
 
+    #[test]
+    fn cargo_build_finished_is_the_lint_verdict() {
+        let messages = r#"{"reason":"compiler-artifact","package_id":"path+file:///repo#aex-wire@0.1.0"}
+{"reason":"build-finished","success":true}"#;
+        let summary = super::parse_cargo_messages(messages).unwrap();
+        assert!(summary.success);
+
+        let mut context = context(1);
+        context.class = "lint".to_owned();
+        let built = super::new_command_receipt(context, summary).unwrap();
+        assert_eq!(built.class, "lint");
+        assert_eq!(built.inventory.declared, 1);
+        assert_eq!(built.inventory.collected, 1);
+        assert_eq!(built.inventory.passed, 1);
+        assert_eq!(built.conclusion, "passed");
+        built.verify().unwrap();
+    }
+
+    #[test]
+    fn failed_cargo_output_cannot_become_a_passing_receipt() {
+        let messages = r#"{"reason":"compiler-message"}
+{"reason":"build-finished","success":false}"#;
+        let summary = super::parse_cargo_messages(messages).unwrap();
+        assert!(!summary.success);
+
+        let built = super::new_command_receipt(context(1), summary).unwrap();
+        assert_eq!(built.inventory.failed, 1);
+        assert_eq!(built.conclusion, "failed");
+        assert!(!built.is_passing());
+    }
+
+    #[test]
+    fn missing_or_ambiguous_cargo_verdict_is_not_evidence() {
+        let missing = super::parse_cargo_messages(r#"{"reason":"compiler-artifact"}"#).unwrap_err();
+        assert_eq!(missing.exit.code(), 40);
+        assert!(missing.rules().contains(&"cargo-verdict-missing"));
+
+        let duplicate = super::parse_cargo_messages(
+            r#"{"reason":"build-finished","success":true}
+{"reason":"build-finished","success":true}"#,
+        )
+        .unwrap_err();
+        assert_eq!(duplicate.exit.code(), 41);
+        assert!(duplicate.rules().contains(&"cargo-verdict-ambiguous"));
+    }
+
+    #[test]
+    fn a_command_receipt_must_declare_exactly_one_command() {
+        let err =
+            super::new_command_receipt(context(2), super::CargoCommandSummary { success: true })
+                .unwrap_err();
+        assert_eq!(err.exit.code(), 41);
+        assert!(err.rules().contains(&"command-inventory-invalid"));
+    }
+
     fn context(declared: u64) -> super::RunContext {
         let template = receipt("unit");
         super::RunContext {
@@ -1145,7 +1382,7 @@ mod freshness_tests {
 schema = "aex.freshness-policy.v1"
 
 [class.unit]
-bound_to = "envelope"
+bound_to = "artifact"
 rationale = "bound to the exact artifact; there is nothing for age to invalidate"
 
 [class.smoke]

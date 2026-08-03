@@ -366,12 +366,6 @@ pub enum AgentError {
     /// The parent belongs to a different session.
     #[error("parent agent belongs to another session")]
     ParentInOtherSession,
-    /// The depth limit is reached.
-    #[error("subagent depth limit of {max} is reached")]
-    DepthExceeded {
-        /// The limit.
-        max: u16,
-    },
     /// A root agent cannot report a result.
     #[error("a root agent can never complete")]
     RootCannotComplete,
@@ -415,14 +409,15 @@ pub fn create_root(
 
 /// Spawns a subagent.
 ///
-/// The ceiling counts only non-terminal **subagents** in `materialized`, so a
-/// completed child frees its slot and a session's semantic history costs nothing.
+/// The ceiling counts the root plus every non-terminal subagent in
+/// `materialized`, so a completed child frees its slot and a session's semantic
+/// history costs nothing.
 ///
 /// # Errors
 ///
 /// Returns [`AgentError`] when the parent is not active or in another session,
-/// when the depth or concurrency ceiling is reached, when admission is closed, or
-/// when a required limit is unresolved.
+/// when the materialized-agent ceiling is reached, when admission is closed, or
+/// when the required limit is unresolved.
 pub fn spawn(
     id: AgentId,
     parent: &AgentControl,
@@ -442,15 +437,10 @@ pub fn spawn(
         return Err(AgentError::ParentNotActive(parent.status));
     }
 
-    let depth_limit = limits.require(LimitId::SessionSubagentDepth)?;
-    let max_depth = u16::try_from(depth_limit).unwrap_or(u16::MAX);
     let depth = parent.depth.saturating_add(1);
-    if u64::from(depth) > depth_limit {
-        return Err(AgentError::DepthExceeded { max: max_depth });
-    }
 
-    let ceiling = limits.require(LimitId::SessionSubagentConcurrency)?;
-    let live = materialized
+    let ceiling = limits.require(LimitId::SessionMaterializedAgents)?;
+    let live_subagents = materialized
         .iter()
         .filter(|agent| {
             agent.session == session.id
@@ -458,9 +448,12 @@ pub fn spawn(
                 && agent.status.is_materialized()
         })
         .count();
-    if live as u64 >= ceiling {
+    let materialized_agents = u64::try_from(live_subagents)
+        .unwrap_or(u64::MAX)
+        .saturating_add(1);
+    if materialized_agents >= ceiling {
         return Err(AgentError::CeilingExceeded {
-            limit: LimitId::SessionSubagentConcurrency,
+            limit: LimitId::SessionMaterializedAgents,
             effective: ceiling,
         });
     }
@@ -665,13 +658,10 @@ mod tests {
         AgentId::from_uuid7(Uuid7::compose(1, [tag; 10]))
     }
 
-    fn limits(concurrency: u64, depth: u64) -> EffectiveLimits {
-        [
-            (LimitId::SessionSubagentConcurrency, concurrency),
-            (LimitId::SessionSubagentDepth, depth),
-        ]
-        .into_iter()
-        .collect()
+    fn limits(materialized_agents: u64) -> EffectiveLimits {
+        [(LimitId::SessionMaterializedAgents, materialized_agents)]
+            .into_iter()
+            .collect()
     }
 
     #[test]
@@ -687,7 +677,7 @@ mod tests {
     }
 
     #[test]
-    fn the_ceiling_counts_only_non_terminal_subagents() {
+    fn the_ceiling_counts_the_root_and_non_terminal_subagents() {
         let session = session_fixture();
         let root = create_root(agent_id(1), &session, materialized_state(), moment(0)).agent;
 
@@ -697,7 +687,7 @@ mod tests {
                 agent_id(tag),
                 &root,
                 &session,
-                &limits(2, 5),
+                &limits(3),
                 &live,
                 materialized_state(),
                 moment(1),
@@ -711,14 +701,14 @@ mod tests {
                 agent_id(9),
                 &root,
                 &session,
-                &limits(2, 5),
+                &limits(3),
                 &live,
                 materialized_state(),
                 moment(2)
             ),
             Err(AgentError::CeilingExceeded {
-                limit: LimitId::SessionSubagentConcurrency,
-                effective: 2
+                limit: LimitId::SessionMaterializedAgents,
+                effective: 3
             })
         );
 
@@ -736,7 +726,7 @@ mod tests {
                 agent_id(9),
                 &root,
                 &session,
-                &limits(2, 5),
+                &limits(3),
                 &live,
                 materialized_state(),
                 moment(4)
@@ -778,7 +768,7 @@ mod tests {
             agent_id(2),
             &root,
             &session,
-            &limits(4, 5),
+            &limits(4),
             &[],
             materialized_state(),
             moment(1),

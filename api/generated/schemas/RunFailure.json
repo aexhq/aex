@@ -1,0 +1,34 @@
+{
+  "$id": "https://schemas.aex.dev/v1/RunFailure.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A durable run failure with no synthetic request identity.",
+  "properties": {
+    "code": {
+      "description": "The stable public failure code.",
+      "type": "string",
+      "x-aex-registry": "errors"
+    },
+    "detail": {
+      "description": "Typed customer-safe detail.",
+      "x-aex-canonical-json": true
+    },
+    "message": {
+      "description": "Customer-safe failure detail.",
+      "maxLength": 4096,
+      "minLength": 1,
+      "type": "string"
+    },
+    "retryable": {
+      "description": "Whether the same run step may be retried.",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "code",
+    "message",
+    "retryable"
+  ],
+  "title": "RunFailure",
+  "type": "object"
+}

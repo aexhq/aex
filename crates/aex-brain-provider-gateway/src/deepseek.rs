@@ -46,12 +46,9 @@ use aex_model_catalog::canonical::{
     UsageCompleteness, UsageField, UsageFieldSet,
 };
 use aex_model_catalog::document::{
-    AdapterSourceDigest, Capability, EndpointPin, ModelEntry, ReasoningReplay, SamplingSupport,
-    StructuredOutputPolicy,
+    Capability, EndpointPin, ModelEntry, ReasoningReplay, SamplingSupport, StructuredOutputPolicy,
 };
-use aex_model_catalog::primitives::{
-    Blake3Digest, BoundedString, ProviderRequestId, ToolCallId, ToolName,
-};
+use aex_model_catalog::primitives::{BoundedString, ProviderRequestId, ToolCallId, ToolName};
 use aex_wire::CanonicalJson;
 use aex_wire::provider::ProviderId;
 use bytes::Bytes;
@@ -84,14 +81,6 @@ pub const MAX_TEMPERATURE_MILLI: u16 = 2_000;
 
 /// The effort `DeepSeek` reasons at when the caller names none.
 pub const DEFAULT_REASONING_EFFORT: &str = "high";
-
-/// The identity the adapter-source digest is taken over.
-///
-/// D-06 binds every conformance receipt to the adapter source tree it was earned
-/// against. Until the build stamps a real tree digest in, the value is derived
-/// from this compiled identity, so changing it is a code release and never a
-/// data release.
-const SOURCE_IDENTITY: &[u8] = b"aex-brain-provider-gateway/deepseek/1";
 
 /// The `DeepSeek` chat-completions adapter.
 #[derive(Debug, Clone, Copy, Default)]
@@ -1050,10 +1039,6 @@ impl ProviderAdapter for DeepSeekAdapter {
         ProviderId::Deepseek
     }
 
-    fn source_digest(&self) -> AdapterSourceDigest {
-        AdapterSourceDigest(Blake3Digest::of(SOURCE_IDENTITY))
-    }
-
     fn build_request(
         &self,
         model: &QualifiedModel,
@@ -1444,14 +1429,6 @@ mod tests {
             Err(RequestBuildError::Encoding {
                 reason: "this adapter speaks only for deepseek",
             })
-        );
-    }
-
-    #[test]
-    fn the_source_digest_is_stable_across_calls() {
-        assert_eq!(
-            DeepSeekAdapter.source_digest(),
-            DeepSeekAdapter.source_digest()
         );
     }
 

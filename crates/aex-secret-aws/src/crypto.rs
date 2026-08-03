@@ -166,7 +166,8 @@ impl EnvelopeCrypto {
         // function of the context: a caller cannot select another tenant's key
         // by asking for it.
         let branch_key_id = context.workspace.to_string();
-        if let Some(cached) = self.cache.get(&branch_key_id, version, now) {
+        let context_digest = context::context_digest(context);
+        if let Some(cached) = self.cache.get(&branch_key_id, version, context_digest, now) {
             return Ok(cached);
         }
         let material = self
@@ -178,7 +179,7 @@ impl EnvelopeCrypto {
                 &context::kms_pairs(context),
             )
             .await?;
-        self.cache.put(material.clone(), now);
+        self.cache.put(material.clone(), context_digest, now);
         Ok(material)
     }
 }
@@ -217,17 +218,33 @@ impl SecretCrypto for EnvelopeCrypto {
         to: &EncryptionContext,
         now: Timestamp,
     ) -> Result<SealedSecret, SecretCryptoError> {
-        let opened = self.open(sealed, from, now).await?;
-        let version = key_version(&sealed.wrapped_branch_key);
-        let material = self
-            .material(to, &sealed.wrapped_branch_key, version, now)
+        let (opened, source_material) = self.open_with_material(sealed, from, now).await?;
+        let wrapped = self
+            .keys
+            .rewrap(
+                &sealed.wrapped_branch_key,
+                &context::kms_pairs(from),
+                &context::kms_pairs(to),
+            )
             .await?;
+        let version = key_version(wrapped.as_bytes());
+        // KMS ReEncrypt preserves the plaintext branch key while authenticating
+        // newly emitted ciphertext under the destination context. Reuse the
+        // already-open material instead of spending a redundant destination
+        // Decrypt call, but give it the destination ciphertext's derived
+        // version and cache identity.
+        let material = BranchKeyMaterial {
+            branch_key_id: to.workspace.to_string(),
+            version,
+            material: source_material.material.clone(),
+        };
         let aad = context::aad_bytes(to);
         let frame = envelope::seal(&material, &aad, &opened, self.entropy.as_ref())?;
+        self.cache.put(material, context::context_digest(to), now);
         Ok(SealedSecret {
             frame,
             context_digest: context::context_digest(to),
-            wrapped_branch_key: sealed.wrapped_branch_key.clone(),
+            wrapped_branch_key: wrapped.into_bytes(),
         })
     }
 
@@ -249,6 +266,17 @@ impl EnvelopeCrypto {
         context: &EncryptionContext,
         now: Timestamp,
     ) -> Result<Zeroizing<Vec<u8>>, SecretCryptoError> {
+        self.open_with_material(sealed, context, now)
+            .await
+            .map(|(opened, _material)| opened)
+    }
+
+    async fn open_with_material(
+        &self,
+        sealed: &SealedSecret,
+        context: &EncryptionContext,
+        now: Timestamp,
+    ) -> Result<(Zeroizing<Vec<u8>>, BranchKeyMaterial), SecretCryptoError> {
         // Checked before anything is spent: a mismatch here means the row was
         // moved between tenants, sessions or domains, and there is no reason to
         // ask KMS about it.
@@ -260,7 +288,8 @@ impl EnvelopeCrypto {
             .material(context, &sealed.wrapped_branch_key, version, now)
             .await?;
         let aad = context::aad_bytes(context);
-        Ok(envelope::open(&material, &aad, &sealed.frame)?)
+        let opened = envelope::open(&material, &aad, &sealed.frame)?;
+        Ok((opened, material))
     }
 }
 

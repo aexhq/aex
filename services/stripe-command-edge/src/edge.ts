@@ -55,6 +55,15 @@ export function classifyStripeFailure(error: unknown): PaymentCommandFailure {
     return {
       outcome: "indeterminate",
       reason: "provider_5xx",
+      status,
+      ...(providerRequestId === undefined ? {} : { providerRequestId }),
+    };
+  }
+  if (status === 429) {
+    return {
+      outcome: "indeterminate",
+      reason: "rate_limited",
+      status,
       ...(providerRequestId === undefined ? {} : { providerRequestId }),
     };
   }
@@ -79,7 +88,7 @@ export function classifyStripeFailure(error: unknown): PaymentCommandFailure {
   }
   return {
     outcome: "indeterminate",
-    reason: status === 429 ? "provider_5xx" : "connection_reset",
+    reason: "connection_reset",
     ...(providerRequestId === undefined ? {} : { providerRequestId }),
   };
 }

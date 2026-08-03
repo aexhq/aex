@@ -336,17 +336,8 @@ async fn reserve(
 
 /// Maps a decode failure onto the public vocabulary.
 fn otlp_error(error: &OtlpError) -> WireError {
-    use aex_otlp_admission::AdmissionCode;
-
     let retryable = error.retryable();
-    let wire = match error.code() {
-        AdmissionCode::Registered(code) => WireError::new(code),
-        // A pending code has no registered spelling, so it is reported under the
-        // nearest registered code with the pending spelling in the message
-        // rather than silently under a code that means something else.
-        AdmissionCode::Pending(pending) => WireError::new(ErrorCode::InvalidTelemetry)
-            .with_message(format!("{} ({})", error, pending.as_str())),
-    };
+    let wire = WireError::new(error.code()).with_message(error.to_string());
     if retryable {
         wire.with_retry_after(Duration::from_millis(
             aex_observation_domain::limits::OTLP_RESERVE_WAIT_MS,

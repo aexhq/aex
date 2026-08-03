@@ -14,8 +14,10 @@ pub mod control;
 pub mod drain;
 pub mod health;
 pub mod measure;
+pub mod release_catalog;
 pub mod runtime;
 pub mod scale;
+pub mod task_shape;
 pub mod wake;
 
 /// The composed loop's own assertions: one turn end to end, the drain order, and A11-MUX
@@ -41,6 +43,10 @@ pub struct Config {
     pub wake_queue_url: String,
     /// The `regional-work` table the due backstop reads.
     pub work_table: String,
+    /// The regional custody table holding provider bindings and sealed generations.
+    pub secret_custody_table: String,
+    /// The exact KMS root key ARN wrapping workspace branch keys.
+    pub secret_kms_key_arn: String,
     /// Maximum concurrently active activations for one task.
     pub budget: u32,
 }
@@ -79,6 +85,9 @@ pub enum RunError {
         /// What failed.
         reason: String,
     },
+    /// Graceful drain could not prove every admitted activation stopped.
+    #[error(transparent)]
+    Drain(#[from] drain::DrainError),
 }
 
 /// Environment variable naming the deployment plane.
@@ -94,6 +103,10 @@ pub const RESOURCE_VAR: &str = "AEX_BRAIN_JOURNAL_TABLE";
 pub const WAKE_QUEUE_VAR: &str = "AEX_BRAIN_WAKE_QUEUE_URL";
 /// Environment variable naming the `regional-work` table the due backstop reads.
 pub const WORK_TABLE_VAR: &str = "AEX_WORK_TABLE";
+/// Environment variable naming the regional secret-custody table.
+pub const SECRET_CUSTODY_TABLE_VAR: &str = "AEX_SECRET_CUSTODY_TABLE";
+/// Environment variable naming the root KMS key for workspace branch keys.
+pub const SECRET_KMS_KEY_ARN_VAR: &str = "AEX_SECRET_KMS_KEY_ARN";
 /// Environment variable naming maximum concurrently active activations for one task.
 pub const BUDGET_VAR: &str = "AEX_MAX_ACTIVE_ACTIVATIONS";
 
@@ -132,9 +145,21 @@ impl Config {
             });
         }
         let region = required(&lookup, REGION_VAR)?;
+        if !aex_wire::types::Region::ALL
+            .iter()
+            .any(|candidate| candidate.as_str() == region)
+        {
+            return Err(ConfigError::Invalid {
+                name: REGION_VAR,
+                reason: format!("unsupported regional placement `{region}`"),
+            });
+        }
         let resource = required(&lookup, RESOURCE_VAR)?;
         let wake_queue_url = required(&lookup, WAKE_QUEUE_VAR)?;
         let work_table = required(&lookup, WORK_TABLE_VAR)?;
+        let secret_custody_table = required(&lookup, SECRET_CUSTODY_TABLE_VAR)?;
+        let secret_kms_key_arn = required(&lookup, SECRET_KMS_KEY_ARN_VAR)?;
+        validate_kms_arn(&secret_kms_key_arn, &region)?;
         let raw_budget = required(&lookup, BUDGET_VAR)?;
         let budget = raw_budget
             .parse::<u32>()
@@ -154,7 +179,65 @@ impl Config {
             resource,
             wake_queue_url,
             work_table,
+            secret_custody_table,
+            secret_kms_key_arn,
             budget,
+        })
+    }
+
+    /// The typed plane bound into every provider-key encryption context.
+    #[must_use]
+    pub fn secret_plane(&self) -> aex_secret_domain::context::Plane {
+        match self.plane.as_str() {
+            "dev" => aex_secret_domain::context::Plane::Dev,
+            "prd" => aex_secret_domain::context::Plane::Prd,
+            _ => unreachable!("configuration admitted only the closed plane set"),
+        }
+    }
+
+    /// The typed region bound into every provider-key encryption context.
+    #[must_use]
+    pub fn placement_region(&self) -> aex_wire::types::Region {
+        aex_wire::types::Region::ALL
+            .into_iter()
+            .find(|candidate| candidate.as_str() == self.region)
+            .unwrap_or_else(|| unreachable!("configuration admitted only the closed region set"))
+    }
+
+    /// The role/process partition for the zeroizing branch-key cache.
+    #[must_use]
+    pub fn credential_cache_partition(&self) -> String {
+        format!(
+            "{}:{}:brain-mux:{}",
+            self.plane,
+            self.region,
+            std::process::id()
+        )
+    }
+}
+
+fn validate_kms_arn(value: &str, region: &str) -> Result<(), ConfigError> {
+    let parts = value.splitn(6, ':').collect::<Vec<_>>();
+    let expected_partition = if region.starts_with("cn-") {
+        "aws-cn"
+    } else if region.starts_with("us-gov-") {
+        "aws-us-gov"
+    } else {
+        "aws"
+    };
+    let valid = matches!(parts.as_slice(), ["arn", partition, "kms", found_region, account, resource]
+        if *partition == expected_partition
+            && *found_region == region
+            && account.len() == 12
+            && account.bytes().all(|byte| byte.is_ascii_digit())
+            && resource.starts_with("key/")
+            && resource.len() > "key/".len());
+    if valid {
+        Ok(())
+    } else {
+        Err(ConfigError::Invalid {
+            name: SECRET_KMS_KEY_ARN_VAR,
+            reason: format!("expected a KMS key ARN in `{region}`"),
         })
     }
 }
@@ -189,6 +272,11 @@ pub fn compose(config: &Config) -> Result<compose::Composition, RunError> {
         safety_cap: config.budget.saturating_mul(2),
         offered_ceiling: config.budget.saturating_mul(5),
     };
+    let policy = aex_brain_application::activation::ActivationPolicy {
+        receive_batch: 1,
+        max_concurrent_drives: usize::try_from(config.budget).unwrap_or(usize::MAX),
+        ..aex_brain_application::activation::ActivationPolicy::default()
+    };
     compose::Composition::build(
         bounds,
         compose::Envelope::candidate_launch(),
@@ -198,7 +286,8 @@ pub fn compose(config: &Config) -> Result<compose::Composition, RunError> {
             max_tasks: 32,
             target_work_seconds_per_task: 10.0,
         },
-        runtime::RuntimeShape::detected(),
+        runtime::RuntimeShape::for_parallelism(task_shape::task_parallelism()),
+        policy,
     )
     .map_err(RunError::Composition)
 }
@@ -252,72 +341,269 @@ pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Resul
             reason: format!("the main runtime could not start: {error}"),
         })?;
 
-    // Configuration and the composition itself are the only bindings validated so far. The
-    // catalog, the store and the schema hashes are each set by the component that proves
-    // them; readiness stays false until every one of them has.
-    composition.health.bindings_validated();
+    // One SDK configuration feeds the store, queue, exact credential directory,
+    // and KMS decryptor. Provider composition is per-request tenant scoped; no
+    // workspace state is installed on the process.
+    let aws = main_runtime.block_on(wake::aws_bindings(
+        &config.region,
+        &config.wake_queue_url,
+        &config.resource,
+        &config.work_table,
+    ));
+    let provider = wake::provider_binding(
+        &aws.sdk,
+        std::sync::Arc::clone(&aws.store),
+        &config.secret_custody_table,
+        &config.secret_kms_key_arn,
+        config.secret_plane(),
+        config.placement_region(),
+        &config.credential_cache_partition(),
+    );
+    let (provider, mut bindings): (
+        std::sync::Arc<dyn aex_brain_application::ports::ProviderPort>,
+        wake::Bindings,
+    ) = match provider {
+        Ok(provider) => (provider, wake::Bindings::provider_ready()),
+        Err(error) => {
+            eprintln!("brain-mux: production provider binding unavailable: {error}");
+            (
+                std::sync::Arc::new(wake::AbsentProvider),
+                wake::Bindings::unavailable(),
+            )
+        }
+    };
+
+    let catalog = bind_release_catalog(&mut bindings)?;
+
+    // The process configuration parsed, but production authorities did not all bind. Do
+    // not translate "the binary started" into "secret bindings validated": readiness must
+    // remain false until the signed catalog/trust root, tool executors and Hands backend
+    // actually exist. Provider pin/custody/KMS composition is independently reported above.
     composition.health.schema_matched();
-    // Provider, catalog, tool-executor and Hands-runtime peers remain unproved and are not
-    // claimed. `Bindings::unavailable` names each one rather than collapsing them to a bare
-    // false.
-    let bindings = wake::Bindings::unavailable();
-    composition
-        .health
-        .store_reachable(bindings.store.is_ready());
+    // Every peer that remains unproved is named rather than collapsed to a bare false.
+    for reason in bindings.unsatisfied() {
+        eprintln!("brain-mux: production binding unavailable: {reason}");
+    }
     if bindings.catalog.is_ready() {
         composition.health.catalog_verified();
     }
 
-    main_runtime.block_on(async {
+    let drain_result = main_runtime.block_on(async {
         let sampler = tokio::spawn(sample_reactor_delay(std::sync::Arc::clone(&composition)));
-        let pump = tokio::spawn(pump(std::sync::Arc::clone(&composition), config.clone()));
+        let pump = tokio::spawn(pump(
+            std::sync::Arc::clone(&composition),
+            config.clone(),
+            telemetry.clone(),
+            PumpPorts {
+                store: aws.store,
+                queue: aws.queue,
+                provider,
+                catalog,
+                bindings,
+            },
+        ));
         wait_for_shutdown().await;
         let stages = drain_sequence(&composition, pump).await;
         sampler.abort();
+        let _ = sampler.await;
         stages
     });
 
     // The control thread stops when the health state reports drain, so joining it is how the
     // process proves it stopped answering rather than merely stopped listening.
     let _ = control.join();
+    drain_result?;
     Ok(())
+}
+
+fn bind_release_catalog(
+    bindings: &mut wake::Bindings,
+) -> Result<std::sync::Arc<dyn aex_brain_application::ports::CatalogPort>, RunError> {
+    // Catalog authority is build/release scoped, never tenant or runtime-env
+    // scoped. The exact collection and bounded publisher trust-root set are
+    // compiled together and the entire retained chain verifies before lookup.
+    let now = aex_wire::types::Timestamp::from_datetime_trunc_ms(time::OffsetDateTime::now_utc())
+        .map_err(|error| RunError::Runtime {
+        reason: format!("the startup clock is outside the catalog timestamp range: {error}"),
+    })?;
+    match release_catalog::load(now) {
+        Ok(catalog) => {
+            *bindings = bindings.with_catalog_capability(catalog.is_service_capable());
+            Ok(std::sync::Arc::new(catalog))
+        }
+        Err(error @ release_catalog::ReleaseCatalogError::NoActiveModels) => {
+            eprintln!("brain-mux: production catalog binding unavailable: {error}");
+            *bindings = bindings.with_catalog_capability(false);
+            Ok(std::sync::Arc::new(wake::AbsentCatalog))
+        }
+        Err(error) => {
+            eprintln!("brain-mux: production catalog binding unavailable: {error}");
+            Ok(std::sync::Arc::new(wake::AbsentCatalog))
+        }
+    }
+}
+
+struct PumpPorts {
+    store: std::sync::Arc<aex_brain_store_aws::BrainStore>,
+    queue: std::sync::Arc<aex_brain_store_aws::SqsWakeQueue>,
+    provider: std::sync::Arc<dyn aex_brain_application::ports::ProviderPort>,
+    catalog: std::sync::Arc<dyn aex_brain_application::ports::CatalogPort>,
+    bindings: wake::Bindings,
 }
 
 /// Receives wakes and drives them until drain starts.
 ///
 /// The loop asks admission before every receive, and admission is false while any binding is
-/// unsatisfied. Production provider, catalog, tool-executor, and Hands-runtime peers are
-/// still absent, so the newly bound store remains idle rather than taking work that cannot
-/// complete.
-async fn pump(composition: std::sync::Arc<compose::Composition>, config: Config) {
-    let (store, queue) = wake::aws_bindings(
-        &config.region,
-        &config.wake_queue_url,
-        &config.resource,
-        &config.work_table,
-    )
-    .await;
+/// unsatisfied. Any absent or service-incapable catalog, tool executor, or Hands-runtime peer
+/// keeps the newly bound store idle rather than taking work that cannot complete.
+async fn pump(
+    composition: std::sync::Arc<compose::Composition>,
+    config: Config,
+    telemetry: aex_platform_telemetry::Handle,
+    ports: PumpPorts,
+) {
+    let mut policy = composition.policy.clone();
+    let aggregate_cap = policy.max_concurrent_drives.max(1);
+    // One receive scope owns one activation slot. The outer scheduler owns the aggregate
+    // target, so nested batch concurrency remains one and cannot multiply that target.
+    policy.max_concurrent_drives = 1;
     let pump = wake::wake_loop(
-        wake::unavailable_ports(store, queue),
-        aex_brain_application::activation::ActivationPolicy::default(),
+        wake::partial_ports_with_catalog(ports.store, ports.queue, ports.provider, ports.catalog),
+        policy,
         std::sync::Arc::clone(&composition.registry),
         std::sync::Arc::clone(&composition.drain),
         std::sync::Arc::clone(&composition.admission),
-        wake::Bindings::unavailable(),
+        ports.bindings,
     );
-    while !composition.drain.is_draining() {
-        match pump.poll_once().await {
-            Ok(report) if report.received == 0 => {
-                // Nothing to do, and nothing to receive while a binding is unsatisfied. The
-                // tick is what makes drain observable without a second channel.
-                tokio::time::sleep(compose::REACTOR_TICK).await;
+    run_wake_scheduler(
+        pump,
+        std::sync::Arc::clone(&composition.drain),
+        aggregate_cap,
+        |result| match result {
+            Ok(report) => {
+                emit_due_isolations(&telemetry, &config, report);
             }
-            Ok(_) => {}
             Err(error) => {
                 eprintln!("brain-mux: the wake loop refused: {error}");
-                tokio::time::sleep(compose::REACTOR_TICK).await;
             }
+        },
+    )
+    .await;
+}
+
+/// Continuously refills independently progressing receive scopes under one aggregate cap.
+///
+/// Each scope is a structured child future rather than a spawned task. The pump join owns
+/// the whole set, so cooperative drain polls admitted activations to settlement and hard
+/// abort drops every remaining receive or effect future before exit can be reported.
+async fn run_wake_scheduler<F>(
+    pump: aex_brain_application::activation::WakeLoop,
+    drain: std::sync::Arc<aex_brain_application::kernel::DrainGate>,
+    aggregate_cap: usize,
+    mut observe: F,
+) where
+    F: FnMut(
+        &Result<
+            aex_brain_application::activation::PollReport,
+            aex_brain_application::activation::ActivationError,
+        >,
+    ),
+{
+    use futures::stream::{FuturesUnordered, StreamExt as _};
+
+    assert_eq!(
+        pump.activation().policy().max_concurrent_drives,
+        1,
+        "each scheduler lane must own exactly one drive slot"
+    );
+    let aggregate_cap = aggregate_cap.max(1);
+    let mut passes = FuturesUnordered::new();
+    loop {
+        while !drain.is_draining() && pump.receiving_allowed() && passes.len() < aggregate_cap {
+            passes.push(poll_after(&pump, core::time::Duration::ZERO));
         }
+
+        if passes.is_empty() {
+            if drain.is_draining() {
+                break;
+            }
+            // Bindings or admission currently refuse new receive scopes. Polling at the
+            // reactor cadence makes a later capacity change and drain observable without a
+            // busy loop or a second notification channel.
+            tokio::time::sleep(compose::REACTOR_TICK).await;
+            continue;
+        }
+
+        let result = passes
+            .next()
+            .await
+            .expect("a non-empty scheduler has one receive scope");
+        let retry_delay = match &result {
+            Ok(report) if report.received > 0 => core::time::Duration::ZERO,
+            Ok(_) | Err(_) => compose::REACTOR_TICK,
+        };
+        observe(&result);
+
+        // A failed or empty lane backs off independently. Other lanes remain polled, so
+        // one queue refusal cannot stall unrelated effects or the due-recovery cadence.
+        if !drain.is_draining() && pump.receiving_allowed() {
+            passes.push(poll_after(&pump, retry_delay));
+        }
+    }
+}
+
+async fn poll_after(
+    pump: &aex_brain_application::activation::WakeLoop,
+    delay: core::time::Duration,
+) -> Result<
+    aex_brain_application::activation::PollReport,
+    aex_brain_application::activation::ActivationError,
+> {
+    if !delay.is_zero() {
+        tokio::time::sleep(delay).await;
+    }
+    pump.poll_once().await
+}
+
+fn emit_due_isolations(
+    telemetry: &aex_platform_telemetry::Handle,
+    config: &Config,
+    report: &aex_brain_application::activation::PollReport,
+) {
+    let count = u32::try_from(report.malformed).unwrap_or(u32::MAX);
+    for isolation in &report.isolations {
+        let reason = match isolation.reason {
+            aex_brain_application::ports::DueRowIsolationReason::MalformedProjection => {
+                "malformed_projection"
+            }
+            aex_brain_application::ports::DueRowIsolationReason::BaseKeyMismatch => {
+                "base_key_mismatch"
+            }
+            aex_brain_application::ports::DueRowIsolationReason::ShardMismatch => "shard_mismatch",
+            aex_brain_application::ports::DueRowIsolationReason::DuePositionMismatch => {
+                "due_position_mismatch"
+            }
+        };
+        telemetry.emit(
+            aex_platform_telemetry::Record::event(
+                aex_telemetry_schema::generated::EVENT_AEX_BRAIN_DUE_ROW_ISOLATED,
+            )
+            .with(
+                aex_telemetry_schema::generated::AEX_PLANE,
+                config.plane.clone(),
+            )
+            .with(
+                aex_telemetry_schema::generated::AEX_REGION,
+                config.region.clone(),
+            )
+            .with(aex_telemetry_schema::generated::AEX_DEPLOYABLE, "brain-mux")
+            .with(aex_telemetry_schema::generated::AEX_ERROR_CLASS, reason)
+            .with(aex_telemetry_schema::generated::AEX_ISOLATION_COUNT, count)
+            .with(
+                aex_telemetry_schema::generated::AEX_ISOLATION_FINGERPRINT,
+                isolation.fingerprint.clone(),
+            ),
+        );
     }
 }
 
@@ -326,36 +612,83 @@ async fn pump(composition: std::sync::Arc<compose::Composition>, config: Config)
 /// The order is the whole design. Readiness fails first so the load balancer stops sending
 /// work; liveness is deliberately untouched, because failing it would have the orchestrator
 /// kill the task along with the non-replayable effects it is trying to finish.
+///
+/// # Errors
+///
+/// Returns the first drain-stage failure, including an activation pump that
+/// panicked before it relinquished receive authority.
 pub async fn drain_sequence(
     composition: &std::sync::Arc<compose::Composition>,
     pump: tokio::task::JoinHandle<()>,
-) -> Vec<drain::Stage> {
+) -> Result<Vec<drain::Stage>, drain::DrainError> {
     let mut performed = vec![composition.begin_drain()];
 
-    // The loop observes the gate on its next iteration and returns; joining it is how the
-    // process proves it stopped receiving rather than merely intended to.
-    let _ = tokio::time::timeout(drain::COMMIT_MARGIN, pump).await;
+    // Closing the gate prevents every post-signal admission, including deliveries returned
+    // by a long-poll already in progress. The join below proves the receive scope eventually
+    // stopped; the stage records when its authority to receive was revoked.
     performed.push(drain::Stage::StopReceiving);
 
     // Replay-safe work is abandoned at once: its lease is released by the activation itself,
     // and a surviving task claims it in milliseconds.
     performed.push(drain::Stage::AbandonReplaySafe);
 
-    // Dispatched non-replayable effects run to the commit margin. Anything that still cannot
-    // commit settles `OutcomeUnknown` and terminalizes the run `interrupted`, which is honest;
-    // reporting a clean cancellation for a request that may have been served is not.
+    // Dispatched non-replayable effects run to the commit margin. Cooperative adapters
+    // preserve their dispatch proof: ambiguous work settles unknown, while `NotSent` may
+    // re-arm. Anything still pending at the hard deadline is dropped only by the explicit
+    // abort-and-join below and remains recoverable from its dispatch-started durable state.
     let deadline = tokio::time::Instant::now() + drain::STOP_TIMEOUT - drain::COMMIT_MARGIN;
     while !composition.is_quiesced() && tokio::time::Instant::now() < deadline {
         tokio::time::sleep(compose::REACTOR_TICK).await;
     }
     performed.push(drain::Stage::AwaitNonReplayable);
 
-    // Every activation released its own lease on the way out; there is nothing left holding
-    // one, which is what quiescence means.
+    // Keep the handle across timeout. Consuming it in `timeout` detaches the task when the
+    // deadline expires, allowing the process to report Exit while the pump still owns live
+    // activations. The commit margin is the last cooperative window; expiry explicitly
+    // aborts and then joins the task, which drops every child future in this structured
+    // scope before any later stage is reported.
+    join_pump(pump, drain::COMMIT_MARGIN).await?;
+    if !composition.is_quiesced() {
+        return Err(drain::DrainError::ActivationsRemain {
+            in_flight: composition.drain.in_flight(),
+        });
+    }
+
+    // No activation future remains able to use a lease. Cooperative paths released their
+    // exact claim; an explicitly aborted path cannot write again and its 15-second durable
+    // lease expires normally. Quiescence is an in-process liveness proof, not a fabricated
+    // claim that every best-effort release reached DynamoDB.
     performed.push(drain::Stage::ReleaseLeases);
     performed.push(drain::Stage::Flush);
     performed.push(drain::Stage::Exit);
-    performed
+    Ok(performed)
+}
+
+async fn join_pump(
+    mut pump: tokio::task::JoinHandle<()>,
+    grace: core::time::Duration,
+) -> Result<(), drain::DrainError> {
+    match tokio::time::timeout(grace, &mut pump).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            return Err(drain::DrainError::PumpFailed {
+                reason: error.to_string(),
+            });
+        }
+        Err(_) => {
+            pump.abort();
+            match pump.await {
+                Err(error) if error.is_cancelled() => {}
+                Ok(()) => {}
+                Err(error) => {
+                    return Err(drain::DrainError::PumpFailed {
+                        reason: error.to_string(),
+                    });
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Serves `/internal/healthz` and `/internal/readyz` until drain completes.
@@ -481,9 +814,13 @@ fn main() -> std::process::ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        BUDGET_VAR, Config, ConfigError, PLANE_VAR, REGION_VAR, RESOURCE_VAR, WAKE_QUEUE_VAR,
-        WORK_TABLE_VAR,
+        BUDGET_VAR, Config, ConfigError, PLANE_VAR, REGION_VAR, RESOURCE_VAR,
+        SECRET_CUSTODY_TABLE_VAR, SECRET_KMS_KEY_ARN_VAR, WAKE_QUEUE_VAR, WORK_TABLE_VAR, compose,
+        emit_due_isolations,
     };
+    use aex_brain_application::activation::PollReport;
+    use aex_brain_application::ports::{DueRowIsolation, DueRowIsolationReason};
+    use aex_platform_telemetry::{AttributeValue, InMemoryExporter};
     use std::collections::BTreeMap;
 
     fn complete() -> BTreeMap<&'static str, String> {
@@ -496,6 +833,14 @@ mod tests {
                 "https://sqs.eu-west-1.amazonaws.com/1/aex-brain-wake".to_owned(),
             ),
             (WORK_TABLE_VAR, "aex-regional-work-fixture".to_owned()),
+            (
+                SECRET_CUSTODY_TABLE_VAR,
+                "aex-regional-secret-custody-fixture".to_owned(),
+            ),
+            (
+                SECRET_KMS_KEY_ARN_VAR,
+                "arn:aws:kms:eu-west-1:123456789012:key/fixture".to_owned(),
+            ),
             (BUDGET_VAR, "8".to_owned()),
         ])
     }
@@ -518,6 +863,25 @@ mod tests {
         assert_eq!(config.budget, 8);
     }
 
+    /// The deployed target is executable capacity, not a tuning hint. The scheduler width
+    /// and all per-activation pools prove 48 together; a 49th worst-case restore is refused
+    /// before the process can receive a wake.
+    #[test]
+    fn composition_accepts_the_proven_target_and_refuses_one_more() {
+        let mut vars = complete();
+        vars.insert(BUDGET_VAR, "48".to_owned());
+        let config = read(&vars).expect("the proven target parses");
+        let composition = compose(&config).expect("the release task proves target 48");
+        assert_eq!(composition.admission.bounds().target, 48);
+        assert_eq!(composition.policy.max_concurrent_drives, 48);
+        assert_eq!(composition.shape.worker_threads, 2);
+
+        vars.insert(BUDGET_VAR, "49".to_owned());
+        let config = read(&vars).expect("capacity is a composition concern");
+        let error = compose(&config).expect_err("target 49 has no reserved restore capacity");
+        assert!(error.to_string().contains("context capacity"), "{error}");
+    }
+
     #[test]
     fn names_each_missing_variable() {
         for name in [
@@ -526,6 +890,8 @@ mod tests {
             RESOURCE_VAR,
             WAKE_QUEUE_VAR,
             WORK_TABLE_VAR,
+            SECRET_CUSTODY_TABLE_VAR,
+            SECRET_KMS_KEY_ARN_VAR,
             BUDGET_VAR,
         ] {
             let mut vars = complete();
@@ -566,6 +932,35 @@ mod tests {
     }
 
     #[test]
+    fn rejects_a_region_outside_the_closed_placement_set() {
+        let mut vars = complete();
+        vars.insert(REGION_VAR, "eu-central-1".to_owned());
+        assert!(matches!(
+            read(&vars),
+            Err(ConfigError::Invalid {
+                name: REGION_VAR,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn rejects_a_kms_key_from_another_region() {
+        let mut vars = complete();
+        vars.insert(
+            SECRET_KMS_KEY_ARN_VAR,
+            "arn:aws:kms:us-east-1:123456789012:key/fixture".to_owned(),
+        );
+        assert!(matches!(
+            read(&vars),
+            Err(ConfigError::Invalid {
+                name: SECRET_KMS_KEY_ARN_VAR,
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn rejects_a_non_numeric_budget() {
         let mut vars = complete();
         vars.insert(BUDGET_VAR, "lots".to_owned());
@@ -596,6 +991,45 @@ mod tests {
                 }
             ),
             "{error:?}"
+        );
+    }
+
+    #[test]
+    fn due_isolation_samples_reach_structured_telemetry_without_raw_keys() {
+        let exporter = std::sync::Arc::new(InMemoryExporter::new());
+        let telemetry = aex_platform_telemetry::Handle::install(
+            &aex_platform_telemetry::Settings::default(),
+            Some(std::sync::Arc::clone(&exporter) as std::sync::Arc<_>),
+        );
+        let config = read(&complete()).expect("complete environment");
+        let report = PollReport {
+            malformed: 17,
+            isolations: vec![DueRowIsolation {
+                reason: DueRowIsolationReason::ShardMismatch,
+                fingerprint: "0123456789abcdef".to_owned(),
+            }],
+            ..PollReport::default()
+        };
+
+        emit_due_isolations(&telemetry, &config, &report);
+        let _ = telemetry.flush(core::time::Duration::from_secs(1));
+        let delivered = exporter.delivered();
+        assert_eq!(delivered.len(), 1);
+        assert_eq!(
+            delivered[0].name,
+            aex_telemetry_schema::generated::EVENT_AEX_BRAIN_DUE_ROW_ISOLATED
+        );
+        assert_eq!(
+            delivered[0].attribute(aex_telemetry_schema::generated::AEX_ERROR_CLASS),
+            Some(&AttributeValue::Text("shard_mismatch".to_owned()))
+        );
+        assert_eq!(
+            delivered[0].attribute(aex_telemetry_schema::generated::AEX_ISOLATION_COUNT),
+            Some(&AttributeValue::Integer(17))
+        );
+        assert_eq!(
+            delivered[0].attribute(aex_telemetry_schema::generated::AEX_ISOLATION_FINGERPRINT),
+            Some(&AttributeValue::Text("0123456789abcdef".to_owned()))
         );
     }
 }

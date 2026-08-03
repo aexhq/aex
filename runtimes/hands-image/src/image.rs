@@ -15,6 +15,10 @@
 
 use serde::{Deserialize, Serialize};
 
+pub use aex_hands_agent::image_contract::{
+    AGENT_PATH, FORBIDDEN_ROOTFS_PATHS, ImageLock, LockVerdict, ROOTFS_CONTRACT, SBOM_DIR,
+};
+
 /// The AWS-managed base image the AEX layer sits on.
 pub const BASE_IMAGE_ARN_TEMPLATE: &str = "arn:aws:lambda:{region}:aws:microvm-image:al2023-1";
 
@@ -28,17 +32,11 @@ pub const ARCHITECTURE: &str = "ARM_64";
 /// `ldconfig` cannot break the supervisor out from under its own operation.
 pub const GUEST_TARGET: &str = "aarch64-unknown-linux-musl";
 
-/// Where the agent binary lives.
-pub const AGENT_PATH: &str = "/opt/aex/hands-agent";
-
-/// Where the SBOM lives.
-pub const SBOM_DIR: &str = "/opt/aex/sbom";
-
 /// The guest root.
-pub const WORKSPACE_PATH: &str = "/workspace";
+pub const WORKSPACE_PATH: &str = aex_hands_agent::boot::GUEST_ROOT;
 
 /// The operation journal root.
-pub const JOURNAL_PATH: &str = "/var/lib/aex/hands";
+pub const JOURNAL_PATH: &str = aex_hands_agent::boot::JOURNAL_ROOT;
 
 /// The single hook port.
 pub const HOOK_PORT: u16 = 8_080;
@@ -167,90 +165,6 @@ pub const FORBIDDEN_INSTALL_PACKAGES: [&str; 5] = [
     "bun",
 ];
 
-/// One pinned package, by exact NEVRA.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct PinnedPackage {
-    /// The package name.
-    pub name: String,
-    /// The exact `name-epoch:version-release.arch` string.
-    pub nevra: String,
-}
-
-/// The image lockfile.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct ImageLock {
-    /// Lockfile schema version.
-    pub version: u32,
-    /// The container base this lock was resolved against.
-    pub container_base: String,
-    /// The pinned package set, sorted by NEVRA.
-    pub packages: Vec<PinnedPackage>,
-}
-
-impl ImageLock {
-    /// Whether an observed `rpm -qa` set matches the lock exactly.
-    ///
-    /// Both directions matter: a missing package is a broken image and an extra one
-    /// is an unreviewed dependency, so `/validate` returns 503 for either.
-    #[must_use]
-    pub fn matches(&self, observed: &[String]) -> LockVerdict {
-        let mut expected: Vec<&str> = self
-            .packages
-            .iter()
-            .map(|package| package.nevra.as_str())
-            .collect();
-        expected.sort_unstable();
-        let mut seen: Vec<&str> = observed.iter().map(String::as_str).collect();
-        seen.sort_unstable();
-
-        let missing: Vec<String> = expected
-            .iter()
-            .filter(|nevra| !seen.contains(nevra))
-            .map(|nevra| (*nevra).to_owned())
-            .collect();
-        let unexpected: Vec<String> = seen
-            .iter()
-            .filter(|nevra| !expected.contains(nevra))
-            .map(|nevra| (*nevra).to_owned())
-            .collect();
-        if missing.is_empty() && unexpected.is_empty() {
-            LockVerdict::Match
-        } else {
-            LockVerdict::Drift {
-                missing,
-                unexpected,
-            }
-        }
-    }
-}
-
-/// What a lockfile comparison found.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LockVerdict {
-    /// The installed set is exactly the lock.
-    Match,
-    /// The mirror moved. The build fails rather than shipping a changed image.
-    Drift {
-        /// Locked but not installed.
-        missing: Vec<String>,
-        /// Installed but not locked.
-        unexpected: Vec<String>,
-    },
-}
-
-impl LockVerdict {
-    /// The HTTP status the `/validate` build hook returns.
-    #[must_use]
-    pub const fn http_status(&self) -> u16 {
-        match self {
-            Self::Match => 200,
-            Self::Drift { .. } => 503,
-        }
-    }
-}
-
 /// One published image variant.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImageVariant {
@@ -293,80 +207,22 @@ pub fn variants() -> Vec<ImageVariant> {
     out
 }
 
-/// A path the rootfs contract requires.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RootfsEntry {
-    /// The path.
-    pub path: &'static str,
-    /// The required mode.
-    pub mode: u32,
-    /// Whether it is a directory.
-    pub directory: bool,
-}
-
-/// The rootfs contract the `/ready` build hook asserts.
-pub const ROOTFS_CONTRACT: [RootfsEntry; 4] = [
-    RootfsEntry {
-        path: AGENT_PATH,
-        mode: 0o755,
-        directory: false,
-    },
-    RootfsEntry {
-        path: SBOM_DIR,
-        mode: 0o755,
-        directory: true,
-    },
-    RootfsEntry {
-        path: WORKSPACE_PATH,
-        mode: 0o755,
-        directory: true,
-    },
-    RootfsEntry {
-        path: JOURNAL_PATH,
-        mode: 0o755,
-        directory: true,
-    },
-];
-
-/// Paths and artefacts that must **not** be in the image.
-///
-/// Each one is something the previous design shipped and this one deletes, so the
-/// scan is a regression guard rather than a generic hygiene sweep.
-pub const FORBIDDEN_ROOTFS_PATHS: [&str; 8] = [
-    // Deleted: there is no Bun or Node trusted runtime.
-    "/opt/aex/customer/bun",
-    "/opt/aex/customer/python",
-    "/opt/aex/runner-bundle",
-    // Deleted with per-uid isolation: H-BOUNDARY grants real root, so there are no
-    // other uids and no launcher to drop into them.
-    "/opt/aex/customer-process-isolation",
-    // Deleted with the in-guest firewall.
-    "/etc/nftables",
-    "/etc/nftables.conf",
-    // A guest holds no credential of any kind.
-    "/root/.aws",
-    "/opt/aex/credentials",
-];
-
 #[cfg(test)]
 mod tests {
     use super::{
         AGENT_PATH, ARCHITECTURE, CURL_SWAP, Capability, FORBIDDEN_INSTALL_PACKAGES,
         FORBIDDEN_ROOTFS_PATHS, GUEST_TARGET, HOOK_PORT, ImageLock, LockVerdict, OS_CAPABILITIES,
-        PackageGroup, PinnedPackage, ROOTFS_CONTRACT, variants,
+        PackageGroup, ROOTFS_CONTRACT, variants,
     };
 
     fn lock(nevras: &[&str]) -> ImageLock {
         ImageLock {
-            version: 1,
-            container_base: super::CONTAINER_BASE.to_owned(),
-            packages: nevras
-                .iter()
-                .map(|nevra| PinnedPackage {
-                    name: nevra.split('-').next().unwrap_or(nevra).to_owned(),
-                    nevra: (*nevra).to_owned(),
-                })
-                .collect(),
+            schema: "aex.hands-image-lock.v1".to_owned(),
+            container_base: format!(
+                "{}@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                super::CONTAINER_BASE
+            ),
+            packages: nevras.iter().map(|nevra| (*nevra).to_owned()).collect(),
         }
     }
 
@@ -463,10 +319,11 @@ mod tests {
             "jq-0:1.7-1.amzn2023.aarch64",
         ]);
         let installed = vec![
-            "jq-0:1.7-1.amzn2023.aarch64".to_owned(),
             "bash-0:5.2.15-1.amzn2023.aarch64".to_owned(),
+            "jq-0:1.7-1.amzn2023.aarch64".to_owned(),
         ];
-        assert_eq!(locked.matches(&installed), LockVerdict::Match);
+        assert_eq!(locked.validate(), Ok(()));
+        assert_eq!(locked.compare(&installed), LockVerdict::Match);
         assert_eq!(LockVerdict::Match.http_status(), 200);
 
         // A mirror moved: the release bumped underneath us.
@@ -474,7 +331,7 @@ mod tests {
             "jq-0:1.7-1.amzn2023.aarch64".to_owned(),
             "bash-0:5.2.15-2.amzn2023.aarch64".to_owned(),
         ];
-        let verdict = locked.matches(&drifted);
+        let verdict = locked.compare(&drifted);
         assert_eq!(
             verdict.http_status(),
             503,
@@ -498,7 +355,7 @@ mod tests {
             "bash-0:5.2.15-1.amzn2023.aarch64".to_owned(),
             "nftables-0:1.0.4-1.amzn2023.aarch64".to_owned(),
         ];
-        let verdict = locked.matches(&installed);
+        let verdict = locked.compare(&installed);
         assert_eq!(
             verdict.http_status(),
             503,
@@ -515,20 +372,23 @@ mod tests {
         // An unknown key is refused, so a hand-edited lockfile fails loudly.
         assert!(
             serde_json::from_str::<ImageLock>(
-                r#"{"version":1,"containerBase":"x","packages":[],"extra":1}"#
+                r#"{"schema":"aex.hands-image-lock.v1","containerBase":"x@sha256:y","packages":["x"],"extra":1}"#
             )
             .is_err()
         );
     }
 
     #[test]
-    fn the_rootfs_contract_names_the_four_paths_the_ready_hook_asserts() {
+    fn the_rootfs_contract_names_every_path_the_ready_hook_asserts() {
         let paths: Vec<&str> = ROOTFS_CONTRACT.iter().map(|entry| entry.path).collect();
         assert_eq!(
             paths,
             vec![
                 "/opt/aex/hands-agent",
                 "/opt/aex/sbom",
+                "/opt/aex/sbom/agent.cdx.json",
+                "/opt/aex/sbom/rpm-nevra.txt",
+                "/opt/aex/sbom/image.lock.json",
                 "/workspace",
                 "/var/lib/aex/hands"
             ]

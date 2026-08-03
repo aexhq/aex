@@ -94,6 +94,8 @@ jobs:
     with:
       matrix: ${{ needs.route.outputs.test_matrix }}
       lane: pr
+      job_name: rust
+      selection_mode: affected
       cache_mode: restore
 
   node:
@@ -101,6 +103,18 @@ jobs:
     needs: route
     uses: ./.github/workflows/_node-lane.yml
     with:
+      matrix: ${{ needs.route.outputs.node_matrix }}
+      lane: pr
+      job_name: node
+      selection_mode: affected
+
+  scenarios:
+    name: Scenarios
+    needs: route
+    if: needs.route.outputs.has_scenario == 'true'
+    uses: ./.github/workflows/_scenario-lane.yml
+    with:
+      matrix: ${{ needs.route.outputs.scenario_matrix }}
       lane: pr
 
   terraform:
@@ -112,6 +126,8 @@ jobs:
       matrix: ${{ needs.route.outputs.terraform_matrix }}
       mode: static
       lane: pr
+      job_name: terraform
+      selection_mode: affected
 
   artifacts:
     name: Artifacts
@@ -125,9 +141,9 @@ jobs:
 
   checks:
     name: Checks
-    needs: [route, gates, rust, node, terraform, artifacts]
+    needs: [route, gates, rust, node, scenarios, terraform, artifacts]
     if: always()
     uses: ./.github/workflows/_receipts.yml
     with:
       lane: pr
-      declared_jobs: '["route","gates","rust","node","terraform","artifacts"]'
+      declared_jobs: '["route","gates","rust","node","scenarios","terraform","artifacts"]'

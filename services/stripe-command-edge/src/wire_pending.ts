@@ -51,6 +51,7 @@ export type PaymentCommand =
       readonly kind: "lookup_effect_outcome";
       readonly effect: string;
       readonly expect: string;
+      readonly provider: string | null;
     }
   | {
       readonly kind: "refund_charge";
@@ -59,16 +60,19 @@ export type PaymentCommand =
       readonly amount: number;
     };
 
+export interface HostedSession {
+  readonly url: string;
+  readonly expiresAt: string;
+}
+
 export interface Succeeded {
   readonly outcome: "succeeded";
   readonly effect: string;
-  readonly objectId: string;
-  readonly objectType: string;
-  readonly status: string;
-  readonly amountCents: number;
-  readonly currency: "usd";
-  readonly providerRequestId?: string;
-  readonly apiVersion: string;
+  readonly providerRef: string;
+  readonly providerCreatedAt: string;
+  readonly hosted: HostedSession | null;
+  readonly charged: number;
+  readonly tax: null;
 }
 
 // TODO(cross-stream): aex-payment-contracts has no PaymentCommandResult. Its outcome
@@ -88,6 +92,30 @@ export interface Rejected {
 
 export interface Indeterminate {
   readonly outcome: "indeterminate";
-  readonly reason: "timeout" | "provider_5xx" | "connection_reset";
+  readonly reason: "timeout" | "provider_5xx" | "connection_reset" | "rate_limited";
+  readonly status?: number;
   readonly providerRequestId?: string;
 }
+
+export interface Failed {
+  readonly outcome: "failed";
+  readonly effect: string;
+  readonly failure: {
+    readonly class: "card_declined" | "authentication_required" | "invalid_request";
+    readonly providerCode: string | null;
+    readonly declineCode: string | null;
+    readonly retryable: false;
+  };
+}
+
+export interface Unknown {
+  readonly outcome: "unknown";
+  readonly effect: string;
+  readonly evidence:
+    | { readonly evidence: "timeout"; readonly waitedMs: number }
+    | { readonly evidence: "transport_lost" }
+    | { readonly evidence: "server_error"; readonly status: number }
+    | { readonly evidence: "ambiguous_response"; readonly providerCode: string | null };
+}
+
+export type PaymentResult = Succeeded | Failed | Unknown;

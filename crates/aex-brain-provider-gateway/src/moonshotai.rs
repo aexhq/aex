@@ -55,13 +55,10 @@ use aex_model_catalog::canonical::{
     UsageCompleteness,
 };
 use aex_model_catalog::document::{
-    AdapterSourceDigest, Capability, CapabilitySet, EndpointPin, ModelLimits, ReasoningMode,
-    ReasoningPolicy, SamplingSupport, SchemaEncoding, StructuredOutputPolicy, ToolEncoding,
-    ToolPolicy,
+    Capability, CapabilitySet, EndpointPin, ModelLimits, ReasoningMode, ReasoningPolicy,
+    SamplingSupport, SchemaEncoding, StructuredOutputPolicy, ToolEncoding, ToolPolicy,
 };
-use aex_model_catalog::primitives::{
-    Blake3Digest, BoundedString, ProviderRequestId, ToolCallId, ToolName,
-};
+use aex_model_catalog::primitives::{BoundedString, ProviderRequestId, ToolCallId, ToolName};
 use aex_wire::CanonicalJson;
 use aex_wire::provider::ProviderId;
 use bytes::Bytes;
@@ -98,13 +95,6 @@ const CHUNK_OBJECT: &str = "chat.completion.chunk";
 /// The block index text and reasoning accumulate under. `n` is never sent, so
 /// there is exactly one choice and therefore exactly one of each.
 const SOLE_BLOCK: u16 = 0;
-
-/// The seed the adapter source digest is taken over.
-///
-/// Bumping a dialect revision is a code release (D-19), so the seed names the
-/// dialect and its revision rather than being computed from a file at runtime,
-/// which no compiled binary can do.
-const SOURCE_SEED: &[u8] = b"aex-brain-provider-gateway/moonshotai/1";
 
 /// The documented finish-reason enum, whole. Anything outside it is a protocol
 /// violation.
@@ -268,10 +258,6 @@ struct RequestView<'a> {
 impl ProviderAdapter for MoonshotAdapter {
     fn provider(&self) -> ProviderId {
         ProviderId::Moonshotai
-    }
-
-    fn source_digest(&self) -> AdapterSourceDigest {
-        AdapterSourceDigest(Blake3Digest::of(SOURCE_SEED))
     }
 
     fn build_request(
@@ -471,7 +457,7 @@ fn build(
     encode_response_format(entry, request, &mut body)?;
 
     let bytes =
-        serde_json::to_vec(&Value::Object(body)).map_err(|_| RequestBuildError::Encoding {
+        aex_wire::to_jcs_bytes(&Value::Object(body)).map_err(|_| RequestBuildError::Encoding {
             reason: "the request body could not be serialized",
         })?;
     if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > u64::from(limits.request_body_max_bytes) {
@@ -2752,14 +2738,6 @@ mod tests {
     #[test]
     fn the_adapter_speaks_for_exactly_one_provider() {
         assert_eq!(MoonshotAdapter.provider(), ProviderId::Moonshotai);
-    }
-
-    #[test]
-    fn the_source_digest_is_stable_across_calls() {
-        assert_eq!(
-            MoonshotAdapter.source_digest(),
-            MoonshotAdapter.source_digest()
-        );
     }
 
     #[test]

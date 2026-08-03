@@ -113,7 +113,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "artifactEnvelopeDigest": { "$ref": "#/$defs/sha256" },
+        "artifactSubjectDigest": { "$ref": "#/$defs/sha256" },
         "releaseId": { "$ref": "#/$defs/sha256" },
         "unitIds": { "type": "array", "items": { "type": "string" } }
       }

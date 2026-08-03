@@ -1,6 +1,6 @@
 //! The JSON Schemas and the Rust types agree.
 //!
-//! Two authorities describe the same five documents: the schemas under
+//! Two authorities describe the same seven documents: the schemas under
 //! `api/schemas/release/`, which the contract generator turns into
 //! `aex_internal_contracts::release::*`, and this crate's own `serde` types.
 //! If they disagree, one of them is enforcing something the other does not,
@@ -18,6 +18,9 @@ mod common;
 use aex_release_tool::artifact::ArtifactEnvelope;
 use aex_release_tool::evidence::Receipt;
 use aex_release_tool::manifest::CompositionManifest;
+use aex_release_tool::release_contract::{
+    EnvironmentBinding, ResolvedPlacement, SavedPlanEnvelope,
+};
 use aex_release_tool::schemas::{self, SchemaName};
 use aex_release_tool::verification::VerificationStatement;
 use serde_json::{Value, json};
@@ -48,6 +51,26 @@ fn corpus() -> Vec<CorpusEntry> {
     fn statement(value: &Value) -> bool {
         serde_json::from_value::<VerificationStatement>(value.clone()).is_ok()
     }
+    fn binding(value: &Value) -> bool {
+        serde_json::from_value::<EnvironmentBinding>(value.clone()).is_ok()
+    }
+    fn placement(value: &Value) -> bool {
+        serde_json::from_value::<ResolvedPlacement>(value.clone()).is_ok()
+    }
+    fn saved_plan(value: &Value) -> bool {
+        serde_json::from_value::<SavedPlanEnvelope>(value.clone()).is_ok()
+    }
+    let contract_fixture = |name: &str| -> Value {
+        serde_json::from_str(
+            &std::fs::read_to_string(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/contracts")
+                    .join(name),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+    };
     vec![
         (
             "artifact-envelope",
@@ -72,6 +95,24 @@ fn corpus() -> Vec<CorpusEntry> {
             SchemaName::VerificationStatement,
             valid_statement(),
             statement as fn(&Value) -> bool,
+        ),
+        (
+            "environment-binding",
+            SchemaName::EnvironmentBinding,
+            contract_fixture("environment-binding.valid.json"),
+            binding as fn(&Value) -> bool,
+        ),
+        (
+            "resolved-placement",
+            SchemaName::ResolvedPlacement,
+            contract_fixture("resolved-placement.valid.json"),
+            placement as fn(&Value) -> bool,
+        ),
+        (
+            "saved-plan-envelope",
+            SchemaName::SavedPlanEnvelope,
+            contract_fixture("saved-plan-envelope.valid.json"),
+            saved_plan as fn(&Value) -> bool,
         ),
     ]
 }
@@ -112,6 +153,9 @@ fn a_missing_required_member_is_rejected_by_both_authorities() {
         ("composition-manifest", "units"),
         ("evidence-receipt", "inventory"),
         ("verification-statement", "deployed"),
+        ("environment-binding", "resources"),
+        ("resolved-placement", "artifacts"),
+        ("saved-plan-envelope", "state"),
     ];
     for (name, schema, mut document, serde_accepts) in corpus() {
         let member = required
@@ -187,6 +231,49 @@ fn the_envelope_schema_forbids_a_mutable_location_and_a_dirty_tree() {
     let mut envelope = valid_envelope();
     envelope["source"]["treeClean"] = json!(false);
     assert!(!schema_accepts(SchemaName::ArtifactEnvelope, &envelope));
+}
+
+#[test]
+fn public_location_schemas_reject_wrong_hosts_tags_and_mutable_oci_refs() {
+    let mut envelope = valid_envelope();
+    let digest = envelope["output"]["digest"].as_str().unwrap().to_owned();
+    let uri = aex_release_tool::publication::github_release_unit_uri(
+        "aexhq/aex",
+        &sha1(),
+        "123",
+        1,
+        "regional-session-api",
+        &digest,
+        "zip",
+    )
+    .unwrap();
+    envelope["output"]["location"] = json!({
+        "kind": "github-release",
+        "uri": uri,
+        "immutable": true
+    });
+    assert!(schema_accepts(SchemaName::ArtifactEnvelope, &envelope));
+    for altered in [
+        uri.replace("github.com", "example.com"),
+        uri.replace("run-123", "run-latest"),
+        uri.replace(&digest[7..], "mutable"),
+    ] {
+        envelope["output"]["location"]["uri"] = json!(altered);
+        assert!(!schema_accepts(SchemaName::ArtifactEnvelope, &envelope));
+    }
+
+    let mut manifest = valid_manifest();
+    manifest["units"]["regional-session-api"]["kind"] = json!("rust-oci-service");
+    manifest["units"]["regional-session-api"]["location"] = json!({
+        "kind": "oci",
+        "uri": format!("oci://ghcr.io/aexhq/aex-units/regional-session-api@{digest}"),
+        "immutable": true
+    });
+    assert!(schema_accepts(SchemaName::CompositionManifest, &manifest));
+    manifest["units"]["regional-session-api"]["location"]["uri"] = json!(format!(
+        "oci://ghcr.io/aexhq/aex-units/regional-session-api:main@{digest}"
+    ));
+    assert!(!schema_accepts(SchemaName::CompositionManifest, &manifest));
 }
 
 #[test]

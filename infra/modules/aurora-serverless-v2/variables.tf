@@ -107,11 +107,11 @@ variable "publicly_accessible" {
 variable "reader_count" {
   type        = number
   default     = 0
-  description = "Reader instances. There are none at launch: a reader adds replica-lag semantics the finance code does not yet account for."
+  description = "Warm failover reader instances. Zero keeps dev small; one gives prd a failover target. Application reads still use the Data API cluster resource rather than the reader endpoint."
 
   validation {
-    condition     = var.reader_count == 0
-    error_message = "No reader instance at launch; add one only once replica lag is accounted for in the read paths."
+    condition     = contains([0, 1], var.reader_count)
+    error_message = "Reader count must be exactly zero or one. This module does not compose read scaling beyond the single warm failover target."
   }
 }
 
@@ -135,19 +135,9 @@ variable "vpc_security_group_ids" {
   }
 }
 
-variable "admin_secret_arn" {
-  type        = string
-  description = "Secrets Manager secret holding the admin credentials. Data API callers pass this ARN with every statement. The module never reads the secret value."
-
-  validation {
-    condition     = can(regex("^arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:[0-9A-Za-z-]{1,64}:secret:[A-Za-z0-9/_+=.@-]+$", var.admin_secret_arn))
-    error_message = "The admin secret must be a Secrets Manager secret ARN."
-  }
-}
-
 variable "region" {
   type        = string
-  description = "AWS region. Used to check that the admin secret lives in the same region as the cluster."
+  description = "AWS region."
 
   validation {
     condition     = can(regex("^[a-z]{2}-[a-z]+-[0-9]$", var.region))

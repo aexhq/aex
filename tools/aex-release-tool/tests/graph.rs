@@ -8,11 +8,53 @@ mod common;
 
 use aex_release_tool::graph::inputs::GraphInputs;
 use aex_release_tool::graph::verify;
-use common::{CratePlan, Fixture, SOUND_SCENARIOS, SOUND_UNITS, deployable_meta, live_meta};
+use common::{
+    CratePlan, Fixture, SOUND_SCENARIOS, SOUND_UNITS, deployable_meta, live_meta, live_meta_for,
+    write,
+};
 
 fn verify_fixture(root: &std::path::Path) -> aex_release_tool::error::Result<verify::BuiltGraph> {
     let inputs = GraphInputs::load(root)?;
     verify::verify(&inputs)
+}
+
+fn classify_generated_api(root: &std::path::Path) {
+    let path = root.join("release/path-map.toml");
+    let mut policy = std::fs::read_to_string(&path).expect("fixture path map");
+    policy.push_str(
+        r#"
+[[rule]]
+id = "generated-api"
+prefix = "api/generated/"
+kind = "ignored"
+"#,
+    );
+    write(root, "release/path-map.toml", &policy);
+}
+
+fn copy_authored_contract(root: &std::path::Path) {
+    let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for entry in walkdir::WalkDir::new(repository.join("api"))
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_file())
+    {
+        let relative = entry
+            .path()
+            .strip_prefix(&repository)
+            .expect("inside repository");
+        if relative.starts_with("api/generated") {
+            continue;
+        }
+        let target = root.join(relative);
+        std::fs::create_dir_all(target.parent().expect("file parent")).expect("create parent");
+        std::fs::copy(entry.path(), target).expect("copy authored contract input");
+    }
+    std::fs::copy(
+        repository.join("rust-toolchain.toml"),
+        root.join("rust-toolchain.toml"),
+    )
+    .expect("copy toolchain pin");
 }
 
 #[test]
@@ -117,6 +159,46 @@ fn a_deployable_with_no_scenario_owner_fails() {
 }
 
 #[test]
+fn observing_an_artifact_without_a_runnable_claim_is_not_scenario_coverage() {
+    let scenarios = SOUND_SCENARIOS
+        .replace("package = \"cargo:aex-live-demo-api\"\n", "")
+        .replace("target = \"smoke\"\n", "");
+    let root = Fixture::new()
+        .add_crate(
+            CratePlan::new("demo-api", "services/demo-api")
+                .meta(deployable_meta("demo-api", "aex-live-demo-api")),
+        )
+        .add_crate(
+            CratePlan::new("aex-live-demo-api", "tests/live/aex-live-demo-api")
+                .meta(live_meta("demo-api")),
+        )
+        .units(SOUND_UNITS)
+        .scenarios(&scenarios)
+        .build();
+    let err = verify_fixture(&root).unwrap_err();
+    assert!(err.rules().contains(&"scenario-runnable-missing"));
+}
+
+#[test]
+fn a_scenario_package_must_claim_the_scenario_and_the_exact_target() {
+    let root = Fixture::new()
+        .add_crate(
+            CratePlan::new("demo-api", "services/demo-api")
+                .meta(deployable_meta("demo-api", "aex-live-demo-api")),
+        )
+        .add_crate(
+            CratePlan::new("aex-live-demo-api", "tests/live/aex-live-demo-api")
+                .meta(live_meta_for("demo-api", "SC-SOMETHING-ELSE")),
+        )
+        .units(SOUND_UNITS)
+        .scenarios(&SOUND_SCENARIOS.replace("target = \"smoke\"", "target = \"ghost\""))
+        .build();
+    let err = verify_fixture(&root).unwrap_err();
+    assert!(err.rules().contains(&"scenario-package-disagreement"));
+    assert!(err.rules().contains(&"scenario-target-unknown"));
+}
+
+#[test]
 fn a_deployable_with_no_live_companion_fails() {
     let root = Fixture::new()
         .add_crate(
@@ -176,6 +258,8 @@ schema = "aex.scenario-ownership.v1"
 id = "SC-EDGE"
 owner = "central-finance"
 observes = ["artifact:stripe-command-edge"]
+package = "cargo:aex-live-stripe-command-edge"
+target = "smoke"
 "#;
 
 fn ts_edge_fixture(units: &str) -> std::path::PathBuf {
@@ -195,7 +279,7 @@ fn ts_edge_fixture(units: &str) -> std::path::PathBuf {
                 "aex-live-stripe-command-edge",
                 "tests/live/aex-live-stripe-command-edge",
             )
-            .meta(live_meta("stripe-command-edge")),
+            .meta(live_meta_for("stripe-command-edge", "SC-EDGE")),
         )
         .units(units)
         .scenarios(TS_EDGE_SCENARIOS)
@@ -369,6 +453,168 @@ fn every_violation_is_reported_rather_than_only_the_first() {
     );
 }
 
+#[test]
+fn a_route_registry_without_routes_fails_closed() {
+    let root = common::sound_fixture();
+    classify_generated_api(&root);
+    write(
+        &root,
+        "api/generated/bundle.json",
+        r#"{"planes":{"regional":{"operations":[]}}}"#,
+    );
+    write(
+        &root,
+        "api/generated/registries/routes.json",
+        r#"{"schema":"aex.route-registry.v1"}"#,
+    );
+    let err = verify_fixture(&root).unwrap_err();
+    assert!(err.rules().contains(&"route-registry-shape"));
+}
+
+#[test]
+fn duplicate_route_registry_members_fail_closed() {
+    let root = common::sound_fixture();
+    classify_generated_api(&root);
+    write(
+        &root,
+        "api/generated/bundle.json",
+        r#"{"planes":{"regional":{"operations":[]}}}"#,
+    );
+    write(
+        &root,
+        "api/generated/registries/routes.json",
+        r#"{"schema":"aex.route-registry.v1","routes":[],"routes":[]}"#,
+    );
+    let err = verify_fixture(&root).unwrap_err();
+    assert!(err.rules().contains(&"route-registry-unparseable"));
+}
+
+#[test]
+fn duplicate_contract_bundle_members_fail_closed() {
+    let root = common::sound_fixture();
+    classify_generated_api(&root);
+    write(
+        &root,
+        "api/generated/bundle.json",
+        r#"{"planes":{"regional":{"operations":[],"operations":[]}}}"#,
+    );
+    write(
+        &root,
+        "api/generated/registries/routes.json",
+        r#"{"schema":"aex.route-registry.v1","routes":[]}"#,
+    );
+    let err = verify_fixture(&root).unwrap_err();
+    assert!(err.rules().contains(&"contract-bundle-unparseable"));
+}
+
+#[test]
+fn authored_openapi_keeps_freshness_live_when_both_output_sentinels_are_deleted() {
+    let root = common::sound_fixture();
+    classify_generated_api(&root);
+    copy_authored_contract(&root);
+    aex_contract_gen::build(&root).expect("build fixture contract outputs");
+    std::fs::remove_file(root.join("api/generated/bundle.json")).expect("delete bundle");
+    std::fs::remove_file(root.join("api/generated/registries/routes.json"))
+        .expect("delete route registry");
+
+    let err = verify_fixture(&root).unwrap_err();
+    assert!(err.rules().contains(&"generated-contract-stale"));
+    assert!(err.rules().contains(&"route-registry-missing"));
+}
+
+#[test]
+fn deleting_routes_meta_while_outputs_exist_is_unverifiable_not_fresh() {
+    let root = common::sound_fixture();
+    classify_generated_api(&root);
+    copy_authored_contract(&root);
+    aex_contract_gen::build(&root).expect("build fixture contract outputs");
+    std::fs::remove_file(root.join("api/schemas/registries/routes-meta.yaml"))
+        .expect("delete authored metadata");
+
+    let err = verify_fixture(&root).unwrap_err();
+    assert!(err.rules().contains(&"generated-contract-unverifiable"));
+}
+
+#[test]
+fn a_route_scenario_must_observe_the_artifact_that_serves_it() {
+    let root = common::sound_fixture();
+    classify_generated_api(&root);
+    write(
+        &root,
+        "api/generated/bundle.json",
+        r#"{"planes":{"regional":{"operations":[{"operationId":"demo_get"}]}}}"#,
+    );
+    write(
+        &root,
+        "api/generated/registries/routes.json",
+        r#"{"schema":"aex.route-registry.v1","routes":[{"operationId":"demo_get","plane":"regional","servingArtifact":"demo-api","servedArtifact":"demo-api","scenarios":["SC-GHOST"]}]}"#,
+    );
+    let err = verify_fixture(&root).unwrap_err();
+    assert!(err.rules().contains(&"aex-route-uncovered"));
+
+    let scenario_path = root.join("release/scenario-ownership.toml");
+    let scenarios = std::fs::read_to_string(&scenario_path)
+        .expect("scenario fixture")
+        .replace("artifact:demo-api", "cargo:aex-leaf");
+    write(&root, "release/scenario-ownership.toml", &scenarios);
+    write(
+        &root,
+        "api/generated/registries/routes.json",
+        r#"{"schema":"aex.route-registry.v1","routes":[{"operationId":"demo_get","plane":"regional","servingArtifact":"demo-api","servedArtifact":"demo-api","scenarios":["SC-DEMO"]}]}"#,
+    );
+    let err = verify_fixture(&root).unwrap_err();
+    assert!(err.rules().contains(&"aex-route-scenario-disagreement"));
+
+    write(
+        &root,
+        "api/generated/registries/routes.json",
+        r#"{"schema":"aex.route-registry.v1","routes":[{"operationId":"demo_get","plane":"regional","servingArtifact":"demo-api","servedArtifact":"demo-api","scenarios":["SC-DEMO"]}]}"#,
+    );
+    let scenarios = scenarios.replace("cargo:aex-leaf", "artifact:demo-api");
+    write(&root, "release/scenario-ownership.toml", &scenarios);
+    let err = verify_fixture(&root).expect_err("synthetic generated outputs have no authored tree");
+    assert!(err.rules().contains(&"generated-contract-unverifiable"));
+    assert!(!err.rules().contains(&"aex-route-scenario-disagreement"));
+    assert!(!err.rules().contains(&"aex-route-uncovered"));
+}
+
+#[test]
+fn planned_ownership_is_not_proof_that_a_route_is_mounted() {
+    let root = common::sound_fixture();
+    classify_generated_api(&root);
+    write(
+        &root,
+        "api/generated/bundle.json",
+        r#"{"planes":{"regional":{"operations":[{"operationId":"demo_get"}]}}}"#,
+    );
+    write(
+        &root,
+        "api/generated/registries/routes.json",
+        r#"{"schema":"aex.route-registry.v1","routes":[{"operationId":"demo_get","plane":"regional","servingArtifact":"demo-api","scenarios":["SC-DEMO"]}]}"#,
+    );
+    let err = verify_fixture(&root).unwrap_err();
+    assert!(err.rules().contains(&"aex-route-unserved"));
+}
+
+#[test]
+fn malformed_and_cross_plane_route_owners_fail_closed() {
+    let root = common::sound_fixture();
+    classify_generated_api(&root);
+    write(
+        &root,
+        "api/generated/bundle.json",
+        r#"{"planes":{"regional":{"operations":[{"operationId":"demo_get"}]}}}"#,
+    );
+    write(
+        &root,
+        "api/generated/registries/routes.json",
+        r#"{"schema":"aex.route-registry.v1","routes":[{"operationId":"demo_get","plane":"central","servingArtifact":"-demo-api","servedArtifact":"demo-api","scenarios":["SC-DEMO"]}]}"#,
+    );
+    let err = verify_fixture(&root).unwrap_err();
+    assert!(err.rules().contains(&"aex-route-owner-invalid"));
+    assert!(err.rules().contains(&"aex-route-owner-cross-plane"));
+}
+
 // ---------------------------------------------------------------------------
 // OD-36: what may provision in `prd`
 // ---------------------------------------------------------------------------
@@ -381,7 +627,9 @@ fn scenarios_with_prd(block: &str) -> String {
          [[scenario]]\n\
          id = \"SC-DEMO\"\n\
          owner = \"delivery\"\n\
-         observes = [\"artifact:demo-api\"]\n\n\
+         observes = [\"artifact:demo-api\"]\n\
+         package = \"cargo:aex-live-demo-api\"\n\
+         target = \"smoke\"\n\n\
          {block}\n"
     )
 }

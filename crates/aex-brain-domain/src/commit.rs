@@ -326,6 +326,14 @@ pub enum EnvelopeViolation {
         /// Which item.
         which: String,
     },
+    /// A journal body exceeded the decoder's inline ceiling.
+    #[error("a journal body of {bytes} bytes exceeds the inline ceiling: {which}")]
+    JournalBodyTooLarge {
+        /// How large the canonical record body is.
+        bytes: usize,
+        /// Which record would become unreadable.
+        which: String,
+    },
     /// The appends are not contiguous from the guard's tail.
     #[error("appends must start at sequence {expected}")]
     NonContiguousAppends {
@@ -351,6 +359,10 @@ pub struct EnvelopeCost {
     pub largest_item_bytes: usize,
     /// Which item is the largest, so a rejection names it rather than the category.
     pub largest_item: String,
+    /// The largest canonical journal body.
+    pub largest_journal_bytes: usize,
+    /// Which journal record is largest.
+    pub largest_journal_item: String,
 }
 
 impl DecisionCommit {
@@ -363,6 +375,8 @@ impl DecisionCommit {
         let mut bytes = 0_usize;
         let mut largest = 0_usize;
         let mut largest_item = String::new();
+        let mut largest_journal = 0_usize;
+        let mut largest_journal_item = String::new();
         let first_seq = self.guard.tail.map_or(JournalSeq::ZERO, JournalSeq::next);
         for (offset, record) in self.appends.iter().enumerate() {
             let size = record.canonical_bytes()?.len();
@@ -371,6 +385,12 @@ impl DecisionCommit {
                 largest = size;
                 let seq = first_seq.get().saturating_add(offset as u64);
                 largest_item = format!("journal record {} at sequence {seq}", record.kind_name());
+            }
+            if size > largest_journal {
+                largest_journal = size;
+                let seq = first_seq.get().saturating_add(offset as u64);
+                largest_journal_item =
+                    format!("journal record {} at sequence {seq}", record.kind_name());
             }
         }
         for event in &self.events {
@@ -392,6 +412,8 @@ impl DecisionCommit {
             bytes,
             largest_item_bytes: largest,
             largest_item,
+            largest_journal_bytes: largest_journal,
+            largest_journal_item,
         })
     }
 
@@ -487,6 +509,12 @@ impl DecisionCommit {
             return Err(EnvelopeViolation::ItemTooLarge {
                 bytes: cost.largest_item_bytes,
                 which: cost.largest_item,
+            });
+        }
+        if cost.largest_journal_bytes > crate::journal::INLINE_BODY_BYTES {
+            return Err(EnvelopeViolation::JournalBodyTooLarge {
+                bytes: cost.largest_journal_bytes,
+                which: cost.largest_journal_item,
             });
         }
         Ok(cost)
@@ -640,6 +668,26 @@ mod tests {
             panic!("expected the item ceiling to name the offender, got {error:?}");
         };
         assert!(bytes > super::MAX_ITEM_BYTES, "{bytes}");
+        assert_eq!(which, "journal record agent_finished at sequence 10");
+    }
+
+    #[test]
+    fn a_record_the_decoder_cannot_reopen_is_never_committed() {
+        let too_large_for_inline = JournalRecord::AgentFinished {
+            reason: FinishReason::Failed,
+            failure: Some(crate::journal::TypedFailure {
+                code: "x".to_owned(),
+                message: "m".repeat(crate::journal::INLINE_BODY_BYTES),
+                detail: None,
+            }),
+        };
+        let error = commit(vec![too_large_for_inline], Vec::new())
+            .validate()
+            .expect_err("an unreopenable journal body is rejected before DynamoDB");
+        let EnvelopeViolation::JournalBodyTooLarge { bytes, which } = error else {
+            panic!("expected the inline ceiling to name the offender, got {error:?}");
+        };
+        assert!(bytes > crate::journal::INLINE_BODY_BYTES, "{bytes}");
         assert_eq!(which, "journal record agent_finished at sequence 10");
     }
 

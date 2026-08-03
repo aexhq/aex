@@ -4,11 +4,17 @@
 #![allow(missing_docs, reason = "the module doc states what these fixtures are")]
 
 use aex_hands_protocol::rpc::Fence;
+use aex_internal_contracts::SchemaVersion;
 use aex_runtime_activity_dynamodb::codec::{
     GenerationRow, IdleProbe, LifecycleIntent, LifecycleReceipt,
 };
-use aex_runtime_control::generation::{GenerationState, Revision};
-use aex_wire::ids::{GenerationId, OrganizationId, PrefixedId, SessionId, Uuid7, WorkspaceId};
+use aex_runtime_control::generation::{
+    GenerationState, HandsGeneration, ImageIdentifier, ImagePin, ImageVersion, LimitsRevision,
+    NetworkPolicy, Revision, guest_root,
+};
+use aex_wire::ids::{
+    ContentHash, GenerationId, OrganizationId, PrefixedId, SessionId, Uuid7, WorkspaceId,
+};
 use aex_wire::types::{ComputeSize, Timestamp};
 use aws_sdk_dynamodb::Client;
 use aws_sdk_dynamodb::config::{BehaviorVersion, Credentials, Region};
@@ -89,7 +95,25 @@ pub fn generation(byte: u8) -> GenerationId {
 
 #[must_use]
 pub fn head(state: GenerationState) -> GenerationRow {
+    let definition = HandsGeneration {
+        generation: generation(4),
+        session: session(),
+        workspace: workspace(),
+        organization: organization(),
+        size: ComputeSize::ALL[0],
+        image: ImagePin {
+            identifier: ImageIdentifier("hands:2026-08-01".to_owned()),
+            version: ImageVersion("17".to_owned()),
+            artifact_digest: ContentHash::from_bytes([7; 32]),
+            capabilities: Vec::new(),
+        },
+        network: NetworkPolicy::None,
+        protocol_version: SchemaVersion::V1,
+        limits_revision: LimitsRevision(3),
+        root: guest_root(),
+    };
     GenerationRow {
+        definition,
         session: session(),
         workspace: workspace(),
         organization: organization(),
@@ -99,7 +123,6 @@ pub fn head(state: GenerationState) -> GenerationRow {
         fence: Fence(3),
         revision: Revision::new(5),
         provider_vm_id: Some("vm-0001".to_owned()),
-        image_identifier: Some("hands:2026-08-01".to_owned()),
         open_operations: 0,
         last_busy_at: now(),
         idle_since: Some(now()),

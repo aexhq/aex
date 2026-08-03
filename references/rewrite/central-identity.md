@@ -1070,5 +1070,112 @@ Two frontiers remain deliberately open:
 
 | Frontier | Exact blocker |
 | --- | --- |
-| Effective limits | The regional reader accepts a `workspace_limit` projection, but central has no authoritative default, override, or effective-limit table/port to publish. The reader explicitly forbids inferring registry defaults, so inventing a zero or guessed default would be an admission bug. Define the central limit authority before adding this producer. |
+| Effective limits | The regional reader accepts a `workspace_limit` projection, but the regional capacity authority has no default document, override store or producer yet. Central owns none of those facts. The reader explicitly forbids inferring registry defaults, so inventing a zero or guessed default would be an admission bug. Define the regional capacity authority before adding a call site. |
 | Signing-key rotation | The worker verifies that a referenced signing secret exists, but no accepted record defines key creation, overlap, trust-anchor publication, retirement, or rollback. The pepper ring can represent rotation; the operational ceremony and signing frontier remain delivery work. |
+
+## 12. Final central-service dependency audit and the limit producer seam
+
+The final pre-deploy audit rechecked the five composition blockers named across
+the central and regional handoffs against the current production roots. Four are
+closed in source:
+
+| Dependency | Current production fact |
+| --- | --- |
+| Credential pepper | `aex-central-runtime::SecretsManagerPepperKeystore` implements OD-39: the database selects the exact lifecycle version and purpose, the secret version holds material only, the cache is bounded and zeroizing, and both central APIs resolve the selected version before serving. |
+| `MailerPort` | The API persists the invitation intent in Aurora; `central-control-worker` is the one SES sender and acknowledges only after the provider accepts it. The API never links a mail client. |
+| `RegionalControlPort` | `LambdaRegionalControl` invokes one configured regional function, classifies only pre-dispatch failure as definitely unavailable, treats every lost/unreadable post-dispatch answer as unknown, and `regional-control` durably fences provision/delete in the session authority. |
+| Assertion exchange | The 323-byte signed envelope is the sole assertion artifact. `aex-internal-contracts` owns only the direct-invoke request/response exchange, `central-authz` serves it, and all four regional HTTP edges verify the domain envelope. The detached JSON claim/signature vocabulary is gone. |
+
+Effective limits are not closed. The historical row above called the missing
+owner "central", but the accepted limits record is more specific: shared-safety
+defaults and support-approved overrides belong to a **regional capacity
+controller**, keyed by `(plane, region, workspace, limit)`. Central control may
+transport a capacity decision, but it must not become the authority or infer a
+value from registry metadata. No central limit table or guessed seed was added.
+
+### The producer seam that landed
+
+`aex_session_dynamodb::capacity_limit_projection_write::{LimitWrite,
+CapacityLimitProjectionWriter}` now publish the exact `workspace_limit` row the
+existing regional reader decodes. This producer is exposed only by
+`capacity-limit-projection-write`; central control's separate
+`authz-projection-write` feature cannot construct it. This is transport only:
+
+- the generated `LimitId` registry determines the required scalar/map shape;
+  a mismatched value is refused before an AWS call;
+- revisions move only forward; a newer durable row makes delayed delivery a
+  completed stale attempt;
+- the write condition binds `itemType`, `workspaceId` and `limitId` before it
+  compares revisions; an equal revision is replay success only when identity,
+  value, provenance and change instant all match;
+- only a failed condition or a typed commit-ambiguous outcome is resolved by one
+  strongly consistent point read. A provider `InternalServerError` after the
+  write is in that ambiguous class; reads remain unavailable, while an invalid
+  endpoint is definitive unavailability. Denial, validation, throttling and a missing
+  table return directly; a conflicting equal revision is never overwritten and
+  no write is blindly retried;
+- the read and write features share one row decoder, while a producer-only
+  composition does not link the broader query surface.
+
+Limit rows use a distinct `LIMIT#…` partition family. The authored table
+contract gives `regional-capacity-controller` `GetItem`/`PutItem` only on that
+family, while central's `PutItem` is restricted to its `WS#…`, `KEY#…` and
+`FEED` families. Per-grant item-type metadata is disjoint and covers the table's
+closed vocabulary, so central cannot persist `workspace_limit` through either
+the Rust feature or the IAM keyspace.
+
+There is deliberately no call site yet. Calling the producer without an
+authoritative input would convert a missing policy into apparently durable
+truth.
+
+CI exercises the capacity transport as an independent feature build: default
+features are disabled while the crate is checked, clippied and tested, and its
+authored `limit_projection` target is registered in the test inventory. Central
+control's manifest dependency is inspected as structured Cargo metadata, and a
+compiler-fail doctest under `authz-projection-write` proves the capacity module
+is not link-visible. This replaces the former substring-only source assertion.
+
+### Ordered blocker ledger
+
+The remaining work must land in this order; a later row is not safe while an
+earlier row is open.
+
+1. **Reconcile the limit registry with the accepted limits record.** The current
+   registry contains product ceilings the accepted decision explicitly rejects
+   (including workspace session/count and ordinary upload/download/registry
+   caps), while several accepted shared-safety families are absent. This is a
+   contract decision, not a value a service may repair locally.
+2. **Publish one complete, versioned regional default document.** Every retained
+   limit and every map dimension needs an exact value, capacity ceiling,
+   revision and change instant. Startup must refuse an absent, partial,
+   wrong-shape or over-capacity document; generated registry descriptions are
+   never values.
+3. **Implement the regional capacity authority.** It owns durable
+   `(plane, region, workspace, limit)` records, capacity admission, audited
+   support approval, conditional override updates and ambiguity resolution. No
+   public mutation route and no environment-only workspace override are added.
+4. **Wire the authority to the capacity limit writer.** Its authored
+   `workspace_limit` capability is already partition-key restricted, but no
+   production role or call site exists yet. Prove an older delivery cannot roll
+   back a row. Placement/profile/revocation remain central-control-worker facts;
+   item-type ownership stays disjoint.
+5. **Make completeness a provisioning/readiness gate.** A workspace is not
+   regionally ready until every retained effective row is durable and readable;
+   reconciliation must repair a missed projection from the authority rather
+   than from constants.
+6. **Replace environment values at serving edges.** `request.body_bytes` and
+   `query.page` are read after workspace resolution and before body decoding or
+   pagination. Deployment configuration becomes an outer capacity ceiling, not
+   the effective customer value. Missing or over-capacity projection fails
+   closed.
+7. **Compose each remaining enforcement owner.** OTLP, stream, Brain, content,
+   query and tool paths consume their own retained IDs atomically at admission;
+   no owner silently falls back to a literal.
+8. **Mount the two public workspace-limit reads only after completeness.** Point
+   and list must report the whole authoritative retained set and provenance, not
+   an empty/partial projection that looks final.
+
+Decision D-63: the limit projection codec and monotone producer are shared
+substrate, but effective-limit policy remains regional. This corrects the owner
+wording in §11.4 without introducing a compatibility path, stub authority or
+second limit vocabulary.

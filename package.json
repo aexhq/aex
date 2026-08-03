@@ -8,7 +8,9 @@
   "packageManager": "bun@1.3.14",
   "workspaces": [
     "packages/*",
-    "apps/*"
+    "apps/*",
+    "services/stripe-command-edge",
+    "services/stripe-webhook-edge"
   ],
   "scripts": {
     "build": "bun run --filter @aexhq/sdk build && bun run --filter @aexhq/site build && bun run --filter @aexhq/dashboard build",

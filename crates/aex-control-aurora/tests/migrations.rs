@@ -94,7 +94,7 @@ GRANT aex_control_worker TO aex_control_worker_login;";
 fn grants() -> &'static GrantSet {
     static GRANTS: std::sync::OnceLock<GrantSet> = std::sync::OnceLock::new();
     GRANTS.get_or_init(|| {
-        GrantSet::load(central_schema_admin::grants::grants_path())
+        GrantSet::embedded()
             .unwrap_or_else(|error| panic!("the committed grants.toml parses: {error}"))
     })
 }

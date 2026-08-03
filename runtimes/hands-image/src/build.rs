@@ -1,4 +1,4 @@
-//! The local build: a generated `Containerfile`, its build context, and the SBOM
+//! The local build: a generated `Dockerfile`, its build context, and the SBOM
 //! layout.
 //!
 //! # Why two pins and not one
@@ -24,6 +24,7 @@ use crate::image::{
     FORBIDDEN_INSTALL_PACKAGES, FORBIDDEN_ROOTFS_PATHS, GUEST_TARGET, HOOK_PORT, JOURNAL_PATH,
     OS_CAPABILITIES, PackageGroup, ROOTFS_CONTRACT, SBOM_DIR, WORKSPACE_PATH,
 };
+use aex_hands_agent::image_contract::{AGENT_SBOM_PATH, IMAGE_LOCK_PATH, RPM_LIST_PATH};
 
 /// The digest the container base is pinned to.
 ///
@@ -129,7 +130,7 @@ impl Variant {
     }
 }
 
-/// The generated `Containerfile` for one variant.
+/// The generated `Dockerfile` for one variant.
 ///
 /// Every line is derived from the same constants the rootfs contract and the
 /// lockfile comparison use, so the built image and the checked contract cannot
@@ -154,9 +155,19 @@ pub fn containerfile(variant: &Variant) -> String {
          {packages} \\\n && dnf clean all\n",
         base = pinned_base(),
     );
+    let _ = writeln!(out, "RUN mkdir -p {SBOM_DIR}");
+    let _ = writeln!(
+        out,
+        "RUN rpm -qa --qf '%{{NAME}}-%{{EPOCHNUM}}:%{{VERSION}}-%{{RELEASE}}.%{{ARCH}}\\n' | LC_ALL=C sort > {RPM_LIST_PATH}"
+    );
+    let _ = writeln!(
+        out,
+        "RUN jq -R -s --arg schema 'aex.hands-image-lock.v1' --arg base '{base}' 'split(\"\\n\") | map(select(length > 0)) | {{schema:$schema,containerBase:$base,packages:.}}' {RPM_LIST_PATH} > {IMAGE_LOCK_PATH} && chmod 0644 {RPM_LIST_PATH} {IMAGE_LOCK_PATH}",
+        base = pinned_base(),
+    );
     let _ = writeln!(out, "# The rootfs contract the /ready build hook asserts.");
     let _ = writeln!(out, "COPY --chmod=0755 hands-agent {AGENT_PATH}");
-    let _ = writeln!(out, "COPY sbom/ {SBOM_DIR}/");
+    let _ = writeln!(out, "COPY --chmod=0644 agent.cdx.json {AGENT_SBOM_PATH}");
     for entry in ROOTFS_CONTRACT.iter().filter(|entry| entry.directory) {
         let _ = writeln!(
             out,
@@ -212,35 +223,6 @@ pub fn create_image_inputs(
     ]
 }
 
-/// One file the SBOM directory carries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SbomEntry {
-    /// The file name inside [`SBOM_DIR`].
-    pub name: &'static str,
-    /// What it records.
-    pub records: &'static str,
-}
-
-/// The SBOM layout every variant ships.
-///
-/// It is inside the image rather than beside it because the agent is the only AEX
-/// binary a customer can inspect, and an inventory they cannot reach is not an
-/// inventory.
-pub const SBOM_LAYOUT: [SbomEntry; 3] = [
-    SbomEntry {
-        name: "agent.cdx.json",
-        records: "CycloneDX for the guest binary's Rust dependency closure",
-    },
-    SbomEntry {
-        name: "rpm-nevra.txt",
-        records: "the exact NEVRA of every installed package, as `rpm -qa` reports it",
-    },
-    SbomEntry {
-        name: "image.lock.json",
-        records: "the locked package set the /validate hook compares against",
-    },
-];
-
 /// The build inputs, rendered for a build record.
 #[must_use]
 pub fn build_inputs(variant: &Variant) -> Vec<String> {
@@ -256,8 +238,8 @@ pub fn build_inputs(variant: &Variant) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        BASE_IMAGE_DIGEST, RELEASEVER, SBOM_LAYOUT, SOURCE_DATE_EPOCH, Variant, build_inputs,
-        containerfile, create_image_inputs, pinned_base,
+        BASE_IMAGE_DIGEST, RELEASEVER, SOURCE_DATE_EPOCH, Variant, build_inputs, containerfile,
+        create_image_inputs, pinned_base,
     };
 
     #[test]
@@ -341,7 +323,7 @@ mod tests {
     #[test]
     fn the_rootfs_contract_and_the_generated_build_agree_about_every_path() {
         let generated = containerfile(&Variant::parse("1gb").expect("an offered variant"));
-        for entry in crate::image::ROOTFS_CONTRACT {
+        for entry in aex_hands_agent::ROOTFS_CONTRACT {
             assert!(
                 generated.contains(entry.path),
                 "the build never creates `{}`",
@@ -413,14 +395,18 @@ mod tests {
 
     #[test]
     fn the_sbom_names_the_three_inventories_a_customer_can_read_back() {
-        let names: Vec<&str> = SBOM_LAYOUT.iter().map(|entry| entry.name).collect();
+        let names = [
+            aex_hands_agent::AGENT_SBOM_PATH,
+            aex_hands_agent::RPM_LIST_PATH,
+            aex_hands_agent::IMAGE_LOCK_PATH,
+        ];
         assert_eq!(
             names,
-            vec!["agent.cdx.json", "rpm-nevra.txt", "image.lock.json"]
-        );
-        assert!(
-            SBOM_LAYOUT.iter().all(|entry| !entry.records.is_empty()),
-            "an inventory with no stated contents is not an inventory"
+            [
+                "/opt/aex/sbom/agent.cdx.json",
+                "/opt/aex/sbom/rpm-nevra.txt",
+                "/opt/aex/sbom/image.lock.json"
+            ]
         );
     }
 }

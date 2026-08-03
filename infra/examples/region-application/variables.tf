@@ -8,6 +8,11 @@ variable "region" {
   description = "AWS region."
 }
 
+variable "permissions_boundary_policy_arn" {
+  type        = string
+  description = "Owner-managed permissions boundary required on every deployable execution role."
+}
+
 variable "vpc_id" {
   type        = string
   description = "VPC from the region foundation."

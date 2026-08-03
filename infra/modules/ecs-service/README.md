@@ -20,6 +20,7 @@ drift on the next plan.
 | Name | Type | Description |
 | --- | --- | --- |
 | `name` | `string` | Service name; also selects the `brain-mux` and `regional-stream` pins. |
+| `task_definition_family` | `string` | Plane- and region-qualified family, `aex-<dev\|prd>-<region>-<service-name>`. |
 | `cluster_arn` / `cluster_name` | `string` | Cluster the service runs in. |
 | `image` | `string` | Digest-pinned image. |
 | `cpu` / `memory` | `number` | Fargate task size. |
@@ -60,6 +61,7 @@ drift on the next plan.
   configuration that scales on `AWS/ECS` CPU alone is rejected.
 - `deregistration_delay` is at least 30 seconds.
 - Tasks never receive a public address.
+- Task-definition revisions are retained on replacement or destroy. Release roles therefore do not need the resource-unscopable ECS deregistration action; plane-aware revision cleanup is a separate operational responsibility.
 - Every environment key is namespaced `AEX_*`, and every secret value is an ARN
   reference.
 

@@ -210,7 +210,7 @@ schemas:
     doc: One page of sessions.
     type: object
     fields:
-      items: { type: array, max: 1000, items: { type: ref, to: SessionListItem }, doc: "The page." }
+      items: { type: array, max: 100, items: { type: ref, to: SessionListItem }, doc: "The page." }
       nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
 
   DeletingSession:
@@ -260,6 +260,20 @@ schemas:
       source: { type: ref, to: FileSource, doc: "Always the persisted tree." }
       mediaType: { type: string, min: 1, max: 255, optional: true, doc: "Declared media type." }
 
+  MessagePartToolCall:
+    doc: A tool call emitted by the model.
+    type: object
+    fields:
+      id: { type: id, of: tool_call, doc: "The call identity." }
+      argumentsDigest: { type: content_hash, doc: "The canonical tool-argument digest." }
+
+  MessagePartToolResult:
+    doc: The canonical result of a tool call.
+    type: object
+    fields:
+      id: { type: id, of: tool_call, doc: "The call identity." }
+      resultDigest: { type: content_hash, doc: "The canonical tool-result digest." }
+
   MessagePart:
     doc: One part of a message.
     type: union
@@ -267,6 +281,8 @@ schemas:
     variants:
       - { value: text, payload: MessagePartText, doc: "Text." }
       - { value: file, payload: MessagePartFile, doc: "A persisted file reference." }
+      - { value: tool_call, payload: MessagePartToolCall, doc: "A canonical tool call." }
+      - { value: tool_result, payload: MessagePartToolResult, doc: "A canonical tool result." }
 
   Message:
     doc: One message in a session.
@@ -283,7 +299,7 @@ schemas:
     doc: One page of messages.
     type: object
     fields:
-      items: { type: array, max: 1000, items: { type: ref, to: Message }, doc: "The page." }
+      items: { type: array, max: 100, items: { type: ref, to: Message }, doc: "The page." }
       nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
 
   MessageSendRequest:
@@ -300,6 +316,15 @@ schemas:
       message: { type: ref, to: Message, doc: "The admitted message." }
       run: { type: ref, to: Run, doc: "The queued or started run." }
 
+  RunFailure:
+    doc: A durable run failure with no synthetic request identity.
+    type: object
+    fields:
+      code: { type: error_code, doc: "The stable public failure code." }
+      message: { type: string, min: 1, max: 4096, doc: "Customer-safe failure detail." }
+      detail: { type: canonical_json, optional: true, doc: "Typed customer-safe detail." }
+      retryable: { type: boolean, doc: "Whether the same run step may be retried." }
+
   Run:
     doc: One admitted turn of execution.
     type: object
@@ -313,7 +338,7 @@ schemas:
       startedAt: { type: timestamp, optional: true, doc: "When execution began." }
       terminalAt: { type: timestamp, optional: true, doc: "When it reached a terminal status." }
       outputMessageIds: { type: array, max: 1000, optional: true, items: { type: id, of: message }, doc: "Messages it produced." }
-      error: { type: ref, to: ApiErrorBody, optional: true, doc: "The terminal failure." }
+      error: { type: ref, to: RunFailure, optional: true, doc: "The terminal failure." }
       telemetryComplete: { type: boolean, optional: true, doc: "Whether the run has no recorded gaps." }
       telemetryGapIds: { type: array, max: 100, optional: true, items: { type: id, of: telemetry_gap }, doc: "Gaps recorded during the run." }
 
@@ -321,7 +346,7 @@ schemas:
     doc: One page of runs.
     type: object
     fields:
-      items: { type: array, max: 1000, items: { type: ref, to: Run }, doc: "The page." }
+      items: { type: array, max: 100, items: { type: ref, to: Run }, doc: "The page." }
       nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
 
   SessionPersistRequest:

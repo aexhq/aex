@@ -3,12 +3,13 @@
 
 use aex_brain_domain::effect::EffectKind;
 use aex_brain_domain::ids::{
-    AgentId, CatalogPin, ContentHash, DetachedOperationId, EffectId, JournalSeq, ModelSlug,
-    OwnerToken, Timestamp, ToolName, WakeId,
+    AgentId, CatalogPin, DetachedOperationId, EffectId, JournalSeq, ModelSlug, OwnerToken,
+    Timestamp, WakeId,
 };
-use aex_brain_domain::wire_pending::{
-    DurableOperationSupport, ModelCapability, ProviderId, ToolManifestEntry,
-};
+pub use aex_model_catalog::document::CatalogDigest;
+use aex_model_catalog::document::DurableOperationSupport;
+use aex_model_catalog::{CatalogError as ModelCatalogError, QualifiedModel};
+use aex_wire::provider::ProviderId;
 
 /// The signed immutable catalog an agent is pinned to for its whole life.
 ///
@@ -36,14 +37,7 @@ pub trait CatalogPort: Send + Sync + 'static {
         pin: &CatalogPin,
         provider: ProviderId,
         model: &ModelSlug,
-    ) -> Result<ModelCapability, CatalogError>;
-
-    /// What the catalog says about one tool.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`CatalogError`] when the pin is unknown or the tool is absent or staged.
-    fn tool(&self, pin: &CatalogPin, name: &ToolName) -> Result<ToolManifestEntry, CatalogError>;
+    ) -> Result<QualifiedModel, CatalogError>;
 
     /// Whether a dispatched call to this model can be resumed or looked up.
     ///
@@ -58,18 +52,6 @@ pub trait CatalogPort: Send + Sync + 'static {
     ) -> DurableOperationSupport;
 }
 
-/// The identity of one signed catalog artifact.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CatalogDigest {
-    /// The content digest the pin names.
-    pub digest: ContentHash,
-    /// The catalog revision, for receipts.
-    pub revision: u64,
-    /// Whether the signature over the artifact verified. A catalog whose signature did not
-    /// verify is never partially trusted: it is rejected at load.
-    pub signature_verified: bool,
-}
-
 /// Why a catalog lookup failed.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CatalogError {
@@ -77,41 +59,11 @@ pub enum CatalogError {
     #[error("catalog pin {pin} is not loaded")]
     UnknownPin {
         /// The pin.
-        pin: ContentHash,
+        pin: CatalogPin,
     },
-    /// The catalog has no such model.
-    #[error("model {provider:?}/{model:?} is not in catalog {pin}")]
-    UnknownModel {
-        /// The pin.
-        pin: ContentHash,
-        /// The provider asked for.
-        provider: ProviderId,
-        /// The model asked for.
-        model: ModelSlug,
-    },
-    /// The catalog has no such tool.
-    #[error("tool {name:?} is not in catalog {pin}")]
-    UnknownTool {
-        /// The pin.
-        pin: ContentHash,
-        /// The tool asked for.
-        name: ToolName,
-    },
-    /// The entry exists but no live conformance receipt has admitted it.
-    ///
-    /// Every entry ships staged, so a fresh process admits zero models until conformance
-    /// is proved. Guessing a default admitted model would assert evidence nobody earned.
-    #[error("{what} is staged, not admitted")]
-    NotAdmitted {
-        /// Which entry.
-        what: String,
-    },
-    /// The artifact's signature did not verify.
-    #[error("catalog {pin} failed signature verification")]
-    SignatureInvalid {
-        /// The pin.
-        pin: ContentHash,
-    },
+    /// The verified catalog refused the provider/model pair.
+    #[error(transparent)]
+    Lookup(#[from] ModelCatalogError),
 }
 
 /// A monotonic instant. Never comparable to wall-clock time, on purpose.
@@ -126,7 +78,7 @@ impl SteadyInstant {
     }
 }
 
-/// Time, as the only two readings the Brain is allowed to take.
+/// Time, as the only two readings and the one timer the Brain is allowed to use.
 ///
 /// Deadlines use [`ClockPort::steady`]; anything durable uses [`ClockPort::now`]. Keeping
 /// them apart is what stops a clock adjustment from expiring a live deadline, and what
@@ -138,6 +90,13 @@ pub trait ClockPort: Send + Sync + 'static {
 
     /// A monotonic reading. Deadlines and elapsed-time measurements use this.
     fn steady(&self) -> SteadyInstant;
+
+    /// Completes after `duration` without occupying an executor thread.
+    ///
+    /// The lease supervisor uses this timer rather than polling an effect in a loop. Keeping
+    /// the timer behind the same port as the readings preserves the runtime-free application
+    /// boundary and gives deterministic tests control of every renewal interleaving.
+    fn sleep(&self, duration: core::time::Duration) -> super::BoxFuture<'_, ()>;
 }
 
 /// Identifier generation.

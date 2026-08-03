@@ -144,12 +144,11 @@ variable "wildcard_resource_allowlist" {
 
 variable "boundary_policy_arn" {
   type        = string
-  default     = null
-  description = "Optional permissions boundary attached to the role."
+  description = "Required owner-managed permissions boundary attached to the role. The application deploy identity must not own this policy."
 
   validation {
-    condition     = var.boundary_policy_arn == null || can(regex("^arn:aws[a-z-]*:iam::[0-9A-Za-z-]{1,64}:policy/[A-Za-z0-9+=,.@_/-]+$", coalesce(var.boundary_policy_arn, "none")))
-    error_message = "When set, the permissions boundary must be an IAM policy ARN."
+    condition     = can(regex("^arn:aws[a-z-]*:iam::[0-9]{12}:policy/[A-Za-z0-9+=,.@_/-]+$", var.boundary_policy_arn))
+    error_message = "The permissions boundary must be an exact IAM managed-policy ARN in a 12-digit AWS account."
   }
 }
 

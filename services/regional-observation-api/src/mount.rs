@@ -21,6 +21,7 @@ use axum::routing::{MethodFilter, on};
 
 use aex_internal_contracts::assertion::AssertionAudience;
 use aex_regional_http::authz::{LambdaAssertionSource, RegionalProjection};
+use aex_regional_http::capacity::CapacityProjection;
 use aex_regional_http::edge::{RegionalEdge, SystemClock};
 use aex_regional_http::mount::AdmissionRequest;
 #[cfg(not(test))]
@@ -49,6 +50,7 @@ pub const AUDIENCE: AssertionAudience = AssertionAudience::RegionalObservation;
 pub type Edge = RegionalEdge<
     LambdaAssertionSource,
     RegionalProjection<aex_session_dynamodb::projection::ProjectionReader>,
+    CapacityProjection<aex_session_dynamodb::projection::ProjectionReader>,
     SystemClock,
 >;
 
@@ -468,6 +470,25 @@ mod tests {
         assert_eq!(RouteGroup::TelemetryLifecycle.routes().len(), 12);
         assert_eq!(owned_routes().len(), 27);
         assert_eq!(served_routes().len(), 25);
+    }
+
+    #[test]
+    fn served_routes_match_the_generated_actual_mount_authority() {
+        let registry: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../api/generated/registries/routes.json"
+        ))
+        .expect("generated route registry");
+        let generated: Vec<RouteId> = registry["routes"]
+            .as_array()
+            .expect("route rows")
+            .iter()
+            .filter(|route| route["servedArtifact"] == "regional-observation-api")
+            .map(|route| {
+                RouteId::parse(route["operationId"].as_str().expect("operation id"))
+                    .expect("generated operation id")
+            })
+            .collect();
+        assert_eq!(served_routes(), generated);
     }
 
     #[test]

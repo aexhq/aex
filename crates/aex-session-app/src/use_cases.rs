@@ -232,7 +232,7 @@ pub async fn admit_message(
         intent: TransactionIntent::AdmitMessage,
         conditions,
         writes: vec![
-            Write::AppendMessage(Box::new(message.clone())),
+            Write::PutMessage(Box::new(message.clone())),
             Write::PutRun(Box::new(commit.run.clone())),
             Write::PutSessionHead(Box::new(head)),
         ],
@@ -280,7 +280,10 @@ pub async fn start_run(
     let commit = start_run_domain(&stored, &snapshot.session, context.clock.now())?;
 
     let mut conditions = live_conditions(&snapshot.session);
-    conditions.push(Condition::RunNonTerminal { run: command.run });
+    conditions.push(Condition::RunNonTerminal {
+        session: command.session,
+        run: command.run,
+    });
     conditions.push(Condition::SessionActiveRun {
         session: command.session,
         expected: Some(command.run),
@@ -347,13 +350,14 @@ pub async fn commit_terminal(
         commit
             .sealed_messages
             .iter()
-            .map(|message| Write::SealMessage(message.id)),
+            .map(|message| Write::PutMessage(Box::new(message.clone()))),
     );
 
     let plan = SessionTransaction {
         intent: TransactionIntent::CommitTerminal,
         conditions: vec![
             Condition::RunNonTerminal {
+                session: command.session,
                 run: command.attempt.run,
             },
             Condition::SessionActiveRun {
@@ -374,6 +378,7 @@ pub async fn commit_terminal(
                 epoch: snapshot.session.deletion.epoch,
             },
             Condition::AgentFence {
+                session: command.session,
                 agent: agent.id,
                 at_least: agent.fence(),
             },
@@ -757,7 +762,6 @@ pub async fn trash_session(
         ],
         writes: vec![
             Write::PutOperation(Box::new(operation.clone())),
-            Write::PutDeletionGuard(Box::new(commit.guard)),
             Write::PutSessionHead(Box::new(head)),
         ],
         after_commit: Vec::new(),
@@ -827,7 +831,6 @@ pub async fn restore_session(
         ],
         writes: vec![
             Write::PutOperation(Box::new(operation.clone())),
-            Write::PutDeletionGuard(Box::new(commit.guard)),
             Write::PutSessionHead(Box::new(head)),
         ],
         after_commit: Vec::new(),
@@ -904,7 +907,6 @@ pub async fn purge_session(
         ],
         writes: vec![
             Write::PutOperation(Box::new(operation.clone())),
-            Write::PutDeletionGuard(Box::new(commit.guard)),
             Write::PutSessionHead(Box::new(head)),
         ],
         after_commit: Vec::new(),

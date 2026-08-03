@@ -908,6 +908,7 @@ impl RuntimeControl {
         &self,
         generation: GenerationId,
         intent_id: &LifecycleIntentId,
+        microvm: &MicrovmId,
         request: &ProviderRequestId,
     ) -> Result<(), CommandOutcome> {
         self.ports
@@ -915,6 +916,7 @@ impl RuntimeControl {
             .record_provider_request(&LifecycleRequestPlan {
                 intent_id: intent_id.clone(),
                 generation,
+                microvm: microvm.clone(),
                 provider_request_id: request.clone(),
             })
             .await
@@ -983,6 +985,7 @@ impl RuntimeControl {
                 accounted_from: now,
                 suspended_at: (closure.next_state == GenerationState::Suspended).then_some(now),
                 snapshot_ordinal,
+                lifetime_started_at: None,
             }),
             at: now,
         };
@@ -1107,7 +1110,7 @@ impl RuntimeControl {
         // 4. Persist the response identity before waiting. A crash after this
         // point leaves enough evidence for exact-identity reconciliation.
         if let Err(outcome) = self
-            .remember_request(view.head.generation, &intent_id, &request)
+            .remember_request(view.head.generation, &intent_id, microvm, &request)
             .await
         {
             return outcome;
@@ -1246,7 +1249,7 @@ impl RuntimeControl {
             }
         };
         if let Err(outcome) = self
-            .remember_request(view.head.generation, &intent_id, &request)
+            .remember_request(view.head.generation, &intent_id, &microvm, &request)
             .await
         {
             return outcome;
@@ -1356,7 +1359,7 @@ impl RuntimeControl {
         };
         if let Some(request) = &request
             && let Err(outcome) = self
-                .remember_request(view.head.generation, &intent_id, request)
+                .remember_request(view.head.generation, &intent_id, &microvm, request)
                 .await
         {
             return outcome;
@@ -1795,9 +1798,9 @@ mod tests {
     use aex_runtime_control::store::{
         GenerationCommit, GenerationPlan, GenerationPointer, GenerationView, IdleProbe,
         LifecycleIntentCommit, LifecycleIntentPlan, LifecycleReceipt, LifecycleReceiptPlan,
-        LifecycleReconcilePlan, LifecycleRequestPlan, OpenEffectCounter, PageBudget,
-        RuntimeActivityStore, RuntimeDuePage, RuntimeShard, RuntimeStoreError, StoreFuture,
-        UsageOutboxEntry,
+        LifecycleReconcilePlan, LifecycleRequestPlan, OpenEffectCounter, OperationAdmissionPlan,
+        OperationSettlementPlan, PageBudget, RuntimeActivityStore, RuntimeDuePage, RuntimeShard,
+        RuntimeStoreError, StoreFuture, UsageOutboxEntry,
     };
     use aex_runtime_control::usage::{SinkError, UsageCategory, UsageFactSink};
     use aex_usage_domain::fact::{FactDraft, FactKind};
@@ -1844,11 +1847,32 @@ mod tests {
     }
 
     fn view(state: GenerationState, open: u32) -> GenerationView {
+        let workspace = WorkspaceId::from_uuid7(Uuid7::compose(3, [3; 10]));
+        let organization = OrganizationId::from_uuid7(Uuid7::compose(2, [2; 10]));
         GenerationView {
+            definition: aex_runtime_control::generation::HandsGeneration {
+                generation: generation(),
+                session: session(),
+                workspace,
+                organization,
+                size: ComputeSize::Gb1,
+                image: aex_runtime_control::generation::ImagePin {
+                    identifier: aex_runtime_control::generation::ImageIdentifier(
+                        "hands:test".to_owned(),
+                    ),
+                    version: aex_runtime_control::generation::ImageVersion("1".to_owned()),
+                    artifact_digest: aex_wire::ids::ContentHash::from_bytes([7; 32]),
+                    capabilities: Vec::new(),
+                },
+                network: aex_runtime_control::generation::NetworkPolicy::None,
+                protocol_version: aex_internal_contracts::SchemaVersion::V1,
+                limits_revision: aex_runtime_control::generation::LimitsRevision(1),
+                root: aex_runtime_control::generation::guest_root(),
+            },
             head: head(state, open),
             session: session(),
-            workspace: WorkspaceId::from_uuid7(Uuid7::compose(3, [3; 10])),
-            organization: OrganizationId::from_uuid7(Uuid7::compose(2, [2; 10])),
+            workspace,
+            organization,
             microvm: Some(microvm()),
             lifetime: Some(Lifetime {
                 launched_at: at(LAUNCHED_AT),
@@ -1963,6 +1987,37 @@ mod tests {
             Box::pin(async move { Ok(GenerationCommit { head, revision }) })
         }
 
+        fn admit_operation<'a>(&'a self, plan: &'a OperationAdmissionPlan) -> StoreFuture<'a, ()> {
+            let mut state = self.lock();
+            if let Some(view) = state.view.as_mut() {
+                view.head.open_operations = plan.open_operations;
+                view.head.revision = plan.next_revision;
+                view.head.last_busy_at = plan.last_busy_at;
+                view.head.idle_since = None;
+            }
+            if let Some(pointer) = state.pointer.as_mut() {
+                pointer.revision = plan.next_revision;
+            }
+            Box::pin(async { Ok(()) })
+        }
+
+        fn settle_operation<'a>(
+            &'a self,
+            plan: &'a OperationSettlementPlan,
+        ) -> StoreFuture<'a, ()> {
+            let mut state = self.lock();
+            if let Some(view) = state.view.as_mut() {
+                view.head.open_operations = plan.open_operations;
+                view.head.revision = plan.next_revision;
+                view.head.last_busy_at = plan.last_busy_at;
+                view.head.idle_since = (plan.open_operations == 0).then_some(plan.last_busy_at);
+            }
+            if let Some(pointer) = state.pointer.as_mut() {
+                pointer.revision = plan.next_revision;
+            }
+            Box::pin(async { Ok(()) })
+        }
+
         fn record_intent<'a>(
             &'a self,
             plan: &'a LifecycleIntentPlan,
@@ -2050,6 +2105,7 @@ mod tests {
                     })
                 });
             }
+            intent.microvm = Some(plan.microvm.clone());
             intent.provider_request_id = Some(plan.provider_request_id.clone());
             let intent = intent.clone();
             drop(state);
@@ -2313,6 +2369,7 @@ mod tests {
                         state,
                         endpoint: None,
                         launched_at: Some(at(LAUNCHED_AT)),
+                        request_id: None,
                     }),
                     None => Err(ProviderCall::NotFound),
                 }

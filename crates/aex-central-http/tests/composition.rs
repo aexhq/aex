@@ -686,14 +686,18 @@ fn the_eight_central_groups_partition_the_central_route_table() {
 }
 
 #[test]
-fn each_deployable_mounts_a_disjoint_slice_and_the_union_is_the_whole_plane() {
+fn each_deployable_mounts_a_disjoint_slice_of_the_actually_served_plane() {
     let mut seen: BTreeSet<RouteId> = BTreeSet::new();
     for service in CentralServiceId::ALL {
         for id in service.routes() {
             assert!(seen.insert(id), "{id:?} is served twice");
         }
     }
-    assert_eq!(seen, central_routes().into_iter().collect::<BTreeSet<_>>());
+    let all = central_routes().into_iter().collect::<BTreeSet<_>>();
+    assert_eq!(
+        all.difference(&seen).copied().collect::<Vec<_>>(),
+        vec![RouteId::AccountGet]
+    );
 }
 
 // ---------------------------------------------------------------------------

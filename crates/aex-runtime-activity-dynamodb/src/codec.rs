@@ -7,7 +7,7 @@
 
 use aex_hands_protocol::lifecycle::KeepaliveLease;
 use aex_hands_protocol::rpc::Fence;
-use aex_runtime_control::generation::{GenerationState, Revision, TransportMode};
+use aex_runtime_control::generation::{GenerationState, HandsGeneration, Revision, TransportMode};
 use aex_runtime_control::lifecycle::{IntentRecord, Lifetime, MicrovmId};
 use aex_session_dynamodb::attr::{CodecError, Item, ItemBuilder, PK, Row, SK, n, s, stamp};
 use aex_session_dynamodb::component::KeyError;
@@ -39,11 +39,20 @@ pub enum EncodeError {
         /// What was offered.
         found: String,
     },
+    /// The immutable definition disagrees with the indexed head identity.
+    #[error("the immutable generation definition disagrees with `{field}`")]
+    Definition {
+        /// Which duplicated identity field drifted.
+        field: &'static str,
+    },
 }
 
 /// One Hands generation head.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GenerationRow {
+    /// The immutable exact-generation tuple. This is the launch authority: a
+    /// retry reuses it byte-for-byte and never resolves mutable catalog state.
+    pub definition: HandsGeneration,
     /// The owning session.
     pub session: SessionId,
     /// The owning workspace.
@@ -62,8 +71,6 @@ pub struct GenerationRow {
     pub revision: Revision,
     /// The provider's own identity for it, once it has one.
     pub provider_vm_id: Option<String>,
-    /// The image it booted.
-    pub image_identifier: Option<String>,
     /// Operations admitted and not yet settled.
     pub open_operations: u32,
     /// The last authoritatively busy instant.
@@ -114,6 +121,7 @@ pub struct GenerationRow {
 /// Only if serialization of the closed [`IntentRecord`] or [`KeepaliveLease`]
 /// data model fails; neither type contains a fallible JSON value.
 pub fn encode_generation(row: &GenerationRow) -> Result<Item, EncodeError> {
+    require_definition_coherence(row)?;
     let key = keys::head(row.session, row.generation);
     let builder = ItemBuilder::new(HANDS_GENERATION)
         .set(PK, s(key.pk))
@@ -126,16 +134,16 @@ pub fn encode_generation(row: &GenerationRow) -> Result<Item, EncodeError> {
         .set("state", s(keys::state_str(row.state)))
         .set("fence", n(row.fence.0))
         .set("revision", n(row.revision.value()))
+        .set(
+            "generationDefinition",
+            s(serde_json::to_string(&row.definition).expect("HandsGeneration serializes")),
+        )
         .set_opt(
             "providerVmId",
             row.microvm
                 .as_ref()
                 .map(|microvm| s(microvm.0.clone()))
                 .or_else(|| row.provider_vm_id.as_ref().map(|id| s(id.clone()))),
-        )
-        .set_opt(
-            "imageIdentifier",
-            row.image_identifier.as_ref().map(|id| s(id.clone())),
         )
         .set("openOperations", n(u64::from(row.open_operations)))
         .set("lastBusyAt", stamp(row.last_busy_at))
@@ -211,7 +219,14 @@ pub fn decode_generation(item: &Item, asserted: WorkspaceId) -> Result<Generatio
             attribute: "size",
             reason: "outside the five public compute shapes".to_owned(),
         })?;
-    Ok(GenerationRow {
+    let definition = serde_json::from_str::<HandsGeneration>(row.string("generationDefinition")?)
+        .map_err(|error| CodecError::Malformed {
+        item_type: HANDS_GENERATION,
+        attribute: "generationDefinition",
+        reason: error.to_string(),
+    })?;
+    let decoded = GenerationRow {
+        definition,
         session: row.id::<SessionId>("sessionId")?,
         workspace: asserted,
         organization: row.id::<OrganizationId>("organizationId")?,
@@ -227,7 +242,6 @@ pub fn decode_generation(item: &Item, asserted: WorkspaceId) -> Result<Generatio
         fence: Fence(row.u64("fence")?),
         revision: Revision::new(row.u64("revision")?),
         provider_vm_id: row.opt_string("providerVmId")?.map(str::to_owned),
-        image_identifier: row.opt_string("imageIdentifier")?.map(str::to_owned),
         open_operations: u32::try_from(row.u64("openOperations")?).map_err(|_| {
             CodecError::Malformed {
                 item_type: HANDS_GENERATION,
@@ -290,6 +304,39 @@ pub fn decode_generation(item: &Item, asserted: WorkspaceId) -> Result<Generatio
         },
         next_evaluate_at: row.timestamp("nextEvaluateAt")?,
         updated_at: row.timestamp("updatedAt")?,
+    };
+    require_decoded_definition_coherence(&decoded)?;
+    Ok(decoded)
+}
+
+fn require_definition_coherence(row: &GenerationRow) -> Result<(), EncodeError> {
+    if row.definition.session != row.session {
+        return Err(EncodeError::Definition { field: "session" });
+    }
+    if row.definition.workspace != row.workspace {
+        return Err(EncodeError::Definition { field: "workspace" });
+    }
+    if row.definition.organization != row.organization {
+        return Err(EncodeError::Definition {
+            field: "organization",
+        });
+    }
+    if row.definition.generation != row.generation {
+        return Err(EncodeError::Definition {
+            field: "generation",
+        });
+    }
+    if row.definition.size != row.size {
+        return Err(EncodeError::Definition { field: "size" });
+    }
+    Ok(())
+}
+
+fn require_decoded_definition_coherence(row: &GenerationRow) -> Result<(), CodecError> {
+    require_definition_coherence(row).map_err(|error| CodecError::Malformed {
+        item_type: HANDS_GENERATION,
+        attribute: "generationDefinition",
+        reason: error.to_string(),
     })
 }
 

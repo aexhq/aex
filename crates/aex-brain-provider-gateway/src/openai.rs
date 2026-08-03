@@ -41,12 +41,10 @@ use aex_model_catalog::canonical::{
     UsageFieldSet,
 };
 use aex_model_catalog::document::{
-    AdapterSourceDigest, Capability, CapabilitySet, Dialect, EndpointPin, ReasoningMode,
-    SamplingSupport, SchemaEncoding, StructuredOutputPolicy, ToolEncoding,
+    Capability, CapabilitySet, Dialect, EndpointPin, ReasoningMode, SamplingSupport,
+    SchemaEncoding, StructuredOutputPolicy, ToolEncoding,
 };
-use aex_model_catalog::primitives::{
-    Blake3Digest, BoundedString, ProviderRequestId, ToolCallId, ToolName,
-};
+use aex_model_catalog::primitives::{BoundedString, ProviderRequestId, ToolCallId, ToolName};
 use aex_wire::CanonicalJson;
 use aex_wire::provider::ProviderId;
 use bytes::Bytes;
@@ -67,11 +65,6 @@ use crate::transport::{Accept, AuthScheme, WireRequest};
 
 /// The single path this dialect posts to.
 const RESPONSES_PATH: &str = "/v1/responses";
-
-/// The compiled identity of this adapter's source, which every conformance
-/// receipt is bound to (D-06). Changing observable behaviour means bumping it,
-/// which invalidates every receipt earned against the previous behaviour.
-const SOURCE_TAG: &[u8] = b"aex-brain-provider-gateway::openai@1";
 
 /// The `include` member that makes round-trip reasoning material arrive.
 const INCLUDE_ENCRYPTED_REASONING: &str = "reasoning.encrypted_content";
@@ -277,10 +270,6 @@ struct ReasoningConfig {
 impl ProviderAdapter for OpenAiAdapter {
     fn provider(&self) -> ProviderId {
         ProviderId::Openai
-    }
-
-    fn source_digest(&self) -> AdapterSourceDigest {
-        AdapterSourceDigest(Blake3Digest::of(SOURCE_TAG))
     }
 
     fn build_request(
@@ -2045,10 +2034,8 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn the_adapter_speaks_for_openai_and_names_its_source() {
+    fn the_adapter_speaks_for_openai() {
         assert_eq!(OpenAiAdapter.provider(), ProviderId::Openai);
-        // The digest is compiled, not derived at runtime, and is stable.
-        assert_eq!(OpenAiAdapter.source_digest(), OpenAiAdapter.source_digest());
     }
 
     #[test]

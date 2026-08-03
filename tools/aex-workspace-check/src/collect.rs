@@ -22,11 +22,12 @@ use crate::registry::{
 /// prevent.
 pub const NPM_ROOTS: &[&str] = &["packages", "apps"];
 
-/// npm packages that no `workspaces` glob reaches.
+/// npm packages outside the two wildcard workspace roots.
 ///
-/// `tools/eslint-plugin-aex` is referenced by path, and the two Stripe edges
-/// live under `services/` beside Cargo members, so each is named here
-/// explicitly rather than being silently exempt from declaring its ownership.
+/// `tools/eslint-plugin-aex` is referenced by path. The two Stripe edges live
+/// under `services/` beside Cargo members and are literal root Bun workspaces.
+/// They stay explicit here because this collector expands package-group roots,
+/// while Bun expands the root manifest's literal package entries.
 /// Public for the same reason as [`NPM_ROOTS`]: the delivery graph must see the
 /// same package set this crate does, or the two authorities derive different
 /// live targets from the same tree.

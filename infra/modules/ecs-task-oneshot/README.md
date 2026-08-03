@@ -47,6 +47,7 @@ outputs.
 - Every secret environment value is an ARN reference; a plaintext value is
   rejected.
 - Every environment key is namespaced `AEX_*`.
+- Task-definition revisions are retained on replacement or destroy. Release roles therefore do not need the resource-unscopable ECS deregistration action; plane-aware revision cleanup is a separate operational responsibility.
 
 ## Not expressed as a test
 

@@ -35,4 +35,5 @@ time.workspace = true
 uuid.workspace = true
 
 aex-brain-domain = { path = "../aex-brain-domain" }
+aex-model-catalog = { path = "../aex-model-catalog" }
 aex-wire = { path = "../aex-wire" }

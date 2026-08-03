@@ -5,12 +5,9 @@
 //! `blake3` — so `aex-brain-domain` and `aex-brain-provider-gateway` can both
 //! depend on it without acquiring Tokio, HTTP or AWS.
 //!
-//! `TODO(cross-stream)`: `aex-brain-domain` has **not** taken the dependency. It
-//! defines its own `aex_brain_domain::wire_pending` copies of `CanonicalBlock`,
-//! `NormalizedUsage`, `StopReason`, `CompleteAssistantMessage`, `CanonicalModelRequest`
-//! and `ProviderReceipt`, and every one of them has since diverged from the definitions
-//! here. Two authorities exist for one vocabulary today; the markers in that module
-//! record what each divergence costs to close.
+//! `aex-brain-domain` depends on this crate and re-exports these canonical
+//! types. There is one authority for provider request, result, usage, preview
+//! and receipt vocabulary across the model catalog, Brain and gateway.
 //!
 //! Two separations are structural rather than conventional:
 //!
@@ -209,11 +206,43 @@ pub struct CompleteAssistantMessage {
     pub proof: CompleteProof,
 }
 
-/// blake3 over the canonical rendering of blocks, stop reason, usage, provider,
+/// SHA-256 over the canonical rendering of blocks, stop reason, usage, provider,
 /// model and catalog revision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct CompleteProof(pub ContentHash);
+
+impl CompleteAssistantMessage {
+    /// Whether the completeness proof covers this exact message and usage.
+    ///
+    /// This is the fold-side verifier. It deliberately does not require a
+    /// live [`QualifiedModel`]: committed history remains verifiable after the
+    /// catalog revision is no longer active.
+    #[must_use]
+    pub fn proof_covers(&self, usage: &NormalizedUsage) -> bool {
+        if !usage.is_consistent() {
+            return false;
+        }
+        complete_proof_fields(
+            &self.blocks,
+            self.stop_reason,
+            usage,
+            self.provider,
+            &self.model,
+            self.catalog,
+        )
+        .is_ok_and(|proof| proof == self.proof)
+    }
+
+    /// Projects a complete assistant result into model-visible history.
+    #[must_use]
+    pub fn as_message(&self) -> CanonicalMessage {
+        CanonicalMessage {
+            role: Role::Assistant,
+            blocks: self.blocks.clone(),
+        }
+    }
+}
 
 /// Why a model turn ended. Terminal only.
 ///
@@ -271,6 +300,9 @@ pub enum SealError {
     /// A tool input that could not be canonicalized.
     #[error("tool input is not canonical JSON")]
     InvalidToolInputJson,
+    /// Provider usage claimed more reasoning tokens than total output tokens.
+    #[error("reasoning token usage exceeds total output token usage")]
+    InconsistentUsage,
 }
 
 /// Shared-safety bound on the number of blocks in one sealed message.
@@ -289,6 +321,9 @@ pub fn seal(
     usage: &NormalizedUsage,
     model: &QualifiedModel,
 ) -> Result<CompleteAssistantMessage, SealError> {
+    if !usage.is_consistent() {
+        return Err(SealError::InconsistentUsage);
+    }
     if blocks.is_empty() {
         return Err(SealError::EmptyBlocks);
     }
@@ -374,11 +409,29 @@ fn complete_proof(
     usage: &NormalizedUsage,
     model: &QualifiedModel,
 ) -> Result<CompleteProof, SealError> {
+    complete_proof_fields(
+        blocks,
+        stop,
+        usage,
+        model.provider(),
+        model.model(),
+        model.catalog(),
+    )
+}
+
+fn complete_proof_fields(
+    blocks: &[CanonicalBlock],
+    stop: StopReason,
+    usage: &NormalizedUsage,
+    provider: ProviderId,
+    model: &ModelSlug,
+    catalog: CatalogRevision,
+) -> Result<CompleteProof, SealError> {
     let input = ProofInput {
         blocks,
-        catalog: model.catalog(),
-        model: model.model(),
-        provider: model.provider(),
+        catalog,
+        model,
+        provider,
         stop_reason: stop,
         usage,
     };
@@ -430,6 +483,36 @@ impl NormalizedUsage {
     pub const fn is_consistent(&self) -> bool {
         self.reasoning_tokens <= self.output_tokens
     }
+
+    /// Prompt tokens occupying the provider context window.
+    #[must_use]
+    pub const fn prompt_tokens(&self) -> u64 {
+        self.input_tokens
+            .saturating_add(self.cache_read_input_tokens)
+            .saturating_add(self.cache_write_input_tokens)
+    }
+
+    /// Saturating accumulation for fold-level observability totals.
+    pub const fn add(&mut self, other: Self) {
+        self.input_tokens = self.input_tokens.saturating_add(other.input_tokens);
+        self.cache_read_input_tokens = self
+            .cache_read_input_tokens
+            .saturating_add(other.cache_read_input_tokens);
+        self.cache_write_input_tokens = self
+            .cache_write_input_tokens
+            .saturating_add(other.cache_write_input_tokens);
+        self.output_tokens = self.output_tokens.saturating_add(other.output_tokens);
+        self.reasoning_tokens = self.reasoning_tokens.saturating_add(other.reasoning_tokens);
+        self.tool_use_prompt_tokens = self
+            .tool_use_prompt_tokens
+            .saturating_add(other.tool_use_prompt_tokens);
+        self.provider_total_tokens = match (self.provider_total_tokens, other.provider_total_tokens)
+        {
+            (Some(left), Some(right)) => Some(left.saturating_add(right)),
+            _ => None,
+        };
+        self.completeness = self.completeness.accumulated(other.completeness);
+    }
 }
 
 /// How complete a [`NormalizedUsage`] is. Usage is never invented: an absent
@@ -447,6 +530,21 @@ pub enum UsageCompleteness {
     },
     /// No usage arrived at all.
     Absent,
+}
+
+impl UsageCompleteness {
+    const fn accumulated(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Exact, Self::Exact) => Self::Exact,
+            (Self::Partial { missing: left }, Self::Partial { missing: right }) => Self::Partial {
+                missing: UsageFieldSet(left.0 | right.0),
+            },
+            (Self::Partial { missing }, Self::Exact) | (Self::Exact, Self::Partial { missing }) => {
+                Self::Partial { missing }
+            }
+            (Self::Absent, _) | (_, Self::Absent) => Self::Absent,
+        }
+    }
 }
 
 /// A bit set over the usage fields a provider may fail to report.
@@ -899,6 +997,38 @@ pub struct ProviderReceipt {
     /// The bounds in force for this dispatch, recorded because they are
     /// configuration rather than protocol facts (D-28).
     pub bounds: ReceiptBounds,
+}
+
+impl ProviderReceipt {
+    /// Whether this receipt identifies and commits to exactly one successful
+    /// canonical outcome.
+    #[must_use]
+    pub fn matches_outcome(
+        &self,
+        message: &CompleteAssistantMessage,
+        usage: &NormalizedUsage,
+    ) -> bool {
+        let first_frame_is_ordered = self
+            .first_frame_at
+            .is_some_and(|first| first >= self.started_at && first <= self.completed_at);
+        (200..300).contains(&self.http_status)
+            && self.attempts > 0
+            && self.frames > 0
+            && self.request_bytes > 0
+            && self.response_bytes > 0
+            && self.completed_at >= self.started_at
+            && first_frame_is_ordered
+            && self.bounds.max_frame_bytes > 0
+            && self.bounds.max_response_bytes > 0
+            && self.bounds.idle_frame_timeout_ms > 0
+            && self.bounds.total_deadline_ms > 0
+            && self.dialect.provider() == self.provider
+            && self.provider == message.provider
+            && self.model == message.model
+            && self.catalog == message.catalog
+            && self.response_receipt == Some(message.proof.0)
+            && message.proof_covers(usage)
+    }
 }
 
 /// Rate-limit feedback as recorded on a receipt.

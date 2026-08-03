@@ -40,7 +40,7 @@ pub mod signature;
 pub mod wire_pending;
 
 pub use catalog::{Catalog, CatalogHead, CatalogLoadError};
-pub use failure::{ProviderFailureClass, ProviderFailureKind};
+pub use failure::{ProviderFailureClass, ProviderFailureKind, RedactedDetail};
 pub use primitives::{
     Blake3Digest, BoundError, BoundedString, ModelSlug, ProviderRequestId, ToolCallId, ToolName,
 };

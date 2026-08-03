@@ -94,6 +94,7 @@ fn context(request_id: RequestId, route: RouteId) -> RequestContext {
         },
         limits: EffectiveLimits {
             json_body_bytes: 1_048_576,
+            otlp_body_bytes: 4 * 1_024 * 1_024,
             query_page_items: 100,
             query_page_bytes: 1_048_576,
         },

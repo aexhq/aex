@@ -4,8 +4,12 @@
 # cannot be: a scenario exercises a deployable through its public surface
 # without importing it, so no dependency edge exists to derive.
 #
-# A deployable observed by no scenario fails `graph verify`. "Nobody has said
-# what this service is for" is a gap worth blocking on.
+# A deployable observed by no scenario fails `graph verify`. Observation alone
+# is not runnable evidence: each scenario must also declare `package` as a
+# namespaced Cargo/npm graph node and `target` as an exact `aex.targets` key,
+# and that package must claim the scenario in `aex.scenarios`. The existing rows
+# intentionally omit those claims until their real targets land, so the graph
+# stays red rather than manufacturing scenario receipts.
 #
 # --- provisioning in `prd` (OD-35 / OD-36) -----------------------------------
 #
@@ -53,7 +57,11 @@ observes = ["artifact:central-authz"]
 [[scenario]]
 id = "SC-CONTROL-WORKSPACE"
 owner = "central-identity"
-observes = ["artifact:central-control-api", "artifact:central-control-worker"]
+observes = [
+  "artifact:central-control-api",
+  "artifact:central-control-worker",
+  "artifact:regional-capacity-controller",
+]
 
 [scenario.prd]
 rule = "deployable_write"
@@ -112,6 +120,7 @@ observes = [
   "artifact:usage-storage-worker",
   "artifact:usage-compute-worker",
   "artifact:usage-transfer-worker",
+  "artifact:regional-session-api",
 ]
 
 # --- session lifecycle ---------------------------------------------------------
@@ -147,7 +156,11 @@ observes = ["artifact:regional-stream"]
 [[scenario]]
 id = "SC-SECRET-CUSTODY"
 owner = "regional-stores"
-observes = ["artifact:regional-secret-api", "artifact:regional-secret-key-admin"]
+observes = [
+  "artifact:regional-secret-api",
+  "artifact:regional-secret-key-admin",
+  "artifact:regional-session-api",
+]
 
 [scenario.prd]
 rule = "secret_path"
@@ -162,7 +175,7 @@ provisions = [
 [[scenario]]
 id = "SC-CONTENT-LIFECYCLE"
 owner = "regional-stores"
-observes = ["artifact:content-lifecycle-worker"]
+observes = ["artifact:content-lifecycle-worker", "artifact:regional-session-api"]
 
 [scenario.prd]
 rule = "content_path"
@@ -205,6 +218,7 @@ observes = ["artifact:regional-observation-api"]
 id = "SC-OBSERVATION-EXPORT"
 owner = "observations-usage"
 observes = [
+  "artifact:regional-observation-api",
   "artifact:observation-export-launcher",
   "artifact:observation-export-task",
 ]
@@ -212,16 +226,26 @@ observes = [
 [[scenario]]
 id = "SC-OBSERVATION-GAP"
 owner = "observations-usage"
-observes = ["artifact:observation-reconciler"]
+observes = ["artifact:observation-reconciler", "artifact:regional-observation-api"]
 
 # --- runtime ---------------------------------------------------------------------
 
 [[scenario]]
 id = "SC-BRAIN-TURN"
 owner = "brain-core"
-observes = ["artifact:brain-mux"]
+observes = ["artifact:brain-mux", "artifact:regional-session-api"]
 
 [[scenario]]
 id = "SC-HANDS-HOSTILE"
 owner = "hands"
-observes = ["artifact:hands-agent", "artifact:hands-image"]
+observes = [
+  "artifact:hands-agent",
+  "artifact:hands-image-512mb",
+  "artifact:hands-image-1gb",
+  "artifact:hands-image-2gb",
+  "artifact:hands-image-2gb-browser",
+  "artifact:hands-image-4gb",
+  "artifact:hands-image-4gb-browser",
+  "artifact:hands-image-8gb",
+  "artifact:hands-image-8gb-browser",
+]

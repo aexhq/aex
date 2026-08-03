@@ -95,6 +95,7 @@ fn request_context() -> RequestContext {
         },
         limits: EffectiveLimits {
             json_body_bytes: 65_536,
+            otlp_body_bytes: 4 * 1_024 * 1_024,
             query_page_items: 100,
             query_page_bytes: 8 * 1024 * 1024,
         },
@@ -542,12 +543,17 @@ fn edge_precedence_is_the_complete_wire_table() {
 }
 
 #[test]
-fn every_generated_regional_route_has_exactly_one_owner() {
+fn every_generated_regional_route_has_exactly_one_planned_owner() {
     use aex_regional_http::router::{RouteOwner, route_owner};
 
     for id in RouteId::ALL {
         if route(*id).plane == Plane::Regional {
-            assert!(route_owner(*id).is_some(), "{id}");
+            let owner = route_owner(*id).unwrap_or_else(|| panic!("{id}"));
+            assert_eq!(
+                owner.deployable(),
+                route(*id).serving_artifact,
+                "planned runtime and generated delivery ownership disagree for {id}"
+            );
         } else {
             assert_eq!(route_owner(*id), None, "{id}");
         }
@@ -569,6 +575,9 @@ fn every_generated_regional_route_has_exactly_one_owner() {
         route_owner(RouteId::SessionObservationsEventsQuery),
         Some(RouteOwner::ObservationApi)
     );
+    for id in [RouteId::WorkspaceLimitGet, RouteId::WorkspaceLimitsList] {
+        assert_eq!(route_owner(id), Some(RouteOwner::SessionApi), "`{id}`");
+    }
 }
 
 #[test]

@@ -17,5 +17,6 @@
 //! - the Stripe protocol (`stripe-command-edge`).
 
 pub mod config;
+pub mod gateway;
 pub mod handler;
 pub mod sweep;

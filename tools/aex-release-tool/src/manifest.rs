@@ -12,12 +12,22 @@
 //! ARN or `:latest` is not a slightly worse manifest, it is a different kind of
 //! object.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
 use crate::canon;
 use crate::error::{Exit, Result, ToolError, Violation};
+
+const LOCATION_KINDS: &[&str] = &[
+    "github-release",
+    "oci",
+    "s3",
+    "ecr",
+    "npm",
+    "gha-artifact",
+    "local",
+];
 
 /// One unit's entry in a composition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,10 +99,46 @@ pub struct CentralMigrations {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RegionalMigrations {
-    /// Bundle digest.
+    /// SHA-256 over the transported JSON bytes.
     pub bundle_digest: String,
+    /// Exact transported byte length.
+    pub bundle_size_bytes: u64,
+    /// Commit/run-addressed public HTTPS release asset.
+    pub bundle_uri: String,
+    /// BLAKE3 identity over the canonical decoded table definitions.
+    pub definitions_digest: String,
     /// Generation number.
     pub generation: u32,
+}
+
+/// Exact public source and workflow run that minted the release inputs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PublicSource {
+    /// Public GitHub repository.
+    pub repository: String,
+    /// Exact public source commit.
+    pub commit_sha: String,
+    /// GitHub workflow run id used in the immutable release tag.
+    pub workflow_run_id: String,
+    /// GitHub workflow attempt used in the immutable release tag.
+    pub workflow_run_attempt: u64,
+}
+
+/// Raw, directly executable public release-tool identity.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReleaseToolIdentity {
+    /// Exact release-tool semantic version.
+    pub version: String,
+    /// SHA-256 digest of the raw executable bytes.
+    pub digest: String,
+    /// Exact raw executable byte length.
+    pub size_bytes: u64,
+    /// Commit/run-addressed public HTTPS release asset.
+    pub uri: String,
+    /// Rust target triple of the executable.
+    pub target: String,
 }
 
 /// The infrastructure module bundle a root pins.
@@ -101,8 +147,10 @@ pub struct RegionalMigrations {
 pub struct Infra {
     /// Module bundle digest.
     pub module_bundle_digest: String,
-    /// Where the bundle is stored.
-    pub source_archive_uri: String,
+    /// Exact bundle byte length.
+    pub module_bundle_size_bytes: u64,
+    /// Commit/run-addressed public HTTPS release asset.
+    pub module_bundle_uri: String,
     /// Terraform version.
     pub terraform_version: String,
     /// Provider versions.
@@ -148,6 +196,10 @@ pub struct CompositionManifest {
     pub release_id: String,
     /// Generated contract bundle digest.
     pub contract_digest: String,
+    /// Exact public source and workflow run.
+    pub source: PublicSource,
+    /// Raw public release-tool identity consumed by hosted acquisition.
+    pub release_tool: ReleaseToolIdentity,
     /// Every unit.
     pub units: BTreeMap<String, ManifestUnit>,
     /// Published packages.
@@ -168,6 +220,30 @@ pub struct CompositionManifest {
     /// not mint a new release identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub annotations: Option<serde_json::Value>,
+}
+
+/// The composition identities no artifact envelope carries.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CompositionInputs {
+    /// Generated contract bundle digest.
+    pub contract_digest: String,
+    /// Exact public source and workflow run.
+    pub source: PublicSource,
+    /// Raw public release-tool identity.
+    pub release_tool: ReleaseToolIdentity,
+    /// Published packages.
+    #[serde(default)]
+    pub packages: BTreeMap<String, BTreeMap<String, PackageRef>>,
+    /// Migration identities.
+    pub migrations: Migrations,
+    /// Terraform module bundle and provider closure.
+    pub infra: Infra,
+    /// Catalogue digests.
+    #[serde(default)]
+    pub catalogs: BTreeMap<String, String>,
+    /// Policy digests.
+    pub policy: Policy,
 }
 
 /// The default stage order.
@@ -228,7 +304,20 @@ pub const DEFAULT_ORDER: &[(&str, &[&str])] = &[
     // embeds the agent binary: publishing them together would let an image whose
     // rootfs holds the previous agent reach a plane as if it held the new one.
     ("runtime-agent", &["hands-agent"]),
-    ("runtime", &["brain-mux", "hands-image"]),
+    (
+        "runtime",
+        &[
+            "brain-mux",
+            "hands-image-512mb",
+            "hands-image-1gb",
+            "hands-image-2gb",
+            "hands-image-2gb-browser",
+            "hands-image-4gb",
+            "hands-image-4gb-browser",
+            "hands-image-8gb",
+            "hands-image-8gb-browser",
+        ],
+    ),
     ("web", &["dashboard", "site"]),
 ];
 
@@ -297,6 +386,7 @@ impl CompositionManifest {
                 "a composition with no unit is not a release",
             ));
         }
+        validate_public_inputs(self, &mut structural);
         let ordered: Vec<&String> = self.order.iter().flat_map(|stage| &stage.units).collect();
         for unit in self.units.keys() {
             if !ordered.contains(&unit) {
@@ -353,6 +443,40 @@ impl CompositionManifest {
         Ok(())
     }
 
+    /// Validate the manifest and the exact public inputs downloaded for hosted
+    /// acquisition.
+    ///
+    /// # Errors
+    /// Propagates manifest validation failures and returns
+    /// [`Exit::ArtifactMismatch`] when either downloaded subject is missing,
+    /// truncated, or altered.
+    pub fn validate_acquired_inputs(
+        &self,
+        release_tool: &std::path::Path,
+        module_bundle: &std::path::Path,
+        regional_tables: &std::path::Path,
+        strict_environment_scan: bool,
+    ) -> Result<()> {
+        self.validate(strict_environment_scan)?;
+        crate::publication::verify_blob(
+            release_tool,
+            &self.release_tool.digest,
+            self.release_tool.size_bytes,
+        )?;
+        crate::publication::verify_blob(
+            module_bundle,
+            &self.infra.module_bundle_digest,
+            self.infra.module_bundle_size_bytes,
+        )?;
+        crate::publication::verify_regional_tables_bundle(
+            regional_tables,
+            &self.migrations.regional.bundle_digest,
+            self.migrations.regional.bundle_size_bytes,
+            &self.migrations.regional.definitions_digest,
+            self.migrations.regional.generation,
+        )
+    }
+
     /// Replace one unit's entry, producing a new complete manifest.
     ///
     /// # Errors
@@ -403,13 +527,8 @@ impl ManifestUnit {
 /// Returns [`Exit::CompositionIncompatible`] when a unit belongs to no stage,
 /// and propagates canonicalization failure.
 pub fn new_manifest(
-    contract_digest: String,
+    inputs: CompositionInputs,
     envelopes: &BTreeMap<String, crate::artifact::ArtifactEnvelope>,
-    packages: BTreeMap<String, BTreeMap<String, PackageRef>>,
-    migrations: Migrations,
-    infra: Infra,
-    catalogs: BTreeMap<String, String>,
-    policy: Policy,
 ) -> Result<CompositionManifest> {
     let units: BTreeMap<String, ManifestUnit> = envelopes
         .iter()
@@ -419,17 +538,478 @@ pub fn new_manifest(
     CompositionManifest {
         schema: "aex.composition-manifest.v1".to_owned(),
         release_id: "sha256:0".to_owned(),
-        contract_digest,
+        contract_digest: inputs.contract_digest,
+        source: inputs.source,
+        release_tool: inputs.release_tool,
         units,
-        packages,
-        migrations,
-        infra,
-        catalogs,
+        packages: inputs.packages,
+        migrations: inputs.migrations,
+        infra: inputs.infra,
+        catalogs: inputs.catalogs,
         order,
-        policy,
+        policy: inputs.policy,
         annotations: None,
     }
     .seal()
+}
+
+/// Index and verify the exact certified envelope set used by a public
+/// composition handoff.
+///
+/// Unlike [`unaccounted_units`], a handoff has no unearned escape hatch: every
+/// registered deployable must have one and only one complete envelope. The
+/// returned map is also the canonical artifact-store document consumed by
+/// hosted admission.
+///
+/// # Errors
+/// Returns [`Exit::CompositionIncompatible`] for an incomplete, duplicate or
+/// registry-inconsistent set, and [`Exit::EvidenceMissing`] when any envelope
+/// is not fully certified or lacks a receipt required by its registry row.
+pub fn verify_handoff_envelopes(
+    registry: &crate::graph::inputs::Units,
+    envelopes: Vec<crate::artifact::ArtifactEnvelope>,
+) -> Result<BTreeMap<String, crate::artifact::ArtifactEnvelope>> {
+    let registered: BTreeMap<&str, &crate::graph::inputs::Unit> = registry
+        .units
+        .iter()
+        .map(|unit| (unit.id.as_str(), unit))
+        .collect();
+    let mut indexed = BTreeMap::new();
+    let mut topology = Vec::new();
+
+    for envelope in envelopes {
+        let id = envelope.unit.id.clone();
+        if indexed.contains_key(&id) {
+            topology.push(Violation::new(
+                "handoff-envelope-duplicate",
+                format!("deployable `{id}` has more than one envelope"),
+            ));
+            continue;
+        }
+        match registered.get(id.as_str()) {
+            None => topology.push(Violation::new(
+                "handoff-envelope-unregistered",
+                format!("envelope `{id}` names no deployable in release/units.toml"),
+            )),
+            Some(unit) => {
+                let required_central_head = envelope
+                    .identities
+                    .migration
+                    .as_ref()
+                    .and_then(|migration| migration.required_central_head.as_ref());
+                if envelope.unit.kind != unit.kind
+                    || envelope.unit.plane != unit.plane
+                    || envelope.media.form != unit.form
+                    || envelope.output.target.triple != unit.target
+                    || envelope.identities.config_schema_version != unit.config_schema_version
+                    || envelope.identities.config_env_namespace.as_deref()
+                        != Some(unit.config_env_namespace.as_str())
+                    || required_central_head != unit.required_central_head.as_ref()
+                {
+                    topology.push(Violation::new(
+                        "handoff-envelope-registry-mismatch",
+                        format!(
+                            "envelope `{id}` does not exactly match its kind, plane, form, target, configuration and migration registry fields"
+                        ),
+                    ));
+                }
+            }
+        }
+        indexed.insert(id, envelope);
+    }
+
+    topology.extend(unaccounted_units(registry, &indexed, &[]));
+    if !topology.is_empty() {
+        topology.sort();
+        topology.dedup();
+        return Err(ToolError::many(Exit::CompositionIncompatible, topology));
+    }
+
+    let mut incomplete = Vec::new();
+    for (id, envelope) in &indexed {
+        let unit = registered[id.as_str()];
+        if let Err(err) = envelope.verify(None, unit.kind == "rust-binary") {
+            incomplete.extend(err.violations.into_iter().map(|violation| {
+                Violation::new(violation.rule, format!("unit `{id}`: {}", violation.detail))
+            }));
+        }
+        let carried: BTreeSet<&str> = envelope
+            .receipts
+            .iter()
+            .map(|receipt| receipt.class.as_str())
+            .collect();
+        for required in &unit.required_receipts {
+            if !carried.contains(required.as_str()) {
+                incomplete.push(Violation::new(
+                    "handoff-receipt-missing",
+                    format!("unit `{id}` requires a passing `{required}` receipt"),
+                ));
+            }
+        }
+    }
+    if !incomplete.is_empty() {
+        incomplete.sort();
+        incomplete.dedup();
+        return Err(ToolError::many(Exit::EvidenceMissing, incomplete));
+    }
+    Ok(indexed)
+}
+
+/// Bind a complete certified envelope store to the non-envelope composition
+/// inputs and produce a strict, plane-neutral manifest.
+///
+/// # Errors
+/// Returns [`Exit::CompositionIncompatible`] when the envelopes do not all
+/// name the exact public source/run, contract, toolchain, migration and
+/// catalogue identities carried by the composition inputs. Strict manifest
+/// validation errors are propagated.
+pub fn new_handoff_manifest(
+    inputs: CompositionInputs,
+    envelopes: &BTreeMap<String, crate::artifact::ArtifactEnvelope>,
+) -> Result<CompositionManifest> {
+    let mut violations = Vec::new();
+    for (id, envelope) in envelopes {
+        if envelope.source.repository != inputs.source.repository
+            || envelope.source.workflow.repository != inputs.source.repository
+            || envelope.source.commit_sha != inputs.source.commit_sha
+            || envelope.source.workflow.run_id != inputs.source.workflow_run_id
+            || u64::from(envelope.source.workflow.run_attempt) != inputs.source.workflow_run_attempt
+        {
+            violations.push(Violation::new(
+                "handoff-source-mismatch",
+                format!(
+                    "unit `{id}` is not bound to composition source `{}` at commit `{}`, run {}, attempt {}",
+                    inputs.source.repository,
+                    inputs.source.commit_sha,
+                    inputs.source.workflow_run_id,
+                    inputs.source.workflow_run_attempt
+                ),
+            ));
+        }
+        if envelope.identities.contract_digest != inputs.contract_digest {
+            violations.push(Violation::new(
+                "handoff-contract-mismatch",
+                format!(
+                    "unit `{id}` contract `{}` differs from composition contract `{}`",
+                    envelope.identities.contract_digest, inputs.contract_digest
+                ),
+            ));
+        }
+        if envelope.inputs.toolchain.channel != inputs.policy.toolchain_channel {
+            violations.push(Violation::new(
+                "handoff-toolchain-mismatch",
+                format!(
+                    "unit `{id}` toolchain `{}` differs from composition toolchain `{}`",
+                    envelope.inputs.toolchain.channel, inputs.policy.toolchain_channel
+                ),
+            ));
+        }
+        if let Some(migration) = &envelope.identities.migration {
+            if migration
+                .central_bundle_digest
+                .as_ref()
+                .is_some_and(|digest| digest != &inputs.migrations.central.bundle_digest)
+            {
+                violations.push(Violation::new(
+                    "handoff-central-migration-mismatch",
+                    format!("unit `{id}` carries a different central migration bundle"),
+                ));
+            }
+            if migration
+                .regional_bundle_digest
+                .as_ref()
+                .is_some_and(|digest| digest != &inputs.migrations.regional.bundle_digest)
+                || migration
+                    .regional_generation
+                    .is_some_and(|generation| generation != inputs.migrations.regional.generation)
+            {
+                violations.push(Violation::new(
+                    "handoff-regional-migration-mismatch",
+                    format!("unit `{id}` carries a different regional migration identity"),
+                ));
+            }
+        }
+        if let Some(catalogs) = &envelope.identities.catalogs {
+            for (name, digest) in [("model", &catalogs.model), ("tool", &catalogs.tool)] {
+                if let Some(digest) = digest
+                    && inputs.catalogs.get(name) != Some(digest)
+                {
+                    violations.push(Violation::new(
+                        "handoff-catalog-mismatch",
+                        format!("unit `{id}` carries a different `{name}` catalogue digest"),
+                    ));
+                }
+            }
+        }
+    }
+    if let Some(admin) = envelopes.get("central-schema-admin")
+        && admin.output.digest != inputs.migrations.central.admin_image_digest
+    {
+        violations.push(Violation::new(
+            "handoff-central-admin-image-mismatch",
+            "the central migration admin image digest differs from the central-schema-admin artifact digest",
+        ));
+    }
+    if !violations.is_empty() {
+        violations.sort();
+        violations.dedup();
+        return Err(ToolError::many(Exit::CompositionIncompatible, violations));
+    }
+
+    let manifest = new_manifest(inputs, envelopes)?;
+    manifest.validate(true)?;
+    Ok(manifest)
+}
+
+// Keep this accumulator together so one admission run reports every malformed
+// public identity rather than turning review into a sequence of failures.
+#[allow(clippy::too_many_lines)]
+fn validate_public_inputs(manifest: &CompositionManifest, violations: &mut Vec<Violation>) {
+    let sha256 = |value: &str| {
+        value.len() == 71
+            && value.starts_with("sha256:")
+            && value[7..]
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    };
+    let sha1 = |value: &str| {
+        value.len() == 40
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    };
+    let exact_version = |value: &str| {
+        regex::Regex::new(r"^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$")
+            .expect("static exact-version regex")
+            .is_match(value)
+    };
+
+    if manifest.source.repository != "aexhq/aex" {
+        violations.push(Violation::new(
+            "manifest-public-repository",
+            format!(
+                "`{}` is not the public source repository `aexhq/aex`",
+                manifest.source.repository
+            ),
+        ));
+    }
+    if !sha1(&manifest.source.commit_sha) {
+        violations.push(Violation::new(
+            "manifest-public-commit",
+            format!(
+                "`{}` is not an exact lowercase Git commit",
+                manifest.source.commit_sha
+            ),
+        ));
+    }
+    if manifest.source.workflow_run_id.is_empty()
+        || !manifest
+            .source
+            .workflow_run_id
+            .bytes()
+            .all(|byte| byte.is_ascii_digit())
+        || manifest.source.workflow_run_id.starts_with('0')
+    {
+        violations.push(Violation::new(
+            "manifest-public-run-id",
+            format!(
+                "`{}` is not a positive GitHub workflow run id",
+                manifest.source.workflow_run_id
+            ),
+        ));
+    }
+    if manifest.source.workflow_run_attempt == 0 {
+        violations.push(Violation::new(
+            "manifest-public-run-attempt",
+            "the GitHub workflow run attempt must be positive",
+        ));
+    }
+    if !exact_version(&manifest.release_tool.version) {
+        violations.push(Violation::new(
+            "manifest-release-tool-version",
+            format!(
+                "`{}` is not an exact release-tool version",
+                manifest.release_tool.version
+            ),
+        ));
+    }
+    if !sha256(&manifest.release_tool.digest) {
+        violations.push(Violation::new(
+            "manifest-release-tool-digest",
+            format!("`{}` is not a SHA-256 digest", manifest.release_tool.digest),
+        ));
+    }
+    if manifest.release_tool.size_bytes == 0 {
+        violations.push(Violation::new(
+            "manifest-release-tool-size",
+            "the raw release tool must contain at least one byte",
+        ));
+    }
+    if manifest.release_tool.target != "x86_64-unknown-linux-musl" {
+        violations.push(Violation::new(
+            "manifest-release-tool-target",
+            format!(
+                "`{}` is not the hosted acquisition target `x86_64-unknown-linux-musl`",
+                manifest.release_tool.target
+            ),
+        ));
+    }
+    if !sha256(&manifest.infra.module_bundle_digest) {
+        violations.push(Violation::new(
+            "manifest-module-bundle-digest",
+            format!(
+                "`{}` is not a SHA-256 digest",
+                manifest.infra.module_bundle_digest
+            ),
+        ));
+    }
+    if manifest.infra.module_bundle_size_bytes == 0 {
+        violations.push(Violation::new(
+            "manifest-module-bundle-size",
+            "the Terraform module bundle must contain at least one byte",
+        ));
+    }
+    if !sha256(&manifest.migrations.regional.bundle_digest) {
+        violations.push(Violation::new(
+            "manifest-regional-bundle-digest",
+            format!(
+                "`{}` is not a SHA-256 digest",
+                manifest.migrations.regional.bundle_digest
+            ),
+        ));
+    }
+    if manifest.migrations.regional.bundle_size_bytes == 0 {
+        violations.push(Violation::new(
+            "manifest-regional-bundle-size",
+            "the regional table bundle must contain at least one byte",
+        ));
+    }
+    if !manifest
+        .migrations
+        .regional
+        .definitions_digest
+        .strip_prefix("blake3:")
+        .is_some_and(|bare| {
+            bare.len() == 64
+                && bare
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        })
+    {
+        violations.push(Violation::new(
+            "manifest-regional-definitions-digest",
+            format!(
+                "`{}` is not a lowercase BLAKE3 digest",
+                manifest.migrations.regional.definitions_digest
+            ),
+        ));
+    }
+
+    if sha1(&manifest.source.commit_sha)
+        && !manifest.source.workflow_run_id.is_empty()
+        && manifest.source.workflow_run_attempt > 0
+    {
+        let base = format!(
+            "https://github.com/{}/releases/download/main-{}-run-{}-attempt-{}",
+            manifest.source.repository,
+            manifest.source.commit_sha,
+            manifest.source.workflow_run_id,
+            manifest.source.workflow_run_attempt,
+        );
+        let expected_tool = format!("{base}/{}", crate::publication::RELEASE_TOOL_ASSET);
+        if manifest.release_tool.uri != expected_tool {
+            violations.push(Violation::new(
+                "manifest-release-tool-uri",
+                format!(
+                    "`{}` is not the exact public release-tool asset `{expected_tool}`",
+                    manifest.release_tool.uri
+                ),
+            ));
+        }
+        let expected_modules = format!("{base}/{}", crate::publication::MODULE_BUNDLE_ASSET);
+        if manifest.infra.module_bundle_uri != expected_modules {
+            violations.push(Violation::new(
+                "manifest-module-bundle-uri",
+                format!(
+                    "`{}` is not the exact public module asset `{expected_modules}`",
+                    manifest.infra.module_bundle_uri
+                ),
+            ));
+        }
+        let expected_regional = format!("{base}/{}", crate::publication::REGIONAL_TABLES_ASSET);
+        if manifest.migrations.regional.bundle_uri != expected_regional {
+            violations.push(Violation::new(
+                "manifest-regional-bundle-uri",
+                format!(
+                    "`{}` is not the exact public regional table asset `{expected_regional}`",
+                    manifest.migrations.regional.bundle_uri
+                ),
+            ));
+        }
+    }
+
+    for (unit, entry) in &manifest.units {
+        if !LOCATION_KINDS.contains(&entry.location.kind.as_str()) {
+            violations.push(Violation::new(
+                "manifest-location-kind",
+                format!(
+                    "unit `{unit}` location kind `{}` is outside the closed release vocabulary",
+                    entry.location.kind
+                ),
+            ));
+            continue;
+        }
+        match entry.location.kind.as_str() {
+            "github-release" => {
+                let Some(form) = crate::publication::blob_form_for_kind(&entry.kind) else {
+                    violations.push(Violation::new(
+                        "manifest-location-kind",
+                        format!(
+                            "unit `{unit}` kind `{}` cannot publish as a release blob",
+                            entry.kind
+                        ),
+                    ));
+                    continue;
+                };
+                match crate::publication::github_release_unit_uri(
+                    &manifest.source.repository,
+                    &manifest.source.commit_sha,
+                    &manifest.source.workflow_run_id,
+                    manifest.source.workflow_run_attempt,
+                    unit,
+                    &entry.artifact_digest,
+                    form,
+                ) {
+                    Ok(expected) if expected == entry.location.uri => {}
+                    Ok(expected) => violations.push(Violation::new(
+                        "manifest-github-release-location",
+                        format!(
+                            "unit `{unit}` location `{}` is not `{expected}`",
+                            entry.location.uri
+                        ),
+                    )),
+                    Err(err) => violations.extend(err.violations),
+                }
+            }
+            "oci" => match crate::publication::ghcr_unit_uri(
+                &manifest.source.repository,
+                unit,
+                &entry.artifact_digest,
+            ) {
+                Ok(expected)
+                    if expected == entry.location.uri && entry.kind.starts_with("rust-oci-") => {}
+                Ok(expected) => violations.push(Violation::new(
+                    "manifest-oci-location",
+                    format!(
+                        "unit `{unit}` location `{}` is not the OCI-kind-bound digest reference `{expected}`",
+                        entry.location.uri
+                    ),
+                )),
+                Err(err) => violations.extend(err.violations),
+            },
+            _ => {}
+        }
+    }
 }
 
 /// Deployables that are neither described by an envelope nor recorded as
@@ -480,12 +1060,22 @@ pub struct ManifestDiff {
     pub removed: Vec<String>,
     /// Units whose artifact digest changed.
     pub changed: Vec<UnitChange>,
-    /// Whether the contract bundle changed.
-    pub contract_changed: bool,
-    /// Whether the central migration head or bundle changed.
-    pub central_migrations_changed: bool,
-    /// Whether the infrastructure module bundle changed.
-    pub infra_changed: bool,
+    /// Closed, ordered list of non-unit composition inputs that changed.
+    pub inputs_changed: Vec<CompositionInputChange>,
+}
+
+/// A non-unit composition input whose identity changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CompositionInputChange {
+    /// Generated API/SDK contract bundle.
+    Contract,
+    /// Central migration bundle or head.
+    CentralMigrations,
+    /// Regional table bundle, definitions, or generation.
+    RegionalMigrations,
+    /// Terraform module bundle.
+    Infra,
 }
 
 /// One unit whose bytes differ between two compositions.
@@ -534,6 +1124,24 @@ pub fn diff(from: &CompositionManifest, to: &CompositionManifest) -> ManifestDif
             })
         })
         .collect();
+    let mut inputs_changed = Vec::new();
+    if from.contract_digest != to.contract_digest {
+        inputs_changed.push(CompositionInputChange::Contract);
+    }
+    if from.migrations.central.bundle_digest != to.migrations.central.bundle_digest
+        || from.migrations.central.head != to.migrations.central.head
+    {
+        inputs_changed.push(CompositionInputChange::CentralMigrations);
+    }
+    if from.migrations.regional.bundle_digest != to.migrations.regional.bundle_digest
+        || from.migrations.regional.definitions_digest != to.migrations.regional.definitions_digest
+        || from.migrations.regional.generation != to.migrations.regional.generation
+    {
+        inputs_changed.push(CompositionInputChange::RegionalMigrations);
+    }
+    if from.infra.module_bundle_digest != to.infra.module_bundle_digest {
+        inputs_changed.push(CompositionInputChange::Infra);
+    }
     ManifestDiff {
         schema: "aex.composition-diff.v1",
         from: from.release_id.clone(),
@@ -541,11 +1149,7 @@ pub fn diff(from: &CompositionManifest, to: &CompositionManifest) -> ManifestDif
         added,
         removed,
         changed,
-        contract_changed: from.contract_digest != to.contract_digest,
-        central_migrations_changed: from.migrations.central.bundle_digest
-            != to.migrations.central.bundle_digest
-            || from.migrations.central.head != to.migrations.central.head,
-        infra_changed: from.infra.module_bundle_digest != to.infra.module_bundle_digest,
+        inputs_changed,
     }
 }
 
@@ -623,10 +1227,17 @@ fn scan_string(text: &str, path: &str, findings: &mut Vec<Violation>) {
         let host = text
             .split_once("//")
             .map_or("", |(_, rest)| rest.split('/').next().unwrap_or(""));
-        if !matches!(
-            host,
-            "schemas.aex.dev" | "slsa.dev" | "json-schema.org" | "spdx.org" | "cyclonedx.org"
-        ) {
+        let exact_public_asset = host == "github.com"
+            && (matches!(
+                path,
+                ".releaseTool.uri" | ".infra.moduleBundleUri" | ".migrations.regional.bundleUri"
+            ) || (path.starts_with(".units.") && path.ends_with(".location.uri")));
+        if !exact_public_asset
+            && !matches!(
+                host,
+                "schemas.aex.dev" | "slsa.dev" | "json-schema.org" | "spdx.org" | "cyclonedx.org"
+            )
+        {
             findings.push(Violation::new(
                 "manifest-environment-identity",
                 format!("`{path}` names host `{host}`, which is outside the schema host set"),
@@ -783,14 +1394,34 @@ mod tests {
             "schema": "aex.composition-manifest.v1",
             "releaseId": release,
             "contractDigest": "sha256:aa",
+            "source": {
+                "repository": "aexhq/aex",
+                "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "workflowRunId": "123",
+                "workflowRunAttempt": 1
+            },
+            "releaseTool": {
+                "version": "0.1.0",
+                "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "sizeBytes": 8192,
+                "uri": "https://github.com/aexhq/aex/releases/download/main-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-run-123-attempt-1/aex-release-tool",
+                "target": "x86_64-unknown-linux-musl"
+            },
             "units": {},
             "migrations": {
                 "central": { "bundleDigest": "sha256:bb", "head": "0007", "adminImageDigest": "sha256:cc" },
-                "regional": { "bundleDigest": "sha256:dd", "generation": 1 }
+                "regional": {
+                    "bundleDigest": "sha256:dd",
+                    "bundleSizeBytes": 1,
+                    "bundleUri": "https://github.com/aexhq/aex/releases/download/main-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-run-123-attempt-1/regional-tables.json",
+                    "definitionsDigest": "blake3:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                    "generation": 1
+                }
             },
             "infra": {
                 "moduleBundleDigest": "sha256:ee",
-                "sourceArchiveUri": "s3://bucket/modules.tar.gz",
+                "moduleBundleSizeBytes": 16384,
+                "moduleBundleUri": "https://github.com/aexhq/aex/releases/download/main-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-run-123-attempt-1/terraform-modules.tar.gz",
                 "terraformVersion": "1.14.0",
                 "providerVersions": {}
             },
@@ -839,7 +1470,7 @@ mod tests {
                 .unwrap_or_else(|| panic!("`{unit}` belongs to no stage"))
         };
         assert!(
-            position("hands-agent") < position("hands-image"),
+            position("hands-agent") < position("hands-image-512mb"),
             "the image embeds the agent, so publishing them in one stage would let an \
              image carrying the previous agent reach a plane as if it carried the new one"
         );
@@ -935,9 +1566,15 @@ alarm_spec = "regional-otlp"
         assert_eq!(report.changed[0].unit, "regional-stream");
         assert_eq!(report.changed[0].from, "sha256:10");
         assert_eq!(report.changed[0].to, "sha256:11");
-        assert!(!report.contract_changed);
-        assert!(!report.central_migrations_changed);
-        assert!(!report.infra_changed);
+        assert!(report.inputs_changed.is_empty());
+
+        let mut regional_change = to.clone();
+        regional_change.migrations.regional.definitions_digest =
+            format!("blake3:{}", "ef".repeat(32));
+        assert_eq!(
+            diff(&to, &regional_change).inputs_changed,
+            vec![super::CompositionInputChange::RegionalMigrations]
+        );
 
         let reverse = diff(&to, &from);
         assert_eq!(reverse.removed, vec!["regional-otlp"]);

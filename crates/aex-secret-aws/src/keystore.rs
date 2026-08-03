@@ -14,7 +14,9 @@ use std::time::Duration;
 use aex_wire::types::Timestamp;
 use async_trait::async_trait;
 use aws_sdk_kms::Client as KmsClient;
+use aws_sdk_kms::error::SdkError;
 use aws_sdk_kms::primitives::Blob;
+use aws_smithy_types::error::metadata::ProvideErrorMetadata;
 use zeroize::Zeroizing;
 
 use crate::envelope::{BranchKeyMaterial, KEY_VERSION_BYTES};
@@ -38,12 +40,22 @@ pub enum KeyMaterialError {
     /// available.
     #[error("the key is unavailable")]
     KeyUnavailable,
-    /// The caller is denied. Expected for an ordinary regional edge role.
-    #[error("the caller is denied `kms:Decrypt`")]
+    /// The caller is denied the required KMS operation. Expected for an
+    /// ordinary regional edge role that has neither decrypt nor rewrap custody.
+    #[error("the caller is denied the required KMS branch-key operation")]
     Denied,
     /// The ciphertext or its context did not match the key.
     #[error("the wrapped key did not decrypt under this context")]
     ContextMismatch,
+    /// The configured root key is not the key that wrapped this branch key.
+    #[error("the wrapped branch key does not belong to the configured KMS root key")]
+    RootKeyMismatch,
+    /// The request was invalid, which is a composition or adapter defect.
+    #[error("the KMS branch-key request is invalid")]
+    InvalidRequest,
+    /// KMS asked the caller to reduce its request rate.
+    #[error("KMS throttled the branch-key request")]
+    Throttled,
     /// KMS was unavailable.
     #[error("KMS is unavailable: {detail}")]
     Unavailable {
@@ -53,6 +65,63 @@ pub enum KeyMaterialError {
     /// The service returned no plaintext at all.
     #[error("KMS returned no key material")]
     Empty,
+}
+
+impl KeyMaterialError {
+    /// Whether the operation can be retried without resolving an external
+    /// commit first.
+    ///
+    /// `Decrypt` is a read and `ReEncrypt` creates no durable provider-side
+    /// object: if no ciphertext reached the caller, retrying cannot duplicate
+    /// state. The caller still owns the bounded retry policy and deadline.
+    #[must_use]
+    pub const fn retryable(&self) -> bool {
+        matches!(self, Self::Throttled | Self::Unavailable { .. })
+    }
+}
+
+/// Ciphertext for the same branch key, newly authenticated under a destination
+/// encryption context.
+///
+/// The bytes are not plaintext key material, but they are still custody
+/// material: `Debug` never renders them, and the type prevents a caller from
+/// confusing a successful `ReEncrypt` response with the source ciphertext.
+#[derive(Clone, PartialEq, Eq)]
+pub struct RewrappedBranchKey(Vec<u8>);
+
+impl RewrappedBranchKey {
+    /// Wraps bytes emitted by a provider implementation.
+    ///
+    /// This constructor exists for faithful non-AWS implementations in tests;
+    /// production obtains the type only from KMS `ReEncrypt`.
+    ///
+    /// # Errors
+    ///
+    /// [`KeyMaterialError::Empty`] when the provider emitted no ciphertext.
+    pub fn from_provider(bytes: Vec<u8>) -> Result<Self, KeyMaterialError> {
+        if bytes.is_empty() {
+            return Err(KeyMaterialError::Empty);
+        }
+        Ok(Self(bytes))
+    }
+
+    /// Borrows the destination-bound ciphertext.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    /// Returns the ciphertext for durable custody storage.
+    #[must_use]
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.0
+    }
+}
+
+impl std::fmt::Debug for RewrappedBranchKey {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("RewrappedBranchKey(<redacted>)")
+    }
 }
 
 /// Where branch-key material comes from.
@@ -75,6 +144,27 @@ pub trait BranchKeyProvider: Send + Sync {
         wrapped: &[u8],
         context: &BTreeMap<String, String>,
     ) -> Result<BranchKeyMaterial, KeyMaterialError>;
+
+    /// Rewraps one KMS ciphertext under an exact destination context without
+    /// returning plaintext branch-key material.
+    ///
+    /// Implementations must authenticate the complete, case-sensitive source
+    /// context and bind the complete destination context. A subset match is a
+    /// contract violation. Dropping this future cancels its in-flight work;
+    /// implementations must not detach it. The caller-provided provider client
+    /// owns attempt/operation deadlines and bounded retries.
+    ///
+    /// # Errors
+    ///
+    /// [`KeyMaterialError`] for every provider condition. An unavailable or
+    /// throttled result is safe to retry because no durable provider-side
+    /// mutation needs resolution.
+    async fn rewrap(
+        &self,
+        wrapped: &[u8],
+        source_context: &BTreeMap<String, String>,
+        destination_context: &BTreeMap<String, String>,
+    ) -> Result<RewrappedBranchKey, KeyMaterialError>;
 }
 
 /// The KMS-backed provider.
@@ -85,8 +175,10 @@ pub struct KmsBranchKeys {
 }
 
 impl KmsBranchKeys {
-    /// Binds a provider to a client and the root key branch keys are wrapped
-    /// under.
+    /// Binds a provider to a client and the exact root-key ARN branch keys are
+    /// wrapped under. A key id or alias is not accepted semantically: KMS
+    /// responses name canonical ARNs, and every response is compared byte for
+    /// byte with this value.
     #[must_use]
     pub fn new(client: KmsClient, key_arn: impl Into<String>) -> Self {
         Self {
@@ -119,28 +211,93 @@ impl BranchKeyProvider for KmsBranchKeys {
         for (key, value) in context {
             request = request.encryption_context(key, value);
         }
-        let response = request.send().await.map_err(|error| {
-            use aws_smithy_types::error::metadata::ProvideErrorMetadata as _;
-            match error.code().unwrap_or("Unknown") {
-                "KMSInvalidStateException"
-                | "DisabledException"
-                | "KeyUnavailableException"
-                | "NotFoundException" => KeyMaterialError::KeyUnavailable,
-                "AccessDeniedException" => KeyMaterialError::Denied,
-                "IncorrectKeyException" | "InvalidCiphertextException" => {
-                    KeyMaterialError::ContextMismatch
-                }
-                other => KeyMaterialError::Unavailable {
-                    detail: other.to_owned(),
-                },
-            }
-        })?;
+        let response = request.send().await.map_err(|error| classify(&error))?;
         let plaintext = response.plaintext.ok_or(KeyMaterialError::Empty)?;
         Ok(BranchKeyMaterial {
             branch_key_id: branch_key_id.to_owned(),
             version,
             material: Zeroizing::new(plaintext.into_inner()),
         })
+    }
+
+    async fn rewrap(
+        &self,
+        wrapped: &[u8],
+        source_context: &BTreeMap<String, String>,
+        destination_context: &BTreeMap<String, String>,
+    ) -> Result<RewrappedBranchKey, KeyMaterialError> {
+        let mut request = self
+            .client
+            .re_encrypt()
+            .ciphertext_blob(Blob::new(wrapped.to_vec()))
+            .source_key_id(&self.key_arn)
+            .destination_key_id(&self.key_arn);
+        for (key, value) in source_context {
+            request = request.source_encryption_context(key, value);
+        }
+        for (key, value) in destination_context {
+            request = request.destination_encryption_context(key, value);
+        }
+        let response = request.send().await.map_err(|error| classify(&error))?;
+        validate_root_key_response(&self.key_arn, response.source_key_id(), response.key_id())?;
+        let ciphertext = response
+            .ciphertext_blob
+            .ok_or(KeyMaterialError::Empty)?
+            .into_inner();
+        RewrappedBranchKey::from_provider(ciphertext)
+    }
+}
+
+fn validate_root_key_response(
+    configured_arn: &str,
+    source_key_id: Option<&str>,
+    destination_key_id: Option<&str>,
+) -> Result<(), KeyMaterialError> {
+    if source_key_id == Some(configured_arn) && destination_key_id == Some(configured_arn) {
+        Ok(())
+    } else {
+        Err(KeyMaterialError::RootKeyMismatch)
+    }
+}
+
+fn classify<E, R>(error: &SdkError<E, R>) -> KeyMaterialError
+where
+    E: ProvideErrorMetadata,
+{
+    match error {
+        SdkError::ConstructionFailure(_) => KeyMaterialError::InvalidRequest,
+        SdkError::TimeoutError(_) | SdkError::DispatchFailure(_) | SdkError::ResponseError(_) => {
+            KeyMaterialError::Unavailable {
+                detail: "the request did not complete".to_owned(),
+            }
+        }
+        SdkError::ServiceError(service) => classify_code(service.err().code().unwrap_or("Unknown")),
+        _ => KeyMaterialError::Unavailable {
+            detail: "an unrecognised SDK failure".to_owned(),
+        },
+    }
+}
+
+fn classify_code(code: &str) -> KeyMaterialError {
+    match code {
+        "KMSInvalidStateException" | "DisabledException" | "NotFoundException" => {
+            KeyMaterialError::KeyUnavailable
+        }
+        "AccessDeniedException" => KeyMaterialError::Denied,
+        "InvalidCiphertextException" => KeyMaterialError::ContextMismatch,
+        "IncorrectKeyException" => KeyMaterialError::RootKeyMismatch,
+        "InvalidGrantTokenException" | "InvalidKeyUsageException" | "DryRunOperationException" => {
+            KeyMaterialError::InvalidRequest
+        }
+        "ThrottlingException" => KeyMaterialError::Throttled,
+        "DependencyTimeoutException" | "KeyUnavailableException" | "KMSInternalException" => {
+            KeyMaterialError::Unavailable {
+                detail: format!("the service reported `{code}`"),
+            }
+        }
+        other => KeyMaterialError::Unavailable {
+            detail: format!("the service reported `{other}`"),
+        },
     }
 }
 
@@ -232,11 +389,17 @@ impl BranchKeyCache {
         self.entries.lock().expect("the cache lock").clear();
     }
 
-    fn slot(&self, branch_key_id: &str, version: [u8; KEY_VERSION_BYTES]) -> String {
+    fn slot(
+        &self,
+        branch_key_id: &str,
+        version: [u8; KEY_VERSION_BYTES],
+        context_digest: [u8; 32],
+    ) -> String {
         format!(
-            "{}|{branch_key_id}|{}",
+            "{}|{branch_key_id}|{}|{}",
             self.partition,
-            hex::encode(version)
+            hex::encode(version),
+            hex::encode(context_digest)
         )
     }
 
@@ -250,9 +413,10 @@ impl BranchKeyCache {
         &self,
         branch_key_id: &str,
         version: [u8; KEY_VERSION_BYTES],
+        context_digest: [u8; 32],
         now: Timestamp,
     ) -> Option<BranchKeyMaterial> {
-        let slot = self.slot(branch_key_id, version);
+        let slot = self.slot(branch_key_id, version, context_digest);
         let mut entries = self.entries.lock().expect("the cache lock");
         match entries.get(&slot) {
             Some(entry) if entry.expires_at_millis > now.unix_millis() => {
@@ -273,8 +437,8 @@ impl BranchKeyCache {
     /// # Panics
     ///
     /// As [`BranchKeyCache::len`].
-    pub fn put(&self, material: BranchKeyMaterial, now: Timestamp) {
-        let slot = self.slot(&material.branch_key_id, material.version);
+    pub fn put(&self, material: BranchKeyMaterial, context_digest: [u8; 32], now: Timestamp) {
+        let slot = self.slot(&material.branch_key_id, material.version, context_digest);
         let mut entries = self.entries.lock().expect("the cache lock");
         if entries.len() >= self.capacity && !entries.contains_key(&slot) {
             // The bound is what matters, not which entry goes: the thing being
@@ -301,7 +465,10 @@ mod tests {
     use aex_wire::types::Timestamp;
     use zeroize::Zeroizing;
 
-    use super::{BranchKeyCache, CACHE_CAPACITY, CACHE_TTL};
+    use super::{
+        BranchKeyCache, CACHE_CAPACITY, CACHE_TTL, KeyMaterialError, RewrappedBranchKey,
+        classify_code, validate_root_key_response,
+    };
     use crate::envelope::{BranchKeyMaterial, KEY_VERSION_BYTES};
 
     fn material(id: &str) -> BranchKeyMaterial {
@@ -319,16 +486,16 @@ mod tests {
     #[test]
     fn material_is_returned_until_it_expires_and_never_after() {
         let cache = BranchKeyCache::new("role-a");
-        cache.put(material("wsp_1"), at(0));
+        cache.put(material("wsp_1"), [1; 32], at(0));
         assert!(
             cache
-                .get("wsp_1", [1; KEY_VERSION_BYTES], at(1_000))
+                .get("wsp_1", [1; KEY_VERSION_BYTES], [1; 32], at(1_000))
                 .is_some()
         );
         let ttl = i64::try_from(CACHE_TTL.as_millis()).expect("600 seconds");
         assert!(
             cache
-                .get("wsp_1", [1; KEY_VERSION_BYTES], at(ttl + 1))
+                .get("wsp_1", [1; KEY_VERSION_BYTES], [1; 32], at(ttl + 1),)
                 .is_none(),
             "expired material must not be served"
         );
@@ -339,9 +506,11 @@ mod tests {
     fn two_roles_in_one_process_never_share_an_entry() {
         let first = BranchKeyCache::new("role-a");
         let second = BranchKeyCache::new("role-b");
-        first.put(material("wsp_1"), at(0));
+        first.put(material("wsp_1"), [1; 32], at(0));
         assert!(
-            second.get("wsp_1", [1; KEY_VERSION_BYTES], at(0)).is_none(),
+            second
+                .get("wsp_1", [1; KEY_VERSION_BYTES], [1; 32], at(0))
+                .is_none(),
             "a role that may decrypt must not warm a cache another role reads"
         );
     }
@@ -349,10 +518,24 @@ mod tests {
     #[test]
     fn a_new_key_version_is_a_different_entry() {
         let cache = BranchKeyCache::new("role-a");
-        cache.put(material("wsp_1"), at(0));
+        cache.put(material("wsp_1"), [1; 32], at(0));
         assert!(
-            cache.get("wsp_1", [2; KEY_VERSION_BYTES], at(0)).is_none(),
+            cache
+                .get("wsp_1", [2; KEY_VERSION_BYTES], [1; 32], at(0))
+                .is_none(),
             "rotation must not be served stale material"
+        );
+    }
+
+    #[test]
+    fn the_same_wrapped_key_under_another_context_is_a_cache_miss() {
+        let cache = BranchKeyCache::new("role-a");
+        cache.put(material("wsp_1"), [1; 32], at(0));
+        assert!(
+            cache
+                .get("wsp_1", [1; KEY_VERSION_BYTES], [2; 32], at(0))
+                .is_none(),
+            "a cached KMS decrypt must not bypass exact encryption-context equality"
         );
     }
 
@@ -360,7 +543,7 @@ mod tests {
     fn the_cache_is_bounded_however_many_workspaces_pass_through_it() {
         let cache = BranchKeyCache::with_capacity("role-a", 4, Duration::from_mins(10));
         for index in 0..64 {
-            cache.put(material(&format!("wsp_{index}")), at(0));
+            cache.put(material(&format!("wsp_{index}")), [1; 32], at(0));
         }
         assert!(cache.len() <= 4, "{} entries", cache.len());
         assert_eq!(CACHE_CAPACITY, 256);
@@ -369,7 +552,7 @@ mod tests {
     #[test]
     fn clearing_drops_every_entry() {
         let cache = BranchKeyCache::new("role-a");
-        cache.put(material("wsp_1"), at(0));
+        cache.put(material("wsp_1"), [1; 32], at(0));
         cache.clear();
         assert!(cache.is_empty());
     }
@@ -377,8 +560,69 @@ mod tests {
     #[test]
     fn the_cache_never_prints_the_material_it_holds() {
         let cache = BranchKeyCache::new("role-a");
-        cache.put(material("wsp_1"), at(0));
+        cache.put(material("wsp_1"), [1; 32], at(0));
         let printed = format!("{cache:?}");
         assert!(printed.contains("<redacted>"), "{printed}");
+    }
+
+    #[test]
+    fn rewrapped_ciphertext_is_redacted_even_though_it_is_not_plaintext() {
+        let wrapped = RewrappedBranchKey::from_provider(b"provider-ciphertext".to_vec())
+            .expect("non-empty provider ciphertext");
+        assert_eq!(format!("{wrapped:?}"), "RewrappedBranchKey(<redacted>)");
+        assert_eq!(wrapped.as_bytes(), b"provider-ciphertext");
+    }
+
+    #[test]
+    fn empty_rewrapped_ciphertext_is_not_a_valid_provider_result() {
+        assert_eq!(
+            RewrappedBranchKey::from_provider(Vec::new()).unwrap_err(),
+            KeyMaterialError::Empty
+        );
+    }
+
+    #[test]
+    fn reencrypt_must_attest_the_configured_arn_on_both_sides() {
+        let root = "arn:aws:kms:eu-west-1:000000000000:key/secret";
+        assert_eq!(
+            validate_root_key_response(root, Some(root), Some(root)),
+            Ok(())
+        );
+        for (source, destination) in [
+            (None, Some(root)),
+            (Some(root), None),
+            (
+                Some("arn:aws:kms:eu-west-1:000000000000:key/other"),
+                Some(root),
+            ),
+            (
+                Some(root),
+                Some("arn:aws:kms:eu-west-1:000000000000:key/other"),
+            ),
+        ] {
+            assert_eq!(
+                validate_root_key_response(root, source, destination),
+                Err(KeyMaterialError::RootKeyMismatch)
+            );
+        }
+    }
+
+    #[test]
+    fn provider_errors_preserve_retry_and_integrity_semantics() {
+        assert_eq!(
+            classify_code("InvalidCiphertextException"),
+            KeyMaterialError::ContextMismatch
+        );
+        assert_eq!(
+            classify_code("IncorrectKeyException"),
+            KeyMaterialError::RootKeyMismatch
+        );
+        assert_eq!(
+            classify_code("AccessDeniedException"),
+            KeyMaterialError::Denied
+        );
+        assert!(classify_code("ThrottlingException").retryable());
+        assert!(classify_code("DependencyTimeoutException").retryable());
+        assert!(!classify_code("DisabledException").retryable());
     }
 }

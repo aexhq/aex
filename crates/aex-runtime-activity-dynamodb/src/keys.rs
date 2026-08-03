@@ -6,6 +6,7 @@
 //! whereas the index gives the reaper a bounded ordered scan at zero write cost
 //! between evaluations.
 
+use aex_hands_protocol::rpc::HandsOperationId;
 use aex_runtime_control::generation::GenerationState;
 use aex_session_dynamodb::component::{Component, KeyError, due_shard, shard2};
 use aex_wire::ids::{GenerationId, SessionId};
@@ -29,6 +30,7 @@ pub const ITEM_TYPES: &[&str] = &[
     "idle_probe",
     "current_generation",
     "usage_outbox",
+    "hands_operation_admission",
 ];
 
 /// Every generation state, as the domain spells them.
@@ -163,6 +165,15 @@ pub fn usage_outbox(generation: GenerationId, fact_id: &str) -> Key {
     }
 }
 
+/// One durable, idempotent open-operation marker.
+#[must_use]
+pub fn operation_admission(generation: GenerationId, operation: HandsOperationId) -> Key {
+    Key {
+        pk: generation_partition_for_id(generation),
+        sk: format!("OPERATION#{}", operation.0),
+    }
+}
+
 /// One true-idle probe.
 #[must_use]
 pub fn probe(session: SessionId, generation: GenerationId, observed_at: Timestamp) -> Key {
@@ -246,13 +257,14 @@ pub const fn is_evaluable(state: GenerationState) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use aex_hands_protocol::rpc::HandsOperationId;
     use aex_runtime_control::generation::GenerationState;
     use aex_wire::ids::{GenerationId, PrefixedId, SessionId, Uuid7};
     use aex_wire::types::Timestamp;
 
     use super::{
-        DUE_SHARDS, STATES, current, due_partition, due_sort, head, is_evaluable, probe, shard_of,
-        state_of, state_str,
+        DUE_SHARDS, STATES, current, due_partition, due_sort, head, is_evaluable,
+        operation_admission, probe, shard_of, state_of, state_str,
     };
 
     fn session() -> SessionId {
@@ -329,5 +341,15 @@ mod tests {
             "a Brain activation reads the pointer with one point read and must not \
              land in the generation's own partition"
         );
+    }
+
+    #[test]
+    fn operation_admission_is_scoped_by_generation_and_operation() {
+        let first = HandsOperationId(Uuid7::compose(2, [1; 10]));
+        let second = HandsOperationId(Uuid7::compose(2, [2; 10]));
+        let marker = operation_admission(generation(1), first);
+        assert_eq!(marker.pk, head(session(), generation(1)).pk);
+        assert_ne!(marker, operation_admission(generation(1), second));
+        assert_ne!(marker, operation_admission(generation(2), first));
     }
 }

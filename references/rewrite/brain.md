@@ -10,7 +10,7 @@ keywords:
   - loom
 audience: implementation agents and maintainers
 status: accepted
-last_verified: 2026-08-02
+last_verified: 2026-08-03
 related:
   - references/rewrite/contracts.md
   - references/rewrite/test-architecture.md
@@ -92,9 +92,9 @@ pub trait ToolPort: Send + Sync + 'static {
     fn route(&self, pin: &CatalogPin, name: &ToolName) -> Result<ToolRoute, ToolRoutingError>;
     fn invoke<'a>(&'a self, ticket: &'a DispatchTicket, call: &'a PreparedToolCall,
         cancel: &'a CancelToken) -> BoxFuture<'a, Result<ToolOutcome, ToolDispatchError>>;
-    fn query<'a>(&'a self, operation: &'a DetachedOperationId)
+    fn query<'a>(&'a self, operation: &'a DetachedOperationRef)
         -> BoxFuture<'a, Result<DetachedStatus, ToolDispatchError>>;
-    fn cancel<'a>(&'a self, operation: &'a DetachedOperationId, fence: Fence)
+    fn cancel<'a>(&'a self, operation: &'a DetachedOperationRef, fence: Fence)
         -> BoxFuture<'a, Result<(), ToolDispatchError>>;
 }
 
@@ -137,15 +137,17 @@ pub trait IdPort: Send + Sync + 'static {
 pub trait JournalStore: Send + Sync + 'static {
     fn load_head<'a>(&'a self, key: &'a AgentKey)
         -> BoxFuture<'a, Result<Option<AgentHead>, StoreError>>;
-    fn read_page<'a>(&'a self, key: &'a AgentKey, from: JournalSeq, budget: ReadBudget)
+    fn read_page<'a>(&'a self, key: &'a AgentKey, from: JournalSeq, budget: ReadBudget,
+        after: Option<JournalCursor>)
         -> BoxFuture<'a, Result<JournalPage, StoreError>>;
     fn commit<'a>(&'a self, commit: &'a DecisionCommit)
         -> BoxFuture<'a, Result<CommitReceipt, CommitError>>;
 }
 
 pub trait EffectStore: Send + Sync + 'static {   // settlement is NOT here; see below
-    fn mark_dispatch_started<'a>(&'a self, guard: &'a FenceGuard, effect: &'a EffectId,
-        attempt: u16, at: Timestamp) -> BoxFuture<'a, Result<DispatchTicket, CommitError>>;
+    fn mark_dispatch_started<'a>(&'a self, guard: &'a FenceGuard,
+        authority: &'a SessionAuthority, effect: &'a EffectId, attempt: u16, at: Timestamp)
+        -> BoxFuture<'a, Result<DispatchTicket, CommitError>>;
     fn mark_response_started<'a>(&'a self, ticket: &'a DispatchTicket,
         evidence: &'a DispatchEvidence) -> BoxFuture<'a, Result<(), CommitError>>;
     fn load_open<'a>(&'a self, key: &'a AgentKey)
@@ -184,10 +186,12 @@ Two rules are carried by types rather than by review.
   agent without one, so it cannot forget to condition its write on the fence
   it holds.
 - **`DispatchTicket`** is minted only by `EffectStore::mark_dispatch_started`,
-  from a `FenceGuard` plus the effect it belongs to. `dispatch`, `invoke` and
-  `start` accept nothing else, so sending a byte before the durable pre-send
-  write is a compile error. The ticket is deliberately not `Clone`: one
-  pre-send write authorizes one attempt.
+  from the claimed session authority, a `FenceGuard` and the effect it belongs
+  to. `dispatch`, `invoke` and `start` accept nothing else, so sending a byte
+  before the durable pre-send transaction is a compile error. That transaction
+  condition-checks session lifecycle/cancellation/deletion and current agent
+  ownership while moving the effect. The ticket is deliberately not `Clone`:
+  one pre-send transaction authorizes one attempt.
 
 `EffectStore` carries **no settlement method** and `WakeQueue` carries **no
 `enqueue`**. Settlement lands inside `DecisionCommit` so the outcome and its
@@ -430,6 +434,7 @@ point and running a second activation against what the first left:
 | before the source-retirement decision | the due row survives, a second owner retires it, and no effect is dispatched twice |
 | after source retirement, before the queue ack | the strong source read observes `done`, the duplicate hint is acked, and no agent claim is needed |
 | the commit loses its fence | nothing is appended, no byte leaves, the delivery is released and never acked |
+| cancellation or deletion after `EffectPrepared`, before ticket mint | the session-head participant loses the pre-dispatch transaction, the effect stays prepared and zero external dispatch occurs |
 | the page read observes a gap | the agent does not fold, does not plan, does not act and does not ack |
 
 The source-retirement rows were introduced red-first; the earlier rows retain
@@ -438,9 +443,10 @@ their mutation proof.
 #### `runtimes/brain-mux` — the composition
 
 `Config` grows the two variables §10 named. `wake` resolves each port to an
-adapter or refuses it by name; `pump` receives and drives until drain;
-`drain_sequence` walks all seven stages and joins the receive task, so the
-process proves it stopped receiving rather than merely intended to.
+adapter or refuses it by name; `pump` receives, recovers due work and drives a
+bounded concurrent batch until drain; `drain_sequence` walks all seven stages
+and joins or explicitly aborts-then-joins the receive task, so the process
+proves every admitted activation stopped rather than merely intending to stop.
 
 A11-MUX is asserted through the composition and not only inside the probe: the
 loop's future is metered across a provider that is pending for a scripted 999 ms
@@ -456,7 +462,7 @@ and none of it is attributed.
 | BR-24 | A failed ack releases the delivery instead of consuming it | the decision has already committed; consuming the delivery would strand an agent with work owed and nothing to wake it. This was a real defect the boundary test caught |
 | BR-25 | Admission stops receiving entirely while any binding is unsatisfied | a task that took deliveries only to release them would, after `max_receives` redeliveries, have the poison policy ack a wake nothing ever served. Not receiving is the only behaviour that cannot lose work |
 | BR-26 | A tool that could not be dispatched is recorded as a `ToolResult` with `is_error`, not as a terminal | the alternative ends a whole session because one optional tool was unavailable, and the manifest already says a failed tool is a result the model decides about |
-| BR-27 | `mark_response_started` writes every attribute `effect::decode` reads back | the decoder read `operationId`, `providerRequestId` and `receiptHash`; the writer wrote none of them. A detached effect therefore decoded with no operation, and `recover` would interrupt a run the upstream was still working on |
+| BR-27 | `mark_response_started` writes every attribute `effect::decode` reads back | the decoder reads the closed external-operation or detached-id-plus-executor binding, `providerRequestId` and `receiptHash`. Omitting any half of a detached binding would make restart recovery either impossible or route-ambiguous. |
 | BR-28 | The wake loop's step bound counts **committed decisions**, not planner steps | it exists to stop one activation holding a lease indefinitely, and a lease is held across commits. The planner's own limits are what stop a run |
 
 ### 13.1 Decision taken in the continuation pass
@@ -469,22 +475,77 @@ and none of it is attributed.
 
 | # | Decision | Why |
 | --- | --- | --- |
-| BR-30 | One bounded `regional-work/gsi_due` shard is swept before every queue receive; recovered rows carry `WakeOrigin::DueScan`, never a synthetic receipt | the stream and SQS are delivery hints, so a lost hint must not strand authority. Explicit provenance makes visibility, poison counting and ack no-ops for a scan result instead of issuing an invalid queue call. Sixty-four shards matches the strict-v1 table descriptor, and one shard plus one receive batch bounds every pass. |
+| BR-30 | A bounded rotating `regional-work/gsi_due` scan is the queue's durable backstop; recovered rows carry `WakeOrigin::DueScan`, never a synthetic receipt | the stream and SQS are delivery hints, so a lost hint must not strand authority. Explicit provenance makes visibility, poison counting and ack no-ops for a scan result instead of issuing an invalid queue call. Sixty-four shards matches the strict-v1 table descriptor; BR-35 and BR-41 fix the current receive/scan/drive ordering and bounds. |
 | BR-31 | Every successful or already-terminal agent activation ends with a retirement-only `DecisionCommit`: the session head and agent control are condition-checked under the live claim, while the exact pending source wake is moved to `done` and loses both due-index keys in the same transaction | a separate `UpdateItem` cleanup would have no agent fence, and acking first would lose the recovery path. The pure retirement does not manufacture a journal tail or advance the revision; terminal agents remain claimable solely so this transaction still has a live fence. |
 | BR-32 | A retirement-only transaction hashes agent, revision, tail and source work identity into its own 36-character client request token | it follows the final journal decision without advancing that decision's tail. Reusing the tail-only token with different transaction parameters would make DynamoDB reject the retirement as an idempotent-parameter mismatch. |
 | BR-33 | Hands effects bind the canonical runtime `aex_wire::ids::GenerationId` read from session authority; Brain has no local numeric generation or unbound-generation state | runtime idle recount and recovery select the exact generation that admitted an operation. `AgentControl`, child fanout, `AgentHead`, `HandsPort`, pinned agent config and Hands effect rows now carry the same typed UUID. |
+| BR-34 | One structured activation supervisor races claimed work against a five-second timer; each renewal atomically rechecks session lifecycle, cancellation, deletion and current agent ownership before extending the 15-second lease, then extends a live SQS receipt to 30 seconds | provider, managed-tool and Hands waits may last 600 seconds. Ownership or session-authority loss sets the adapter cancellation token and drops the pending work under its existing fence. Drain also sets the token; returned dispatch proof, never the token, decides whether the effect settles unknown or may be safely re-armed. A visibility failure permits a duplicate hint instead of hiding work whose ownership is uncertain. |
+| BR-35 | SQS receive remains first, but the cadence-limited rotating due burst completes immediately after that receive and before any external effect is polled; queue and recovered deliveries then share one bounded concurrent scheduler | a failed receive cannot advance a due cursor, and ten 600-second effects no longer serialize into roughly 100 minutes or delay lost-hint recovery until they finish. Every 20 seconds the backstop queries 16 of 64 shards and takes at most one exceptional lost-hint row per shard. Admission and the explicit drive bound cap aggregate context, stream and future state. |
+
+### 13.3 Decisions taken in the pre-send-integrity pass
+
+| # | Decision | Why |
+| --- | --- | --- |
+| BR-36 | Ticket minting reuses the decision compiler's canonical session-head condition as the first participant in the pre-dispatch transaction; the following participants prove current agent owner/fence and move the exact prepared effect | `EffectPrepared` is not dispatch authority. Cancellation, trash or purge can commit after preparation, and a separate pre-send read would leave another race while adding latency. One `ConditionCheck` makes the session fact and effect transition share the serialization point. |
+| BR-37 | A due row becomes a wake only when its base key, derived shard and effective due position all match `workId`, `dueAt` and priority. Invalid rows are skipped while the native cursor advances; each page returns the full invalid count plus at most eight closed-reason, key-digest diagnostics | trusting projected fields lets a forged past index key wake future work or address a different base row. The delivery port cannot delete or rewrite work authority, so logical isolation plus a bounded redacted diagnostic is the only boundary-correct quarantine; it never carries tenant identifiers or row keys. |
+
+### 13.4 Decisions taken in the tail-and-restore-budget pass
+
+| # | Decision | Why |
+| --- | --- | --- |
+| BR-38 | Journal pagination carries `DynamoDB`'s complete native `LastEvaluatedKey`; every `pk`/`sk`, partition, journal sort key and resume sequence is decoded and revalidated, and activation accepts a restore only when its final `(sequence, content hash)` equals the pair returned in the claimed `AgentHead` | `DynamoDB` may return a short page with a continuation, so entry count cannot distinguish EOF. Sequence alone also cannot distinguish a same-tail fork. Either ambiguity reaching recovery or planning can dispatch from a prefix or a different history. |
+| BR-39 | Cold restore has strict activation-wide entry and canonical inline-body-byte ceilings in addition to per-page bounds; mux admission reserves a separate conservative decoded-restore allowance before restore and releases it by RAII with the activation | many valid pages are still unbounded in aggregate, and payload bytes understate decoded Rust plus canonicalization memory. The code-owned [`ActivationPolicy::default`](../../crates/aex-brain-application/src/activation/mod.rs) bounds are inclusive across all pages. Model token limits are not memory measurements and are not used. The current 64 MiB reservation covers the measured four-megabyte-body amplification and conservatively extrapolates through the eight-megabyte launch ceiling; it must be retuned only from reproducible measurements. |
+
+### 13.5 Decisions taken in the runtime-liveness pass
+
+| # | Decision | Why |
+| --- | --- | --- |
+| BR-40 | Prepared-effect takeover mints a ticket only for the attempt already stored on the durable effect and never writes a replacement attempt number | ownership takeover is not a retry: the predecessor sent no byte. Rewriting the attempt would mutate durable history and make settlement evidence describe a generation that never existed. |
+| BR-41 | Drain retains the exact pump join handle across the cooperative timeout; expiry explicitly aborts and joins it, and `Stage::Exit` is refused while any drain permit remains | dropping a timed-out join handle detaches the pump. Readiness can fail at drain start, but a clean exit is true only after every admitted activation quiesced or its structured parent was cancelled and joined. |
+| BR-42 | Drain and session-authority loss set the downstream cancellation token; an ambiguous dispatch settles unknown, while only `NotSent` may create a replacement effect and continuation wake in one commit | cancellation in one process cannot unsend a request. Proof-preserving settlement prevents duplicate billing, and atomic re-arm prevents shutdown from stranding a prepared effect without a wake. Every late write retains the original session and agent fences. |
+| BR-43 | One receive pass scans due shards before driving anything, deduplicates queue/due hints, and polls all deliveries through `max_concurrent_drives` unordered futures | recovery latency is independent of effect duration, ten long effects overlap instead of serializing, and the explicit bound caps runnable futures and their reserved memory/CPU. |
+| BR-44 | A due page advances its native cursor only when every valid wake reached a stable outcome; a release, refusal or scan fault retains the prior cursor, while the shard rotor advances independently | a cursor is an assertion that earlier work was handled. Transient work must be revisited, but one hot or malformed shard must not starve later shards. |
+| BR-45 | SQS decoding returns valid and malformed siblings separately. Each malformed record is released below `max_receives` and acknowledged only at or above that threshold | one poison body cannot reject or repeatedly hide nine valid messages, and poison handling is an explicit per-record policy rather than an accidental batch error. |
+| BR-46 | Every poll carries the complete due-isolation count plus at most eight closed-reason, sixteen-hex fingerprints into the host's structured telemetry event | discarding the adapter's bounded diagnostics made logical quarantine operationally invisible. The event contains no tenant, session, work id, row key or body. |
+
+### 13.6 Decisions taken in the stateless detached-recovery pass
+
+| # | Decision | Why |
+| --- | --- | --- |
+| BR-47 | A detached tool is durably named by `DetachedOperationRef { id, executor }` in both effect evidence and the journal wait; recovery refuses if those bindings disagree | upstream ids are executor-scoped. A process-local id-to-route map disappears on restart and lets equal raw ids from two executors overwrite each other. The composed router now indexes four fixed executor slots directly and holds no per-operation state or lock. |
+| BR-48 | `DetachedStatus::Unknown` means an authoritative durable-absence response. Read-after-accept propagation lag and retryable query transport failures re-arm the existing wait until the effect's persisted deadline | treating eventual-consistency lag as absence interrupts valid work; retrying from a process-local deadline can poll forever after restart. Poll wakes remain delivery hints created only in `DecisionCommit`, with a non-zero scheduler floor so a zero hint cannot hot-loop. |
+| BR-49 | A completed or definitively failed detached query settles the effect, resolves its existing wait, records the exact executor result, and creates the continuation wake in one `DecisionCommit` | handing back after only the result commit strands the next model call. A separate enqueue would make the queue a second authority and reopen the commit/ack crash window. |
+| BR-50 | Detached operation identity is persisted before its journal wait. A successor that finds the response-started ToolCall effect in the narrow inter-write state revalidates the ordered pending call, request hash, class and pinned executor, then reconstructs the wait without external I/O; an already-expired operation opens and closes the wait plus settles unknown atomically | persisting the wait first can leave an unresolvable operation-less wait, while requiring the operation write to retain current-owner authority can lose an already-accepted upstream identity after lease theft. The repair is restart-only, never redispatches and leaves the successful hot path unchanged. |
+
+### 13.7 Decisions taken in the verified-fold-snapshot pass
+
+| # | Decision | Why |
+| --- | --- | --- |
+| BR-51 | A fold snapshot is derived acceleration only: the journal and agent control remain the sole semantic authority, while a separate `FoldSnapshotStore` exposes immutable body read plus one strongly selected per-agent pointer. Body read/publish receives the `WorkspaceId` already returned by this activation's claimed session authority | regional content keys are workspace-scoped, but putting tenant/session authority into `brain-mux` process configuration would reduce horizontal throughput and create process-local correctness state. The workspace argument is request-scoped, and the in-memory fixture rejects a mismatch. A mux may lose every cache and restart without changing an answer. |
+| BR-52 | Snapshot body `aex.brain.fold.v1` is uncompressed canonical JCS. Its pointer and body repeat the exact agent, absorbed `(JournalSeq, BLAKE3 journal hash)`, SHA-256 config digest, SHA-256 body digest and byte length; restore verifies every equality and re-canonicalizes before using state | sequence alone cannot detect a same-tail fork, and trusting a body merely because its object key matches lets schema/key/config substitution reach planning. Uncompressed bytes avoid decompression bombs and a second decoded-size/CPU bound. Typed-key maps encode as sorted `[key,value]` arrays because JSON object keys can only be strings. |
+| BR-53 | A valid snapshot seeds only a native-cursor journal suffix and every success still proves the exact head pair returned by the fenced claim. Missing, unavailable, corrupt, ahead-of-claim or same-sequence-fork snapshots get one bounded sequence-zero fallback; a present/degraded snapshot plus fallback failure preserves both typed causes, while ordinary pointer absence preserves the pre-existing authoritative replay error | the optimization never becomes authority and agents that have not reached the snapshot threshold retain their old failure classification. A valid snapshot whose suffix itself exceeds the ceiling does not attempt a strictly larger sequence-zero replay. Domain fold failures remain `FoldError`, not storage decode errors. |
+| BR-54 | Pointer publication rejects an unknown schema or impossible body length before I/O, condition-checks the exact immutable historical journal row, proves current control tail is at least the cut, then advances only from true strongly-read absence or a compare-and-swap over every field of the fully decoded previous pointer, accepting only the exact same cut/body/config/schema retry | requiring the snapshot cut to equal current head would starve continuously active agents; allowing an unchecked/regressing pointer or silently healing a malformed older row would hide corruption and let a slow publisher roll state backward. The immutable body must be placed through regional content authority first—Brain never writes S3 directly. |
+| BR-55 | Snapshot bodies are capped before allocation and valid body bytes share the activation-wide suffix byte ceiling. Admission reserves a separate 64 MiB restore working set; the `snapshot_memory` example canonically replays four 1,000,000-byte journal text blocks in one process and verifies that all four blocks and 4,000,000 text bytes survive in the resulting 4,002,554-byte body in a fresh process | JSON decode plus JCS verification temporarily holds multiple representations. Across five independent Windows debug runs, baseline peak working set was 4,431,872–4,435,968 bytes and verify peak was 23,085,056–23,138,304 bytes; the medians differ by 18,685,952 bytes (about 4.67× body bytes). The four-bytes-per-token shape is a planning approximation, not tokenizer truth; 64 MiB conservatively covers linear extrapolation through the 8 MiB launch ceiling plus suffix/accounting headroom, but does not become a semantic context limit. |
+| BR-56 | The optional snapshot-body cache is keyed by `(WorkspaceId, SHA-256 immutable identity)`, verifies the digest before insert, refuses same-digest distinct bytes, has independent entry/aggregate byte ceilings and LRU eviction, and stores no mutable pointer | a cache may improve latency only. Workspace in the key makes cross-tenant reuse impossible by construction; the adapter must still authorize the request-scoped workspace before lookup. Keeping it below the future store adapter means mux stays process-only; cache clear, eviction and process restart are ordinary misses. It is not wired until the real content adapter exists and a workload measurement proves benefit. |
+| BR-57 | A publishable snapshot artifact is opaque and can be created only by `SnapshotReplay`: it starts with an empty fold at sequence zero, accepts journal entries only through the canonical `fold::apply`, and consumes itself only at an exact target `(sequence, hash)`. Direct capture from a caller-supplied mutable `FoldState` is impossible | pointer/body digests prove internal byte identity, not semantic derivation. Without this boundary a writer could alter history, phase, budgets or effects while retaining a plausible tail/config and publish a self-consistent derived lie. The production publisher must still stream every bounded page from the trusted journal source for one stable target before this optimization may become ready. |
+| BR-58 | `brain-mux` compiles its CPU and memory shape from its unique `rust-oci-service` row in `release/units.toml`; the build refuses a missing, duplicate, wrong-package, non-service or malformed row and any shape other than the pinned 2048 CPU units/4096 MiB launch contract | the previous composition hard-coded 2 GiB while the release authority deployed 4 GiB, so tests proved a process that would never run. Binding and checking the constants at build time keeps release shape authoritative without parsing TOML or installing mutable task state on the hot path; a future shape change must update the complete internal envelope explicitly. |
+| BR-59 | Admission atomically acquires one RAII bundle containing activation, 64 MiB restore, 1 MiB stream-buffer, one provider-stream and one Hands-RPC reservation before claim or any body/page read; `should_receive` checks the exact same bundle | acquiring resources independently permits split capacity under concurrency, and waiting for provider/Hands capacity after claim holds a durable lease while no progress is possible. Reserving both external paths for the activation lifetime is conservative and may leave a permit unused, but eliminates post-claim local waits and preserves the no-unreserved-read/OOM guarantee. |
+| BR-60 | The 4096 MiB task is split into 3072 MiB context, 128 MiB stream buffers, 512 MiB warm cache and 384 MiB unavailable headroom. Provider and Hands pools each hold 48. Composition rejects a target above the minimum of every resource capacity and scheduler width; the launch target and outer scheduler width are 48, while each receive scope still owns one drive | 48 simultaneous worst-case restores consume exactly 3072 MiB. A scheduler width of 10 silently capped throughput far below the declared target; a width above 48 would advertise work the context pool cannot retain. One-delivery scopes prevent nested batch fan-out from multiplying the process cap. |
+| BR-61 | Restore scratch is not yet shrunk to a smaller retained-context reservation after hydration | there is a reproducible upper bound for peak decode/verify RSS but not for the allocator-retained folded state. Releasing the 64 MiB reservation from a guessed payload ratio could admit the next body while the first allocation remained resident. The conservative full-lifetime reservation costs concurrency only beyond the proven target; revisit after a fresh-process retained-RSS campaign publishes a reproducible bound. |
+| BR-62 | The production `FoldSnapshotStore` composes the existing regional S3 content authority with the Brain-owned DynamoDB pointer: a GET admits provider-declared `Content-Length` before collecting its stream and then verifies metadata, exact length and SHA-256; publication places immutable bytes first and only then runs the historical-row/control-tail/complete-old-pointer CAS. Workspace enters both paths only as the activation-scoped session-authority fact, while plane and region are the only process-scoped encryption-context inputs | a pointer selected before its body is durable creates a recoverable-looking hole, an unbounded GET lets one corrupt object exceed the mux memory reservation, and a mux-local workspace binding turns a multi-tenant process into hidden mutable authority. One streaming GET avoids the extra HEAD round trip; the adapter pays one body copy only on the off-hot-path publisher because the opaque artifact remains borrowed. Concurrent late publishers return `Superseded`, same-cut/different-body is a hard conflict, and ambiguous writes are resolved through a strong pointer read rather than blind reissue. |
 
 ### 14. Still deferred, with what unblocks each
 
 | Deferred | Unblocked by |
 | --- | --- |
-| `ProviderPort` and `CatalogPort` implementations | the gateway still restates its own port over `aex_model_catalog::canonical` types and publishes no composed router; the catalog publishes `ModelEntry`/`QualifiedModel`, not Brain's `ModelCapability` |
+| Complete production peer set | provider custody/router and the signed immutable catalog collection are composed; concrete tool executors and the Hands runtime backend remain absent, so readiness and receive admission remain closed |
 | Concrete Hands runtime backend | `aex-brain-hands::HandsAdapter` now implements `HandsPort` and enforces response generation equality, but no crate implements its `HandsBackend` over the runtime-activity store plus authenticated guest transport |
 | A `ToolExecutor` for any route | `aex-brain-managed-web` and `aex-brain-mcp` implement none, so the composed router is linked with zero executors and refuses by its own typed error |
 | The recovery controller's `RetrySameEffect` on a *dispatched* effect | nothing moves a dispatched effect back to `prepared`, so the arm is a named refusal. Unreachable for the classes this loop prepares, which a test asserts |
 | `ReconstructFromReceipt` | `aex-content-aws`'s placement API: the receipt is a digest, and the body it names lives in the content authority |
 | `OwedStep::SpawnChildren` | the `create_subagent` tool, which is the only thing that produces a fanout request for `subagent::plan_spawn`. The planner has no arm that reaches it today |
-| Concurrent activation of one batch | the loop drives a batch sequentially. The local slot already refuses a concurrent duplicate, and the composition root can spawn per delivery; nothing asserts the fan-out yet |
+| Production restore above the activation-wide entry/byte ceiling | the domain codec, opaque sequence-zero replay, bounded regional-content body read/publish, restore path and exact-old-tuple DynamoDB pointer adapter now exist. Production remains deliberately unready until the mux composes the adapter and a trusted publisher streams one stable journal target from sequence zero under the active fleet's restore byte ceiling before invoking it; Brain does not substitute an unbound process cache |
+| Successful snapshot-fallback telemetry | `restore` retains the typed `RestoreSource`, including degraded/corrupt/ahead/fork diagnostics, but the current `Session::reload` consumes only the verified state. Wire a bounded observation sink with the production content adapter before claiming fallback-rate or snapshot-hit operational visibility; terminal dual failures already preserve both causes in `ActivationError` |
 
 ### 14.1 BR-33 canonical generation and production injection
 
@@ -508,10 +569,12 @@ The physical recount contract is therefore closed:
 
 `brain-mux` exposes `ProductionPeers`, whose constructor requires provider, tool, catalog and
 Hands backend peers together and wraps the Hands backend in
-`aex_brain_hands::HandsAdapter`. The current executable deliberately uses
-`unavailable_ports`; readiness names all four missing peer implementations and receives no
-work. It must not be switched to `production_ports` until the provider router, catalog
-projection, tool executors and concrete Hands backend exist.
+`aex_brain_hands::HandsAdapter`. The current executable composes the real provider router and,
+only when the complete build-bound collection verifies and contains an `Active` model, the
+immutable catalog port. The collection covers every still-live session pin explicitly; it is
+not newest-only or last-N. Missing real publisher roots/artifacts, any invalid revision, or a
+cryptographically valid zero-`Active` collection leaves the catalog binding unready. Tool
+executors and the concrete Hands backend are still absent, so the process receives no work.
 
 ### 15. Third-pass gate output
 
@@ -595,3 +658,44 @@ cargo run -p aex-workspace-check
     134 member(s) and 141 package(s) satisfy every structural and registry rule
 git diff --check                                                        clean
 ```
+
+### 18.1 Canonical session authority at lease claim
+
+Brain lease claim no longer decodes the removed slim `SessionHead` or compares
+the removed `SessionLifecycle` enum. After the conditional agent claim it
+strongly reads and decodes the complete canonical session document, verifies
+the exact claimed session id and checked workspace projection, and derives the
+workspace, organization and deletion epoch from that single authority. Every
+non-live deletion state is terminal to a claim. An absent parent is terminal as
+well: a durable wake or agent row may legitimately outlive a purged session,
+and classifying that stale delivery as corrupt storage would retry or poison it
+indefinitely. A present malformed row remains an undecodable store failure.
+
+This does not make lease acquisition and the session head one transaction. The
+claim's subsequent decision writes and every renewal still condition on the
+session lifecycle, cancellation epoch and deletion epoch, so a deletion race
+cannot authorize work. A claim that discovers a terminal session may leave its
+new agent lease until expiry; removing it would add another conditional write
+to a path that will perform no decision, while it cannot bypass the later
+session guards. Converting claim to one `TransactWriteItems` would remove that
+temporary lease but lose `ReturnValues=ALL_NEW`, forcing another strong agent
+read. The current choice keeps the hot successful claim at two round trips and
+preserves the returned fence/head atomically with the claim update.
+
+### 19. Capacity-accounting pass gate output
+
+```text
+cargo fmt -p aex-brain-application -p brain-mux                      clean
+cargo test -p aex-brain-application -p brain-mux
+    application unit 101, threaded concurrency 15, ports 6,
+    brain-mux 112; 234 passed, 0 failed
+LOOM_MAX_PREEMPTIONS=3 cargo test -p aex-brain-application \
+    --features loom --test concurrency                               7 passed
+cargo clippy -p aex-brain-application -p brain-mux \
+    --all-targets --all-features -- -D warnings                      clean
+git diff --check                                                     clean
+```
+
+The local target directory is on a Windows volume where Cargo incremental
+hard-link creation falls back to copying. Those host warnings do not originate
+in source and no lint or test was suppressed.

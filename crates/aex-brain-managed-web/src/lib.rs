@@ -15,6 +15,7 @@
 //! - credential handling
 
 pub mod egress;
+pub mod executor;
 pub mod fetch;
 pub mod search;
 pub mod serializer;

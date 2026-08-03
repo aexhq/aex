@@ -165,6 +165,13 @@ where
             command,
         };
 
+        if kind != CommandKind::CreatePortalSession {
+            self.authority
+                .bind_effect_command(prepared.effect, prepared.intent_hash, &envelope)
+                .await
+                .map_err(authority_error)?;
+        }
+
         let result = self
             .gateway
             .execute(&envelope)

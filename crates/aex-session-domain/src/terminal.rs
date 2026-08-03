@@ -177,6 +177,7 @@ pub fn claim_terminal(
     head.status = SessionStatus::Idle;
     head.active_run = None;
     head.revision = session.revision.next();
+    head.updated_at = attempt.at;
 
     Ok(TerminalCommit {
         run: settled,

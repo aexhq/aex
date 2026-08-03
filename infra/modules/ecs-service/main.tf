@@ -1,5 +1,6 @@
 resource "aws_ecs_task_definition" "this" {
-  family                   = var.name
+  family                   = var.task_definition_family
+  skip_destroy             = true
   cpu                      = tostring(var.cpu)
   memory                   = tostring(var.memory)
   network_mode             = "awsvpc"

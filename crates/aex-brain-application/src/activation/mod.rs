@@ -29,6 +29,7 @@
 //!   of a lost unit of work.
 
 pub mod decide;
+pub mod restore;
 pub mod run;
 
 #[cfg(any(test, feature = "testing"))]
@@ -38,9 +39,9 @@ pub mod memory;
 mod tests;
 
 use crate::ports::{
-    CatalogError, CatalogPort, ClaimError, ClockPort, CommitError, EffectStore, HandsError,
-    HandsPort, IdPort, JournalStore, LeaseStore, ProviderPort, ReadBudget, StoreError, ToolPort,
-    ToolRoutingError, WakeQueue,
+    CatalogError, CatalogPort, ClaimError, ClockPort, CommitError, EffectStore, FoldSnapshotStore,
+    HandsError, HandsPort, IdPort, JournalStore, LeaseStore, ProviderPort, ReadBudget,
+    SnapshotDiagnostic, StoreError, ToolPort, ToolRoutingError, WakeQueue,
 };
 use aex_brain_domain::context::ContextPolicy;
 use aex_brain_domain::fold::FoldError;
@@ -49,7 +50,25 @@ use aex_brain_domain::journal::FinishReason;
 use std::sync::Arc;
 
 pub use decide::{Draft, phase_tag};
+pub use restore::{RestoreSource, RestoredFold};
 pub use run::{Activation, PollReport, WakeLoop};
+
+/// The strict activation-wide ceiling for cold journal restore.
+///
+/// This is separate from [`ReadBudget`]: a service may return many individually valid short
+/// pages, and retaining all of them is still unbounded unless the activation accounts for
+/// the whole restore. It is an entry/byte ceiling only; model token limits are not a memory
+/// measurement and are deliberately absent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RestoreBudget {
+    /// The most entries one activation may retain while rebuilding its fold.
+    pub max_entries: usize,
+    /// The most canonical inline journal-body bytes one activation may retain.
+    ///
+    /// This is a payload ceiling, not a claim about the exact heap footprint of the decoded
+    /// fold or `DynamoDB`'s response encoding.
+    pub max_bytes: usize,
+}
 
 /// Every port one activation is driven through.
 ///
@@ -60,6 +79,8 @@ pub use run::{Activation, PollReport, WakeLoop};
 pub struct Ports {
     /// The agent's journal: head, pages and the one decision transaction.
     pub journal: Arc<dyn JournalStore>,
+    /// Immutable fold snapshots and their monotonic durable pointer.
+    pub snapshots: Arc<dyn FoldSnapshotStore>,
     /// The durable effect record's two pre-settlement transitions.
     pub effects: Arc<dyn EffectStore>,
     /// Activation ownership.
@@ -96,8 +117,22 @@ impl core::fmt::Debug for Ports {
 pub struct ActivationPolicy {
     /// How long a claim is taken for.
     pub lease_ttl: core::time::Duration,
+    /// How often a live activation renews its claim.
+    pub renew_interval: core::time::Duration,
+    /// How far a progressing queue delivery is kept invisible on each renewal.
+    pub visibility_timeout: core::time::Duration,
     /// The bounds one journal page read runs under.
     pub read: ReadBudget,
+    /// The strict total journal restore ceiling across every page.
+    pub restore: RestoreBudget,
+    /// Largest canonical immutable fold snapshot this build will parse.
+    pub max_snapshot_bytes: usize,
+    /// Peak resident bytes reserved before snapshot/journal hydration.
+    ///
+    /// This is intentionally separate from canonical payload bytes. A reproducible
+    /// process-RSS probe bounds decode/fold amplification; token counts and `DynamoDB`
+    /// response bytes are not substitutes.
+    pub restore_resident_bytes: u64,
     /// The context view policy.
     pub context: ContextPolicy,
     /// How long one external effect attempt may run, in milliseconds.
@@ -124,6 +159,18 @@ pub struct ActivationPolicy {
     pub max_receives: u32,
     /// How many due shards the `regional-work` table is partitioned into.
     pub due_shards: u16,
+    /// Minimum time between bounded due-backstop bursts.
+    pub due_scan_interval: core::time::Duration,
+    /// How many rotating shards one due-backstop burst covers.
+    pub due_scan_shards_per_pass: u16,
+    /// The most due rows one shard contributes to one burst.
+    pub due_scan_page: usize,
+    /// The most delivery futures polled concurrently by one receive pass.
+    ///
+    /// This bounds hydrated context, stream buffers and runnable future state even when a
+    /// queue batch and due-recovery burst arrive together. Admission remains the stricter
+    /// resource authority; this is the scheduler's local fan-out bound.
+    pub max_concurrent_drives: usize,
     /// How many provider attempts one activation may make.
     ///
     /// Only a [`DispatchProof::NotSent`](aex_brain_domain::effect::DispatchProof::NotSent)
@@ -136,10 +183,22 @@ impl Default for ActivationPolicy {
     fn default() -> Self {
         Self {
             lease_ttl: core::time::Duration::from_secs(15),
+            renew_interval: core::time::Duration::from_secs(5),
+            visibility_timeout: core::time::Duration::from_secs(30),
             read: ReadBudget {
                 max_entries: 256,
                 max_bytes: 8 * 1_024 * 1_024,
             },
+            // A verified snapshot plus bounded suffix is the path for histories above this
+            // canonical payload ceiling. Admission separately reserves decoded working set.
+            restore: RestoreBudget {
+                max_entries: 4_096,
+                max_bytes: 8 * 1_024 * 1_024,
+            },
+            max_snapshot_bytes: 8 * 1_024 * 1_024,
+            // Conservative until the production-shape allocator/RSS campaign tightens it.
+            // Correct typed deferral is preferable to overcommitting a 1M-context mux.
+            restore_resident_bytes: 64 * 1_024 * 1_024,
             context: ContextPolicy::default(),
             effect_deadline_ms: 600_000,
             stream_buffer_bytes: 1_024 * 1_024,
@@ -153,6 +212,15 @@ impl Default for ActivationPolicy {
             // Must match the strict-v1 regional-work descriptor. The application keeps the
             // value explicit so a migration cannot silently change the sweep topology.
             due_shards: 64,
+            // SQS remains the primary path. The backstop runs a bounded 16-shard burst no
+            // more than once per long-poll window, recovering at most one exceptional
+            // lost-hint row from each shard. At the 20-second long poll this covers all 64
+            // shards in 80 seconds, costs at most 0.8 queries and 0.8 recovered rows per
+            // second per task, and cannot become hot polling while SQS stays ready.
+            due_scan_interval: core::time::Duration::from_secs(20),
+            due_scan_shards_per_pass: 16,
+            due_scan_page: 1,
+            max_concurrent_drives: 10,
             max_provider_attempts: 3,
         }
     }
@@ -188,7 +256,7 @@ pub trait AdmissionControl: Send + Sync + 'static {
     fn should_receive(&self) -> bool;
 
     /// Decides whether one activation may start.
-    fn admit(&self) -> AdmissionDecision;
+    fn admit(&self, restore_bytes: u64) -> AdmissionDecision;
 }
 
 /// What admission decided.
@@ -280,6 +348,16 @@ pub enum ActivationError {
     /// The journal did not fold.
     #[error(transparent)]
     Fold(#[from] FoldError),
+    /// Snapshot restore failed and the bounded authoritative sequence-zero fallback did too.
+    #[error(
+        "fold snapshot fallback failed ({snapshot}); sequence-zero restore failed ({fallback})"
+    )]
+    SnapshotFallbackFailed {
+        /// Why the acceleration path could not be used.
+        snapshot: SnapshotDiagnostic,
+        /// Why replaying the authoritative journal under the same ceiling also refused.
+        fallback: Box<ActivationError>,
+    },
     /// A capability lookup failed.
     #[error(transparent)]
     Catalog(#[from] CatalogError),
@@ -292,6 +370,19 @@ pub enum ActivationError {
     /// A record or a request could not be canonicalized, so its identity is unknown.
     #[error(transparent)]
     Canonical(#[from] aex_brain_domain::canonical::CanonicalizeError),
+    /// The canonical provider request could not be sealed.
+    #[error(transparent)]
+    ProviderCanonical(#[from] aex_model_catalog::canonical::SealError),
+    /// The provider returned message, usage and receipt values that do not
+    /// commit to the same canonical outcome.
+    #[error("provider outcome proof, usage and receipt do not match")]
+    InvalidProviderOutcome,
+    /// A system instruction reference reached activation without content hydration.
+    #[error("system instruction content was not hydrated before provider request construction")]
+    UnhydratedSystem,
+    /// A placed user block reached activation without content hydration.
+    #[error("placed user content was not hydrated before provider request construction")]
+    UnhydratedContent,
     /// The same effect identity arrived carrying a different request.
     ///
     /// The agent quarantines rather than dispatching either one: two requests under one

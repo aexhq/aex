@@ -286,9 +286,13 @@ where
         query: &query,
         body: &body,
     };
+    let effective_limits = RequestLimits {
+        max_json_body_bytes: context.limits.json_body_bytes,
+        max_otlp_body_bytes: context.limits.otlp_body_bytes,
+    };
     match state
         .api
-        .dispatch(&context, accept_kind(&headers), raw, state.limits)
+        .dispatch(&context, accept_kind(&headers), raw, effective_limits)
         .await
     {
         Ok(response) => render(response),

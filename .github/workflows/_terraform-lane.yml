@@ -20,6 +20,14 @@ on:
       lane:
         type: string
         required: true
+      job_name:
+        description: Caller job id recorded in the lane receipt.
+        type: string
+        required: true
+      selection_mode:
+        description: affected | full | shadow
+        type: string
+        required: true
 
 permissions:
   contents: read
@@ -36,6 +44,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
+        with:
+          toolchain: "1.97.1"
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd  # v3.1.2
@@ -59,12 +72,201 @@ jobs:
           terraform init -backend=false -input=false
           terraform validate
 
+      - name: Record the test identity
+        id: identity
+        env:
+          TERRAFORM_NODE: ${{ matrix.id }}
+          TERRAFORM_ROOT: ${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          [[ "$TERRAFORM_NODE" == "tf:$TERRAFORM_ROOT" ]]
+          case "$TERRAFORM_ROOT" in
+            ""|/*|*..*|*\\*) echo "unsafe Terraform root: $TERRAFORM_ROOT"; exit 2 ;;
+          esac
+          test -d "infra/$TERRAFORM_ROOT"
+          test -f "infra/$TERRAFORM_ROOT/.terraform.lock.hcl"
+          artifact_key=$(printf '%s' "$TERRAFORM_NODE" | sha256sum | cut -c1-12)
+          receipt_dir="$GITHUB_WORKSPACE/target/aex-evidence/terraform-$artifact_key"
+          mkdir -p "$receipt_dir"
+          date --utc +'%Y-%m-%dT%H:%M:%SZ' > "$receipt_dir/started-at.txt"
+          echo "ARTIFACT_KEY=$artifact_key" >> "$GITHUB_ENV"
+          echo "RECEIPT_DIR=$receipt_dir" >> "$GITHUB_ENV"
+          echo "RECEIPT_FILE=$receipt_dir/receipt-$artifact_key.json" >> "$GITHUB_ENV"
+          echo "artifact_key=$artifact_key" >> "$GITHUB_OUTPUT"
+
       - name: Test against mocked providers
         working-directory: infra/${{ matrix.name }}
-        run: terraform test
+        run: |
+          set -euo pipefail
+          terraform test -json -junit-xml="$RECEIPT_DIR/junit.xml" \
+            | tee "$RECEIPT_DIR/test-events.jsonl"
+
+      - name: Prove the complete test inventory
+        run: |
+          set -euo pipefail
+          jq -s -e '
+            ([.[] | select(.type == "version")]) as $versions
+            | ([.[] | select(.type == "test_abstract")]) as $abstracts
+            | ([.[] | select(
+                .type == "test_run" and .test_run.progress == "complete"
+              )]) as $runs
+            | ([.[] | select(.type == "test_summary")]) as $summaries
+            | ([.[] | select(
+                .type == "test_cleanup" or .type == "test_interrupt"
+              )]) as $residue
+            | ($abstracts[0].test_abstract
+                | to_entries
+                | map(.key as $path | .value[] | {path: $path, run: .})
+                | sort_by([.path, .run])) as $declared_cases
+            | ([$runs[] | {path: .test_run.path, run: .test_run.run}]
+                | sort_by([.path, .run])) as $collected_cases
+            | ($summaries[0].test_summary) as $summary
+            | if (
+                ($versions | length) == 1
+                and (($versions[0].ui // "") | split(".")[0] == "1")
+                and ($abstracts | length) == 1
+                and ($summaries | length) == 1
+                and ($declared_cases | length) > 0
+                and $collected_cases == $declared_cases
+                and ($runs | all(.test_run.status == "pass"))
+                and ($summary.status == "pass")
+                and ($summary.passed == ($declared_cases | length))
+                and ($summary.failed == 0)
+                and ($summary.errored == 0)
+                and ($summary.skipped == 0)
+                and ($residue | length) == 0
+              ) then {
+                declared: ($declared_cases | length),
+                collected: ($collected_cases | length),
+                passed: $summary.passed,
+                failed: $summary.failed,
+                skipped: $summary.skipped
+              } else error("Terraform test output is empty, skipped, interrupted, or partial") end
+          ' "$RECEIPT_DIR/test-events.jsonl" > "$RECEIPT_DIR/inventory.json"
 
       - name: Source policy
         run: cargo run --locked --release -p aex-release-tool -- policy terraform
+
+      - name: Build and verify the Terraform receipt
+        env:
+          CALLER_JOB: ${{ inputs.job_name }}
+          PARTITION_INDEX: ${{ matrix.partition }}
+          PARTITION_TOTAL: ${{ matrix.partitions }}
+          RECEIPT_LANE: ${{ inputs.lane }}
+          SELECTION_MODE: ${{ inputs.selection_mode }}
+          TERRAFORM_NODE: ${{ matrix.id }}
+          TERRAFORM_ROOT: ${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          completed_at=$(date --utc +'%Y-%m-%dT%H:%M:%SZ')
+          started_at=$(<"$RECEIPT_DIR/started-at.txt")
+          declared=$(jq -er '.declared | select(. > 0)' "$RECEIPT_DIR/inventory.json")
+          terraform_lock_digest="sha256:$(sha256sum "infra/$TERRAFORM_ROOT/.terraform.lock.hcl" | cut -d' ' -f1)"
+          receipt_id="rc_${RECEIPT_LANE}_terraform_${ARTIFACT_KEY}_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+          jq -n \
+            --arg receiptId "$receipt_id" \
+            --arg lane "$RECEIPT_LANE" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg commitSha "$GITHUB_SHA" \
+            --arg workflowRunId "$GITHUB_RUN_ID" \
+            --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            --arg jobName "$CALLER_JOB" \
+            --arg builderId "https://github.com/$GITHUB_REPOSITORY/.github/workflows/_terraform-lane.yml@$GITHUB_SHA" \
+            --arg terraformLockDigest "$terraform_lock_digest" \
+            --arg mode "$SELECTION_MODE" \
+            --arg terraformNode "$TERRAFORM_NODE" \
+            --argjson partitionIndex "$PARTITION_INDEX" \
+            --argjson partitionTotal "$PARTITION_TOTAL" \
+            --argjson declared "$declared" \
+            --arg startedAt "$started_at" \
+            --arg completedAt "$completed_at" \
+            '{
+              receiptId: $receiptId,
+              class: "unit",
+              layer: "unit",
+              lane: $lane,
+              concerns: ["contract"],
+              declared: $declared,
+              source: {
+                repository: $repository,
+                commitSha: $commitSha,
+                treeClean: true,
+                workflowRunId: $workflowRunId,
+                runAttempt: $runAttempt,
+                jobName: $jobName,
+                builderId: $builderId
+              },
+              inputs: {terraformLockDigest: $terraformLockDigest},
+              selection: {
+                mode: $mode,
+                filterset: "terraform test (all discovered run blocks)",
+                packages: [$terraformNode],
+                partition: {index: $partitionIndex, total: $partitionTotal}
+              },
+              data: {residue: "none", secretCanaryObserved: false},
+              startedAt: $startedAt,
+              completedAt: $completedAt
+            }' > "$RECEIPT_DIR/context.json"
+          cargo run --locked --release -p aex-release-tool -- evidence new \
+            --context "$RECEIPT_DIR/context.json" \
+            --junit "$RECEIPT_DIR/junit.xml" \
+            --out "$RECEIPT_FILE"
+          cargo run --locked --release -p aex-release-tool -- evidence attach \
+            --receipt "$RECEIPT_FILE" --kind junit \
+            --file "$RECEIPT_DIR/junit.xml" \
+            --uri "artifact://terraform-evidence-${RECEIPT_LANE}-${ARTIFACT_KEY}/junit.xml"
+          cargo run --locked --release -p aex-release-tool -- evidence attach \
+            --receipt "$RECEIPT_FILE" --kind log \
+            --file "$RECEIPT_DIR/test-events.jsonl" \
+            --uri "artifact://terraform-evidence-${RECEIPT_LANE}-${ARTIFACT_KEY}/test-events.jsonl"
+          jq -e --slurpfile scan "$RECEIPT_DIR/inventory.json" '
+            .schema == "aex.evidence-receipt.v1" and
+            .class == "unit" and
+            .layer == "unit" and
+            .lane == env.RECEIPT_LANE and
+            .source.commitSha == env.GITHUB_SHA and
+            .source.workflowRunId == env.GITHUB_RUN_ID and
+            .source.runAttempt == (env.GITHUB_RUN_ATTEMPT | tonumber) and
+            .source.jobName == env.CALLER_JOB and
+            .selection.mode == env.SELECTION_MODE and
+            .selection.packages == [env.TERRAFORM_NODE] and
+            .inventory.declared == $scan[0].declared and
+            .inventory.collected == $scan[0].collected and
+            .inventory.passed == $scan[0].passed and
+            .inventory.failed == 0 and
+            .inventory.skipped == 0 and
+            .inventory.ignored == 0 and
+            .inventory.filteredAtRuntime == 0 and
+            .inventory.retried == 0 and
+            .inventory.flaky == 0 and
+            .conclusion == "passed"
+          ' "$RECEIPT_FILE" >/dev/null
+          cargo run --locked --release -p aex-release-tool -- evidence verify \
+            --receipt "$RECEIPT_FILE"
+
+      - name: Upload the Terraform receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: receipt-${{ inputs.lane }}-terraform-${{ steps.identity.outputs.artifact_key }}
+          path: target/aex-evidence/terraform-${{ steps.identity.outputs.artifact_key }}/receipt-${{ steps.identity.outputs.artifact_key }}.json
+          if-no-files-found: error
+
+      - name: Upload the Terraform test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: terraform-evidence-${{ inputs.lane }}-${{ steps.identity.outputs.artifact_key }}
+          path: |
+            target/aex-evidence/terraform-${{ steps.identity.outputs.artifact_key }}/junit.xml
+            target/aex-evidence/terraform-${{ steps.identity.outputs.artifact_key }}/test-events.jsonl
+          if-no-files-found: error
 
       - name: Speculative plan
         if: inputs.mode == 'speculative-plan'

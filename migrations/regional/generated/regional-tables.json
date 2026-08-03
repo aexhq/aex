@@ -1,6 +1,7 @@
 {
   "schema": "aex.regional-tables.v1",
-  "digest": "blake3:357d0b92a60e93cde4019939ea99a7b5cef65206f7ca6ac7ba63376bcef858e5",
+  "generation": 1,
+  "digest": "blake3:d39c1be206dc482d66c4c18ba28ceab9d41c77bd64f2c1ea86c42a9d299e5cae",
   "tables": [
     {
       "schema": "aex.regional-table.v1",
@@ -406,7 +407,7 @@
       "schema": "aex.regional-table.v1",
       "table": "regional-authz-projection",
       "owner": "regional-stores",
-      "purpose": "Read-only regional projection of workspace placement, descriptive profiles, effective limits, API key revocation and the signed feed frontier. Written only by central-control-worker; every regional role holds GetItem and Query and nothing else. The item shapes are assumed by the regional stream and must be confirmed by the central stream (G-3).",
+      "purpose": "Read-only regional projection of workspace placement, descriptive profiles, effective limits, API key revocation and the signed feed frontier. Central control owns placement, profile, revocation and frontier rows; regional capacity alone owns effective-limit rows. Partition-key-scoped IAM keeps those write capabilities disjoint, while every serving regional role holds GetItem and Query only.",
       "billingMode": "PAY_PER_REQUEST",
       "deletionProtection": true,
       "pointInTimeRecovery": {
@@ -449,6 +450,8 @@
         "workspace_placement",
         "workspace_profile",
         "workspace_limit",
+        "workspace_limit_bundle_head",
+        "workspace_limit_bundle",
         "key_revocation",
         "feed_frontier"
       ],
@@ -456,14 +459,56 @@
         {
           "role": "central-control-worker",
           "actions": [
-            "dynamodb:GetItem",
-            "dynamodb:PutItem",
-            "dynamodb:UpdateItem",
-            "dynamodb:TransactWriteItems"
+            "dynamodb:GetItem"
           ],
           "resources": [
             "table"
           ]
+        },
+        {
+          "role": "central-control-worker",
+          "actions": [
+            "dynamodb:PutItem"
+          ],
+          "resources": [
+            "table"
+          ],
+          "itemTypes": [
+            "workspace_placement",
+            "workspace_profile",
+            "key_revocation",
+            "feed_frontier"
+          ],
+          "condition": {
+            "operator": "ForAllValues:StringLike",
+            "key": "dynamodb:LeadingKeys",
+            "values": [
+              "WS#*",
+              "KEY#*",
+              "FEED"
+            ]
+          }
+        },
+        {
+          "role": "regional-capacity-controller",
+          "actions": [
+            "dynamodb:TransactWriteItems"
+          ],
+          "resources": [
+            "table"
+          ],
+          "itemTypes": [
+            "workspace_limit",
+            "workspace_limit_bundle_head",
+            "workspace_limit_bundle"
+          ],
+          "condition": {
+            "operator": "ForAllValues:StringLike",
+            "key": "dynamodb:LeadingKeys",
+            "values": [
+              "LIMIT#*"
+            ]
+          }
         },
         {
           "role": "regional-session-api",
@@ -540,6 +585,82 @@
       "tags": {
         "aex:component": "authz-projection",
         "aex:data-class": "projection",
+        "aex:plane": "regional"
+      }
+    },
+    {
+      "schema": "aex.regional-table.v1",
+      "table": "regional-capacity-authority",
+      "owner": "regional-stores",
+      "purpose": "Durable per-workspace shared-safety capacity authority. One complete workspace_capacity row carries the current defaults revision/digest, monotonic authority revision and regional capacity fence; immutable capacity_audit rows retain every committed decision identity. The controller atomically writes this authority together with the complete public effective-limit projection.",
+      "billingMode": "PAY_PER_REQUEST",
+      "deletionProtection": true,
+      "pointInTimeRecovery": {
+        "enabled": true,
+        "retentionDays": 35
+      },
+      "serverSideEncryption": {
+        "type": "KMS",
+        "keyAuthority": "regional-capacity",
+        "rationale": "Capacity decisions are a regional authority with a distinct write role and recovery boundary; they must not share the session or authorization-projection key authority."
+      },
+      "attributes": [
+        {
+          "name": "pk",
+          "type": "S"
+        },
+        {
+          "name": "sk",
+          "type": "S"
+        }
+      ],
+      "keySchema": {
+        "partition": "pk",
+        "sort": "sk"
+      },
+      "globalSecondaryIndexes": [],
+      "stream": {
+        "enabled": false,
+        "viewType": "NONE",
+        "consumers": [],
+        "rationale": "Capacity commands are explicit direct invokes and publish their serving projection in the same transaction; there is no asynchronous second writer to catch up."
+      },
+      "timeToLive": {
+        "enabled": false,
+        "attribute": "",
+        "appliesTo": [],
+        "rationale": "An expired authority or audit row would either fail every request or erase the evidence for an override, so neither family is TTL data."
+      },
+      "itemTypes": [
+        "workspace_capacity",
+        "capacity_audit"
+      ],
+      "iam": [
+        {
+          "role": "regional-capacity-controller",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:TransactWriteItems"
+          ],
+          "resources": [
+            "table"
+          ],
+          "itemTypes": [
+            "workspace_capacity",
+            "capacity_audit"
+          ],
+          "condition": {
+            "operator": "ForAllValues:StringLike",
+            "key": "dynamodb:LeadingKeys",
+            "values": [
+              "WS#*"
+            ]
+          }
+        }
+      ],
+      "tags": {
+        "aex:component": "capacity",
+        "aex:data-class": "authority",
         "aex:plane": "regional"
       }
     },
@@ -1179,7 +1300,7 @@
       "schema": "aex.regional-table.v1",
       "table": "runtime-activity",
       "owner": "regional-stores",
-      "purpose": "The exact Hands generation head, lifecycle intents and immutable receipts, transactional usage outbox, true-idle probes, the current-generation pointer a Brain activation reads, and a sharded evaluation due index for the reaper.",
+      "purpose": "The exact Hands generation head, idempotent open-operation admission markers, lifecycle intents and immutable receipts, transactional usage outbox, true-idle probes, the current-generation pointer a Brain activation reads, and a sharded evaluation due index for the reaper.",
       "billingMode": "PAY_PER_REQUEST",
       "deletionProtection": true,
       "pointInTimeRecovery": {
@@ -1259,7 +1380,8 @@
         "lifecycle_receipt",
         "idle_probe",
         "current_generation",
-        "usage_outbox"
+        "usage_outbox",
+        "hands_operation_admission"
       ],
       "iam": [
         {
@@ -1285,6 +1407,7 @@
             "dynamodb:Query",
             "dynamodb:PutItem",
             "dynamodb:UpdateItem",
+            "dynamodb:DeleteItem",
             "dynamodb:TransactWriteItems"
           ],
           "resources": [
@@ -1368,21 +1491,37 @@
           "partition": "wsIndexPk",
           "sort": "wsIndexSk",
           "sparse": true,
-          "projectsRecordBody": false,
-          "rationale": "Only session heads and operation states carry the index attributes, so a list query can never surface a prompt, a journal entry or an idempotency receipt. lifecycle sits inside the index partition key so trash moves the item and purge removes it entirely, which makes ordinary list filter-free.",
+          "projectsRecordBody": true,
+          "rationale": "Only session heads and operation states carry the index attributes, so a list query can never surface a prompt, a journal entry or an idempotency receipt. Session heads project their versioned authority document so a complete public session page needs no N+1 base-table hydration. lifecycle sits inside the index partition key so trash moves the item and purge removes it entirely, which makes ordinary list filter-free.",
           "projection": {
             "type": "INCLUDE",
             "attributes": [
               "sessionId",
               "operationId",
+              "itemType",
               "workspaceId",
+              "organizationId",
               "status",
               "lifecycle",
+              "workAdmission",
               "kind",
               "createdAt",
               "updatedAt",
               "revision",
-              "sessionRefId"
+              "deletionEpoch",
+              "cancelEpoch",
+              "activeRunId",
+              "rootAgentId",
+              "mutationGuardOperationId",
+              "resolvedConfigDigest",
+              "provider",
+              "model",
+              "custodyRevision",
+              "persistedRootDigest",
+              "persistRevision",
+              "sessionRefId",
+              "authoritySchemaVersion",
+              "authorityDocument"
             ]
           }
         },

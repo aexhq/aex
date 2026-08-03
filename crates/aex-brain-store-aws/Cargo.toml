@@ -18,7 +18,7 @@ artifact = "none"
 live_suite = "aex-live-brain-mux"
 layers = ["unit", "integration"]
 concerns = ["contract", "property", "fault", "security"]
-seams = ["aws.dynamodb.transact_write", "aws.dynamodb.condition", "aws.s3.conditional_put"]
+seams = ["aws.dynamodb.transact_write", "aws.dynamodb.condition"]
 security_tier = "authority"
 risk = ["concurrency"]
 scenarios = []
@@ -37,7 +37,6 @@ async-trait.workspace = true
 blake3.workspace = true
 aws-config.workspace = true
 aws-sdk-dynamodb.workspace = true
-aws-sdk-s3.workspace = true
 aws-sdk-sqs.workspace = true
 aws-smithy-types.workspace = true
 bytes.workspace = true
@@ -49,6 +48,7 @@ time.workspace = true
 uuid.workspace = true
 aex-brain-application = { path = "../aex-brain-application" }
 aex-brain-domain = { path = "../aex-brain-domain" }
+aex-content-aws = { path = "../aex-content-aws" }
 # The shared regional store machinery: key templates, row codecs, item
 # measurement, the one transaction-plan compiler and the error vocabulary. Brain
 # calls these rather than forking the item shapes they own.
@@ -58,7 +58,10 @@ aex-wire = { path = "../aex-wire" }
 
 [dev-dependencies]
 aex-brain-test-support = { path = "../aex-brain-test-support" }
+aex-session-domain = { path = "../aex-session-domain" }
 aws-smithy-http-client.workspace = true
+base64.workspace = true
+http.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 [[test]]

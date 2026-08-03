@@ -86,6 +86,11 @@ pub fn default_meta(owner: &str, role: &str) -> Value {
 
 /// A live-companion ownership block.
 pub fn live_meta(deployable: &str) -> Value {
+    live_meta_for(deployable, "SC-DEMO")
+}
+
+/// A live-companion ownership block claiming one runnable release scenario.
+pub fn live_meta_for(deployable: &str, scenario: &str) -> Value {
     json!({
         "owner": "delivery",
         "role": "live_companion",
@@ -96,7 +101,7 @@ pub fn live_meta(deployable: &str) -> Value {
         "seams": [],
         "security_tier": "internal",
         "risk": ["none"],
-        "scenarios": [],
+        "scenarios": [scenario],
         "targets": { "smoke": "smoke" }
     })
 }
@@ -426,4 +431,6 @@ schema = "aex.scenario-ownership.v1"
 id = "SC-DEMO"
 owner = "delivery"
 observes = ["artifact:demo-api"]
+package = "cargo:aex-live-demo-api"
+target = "smoke"
 "#;

@@ -91,12 +91,14 @@ impl MicrovmControlApi for AwsMicrovmControl {
                 .send()
                 .await
                 .map_err(|error| effect_error(&error))?;
-            description(
+            let mut description = description(
                 output.microvm_id(),
                 output.state(),
                 Some(output.endpoint()),
                 Some(output.started_at()),
-            )
+            )?;
+            description.request_id = Some(request_id(&output)?);
+            Ok(description)
         })
     }
 
@@ -238,6 +240,7 @@ fn description(
         state,
         endpoint,
         launched_at,
+        request_id: None,
     })
 }
 

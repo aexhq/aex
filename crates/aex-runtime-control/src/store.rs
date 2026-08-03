@@ -119,6 +119,10 @@ pub fn bind_command(pointer: Option<&GenerationPointer>, named: GenerationId) ->
 /// belong to. Reading them as four calls would let the four disagree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GenerationView {
+    /// The immutable exact-generation tuple required to reconstruct the original
+    /// launch request. Runtime lifecycle fields below may change; this value may
+    /// not. In particular, a launch retry never resolves a newer image catalog.
+    pub definition: crate::generation::HandsGeneration,
     /// The head as stored.
     pub head: GenerationHead,
     /// The session the generation belongs to.
@@ -196,6 +200,9 @@ pub struct GenerationAccountingPlan {
     pub suspended_at: Option<Timestamp>,
     /// Next snapshot generation ordinal.
     pub snapshot_ordinal: u32,
+    /// Provider lifetime start, set exactly once when launch settles. `None`
+    /// preserves the already-recorded lifetime on later transitions.
+    pub lifetime_started_at: Option<Timestamp>,
 }
 
 /// What a committed generation write landed.
@@ -205,6 +212,48 @@ pub struct GenerationCommit {
     pub head: GenerationHead,
     /// The revision the write landed.
     pub revision: Revision,
+}
+
+/// One conditional increment of the authoritative open-operation count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OperationAdmissionPlan {
+    /// The exact generation admitting work.
+    pub generation: GenerationId,
+    /// The deterministic operation identity. Admission is idempotent on this
+    /// value, not merely on a head revision.
+    pub operation: aex_hands_protocol::rpc::HandsOperationId,
+    /// The lifecycle fence presented by Brain.
+    pub fence: Fence,
+    /// The head revision Brain read.
+    pub expected_revision: Revision,
+    /// The count after admission.
+    pub open_operations: u32,
+    /// The revision after admission.
+    pub next_revision: Revision,
+    /// The authoritative busy instant.
+    pub last_busy_at: Timestamp,
+}
+
+/// One conditional decrement of the authoritative open-operation count.
+///
+/// Settlement is revision-conditional but deliberately not fence-conditional:
+/// lifecycle may advance the fence while an admitted operation is completing.
+/// A revision race reloads and recomputes rather than losing a decrement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OperationSettlementPlan {
+    /// The exact generation settling work.
+    pub generation: GenerationId,
+    /// The operation whose durable admission marker is removed. Repeated
+    /// settlement of the same operation is a no-op.
+    pub operation: aex_hands_protocol::rpc::HandsOperationId,
+    /// The head revision Brain read.
+    pub expected_revision: Revision,
+    /// The count after settlement.
+    pub open_operations: u32,
+    /// The revision after settlement.
+    pub next_revision: Revision,
+    /// The authoritative busy instant.
+    pub last_busy_at: Timestamp,
 }
 
 /// A lifecycle intent to record **before** the provider call, in the same
@@ -249,6 +298,8 @@ pub struct LifecycleRequestPlan {
     pub intent_id: LifecycleIntentId,
     /// The generation the intent belongs to.
     pub generation: GenerationId,
+    /// The exact provider `MicroVM` the request acted on or produced.
+    pub microvm: MicrovmId,
     /// The exact request identity returned by the provider SDK.
     pub provider_request_id: ProviderRequestId,
 }
@@ -441,6 +492,14 @@ pub trait RuntimeActivityStore: Send + Sync + 'static {
         &'a self,
         plan: &'a GenerationPlan,
     ) -> StoreFuture<'a, GenerationCommit>;
+
+    /// Atomically admits one Hands operation against running state, exact fence,
+    /// and exact revision, advancing the session pointer revision with the head.
+    fn admit_operation<'a>(&'a self, plan: &'a OperationAdmissionPlan) -> StoreFuture<'a, ()>;
+
+    /// Atomically settles one Hands operation against only the exact revision,
+    /// advancing the session pointer revision with the head.
+    fn settle_operation<'a>(&'a self, plan: &'a OperationSettlementPlan) -> StoreFuture<'a, ()>;
 
     /// Records a lifecycle intent before the provider call.
     fn record_intent<'a>(

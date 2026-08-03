@@ -1,17 +1,18 @@
 //! The read-only `regional-authz-projection` reader.
 //!
-//! This table is written **only** by `central-control-worker`. Every regional
-//! role holds `dynamodb:GetItem` and `dynamodb:Query` on it and nothing else,
-//! and this module contains no write operation at all — a source conformance
-//! test asserts that, because "read-only by convention" is not a property.
+//! Placement, profile and revocation rows are written by
+//! `central-control-worker`; effective-limit rows are reserved for the regional
+//! capacity authority. Every serving regional role holds `dynamodb:GetItem`
+//! and `dynamodb:Query` on the table and nothing else, and this module contains
+//! no write operation at all — a source conformance test asserts that, because
+//! "read-only by convention" is not a property.
 //!
 //! It lives behind the `authz-projection` feature so `regional-secret-api` and
 //! `regional-otlp` can read a placement without linking the session row codec
 //! (D-21).
 
 use aex_wire::ids::{ApiKeyId, WorkspaceId};
-use aex_wire::limits::{LimitId, LimitShape};
-use aex_wire::models::{LimitSource, LimitValue};
+use aex_wire::limits::LimitId;
 use async_trait::async_trait;
 use aws_sdk_dynamodb::Client;
 
@@ -20,7 +21,13 @@ use crate::error::{Idempotence, StoreError, classify};
 use crate::paging::{PageBudget, PagePosition};
 use crate::plan::key;
 use crate::wire_pending::{
-    FeedFrontier, KeyRevocation, ProjectedWorkspaceLimit, WorkspacePlacement, WorkspaceProfile,
+    FeedFrontier, KeyRevocation, ProjectedLimitBundle, ProjectedLimitBundleHead,
+    ProjectedWorkspaceLimit, WorkspacePlacement, WorkspaceProfile,
+};
+
+pub use crate::projection_limit::{
+    WORKSPACE_LIMIT, decode_limit, decode_limit_at, decode_limit_bundle, decode_limit_bundle_head,
+    limit_bundle_head_key, limit_bundle_key, limit_key,
 };
 
 /// The `itemType` of a workspace placement.
@@ -31,8 +38,6 @@ pub const KEY_REVOCATION: &str = "key_revocation";
 pub const FEED_FRONTIER: &str = "feed_frontier";
 /// The `itemType` of descriptive workspace facts.
 pub const WORKSPACE_PROFILE: &str = "workspace_profile";
-/// The `itemType` of a durable effective workspace limit.
-pub const WORKSPACE_LIMIT: &str = "workspace_limit";
 
 /// `WS#{workspace_id}` / `PLACEMENT`.
 #[must_use]
@@ -56,15 +61,6 @@ pub fn frontier_key() -> (String, String) {
 #[must_use]
 pub fn profile_key(workspace: WorkspaceId) -> (String, String) {
     (format!("WS#{workspace}"), "PROFILE".to_owned())
-}
-
-/// `WS#{workspace_id}` / `LIMIT#{limit_id}`.
-#[must_use]
-pub fn limit_key(workspace: WorkspaceId, limit: LimitId) -> (String, String) {
-    (
-        format!("WS#{workspace}"),
-        format!("LIMIT#{}", limit.as_str()),
-    )
 }
 
 /// One bounded page from the descriptive workspace projection.
@@ -155,6 +151,26 @@ pub trait WorkspaceProjection: Send + Sync + 'static {
         budget: PageBudget,
         after: Option<&PagePosition>,
     ) -> Result<ProjectionPage<ProjectedWorkspaceLimit>, StoreError>;
+
+    /// Strongly reads the complete-set revision fence.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError`] for absence, transport or strict decode failure.
+    async fn read_limit_bundle_head(
+        &self,
+        workspace: WorkspaceId,
+    ) -> Result<ProjectedLimitBundleHead, StoreError>;
+
+    /// Strongly reads the complete payload selected by the head.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError`] for absence, transport or strict decode failure.
+    async fn read_limit_bundle(
+        &self,
+        workspace: WorkspaceId,
+    ) -> Result<ProjectedLimitBundle, StoreError>;
 }
 
 /// The reader.
@@ -253,7 +269,7 @@ impl WorkspaceProjection for ProjectionReader {
         self.get(&pk, &sk)
             .await?
             .as_ref()
-            .map(|item| decode_limit(item, workspace).map_err(StoreError::from))
+            .map(|item| decode_limit_at(item, workspace, limit).map_err(StoreError::from))
             .transpose()
     }
 
@@ -263,7 +279,7 @@ impl WorkspaceProjection for ProjectionReader {
         budget: PageBudget,
         after: Option<&PagePosition>,
     ) -> Result<ProjectionPage<ProjectedWorkspaceLimit>, StoreError> {
-        let partition = format!("WS#{workspace}");
+        let partition = format!("LIMIT#WS#{workspace}");
         let output = self
             .client
             .query()
@@ -295,6 +311,34 @@ impl WorkspaceProjection for ProjectionReader {
             })?;
         Ok(ProjectionPage { items, next })
     }
+
+    async fn read_limit_bundle_head(
+        &self,
+        workspace: WorkspaceId,
+    ) -> Result<ProjectedLimitBundleHead, StoreError> {
+        let (pk, sk) = limit_bundle_head_key(workspace);
+        let item = self
+            .get(&pk, &sk)
+            .await?
+            .ok_or_else(|| StoreError::Misconfigured {
+                table: self.table.clone(),
+            })?;
+        Ok(decode_limit_bundle_head(&item, workspace)?)
+    }
+
+    async fn read_limit_bundle(
+        &self,
+        workspace: WorkspaceId,
+    ) -> Result<ProjectedLimitBundle, StoreError> {
+        let (pk, sk) = limit_bundle_key(workspace);
+        let item = self
+            .get(&pk, &sk)
+            .await?
+            .ok_or_else(|| StoreError::Misconfigured {
+                table: self.table.clone(),
+            })?;
+        Ok(decode_limit_bundle(&item, workspace)?)
+    }
 }
 
 /// Decodes cold descriptive workspace facts.
@@ -310,64 +354,6 @@ pub fn decode_profile(item: &Item, asserted: WorkspaceId) -> Result<WorkspacePro
         name: row.string("name")?.to_owned(),
         slug: row.string("slug")?.to_owned(),
         created_at: row.timestamp("createdAt")?,
-    })
-}
-
-/// Decodes one durable effective limit and checks its registered shape.
-///
-/// # Errors
-///
-/// [`CodecError`] for a missing, mistyped, foreign-tenant, unknown-limit or
-/// wrong-shape field.
-pub fn decode_limit(
-    item: &Item,
-    asserted: WorkspaceId,
-) -> Result<ProjectedWorkspaceLimit, CodecError> {
-    let row = Row::bind(item, WORKSPACE_LIMIT)?;
-    row.owned_by("workspaceId", &asserted.to_string())?;
-    let id = LimitId::parse(row.string("limitId")?).ok_or_else(|| CodecError::Malformed {
-        item_type: WORKSPACE_LIMIT,
-        attribute: "limitId",
-        reason: "outside the generated limit registry".to_owned(),
-    })?;
-    let effective_value = serde_json::from_str::<LimitValue>(row.string("effectiveValue")?)
-        .map_err(|error| CodecError::Malformed {
-            item_type: WORKSPACE_LIMIT,
-            attribute: "effectiveValue",
-            reason: error.to_string(),
-        })?;
-    let actual_shape = match &effective_value {
-        LimitValue::Scalar(_) => LimitShape::Scalar,
-        LimitValue::Map(_) => LimitShape::Map,
-    };
-    if actual_shape != id.shape() {
-        return Err(CodecError::Malformed {
-            item_type: WORKSPACE_LIMIT,
-            attribute: "effectiveValue",
-            reason: format!(
-                "shape {actual_shape:?} does not match registered {:?}",
-                id.shape()
-            ),
-        });
-    }
-    let source = match row.string("source")? {
-        "default" => LimitSource::Default,
-        "workspace_override" => LimitSource::WorkspaceOverride,
-        _ => {
-            return Err(CodecError::Malformed {
-                item_type: WORKSPACE_LIMIT,
-                attribute: "source",
-                reason: "expected `default` or `workspace_override`".to_owned(),
-            });
-        }
-    };
-    Ok(ProjectedWorkspaceLimit {
-        workspace: asserted,
-        id,
-        effective_value,
-        source,
-        revision: row.u64("revision")?,
-        changed_at: row.timestamp("changedAt")?,
     })
 }
 
@@ -449,14 +435,14 @@ pub fn guard(placement: &WorkspacePlacement) -> crate::wire_pending::PlacementGu
 mod tests {
     use aex_wire::ids::{ApiKeyId, PrefixedId, Uuid7, WorkspaceId};
     use aex_wire::limits::LimitId;
-    use aex_wire::models::{LimitScalarValue, LimitSource, LimitValue};
+    use aex_wire::models::{LimitMapValue, LimitScalarValue, LimitSource, LimitValue};
     use aex_wire::types::DecimalU128;
 
     use super::{
         FEED_FRONTIER, KEY_REVOCATION, WORKSPACE_LIMIT, WORKSPACE_PLACEMENT, WORKSPACE_PROFILE,
-        admits_execution, decode_frontier, decode_limit, decode_placement, decode_profile,
-        decode_revocation, frontier_key, guard, limit_key, placement_key, profile_key,
-        revocation_key,
+        admits_execution, decode_frontier, decode_limit, decode_limit_at, decode_placement,
+        decode_profile, decode_revocation, frontier_key, guard, limit_key, placement_key,
+        profile_key, revocation_key,
     };
     use crate::attr::{CodecError, ItemBuilder, n, s};
 
@@ -545,10 +531,18 @@ mod tests {
         let decoded = decode_profile(&profile, workspace(1)).expect("profile");
         assert_eq!(decoded.name, "Production");
 
-        let value = LimitValue::Scalar(LimitScalarValue {
-            value: DecimalU128::new(100),
+        let value = LimitValue::Map(LimitMapValue {
+            values: std::collections::BTreeMap::from([
+                ("items".to_owned(), DecimalU128::new(100)),
+                (
+                    "serialized_bytes".to_owned(),
+                    DecimalU128::new(8 * 1_024 * 1_024),
+                ),
+            ]),
         });
         let limit = ItemBuilder::new(WORKSPACE_LIMIT)
+            .set("pk", s(format!("LIMIT#WS#{}", workspace(1))))
+            .set("sk", s("LIMIT#query.page"))
             .set("workspaceId", s(workspace(1).to_string()))
             .set("limitId", s(LimitId::QueryPage.as_str()))
             .set(
@@ -572,10 +566,12 @@ mod tests {
 
     #[test]
     fn a_limit_value_with_the_wrong_registered_shape_is_corrupt() {
-        let value = aex_wire::models::LimitValue::Map(aex_wire::models::LimitMapValue {
-            values: std::collections::BTreeMap::new(),
+        let value = LimitValue::Scalar(LimitScalarValue {
+            value: DecimalU128::new(100),
         });
         let limit = ItemBuilder::new(WORKSPACE_LIMIT)
+            .set("pk", s(format!("LIMIT#WS#{}", workspace(1))))
+            .set("sk", s("LIMIT#query.page"))
             .set("workspaceId", s(workspace(1).to_string()))
             .set("limitId", s(LimitId::QueryPage.as_str()))
             .set(
@@ -593,18 +589,43 @@ mod tests {
     }
 
     #[test]
-    fn the_three_key_shapes_are_disjoint() {
+    fn the_authority_key_shapes_are_disjoint() {
         let (placement_pk, _) = placement_key(workspace(1));
         let profile = profile_key(workspace(1));
         let limit = limit_key(workspace(1), LimitId::QueryPage);
         let (revocation_pk, _) = revocation_key(ApiKeyId::from_uuid7(Uuid7::compose(1, [3; 10])));
         let (frontier_pk, _) = frontier_key();
         assert_eq!(placement_pk, profile.0);
-        assert_eq!(placement_pk, limit.0);
+        assert_ne!(placement_pk, limit.0);
+        assert!(limit.0.starts_with("LIMIT#"));
         assert_eq!(profile.1, "PROFILE");
         assert_eq!(limit.1, "LIMIT#query.page");
         assert_ne!(placement_pk, revocation_pk);
         assert_ne!(placement_pk, frontier_pk);
         assert_ne!(revocation_pk, frontier_pk);
+    }
+
+    #[test]
+    fn a_limit_point_read_rejects_identity_that_disagrees_with_the_requested_key() {
+        let value = LimitValue::Scalar(LimitScalarValue {
+            value: DecimalU128::new(100),
+        });
+        let corrupt = ItemBuilder::new(WORKSPACE_LIMIT)
+            .set("pk", s(format!("LIMIT#WS#{}", workspace(1))))
+            .set("sk", s("LIMIT#query.page"))
+            .set("workspaceId", s(workspace(1).to_string()))
+            .set("limitId", s(LimitId::ApiJsonBody.as_str()))
+            .set(
+                "effectiveValue",
+                s(serde_json::to_string(&value).expect("json")),
+            )
+            .set("source", s("default"))
+            .set("revision", n(1))
+            .set("changedAt", s("2026-08-01T00:00:00.000Z"))
+            .build();
+        assert!(matches!(
+            decode_limit_at(&corrupt, workspace(1), LimitId::QueryPage),
+            Err(CodecError::Malformed { .. })
+        ));
     }
 }

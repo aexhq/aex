@@ -3,7 +3,7 @@
 //! The closed v1 public error vocabulary.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:1186e3b9ca9d4778ac1fea9788954f5bbfd78a2e88749cd41e198288d1206c18`.
+//! `sha256:9512c0dcc6713ee46bf1355a42a88c14436073bc2f2c2bade25a25969587c2c2`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -61,6 +61,9 @@ pub enum ErrorCode {
     InvalidFileSelection,
     /// `invalid_range` — the byte range is absent, empty, or larger than one grant may sign
     InvalidRange,
+    /// `unsupported_media_type` — the request Content-Type or Content-Encoding is not supported by
+    /// this endpoint
+    UnsupportedMediaType,
     /// `payload_too_large` — the encoded body exceeded the effective limit
     PayloadTooLarge,
     /// `limit_exceeded` — an effective workspace limit was exceeded
@@ -102,6 +105,8 @@ pub enum ErrorCode {
     ExportExpired,
     /// `export_revoked` — the export was revoked
     ExportRevoked,
+    /// `export_capacity` — the export could not reserve its bounded worker capacity
+    ExportCapacity,
     /// `download_grant_expired` — the download grant expired
     DownloadGrantExpired,
     /// `telemetry_payload_too_large` — the OTLP payload exceeded its effective limit
@@ -116,6 +121,9 @@ pub enum ErrorCode {
     UnsupportedExportSignal,
     /// `invalid_query` — the observation query exceeded its structural bounds
     InvalidQuery,
+    /// `telemetry_query_budget_exhausted` — the observation query exhausted its scan budget before
+    /// it could make progress
+    TelemetryQueryBudgetExhausted,
     /// `invalid_metric_aggregation` — the metric aggregation is not computable over the selection
     InvalidMetricAggregation,
     /// `invalid_network_policy` — the requested network policy is not permitted
@@ -189,6 +197,7 @@ impl ErrorCode {
         ErrorCode::InvalidCursor,
         ErrorCode::InvalidFileSelection,
         ErrorCode::InvalidRange,
+        ErrorCode::UnsupportedMediaType,
         ErrorCode::PayloadTooLarge,
         ErrorCode::LimitExceeded,
         ErrorCode::SessionNotIdle,
@@ -209,6 +218,7 @@ impl ErrorCode {
         ErrorCode::ExportNotReady,
         ErrorCode::ExportExpired,
         ErrorCode::ExportRevoked,
+        ErrorCode::ExportCapacity,
         ErrorCode::DownloadGrantExpired,
         ErrorCode::TelemetryPayloadTooLarge,
         ErrorCode::InvalidTelemetry,
@@ -216,6 +226,7 @@ impl ErrorCode {
         ErrorCode::TelemetryIncomplete,
         ErrorCode::UnsupportedExportSignal,
         ErrorCode::InvalidQuery,
+        ErrorCode::TelemetryQueryBudgetExhausted,
         ErrorCode::InvalidMetricAggregation,
         ErrorCode::InvalidNetworkPolicy,
         ErrorCode::UnsupportedPackageEcosystem,
@@ -266,6 +277,7 @@ impl ErrorCode {
             Self::InvalidCursor => "invalid_cursor",
             Self::InvalidFileSelection => "invalid_file_selection",
             Self::InvalidRange => "invalid_range",
+            Self::UnsupportedMediaType => "unsupported_media_type",
             Self::PayloadTooLarge => "payload_too_large",
             Self::LimitExceeded => "limit_exceeded",
             Self::SessionNotIdle => "session_not_idle",
@@ -286,6 +298,7 @@ impl ErrorCode {
             Self::ExportNotReady => "export_not_ready",
             Self::ExportExpired => "export_expired",
             Self::ExportRevoked => "export_revoked",
+            Self::ExportCapacity => "export_capacity",
             Self::DownloadGrantExpired => "download_grant_expired",
             Self::TelemetryPayloadTooLarge => "telemetry_payload_too_large",
             Self::InvalidTelemetry => "invalid_telemetry",
@@ -293,6 +306,7 @@ impl ErrorCode {
             Self::TelemetryIncomplete => "telemetry_incomplete",
             Self::UnsupportedExportSignal => "unsupported_export_signal",
             Self::InvalidQuery => "invalid_query",
+            Self::TelemetryQueryBudgetExhausted => "telemetry_query_budget_exhausted",
             Self::InvalidMetricAggregation => "invalid_metric_aggregation",
             Self::InvalidNetworkPolicy => "invalid_network_policy",
             Self::UnsupportedPackageEcosystem => "unsupported_package_ecosystem",
@@ -344,6 +358,7 @@ impl ErrorCode {
             Self::InvalidCursor => 400,
             Self::InvalidFileSelection => 400,
             Self::InvalidRange => 400,
+            Self::UnsupportedMediaType => 415,
             Self::PayloadTooLarge => 413,
             Self::LimitExceeded => 429,
             Self::SessionNotIdle => 409,
@@ -364,6 +379,7 @@ impl ErrorCode {
             Self::ExportNotReady => 409,
             Self::ExportExpired => 410,
             Self::ExportRevoked => 410,
+            Self::ExportCapacity => 503,
             Self::DownloadGrantExpired => 410,
             Self::TelemetryPayloadTooLarge => 413,
             Self::InvalidTelemetry => 400,
@@ -371,6 +387,7 @@ impl ErrorCode {
             Self::TelemetryIncomplete => 409,
             Self::UnsupportedExportSignal => 400,
             Self::InvalidQuery => 400,
+            Self::TelemetryQueryBudgetExhausted => 409,
             Self::InvalidMetricAggregation => 400,
             Self::InvalidNetworkPolicy => 400,
             Self::UnsupportedPackageEcosystem => 400,
@@ -422,6 +439,7 @@ impl ErrorCode {
             Self::InvalidCursor => false,
             Self::InvalidFileSelection => false,
             Self::InvalidRange => false,
+            Self::UnsupportedMediaType => false,
             Self::PayloadTooLarge => false,
             Self::LimitExceeded => true,
             Self::SessionNotIdle => true,
@@ -442,6 +460,7 @@ impl ErrorCode {
             Self::ExportNotReady => true,
             Self::ExportExpired => false,
             Self::ExportRevoked => false,
+            Self::ExportCapacity => true,
             Self::DownloadGrantExpired => false,
             Self::TelemetryPayloadTooLarge => false,
             Self::InvalidTelemetry => false,
@@ -449,6 +468,7 @@ impl ErrorCode {
             Self::TelemetryIncomplete => true,
             Self::UnsupportedExportSignal => false,
             Self::InvalidQuery => false,
+            Self::TelemetryQueryBudgetExhausted => false,
             Self::InvalidMetricAggregation => false,
             Self::InvalidNetworkPolicy => false,
             Self::UnsupportedPackageEcosystem => false,
@@ -500,6 +520,7 @@ impl ErrorCode {
             Self::InvalidCursor => ErrorClass::Validation,
             Self::InvalidFileSelection => ErrorClass::Validation,
             Self::InvalidRange => ErrorClass::Validation,
+            Self::UnsupportedMediaType => ErrorClass::Validation,
             Self::PayloadTooLarge => ErrorClass::Validation,
             Self::LimitExceeded => ErrorClass::Quota,
             Self::SessionNotIdle => ErrorClass::State,
@@ -520,6 +541,7 @@ impl ErrorCode {
             Self::ExportNotReady => ErrorClass::State,
             Self::ExportExpired => ErrorClass::NotFound,
             Self::ExportRevoked => ErrorClass::NotFound,
+            Self::ExportCapacity => ErrorClass::Unavailable,
             Self::DownloadGrantExpired => ErrorClass::NotFound,
             Self::TelemetryPayloadTooLarge => ErrorClass::Validation,
             Self::InvalidTelemetry => ErrorClass::Validation,
@@ -527,6 +549,7 @@ impl ErrorCode {
             Self::TelemetryIncomplete => ErrorClass::State,
             Self::UnsupportedExportSignal => ErrorClass::Validation,
             Self::InvalidQuery => ErrorClass::Validation,
+            Self::TelemetryQueryBudgetExhausted => ErrorClass::Quota,
             Self::InvalidMetricAggregation => ErrorClass::Validation,
             Self::InvalidNetworkPolicy => ErrorClass::Validation,
             Self::UnsupportedPackageEcosystem => ErrorClass::Validation,
@@ -578,6 +601,7 @@ impl ErrorCode {
             Self::InvalidCursor => PrecedenceStage::BodyLimitAndParse,
             Self::InvalidFileSelection => PrecedenceStage::BodyLimitAndParse,
             Self::InvalidRange => PrecedenceStage::BodyLimitAndParse,
+            Self::UnsupportedMediaType => PrecedenceStage::TransportEnvelope,
             Self::PayloadTooLarge => PrecedenceStage::TransportEnvelope,
             Self::LimitExceeded => PrecedenceStage::DomainState,
             Self::SessionNotIdle => PrecedenceStage::DomainState,
@@ -598,6 +622,7 @@ impl ErrorCode {
             Self::ExportNotReady => PrecedenceStage::DomainState,
             Self::ExportExpired => PrecedenceStage::DomainState,
             Self::ExportRevoked => PrecedenceStage::DomainState,
+            Self::ExportCapacity => PrecedenceStage::DomainState,
             Self::DownloadGrantExpired => PrecedenceStage::DomainState,
             Self::TelemetryPayloadTooLarge => PrecedenceStage::TransportEnvelope,
             Self::InvalidTelemetry => PrecedenceStage::BodyLimitAndParse,
@@ -605,6 +630,7 @@ impl ErrorCode {
             Self::TelemetryIncomplete => PrecedenceStage::DomainState,
             Self::UnsupportedExportSignal => PrecedenceStage::BodyLimitAndParse,
             Self::InvalidQuery => PrecedenceStage::BodyLimitAndParse,
+            Self::TelemetryQueryBudgetExhausted => PrecedenceStage::DomainState,
             Self::InvalidMetricAggregation => PrecedenceStage::BodyLimitAndParse,
             Self::InvalidNetworkPolicy => PrecedenceStage::BodyLimitAndParse,
             Self::UnsupportedPackageEcosystem => PrecedenceStage::BodyLimitAndParse,
@@ -668,6 +694,9 @@ impl ErrorCode {
             Self::InvalidRange => {
                 "the byte range is absent, empty, or larger than one grant may sign"
             }
+            Self::UnsupportedMediaType => {
+                "the request Content-Type or Content-Encoding is not supported by this endpoint"
+            }
             Self::PayloadTooLarge => "the encoded body exceeded the effective limit",
             Self::LimitExceeded => "an effective workspace limit was exceeded",
             Self::SessionNotIdle => "the session must be idle for this operation",
@@ -692,6 +721,7 @@ impl ErrorCode {
             Self::ExportNotReady => "the export is still preparing",
             Self::ExportExpired => "the export expired",
             Self::ExportRevoked => "the export was revoked",
+            Self::ExportCapacity => "the export could not reserve its bounded worker capacity",
             Self::DownloadGrantExpired => "the download grant expired",
             Self::TelemetryPayloadTooLarge => "the OTLP payload exceeded its effective limit",
             Self::InvalidTelemetry => "the telemetry payload is not the pinned OTLP revision",
@@ -703,6 +733,9 @@ impl ErrorCode {
                 "that signal cannot be exported in the requested format"
             }
             Self::InvalidQuery => "the observation query exceeded its structural bounds",
+            Self::TelemetryQueryBudgetExhausted => {
+                "the observation query exhausted its scan budget before it could make progress"
+            }
             Self::InvalidMetricAggregation => {
                 "the metric aggregation is not computable over the selection"
             }
@@ -760,6 +793,7 @@ impl ErrorCode {
             Self::InvalidCursor => None,
             Self::InvalidFileSelection => None,
             Self::InvalidRange => None,
+            Self::UnsupportedMediaType => None,
             Self::PayloadTooLarge => None,
             Self::LimitExceeded => None,
             Self::SessionNotIdle => None,
@@ -782,6 +816,9 @@ impl ErrorCode {
             Self::ExportNotReady => None,
             Self::ExportExpired => None,
             Self::ExportRevoked => None,
+            Self::ExportCapacity => {
+                Some("retry after capacity is available or select a smaller export")
+            }
             Self::DownloadGrantExpired => None,
             Self::TelemetryPayloadTooLarge => None,
             Self::InvalidTelemetry => None,
@@ -789,6 +826,9 @@ impl ErrorCode {
             Self::TelemetryIncomplete => None,
             Self::UnsupportedExportSignal => None,
             Self::InvalidQuery => None,
+            Self::TelemetryQueryBudgetExhausted => {
+                Some("narrow the time range, add an indexed predicate, or request an export")
+            }
             Self::InvalidMetricAggregation => None,
             Self::InvalidNetworkPolicy => None,
             Self::UnsupportedPackageEcosystem => None,

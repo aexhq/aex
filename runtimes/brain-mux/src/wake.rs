@@ -12,8 +12,8 @@
 //! | `JournalStore`, `EffectStore`, `LeaseStore` | `aex_brain_store_aws::BrainStore` | real; each claim derives tenant and deletion authority from its session head |
 //! | `ToolPort` | injected production router, or explicit unavailable composition | managed-web and MCP do not yet implement `ToolExecutor` |
 //! | `ClockPort`, `IdPort` | this module | composition facts, not a peer's |
-//! | `ProviderPort` | [`AbsentProvider`] | `aex-brain-provider-gateway` restates its own `ProviderPort` over `aex_model_catalog::canonical` types and takes no dependency on `aex-brain-application` |
-//! | `CatalogPort` | [`AbsentCatalog`] | `aex-model-catalog` publishes no `ModelCapability` |
+//! | `ProviderPort` | regional custody + KMS + six-provider router, or explicit startup refusal | dispatch uses the immutable session pin and ticket-scoped tenant authority; registration remains owned by the secret API |
+//! | `CatalogPort` | [`AbsentCatalog`] | the verified loader exists, but startup has no content-addressed envelope or compiled trust root to bind |
 //! | `HandsPort` | [`aex_brain_hands::HandsAdapter`] in production injection | the adapter is real; no concrete guest transport/runtime backend exists yet |
 //!
 //! Every refusal is `DispatchProof::NotSent` and carries the name of the crate that owes the
@@ -29,11 +29,11 @@ use aex_brain_application::kernel::{ActivationRegistry, DrainGate};
 use aex_brain_application::ports::{
     AgentHead, BoxFuture, CancelToken, CatalogDigest, CatalogError, CatalogPort, Claim, ClaimError,
     ClockPort, CommitError, CommitReceipt, DecisionContext, DispatchTicket, EffectStore,
-    FenceGuard, HandsAccepted, HandsEndpoint, HandsError, HandsOperationStart,
+    FenceGuard, FoldSnapshotStore, HandsAccepted, HandsEndpoint, HandsError, HandsOperationStart,
     HandsOperationStatus, HandsPort, HandsResult, IdPort, JournalPage, JournalStore, LeaseStore,
     PreviewSink, ProviderDispatchError, ProviderOutcome, ProviderPort, ReadBudget, RedactedDetail,
-    ReleaseDisposition, ResultBounds, SteadyInstant, StoreError, StreamBudget, ToolPort,
-    UnknownResolution,
+    ReleaseDisposition, ResultBounds, SessionAuthority, SnapshotPublishOutcome, SteadyInstant,
+    StoreError, StreamBudget, ToolPort, UnknownResolution,
 };
 use aex_brain_domain::commit::DecisionCommit;
 use aex_brain_domain::effect::{
@@ -41,11 +41,11 @@ use aex_brain_domain::effect::{
 };
 use aex_brain_domain::ids::{
     AgentId, AgentKey, CatalogPin, DetachedOperationId, EffectId, HandsOperationId, JournalSeq,
-    ModelSlug, OwnerToken, SessionId, Timestamp, ToolName, WakeId,
+    ModelSlug, OwnerToken, SessionId, Timestamp, WakeId,
 };
-use aex_brain_domain::wire_pending::{
-    CanonicalModelRequest, DurableOperationSupport, ModelCapability, ProviderId, ToolManifestEntry,
-};
+use aex_brain_domain::snapshot::{FoldSnapshotArtifact, FoldSnapshotPointer};
+use aex_brain_domain::wire_pending::{CanonicalModelRequest, DurableOperationSupport, ProviderId};
+use aex_model_catalog::{ProviderFailureKind, QualifiedModel};
 use aex_wire::ids::GenerationId;
 use std::sync::Arc;
 
@@ -56,15 +56,21 @@ use std::sync::Arc;
 /// fail closed.
 pub const STORE_UNBOUND: &str = "aex-brain-store-aws is not bound into this composition";
 
+/// Why verified fold snapshots are not yet bound.
+pub const SNAPSHOT_ABSENT: &str = "the regional content-authority fold snapshot reader and \
+                                  monotonic publisher are not bound";
+
 /// Why the provider is not bound.
-pub const PROVIDER_ABSENT: &str = "aex-brain-provider-gateway restates its own ProviderPort over \
-                                   aex_model_catalog::canonical types and takes no dependency on \
-                                   aex-brain-application";
+pub const PROVIDER_ABSENT: &str =
+    "the provider gateway could not bind its build-stamped adapter source identity";
 
 /// Why the catalog is not bound.
-pub const CATALOG_ABSENT: &str = "aex-model-catalog publishes no ModelCapability; it describes a \
-                                  model with document::ModelEntry over ModelLimits and \
-                                  CapabilitySet";
+pub const CATALOG_ABSENT: &str = "no content-addressed signed model catalog and compiled trust \
+                                  root were bound at startup";
+
+/// Why a verified collection still cannot serve wakes.
+pub const CATALOG_NO_ACTIVE_MODELS: &str =
+    "the signed model catalog collection contains no Active serviceable model";
 
 /// Why tool execution is not bound.
 pub const TOOL_EXECUTORS_ABSENT: &str = "aex-brain-managed-web and aex-brain-mcp do not implement \
@@ -103,11 +109,16 @@ impl AdmissionControl for MuxAdmission {
         self.bindings.complete() && self.admission.should_receive()
     }
 
-    fn admit(&self) -> AdmissionDecision {
-        // Context bytes are reserved by the activation once it knows how much history it is
-        // hydrating; admission takes the activation permit alone, so an agent that turns out
-        // to be small does not hold a large reservation for its whole life.
-        match self.admission.admit(0) {
+    fn admit(&self, restore_bytes: u64) -> AdmissionDecision {
+        // The activation's strict total restore ceiling is reserved before the first page.
+        // `DynamoDB` page count is not a memory measurement, and reserving zero here would
+        // let many individually bounded pages overrun the task's context pool.
+        if restore_bytes != self.admission.resources().context_bytes {
+            return AdmissionDecision::Shed {
+                retry_after: core::time::Duration::from_millis(500),
+            };
+        }
+        match self.admission.admit() {
             AdmissionOutcome::Admitted(permits) => AdmissionDecision::Admitted(permits),
             AdmissionOutcome::Deferred { requeue_after } => {
                 AdmissionDecision::Deferred { requeue_after }
@@ -153,6 +164,10 @@ impl ClockPort for SystemClock {
 
     fn steady(&self) -> SteadyInstant {
         SteadyInstant(u64::try_from(self.base.elapsed().as_millis()).unwrap_or(u64::MAX))
+    }
+
+    fn sleep(&self, duration: core::time::Duration) -> BoxFuture<'_, ()> {
+        Box::pin(tokio::time::sleep(duration))
     }
 }
 
@@ -219,6 +234,7 @@ impl JournalStore for UnboundStore {
         _key: &'a AgentKey,
         _from: JournalSeq,
         _budget: ReadBudget,
+        _after: Option<aex_brain_application::ports::JournalCursor>,
     ) -> BoxFuture<'a, Result<JournalPage, StoreError>> {
         Box::pin(async { Err(Self::refusal()) })
     }
@@ -232,10 +248,37 @@ impl JournalStore for UnboundStore {
     }
 }
 
+impl FoldSnapshotStore for UnboundStore {
+    fn load_latest<'a>(
+        &'a self,
+        _key: &'a AgentKey,
+    ) -> BoxFuture<'a, Result<Option<FoldSnapshotPointer>, StoreError>> {
+        Box::pin(async { Err(Self::refusal()) })
+    }
+
+    fn load_body<'a>(
+        &'a self,
+        _workspace: aex_wire::ids::WorkspaceId,
+        _pointer: &'a FoldSnapshotPointer,
+        _max_bytes: usize,
+    ) -> BoxFuture<'a, Result<Vec<u8>, StoreError>> {
+        Box::pin(async { Err(Self::refusal()) })
+    }
+
+    fn publish<'a>(
+        &'a self,
+        _workspace: aex_wire::ids::WorkspaceId,
+        _artifact: &'a FoldSnapshotArtifact,
+    ) -> BoxFuture<'a, Result<SnapshotPublishOutcome, StoreError>> {
+        Box::pin(async { Err(Self::refusal()) })
+    }
+}
+
 impl EffectStore for UnboundStore {
     fn mark_dispatch_started<'a>(
         &'a self,
         _guard: &'a FenceGuard,
+        _authority: &'a SessionAuthority,
         _effect: &'a EffectId,
         _attempt: u16,
         _at: Timestamp,
@@ -288,7 +331,7 @@ impl LeaseStore for UnboundStore {
     }
 }
 
-/// A provider whose adapter does not implement this port.
+/// A provider binding whose required credential authorities are unavailable.
 ///
 /// Every dispatch fails `NotSent`, which is the strongest thing an adapter may assert and the
 /// only value that permits another attempt. Answering anything weaker would make an
@@ -300,6 +343,7 @@ impl ProviderPort for AbsentProvider {
     fn dispatch<'a>(
         &'a self,
         _ticket: &'a DispatchTicket,
+        _credential: aex_brain_domain::wire_pending::SessionCredentialPin,
         _request: &'a CanonicalModelRequest,
         _budget: &'a StreamBudget,
         _preview: &'a dyn PreviewSink,
@@ -309,10 +353,13 @@ impl ProviderPort for AbsentProvider {
             Err(ProviderDispatchError {
                 stage: DispatchStage::PreDispatch,
                 proof: DispatchProof::NotSent,
-                class: aex_brain_application::ports::ProviderFailureClass::Permanent,
+                kind: ProviderFailureKind::InvalidRequest,
                 provider_request_id: None,
                 retry_after: None,
-                detail: RedactedDetail::new(PROVIDER_ABSENT),
+                detail: RedactedDetail::internal(
+                    ProviderFailureKind::InvalidRequest,
+                    PROVIDER_ABSENT,
+                ),
             })
         })
     }
@@ -328,7 +375,7 @@ impl ProviderPort for AbsentProvider {
     }
 }
 
-/// A catalog whose artifact type does not exist yet.
+/// A catalog binding with no startup artifact or trust root.
 ///
 /// `durable_operation_support` answers [`DurableOperationSupport::None`], which is not a stub:
 /// it is the correct launch answer for every admitted model, and the safe answer to "can this
@@ -338,7 +385,7 @@ pub struct AbsentCatalog;
 
 impl CatalogPort for AbsentCatalog {
     fn digest(&self, pin: &CatalogPin) -> Result<CatalogDigest, CatalogError> {
-        Err(CatalogError::UnknownPin { pin: pin.0 })
+        Err(CatalogError::UnknownPin { pin: *pin })
     }
 
     fn model(
@@ -346,12 +393,8 @@ impl CatalogPort for AbsentCatalog {
         pin: &CatalogPin,
         _provider: ProviderId,
         _model: &ModelSlug,
-    ) -> Result<ModelCapability, CatalogError> {
-        Err(CatalogError::UnknownPin { pin: pin.0 })
-    }
-
-    fn tool(&self, pin: &CatalogPin, _name: &ToolName) -> Result<ToolManifestEntry, CatalogError> {
-        Err(CatalogError::UnknownPin { pin: pin.0 })
+    ) -> Result<QualifiedModel, CatalogError> {
+        Err(CatalogError::UnknownPin { pin: *pin })
     }
 
     fn durable_operation_support(
@@ -373,7 +416,7 @@ impl AbsentHands {
         HandsError::Transport {
             stage: DispatchStage::PreDispatch,
             proof: DispatchProof::NotSent,
-            detail: RedactedDetail::new(HANDS_ABSENT),
+            detail: RedactedDetail::internal(ProviderFailureKind::ServerError, HANDS_ABSENT),
         }
     }
 }
@@ -449,6 +492,8 @@ impl BindingState {
 pub struct Bindings {
     /// Whether the journal, effect and lease ports reach a real authority.
     pub store: BindingState,
+    /// Whether immutable fold snapshots and their monotonic pointer are real.
+    pub snapshots: BindingState,
     /// Whether the provider port reaches a real adapter.
     pub provider: BindingState,
     /// Whether the catalog port reaches a verified artifact.
@@ -465,6 +510,7 @@ impl Bindings {
     pub const fn unavailable() -> Self {
         Self {
             store: BindingState::Ready,
+            snapshots: BindingState::Unavailable(SNAPSHOT_ABSENT),
             provider: BindingState::Unavailable(PROVIDER_ABSENT),
             catalog: BindingState::Unavailable(CATALOG_ABSENT),
             tools: BindingState::Unavailable(TOOL_EXECUTORS_ABSENT),
@@ -472,11 +518,40 @@ impl Bindings {
         }
     }
 
+    /// Provider custody and transport are real; unrelated launch peers remain absent.
+    #[must_use]
+    pub const fn provider_ready() -> Self {
+        Self {
+            store: BindingState::Ready,
+            snapshots: BindingState::Unavailable(SNAPSHOT_ABSENT),
+            provider: BindingState::Ready,
+            catalog: BindingState::Unavailable(CATALOG_ABSENT),
+            tools: BindingState::Unavailable(TOOL_EXECUTORS_ABSENT),
+            hands: BindingState::Unavailable(HANDS_ABSENT),
+        }
+    }
+
+    /// Applies the catalog's verified service capability to this binding set.
+    ///
+    /// Signature validity alone is not readiness: a zero-Active collection
+    /// would make every model wake fail after receipt. Admission remains closed
+    /// instead, so Brain never consumes work it cannot route.
+    #[must_use]
+    pub const fn with_catalog_capability(mut self, service_capable: bool) -> Self {
+        self.catalog = if service_capable {
+            BindingState::Ready
+        } else {
+            BindingState::Unavailable(CATALOG_NO_ACTIVE_MODELS)
+        };
+        self
+    }
+
     /// Fully injected production ports.
     #[must_use]
     pub const fn production() -> Self {
         Self {
             store: BindingState::Ready,
+            snapshots: BindingState::Ready,
             provider: BindingState::Ready,
             catalog: BindingState::Ready,
             tools: BindingState::Ready,
@@ -488,6 +563,7 @@ impl Bindings {
     #[must_use]
     pub const fn complete(&self) -> bool {
         self.store.is_ready()
+            && self.snapshots.is_ready()
             && self.provider.is_ready()
             && self.catalog.is_ready()
             && self.tools.is_ready()
@@ -500,6 +576,7 @@ impl Bindings {
         let mut missing = Vec::new();
         for state in [
             self.store,
+            self.snapshots,
             self.provider,
             self.catalog,
             self.tools,
@@ -522,6 +599,7 @@ pub struct ProductionPeers {
     tools: Arc<dyn ToolPort>,
     hands: Arc<dyn HandsPort>,
     catalog: Arc<dyn CatalogPort>,
+    snapshots: Arc<dyn FoldSnapshotStore>,
 }
 
 impl ProductionPeers {
@@ -532,12 +610,14 @@ impl ProductionPeers {
         tools: Arc<dyn ToolPort>,
         hands_backend: Arc<dyn aex_brain_hands::HandsBackend>,
         catalog: Arc<dyn CatalogPort>,
+        snapshots: Arc<dyn FoldSnapshotStore>,
     ) -> Self {
         Self {
             provider,
             tools,
             hands: Arc::new(aex_brain_hands::HandsAdapter::new(hands_backend)),
             catalog,
+            snapshots,
         }
     }
 }
@@ -550,16 +630,23 @@ impl core::fmt::Debug for ProductionPeers {
     }
 }
 
+/// Real AWS clients shared by store, queue, provider custody, and KMS composition.
+pub struct AwsBindings {
+    /// Session-authority store.
+    pub store: Arc<aex_brain_store_aws::BrainStore>,
+    /// Wake delivery and due backstop.
+    pub queue: Arc<aex_brain_store_aws::SqsWakeQueue>,
+    /// The one SDK configuration all clients in this task derive from.
+    pub sdk: aws_config::SdkConfig,
+}
+
 /// Binds the real store and queue adapters through one `AWS` configuration.
 pub async fn aws_bindings(
     region: &str,
     queue_url: &str,
     session_table: &str,
     work_table: &str,
-) -> (
-    Arc<aex_brain_store_aws::BrainStore>,
-    Arc<aex_brain_store_aws::SqsWakeQueue>,
-) {
+) -> AwsBindings {
     let aws = aws_config::defaults(aws_config::BehaviorVersion::latest())
         .region(aws_sdk_dynamodb::config::Region::new(region.to_owned()))
         .load()
@@ -577,7 +664,50 @@ pub async fn aws_bindings(
         queue_url.to_owned(),
         aex_brain_store_aws::DueScan::new(dynamodb, work_table.to_owned()),
     ));
-    (store, queue)
+    AwsBindings {
+        store,
+        queue,
+        sdk: aws,
+    }
+}
+
+/// Binds exact regional custody plus KMS reveal into the six-provider router.
+///
+/// # Errors
+///
+/// The build-stamped adapter identity must be valid before this port can exist.
+pub fn provider_binding(
+    aws: &aws_config::SdkConfig,
+    store: Arc<aex_brain_store_aws::BrainStore>,
+    custody_table: &str,
+    kms_key_arn: &str,
+    plane: aex_secret_domain::context::Plane,
+    region: aex_wire::types::Region,
+    cache_partition: &str,
+) -> Result<
+    Arc<dyn ProviderPort>,
+    aex_brain_provider_gateway::build_identity::AdapterBuildIdentityError,
+> {
+    let custody = Arc::new(aex_secret_custody_dynamodb::CustodyStore::new(
+        aws_sdk_dynamodb::Client::new(aws),
+        custody_table.to_owned(),
+    ));
+    let crypto = Arc::new(aex_secret_aws::EnvelopeCrypto::new(
+        Box::new(aex_secret_aws::KmsBranchKeys::new(
+            aws_sdk_kms::Client::new(aws),
+            kms_key_arn.to_owned(),
+        )),
+        cache_partition.to_owned(),
+    ));
+    let authority = Arc::new(aex_brain_provider_custody::CredentialAuthority::new(
+        custody, crypto, plane, region,
+    ));
+    let router = aex_brain_provider_gateway::router::ProviderRouter::from_build(
+        Arc::clone(&authority) as Arc<_>,
+        authority,
+        store,
+    )?;
+    Ok(Arc::new(router))
 }
 
 /// Fail-closed ports for a task whose production peers are not composed yet.
@@ -586,17 +716,40 @@ pub fn unavailable_ports(
     store: Arc<aex_brain_store_aws::BrainStore>,
     wakes: Arc<dyn aex_brain_application::ports::WakeQueue>,
 ) -> Ports {
+    partial_ports(store, wakes, Arc::new(AbsentProvider))
+}
+
+/// Composes a real provider while unrelated peer ports remain explicitly absent.
+#[must_use]
+pub fn partial_ports(
+    store: Arc<aex_brain_store_aws::BrainStore>,
+    wakes: Arc<dyn aex_brain_application::ports::WakeQueue>,
+    provider: Arc<dyn ProviderPort>,
+) -> Ports {
+    partial_ports_with_catalog(store, wakes, provider, Arc::new(AbsentCatalog))
+}
+
+/// Composes a real provider and verified immutable catalog while unrelated
+/// peer ports remain explicitly absent.
+#[must_use]
+pub fn partial_ports_with_catalog(
+    store: Arc<aex_brain_store_aws::BrainStore>,
+    wakes: Arc<dyn aex_brain_application::ports::WakeQueue>,
+    provider: Arc<dyn ProviderPort>,
+    catalog: Arc<dyn CatalogPort>,
+) -> Ports {
     Ports {
         journal: Arc::clone(&store) as Arc<_>,
+        snapshots: Arc::new(UnboundStore),
         effects: Arc::clone(&store) as Arc<_>,
         leases: store,
         wakes,
-        provider: Arc::new(AbsentProvider),
+        provider,
         // The real router. It holds no executor because nothing implements `ToolExecutor`
         // yet, so it refuses by its own typed error rather than by one invented here.
         tools: Arc::new(aex_brain_tool_catalog::router::CompositeToolRouter::new()),
         hands: Arc::new(AbsentHands),
-        catalog: Arc::new(AbsentCatalog),
+        catalog,
         clock: Arc::new(SystemClock::new()),
         ids: Arc::new(ProcessIds),
     }
@@ -611,6 +764,7 @@ pub fn production_ports(
 ) -> Ports {
     Ports {
         journal: Arc::clone(&store) as Arc<_>,
+        snapshots: peers.snapshots,
         effects: Arc::clone(&store) as Arc<_>,
         leases: store,
         wakes,
@@ -642,24 +796,32 @@ pub fn wake_loop(
 #[cfg(test)]
 mod tests {
     use super::{
-        AbsentCatalog, AbsentProvider, Bindings, CATALOG_ABSENT, MuxAdmission, PROVIDER_ABSENT,
-        ProcessIds, STORE_UNBOUND, SystemClock, UnboundStore,
+        AbsentCatalog, AbsentProvider, Bindings, CATALOG_ABSENT, CATALOG_NO_ACTIVE_MODELS,
+        MuxAdmission, PROVIDER_ABSENT, ProcessIds, STORE_UNBOUND, SystemClock, UnboundStore,
     };
-    use crate::admission::{Admission, AdmissionBounds};
+    use crate::admission::{ActivationResources, Admission, AdmissionBounds};
     use aex_brain_application::activation::{AdmissionControl, AdmissionDecision};
     use aex_brain_application::kernel::{DrainGate, PermitKind, PermitSet};
     use aex_brain_application::ports::{
         CatalogPort, ClockPort, IdPort, JournalStore, LeaseStore, StoreError,
     };
     use aex_brain_domain::effect::EffectKind;
-    use aex_brain_domain::ids::{
-        AgentId, AgentKey, CatalogPin, ContentHash, JournalSeq, ModelSlug, OwnerToken, SessionId,
-        Timestamp,
-    };
+    use aex_brain_domain::ids::{AgentId, AgentKey, JournalSeq, OwnerToken, SessionId, Timestamp};
     use aex_brain_domain::wire_pending::{DurableOperationSupport, ProviderId};
+    use aex_model_catalog::document::CapabilitySet;
+    use aex_model_catalog::fixture;
     use std::collections::BTreeMap;
     use std::sync::Arc;
     use uuid::Uuid;
+
+    fn activation_resources(context_bytes: u64) -> ActivationResources {
+        ActivationResources {
+            context_bytes,
+            stream_buffer_bytes: 1,
+            provider_streams: 1,
+            hands_rpcs: 1,
+        }
+    }
 
     fn block_on<F: core::future::Future>(future: F) -> F::Output {
         let mut future = Box::pin(future);
@@ -702,40 +864,76 @@ mod tests {
     fn the_absent_provider_proves_nothing_was_sent() {
         let ports: &dyn aex_brain_application::ports::ProviderPort = &AbsentProvider;
         let _ = ports;
-        assert!(PROVIDER_ABSENT.contains("aex-brain-provider-gateway"));
+        assert!(PROVIDER_ABSENT.contains("build-stamped adapter source identity"));
     }
 
     /// The safe answer to "can this be resumed?" is "no", so an unknown pin still answers
     /// the one infallible question rather than tempting the caller to guess.
     #[test]
     fn the_absent_catalog_answers_no_durable_operation_and_refuses_everything_else() {
-        let pin = CatalogPin(ContentHash::of(b"pin"));
+        let model = fixture::qualified_entry(ProviderId::Deepseek, "m", CapabilitySet::default());
+        let pin = model.catalog();
         assert_eq!(
-            AbsentCatalog.durable_operation_support(
-                &pin,
-                ProviderId::Deepseek,
-                &ModelSlug("m".to_owned())
-            ),
+            AbsentCatalog.durable_operation_support(&pin, ProviderId::Deepseek, model.model()),
             DurableOperationSupport::None
         );
         assert!(AbsentCatalog.digest(&pin).is_err());
-        assert!(CATALOG_ABSENT.contains("aex-model-catalog"));
+        assert!(CATALOG_ABSENT.contains("signed model catalog"));
     }
 
-    /// The store is bound, while all four absent production peers remain named blockers.
+    /// Each partial composition names only the peers it truly lacks.
     #[test]
     fn a_deployed_task_binds_the_store_and_names_the_remaining_peers() {
         let bindings = Bindings::unavailable();
         assert!(!bindings.complete());
         assert!(bindings.store.is_ready());
         let missing = bindings.unsatisfied();
-        assert_eq!(missing.len(), 4);
+        assert_eq!(missing.len(), 5);
         assert!(!missing.contains(&STORE_UNBOUND));
         assert!(missing.contains(&PROVIDER_ABSENT));
         assert!(missing.contains(&CATALOG_ABSENT));
         assert!(missing.contains(&super::TOOL_EXECUTORS_ABSENT));
         assert!(missing.contains(&super::HANDS_ABSENT));
+        assert!(missing.contains(&super::SNAPSHOT_ABSENT));
+
+        let with_provider = Bindings::provider_ready();
+        assert!(!with_provider.complete());
+        assert!(with_provider.provider.is_ready());
+        let missing = with_provider.unsatisfied();
+        assert_eq!(missing.len(), 4);
+        assert!(!missing.contains(&PROVIDER_ABSENT));
         assert!(Bindings::production().complete());
+    }
+
+    #[test]
+    fn a_verified_zero_active_collection_keeps_admission_and_readiness_closed() {
+        let bindings = Bindings::provider_ready().with_catalog_capability(false);
+        assert!(!bindings.complete());
+        assert_eq!(
+            bindings.catalog,
+            super::BindingState::Unavailable(CATALOG_NO_ACTIVE_MODELS)
+        );
+        assert!(bindings.unsatisfied().contains(&CATALOG_NO_ACTIVE_MODELS));
+
+        let permits = Arc::new(PermitSet::new(BTreeMap::from([(
+            PermitKind::Activation,
+            1_u64,
+        )])));
+        let drain = Arc::new(DrainGate::new());
+        let admission = Arc::new(Admission::new(
+            AdmissionBounds {
+                target: 1,
+                safety_cap: 1,
+                offered_ceiling: 1,
+            },
+            permits,
+            drain,
+            activation_resources(1),
+        ));
+        assert!(
+            !MuxAdmission::new(admission, bindings).should_receive(),
+            "Brain must not consume a wake that every model lookup can only fail"
+        );
     }
 
     /// Two claim attempts by one task must be distinguishable, so the owner token is fresh
@@ -773,10 +971,13 @@ mod tests {
     /// A draining task admits nothing, and the loop asks before it receives.
     #[test]
     fn admission_stops_receiving_the_moment_drain_starts() {
-        let permits = Arc::new(PermitSet::new(BTreeMap::from([(
-            PermitKind::Activation,
-            4_u64,
-        )])));
+        let permits = Arc::new(PermitSet::new(BTreeMap::from([
+            (PermitKind::Activation, 4_u64),
+            (PermitKind::ContextBytes, 2_u64),
+            (PermitKind::StreamBufferBytes, 2_u64),
+            (PermitKind::ProviderStream, 2_u64),
+            (PermitKind::HandsRpc, 2_u64),
+        ])));
         let drain = Arc::new(DrainGate::new());
         let admission = Arc::new(Admission::new(
             AdmissionBounds {
@@ -786,11 +987,13 @@ mod tests {
             },
             permits,
             Arc::clone(&drain),
+            activation_resources(1),
         ));
         let control = MuxAdmission::new(
             Arc::clone(&admission),
             Bindings {
                 store: super::BindingState::Ready,
+                snapshots: super::BindingState::Ready,
                 provider: super::BindingState::Ready,
                 catalog: super::BindingState::Ready,
                 tools: super::BindingState::Ready,
@@ -804,6 +1007,55 @@ mod tests {
         );
         drain.start_drain();
         assert!(!control.should_receive());
-        assert!(matches!(control.admit(), AdmissionDecision::Shed { .. }));
+        assert!(matches!(control.admit(0), AdmissionDecision::Shed { .. }));
+    }
+
+    /// The application supplies its measured restore-byte ceiling to mux admission. The
+    /// context pool holds those bytes before hydration and returns them through RAII when
+    /// the activation ends.
+    #[test]
+    fn mux_admission_reserves_the_activation_restore_bytes() {
+        let permits = Arc::new(PermitSet::new(BTreeMap::from([
+            (PermitKind::Activation, 1_u64),
+            (PermitKind::ContextBytes, 512_u64),
+            (PermitKind::StreamBufferBytes, 1_u64),
+            (PermitKind::ProviderStream, 1_u64),
+            (PermitKind::HandsRpc, 1_u64),
+        ])));
+        let admission = Arc::new(Admission::new(
+            AdmissionBounds {
+                target: 1,
+                safety_cap: 1,
+                offered_ceiling: 1,
+            },
+            Arc::clone(&permits),
+            Arc::new(DrainGate::new()),
+            activation_resources(512),
+        ));
+        let control = MuxAdmission::new(
+            admission,
+            Bindings {
+                store: super::BindingState::Ready,
+                snapshots: super::BindingState::Ready,
+                provider: super::BindingState::Ready,
+                catalog: super::BindingState::Ready,
+                tools: super::BindingState::Ready,
+                hands: super::BindingState::Ready,
+            },
+        );
+
+        let AdmissionDecision::Admitted(held) = control.admit(512) else {
+            panic!("the exact context boundary is admitted");
+        };
+        assert_eq!(permits.held(PermitKind::ContextBytes), 512);
+        assert_eq!(permits.held(PermitKind::StreamBufferBytes), 1);
+        assert_eq!(permits.held(PermitKind::ProviderStream), 1);
+        assert_eq!(permits.held(PermitKind::HandsRpc), 1);
+        drop(held);
+        assert_eq!(permits.held(PermitKind::ContextBytes), 0);
+        assert_eq!(permits.held(PermitKind::Activation), 0);
+        assert_eq!(permits.held(PermitKind::StreamBufferBytes), 0);
+        assert_eq!(permits.held(PermitKind::ProviderStream), 0);
+        assert_eq!(permits.held(PermitKind::HandsRpc), 0);
     }
 }

@@ -11,8 +11,8 @@
 
 use aex_test_harness::containers::PostgresContainer;
 use central_schema_admin::connect::ADVISORY_LOCK_KEY;
-use central_schema_admin::grants::{GrantSet, grants_path};
-use central_schema_admin::migration::{MigrationBundle, bundle_path, native_migrator};
+use central_schema_admin::grants::GrantSet;
+use central_schema_admin::migration::{MigrationBundle, native_migrator};
 use central_schema_admin::runner::{
     applied_head, apply_grants, check_conservation, diff_grants, expect_applied_head,
 };
@@ -64,8 +64,8 @@ impl Fixture {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_bundle_applies_from_empty_and_reruns_as_a_no_op() {
     let fixture = Fixture::start().await;
-    let migrator = native_migrator().await.expect("the bundle parses");
-    let bundle = MigrationBundle::load(&bundle_path()).expect("the bundle is linear");
+    let migrator = native_migrator();
+    let bundle = MigrationBundle::embedded().expect("the embedded bundle is linear");
     let mut connection = fixture.connect().await;
 
     assert_eq!(
@@ -106,7 +106,7 @@ async fn the_bundle_applies_from_empty_and_reruns_as_a_no_op() {
 #[tokio::test(flavor = "multi_thread")]
 async fn checksum_drift_on_an_applied_version_fails_closed() {
     let fixture = Fixture::start().await;
-    let migrator = native_migrator().await.expect("the bundle parses");
+    let migrator = native_migrator();
     let mut connection = fixture.connect().await;
     migrator
         .run(&mut connection)
@@ -140,14 +140,14 @@ async fn an_out_of_order_release_is_refused_before_it_applies_anything() {
     let error = expect_applied_head(&mut connection, 20_260_801_000_700)
         .await
         .expect_err("an empty database is not at the expected head");
-    assert!(error.to_string().contains("20260801000700"));
+    assert!(error.to_string().contains("20260801000800"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn production_grant_application_reconciles_the_whole_v2_allowlist() {
     let fixture = Fixture::start().await;
-    let migrator = native_migrator().await.expect("the bundle parses");
-    let grants = GrantSet::load(grants_path()).expect("the v2 allowlist parses");
+    let migrator = native_migrator();
+    let grants = GrantSet::embedded().expect("the embedded v2 allowlist parses");
     let mut connection = fixture.connect().await;
     migrator
         .run(&mut connection)
@@ -219,7 +219,7 @@ async fn a_second_task_cannot_take_the_outer_lock() {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_journal_refuses_an_unbalanced_transaction_at_commit() {
     let fixture = Fixture::start().await;
-    let migrator = native_migrator().await.expect("the bundle parses");
+    let migrator = native_migrator();
     let mut connection = fixture.connect().await;
     migrator
         .run(&mut connection)
@@ -251,7 +251,7 @@ async fn the_journal_refuses_an_unbalanced_transaction_at_commit() {
 #[tokio::test(flavor = "multi_thread")]
 async fn journal_history_cannot_be_mutated_even_by_the_owner() {
     let fixture = Fixture::start().await;
-    let migrator = native_migrator().await.expect("the bundle parses");
+    let migrator = native_migrator();
     let mut connection = fixture.connect().await;
     migrator
         .run(&mut connection)
@@ -296,7 +296,7 @@ async fn journal_history_cannot_be_mutated_even_by_the_owner() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_customer_balance_can_never_be_overdrawn() {
     let fixture = Fixture::start().await;
-    let migrator = native_migrator().await.expect("the bundle parses");
+    let migrator = native_migrator();
     let mut connection = fixture.connect().await;
     migrator
         .run(&mut connection)
@@ -320,7 +320,7 @@ async fn a_customer_balance_can_never_be_overdrawn() {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_conservation_sweep_holds_on_a_freshly_migrated_database() {
     let fixture = Fixture::start().await;
-    let migrator = native_migrator().await.expect("the bundle parses");
+    let migrator = native_migrator();
     let mut connection = fixture.connect().await;
     migrator
         .run(&mut connection)

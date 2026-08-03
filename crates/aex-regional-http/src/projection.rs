@@ -30,6 +30,7 @@ use aex_secret_custody_dynamodb::codec::{
 };
 use aex_secret_domain::plaintext::{PlaintextError, SecretPlaintext};
 use aex_secret_domain::secret::{SecretName, SecretState};
+use aex_session_domain::{Run, RunOutcome};
 use aex_session_dynamodb::paging::PagePosition;
 use aex_wire::cursor::Cursor;
 use aex_wire::error::{ErrorCode, WireError};
@@ -427,6 +428,64 @@ registry_projections! {
         registered_instruction, registered_instruction_page;
     RegisteredMcpServer, RegisteredMcpServerPage, McpServer,
         registered_mcp_server, registered_mcp_server_page;
+}
+
+// --- sessions ---------------------------------------------------------------------
+
+/// Projects one canonical run authority document onto its public resource.
+///
+/// The public `error` field describes a failed run. Timeout, cancellation and
+/// interruption remain distinct statuses and carry no invented generic error;
+/// their typed internal causes remain durable in the authority document.
+#[must_use]
+pub fn session_run(stored: &Run) -> models::Run {
+    let (output_message_ids, error) = match stored.outcome.as_ref() {
+        Some(RunOutcome::Succeeded { output_messages }) => (Some(output_messages.clone()), None),
+        Some(RunOutcome::Failed { error }) => (
+            None,
+            Some(models::RunFailure {
+                code: error.code.into(),
+                detail: error.detail.clone(),
+                message: error.message.clone(),
+                retryable: error.retryable,
+            }),
+        ),
+        Some(
+            RunOutcome::TimedOut { .. } | RunOutcome::Cancelled { .. } | RunOutcome::Interrupted(_),
+        )
+        | None => (None, None),
+    };
+    models::Run {
+        error,
+        id: stored.id,
+        max_spend_cents: aex_wire::types::Cents::new(stored.max_spend_cents.get()),
+        message_id: stored.message,
+        output_message_ids,
+        queued_at: stored.queued_at,
+        session_id: stored.session,
+        started_at: stored.started_at,
+        status: match stored.status {
+            aex_session_domain::RunStatus::Queued => models::RunStatus::Queued,
+            aex_session_domain::RunStatus::Running => models::RunStatus::Running,
+            aex_session_domain::RunStatus::Succeeded => models::RunStatus::Succeeded,
+            aex_session_domain::RunStatus::Failed => models::RunStatus::Failed,
+            aex_session_domain::RunStatus::TimedOut => models::RunStatus::TimedOut,
+            aex_session_domain::RunStatus::Cancelled => models::RunStatus::Cancelled,
+            aex_session_domain::RunStatus::Interrupted => models::RunStatus::Interrupted,
+        },
+        telemetry_complete: stored.telemetry_complete,
+        telemetry_gap_ids: stored.telemetry_gaps.clone(),
+        terminal_at: stored.terminal_at,
+    }
+}
+
+/// Projects one canonical run page after its signed continuation is minted.
+#[must_use]
+pub fn session_run_page(stored: &[Run], next_cursor: Option<Cursor>) -> models::RunPage {
+    models::RunPage {
+        items: stored.iter().map(session_run).collect(),
+        next_cursor,
+    }
 }
 
 // --- continuations ---------------------------------------------------------------

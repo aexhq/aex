@@ -1,0 +1,44 @@
+[package]
+name = "aex-brain-provider-custody"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[package.metadata.aex]
+owner = "providers"
+role = "adapter"
+artifact = "none"
+live_suite = "aex-live-brain-mux"
+layers = ["unit", "integration"]
+concerns = ["contract", "property", "fault", "security"]
+seams = []
+security_tier = "secret"
+risk = ["none"]
+scenarios = []
+
+[package.metadata.aex.targets]
+authority = "unit"
+
+[package.metadata.aex.not_applicable]
+integration = "port-composition adapter with no datastore or transport engine of its own; DynamoDB and KMS integration evidence belongs to the regional-stores adapters"
+
+[dependencies]
+aex-brain-application = { path = "../aex-brain-application" }
+aex-brain-provider-gateway = { path = "../aex-brain-provider-gateway" }
+aex-secret-aws = { path = "../aex-secret-aws" }
+aex-secret-custody-dynamodb = { path = "../aex-secret-custody-dynamodb" }
+aex-secret-domain = { path = "../aex-secret-domain" }
+aex-wire = { path = "../aex-wire" }
+futures.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
+proptest.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }

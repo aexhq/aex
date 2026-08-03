@@ -12,8 +12,9 @@ use aex_runtime_control::store::{
     GenerationCommit, GenerationPlan, GenerationPointer, GenerationView,
     IdleProbe as CanonicalIdleProbe, LifecycleIntentCommit, LifecycleIntentPlan,
     LifecycleReceipt as CanonicalReceipt, LifecycleReceiptPlan, LifecycleReconcilePlan,
-    LifecycleRequestPlan, PageBudget as CanonicalPageBudget, RuntimeActivityStore, RuntimeDuePage,
-    RuntimeShard, RuntimeStoreError, StoreFuture, UsageOutboxEntry,
+    LifecycleRequestPlan, OperationAdmissionPlan, OperationSettlementPlan,
+    PageBudget as CanonicalPageBudget, RuntimeActivityStore, RuntimeDuePage, RuntimeShard,
+    RuntimeStoreError, StoreFuture, UsageOutboxEntry,
 };
 use aex_session_dynamodb::attr::{Item, ItemBuilder, PK, SK, n, s, stamp};
 use aex_session_dynamodb::error::{Idempotence, Resolution, StoreError, classify};
@@ -26,7 +27,7 @@ use aex_wire::types::Timestamp;
 use aws_sdk_dynamodb::Client;
 use aws_sdk_dynamodb::types::builders::{PutBuilder, UpdateBuilder};
 use aws_sdk_dynamodb::types::{
-    Put, ReturnValuesOnConditionCheckFailure, TransactWriteItem, Update,
+    Delete, Put, ReturnValuesOnConditionCheckFailure, TransactWriteItem, Update,
 };
 use std::str::FromStr as _;
 
@@ -34,6 +35,8 @@ use crate::codec::{
     self, CurrentGeneration, GenerationRow, IdleProbe, LifecycleIntent, LifecycleReceipt,
 };
 use crate::{expressions, keys};
+
+const HANDS_OPERATION_ADMISSION: &str = "hands_operation_admission";
 
 /// One row of the slim evaluation projection.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -179,6 +182,37 @@ impl RuntimeActivityDynamoStore {
             .transpose()
     }
 
+    async fn operation_is_admitted(
+        &self,
+        generation: GenerationId,
+        operation: aex_hands_protocol::rpc::HandsOperationId,
+    ) -> Result<bool, RuntimeStoreError> {
+        let target = keys::operation_admission(generation, operation);
+        let Some(item) = self
+            .get(&target.pk, &target.sk)
+            .await
+            .map_err(|error| runtime_error(error, None))?
+        else {
+            return Ok(false);
+        };
+        let row = aex_session_dynamodb::attr::Row::bind(&item, HANDS_OPERATION_ADMISSION)
+            .map_err(|error| malformed(&error.to_string()))?;
+        if row
+            .string("generationId")
+            .map_err(|error| malformed(&error.to_string()))?
+            != generation.to_string()
+            || row
+                .string("operationId")
+                .map_err(|error| malformed(&error.to_string()))?
+                != operation.0.to_string()
+        {
+            return Err(malformed(
+                "an operation admission marker disagrees with its key",
+            ));
+        }
+        Ok(true)
+    }
+
     async fn transact(
         &self,
         items: Vec<TransactWriteItem>,
@@ -297,6 +331,20 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
                 } else {
                     remove.push("suspendedAt");
                 }
+                if let Some(launched_at) = accounting.lifetime_started_at {
+                    update.push_str(
+                        ", providerLaunchedAt = :providerLaunchedAt, providerLifetimeExpiresAt = :providerLifetimeExpiresAt",
+                    );
+                    builder = builder
+                        .expression_attribute_values(":providerLaunchedAt", stamp(launched_at))
+                        .expression_attribute_values(
+                            ":providerLifetimeExpiresAt",
+                            stamp(aex_runtime_control::clock::plus_millis(
+                                launched_at,
+                                aex_runtime_control::lifecycle::PROVIDER_LIFETIME_MS,
+                            )),
+                        );
+                }
             }
             if !evaluable {
                 remove.extend([keys::DUE_PK, keys::DUE_SK]);
@@ -365,6 +413,195 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
                 head: generation_view(persisted).head,
                 revision: next_revision,
             })
+        })
+    }
+
+    fn admit_operation<'a>(&'a self, plan: &'a OperationAdmissionPlan) -> StoreFuture<'a, ()> {
+        Box::pin(async move {
+            if plan.open_operations == 0 || plan.next_revision != plan.expected_revision.next() {
+                return Err(malformed(
+                    "an operation admission plan is internally inconsistent",
+                ));
+            }
+            let row = self.load_canonical_row(plan.generation).await?.ok_or(
+                RuntimeStoreError::NoSuchGeneration {
+                    generation: plan.generation,
+                },
+            )?;
+            if self
+                .operation_is_admitted(plan.generation, plan.operation)
+                .await?
+            {
+                return Ok(());
+            }
+            let expected_open = plan.open_operations - 1;
+            let target = keys::head_for_generation(plan.generation);
+            let head = Update::builder()
+                .table_name(&self.table)
+                .set_key(Some(key(&target.pk, &target.sk)))
+                .condition_expression(
+                    "generationId = :generation AND #state = :running AND fence = :fence AND revision = :expectedRevision AND openOperations = :expectedOpen",
+                )
+                .update_expression(
+                    "SET openOperations = :open, revision = :nextRevision, lastBusyAt = :at, updatedAt = :at REMOVE idleSince",
+                )
+                .expression_attribute_names("#state", "state")
+                .expression_attribute_values(":generation", s(plan.generation.to_string()))
+                .expression_attribute_values(":running", s(keys::state_str(GenerationState::Running)))
+                .expression_attribute_values(":fence", n(plan.fence.0))
+                .expression_attribute_values(":expectedRevision", n(plan.expected_revision.value()))
+                .expression_attribute_values(":expectedOpen", n(u64::from(expected_open)))
+                .expression_attribute_values(":open", n(u64::from(plan.open_operations)))
+                .expression_attribute_values(":nextRevision", n(plan.next_revision.value()))
+                .expression_attribute_values(":at", stamp(plan.last_busy_at))
+                .build()
+                .map_err(|error| malformed(&error.to_string()))?;
+            let current = keys::current(row.session);
+            let pointer = Update::builder()
+                .table_name(&self.table)
+                .set_key(Some(key(&current.pk, &current.sk)))
+                .condition_expression(
+                    "generationId = :generation AND fence = :fence AND revision = :expectedRevision",
+                )
+                .update_expression("SET revision = :nextRevision, updatedAt = :at")
+                .expression_attribute_values(":generation", s(plan.generation.to_string()))
+                .expression_attribute_values(":fence", n(plan.fence.0))
+                .expression_attribute_values(":expectedRevision", n(plan.expected_revision.value()))
+                .expression_attribute_values(":nextRevision", n(plan.next_revision.value()))
+                .expression_attribute_values(":at", stamp(plan.last_busy_at))
+                .build()
+                .map_err(|error| malformed(&error.to_string()))?;
+            let marker = keys::operation_admission(plan.generation, plan.operation);
+            let marker = ItemBuilder::new(HANDS_OPERATION_ADMISSION)
+                .set(PK, s(marker.pk))
+                .set(SK, s(marker.sk))
+                .set("generationId", s(plan.generation.to_string()))
+                .set("operationId", s(plan.operation.0.to_string()))
+                .set("admittedAt", stamp(plan.last_busy_at))
+                .build();
+            let marker = Put::builder()
+                .table_name(&self.table)
+                .set_item(Some(marker))
+                .condition_expression("attribute_not_exists(pk)")
+                .build()
+                .map_err(|error| malformed(&error.to_string()))?;
+            let outcome = self
+                .transact(
+                    vec![
+                        TransactWriteItem::builder().put(marker).build(),
+                        TransactWriteItem::builder().update(head).build(),
+                        TransactWriteItem::builder().update(pointer).build(),
+                    ],
+                    transaction_token(
+                        "operation-admit",
+                        plan.generation,
+                        &format!(
+                            "{}:{}",
+                            plan.operation.0,
+                            plan.expected_revision.value()
+                        ),
+                    ),
+                )
+                .await;
+            if outcome.is_err()
+                && self
+                    .operation_is_admitted(plan.generation, plan.operation)
+                    .await?
+            {
+                return Ok(());
+            }
+            outcome
+        })
+    }
+
+    fn settle_operation<'a>(&'a self, plan: &'a OperationSettlementPlan) -> StoreFuture<'a, ()> {
+        Box::pin(async move {
+            if plan.next_revision != plan.expected_revision.next() {
+                return Err(malformed(
+                    "an operation settlement plan is internally inconsistent",
+                ));
+            }
+            let row = self.load_canonical_row(plan.generation).await?.ok_or(
+                RuntimeStoreError::NoSuchGeneration {
+                    generation: plan.generation,
+                },
+            )?;
+            if !self
+                .operation_is_admitted(plan.generation, plan.operation)
+                .await?
+            {
+                return Ok(());
+            }
+            let expected_open = plan
+                .open_operations
+                .checked_add(1)
+                .ok_or_else(|| malformed("an operation settlement count cannot exceed u32"))?;
+            let target = keys::head_for_generation(plan.generation);
+            let update = if plan.open_operations == 0 {
+                "SET openOperations = :open, revision = :nextRevision, lastBusyAt = :at, idleSince = :at, updatedAt = :at"
+            } else {
+                "SET openOperations = :open, revision = :nextRevision, lastBusyAt = :at, updatedAt = :at REMOVE idleSince"
+            };
+            let head = Update::builder()
+                .table_name(&self.table)
+                .set_key(Some(key(&target.pk, &target.sk)))
+                .condition_expression(
+                    "generationId = :generation AND revision = :expectedRevision AND openOperations = :expectedOpen",
+                )
+                .update_expression(update)
+                .expression_attribute_values(":generation", s(plan.generation.to_string()))
+                .expression_attribute_values(":expectedRevision", n(plan.expected_revision.value()))
+                .expression_attribute_values(":expectedOpen", n(u64::from(expected_open)))
+                .expression_attribute_values(":open", n(u64::from(plan.open_operations)))
+                .expression_attribute_values(":nextRevision", n(plan.next_revision.value()))
+                .expression_attribute_values(":at", stamp(plan.last_busy_at))
+                .build()
+                .map_err(|error| malformed(&error.to_string()))?;
+            let current = keys::current(row.session);
+            let pointer = Update::builder()
+                .table_name(&self.table)
+                .set_key(Some(key(&current.pk, &current.sk)))
+                .condition_expression("generationId = :generation AND revision = :expectedRevision")
+                .update_expression("SET revision = :nextRevision, updatedAt = :at")
+                .expression_attribute_values(":generation", s(plan.generation.to_string()))
+                .expression_attribute_values(":expectedRevision", n(plan.expected_revision.value()))
+                .expression_attribute_values(":nextRevision", n(plan.next_revision.value()))
+                .expression_attribute_values(":at", stamp(plan.last_busy_at))
+                .build()
+                .map_err(|error| malformed(&error.to_string()))?;
+            let marker = keys::operation_admission(plan.generation, plan.operation);
+            let marker = Delete::builder()
+                .table_name(&self.table)
+                .set_key(Some(key(&marker.pk, &marker.sk)))
+                .condition_expression("attribute_exists(pk)")
+                .build()
+                .map_err(|error| malformed(&error.to_string()))?;
+            let outcome = self
+                .transact(
+                    vec![
+                        TransactWriteItem::builder().delete(marker).build(),
+                        TransactWriteItem::builder().update(head).build(),
+                        TransactWriteItem::builder().update(pointer).build(),
+                    ],
+                    transaction_token(
+                        "operation-settle",
+                        plan.generation,
+                        &format!(
+                            "{}:{}",
+                            plan.operation.0,
+                            plan.expected_revision.value()
+                        ),
+                    ),
+                )
+                .await;
+            if outcome.is_err()
+                && !self
+                    .operation_is_admitted(plan.generation, plan.operation)
+                    .await?
+            {
+                return Ok(());
+            }
+            outcome
         })
     }
 
@@ -549,15 +786,27 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
                 });
             }
             if let Some(existing) = &intent.provider_request_id {
-                if existing == &plan.provider_request_id {
+                if existing == &plan.provider_request_id
+                    && intent.microvm.as_ref() == Some(&plan.microvm)
+                {
                     return Ok(intent);
                 }
                 return Err(malformed(
-                    "one lifecycle intent has two provider request ids",
+                    "one lifecycle intent has conflicting provider evidence",
+                ));
+            }
+            if intent
+                .microvm
+                .as_ref()
+                .is_some_and(|existing| existing != &plan.microvm)
+            {
+                return Err(malformed(
+                    "one lifecycle intent has two provider MicroVM identities",
                 ));
             }
             let expected =
                 serde_json::to_string(&intent).map_err(|error| malformed(&error.to_string()))?;
+            intent.microvm = Some(plan.microvm.clone());
             intent.provider_request_id = Some(plan.provider_request_id.clone());
             let next =
                 serde_json::to_string(&intent).map_err(|error| malformed(&error.to_string()))?;
@@ -566,9 +815,10 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
                 .table_name(&self.table)
                 .set_key(Some(key(&target.pk, &target.sk)))
                 .condition_expression("openIntent = :expected")
-                .update_expression("SET openIntent = :next")
+                .update_expression("SET openIntent = :next, providerVmId = :microvm")
                 .expression_attribute_values(":expected", s(expected))
                 .expression_attribute_values(":next", s(next))
+                .expression_attribute_values(":microvm", s(plan.microvm.0.clone()))
                 .build()
                 .map_err(|error| malformed(&error.to_string()))?;
             let durable_target = keys::intent(row.session, plan.generation, &plan.intent_id.0)
@@ -1000,6 +1250,20 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
                     } else {
                         remove.push("suspendedAt");
                     }
+                    if let Some(launched_at) = accounting.lifetime_started_at {
+                        head_update.push_str(
+                            ", providerLaunchedAt = :providerLaunchedAt, providerLifetimeExpiresAt = :providerLifetimeExpiresAt",
+                        );
+                        head_builder = head_builder
+                            .expression_attribute_values(":providerLaunchedAt", stamp(launched_at))
+                            .expression_attribute_values(
+                                ":providerLifetimeExpiresAt",
+                                stamp(aex_runtime_control::clock::plus_millis(
+                                    launched_at,
+                                    aex_runtime_control::lifecycle::PROVIDER_LIFETIME_MS,
+                                )),
+                            );
+                    }
                 }
                 if !keys::is_evaluable(generation.next_state) {
                     remove.extend([keys::DUE_PK, keys::DUE_SK]);
@@ -1387,6 +1651,7 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
 
 fn generation_view(row: GenerationRow) -> GenerationView {
     GenerationView {
+        definition: row.definition,
         head: GenerationHead {
             generation: row.generation,
             size: row.size,

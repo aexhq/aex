@@ -19,7 +19,6 @@ on:
           - supply-chain
           - deep-risk
           - cold-rebuild
-          - plane
   schedule:
     # full-graph
     - cron: "0 2 * * *"
@@ -29,8 +28,6 @@ on:
     - cron: "0 4 * * 0"
     # cold-rebuild
     - cron: "0 5 * * 1"
-    # plane
-    - cron: "0 6 * * *"
 
 concurrency:
   group: assurance-${{ github.event.inputs.suite || github.event.schedule }}
@@ -64,7 +61,6 @@ jobs:
             "0 3 * * *") echo "name=supply-chain" >> "$GITHUB_OUTPUT" ;;
             "0 4 * * 0") echo "name=deep-risk" >> "$GITHUB_OUTPUT" ;;
             "0 5 * * 1") echo "name=cold-rebuild" >> "$GITHUB_OUTPUT" ;;
-            "0 6 * * *") echo "name=plane" >> "$GITHUB_OUTPUT" ;;
             *) echo "unrecognised schedule"; exit 2 ;;
           esac
 
@@ -88,7 +84,18 @@ jobs:
     with:
       matrix: ${{ needs.route.outputs.test_matrix }}
       lane: assurance
+      job_name: full-graph
+      selection_mode: shadow
       cache_mode: restore
+
+  full-scenarios:
+    name: Full scenarios
+    needs: [suite, route]
+    if: needs.suite.outputs.name == 'full-graph' && needs.route.outputs.has_scenario == 'true'
+    uses: ./.github/workflows/_scenario-lane.yml
+    with:
+      matrix: ${{ needs.route.outputs.scenario_matrix }}
+      lane: assurance
 
   supply-chain:
     name: Supply chain
@@ -166,20 +173,3 @@ jobs:
           echo "compares digests. Nothing is published yet, so there is nothing"
           echo "to compare against."
           exit 40
-
-  plane:
-    name: Plane
-    needs: suite
-    if: needs.suite.outputs.name == 'plane'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - name: Read-only plane inspection
-        run: |
-          set -euo pipefail
-          echo "Drift, certificate expiry, quota headroom, cost and backup"
-          echo "readiness all need a deployed plane and a read-only role."
-          echo "Neither exists."
-          exit 44

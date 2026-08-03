@@ -29,6 +29,7 @@ pub fn valid_envelope() -> Value {
     json!({
         "schema": "aex.artifact-envelope.v1",
         "envelopeDigest": digest(1),
+        "artifactSubjectDigest": digest(2),
         "unit": { "id": "regional-session-api", "kind": "rust-lambda", "plane": "regional" },
         "media": { "mediaType": "application/zip", "form": "zip" },
         "source": {
@@ -39,7 +40,7 @@ pub fn valid_envelope() -> Value {
             "workflow": {
                 "repository": "aexhq/aex",
                 "ref": "refs/heads/main",
-                "path": ".github/workflows/main.yml",
+                "path": ".github/workflows/_build-artifacts.yml",
                 "runId": "123",
                 "runAttempt": 1,
                 "jobName": "build",
@@ -128,6 +129,19 @@ pub fn valid_manifest() -> Value {
         "schema": "aex.composition-manifest.v1",
         "releaseId": digest(0x11),
         "contractDigest": digest(6),
+        "source": {
+            "repository": "aexhq/aex",
+            "commitSha": sha1(),
+            "workflowRunId": "123",
+            "workflowRunAttempt": 1
+        },
+        "releaseTool": {
+            "version": "0.1.0",
+            "digest": digest(0x27),
+            "sizeBytes": 8192,
+            "uri": format!("https://github.com/aexhq/aex/releases/download/main-{}-run-123-attempt-1/aex-release-tool", sha1()),
+            "target": "x86_64-unknown-linux-musl"
+        },
         "units": {
             "regional-session-api": {
                 "kind": "rust-lambda",
@@ -159,11 +173,18 @@ pub fn valid_manifest() -> Value {
                 "head": "20260801000100",
                 "adminImageDigest": digest(0x22)
             },
-            "regional": { "bundleDigest": digest(0x23), "generation": 1 }
+            "regional": {
+                "bundleDigest": digest(0x23),
+                "bundleSizeBytes": 71384,
+                "bundleUri": format!("https://github.com/aexhq/aex/releases/download/main-{}-run-123-attempt-1/regional-tables.json", sha1()),
+                "definitionsDigest": format!("blake3:{}", "23".repeat(32)),
+                "generation": 1
+            }
         },
         "infra": {
             "moduleBundleDigest": digest(0x24),
-            "sourceArchiveUri": "infra/modules-deadbeef.tar.gz",
+            "moduleBundleSizeBytes": 16384,
+            "moduleBundleUri": format!("https://github.com/aexhq/aex/releases/download/main-{}-run-123-attempt-1/terraform-modules.tar.gz", sha1()),
             "terraformVersion": "1.14.0",
             "providerVersions": { "hashicorp/aws": "6.0.0" }
         },

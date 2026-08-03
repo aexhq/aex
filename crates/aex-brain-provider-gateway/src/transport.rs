@@ -78,7 +78,7 @@ impl AuthScheme {
 /// Every field is bounded, and the only field that can hold caller text is the
 /// `JSON` `body`. `path` is assembled from an [`EndpointPin`] and a catalog
 /// model slug, never from free-form input.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct WireRequest {
     /// The compiled origin.
     pub endpoint: EndpointPin,
@@ -94,6 +94,21 @@ pub struct WireRequest {
     pub body: Bytes,
     /// What to accept.
     pub accept: Accept,
+}
+
+impl core::fmt::Debug for WireRequest {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("WireRequest")
+            .field("endpoint", &self.endpoint)
+            .field("path", &self.path)
+            .field("query", &self.query)
+            .field("headers", &self.headers)
+            .field("auth", &self.auth)
+            .field("body_len", &self.body.len())
+            .field("accept", &self.accept)
+            .finish()
+    }
 }
 
 impl WireRequest {
@@ -460,14 +475,18 @@ mod tests {
 
     #[test]
     fn a_wire_request_debug_rendering_carries_only_the_auth_tag() {
-        let built = request(
+        let mut built = request(
             EndpointPin::OpenAiApi,
             "/v1/responses",
             AuthScheme::BearerAuthorization,
         );
+        built.body =
+            bytes::Bytes::from_static(b"{\"input\":\"sk-012345678901234567890123456789\"}");
         let rendered = format!("{built:?}");
         assert!(rendered.contains("BearerAuthorization"));
-        // There is no field that could hold a key, so there is nothing to find.
+        assert!(rendered.contains("body_len"));
+        // Customer content may itself contain a credential, so body bytes are
+        // never part of a diagnostic rendering.
         assert!(!rendered.contains("sk-"));
     }
 }

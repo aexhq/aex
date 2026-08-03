@@ -11,6 +11,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::canon;
@@ -26,8 +27,8 @@ pub enum Form {
     LambdaZip,
     /// An OCI image layout.
     Oci,
-    /// A guest root filesystem image.
-    Rootfs,
+    /// An AWS Lambda `MicroVM` image service ZIP.
+    MicrovmZip,
     /// A `.tar.gz` of a file set.
     Tarball,
     /// A `.tar.gz` of a build output tree.
@@ -53,8 +54,150 @@ pub struct BuildPlan {
     pub env: BTreeMap<String, String>,
     /// Packaged form.
     pub form: String,
+    /// Repository-relative path the build command produces. Packaging consumes
+    /// this exact path; workflows must not reconstruct it from the unit id.
+    pub input: String,
+    /// Archive member loaded by the runtime, where the form has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entrypoint: Option<String>,
+    /// Digest-pinned runtime base for an OCI image.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_image: Option<String>,
     /// Digest over the argv and environment, recorded in the envelope.
     pub digest: String,
+}
+
+/// Build-time inputs that turn `brain-mux` catalog verification into release authority.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelCatalogBuildInputs {
+    /// Canonical JSON containing the bounded release trust-root set.
+    pub trust_roots_json: String,
+    /// SHA-256 of the exact canonical trust-root JSON.
+    pub trust_roots_sha256: String,
+    /// Stable workspace-relative path of the collection copied into the binary.
+    pub collection_file: String,
+    /// SHA-256 of the exact collection bytes.
+    pub collection_sha256: String,
+    /// SHA-256 of the immutable built-in tool catalogue compiled into Brain.
+    pub tool_catalog_sha256: String,
+}
+
+/// Build-time canonical publisher trust-root-set variable.
+pub const MODEL_CATALOG_TRUST_ROOTS_JSON_VAR: &str = "AEX_MODEL_CATALOG_TRUST_ROOTS_JSON";
+/// Build-time exact trust-root-set digest variable.
+pub const MODEL_CATALOG_TRUST_ROOTS_SHA256_VAR: &str = "AEX_MODEL_CATALOG_TRUST_ROOTS_SHA256";
+/// Build-time exact collection-file variable.
+pub const MODEL_CATALOG_COLLECTION_FILE_VAR: &str = "AEX_MODEL_CATALOG_COLLECTION_FILE";
+/// Build-time exact collection digest variable.
+pub const MODEL_CATALOG_COLLECTION_SHA256_VAR: &str = "AEX_MODEL_CATALOG_COLLECTION_SHA256";
+/// Build-time exact built-in tool catalogue digest variable.
+pub const TOOL_CATALOG_SHA256_VAR: &str = "AEX_TOOL_CATALOG_SHA256";
+
+const MODEL_CATALOG_TRUST_ROOTS_SCHEMA: &str = "aex.model-catalog-trust-roots.v1";
+const MAX_MODEL_CATALOG_TRUST_ROOTS: usize = 8;
+const MAX_MODEL_CATALOG_TRUST_ROOTS_BYTES: usize = 8 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ModelCatalogTrustRoots {
+    // Field order is JCS order for the restricted ASCII document below.
+    keys: Vec<ModelCatalogTrustRoot>,
+    schema: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ModelCatalogTrustRoot {
+    // Field order is JCS order.
+    key_id: String,
+    sec1: String,
+}
+
+fn microvm_plan(unit: &Unit) -> Result<(Vec<String>, &'static str, String)> {
+    let shape = unit.microvm.as_ref().ok_or_else(|| {
+        ToolError::single(
+            Exit::Usage,
+            "artifact-microvm-shape-missing",
+            format!("unit `{}` declares no MicroVM variant", unit.id),
+        )
+    })?;
+    let output = format!("target/microvm/{}", unit.id);
+    Ok((
+        vec![
+            "cargo".to_owned(),
+            "run".to_owned(),
+            "--locked".to_owned(),
+            "--release".to_owned(),
+            "--package".to_owned(),
+            "hands-image".to_owned(),
+            "--".to_owned(),
+            "artifact".to_owned(),
+            "--variant".to_owned(),
+            shape.variant.clone(),
+            "--out".to_owned(),
+            output.clone(),
+        ],
+        "microvm-zip",
+        output,
+    ))
+}
+
+fn rust_plan(unit: &Unit) -> Result<Option<(Vec<String>, &'static str, String)>> {
+    let binary = || {
+        unit.bin.clone().ok_or_else(|| {
+            ToolError::single(
+                Exit::Usage,
+                "artifact-binary-target-missing",
+                format!(
+                    "unit `{}` does not declare its Cargo binary target",
+                    unit.id
+                ),
+            )
+        })
+    };
+    let rust_target = unit.target.strip_suffix(".2.34").unwrap_or(&unit.target);
+    let planned = match unit.kind.as_str() {
+        "rust-lambda" => {
+            let binary = binary()?;
+            Some((
+                vec![
+                    "cargo".to_owned(),
+                    "lambda".to_owned(),
+                    "build".to_owned(),
+                    "--profile".to_owned(),
+                    unit.profile.clone(),
+                    "--package".to_owned(),
+                    unit.package.clone(),
+                    "--target".to_owned(),
+                    unit.target.clone(),
+                ],
+                "lambda-zip",
+                format!("target/lambda/{binary}/bootstrap"),
+            ))
+        }
+        kind @ ("rust-oci-service" | "rust-oci-task" | "rust-binary") => {
+            let binary = binary()?;
+            Some((
+                vec![
+                    "cargo".to_owned(),
+                    "zigbuild".to_owned(),
+                    "--release".to_owned(),
+                    "--package".to_owned(),
+                    unit.package.clone(),
+                    "--target".to_owned(),
+                    unit.target.clone(),
+                ],
+                if kind == "rust-binary" {
+                    "tarball"
+                } else {
+                    "oci"
+                },
+                format!("target/{rust_target}/release/{binary}"),
+            ))
+        }
+        _ => None,
+    };
+    Ok(planned)
 }
 
 /// Derive the build plan for one unit.
@@ -66,84 +209,44 @@ pub struct BuildPlan {
 /// # Errors
 /// Returns [`Exit::Usage`] for a unit kind with no recipe.
 pub fn plan(unit: &Unit) -> Result<BuildPlan> {
-    let package = unit.package.clone();
-    let (argv, form) = match unit.kind.as_str() {
-        // `cargo lambda build` drives `cargo zigbuild`, so the `bootstrap`
-        // rename is native and the glibc floor is explicit rather than
-        // whatever a container image happened to ship.
-        "rust-lambda" => (
-            vec![
-                "cargo".to_owned(),
-                "lambda".to_owned(),
-                "build".to_owned(),
-                "--profile".to_owned(),
-                unit.profile.clone(),
-                "--package".to_owned(),
-                package,
-                "--target".to_owned(),
-                unit.target.clone(),
-            ],
-            "lambda-zip",
-        ),
-        "rust-oci-service" | "rust-oci-task" => (
-            vec![
-                "cargo".to_owned(),
-                "zigbuild".to_owned(),
-                "--release".to_owned(),
-                "--package".to_owned(),
-                package,
-                "--target".to_owned(),
-                unit.target.clone(),
-            ],
-            "oci",
-        ),
-        "rust-binary" => (
-            vec![
-                "cargo".to_owned(),
-                "zigbuild".to_owned(),
-                "--release".to_owned(),
-                "--package".to_owned(),
-                package,
-                "--target".to_owned(),
-                unit.target.clone(),
-            ],
-            "tarball",
-        ),
-        // The entry is the module that exports the Lambda handler symbol, which
-        // is `handler.ts` in both edges. The output directory is the package's
-        // own, so two edges built in one job cannot overwrite each other. There
-        // is no minify flag: `bun build` does not minify unless asked, and
-        // `--minify=false` is a parse error rather than a no-op — writing the
-        // default down is what made this recipe unrunnable.
-        "ts-lambda" => (
-            vec![
-                "bun".to_owned(),
-                "build".to_owned(),
-                "--target=node".to_owned(),
-                "--outdir".to_owned(),
+    let (argv, form, input) = if let Some(planned) = rust_plan(unit)? {
+        planned
+    } else {
+        match unit.kind.as_str() {
+            // `cargo lambda build` drives `cargo zigbuild`, so the `bootstrap`
+            // rename is native and the glibc floor is explicit rather than
+            // whatever a container image happened to ship.
+            // The entry is the module that exports the Lambda handler symbol, which
+            // is `handler.ts` in both edges. The output directory is the package's
+            // own, so two edges built in one job cannot overwrite each other. There
+            // is no minify flag: `bun build` does not minify unless asked, and
+            // `--minify=false` is a parse error rather than a no-op — writing the
+            // default down is what made this recipe unrunnable.
+            "ts-lambda" => (
+                vec![
+                    "bun".to_owned(),
+                    "build".to_owned(),
+                    "--target=node".to_owned(),
+                    "--outdir".to_owned(),
+                    format!("services/{}/dist", unit.id),
+                    format!("services/{}/src/handler.ts", unit.id),
+                ],
+                "lambda-zip",
+                format!("services/{}/dist/handler.js", unit.id),
+            ),
+            "build-output" => (
+                vec!["bun".to_owned(), "run".to_owned(), "build".to_owned()],
+                "build-output",
                 format!("services/{}/dist", unit.id),
-                format!("services/{}/src/handler.ts", unit.id),
-            ],
-            "lambda-zip",
-        ),
-        "build-output" => (
-            vec!["bun".to_owned(), "run".to_owned(), "build".to_owned()],
-            "build-output",
-        ),
-        "rootfs" => (
-            vec![
-                "runtimes".to_owned(),
-                "hands-image".to_owned(),
-                "build".to_owned(),
-            ],
-            "rootfs",
-        ),
-        other => {
-            return Err(ToolError::single(
-                Exit::Usage,
-                "artifact-recipe-unknown",
-                format!("unit `{}` has kind `{other}`, which has no recipe", unit.id),
-            ));
+            ),
+            "microvm-image" => microvm_plan(unit)?,
+            other => {
+                return Err(ToolError::single(
+                    Exit::Usage,
+                    "artifact-recipe-unknown",
+                    format!("unit `{}` has kind `{other}`, which has no recipe", unit.id),
+                ));
+            }
         }
     };
     let env = BTreeMap::from([
@@ -156,6 +259,9 @@ pub fn plan(unit: &Unit) -> Result<BuildPlan> {
         "env": env,
         "target": unit.target,
         "profile": unit.profile,
+        "input": input,
+        "entrypoint": unit.entrypoint,
+        "baseImage": unit.base_image,
     }))?;
     Ok(BuildPlan {
         unit: unit.id.clone(),
@@ -165,8 +271,421 @@ pub fn plan(unit: &Unit) -> Result<BuildPlan> {
         argv,
         env,
         form: form.to_owned(),
+        input,
+        entrypoint: unit.entrypoint.clone(),
+        base_image: unit.base_image.clone(),
         digest,
     })
+}
+
+/// Derives a plan whose recorded environment exactly binds `brain-mux` to a
+/// publisher trust-root set and collection. Other units ignore these inputs.
+///
+/// # Errors
+///
+/// Propagates recipe canonicalization failure.
+pub fn plan_with_model_catalog(
+    unit: &Unit,
+    catalog: Option<&ModelCatalogBuildInputs>,
+) -> Result<BuildPlan> {
+    let mut build = plan(unit)?;
+    if unit.id != "brain-mux" {
+        return Ok(build);
+    }
+    if let Some(catalog) = catalog {
+        validate_model_catalog_build_inputs(catalog)?;
+        build.env.insert(
+            MODEL_CATALOG_TRUST_ROOTS_JSON_VAR.to_owned(),
+            catalog.trust_roots_json.clone(),
+        );
+        build.env.insert(
+            MODEL_CATALOG_TRUST_ROOTS_SHA256_VAR.to_owned(),
+            catalog.trust_roots_sha256.clone(),
+        );
+        build.env.insert(
+            MODEL_CATALOG_COLLECTION_FILE_VAR.to_owned(),
+            catalog.collection_file.clone(),
+        );
+        build.env.insert(
+            MODEL_CATALOG_COLLECTION_SHA256_VAR.to_owned(),
+            catalog.collection_sha256.clone(),
+        );
+        build.env.insert(
+            TOOL_CATALOG_SHA256_VAR.to_owned(),
+            catalog.tool_catalog_sha256.clone(),
+        );
+        build.digest = build_plan_digest(&build)?;
+    }
+    Ok(build)
+}
+
+/// Reads the all-or-none build-time catalog inputs and verifies the collection
+/// digest before a compiler sees them.
+///
+/// # Errors
+///
+/// Returns a usage error for partial/invalid bindings or an I/O error when the
+/// exact collection cannot be read.
+pub fn model_catalog_inputs_from_environment(
+    workspace_root: &Path,
+) -> Result<Option<ModelCatalogBuildInputs>> {
+    model_catalog_inputs(
+        workspace_root,
+        [
+            nonempty_environment(MODEL_CATALOG_TRUST_ROOTS_JSON_VAR),
+            nonempty_environment(MODEL_CATALOG_TRUST_ROOTS_SHA256_VAR),
+            nonempty_environment(MODEL_CATALOG_COLLECTION_FILE_VAR),
+            nonempty_environment(MODEL_CATALOG_COLLECTION_SHA256_VAR),
+            nonempty_environment(TOOL_CATALOG_SHA256_VAR),
+        ],
+    )
+}
+
+fn model_catalog_inputs(
+    workspace_root: &Path,
+    bindings: [Option<String>; 5],
+) -> Result<Option<ModelCatalogBuildInputs>> {
+    let [
+        trust_roots_json,
+        trust_roots_sha256,
+        collection_file,
+        collection_sha256,
+        tool_catalog_sha256,
+    ] = bindings;
+    let present = [
+        trust_roots_json.is_some(),
+        trust_roots_sha256.is_some(),
+        collection_file.is_some(),
+        collection_sha256.is_some(),
+        tool_catalog_sha256.is_some(),
+    ];
+    if present.iter().any(|value| *value) && !present.iter().all(|value| *value) {
+        return Err(ToolError::single(
+            Exit::Usage,
+            "model-catalog-build-binding-partial",
+            format!(
+                "{MODEL_CATALOG_TRUST_ROOTS_JSON_VAR}, \
+                 {MODEL_CATALOG_TRUST_ROOTS_SHA256_VAR}, \
+                 {MODEL_CATALOG_COLLECTION_FILE_VAR}, \
+                 {MODEL_CATALOG_COLLECTION_SHA256_VAR} and \
+                 {TOOL_CATALOG_SHA256_VAR} must be supplied together"
+            ),
+        ));
+    }
+    let (
+        Some(trust_roots_json),
+        Some(trust_roots_sha256),
+        Some(collection_file),
+        Some(collection_sha256),
+        Some(tool_catalog_sha256),
+    ) = (
+        trust_roots_json,
+        trust_roots_sha256,
+        collection_file,
+        collection_sha256,
+        tool_catalog_sha256,
+    )
+    else {
+        return Ok(None);
+    };
+    let inputs = ModelCatalogBuildInputs {
+        trust_roots_json,
+        trust_roots_sha256,
+        collection_file,
+        collection_sha256,
+        tool_catalog_sha256,
+    };
+    validate_model_catalog_build_inputs(&inputs)?;
+    let actual_tool_catalog = tool_catalog_digest(workspace_root)?;
+    if inputs.tool_catalog_sha256 != actual_tool_catalog {
+        return Err(ToolError::single(
+            Exit::Usage,
+            "tool-catalog-build-digest-mismatch",
+            format!(
+                "the release-bound tool catalogue is {actual_tool_catalog}, not {}",
+                inputs.tool_catalog_sha256
+            ),
+        ));
+    }
+    let canonical_root = std::fs::canonicalize(workspace_root)
+        .map_err(|error| io(&workspace_root.display().to_string(), &error))?;
+    let logical_collection = workspace_root.join(&inputs.collection_file);
+    let resolved_collection = std::fs::canonicalize(&logical_collection)
+        .map_err(|error| io(&logical_collection.display().to_string(), &error))?;
+    if !resolved_collection.starts_with(&canonical_root) {
+        return Err(ToolError::single(
+            Exit::Usage,
+            "model-catalog-collection-path-escape",
+            format!(
+                "the release-bound collection `{}` resolves outside the workspace root",
+                inputs.collection_file
+            ),
+        ));
+    }
+    let bytes = std::fs::read(&resolved_collection)
+        .map_err(|error| io(&resolved_collection.display().to_string(), &error))?;
+    if bytes.is_empty() {
+        return Err(ToolError::single(
+            Exit::Usage,
+            "model-catalog-collection-empty",
+            "the release-bound model catalog collection is empty",
+        ));
+    }
+    let actual = canon::digest_bytes(&bytes);
+    if actual != inputs.collection_sha256 {
+        return Err(ToolError::single(
+            Exit::Usage,
+            "model-catalog-collection-digest-mismatch",
+            format!(
+                "the release-bound collection at `{}` is {actual}, not {}",
+                inputs.collection_file, inputs.collection_sha256
+            ),
+        ));
+    }
+    Ok(Some(inputs))
+}
+
+/// Produces the release plan, including any exact build-bound catalog inputs.
+///
+/// # Errors
+///
+/// Propagates release-input and recipe failures.
+pub fn release_plan(unit: &Unit, workspace_root: &Path) -> Result<BuildPlan> {
+    let catalog = if unit.id == "brain-mux" {
+        model_catalog_inputs_from_environment(workspace_root)?
+    } else {
+        None
+    };
+    plan_with_model_catalog(unit, catalog.as_ref())
+}
+
+/// Produces a publication plan and refuses an unbound `brain-mux` before build.
+///
+/// # Errors
+///
+/// Propagates release-input and recipe failures. `brain-mux` also fails when
+/// the real release trust roots and signed collection are absent.
+pub fn publication_plan(unit: &Unit, workspace_root: &Path) -> Result<BuildPlan> {
+    let catalog = if unit.id == "brain-mux" {
+        model_catalog_inputs_from_environment(workspace_root)?
+    } else {
+        None
+    };
+    publication_plan_with_model_catalog(unit, catalog.as_ref())
+}
+
+fn publication_plan_with_model_catalog(
+    unit: &Unit,
+    catalog: Option<&ModelCatalogBuildInputs>,
+) -> Result<BuildPlan> {
+    if unit.id == "brain-mux" && catalog.is_none() {
+        return Err(ToolError::single(
+            Exit::Usage,
+            "model-catalog-build-binding-missing",
+            "brain-mux publication requires the real build-bound publisher trust-root set and \
+             signed catalog collection",
+        ));
+    }
+    plan_with_model_catalog(unit, catalog)
+}
+
+fn nonempty_environment(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn validate_model_catalog_build_inputs(inputs: &ModelCatalogBuildInputs) -> Result<()> {
+    validate_workspace_relative_path(&inputs.collection_file)?;
+    validate_sha256(
+        MODEL_CATALOG_TRUST_ROOTS_SHA256_VAR,
+        &inputs.trust_roots_sha256,
+    )?;
+    validate_sha256(
+        MODEL_CATALOG_COLLECTION_SHA256_VAR,
+        &inputs.collection_sha256,
+    )?;
+    validate_sha256(TOOL_CATALOG_SHA256_VAR, &inputs.tool_catalog_sha256)?;
+    if inputs.trust_roots_json.len() > MAX_MODEL_CATALOG_TRUST_ROOTS_BYTES {
+        return Err(ToolError::single(
+            Exit::Usage,
+            "model-catalog-trust-roots-too-large",
+            format!(
+                "the trust-root document is {} bytes, over the {}-byte bound",
+                inputs.trust_roots_json.len(),
+                MAX_MODEL_CATALOG_TRUST_ROOTS_BYTES
+            ),
+        ));
+    }
+    let roots: ModelCatalogTrustRoots =
+        serde_json::from_str(&inputs.trust_roots_json).map_err(|error| {
+            ToolError::single(
+                Exit::Usage,
+                "model-catalog-trust-roots-malformed",
+                error.to_string(),
+            )
+        })?;
+    if roots.schema != MODEL_CATALOG_TRUST_ROOTS_SCHEMA
+        || roots.keys.is_empty()
+        || roots.keys.len() > MAX_MODEL_CATALOG_TRUST_ROOTS
+    {
+        return Err(ToolError::single(
+            Exit::Usage,
+            "model-catalog-trust-roots-invalid",
+            format!(
+                "trust roots require schema `{MODEL_CATALOG_TRUST_ROOTS_SCHEMA}` and 1..={MAX_MODEL_CATALOG_TRUST_ROOTS} keys"
+            ),
+        ));
+    }
+    for root in &roots.keys {
+        validate_trust_root(root)?;
+    }
+    if roots
+        .keys
+        .windows(2)
+        .any(|pair| pair[0].key_id >= pair[1].key_id)
+    {
+        return Err(ToolError::single(
+            Exit::Usage,
+            "model-catalog-trust-roots-unsorted",
+            "publisher trust-root key ids must be strictly sorted and unique",
+        ));
+    }
+    let canonical = canon::to_string(&roots)?;
+    if canonical != inputs.trust_roots_json {
+        return Err(ToolError::single(
+            Exit::Usage,
+            "model-catalog-trust-roots-not-canonical",
+            "publisher trust roots must be exact canonical JSON with no trailing bytes",
+        ));
+    }
+    let actual = canon::digest_bytes(inputs.trust_roots_json.as_bytes());
+    if actual != inputs.trust_roots_sha256 {
+        return Err(ToolError::single(
+            Exit::Usage,
+            "model-catalog-trust-roots-digest-mismatch",
+            format!(
+                "the release-bound trust-root document is {actual}, not {}",
+                inputs.trust_roots_sha256
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// Read the snapshot-bound immutable tool-catalogue digest from Brain source.
+///
+/// The catalogue crate proves in its property suite that this constant equals
+/// the SHA-256 of its canonical built-in rows. Reading the source constant here
+/// avoids coupling the small release tool to Brain's runtime dependency graph.
+///
+/// # Errors
+/// Returns a classified refusal if the source omits or ambiguously declares
+/// the snapshot identity.
+///
+/// # Panics
+/// The regular expression is a compile-time constant; construction can only
+/// fail if this source is changed to contain an invalid expression.
+pub fn tool_catalog_digest(workspace_root: &Path) -> Result<String> {
+    let path = workspace_root.join("crates/aex-brain-tool-catalog/src/catalog.rs");
+    let source =
+        std::fs::read_to_string(&path).map_err(|error| io(&path.display().to_string(), &error))?;
+    let pattern = Regex::new(
+        r#"(?s)pub\s+const\s+BUILTIN_CATALOG_DIGEST\s*:\s*&str\s*=\s*"(sha256:[0-9a-f]{64})"\s*;"#,
+    )
+    .expect("static tool catalogue identity regex");
+    let digests = pattern
+        .captures_iter(&source)
+        .map(|capture| capture[1].to_owned())
+        .collect::<Vec<_>>();
+    if digests.len() != 1 {
+        return Err(ToolError::single(
+            Exit::Usage,
+            "tool-catalog-snapshot-ambiguous",
+            "Brain source must declare exactly one lowercase snapshot-bound tool catalogue digest",
+        ));
+    }
+    Ok(digests[0].clone())
+}
+
+fn validate_workspace_relative_path(path: &str) -> Result<()> {
+    let valid = !path.is_empty()
+        && !path.contains('\\')
+        && path.split('/').all(|component| {
+            !component.is_empty()
+                && !matches!(component, "." | "..")
+                && component
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+        });
+    if !valid {
+        return Err(ToolError::single(
+            Exit::Usage,
+            "model-catalog-collection-path-unstable",
+            "the collection path must be a normalized workspace-relative forward-slash path \
+             with no empty, current, parent, absolute, drive, or runner-specific component",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_sha256(name: &str, digest: &str) -> Result<()> {
+    if digest.len() != 71
+        || !digest.starts_with("sha256:")
+        || !digest[7..]
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err(ToolError::single(
+            Exit::Usage,
+            "model-catalog-build-digest-invalid",
+            format!("{name} must be a sha256: prefix and 64 lowercase hexadecimal digits"),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_trust_root(root: &ModelCatalogTrustRoot) -> Result<()> {
+    let key_id_valid = !root.key_id.is_empty()
+        && root.key_id.len() <= 64
+        && root
+            .key_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'));
+    let sec1_valid = root.sec1.len() == 130
+        && root.sec1.starts_with("04")
+        && root
+            .sec1
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase());
+    let decoded = sec1_valid.then(|| hex::decode(&root.sec1).ok()).flatten();
+    if !key_id_valid
+        || decoded
+            .as_deref()
+            .is_none_or(|bytes| p256::ecdsa::VerifyingKey::from_sec1_bytes(bytes).is_err())
+    {
+        return Err(ToolError::single(
+            Exit::Usage,
+            "model-catalog-trust-root-invalid",
+            format!(
+                "publisher key `{}` is not a valid id and uncompressed lowercase P-256 SEC1 key",
+                root.key_id
+            ),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn build_plan_digest(build: &BuildPlan) -> Result<String> {
+    canon::digest_document(&serde_json::json!({
+        "argv": build.argv,
+        "env": build.env,
+        "target": build.target,
+        "profile": build.profile,
+        "input": build.input,
+        "entrypoint": build.entrypoint,
+        "baseImage": build.base_image,
+    }))
 }
 
 /// Every recipe in the registry.
@@ -175,6 +694,19 @@ pub fn plan(unit: &Unit) -> Result<BuildPlan> {
 /// Propagates a unit with no recipe.
 pub fn recipes(units: &Units) -> Result<Vec<BuildPlan>> {
     units.units.iter().map(plan).collect()
+}
+
+/// Every release recipe with exact build-bound inputs applied.
+///
+/// # Errors
+///
+/// Propagates any invalid release binding or recipe.
+pub fn release_recipes(units: &Units, workspace_root: &Path) -> Result<Vec<BuildPlan>> {
+    units
+        .units
+        .iter()
+        .map(|unit| release_plan(unit, workspace_root))
+        .collect()
 }
 
 /// Package a built input into its artifact bytes.
@@ -200,6 +732,20 @@ pub fn package(
                 std::fs::read(input).map_err(|err| io(&input.display().to_string(), &err))?;
             pack::write_zip(&[pack::Entry::executable(entrypoint, data)])
         }
+        Form::MicrovmZip => {
+            if !input.is_dir() {
+                return Err(ToolError::single(
+                    Exit::Usage,
+                    "microvm-context-not-directory",
+                    format!(
+                        "`{}` is not a MicroVM service context directory",
+                        input.display()
+                    ),
+                ));
+            }
+            let entries = collect_tree(input)?;
+            pack::write_zip(&entries)
+        }
         Form::Tarball | Form::BuildOutput => {
             let entries = if input.is_dir() {
                 collect_tree(input)?
@@ -215,12 +761,12 @@ pub fn package(
             };
             pack::write_tar_gz(&entries, source_date_epoch)
         }
-        Form::Oci | Form::Rootfs => Err(ToolError::single(
+        Form::Oci => Err(ToolError::single(
             Exit::Usage,
             "artifact-form-requires-registry",
             "an OCI image is assembled over a digest-pinned base whose blobs come from a \
-             registry, and a rootfs comes from the Hands image build; neither can be \
-             produced offline. Use `artifact plan` to print the exact build invocation.",
+             registry and cannot be produced offline. Use `artifact plan` to print the exact \
+             build invocation.",
         )),
     }
 }
@@ -283,6 +829,9 @@ pub struct ArtifactEnvelope {
     pub schema: String,
     /// Self-digest over the canonical bytes with this field removed.
     pub envelope_digest: String,
+    /// Receipt-independent identity of the artifact bytes and everything that
+    /// shaped them.
+    pub artifact_subject_digest: String,
     /// What was built.
     pub unit: UnitIdentity,
     /// How it is encoded.
@@ -412,7 +961,7 @@ pub struct BuildCommand {
 }
 
 /// A digest-pinned base image.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BaseImage {
     /// Human-readable reference.
@@ -465,7 +1014,7 @@ pub struct Target {
 }
 
 /// Where the bytes are stored.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Location {
     /// Storage kind.
@@ -509,6 +1058,12 @@ pub struct Output {
     /// The child digest ECS actually runs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oci_child_digest: Option<String>,
+    /// The image configuration digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oci_config_digest: Option<String>,
+    /// Every compressed image layer digest, in order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub oci_layer_digests: Vec<String>,
     /// Where the bytes live.
     pub location: Location,
     /// Detached symbols.
@@ -760,12 +1315,77 @@ pub const PREPUBLICATION_RECEIPT_CLASSES: &[&str] = &[
     "vulnerability",
 ];
 
+const LOCATION_KINDS: &[&str] = &[
+    "github-release",
+    "oci",
+    "s3",
+    "ecr",
+    "npm",
+    "gha-artifact",
+    "local",
+];
+
 impl ArtifactEnvelope {
+    /// Recompute the receipt-independent artifact subject identity.
+    ///
+    /// The subject deliberately excludes the workflow run, publication
+    /// location, supply-chain verdicts and receipt references. Those fields
+    /// describe who certified or where content-addressed bytes are stored; they
+    /// do not change the bytes, source or build-input closure a receipt tested.
+    /// The complete output identity remains in the projection, including OCI
+    /// manifest, config and layer digests.
+    ///
+    /// # Errors
+    /// Propagates serialization or canonicalization failure.
+    pub fn compute_artifact_subject_digest(&self) -> Result<String> {
+        let mut source = serde_json::to_value(&self.source).map_err(|err| {
+            ToolError::single(
+                Exit::EnvelopeInvalid,
+                "artifact-subject-unserializable",
+                err.to_string(),
+            )
+        })?;
+        let source = source.as_object_mut().ok_or_else(|| {
+            ToolError::single(
+                Exit::EnvelopeInvalid,
+                "artifact-subject-source-shape",
+                "artifact source did not serialize as an object",
+            )
+        })?;
+        source.remove("workflow");
+
+        let mut output = serde_json::to_value(&self.output).map_err(|err| {
+            ToolError::single(
+                Exit::EnvelopeInvalid,
+                "artifact-subject-unserializable",
+                err.to_string(),
+            )
+        })?;
+        let output = output.as_object_mut().ok_or_else(|| {
+            ToolError::single(
+                Exit::EnvelopeInvalid,
+                "artifact-subject-output-shape",
+                "artifact output did not serialize as an object",
+            )
+        })?;
+        output.remove("location");
+
+        canon::digest_document(&serde_json::json!({
+            "schema": "aex.artifact-subject.v1",
+            "unit": &self.unit,
+            "media": &self.media,
+            "source": source,
+            "inputs": &self.inputs,
+            "output": output,
+        }))
+    }
+
     /// Recompute and set the self-digest.
     ///
     /// # Errors
     /// Propagates canonicalization failure.
     pub fn seal(mut self) -> Result<Self> {
+        self.artifact_subject_digest = self.compute_artifact_subject_digest()?;
         "sha256:0".clone_into(&mut self.envelope_digest);
         let value = serde_json::to_value(&self).map_err(|err| {
             ToolError::single(
@@ -802,6 +1422,32 @@ impl ArtifactEnvelope {
                 "the build tree was not clean; a dirty tree cannot mint an identity",
             ));
         }
+        let positive_run = !self.source.workflow.run_id.is_empty()
+            && !self.source.workflow.run_id.starts_with('0')
+            && self
+                .source
+                .workflow
+                .run_id
+                .bytes()
+                .all(|byte| byte.is_ascii_digit());
+        if self.source.r#ref.as_deref() != Some("refs/heads/main")
+            || self.source.workflow.repository != self.source.repository
+            || self.source.workflow.r#ref != "refs/heads/main"
+            || self.source.workflow.path != ".github/workflows/_build-artifacts.yml"
+            || !positive_run
+            || self.source.workflow.run_attempt == 0
+        {
+            structural.push(Violation::new(
+                "envelope-workflow-identity",
+                "published bytes must come from the exact protected-main reusable artifact workflow and a positive run identity",
+            ));
+        }
+        if self.provenance.builder_id != self.source.workflow.builder_id {
+            structural.push(Violation::new(
+                "envelope-builder-mismatch",
+                "the envelope workflow and provenance builder identities differ",
+            ));
+        }
         if !self.output.location.immutable {
             structural.push(Violation::new(
                 "envelope-mutable-location",
@@ -818,6 +1464,104 @@ impl ArtifactEnvelope {
                     "`{}` names a tag or branch instead of a digest",
                     self.output.location.uri
                 ),
+            ));
+        }
+        if !LOCATION_KINDS.contains(&self.output.location.kind.as_str()) {
+            structural.push(Violation::new(
+                "envelope-location-kind",
+                format!(
+                    "location kind `{}` is outside the closed release vocabulary",
+                    self.output.location.kind
+                ),
+            ));
+        }
+        match self.output.location.kind.as_str() {
+            "github-release" => {
+                let expected = crate::publication::github_release_unit_uri(
+                    &self.source.repository,
+                    &self.source.commit_sha,
+                    &self.source.workflow.run_id,
+                    u64::from(self.source.workflow.run_attempt),
+                    &self.unit.id,
+                    &self.output.digest,
+                    &self.media.form,
+                );
+                match expected {
+                    Ok(expected) if expected == self.output.location.uri => {}
+                    Ok(expected) => structural.push(Violation::new(
+                        "envelope-github-release-location",
+                        format!(
+                            "`{}` is not the exact source/run/content-bound URI `{expected}`",
+                            self.output.location.uri
+                        ),
+                    )),
+                    Err(err) => structural.extend(err.violations),
+                }
+                if self.unit.kind.starts_with("rust-oci-") {
+                    structural.push(Violation::new(
+                        "envelope-location-kind",
+                        "OCI units must use a digest-only `oci` location, not a release tarball",
+                    ));
+                }
+            }
+            "oci" => {
+                let expected = crate::publication::ghcr_unit_uri(
+                    &self.source.repository,
+                    &self.unit.id,
+                    &self.output.digest,
+                );
+                match expected {
+                    Ok(expected) if expected == self.output.location.uri => {}
+                    Ok(expected) => structural.push(Violation::new(
+                        "envelope-oci-location",
+                        format!(
+                            "`{}` is not the exact GHCR digest reference `{expected}`",
+                            self.output.location.uri
+                        ),
+                    )),
+                    Err(err) => structural.extend(err.violations),
+                }
+                if !self.unit.kind.starts_with("rust-oci-") {
+                    structural.push(Violation::new(
+                        "envelope-location-kind",
+                        format!(
+                            "unit kind `{}` is a blob and cannot claim an OCI manifest location",
+                            self.unit.kind
+                        ),
+                    ));
+                }
+            }
+            _ => {}
+        }
+        let is_oci = self.unit.kind.starts_with("rust-oci-");
+        let oci_identity_valid = self.output.oci_index_digest.is_none()
+            && self.output.oci_child_digest.as_deref() == Some(&self.output.digest)
+            && self
+                .output
+                .oci_config_digest
+                .as_deref()
+                .is_some_and(valid_sha256_digest)
+            && !self.output.oci_layer_digests.is_empty()
+            && self
+                .output
+                .oci_layer_digests
+                .iter()
+                .all(|digest| valid_sha256_digest(digest));
+        if is_oci && !oci_identity_valid {
+            structural.push(Violation::new(
+                "envelope-oci-identity",
+                "single-platform OCI output must bind its manifest, config and every layer digest",
+            ));
+        }
+        if !is_oci
+            && (self.output.oci_index_digest.is_some()
+                || self.output.oci_child_digest.is_some()
+                || self.output.oci_config_digest.is_some()
+                || !self.output.oci_layer_digests.is_empty())
+        {
+            structural.push(Violation::new(
+                "envelope-oci-identity",
+                "blob output cannot carry OCI manifest, config or layer identities",
             ));
         }
         if self.receipts.is_empty() {
@@ -846,6 +1590,29 @@ impl ArtifactEnvelope {
                     ),
                 ));
             }
+            if receipt.source.repository != self.source.repository
+                || receipt.source.commit_sha != self.source.commit_sha
+                || receipt.source.workflow_run_id != self.source.workflow.run_id
+                || receipt.source.run_attempt != self.source.workflow.run_attempt
+            {
+                structural.push(Violation::new(
+                    "envelope-receipt-binding",
+                    format!(
+                        "receipt class `{}` is not bound to this exact repository, commit and workflow attempt",
+                        receipt.class
+                    ),
+                ));
+            }
+        }
+        let recomputed_subject = self.compute_artifact_subject_digest()?;
+        if recomputed_subject != self.artifact_subject_digest {
+            structural.push(Violation::new(
+                "artifact-subject-digest-mismatch",
+                format!(
+                    "recorded artifactSubjectDigest `{}` does not match the canonical artifact subject `{recomputed_subject}`",
+                    self.artifact_subject_digest
+                ),
+            ));
         }
         let recomputed = {
             let value = serde_json::to_value(self).map_err(|err| {
@@ -958,6 +1725,15 @@ impl ArtifactEnvelope {
     }
 }
 
+fn valid_sha256_digest(value: &str) -> bool {
+    value.strip_prefix("sha256:").is_some_and(|bare| {
+        bare.len() == 64
+            && bare
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    })
+}
+
 /// The immutable destination an artifact publishes to.
 #[derive(Debug, Clone, Serialize)]
 pub struct PublishDestination {
@@ -976,20 +1752,18 @@ pub struct PublishDestination {
 /// # Errors
 /// Returns [`Exit::EnvelopeInvalid`] for a unit kind with no publication rule.
 pub fn publish_destination(envelope: &ArtifactEnvelope) -> Result<PublishDestination> {
-    let bare = envelope
-        .output
-        .digest
-        .strip_prefix("sha256:")
-        .unwrap_or(&envelope.output.digest);
     let (kind, key) = match envelope.unit.kind.as_str() {
-        "rust-lambda" | "ts-lambda" => ("s3", format!("lambda/{}/{bare}.zip", envelope.unit.id)),
-        "rust-oci-service" | "rust-oci-task" => (
-            "ecr",
-            format!("{}@{}", envelope.unit.id, envelope.output.digest),
+        "rust-lambda" | "ts-lambda" | "rust-binary" | "build-output" | "microvm-image" => (
+            "github-release",
+            crate::publication::unit_asset_name(
+                &envelope.unit.id,
+                &envelope.output.digest,
+                &envelope.media.form,
+            )?,
         ),
-        "rust-binary" | "rootfs" | "build-output" => (
-            "s3",
-            format!("{}/{}/{bare}", envelope.unit.kind, envelope.unit.id),
+        "rust-oci-service" | "rust-oci-task" => (
+            "oci",
+            format!("{}@{}", envelope.unit.id, envelope.output.digest),
         ),
         "npm-package" => ("npm", envelope.unit.id.clone()),
         other => {
@@ -1009,7 +1783,12 @@ pub fn publish_destination(envelope: &ArtifactEnvelope) -> Result<PublishDestina
 
 #[cfg(test)]
 mod tests {
-    use super::{Form, package, plan};
+    use super::{
+        Form, MODEL_CATALOG_TRUST_ROOTS_SCHEMA, ModelCatalogBuildInputs, model_catalog_inputs,
+        package, plan, plan_with_model_catalog, publication_plan_with_model_catalog,
+        validate_workspace_relative_path,
+    };
+    use crate::canon;
     use crate::graph::inputs::Unit;
 
     fn unit(kind: &str) -> Unit {
@@ -1019,6 +1798,7 @@ id = "regional-session-api"
 kind = "{kind}"
 plane = "regional"
 package = "regional-session-api"
+bin = "regional-session-api"
 target = "aarch64-unknown-linux-gnu.2.34"
 profile = "release-lambda"
 form = "zip"
@@ -1029,6 +1809,54 @@ alarm_spec = "regional-session-api"
 "#
         ))
         .unwrap()
+    }
+
+    fn brain_unit() -> Unit {
+        let mut brain = unit("rust-oci-task");
+        brain.id = "brain-mux".to_owned();
+        brain.package = "brain-mux".to_owned();
+        brain.bin = Some("brain-mux".to_owned());
+        brain
+    }
+
+    fn trust_roots() -> String {
+        let signing = p256::ecdsa::SigningKey::from_slice(&[7; 32]).expect("fixture key");
+        canon::to_string(&serde_json::json!({
+            "keys": [{
+                "keyId": "aex-catalog-fixture",
+                "sec1": hex::encode(
+                    signing.verifying_key().to_sec1_point(false).as_bytes()
+                ),
+            }],
+            "schema": MODEL_CATALOG_TRUST_ROOTS_SCHEMA,
+        }))
+        .expect("canonical trust roots")
+    }
+
+    fn bindings(root: &std::path::Path) -> [Option<String>; 5] {
+        let relative = "release-inputs/catalog.json";
+        let collection = root.join(relative);
+        std::fs::create_dir_all(collection.parent().expect("collection parent")).unwrap();
+        std::fs::write(&collection, b"signed collection").unwrap();
+        let catalog_source = root.join("crates/aex-brain-tool-catalog/src/catalog.rs");
+        std::fs::create_dir_all(catalog_source.parent().expect("catalog parent")).unwrap();
+        std::fs::write(
+            catalog_source,
+            "pub const BUILTIN_CATALOG_DIGEST: &str = \
+             \"sha256:b3cae3e3b5cb64b3ca274f22f67c3ba1e305ac4ca14084967348f06d0ba0fdec\";",
+        )
+        .unwrap();
+        let roots = trust_roots();
+        [
+            Some(roots.clone()),
+            Some(canon::digest_bytes(roots.as_bytes())),
+            Some(relative.to_owned()),
+            Some(canon::digest_bytes(b"signed collection")),
+            Some(
+                "sha256:b3cae3e3b5cb64b3ca274f22f67c3ba1e305ac4ca14084967348f06d0ba0fdec"
+                    .to_owned(),
+            ),
+        ]
     }
 
     #[test]
@@ -1071,20 +1899,116 @@ alarm_spec = "regional-session-api"
     }
 
     #[test]
+    fn publication_refuses_an_unbound_brain_before_build_planning() {
+        let error = publication_plan_with_model_catalog(&brain_unit(), None)
+            .expect_err("publication must fail closed");
+        assert_eq!(error.rules(), vec!["model-catalog-build-binding-missing"]);
+    }
+
+    #[test]
+    fn partial_and_digest_mismatched_release_inputs_fail_closed() {
+        let temp = tempfile::tempdir().unwrap();
+        let roots = trust_roots();
+        let error = model_catalog_inputs(temp.path(), [Some(roots), None, None, None, None])
+            .expect_err("partial inputs must fail");
+        assert_eq!(error.rules(), vec!["model-catalog-build-binding-partial"]);
+
+        let mut mismatched_roots = bindings(temp.path());
+        mismatched_roots[1] = Some(format!("sha256:{}", "0".repeat(64)));
+        let error = model_catalog_inputs(temp.path(), mismatched_roots)
+            .expect_err("trust-root digest mismatch must fail");
+        assert_eq!(
+            error.rules(),
+            vec!["model-catalog-trust-roots-digest-mismatch"]
+        );
+
+        let mut mismatched_collection = bindings(temp.path());
+        mismatched_collection[3] = Some(format!("sha256:{}", "0".repeat(64)));
+        let error = model_catalog_inputs(temp.path(), mismatched_collection)
+            .expect_err("collection digest mismatch must fail");
+        assert_eq!(
+            error.rules(),
+            vec!["model-catalog-collection-digest-mismatch"]
+        );
+    }
+
+    #[test]
+    fn collection_paths_are_stable_and_plans_ignore_checkout_roots() {
+        for unstable in [
+            "/release-inputs/catalog.json",
+            "C:/release-inputs/catalog.json",
+            "release-inputs/../catalog.json",
+            "release-inputs\\catalog.json",
+        ] {
+            assert!(validate_workspace_relative_path(unstable).is_err());
+        }
+
+        let first_root = tempfile::tempdir().unwrap();
+        let second_root = tempfile::tempdir().unwrap();
+        let first = model_catalog_inputs(first_root.path(), bindings(first_root.path()))
+            .expect("first binding")
+            .expect("configured");
+        let second = model_catalog_inputs(second_root.path(), bindings(second_root.path()))
+            .expect("second binding")
+            .expect("configured");
+        assert_eq!(first, second);
+        let first_plan = plan_with_model_catalog(&brain_unit(), Some(&first)).expect("first plan");
+        let second_plan =
+            plan_with_model_catalog(&brain_unit(), Some(&second)).expect("second plan");
+        assert_eq!(first_plan.digest, second_plan.digest);
+        assert_eq!(first_plan.env, second_plan.env);
+    }
+
+    #[test]
+    fn trust_roots_require_canonical_sorted_unique_json() {
+        let roots = trust_roots();
+        let signing = p256::ecdsa::SigningKey::from_slice(&[8; 32]).expect("fixture key");
+        let second = hex::encode(signing.verifying_key().to_sec1_point(false).as_bytes());
+        let unsorted = format!(
+            "{{\"keys\":[{{\"keyId\":\"z\",\"sec1\":\"{second}\"}},{}],\"schema\":\"{MODEL_CATALOG_TRUST_ROOTS_SCHEMA}\"}}",
+            &roots[9..roots.find("],\"schema\"").expect("keys close")]
+        );
+        let inputs = ModelCatalogBuildInputs {
+            trust_roots_sha256: canon::digest_bytes(unsorted.as_bytes()),
+            trust_roots_json: unsorted,
+            collection_file: "release-inputs/catalog.json".to_owned(),
+            collection_sha256: canon::digest_bytes(b"signed collection"),
+            tool_catalog_sha256:
+                "sha256:b3cae3e3b5cb64b3ca274f22f67c3ba1e305ac4ca14084967348f06d0ba0fdec".to_owned(),
+        };
+        let error = plan_with_model_catalog(&brain_unit(), Some(&inputs))
+            .expect_err("unsorted roots must fail");
+        assert_eq!(error.rules(), vec!["model-catalog-trust-roots-unsorted"]);
+
+        let noncanonical = ModelCatalogBuildInputs {
+            trust_roots_sha256: canon::digest_bytes(format!("{roots}\n").as_bytes()),
+            trust_roots_json: format!("{roots}\n"),
+            collection_file: "release-inputs/catalog.json".to_owned(),
+            collection_sha256: canon::digest_bytes(b"signed collection"),
+            tool_catalog_sha256:
+                "sha256:b3cae3e3b5cb64b3ca274f22f67c3ba1e305ac4ca14084967348f06d0ba0fdec".to_owned(),
+        };
+        let error = plan_with_model_catalog(&brain_unit(), Some(&noncanonical))
+            .expect_err("trailing bytes must fail");
+        assert_eq!(
+            error.rules(),
+            vec!["model-catalog-trust-roots-not-canonical"]
+        );
+    }
+
+    #[test]
     fn an_unknown_unit_kind_has_no_recipe() {
         let err = plan(&unit("wasm-module")).unwrap_err();
         assert_eq!(err.rules(), vec!["artifact-recipe-unknown"]);
     }
 
     #[test]
-    fn oci_and_rootfs_packaging_refuse_rather_than_produce_a_partial_image() {
+    fn oci_packaging_refuses_rather_than_produce_a_partial_image() {
         let temp = tempfile::tempdir().unwrap();
         let input = temp.path().join("bin");
         std::fs::write(&input, b"x").unwrap();
-        for form in [Form::Oci, Form::Rootfs] {
-            let err = package(form, &input, 0, "bootstrap").unwrap_err();
-            assert_eq!(err.rules(), vec!["artifact-form-requires-registry"]);
-        }
+        let err = package(Form::Oci, &input, 0, "bootstrap").unwrap_err();
+        assert_eq!(err.rules(), vec!["artifact-form-requires-registry"]);
     }
 
     #[test]

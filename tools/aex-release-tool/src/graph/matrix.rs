@@ -13,14 +13,17 @@ use serde::{Deserialize, Serialize};
 use crate::error::{Exit, Result, ToolError};
 
 use super::NodeKind;
+use super::inputs::{NpmPackage, ScenarioOwnership, Units};
 use super::select::Selection;
 
 /// Which slice of the selection to emit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 #[clap(rename_all = "kebab-case")]
 pub enum MatrixKind {
-    /// Cargo and npm packages to test.
+    /// Cargo packages to test in the Rust lane.
     Test,
+    /// npm packages that own deployable units to test in the Node lane.
+    Node,
     /// Artifacts to build.
     Artifact,
     /// Scenarios to exercise.
@@ -39,6 +42,18 @@ pub struct MatrixEntry {
     /// Node identity within its authority: the Cargo package name, the npm
     /// package name, the module directory, the unit id.
     pub name: String,
+    /// Runnable package node for a scenario entry.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub package: Option<String>,
+    /// Exact package target for a scenario entry.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    /// Repository-relative npm package directory for a Node entry.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub directory: Option<String>,
+    /// Deployable unit ids whose own package this entry exercises.
+    #[serde(default)]
+    pub units: Vec<String>,
     /// Zero-based shard index.
     pub partition: usize,
     /// Total shard count.
@@ -79,12 +94,17 @@ pub const OUTPUT_KEYS: &[&str] = &[
 /// packing then balances the shards. Without it every node weighs the same.
 ///
 /// # Errors
-/// Returns [`Exit::Usage`] when `partitions` is zero.
+/// Returns [`Exit::Usage`] when `partitions` is zero, or
+/// [`Exit::GraphVerification`] when a selected scenario has no exact runnable
+/// package/target claim.
 pub fn build(
     selection: &Selection,
     kind: MatrixKind,
     partitions: usize,
     durations: &BTreeMap<String, u64>,
+    scenarios: &ScenarioOwnership,
+    units: &Units,
+    npm: &[NpmPackage],
 ) -> Result<MatrixOutput> {
     if partitions == 0 {
         return Err(ToolError::single(
@@ -93,13 +113,103 @@ pub fn build(
             "--partitions must be at least 1",
         ));
     }
-    let candidates: Vec<(String, String)> = match kind {
+    let candidates = candidates(selection, kind, units);
+
+    let shards = partition(&candidates, partitions, durations);
+    let scenario_claims: BTreeMap<&str, (&str, &str)> = scenarios
+        .scenarios
+        .iter()
+        .filter_map(|scenario| {
+            Some((
+                scenario.id.as_str(),
+                (scenario.package.as_deref()?, scenario.target.as_deref()?),
+            ))
+        })
+        .collect();
+    let mut include = Vec::new();
+    let used = shards.len();
+    for (index, shard) in shards.iter().enumerate() {
+        for (id, name) in shard {
+            let (package, target) = if kind == MatrixKind::Scenario {
+                let Some((package, target)) = scenario_claims.get(name.as_str()) else {
+                    return Err(ToolError::single(
+                        Exit::GraphVerification,
+                        "scenario-runnable-missing",
+                        format!("selected scenario `{name}` has no runnable package/target claim"),
+                    ));
+                };
+                (Some((*package).to_owned()), Some((*target).to_owned()))
+            } else {
+                (None, None)
+            };
+            let directory = if kind == MatrixKind::Node {
+                Some(
+                    npm.iter()
+                        .find(|candidate| candidate.name == *name)
+                        .ok_or_else(|| {
+                            ToolError::single(
+                                Exit::GraphVerification,
+                                "node-package-directory-missing",
+                                format!(
+                                    "selected Node package `{name}` has no npm package directory"
+                                ),
+                            )
+                        })?
+                        .dir
+                        .clone(),
+                )
+            } else {
+                None
+            };
+            include.push(MatrixEntry {
+                id: id.clone(),
+                name: name.clone(),
+                package,
+                target,
+                directory,
+                units: if matches!(kind, MatrixKind::Test | MatrixKind::Node) {
+                    units
+                        .units
+                        .iter()
+                        .filter(|unit| unit.package == *name)
+                        .map(|unit| unit.id.clone())
+                        .collect()
+                } else {
+                    Vec::new()
+                },
+                partition: index,
+                partitions: used,
+            });
+        }
+    }
+    Ok(MatrixOutput {
+        routing_failed: selection.routing_failed,
+        repo_wide: selection.repo_wide,
+        has_entries: !include.is_empty(),
+        count: include.len(),
+        include,
+    })
+}
+
+fn candidates(selection: &Selection, kind: MatrixKind, units: &Units) -> Vec<(String, String)> {
+    match kind {
         MatrixKind::Test => selection
             .test
             .iter()
             .filter(|selected| {
-                matches!(selected.id.namespace(), "cargo" | "npm")
-                    && !selected.id.local().starts_with("aex-live-")
+                selected.id.namespace() == "cargo" && !selected.id.local().starts_with("aex-live-")
+            })
+            .map(|selected| (selected.id.to_string(), selected.id.local().to_owned()))
+            .collect(),
+        MatrixKind::Node => selection
+            .test
+            .iter()
+            .filter(|selected| {
+                selected.id.namespace() == "npm"
+                    && units
+                        .units
+                        .iter()
+                        .any(|unit| unit.package == selected.id.local())
             })
             .map(|selected| (selected.id.to_string(), selected.id.local().to_owned()))
             .collect(),
@@ -125,28 +235,7 @@ pub fn build(
             .iter()
             .map(|selected| (selected.id.to_string(), selected.id.local().to_owned()))
             .collect(),
-    };
-
-    let shards = partition(&candidates, partitions, durations);
-    let mut include = Vec::new();
-    let used = shards.len();
-    for (index, shard) in shards.iter().enumerate() {
-        for (id, name) in shard {
-            include.push(MatrixEntry {
-                id: id.clone(),
-                name: name.clone(),
-                partition: index,
-                partitions: used,
-            });
-        }
     }
-    Ok(MatrixOutput {
-        routing_failed: selection.routing_failed,
-        repo_wide: selection.repo_wide,
-        has_entries: !include.is_empty(),
-        count: include.len(),
-        include,
-    })
 }
 
 /// The emission produced when routing itself failed.
@@ -221,6 +310,7 @@ pub fn to_github_output(output: &MatrixOutput) -> Result<String> {
 pub const fn source_kind(kind: MatrixKind) -> NodeKind {
     match kind {
         MatrixKind::Test | MatrixKind::Live => NodeKind::Crate,
+        MatrixKind::Node => NodeKind::NpmPackage,
         MatrixKind::Artifact => NodeKind::Artifact,
         MatrixKind::Scenario => NodeKind::Scenario,
         MatrixKind::Terraform => NodeKind::TerraformModule,
@@ -233,6 +323,7 @@ mod tests {
 
     use super::{MatrixKind, OUTPUT_KEYS, build, degraded, partition, to_github_output};
     use crate::graph::NodeId;
+    use crate::graph::inputs::{ScenarioOwnership, Units};
     use crate::graph::select::{Lane, Mode, Selected, Selection, SelectionReason};
 
     fn selection(ids: &[NodeId]) -> Selection {
@@ -258,6 +349,20 @@ mod tests {
         }
     }
 
+    fn no_scenarios() -> ScenarioOwnership {
+        ScenarioOwnership {
+            schema: "aex.scenario-ownership.v1".to_owned(),
+            scenarios: Vec::new(),
+        }
+    }
+
+    fn no_units() -> Units {
+        Units {
+            schema: "aex.units.v1".to_owned(),
+            units: Vec::new(),
+        }
+    }
+
     #[test]
     fn healthy_and_degraded_paths_emit_the_same_output_keys() {
         let healthy = to_github_output(
@@ -266,6 +371,9 @@ mod tests {
                 MatrixKind::Test,
                 1,
                 &BTreeMap::new(),
+                &no_scenarios(),
+                &no_units(),
+                &[],
             )
             .unwrap(),
         )
@@ -294,9 +402,28 @@ mod tests {
         let selection = selection(&[
             NodeId::cargo("aex-wire"),
             NodeId::cargo("aex-live-brain-mux"),
+            NodeId::npm("@aexhq/sdk"),
         ]);
-        let unit = build(&selection, MatrixKind::Test, 4, &BTreeMap::new()).unwrap();
-        let live = build(&selection, MatrixKind::Live, 4, &BTreeMap::new()).unwrap();
+        let unit = build(
+            &selection,
+            MatrixKind::Test,
+            4,
+            &BTreeMap::new(),
+            &no_scenarios(),
+            &no_units(),
+            &[],
+        )
+        .unwrap();
+        let live = build(
+            &selection,
+            MatrixKind::Live,
+            4,
+            &BTreeMap::new(),
+            &no_scenarios(),
+            &no_units(),
+            &[],
+        )
+        .unwrap();
         assert_eq!(
             unit.include
                 .iter()
@@ -311,6 +438,160 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["aex-live-brain-mux"]
         );
+        assert!(
+            unit.include
+                .iter()
+                .all(|entry| entry.id.starts_with("cargo:")),
+            "the Rust lane must never receive an npm package"
+        );
+    }
+
+    #[test]
+    fn node_matrix_is_bounded_to_npm_packages_that_own_deployable_units() {
+        let selection = selection(&[
+            NodeId::npm("@aexhq/sdk"),
+            NodeId::npm("@aexhq/stripe-command-edge"),
+            NodeId::npm("@aexhq/stripe-webhook-edge"),
+            NodeId::cargo("aex-wire"),
+        ]);
+        let units: Units = toml::from_str(
+            r#"
+schema = "aex.units.v1"
+[[unit]]
+id = "stripe-command-edge"
+kind = "ts-lambda"
+plane = "central"
+package = "@aexhq/stripe-command-edge"
+target = "none"
+profile = "release"
+form = "zip"
+config_env_namespace = "AEX_STRIPE_COMMAND_"
+config_schema_version = 1
+required_receipts = ["unit"]
+alarm_spec = "stripe-command-edge"
+[[unit]]
+id = "stripe-webhook-edge"
+kind = "ts-lambda"
+plane = "central"
+package = "@aexhq/stripe-webhook-edge"
+target = "none"
+profile = "release"
+form = "zip"
+config_env_namespace = "AEX_STRIPE_WEBHOOK_"
+config_schema_version = 1
+required_receipts = ["unit"]
+alarm_spec = "stripe-webhook-edge"
+"#,
+        )
+        .unwrap();
+        let npm = vec![
+            crate::graph::inputs::NpmPackage {
+                name: "@aexhq/sdk".to_owned(),
+                dir: "packages/sdk".to_owned(),
+                meta: None,
+                publishable: true,
+                deps: Vec::new(),
+            },
+            crate::graph::inputs::NpmPackage {
+                name: "@aexhq/stripe-command-edge".to_owned(),
+                dir: "services/stripe-command-edge".to_owned(),
+                meta: None,
+                publishable: false,
+                deps: Vec::new(),
+            },
+            crate::graph::inputs::NpmPackage {
+                name: "@aexhq/stripe-webhook-edge".to_owned(),
+                dir: "services/stripe-webhook-edge".to_owned(),
+                meta: None,
+                publishable: false,
+                deps: Vec::new(),
+            },
+        ];
+
+        let output = build(
+            &selection,
+            MatrixKind::Node,
+            8,
+            &BTreeMap::new(),
+            &no_scenarios(),
+            &units,
+            &npm,
+        )
+        .unwrap();
+
+        assert_eq!(output.include.len(), 2);
+        assert_eq!(output.include[0].name, "@aexhq/stripe-command-edge");
+        assert_eq!(
+            output.include[0].directory.as_deref(),
+            Some("services/stripe-command-edge")
+        );
+        assert_eq!(output.include[0].units, vec!["stripe-command-edge"]);
+        assert_eq!(output.include[1].name, "@aexhq/stripe-webhook-edge");
+        assert_eq!(
+            output.include[1].directory.as_deref(),
+            Some("services/stripe-webhook-edge")
+        );
+        assert_eq!(output.include[1].units, vec!["stripe-webhook-edge"]);
+        assert_eq!(output.include[0].partitions, 2);
+        assert_eq!(output.include[1].partitions, 2);
+    }
+
+    #[test]
+    fn scenario_matrix_carries_the_verified_package_and_target_claim() {
+        let mut selected = selection(&[]);
+        selected.scenarios.push(Selected {
+            id: NodeId::scenario("SC-DEMO"),
+            reason: SelectionReason::RouterChanged,
+        });
+        let registry: ScenarioOwnership = toml::from_str(
+            r#"
+schema = "aex.scenario-ownership.v1"
+[[scenario]]
+id = "SC-DEMO"
+owner = "delivery"
+observes = ["artifact:demo-api"]
+package = "cargo:aex-live-demo-api"
+target = "live"
+"#,
+        )
+        .expect("scenario registry");
+        let output = build(
+            &selected,
+            MatrixKind::Scenario,
+            1,
+            &BTreeMap::new(),
+            &registry,
+            &no_units(),
+            &[],
+        )
+        .expect("scenario matrix");
+        assert_eq!(output.include.len(), 1);
+        assert_eq!(output.include[0].name, "SC-DEMO");
+        assert_eq!(
+            output.include[0].package.as_deref(),
+            Some("cargo:aex-live-demo-api")
+        );
+        assert_eq!(output.include[0].target.as_deref(), Some("live"));
+    }
+
+    #[test]
+    fn selected_scenario_without_a_claim_cannot_emit_a_green_matrix() {
+        let mut selected = selection(&[]);
+        selected.scenarios.push(Selected {
+            id: NodeId::scenario("SC-GHOST"),
+            reason: SelectionReason::RouterChanged,
+        });
+        let err = build(
+            &selected,
+            MatrixKind::Scenario,
+            1,
+            &BTreeMap::new(),
+            &no_scenarios(),
+            &no_units(),
+            &[],
+        )
+        .unwrap_err();
+        assert_eq!(err.rules(), vec!["scenario-runnable-missing"]);
     }
 
     #[test]
@@ -346,8 +627,65 @@ mod tests {
     }
 
     #[test]
+    fn test_entries_carry_units_owned_by_the_selected_package() {
+        let units: Units = toml::from_str(
+            r#"
+schema = "aex.units.v1"
+[[unit]]
+id = "hands-image-small"
+kind = "microvm-image"
+plane = "regional"
+package = "hands-image"
+target = "aarch64-unknown-linux-musl"
+profile = "release"
+form = "raw"
+config_env_namespace = "AEX_HANDS_IMAGE_"
+config_schema_version = 1
+required_receipts = ["unit"]
+alarm_spec = "hands-image-small"
+[[unit]]
+id = "hands-image-large"
+kind = "microvm-image"
+plane = "regional"
+package = "hands-image"
+target = "aarch64-unknown-linux-musl"
+profile = "release"
+form = "raw"
+config_env_namespace = "AEX_HANDS_IMAGE_"
+config_schema_version = 1
+required_receipts = ["unit"]
+alarm_spec = "hands-image-large"
+"#,
+        )
+        .unwrap();
+        let output = build(
+            &selection(&[NodeId::cargo("hands-image")]),
+            MatrixKind::Test,
+            1,
+            &BTreeMap::new(),
+            &no_scenarios(),
+            &units,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            output.include[0].units,
+            vec!["hands-image-small", "hands-image-large"]
+        );
+    }
+
+    #[test]
     fn an_empty_selection_yields_no_shards_and_says_so() {
-        let output = build(&selection(&[]), MatrixKind::Test, 4, &BTreeMap::new()).unwrap();
+        let output = build(
+            &selection(&[]),
+            MatrixKind::Test,
+            4,
+            &BTreeMap::new(),
+            &no_scenarios(),
+            &no_units(),
+            &[],
+        )
+        .unwrap();
         assert!(!output.has_entries);
         assert_eq!(output.count, 0);
         assert!(!output.routing_failed, "empty is not the same as broken");
@@ -355,7 +693,16 @@ mod tests {
 
     #[test]
     fn zero_partitions_is_a_usage_error() {
-        let err = build(&selection(&[]), MatrixKind::Test, 0, &BTreeMap::new()).unwrap_err();
+        let err = build(
+            &selection(&[]),
+            MatrixKind::Test,
+            0,
+            &BTreeMap::new(),
+            &no_scenarios(),
+            &no_units(),
+            &[],
+        )
+        .unwrap_err();
         assert_eq!(err.exit.code(), 2);
     }
 }

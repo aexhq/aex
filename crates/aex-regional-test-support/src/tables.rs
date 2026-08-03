@@ -23,6 +23,13 @@ pub const TABLE_SCHEMA: &str = "aex.regional-table.v1";
 /// The schema identifier the generated bundle declares.
 pub const BUNDLE_SCHEMA: &str = "aex.regional-tables.v1";
 
+/// Monotone generation of the regional table contract.
+///
+/// This is the first prelaunch generation. Increment it only when a new
+/// generated table contract must not be admitted as the same regional schema
+/// generation as its predecessor.
+pub const BUNDLE_GENERATION: u32 = 1;
+
 /// Why a table definition could not be read, validated or bundled.
 #[derive(Debug, thiserror::Error)]
 pub enum TableError {
@@ -211,6 +218,11 @@ pub struct IamGrant {
     pub actions: Vec<String>,
     /// Which resource ARNs the actions apply to.
     pub resources: Vec<String>,
+    /// The item families a write grant owns. Empty for read-only grants and for
+    /// older authorities that have not yet published item-level capability
+    /// metadata.
+    #[serde(rename = "itemTypes", default, skip_serializing_if = "Vec::is_empty")]
+    pub item_types: Vec<String>,
     /// Optional request-shape restriction applied to this statement.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub condition: Option<IamCondition>,
@@ -287,6 +299,8 @@ pub struct TableDefinition {
 pub struct TableBundle {
     /// Bundle schema identifier.
     pub schema: String,
+    /// Authored monotone regional schema generation.
+    pub generation: u32,
     /// `blake3:<64 hex>` over the rendered table array.
     pub digest: String,
     /// Every table, ordered by logical name.
@@ -521,6 +535,7 @@ pub fn bundle(tables: Vec<TableDefinition>) -> TableBundle {
     let digest = blake3::hash(body.as_bytes());
     TableBundle {
         schema: BUNDLE_SCHEMA.to_owned(),
+        generation: BUNDLE_GENERATION,
         digest: format!("blake3:{}", hex::encode(digest.as_bytes())),
         tables,
     }
@@ -587,6 +602,7 @@ mod tests {
             vec![
                 "observation-authority",
                 "regional-authz-projection",
+                "regional-capacity-authority",
                 "regional-content",
                 "regional-registry",
                 "regional-secret-custody",
@@ -626,7 +642,7 @@ mod tests {
     }
 
     /// Attribute names that carry a record body, a prompt or a receipt.
-    const BODY_SHAPED: [&str; 10] = [
+    const BODY_SHAPED: [&str; 11] = [
         "bodyInline",
         "bodyDigest",
         "contentInline",
@@ -637,6 +653,7 @@ mod tests {
         "resolvedConfig",
         "resultInline",
         "enc",
+        "authorityDocument",
     ];
 
     #[test]
@@ -852,6 +869,124 @@ mod tests {
     }
 
     #[test]
+    fn authz_projection_write_capabilities_are_disjoint_and_key_enforced() {
+        let tables = load_all(&definitions_directory()).expect("the definitions load");
+        let table = tables
+            .iter()
+            .find(|table| table.table == "regional-authz-projection")
+            .expect("the authorization projection is declared");
+        let writers = table
+            .iam
+            .iter()
+            .filter(|grant| !grant.item_types.is_empty())
+            .collect::<Vec<_>>();
+        assert_eq!(writers.len(), 2, "exactly two authorities own row families");
+
+        let mut owned = std::collections::BTreeSet::new();
+        for writer in &writers {
+            assert!(
+                writer.actions.iter().all(|action| matches!(
+                    action.as_str(),
+                    "dynamodb:GetItem" | "dynamodb:PutItem" | "dynamodb:TransactWriteItems"
+                )),
+                "{} holds a broad action: {:?}",
+                writer.role,
+                writer.actions
+            );
+            for item_type in &writer.item_types {
+                assert!(
+                    owned.insert(item_type.as_str()),
+                    "`{item_type}` has more than one write owner"
+                );
+            }
+        }
+        assert_eq!(
+            owned,
+            table
+                .item_types
+                .iter()
+                .map(String::as_str)
+                .collect::<std::collections::BTreeSet<_>>()
+        );
+
+        let central = writers
+            .iter()
+            .find(|grant| grant.role == "central-control-worker")
+            .expect("central control owns its row families");
+        assert!(
+            !central
+                .item_types
+                .iter()
+                .any(|kind| kind == "workspace_limit")
+        );
+        assert_eq!(central.actions, ["dynamodb:PutItem"]);
+        assert_eq!(
+            central
+                .condition
+                .as_ref()
+                .expect("central writes are key restricted")
+                .values,
+            ["WS#*", "KEY#*", "FEED"]
+        );
+
+        let capacity = writers
+            .iter()
+            .find(|grant| grant.role == "regional-capacity-controller")
+            .expect("regional capacity owns workspace limits");
+        assert_eq!(
+            capacity.item_types,
+            [
+                "workspace_limit",
+                "workspace_limit_bundle_head",
+                "workspace_limit_bundle"
+            ]
+        );
+        assert_eq!(
+            capacity
+                .condition
+                .as_ref()
+                .expect("capacity writes are key restricted")
+                .values,
+            ["LIMIT#*"]
+        );
+    }
+
+    #[test]
+    fn capacity_authority_has_one_key_scoped_transactional_writer() {
+        let tables = load_all(&definitions_directory()).expect("the definitions load");
+        let table = tables
+            .iter()
+            .find(|table| table.table == "regional-capacity-authority")
+            .expect("the capacity authority is declared");
+
+        assert_eq!(
+            table.server_side_encryption.key_authority,
+            "regional-capacity"
+        );
+        assert_eq!(table.item_types, ["workspace_capacity", "capacity_audit"]);
+        assert!(table.global_secondary_indexes.is_empty());
+        assert!(!table.stream.enabled);
+        assert!(!table.time_to_live.enabled);
+        assert_eq!(table.iam.len(), 1);
+
+        let writer = &table.iam[0];
+        assert_eq!(writer.role, "regional-capacity-controller");
+        assert_eq!(
+            writer.actions,
+            ["dynamodb:GetItem", "dynamodb:TransactWriteItems"]
+        );
+        assert_eq!(writer.resources, ["table"]);
+        assert_eq!(writer.item_types, ["workspace_capacity", "capacity_audit"]);
+        let condition = writer
+            .condition
+            .as_ref()
+            .expect("capacity authority writes are key restricted");
+        assert_eq!(condition.operator, "ForAllValues:StringLike");
+        assert_eq!(condition.key, "dynamodb:LeadingKeys");
+        assert_eq!(condition.values, ["WS#*"]);
+    }
+
+    #[test]
     fn the_event_indexes_project_every_field_their_decoder_requires() {
         let tables = load_all(&definitions_directory()).expect("the definitions load");
         let session = tables
@@ -877,7 +1012,11 @@ mod tests {
                 "outboxState",
             ] {
                 assert!(
-                    index.projection.attributes.iter().any(|name| name == required),
+                    index
+                        .projection
+                        .attributes
+                        .iter()
+                        .any(|name| name == required),
                     "{index_name} omits decoder field `{required}`"
                 );
             }
@@ -899,6 +1038,7 @@ mod tests {
     fn the_bundle_digest_is_stable_across_two_builds() {
         let first = rebuild().expect("the bundle rebuilds");
         let second = rebuild().expect("the bundle rebuilds");
+        assert_eq!(first.generation, 1);
         assert_eq!(first.digest, second.digest);
         assert!(first.digest.starts_with("blake3:"));
         assert_eq!(first.digest.len(), "blake3:".len() + 64);

@@ -389,6 +389,9 @@ struct LimitEntry {
     id: String,
     /// `scalar` or `map`.
     shape: String,
+    /// Complete ordered dimension vocabulary for a map limit.
+    #[serde(default)]
+    dimensions: Vec<String>,
     /// One-line documentation.
     doc: String,
 }
@@ -405,6 +408,7 @@ fn build_limits(file: &LimitsFile) -> Vec<LimitRow> {
             } else {
                 LimitShape::Scalar
             },
+            dimensions: entry.dimensions.clone(),
             doc: entry.doc.clone(),
         })
         .collect()
@@ -444,6 +448,37 @@ struct RoutesMetaFile {
     expected: BTreeMap<String, usize>,
     /// The one place a path parameter's type is declared.
     path_params: BTreeMap<String, FieldEntry>,
+    /// Closed release-artifact vocabulary and the API plane each artifact may
+    /// own. Both planned and actual ownership are checked against this map.
+    serving_artifacts: BTreeMap<String, String>,
+    /// Release scenario owners, keyed `<plane>.<fragment>`.
+    ///
+    /// This is delivery metadata emitted only into the route registry. It is
+    /// deliberately absent from the public wire bundle, so changing test
+    /// selection does not mint a new API contract identity.
+    scenario_owners: BTreeMap<String, RouteOwnerEntry>,
+    /// Per-operation exceptions for fragments whose routes are split across
+    /// deployables or transports.
+    ///
+    /// The resolved planned owner is emitted into both the delivery registry
+    /// and generated runtime descriptor, so selection and responsibility do
+    /// not mirror routing rules. Actual mount evidence remains separate.
+    #[serde(default)]
+    operation_owners: BTreeMap<String, RouteOwnerEntry>,
+    /// Operations that are mounted by a runnable composition today, keyed by
+    /// release artifact. An operation absent here is deliberately unserved.
+    #[serde(default)]
+    served_operations: BTreeMap<String, Vec<String>>,
+}
+
+/// Release-selection metadata for one mounted API fragment.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct RouteOwnerEntry {
+    /// The immutable release unit that serves the fragment.
+    serving_artifact: String,
+    /// Scenarios that exercise the fragment through that unit.
+    scenarios: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -901,8 +936,10 @@ fn load_planes(
     id_keys: &BTreeSet<&str>,
     sources: &mut BTreeMap<String, String>,
 ) -> Result<Vec<PlaneIr>, GenError> {
+    let actual_owners = actual_route_owners(meta)?;
     let mut planes = Vec::new();
     let mut seen_operations: BTreeSet<String> = BTreeSet::new();
+    let mut used_scenario_owners = BTreeSet::new();
     for plane_id in ["central", "regional"] {
         let relative = format!("api/openapi/plane.{plane_id}.yaml");
         let header: PlaneFile = read_yaml(root, &relative, sources)?;
@@ -915,6 +952,7 @@ fn load_planes(
         let mut operations = Vec::new();
         let mut seen_routes: BTreeSet<(String, String)> = BTreeSet::new();
         for fragment in &header.fragments {
+            used_scenario_owners.insert(format!("{plane_id}.{fragment}"));
             let path = format!("api/openapi/{plane_id}/{fragment}.yaml");
             let file: FragmentFile = read_yaml(root, &path, sources)?;
             if file.plane != plane_id || &file.fragment != fragment {
@@ -944,6 +982,7 @@ fn load_planes(
                     error_codes,
                     scope_names,
                     id_keys,
+                    &actual_owners,
                 )?);
             }
         }
@@ -967,7 +1006,137 @@ fn load_planes(
             operations,
         });
     }
+    let declared_scenario_owners: BTreeSet<String> = meta.scenario_owners.keys().cloned().collect();
+    if used_scenario_owners != declared_scenario_owners {
+        let missing = used_scenario_owners
+            .difference(&declared_scenario_owners)
+            .cloned()
+            .collect::<Vec<_>>();
+        let stale = declared_scenario_owners
+            .difference(&used_scenario_owners)
+            .cloned()
+            .collect::<Vec<_>>();
+        return Err(GenError::Registry {
+            registry: "routes-meta",
+            detail: format!(
+                "scenarioOwners must exactly match the mounted fragments; missing={missing:?}, stale={stale:?}"
+            ),
+        });
+    }
+    let stale_operation_owners = meta
+        .operation_owners
+        .keys()
+        .filter(|operation| !seen_operations.contains(*operation))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !stale_operation_owners.is_empty() {
+        return Err(GenError::Registry {
+            registry: "routes-meta",
+            detail: format!("operationOwners names unknown operations: {stale_operation_owners:?}"),
+        });
+    }
+    let stale_served_operations = actual_owners
+        .keys()
+        .filter(|operation| !seen_operations.contains(*operation))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !stale_served_operations.is_empty() {
+        return Err(GenError::Registry {
+            registry: "routes-meta",
+            detail: format!(
+                "servedOperations names unknown operations: {stale_served_operations:?}"
+            ),
+        });
+    }
+    let used_artifacts: BTreeSet<&str> = planes
+        .iter()
+        .flat_map(|plane| plane.operations.iter())
+        .map(|operation| operation.serving_artifact.as_str())
+        .collect();
+    let declared_artifacts: BTreeSet<&str> =
+        meta.serving_artifacts.keys().map(String::as_str).collect();
+    if used_artifacts != declared_artifacts {
+        let missing = used_artifacts
+            .difference(&declared_artifacts)
+            .copied()
+            .collect::<Vec<_>>();
+        let stale = declared_artifacts
+            .difference(&used_artifacts)
+            .copied()
+            .collect::<Vec<_>>();
+        return Err(GenError::Registry {
+            registry: "routes-meta",
+            detail: format!(
+                "servingArtifacts must exactly match planned owners; missing={missing:?}, stale={stale:?}"
+            ),
+        });
+    }
     Ok(planes)
+}
+
+/// Resolves the authored actual-mount table into one owner per operation.
+fn actual_route_owners(meta: &RoutesMetaFile) -> Result<BTreeMap<String, String>, GenError> {
+    for (artifact, plane) in &meta.serving_artifacts {
+        validate_artifact_id(artifact)?;
+        if !["central", "regional"].contains(&plane.as_str()) {
+            return Err(GenError::Registry {
+                registry: "routes-meta",
+                detail: format!("serving artifact `{artifact}` declares unknown plane `{plane}`"),
+            });
+        }
+    }
+    let mut owners = BTreeMap::new();
+    for (artifact, operations) in &meta.served_operations {
+        validate_artifact_id(artifact)?;
+        if !meta.serving_artifacts.contains_key(artifact) {
+            return Err(GenError::Registry {
+                registry: "routes-meta",
+                detail: format!("servedOperations names undeclared serving artifact `{artifact}`"),
+            });
+        }
+        let mut local = BTreeSet::new();
+        for operation in operations {
+            if !local.insert(operation) {
+                return Err(GenError::Registry {
+                    registry: "routes-meta",
+                    detail: format!("servedOperations.{artifact} repeats operation `{operation}`"),
+                });
+            }
+            if let Some(first) = owners.insert(operation.clone(), artifact.clone()) {
+                return Err(GenError::Registry {
+                    registry: "routes-meta",
+                    detail: format!(
+                        "operation `{operation}` is actually served by both `{first}` and `{artifact}`"
+                    ),
+                });
+            }
+        }
+    }
+    Ok(owners)
+}
+
+fn validate_artifact_id(artifact: &str) -> Result<(), GenError> {
+    let valid = !artifact.is_empty()
+        && artifact
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        && artifact
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_lowercase)
+        && artifact
+            .as_bytes()
+            .last()
+            .is_some_and(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+        && !artifact.contains("--");
+    if valid {
+        Ok(())
+    } else {
+        Err(GenError::Registry {
+            registry: "routes-meta",
+            detail: format!("malformed serving artifact `{artifact}`"),
+        })
+    }
 }
 
 /// Validates and converts one operation.
@@ -984,11 +1153,80 @@ fn build_operation(
     error_codes: &[&str],
     scope_names: &BTreeSet<&str>,
     id_keys: &BTreeSet<&str>,
+    actual_owners: &BTreeMap<String, String>,
 ) -> Result<OperationIr, GenError> {
     let bad = |detail: String| GenError::Operation {
         id: entry.id.clone(),
         detail,
     };
+    let scenario_key = format!("{plane}.{fragment}");
+    let fragment_owner = meta.scenario_owners.get(&scenario_key).ok_or_else(|| {
+        bad(format!(
+            "fragment `{scenario_key}` has no scenario owner in routes-meta.yaml"
+        ))
+    })?;
+    let owner = meta
+        .operation_owners
+        .get(&entry.id)
+        .unwrap_or(fragment_owner);
+    if owner.scenarios.is_empty() {
+        return Err(bad(format!(
+            "fragment `{scenario_key}` has an empty scenario owner list"
+        )));
+    }
+    validate_artifact_id(&owner.serving_artifact).map_err(|_| {
+        bad(format!(
+            "fragment `{scenario_key}` has invalid serving artifact `{}`",
+            owner.serving_artifact
+        ))
+    })?;
+    let Some(owner_plane) = meta.serving_artifacts.get(&owner.serving_artifact) else {
+        return Err(bad(format!(
+            "fragment `{scenario_key}` names undeclared serving artifact `{}`",
+            owner.serving_artifact
+        )));
+    };
+    if owner_plane != plane {
+        return Err(bad(format!(
+            "fragment `{scenario_key}` is on `{plane}` but serving artifact `{}` is declared on `{owner_plane}`",
+            owner.serving_artifact
+        )));
+    }
+    let served_artifact = actual_owners.get(&entry.id).cloned();
+    if let Some(actual) = &served_artifact {
+        let actual_plane = meta
+            .serving_artifacts
+            .get(actual)
+            .expect("actual_route_owners rejects undeclared artifacts");
+        if actual_plane != plane {
+            return Err(bad(format!(
+                "operation is on `{plane}` but actual serving artifact `{actual}` is declared on `{actual_plane}`"
+            )));
+        }
+        if actual != &owner.serving_artifact {
+            return Err(bad(format!(
+                "operation is planned for `{}` but claims it is actually served by `{actual}`",
+                owner.serving_artifact
+            )));
+        }
+    }
+    let mut unique_scenarios = BTreeSet::new();
+    for scenario in &owner.scenarios {
+        if !scenario.starts_with("SC-")
+            || !scenario.chars().all(|character| {
+                character.is_ascii_uppercase() || character.is_ascii_digit() || character == '-'
+            })
+        {
+            return Err(bad(format!(
+                "fragment `{scenario_key}` has malformed scenario id `{scenario}`"
+            )));
+        }
+        if !unique_scenarios.insert(scenario) {
+            return Err(bad(format!(
+                "fragment `{scenario_key}` repeats scenario `{scenario}`"
+            )));
+        }
+    }
     if !["GET", "PUT", "POST", "DELETE"].contains(&entry.method.as_str()) {
         return Err(bad(format!("unsupported method `{}`", entry.method)));
     }
@@ -1113,6 +1351,9 @@ fn build_operation(
         id: entry.id.clone(),
         plane: plane.to_owned(),
         fragment: fragment.to_owned(),
+        serving_artifact: owner.serving_artifact.clone(),
+        served_artifact,
+        scenarios: owner.scenarios.clone(),
         method: entry.method.clone(),
         path: entry.path.clone(),
         summary: entry.summary.clone(),

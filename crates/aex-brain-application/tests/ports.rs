@@ -16,28 +16,42 @@ use aex_brain_application::ports::tool::{ControlStateView, DetachedStatus};
 use aex_brain_application::ports::{
     BoxFuture, CancelToken, DispatchTicket, FenceGuard, HandsAccepted, HandsEndpoint, HandsError,
     HandsOperationStart, HandsOperationStatus, HandsPort, PreparedToolCall, ProviderDispatchError,
-    ProviderFailureClass, ProviderOutcome, ProviderPort, RedactedDetail, ResultBounds,
-    StreamBudget, ToolDispatchError, ToolOutcome, ToolPort, ToolRoute, ToolRoutingError,
-    UnknownResolution,
+    ProviderFailureKind, ProviderOutcome, ProviderPort, RedactedDetail, ResultBounds, StreamBudget,
+    ToolDispatchError, ToolOutcome, ToolPort, ToolRoute, ToolRoutingError, UnknownResolution,
 };
 use aex_brain_domain::effect::{
-    DispatchEvidence, DispatchProof, DispatchStage, DurableEffect, EffectClass, EffectKind,
+    DetachedOperationRef, DispatchEvidence, DispatchProof, DispatchStage, DurableEffect,
+    EffectClass, EffectKind,
 };
 use aex_brain_domain::ids::{
     AgentId, AgentKey, AgentRevision, CancelEpoch, CatalogPin, ContentHash, DetachedOperationId,
-    EffectId, Fence, HandsOperationId, JournalSeq, ModelSlug, OwnerToken, SessionId, Timestamp,
-    ToolCallId, ToolName,
+    EffectId, Fence, HandsOperationId, JournalSeq, OwnerToken, SessionId, Timestamp, ToolCallId,
+    ToolName,
 };
 use aex_brain_domain::journal::ExecutorRoute;
 use aex_brain_domain::wire_pending::{
-    CanonicalModelRequest, PreviewFrame, ProviderId, ResolvedAgentConfig,
+    CanonicalModelRequest, PreviewFrame, ProviderId, ResolvedAgentConfig, SessionCredentialPin,
 };
-use aex_wire::ids::{GenerationId, PrefixedId as _, Uuid7};
+use aex_model_catalog::canonical::{CorrelationId, ReasoningRequest, ToolChoice};
+use aex_model_catalog::document::CapabilitySet;
+use aex_model_catalog::{BoundedString, fixture};
+use aex_wire::CanonicalJson;
+use aex_wire::ids::{GenerationId, PrefixedId as _, ProviderCredentialId, Uuid7, WorkspaceId};
 use std::sync::Mutex;
 use uuid::Uuid;
 
 fn generation(seed: u8) -> GenerationId {
     GenerationId::from_uuid7(Uuid7::compose(1, [seed; 10]))
+}
+
+fn credential() -> SessionCredentialPin {
+    SessionCredentialPin::new(
+        ProviderCredentialId::from_uuid7(Uuid7::compose(1, [7; 10])),
+        1,
+        1,
+        0,
+    )
+    .expect("non-zero fixture pin")
 }
 
 fn guard() -> FenceGuard {
@@ -53,7 +67,14 @@ fn guard() -> FenceGuard {
 }
 
 fn ticket(effect: EffectId) -> DispatchTicket {
-    DispatchTicket::mint(&guard(), effect, 1, Timestamp(0))
+    DispatchTicket::mint(
+        &guard(),
+        WorkspaceId::from_uuid7(Uuid7::compose(1, [8; 10])),
+        aex_wire::ids::OrganizationId::from_uuid7(Uuid7::compose(1, [9; 10])),
+        effect,
+        1,
+        Timestamp(0),
+    )
 }
 
 /// A provider that records the ticket it was handed and refuses to invent an outcome.
@@ -66,6 +87,7 @@ impl ProviderPort for RecordingProvider {
     fn dispatch<'a>(
         &'a self,
         ticket: &'a DispatchTicket,
+        _credential: aex_brain_domain::wire_pending::SessionCredentialPin,
         _request: &'a CanonicalModelRequest,
         _budget: &'a StreamBudget,
         _preview: &'a dyn PreviewSink,
@@ -80,10 +102,13 @@ impl ProviderPort for RecordingProvider {
             Err(ProviderDispatchError {
                 stage: DispatchStage::PreDispatch,
                 proof: DispatchProof::NotSent,
-                class: ProviderFailureClass::Transient,
+                kind: ProviderFailureKind::ServerError,
                 provider_request_id: None,
                 retry_after: None,
-                detail: RedactedDetail::new("fixture refuses to fabricate a generation"),
+                detail: RedactedDetail::internal(
+                    ProviderFailureKind::ServerError,
+                    "fixture refuses to fabricate a generation",
+                ),
             })
         })
     }
@@ -103,7 +128,7 @@ struct StubTools;
 
 impl ToolPort for StubTools {
     fn route(&self, _pin: &CatalogPin, name: &ToolName) -> Result<ToolRoute, ToolRoutingError> {
-        if name.0 == "read_file" {
+        if name.as_str() == "read_file" {
             Ok(ToolRoute {
                 name: name.clone(),
                 executor: ExecutorRoute::ManagedWeb,
@@ -113,7 +138,7 @@ impl ToolPort for StubTools {
             })
         } else {
             Err(ToolRoutingError::Unknown {
-                name: name.0.clone(),
+                name: name.as_str().to_owned(),
             })
         }
     }
@@ -138,14 +163,14 @@ impl ToolPort for StubTools {
 
     fn query<'a>(
         &'a self,
-        _operation: &'a DetachedOperationId,
+        _operation: &'a DetachedOperationRef,
     ) -> BoxFuture<'a, Result<DetachedStatus, ToolDispatchError>> {
         Box::pin(async { Ok(DetachedStatus::Unknown) })
     }
 
     fn cancel<'a>(
         &'a self,
-        _operation: &'a DetachedOperationId,
+        _operation: &'a DetachedOperationRef,
         _fence: Fence,
     ) -> BoxFuture<'a, Result<(), ToolDispatchError>> {
         Box::pin(async { Ok(()) })
@@ -241,14 +266,34 @@ fn block_on<F: core::future::Future>(future: F) -> F::Output {
 }
 
 fn request() -> CanonicalModelRequest {
-    CanonicalModelRequest {
-        provider: ProviderId::Deepseek,
-        model: ModelSlug("deepseek-chat".to_owned()),
-        system: None,
-        turns: Vec::new(),
+    let selection = fixture::qualified_entry(
+        ProviderId::Deepseek,
+        "deepseek-chat",
+        CapabilitySet::default(),
+    );
+    let mut request = CanonicalModelRequest {
+        selection,
+        system: Vec::new(),
+        messages: Vec::new(),
         tools: Vec::new(),
+        tool_choice: ToolChoice::None,
+        parallel_tools: false,
         max_output_tokens: 1_024,
-    }
+        temperature_milli: None,
+        top_p_milli: None,
+        stop_sequences: Vec::new(),
+        reasoning: ReasoningRequest::ProviderDefault,
+        structured_output: None,
+        cache_breakpoints: Vec::new(),
+        correlation: CorrelationId::from_effect([1; 16]),
+        request_hash: aex_wire::ContentHash::of(b"pending"),
+    };
+    request.request_hash = request.digest().expect("fixture request is canonical");
+    request
+}
+
+fn catalog_pin() -> CatalogPin {
+    request().selection.catalog()
 }
 
 fn budget() -> StreamBudget {
@@ -275,6 +320,7 @@ fn every_port_is_dyn_compatible() {
     );
     let outcome = block_on(provider.dispatch(
         &ticket(effect),
+        credential(),
         &request(),
         &budget(),
         &NullPreviewSink,
@@ -285,14 +331,14 @@ fn every_port_is_dyn_compatible() {
 
     tools
         .route(
-            &CatalogPin(ContentHash::of(b"pin")),
-            &ToolName("read_file".to_owned()),
+            &catalog_pin(),
+            &ToolName::parse("read_file").expect("tool name"),
         )
         .expect("a known tool routes");
     let unknown = tools
         .route(
-            &CatalogPin(ContentHash::of(b"pin")),
-            &ToolName("telepathy".to_owned()),
+            &catalog_pin(),
+            &ToolName::parse("telepathy").expect("tool name"),
         )
         .expect_err("an unknown tool does not");
     assert!(matches!(unknown, ToolRoutingError::Unknown { .. }));
@@ -310,6 +356,7 @@ fn a_dispatch_carries_the_ticket_it_was_authorized_by() {
     let effect = EffectId([9; 16]);
     let _ = block_on(provider.dispatch(
         &ticket(effect),
+        credential(),
         &request(),
         &budget(),
         &NullPreviewSink,
@@ -346,15 +393,16 @@ fn an_unresolvable_effect_stays_unresolved() {
 fn a_detached_tool_returns_an_operation_rather_than_blocking() {
     let tools = StubTools;
     let call = PreparedToolCall {
-        call: ToolCallId("c1".to_owned()),
+        call: ToolCallId::truncating("c1"),
         route: tools
             .route(
-                &CatalogPin(ContentHash::of(b"pin")),
-                &ToolName("read_file".to_owned()),
+                &catalog_pin(),
+                &ToolName::parse("read_file").expect("tool name"),
             )
             .expect("the tool routes"),
-        input: serde_json::json!({}),
+        input: CanonicalJson::parse("{}").expect("tool input"),
         max_result_bytes: 65_536,
+        hands_generation: generation(3),
         control: ControlStateView::default(),
     };
     let outcome = block_on(tools.invoke(&ticket(EffectId([2; 16])), &call, &CancelToken::new()))
@@ -384,10 +432,9 @@ fn a_lost_generation_never_answers_with_a_successor() {
 /// frame into any journal variant, and the sink is the only thing that takes one.
 #[test]
 fn a_preview_frame_has_nowhere_to_go_but_the_sink() {
-    let frame = PreviewFrame {
-        journal_seq: JournalSeq(4),
-        sub_slot: 7,
-        payload: "partial delta".to_owned(),
+    let frame = PreviewFrame::TextDelta {
+        index: 7,
+        text: BoundedString::truncating("partial delta"),
     };
     assert!(!NullPreviewSink.offer(frame));
     // `ResolvedAgentConfig` is the only thing a journal record accepts as configuration;

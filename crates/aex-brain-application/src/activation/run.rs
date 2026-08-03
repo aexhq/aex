@@ -21,18 +21,19 @@ use super::{
     ActivationError, ActivationPolicy, AdmissionControl, AdmissionDecision, Outcome, Ports,
     Release, Stop,
 };
-use crate::kernel::{ActivationRegistry, DrainGate};
+use crate::kernel::{ActivationRegistry, DrainGate, RenewalOutcome, RenewalState};
 use crate::ports::{
-    ClaimError, CommitError, ConditionFailure, ControlStateView, DecisionContext, DetachedStatus,
-    FenceGuard, NullPreviewSink, PreparedToolCall, ReleaseDisposition, SessionAuthority,
-    StoreError, StreamBudget, ToolOutcome, WakeDelivery, WakeOrigin, WakeState,
+    BoxFuture, CancelToken, Claim, ClaimError, CommitError, ConditionFailure, ControlStateView,
+    DecisionContext, DetachedStatus, DueRowIsolation, DueScanCursor, FenceGuard,
+    MAX_DUE_ROW_ISOLATIONS, NullPreviewSink, PreparedToolCall, ReleaseDisposition,
+    SessionAuthority, StoreError, StreamBudget, ToolOutcome, WakeDelivery, WakeOrigin, WakeState,
 };
 use aex_brain_domain::canonical::canonicalize_value;
 use aex_brain_domain::child::QueuedReason;
 use aex_brain_domain::context;
 use aex_brain_domain::effect::{
-    DispatchEvidence, DispatchProof, DispatchStage, DurableEffect, EffectClass, EffectKind,
-    EffectState, RecoveryDecision, recover,
+    DetachedOperationRef, DispatchEvidence, DispatchProof, DispatchStage, DurableEffect,
+    EffectClass, EffectKind, EffectState, RecoveryDecision, recover,
 };
 use aex_brain_domain::fold::{FoldState, PendingCall, Phase, apply};
 use aex_brain_domain::ids::{
@@ -44,10 +45,14 @@ use aex_brain_domain::journal::{
 };
 use aex_brain_domain::planner::{OwedStep, PlanPolicy, model_effect_id, plan};
 use aex_brain_domain::wire_pending::{
-    CanonicalBlock, CanonicalModelRequest, DurableOperationSupport, ResolvedAgentConfig,
+    CanonicalMessage, CanonicalModelRequest, ContentBlockRef, DurableOperationSupport,
+    ResolvedAgentConfig, Role,
 };
-use std::collections::BTreeSet;
-use std::sync::atomic::{AtomicU16, Ordering};
+use aex_model_catalog::BoundedString;
+use aex_model_catalog::canonical::{CorrelationId, ReasoningRequest, ToolChoice, ToolResultPart};
+use futures::stream::{self, StreamExt as _};
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
@@ -156,12 +161,14 @@ impl Activation {
             claim.head.cancel_epoch,
             crate::ports::CancelToken::new(),
         );
+        let claim_state = Arc::new(Mutex::new(claim.clone()));
         let mut session = Session {
             ports: &self.ports,
             policy: &self.policy,
+            drain: &self.drain,
             key,
             authority: claim.authority.clone(),
-            lease_expires_at: claim.expires_at,
+            claim: Arc::clone(&claim_state),
             stop_requested: claim.head.stop_requested,
             guard,
             state: FoldState::empty(),
@@ -170,18 +177,25 @@ impl Activation {
             resume: None,
         };
 
-        let outcome = if claim.head.finish.is_some() {
-            Ok(Outcome::Idle)
-        } else {
-            session.drive().await
+        let cancel = session.guard.cancel().clone();
+        let work = async {
+            let outcome = if claim.head.finish.is_some() {
+                // Terminal is a control projection, not permission to skip journal
+                // integrity. Source retirement is still a durable action, so even this
+                // path proves the complete folded tail before it writes or acks.
+                session.reload().await.map(|()| Outcome::Idle)
+            } else {
+                session.drive().await
+            };
+            match outcome {
+                Ok(outcome) => self
+                    .retire_source(&mut session, &delivery.wake)
+                    .await
+                    .map(|()| outcome),
+                Err(error) => Err(error),
+            }
         };
-        let outcome = match outcome {
-            Ok(outcome) => self
-                .retire_source(&mut session, &delivery.wake)
-                .await
-                .map(|()| outcome),
-            Err(error) => Err(error),
-        };
+        let outcome = self.supervise(&claim_state, &delivery, cancel, work).await;
         let disposition = match &outcome {
             Ok(Outcome::Progressed {
                 stop: Stop::Parked, ..
@@ -191,7 +205,11 @@ impl Activation {
         };
         // The lease goes back before the ack. A crash between them leaves a wake that
         // redelivers against an unowned agent, which is the cheap direction to fail in.
-        let _ = self.ports.leases.release(claim, disposition).await;
+        let latest_claim = claim_state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let _ = self.ports.leases.release(latest_claim, disposition).await;
 
         self.finish_delivery(delivery, outcome).await
     }
@@ -241,6 +259,120 @@ impl Activation {
         let _ = self.ports.wakes.release(delivery.clone(), after).await;
     }
 
+    /// Runs claimed work beside one timer-driven ownership supervisor.
+    ///
+    /// The work future and timer are polled by one structured parent, so neither is detached
+    /// and dropping this scope drops both. A pending provider/tool/Hands future sleeps until
+    /// either it is woken or the renewal timer fires; there is no per-effect polling loop.
+    async fn supervise<F, T>(
+        &self,
+        claim: &Arc<Mutex<Claim>>,
+        delivery: &WakeDelivery,
+        cancel: CancelToken,
+        work: F,
+    ) -> Result<T, ActivationError>
+    where
+        F: core::future::Future<Output = Result<T, ActivationError>>,
+    {
+        enum Event<T> {
+            Work(Result<T, ActivationError>),
+            Renew,
+            Visibility,
+        }
+
+        let renewal = RenewalState::new(
+            claim
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .fence,
+            cancel.clone(),
+        );
+        let mut work = Box::pin(work);
+        let mut timer = self.ports.clock.sleep(self.policy.renew_interval);
+        let mut visibility: Option<BoxFuture<'_, Result<(), StoreError>>> = None;
+        loop {
+            let event = core::future::poll_fn(|context| {
+                if let core::task::Poll::Ready(output) = work.as_mut().poll(context) {
+                    return core::task::Poll::Ready(Event::Work(output));
+                }
+                if visibility
+                    .as_mut()
+                    .is_some_and(|pending| pending.as_mut().poll(context).is_ready())
+                {
+                    return core::task::Poll::Ready(Event::Visibility);
+                }
+                timer.as_mut().poll(context).map(|()| Event::Renew)
+            })
+            .await;
+            match event {
+                Event::Work(output) => return output,
+                Event::Visibility => {
+                    visibility = None;
+                    continue;
+                }
+                Event::Renew => {
+                    // Arm the next deadline before any network call. A slow visibility
+                    // extension remains one polled child below; it cannot postpone the next
+                    // lease renewal or stop the claimed work being polled.
+                    timer = self.ports.clock.sleep(self.policy.renew_interval);
+                    if self.drain.is_draining() {
+                        // The adapter receives an honest cancellation request before this
+                        // scope can be aborted. The token cannot prove whether a byte left,
+                        // so the effect's returned dispatch proof still decides settlement.
+                        cancel.cancel();
+                    }
+                }
+            }
+
+            let current = claim
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
+            match self
+                .ports
+                .leases
+                .renew(&current, self.policy.lease_ttl, self.ports.clock.now())
+                .await
+            {
+                Ok(renewed) => {
+                    if renewal.renewed(renewed.fence) == RenewalOutcome::Lost {
+                        return Err(ClaimError::Fenced {
+                            current: renewed.fence,
+                        }
+                        .into());
+                    }
+                    *claim
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) = renewed;
+                    // Visibility is extended only after the durable lease proves this owner
+                    // is still live. A queue failure permits a duplicate hint; the fence then
+                    // rejects its claim. Hiding a delivery after a failed renewal would be the
+                    // unsafe direction.
+                    if visibility.is_none() {
+                        visibility = Some(
+                            self.ports
+                                .wakes
+                                .extend_visibility(delivery, self.policy.visibility_timeout),
+                        );
+                    }
+                }
+                Err(ClaimError::Fenced { current }) => {
+                    let _ = renewal.observe(current);
+                    return Err(ClaimError::Fenced { current }.into());
+                }
+                Err(error @ (ClaimError::HeldByOther { .. } | ClaimError::Terminal)) => {
+                    cancel.cancel();
+                    return Err(error.into());
+                }
+                Err(ClaimError::Store(error)) => {
+                    if renewal.renewal_failed() == RenewalOutcome::Lost {
+                        return Err(ClaimError::Store(error).into());
+                    }
+                }
+            }
+        }
+    }
+
     async fn source_is_pending(&self, delivery: &WakeDelivery) -> Result<bool, ActivationError> {
         match self.ports.wakes.state(&delivery.wake).await {
             Ok(WakeState::Pending) => Ok(true),
@@ -286,10 +418,12 @@ pub struct WakeLoop {
     admission: Arc<dyn AdmissionControl>,
     inflight: Arc<Mutex<BTreeSet<String>>>,
     due_shard: Arc<AtomicU16>,
+    due_cursors: Arc<Mutex<BTreeMap<u16, DueScanCursor>>>,
+    due_scan_due_at: Arc<AtomicU64>,
 }
 
 /// What one pass over the queue did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PollReport {
     /// How many deliveries the receive returned.
     pub received: usize,
@@ -301,6 +435,31 @@ pub struct PollReport {
     pub refused: usize,
     /// How many of the deliveries came from the durable due backstop.
     pub recovered: usize,
+    /// How many malformed due rows were isolated while valid siblings continued.
+    pub malformed: usize,
+    /// How many malformed queue records were isolated while valid siblings continued.
+    pub malformed_queue: usize,
+    /// How many malformed queue records reached the configured poison threshold.
+    pub poisoned: usize,
+    /// A process-wide bounded, redacted sample of malformed due rows from this pass.
+    pub isolations: Vec<DueRowIsolation>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DriveClass {
+    Stable,
+    Transient,
+}
+
+struct ScheduledDelivery {
+    delivery: WakeDelivery,
+    due_pages: Vec<usize>,
+}
+
+struct DuePageProgress {
+    shard: u16,
+    next: Option<DueScanCursor>,
+    advance: bool,
 }
 
 impl WakeLoop {
@@ -312,6 +471,8 @@ impl WakeLoop {
             admission,
             inflight: Arc::new(Mutex::new(BTreeSet::new())),
             due_shard: Arc::new(AtomicU16::new(0)),
+            due_cursors: Arc::new(Mutex::new(BTreeMap::new())),
+            due_scan_due_at: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -319,6 +480,16 @@ impl WakeLoop {
     #[must_use]
     pub const fn activation(&self) -> &Activation {
         &self.activation
+    }
+
+    /// Whether the composition currently permits another receive scope.
+    ///
+    /// A process-level scheduler uses this before adding a long-poll lane. [`poll_once`](Self::poll_once)
+    /// repeats the check, so a drain or admission change between this observation and the
+    /// first poll still fails closed without touching the queue.
+    #[must_use]
+    pub fn receiving_allowed(&self) -> bool {
+        self.admission.should_receive()
     }
 
     /// Receives one batch and drives it.
@@ -337,50 +508,215 @@ impl WakeLoop {
             return Ok(report);
         }
         let policy = self.activation.policy();
-        let shard_count = policy.due_shards.max(1);
-        let shard = self.due_shard.fetch_add(1, Ordering::Relaxed) % shard_count;
-        let recovered = self
+        let batch = self
             .activation
             .ports()
             .wakes
-            .due_scan(
-                aex_brain_domain::ids::WorkShard(shard),
-                self.activation.ports().clock.now(),
-                policy.receive_batch,
-            )
+            .receive(policy.receive_batch, policy.long_poll)
             .await?;
-        report.recovered = recovered.len();
-        let remaining = policy.receive_batch.saturating_sub(recovered.len());
-        let wait = if recovered.is_empty() {
-            policy.long_poll
-        } else {
-            core::time::Duration::ZERO
-        };
-        let mut deliveries: Vec<WakeDelivery> = recovered
+        report.received = batch.deliveries.len().saturating_add(batch.malformed.len());
+
+        // Receive remains first so a transport failure cannot move a due cursor. Recovery
+        // is the first post-receive I/O: neither poison-record handling nor ten 600-second
+        // provider calls may postpone the lost-hint backstop.
+        let mut scheduled: Vec<ScheduledDelivery> = batch
+            .deliveries
             .into_iter()
-            .map(|wake| WakeDelivery {
-                wake,
-                origin: WakeOrigin::DueScan,
+            .map(|delivery| ScheduledDelivery {
+                delivery,
+                due_pages: Vec::new(),
             })
             .collect();
-        if remaining > 0 {
-            deliveries.extend(
-                self.activation
+        let mut due_pages = Vec::new();
+        if self.claim_due_pass() {
+            self.scan_due(&mut report, &mut scheduled, &mut due_pages)
+                .await;
+        }
+        self.handle_malformed(&mut report, batch.malformed).await;
+        self.drive_scheduled(&mut report, scheduled, &mut due_pages)
+            .await;
+        self.commit_due_cursors(due_pages);
+        Ok(report)
+    }
+
+    async fn handle_malformed(
+        &self,
+        report: &mut PollReport,
+        malformed: Vec<crate::ports::MalformedWakeDelivery>,
+    ) {
+        for delivery in malformed {
+            report.malformed_queue = report.malformed_queue.saturating_add(1);
+            if delivery.receive_count >= self.activation.policy().max_receives {
+                match self.activation.ports().wakes.ack_malformed(delivery).await {
+                    Ok(()) => report.poisoned = report.poisoned.saturating_add(1),
+                    Err(_) => report.refused = report.refused.saturating_add(1),
+                }
+            } else {
+                match self
+                    .activation
                     .ports()
                     .wakes
-                    .receive(remaining, wait)
-                    .await?,
-            );
-        }
-        report.received = deliveries.len();
-        for delivery in deliveries {
-            match self.drive(delivery).await {
-                Ok(Outcome::Released(_)) => report.released += 1,
-                Ok(_) => report.driven += 1,
-                Err(_) => report.refused += 1,
+                    .release_malformed(delivery, self.activation.policy().requeue_after)
+                    .await
+                {
+                    Ok(()) => report.released = report.released.saturating_add(1),
+                    Err(_) => report.refused = report.refused.saturating_add(1),
+                }
             }
         }
-        Ok(report)
+    }
+
+    fn claim_due_pass(&self) -> bool {
+        let now = self.activation.ports().clock.steady().0;
+        let interval = u64::try_from(self.activation.policy().due_scan_interval.as_millis())
+            .unwrap_or(u64::MAX);
+        loop {
+            let due_at = self.due_scan_due_at.load(Ordering::Acquire);
+            if now < due_at {
+                return false;
+            }
+            let next = now.saturating_add(interval);
+            if self
+                .due_scan_due_at
+                .compare_exchange(due_at, next, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                return true;
+            }
+        }
+    }
+
+    async fn scan_due(
+        &self,
+        report: &mut PollReport,
+        scheduled: &mut Vec<ScheduledDelivery>,
+        progress: &mut Vec<DuePageProgress>,
+    ) {
+        let policy = self.activation.policy();
+        let shard_count = policy.due_shards.max(1);
+        let shards = policy.due_scan_shards_per_pass.max(1).min(shard_count);
+        for _ in 0..shards {
+            let shard = self.due_shard.fetch_add(1, Ordering::Relaxed) % shard_count;
+            let after = self
+                .due_cursors
+                .lock()
+                .expect("not poisoned")
+                .get(&shard)
+                .cloned();
+            let page = self
+                .activation
+                .ports()
+                .wakes
+                .due_scan(
+                    aex_brain_domain::ids::WorkShard(shard),
+                    self.activation.ports().clock.now(),
+                    policy.due_scan_page.max(1),
+                    after,
+                )
+                .await;
+            let Ok(page) = page else {
+                // A failed shard is retained at its prior cursor. Rotation continues so
+                // one throttled partition cannot suppress recovery in later shards.
+                report.refused = report.refused.saturating_add(1);
+                continue;
+            };
+            report.malformed = report.malformed.saturating_add(page.malformed);
+            let sample_room = MAX_DUE_ROW_ISOLATIONS.saturating_sub(report.isolations.len());
+            report
+                .isolations
+                .extend(page.isolations.into_iter().take(sample_room));
+            report.recovered = report.recovered.saturating_add(page.wakes.len());
+            report.received = report.received.saturating_add(page.wakes.len());
+            let page_index = progress.len();
+            progress.push(DuePageProgress {
+                shard,
+                next: page.next,
+                advance: true,
+            });
+            for wake in page.wakes {
+                if let Some(existing) = scheduled
+                    .iter_mut()
+                    .find(|delivery| delivery.delivery.wake.dedup_key == wake.dedup_key)
+                {
+                    // The queue and due index are two hints for one durable row. Drive it
+                    // once, but make cursor progress depend on that shared drive's outcome.
+                    existing.due_pages.push(page_index);
+                } else {
+                    scheduled.push(ScheduledDelivery {
+                        delivery: WakeDelivery {
+                            wake,
+                            origin: WakeOrigin::DueScan,
+                        },
+                        due_pages: vec![page_index],
+                    });
+                }
+            }
+        }
+    }
+
+    async fn drive_scheduled(
+        &self,
+        report: &mut PollReport,
+        scheduled: Vec<ScheduledDelivery>,
+        due_pages: &mut [DuePageProgress],
+    ) {
+        let concurrency = self.activation.policy().max_concurrent_drives.max(1);
+        let mut outcomes = stream::iter(scheduled)
+            .map(|scheduled| async move {
+                let outcome = self.drive(scheduled.delivery).await;
+                (scheduled.due_pages, outcome)
+            })
+            .buffer_unordered(concurrency);
+        while let Some((due_page_indexes, outcome)) = outcomes.next().await {
+            let class = match outcome {
+                Ok(Outcome::Released(_)) => {
+                    report.released = report.released.saturating_add(1);
+                    DriveClass::Transient
+                }
+                Ok(Outcome::Poisoned { .. }) => {
+                    // Queue poison handling consumes only the SQS projection. If the same
+                    // durable row was also in this due page, it remains pending authority
+                    // and the page must revisit it rather than advancing past it.
+                    report.driven = report.driven.saturating_add(1);
+                    DriveClass::Transient
+                }
+                Ok(_) => {
+                    report.driven = report.driven.saturating_add(1);
+                    DriveClass::Stable
+                }
+                Err(_) => {
+                    report.refused = report.refused.saturating_add(1);
+                    DriveClass::Transient
+                }
+            };
+            if class == DriveClass::Transient {
+                for index in due_page_indexes {
+                    if let Some(page) = due_pages.get_mut(index) {
+                        page.advance = false;
+                    }
+                }
+            }
+        }
+    }
+
+    fn commit_due_cursors(&self, pages: Vec<DuePageProgress>) {
+        let mut cursors = self.due_cursors.lock().expect("not poisoned");
+        for page in pages {
+            if !page.advance {
+                continue;
+            }
+            // A cursor is installed only after every valid wake in the page reached a
+            // durable stable outcome. Transient releases and typed refusals revisit the old
+            // position; shard rotation remains independent, so later shards still run.
+            match page.next {
+                Some(next) => {
+                    cursors.insert(page.shard, next);
+                }
+                None => {
+                    cursors.remove(&page.shard);
+                }
+            }
+        }
     }
 
     /// Drives one delivery through admission and dedup.
@@ -403,7 +739,8 @@ impl WakeLoop {
                 .await;
             return Ok(Outcome::Released(Release::LocallyBusy));
         };
-        let _permits = match self.admission.admit() {
+        let restore_bytes = self.activation.policy().restore_resident_bytes;
+        let _permits = match self.admission.admit(restore_bytes) {
             AdmissionDecision::Admitted(permits) => permits,
             AdmissionDecision::Deferred { requeue_after } => {
                 let _ = self
@@ -465,9 +802,10 @@ impl Drop for InflightKey<'_> {
 struct Session<'a> {
     ports: &'a Ports,
     policy: &'a ActivationPolicy,
+    drain: &'a DrainGate,
     key: AgentKey,
     authority: SessionAuthority,
-    lease_expires_at: Timestamp,
+    claim: Arc<Mutex<Claim>>,
     stop_requested: bool,
     guard: FenceGuard,
     state: FoldState,
@@ -520,29 +858,38 @@ impl Session<'_> {
         }
     }
 
-    /// Rebuilds the fold from the journal.
+    /// Rebuilds the fold from a verified immutable snapshot plus a bounded journal suffix,
+    /// or one explicit bounded sequence-zero fallback.
     ///
     /// A page that observes a gap returns no entries at all, so the agent never acts on a
-    /// prefix of its own history: `read_page` refuses and this propagates the refusal.
+    /// prefix of its own history: `read_page` refuses and this propagates the refusal. The
+    /// complete restore must also equal the `(sequence, hash)` tail returned with the claim;
+    /// neither an early EOF nor a same-sequence fork may reach recovery or planning.
     async fn reload(&mut self) -> Result<(), ActivationError> {
-        let mut state = FoldState::empty();
-        let mut from = JournalSeq::ZERO;
-        loop {
-            let page = self
-                .ports
-                .journal
-                .read_page(&self.key, from, self.policy.read)
-                .await?;
-            let empty = page.entries.is_empty();
-            for entry in &page.entries {
-                apply(&mut state, entry)?;
-            }
-            match page.next {
-                Some(next) if !empty => from = next,
-                _ => break,
-            }
-        }
-        self.state = state;
+        let (claimed_seq, claimed_hash, workspace) = {
+            let claim = self
+                .claim
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            (
+                claim.head.journal_tail,
+                claim.head.journal_tail_hash,
+                claim.authority.workspace,
+            )
+        };
+        let restored = super::restore::restore(
+            self.ports.journal.as_ref(),
+            self.ports.snapshots.as_ref(),
+            workspace,
+            self.key,
+            claimed_seq,
+            claimed_hash,
+            self.policy.read,
+            self.policy.restore,
+            self.policy.max_snapshot_bytes,
+        )
+        .await?;
+        self.state = restored.state;
         Ok(())
     }
 
@@ -569,8 +916,12 @@ impl Session<'_> {
                 self.commit(draft).await?;
                 Ok(Some(Stop::Finished(FinishReason::Interrupted)))
             }
-            RecoveryDecision::QueryDurableOperation { id } => {
-                self.resolve_detached(&effect, &id).await.map(Some)
+            RecoveryDecision::QueryDurableOperation { .. } => Err(ActivationError::Unsupported {
+                step: "query_non_tool_durable_operation",
+                owed_by: "the provider or Hands recovery adapter selected by the effect kind; a tool executor route cannot safely answer this identity",
+            }),
+            RecoveryDecision::QueryDetachedTool { operation } => {
+                self.resolve_detached(&effect, &operation).await.map(Some)
             }
             RecoveryDecision::ReconstructFromReceipt { .. } => Err(ActivationError::Unsupported {
                 step: "reconstruct_from_receipt",
@@ -675,6 +1026,11 @@ impl Session<'_> {
     /// hand-back that merely stopped would leave the work durable and unscheduled.
     async fn hand_back(&mut self) -> Result<(), ActivationError> {
         let mut draft = self.draft(phase_tag(&self.state.phase));
+        self.wake_continuation(&mut draft);
+        self.commit(draft).await
+    }
+
+    fn wake_continuation(&self, draft: &mut Draft) {
         draft.wake(
             self.ports.ids.wake_id(),
             ParkReason::AwaitingCapacity {
@@ -684,7 +1040,17 @@ impl Session<'_> {
             self.authority.workspace.to_string(),
             self.policy.shard_for(self.agent()),
         );
-        self.commit(draft).await
+    }
+
+    fn cancellation_requested(&self) -> bool {
+        if self.drain.is_draining() {
+            // The supervisor normally propagates drain on its renewal tick, but a ready
+            // downstream future may start drain and return without yielding back to that
+            // supervisor. Observe the gate inside the session as well so the same poll
+            // cannot dispatch a replacement after shutdown has begun.
+            self.guard.cancel().cancel();
+        }
+        self.guard.cancel().is_cancelled()
     }
 
     /// Retires the source wake under the same session and agent fence as every decision.
@@ -716,7 +1082,11 @@ impl Session<'_> {
         let retirement_only = commit.is_retirement_only();
         let context = DecisionContext {
             authority: self.authority.clone(),
-            lease_expires_at: self.lease_expires_at,
+            lease_expires_at: self
+                .claim
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .expires_at,
             now: recorded_at,
         };
         match self.ports.journal.commit(&context, &commit).await {
@@ -738,8 +1108,8 @@ impl Session<'_> {
                 // learn what it wrote: the receipt a replay returns describes the write this
                 // attempt did not perform.
                 if !retirement_only {
-                    self.reload().await?;
                     self.refresh_guard().await?;
+                    self.reload().await?;
                     self.steps = self.steps.saturating_add(1);
                 }
                 Ok(())
@@ -761,6 +1131,10 @@ impl Session<'_> {
         self.guard = self
             .guard
             .advanced(head.revision, head.journal_tail.unwrap_or(JournalSeq::ZERO));
+        self.claim
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .head = head;
         Ok(())
     }
 
@@ -816,19 +1190,64 @@ impl Session<'_> {
             self.ports
                 .catalog
                 .model(&config.catalog_pin, config.provider, &config.model)?;
-        let request = CanonicalModelRequest {
-            provider: config.provider,
-            model: config.model.clone(),
-            system: config.system.clone(),
-            turns: context::view(&self.state, &self.policy.context, 0),
-            tools: Vec::new(),
-            max_output_tokens: capability.max_output_tokens,
-        };
-        let request_hash = ContentHash::of(&canonicalize_value(&request)?);
         let now = self.ports.clock.now();
         let deadline = now.plus_millis(self.policy.effect_deadline_ms);
 
         let existing = resumed.map(Prepared::from).or_else(|| self.open_prepared());
+        let effect = existing.as_ref().map_or_else(
+            || model_effect_id(self.agent(), &self.state),
+            |open| open.id,
+        );
+        if config.system.is_some() {
+            return Err(ActivationError::UnhydratedSystem);
+        }
+        if self
+            .state
+            .open_user
+            .iter()
+            .any(|reference| matches!(reference, ContentBlockRef::Placed { .. }))
+        {
+            return Err(ActivationError::UnhydratedContent);
+        }
+        let mut messages = context::view(&self.state, &self.policy.context, 0);
+        let open_user = self
+            .state
+            .open_user
+            .iter()
+            .filter_map(|reference| match reference {
+                ContentBlockRef::Inline { block } => Some(block.clone()),
+                ContentBlockRef::Placed { .. } => None,
+            })
+            .collect::<Vec<_>>();
+        if !open_user.is_empty() {
+            messages.push(CanonicalMessage {
+                role: Role::User,
+                blocks: open_user,
+            });
+        }
+        let max_output_tokens = capability.limits().max_output_tokens;
+        let mut request = CanonicalModelRequest {
+            selection: capability,
+            system: Vec::new(),
+            messages,
+            tools: Vec::new(),
+            tool_choice: ToolChoice::None,
+            parallel_tools: false,
+            max_output_tokens,
+            temperature_milli: None,
+            top_p_milli: None,
+            stop_sequences: Vec::new(),
+            reasoning: ReasoningRequest::ProviderDefault,
+            structured_output: None,
+            cache_breakpoints: Vec::new(),
+            correlation: CorrelationId::from_effect(effect.0),
+            request_hash: aex_wire::ContentHash::of(b"pending"),
+        };
+        request.request_hash = request.digest()?;
+        // The canonical provider request owns a wire SHA-256 digest; Brain's
+        // effect identity owns a blake3 `ContentHash`. Commit to the exact wire
+        // digest bytes without relabelling one algorithm as the other.
+        let request_hash = ContentHash::of(request.request_hash.as_bytes());
         // A prepared effect has never had its pre-send write, so this *is* its attempt.
         // Opening a second effect instead would leave the first dangling for the rest of the
         // agent's life and charge its reservation twice.
@@ -841,7 +1260,7 @@ impl Session<'_> {
             }
             (open.id, open.attempt)
         } else {
-            let id = model_effect_id(self.agent(), &self.state);
+            let id = effect;
             let mut draft = self.draft(phase_tag(&self.state.phase));
             decide::prepare(
                 &mut draft,
@@ -857,18 +1276,30 @@ impl Session<'_> {
             (id, 1)
         };
 
+        if self.cancellation_requested() {
+            self.hand_back().await?;
+            return Ok(Step::Stop(Stop::HandedBack));
+        }
+
         // The durable pre-send write. Nothing below this line may run without the ticket it
         // mints, which is why `dispatch` accepts nothing else.
         let ticket = self
             .ports
             .effects
-            .mark_dispatch_started(&self.guard, &effect, attempt, self.ports.clock.now())
+            .mark_dispatch_started(
+                &self.guard,
+                &self.authority,
+                &effect,
+                attempt,
+                self.ports.clock.now(),
+            )
             .await?;
         let outcome = self
             .ports
             .provider
             .dispatch(
                 &ticket,
+                config.credential,
                 &request,
                 &self.stream_budget(deadline),
                 &NullPreviewSink,
@@ -879,15 +1310,10 @@ impl Session<'_> {
         let mut draft = self.draft("effecting");
         match outcome {
             Ok(produced) => {
-                let (provider, model, usage) = decide::model_settlement(&produced);
-                decide::settle_model_call(
-                    &mut draft,
-                    effect,
-                    provider,
-                    model,
-                    &produced.message,
-                    usage,
-                )?;
+                if !produced.is_consistent() {
+                    return Err(ActivationError::InvalidProviderOutcome);
+                }
+                decide::settle_model_call(&mut draft, effect, &produced);
                 self.commit(draft).await?;
                 Ok(Step::Continue)
             }
@@ -901,19 +1327,45 @@ impl Session<'_> {
                             draft.next_seq(),
                             EffectKind::ModelCall,
                         );
+                        let mut next_request = request.clone();
+                        next_request.correlation = CorrelationId::from_effect(next.0);
+                        next_request.request_hash = next_request.digest()?;
+                        let next_request_hash =
+                            ContentHash::of(next_request.request_hash.as_bytes());
                         decide::prepare(
                             &mut draft,
                             next,
                             EffectKind::ModelCall,
                             EffectClass::NonReplayable,
-                            request_hash,
+                            next_request_hash,
                             attempt.saturating_add(1),
                             deadline,
                             provider_call_reservation(&self.state),
                         );
+                        if self.cancellation_requested() {
+                            // Drain may re-arm only because the adapter proved no byte left.
+                            // The replacement and its continuation wake share this commit,
+                            // so shutdown cannot strand a prepared identity between them.
+                            self.wake_continuation(&mut draft);
+                            self.commit(draft).await?;
+                            return Ok(Step::Stop(Stop::HandedBack));
+                        }
                         self.commit(draft).await?;
                         return Ok(Step::Continue);
                     }
+                    decide::finish(
+                        &mut draft,
+                        FinishReason::Failed,
+                        Some(decide::refusal(
+                            "provider_dispatch_failed",
+                            error.detail.as_str(),
+                        )),
+                    );
+                    self.commit(draft).await?;
+                    Ok(Step::Stop(Stop::Finished(FinishReason::Failed)))
+                }
+                FailureSettlement::KnownFailure { stage, proof } => {
+                    decide::settle_known_failure(&mut draft, effect, stage, proof);
                     decide::finish(
                         &mut draft,
                         FinishReason::Failed,
@@ -982,16 +1434,28 @@ impl Session<'_> {
             (id, 1)
         };
 
+        if self.cancellation_requested() {
+            self.hand_back().await?;
+            return Ok(Step::Stop(Stop::HandedBack));
+        }
+
         let ticket = self
             .ports
             .effects
-            .mark_dispatch_started(&self.guard, &effect, attempt, self.ports.clock.now())
+            .mark_dispatch_started(
+                &self.guard,
+                &self.authority,
+                &effect,
+                attempt,
+                self.ports.clock.now(),
+            )
             .await?;
         let prepared = PreparedToolCall {
             call: call.call.clone(),
             route: route.clone(),
             input: call.input.clone(),
             max_result_bytes: self.policy.context.tool_result_bytes,
+            hands_generation: config.hands_generation,
             control: ControlStateView {
                 todos: Vec::new(),
                 assistant_turns: self.state.assistant_turns,
@@ -1007,11 +1471,29 @@ impl Session<'_> {
         let mut draft = self.draft("effecting");
         match outcome {
             Ok(ToolOutcome::Completed(body)) => {
+                if body.executed_on != route.executor {
+                    let evidence = DispatchEvidence {
+                        stage: DispatchStage::Terminal,
+                        proof: DispatchProof::ResponseStarted,
+                        attempt,
+                        provider_request_id: None,
+                        external_operation: None,
+                        detached_tool: None,
+                        receipt: None,
+                        detail: Some(
+                            "tool executor receipt route does not match the pinned route"
+                                .to_owned(),
+                        ),
+                    };
+                    decide::settle_unknown(&mut draft, effect, evidence);
+                    self.commit(draft).await?;
+                    return Ok(Step::Stop(Stop::Finished(FinishReason::Interrupted)));
+                }
                 decide::settle_tool_call(
                     &mut draft,
                     effect,
                     call.call.clone(),
-                    body.blocks,
+                    body.content,
                     body.is_error,
                     body.executed_on,
                     body.duration_ms,
@@ -1028,12 +1510,17 @@ impl Session<'_> {
                 // never holds a socket or a lease. The operation id goes into the durable
                 // evidence first: without it the effect would be unresolvable rather than
                 // detached.
+                let operation = DetachedOperationRef {
+                    id: operation,
+                    executor: route.executor,
+                };
                 let evidence = DispatchEvidence {
                     stage: DispatchStage::Streaming,
                     proof: DispatchProof::ResponseStarted,
                     attempt,
                     provider_request_id: None,
-                    operation: Some(operation),
+                    external_operation: None,
+                    detached_tool: Some(operation.clone()),
                     receipt: None,
                     detail: None,
                 };
@@ -1041,10 +1528,11 @@ impl Session<'_> {
                     .effects
                     .mark_response_started(&ticket, &evidence)
                     .await?;
-                let due = now.plus_millis(millis(poll_after));
+                let due = detached_poll_due(now, deadline, poll_after);
                 let wait = wait_id(self.agent(), draft.next_seq());
                 let reason = ParkReason::AwaitingToolResult {
                     call: call.call.clone(),
+                    operation,
                 };
                 draft.append(JournalRecord::WaitOpened {
                     wait,
@@ -1063,15 +1551,50 @@ impl Session<'_> {
                 Ok(Step::Stop(Stop::Parked))
             }
             Err(error) => match classify_tool_failure(&error, attempt) {
-                FailureSettlement::NotSent { stage, .. } => {
+                FailureSettlement::NotSent { stage, retryable } => {
                     decide::settle_known_failure(&mut draft, effect, stage, DispatchProof::NotSent);
+                    if retryable && self.cancellation_requested() {
+                        let next = self.ports.ids.effect_id(
+                            &self.agent(),
+                            draft.next_seq(),
+                            EffectKind::ToolCall,
+                        );
+                        decide::prepare(
+                            &mut draft,
+                            next,
+                            EffectKind::ToolCall,
+                            route.class,
+                            request_hash,
+                            attempt.saturating_add(1),
+                            deadline,
+                            Vec::new(),
+                        );
+                        self.wake_continuation(&mut draft);
+                        self.commit(draft).await?;
+                        return Ok(Step::Stop(Stop::HandedBack));
+                    }
                     // A tool that could not be dispatched is a *result* the model decides
                     // about, not a reason to end the run: the alternative is terminalizing a
                     // whole session because one optional tool was unavailable.
                     draft.append(JournalRecord::ToolResult {
                         call: call.call.clone(),
-                        blocks: vec![CanonicalBlock::Text {
-                            text: error.detail.as_str().to_owned(),
+                        content: vec![ToolResultPart::Text {
+                            text: BoundedString::truncating(error.detail.as_str()),
+                        }],
+                        is_error: true,
+                        executed_on: route.executor,
+                        duration_ms: 0,
+                        effect,
+                    });
+                    self.commit(draft).await?;
+                    Ok(Step::Continue)
+                }
+                FailureSettlement::KnownFailure { stage, proof } => {
+                    decide::settle_known_failure(&mut draft, effect, stage, proof);
+                    draft.append(JournalRecord::ToolResult {
+                        call: call.call.clone(),
+                        content: vec![ToolResultPart::Text {
+                            text: BoundedString::truncating(error.detail.as_str()),
                         }],
                         is_error: true,
                         executed_on: route.executor,
@@ -1098,24 +1621,46 @@ impl Session<'_> {
     async fn resolve_detached(
         &mut self,
         effect: &DurableEffect,
-        operation: &aex_brain_domain::ids::DetachedOperationId,
+        operation: &DetachedOperationRef,
     ) -> Result<Stop, ActivationError> {
-        let status = self.ports.tools.query(operation).await;
-        let Some((wait, call)) = self.open_tool_wait() else {
-            return Err(ActivationError::Unsupported {
-                step: "detached_result_without_wait",
-                owed_by: "nothing: a detached effect is always committed with the wait it parks on, so this state means the journal and the effect row disagree",
-            });
+        let Some((wait, call, waiting_on)) = self.open_tool_wait() else {
+            return self.repair_detached_wait(effect, operation).await;
         };
+        if waiting_on != *operation {
+            return Err(ActivationError::Unsupported {
+                step: "detached_operation_ref_mismatch",
+                owed_by: "nothing: the effect evidence and journal wait must bind the same operation id and executor",
+            });
+        }
+        let now = self.ports.clock.now();
+        if now >= effect.deadline {
+            let mut draft = self.draft("effecting");
+            Self::settle_detached_unknown(&mut draft, effect, wait);
+            self.commit(draft).await?;
+            return Ok(Stop::Finished(FinishReason::Interrupted));
+        }
+        let status = self.ports.tools.query(operation).await;
+        let query_now = self.ports.clock.now();
+        // The query may have taken a material fraction of the effect lifetime. Build the
+        // decision only after it returns so its timestamp describes the commit attempt,
+        // while `query_now` independently enforces and bounds the persisted deadline.
         let mut draft = self.draft("effecting");
         match status {
             Ok(DetachedStatus::Running { poll_after }) => {
+                if query_now >= effect.deadline {
+                    Self::settle_detached_unknown(&mut draft, effect, wait);
+                    self.commit(draft).await?;
+                    return Ok(Stop::Finished(FinishReason::Interrupted));
+                }
                 // Still running. The poll timer is a wake, and a wake exists only inside a
                 // decision, so re-arming it is a commit rather than a queue call.
-                let due = self.ports.clock.now().plus_millis(millis(poll_after));
+                let due = detached_poll_due(query_now, effect.deadline, poll_after);
                 draft.wake(
                     self.ports.ids.wake_id(),
-                    ParkReason::AwaitingToolResult { call },
+                    ParkReason::AwaitingToolResult {
+                        call,
+                        operation: operation.clone(),
+                    },
                     due,
                     self.authority.workspace.to_string(),
                     self.policy.shard_for(self.agent()),
@@ -1124,52 +1669,143 @@ impl Session<'_> {
                 Ok(Stop::Parked)
             }
             Ok(DetachedStatus::Completed(body)) => {
+                if body.executed_on != operation.executor {
+                    Self::settle_detached_unknown(&mut draft, effect, wait);
+                    self.commit(draft).await?;
+                    return Ok(Stop::Finished(FinishReason::Interrupted));
+                }
                 Self::settle_detached(
                     &mut draft,
                     effect.id,
                     wait,
                     call,
-                    body.blocks,
+                    body.content,
                     body.is_error,
                     body.executed_on,
                     body.duration_ms,
                     body.checksum,
                 );
+                self.wake_continuation(&mut draft);
                 self.commit(draft).await?;
                 Ok(Stop::HandedBack)
             }
             Ok(DetachedStatus::Failed { reason }) => {
-                let blocks = vec![CanonicalBlock::Text { text: reason }];
-                let checksum = ContentHash::of(&canonicalize_value(&blocks)?);
+                let content = vec![ToolResultPart::Text {
+                    text: BoundedString::truncating(&reason),
+                }];
+                let checksum = ContentHash::of(&canonicalize_value(&content)?);
                 Self::settle_detached(
                     &mut draft,
                     effect.id,
                     wait,
                     call,
-                    blocks,
+                    content,
                     true,
-                    // A failed detached operation carries no executor on its durable record,
-                    // and inventing one would attribute the failure to an executor that may
-                    // never have run.
-                    ExecutorRoute::BrainInline,
+                    operation.executor,
                     0,
                     checksum,
                 );
+                self.wake_continuation(&mut draft);
                 self.commit(draft).await?;
                 Ok(Stop::HandedBack)
             }
+            Err(error) if error.retryable => {
+                if query_now >= effect.deadline {
+                    Self::settle_detached_unknown(&mut draft, effect, wait);
+                    self.commit(draft).await?;
+                    return Ok(Stop::Finished(FinishReason::Interrupted));
+                }
+                let due = detached_query_retry_due(query_now, effect.deadline);
+                draft.wake(
+                    self.ports.ids.wake_id(),
+                    ParkReason::AwaitingToolResult {
+                        call,
+                        operation: operation.clone(),
+                    },
+                    due,
+                    self.authority.workspace.to_string(),
+                    self.policy.shard_for(self.agent()),
+                );
+                self.commit(draft).await?;
+                Ok(Stop::Parked)
+            }
             Ok(DetachedStatus::Unknown) | Err(_) => {
-                let evidence = effect.evidence.clone().unwrap_or_else(|| {
-                    DispatchEvidence::ambiguous(
-                        effect.state.attempt().unwrap_or(1),
-                        DispatchStage::Streaming,
-                    )
-                });
-                decide::settle_unknown(&mut draft, effect.id, evidence);
+                Self::settle_detached_unknown(&mut draft, effect, wait);
                 self.commit(draft).await?;
                 Ok(Stop::Finished(FinishReason::Interrupted))
             }
         }
+    }
+
+    /// Repairs the sole valid inter-write state of a detached tool dispatch.
+    ///
+    /// `mark_response_started` must persist the operation identity before `WaitOpened`:
+    /// reversing them would allow a crash to leave an unresolvable wait. A crash between
+    /// those writes therefore leaves an effect row with the operation and a journal whose
+    /// phase is still `Effecting`. The journal is serial, so its first pending call is the
+    /// exact call this one open effect dispatched. Re-checking the request hash and pinned
+    /// executor makes that inference fail closed before the missing wait is reconstructed.
+    ///
+    /// This activation never queries or dispatches the operation. It only restores the
+    /// durable wait (or atomically opens and expires it), after which ordinary recovery owns
+    /// the external lookup.
+    async fn repair_detached_wait(
+        &mut self,
+        effect: &DurableEffect,
+        operation: &DetachedOperationRef,
+    ) -> Result<Stop, ActivationError> {
+        if effect.kind != EffectKind::ToolCall
+            || !matches!(self.state.phase, Phase::Effecting { effect: open } if open == effect.id)
+        {
+            return Err(ActivationError::Unsupported {
+                step: "detached_result_without_wait",
+                owed_by: "nothing: only the response-started/tool-effecting inter-write state may reconstruct a missing detached wait",
+            });
+        }
+        let Some(call) = first_pending(&self.state) else {
+            return Err(ActivationError::Unsupported {
+                step: "detached_result_without_pending_call",
+                owed_by: "nothing: an open detached tool effect must still have its ordered pending call",
+            });
+        };
+        let request_hash = ContentHash::of(&canonicalize_value(&call.input)?);
+        let config = self.config()?;
+        let route = self.ports.tools.route(&config.catalog_pin, &call.name)?;
+        if effect.request_hash != request_hash
+            || effect.class != route.class
+            || operation.executor != route.executor
+        {
+            return Err(ActivationError::RequestConflict { effect: effect.id });
+        }
+
+        let now = self.ports.clock.now();
+        let mut draft = self.draft("effecting");
+        let wait = wait_id(self.agent(), draft.next_seq());
+        let due = detached_query_retry_due(now, effect.deadline);
+        let reason = ParkReason::AwaitingToolResult {
+            call: call.call,
+            operation: operation.clone(),
+        };
+        draft.append(JournalRecord::WaitOpened {
+            wait,
+            reason: reason.clone(),
+            due: Some(due),
+        });
+        if now >= effect.deadline {
+            Self::settle_detached_unknown(&mut draft, effect, wait);
+            self.commit(draft).await?;
+            return Ok(Stop::Finished(FinishReason::Interrupted));
+        }
+        draft.phase("parked");
+        draft.wake(
+            self.ports.ids.wake_id(),
+            reason,
+            due,
+            self.authority.workspace.to_string(),
+            self.policy.shard_for(self.agent()),
+        );
+        self.commit(draft).await?;
+        Ok(Stop::Parked)
     }
 
     /// Appends the settlement, the wait resolution and the result, in the order the fold
@@ -1186,7 +1822,7 @@ impl Session<'_> {
         effect: EffectId,
         wait: WaitId,
         call: ToolCallId,
-        blocks: Vec<CanonicalBlock>,
+        content: Vec<ToolResultPart>,
         is_error: bool,
         executed_on: ExecutorRoute,
         duration_ms: u32,
@@ -1203,7 +1839,7 @@ impl Session<'_> {
         });
         draft.append(JournalRecord::ToolResult {
             call,
-            blocks,
+            content,
             is_error,
             executed_on,
             duration_ms,
@@ -1211,15 +1847,55 @@ impl Session<'_> {
         });
     }
 
-    fn open_tool_wait(&self) -> Option<(WaitId, ToolCallId)> {
+    fn settle_detached_unknown(draft: &mut Draft, effect: &DurableEffect, wait: WaitId) {
+        let evidence = effect.evidence.clone().unwrap_or_else(|| {
+            DispatchEvidence::ambiguous(
+                effect.state.attempt().unwrap_or(1),
+                DispatchStage::Streaming,
+            )
+        });
+        // `OutcomeUnknown` is terminal in the pure fold. Close the wait first so every
+        // record in this atomic decision remains foldable; reversing these two appends
+        // would place `WaitResolved` after an absorbing terminal.
+        draft.append(JournalRecord::WaitResolved {
+            wait,
+            resolution: WaitResolution::Cancelled,
+        });
+        decide::settle_unknown(draft, effect.id, evidence);
+    }
+
+    fn open_tool_wait(&self) -> Option<(WaitId, ToolCallId, DetachedOperationRef)> {
         self.state
             .waits
             .iter()
             .find_map(|(wait, reason)| match reason {
-                ParkReason::AwaitingToolResult { call } => Some((*wait, call.clone())),
+                ParkReason::AwaitingToolResult { call, operation } => {
+                    Some((*wait, call.clone(), operation.clone()))
+                }
                 _ => None,
             })
     }
+}
+
+const DETACHED_POLL_FLOOR: core::time::Duration = core::time::Duration::from_millis(250);
+const DETACHED_QUERY_RETRY_AFTER: core::time::Duration = core::time::Duration::from_secs(5);
+
+fn detached_poll_due(
+    now: Timestamp,
+    deadline: Timestamp,
+    requested: core::time::Duration,
+) -> Timestamp {
+    let delay = requested.max(DETACHED_POLL_FLOOR);
+    bounded_due(now, deadline, delay)
+}
+
+fn detached_query_retry_due(now: Timestamp, deadline: Timestamp) -> Timestamp {
+    bounded_due(now, deadline, DETACHED_QUERY_RETRY_AFTER)
+}
+
+fn bounded_due(now: Timestamp, deadline: Timestamp, delay: core::time::Duration) -> Timestamp {
+    let proposed = now.plus_millis(millis(delay));
+    proposed.min(deadline)
 }
 
 /// An effect whose intent is committed and whose pre-send write has not happened.

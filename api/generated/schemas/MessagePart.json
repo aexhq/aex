@@ -10,6 +10,14 @@
     {
       "$ref": "aex:schema:MessagePartFile",
       "x-aex-discriminator-value": "file"
+    },
+    {
+      "$ref": "aex:schema:MessagePartToolCall",
+      "x-aex-discriminator-value": "tool_call"
+    },
+    {
+      "$ref": "aex:schema:MessagePartToolResult",
+      "x-aex-discriminator-value": "tool_result"
     }
   ],
   "title": "MessagePart",

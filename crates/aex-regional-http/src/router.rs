@@ -1,20 +1,20 @@
-//! Route ownership: the partition of the generated regional table across the
-//! regional deployables.
+//! Planned route ownership: the partition of the generated regional table
+//! across the regional deployables responsible for closing it.
 //!
 //! There is exactly one route table. Ownership is a *projection* of it, derived
-//! per route from the generated descriptor, so a new regional route lands on a
-//! deployable by construction rather than by somebody remembering to add it to a
-//! second list.
+//! per route from the generated descriptor. This assigns responsibility and
+//! selection closure; actual mount evidence is the narrower `servedArtifact`
+//! projection in the generated delivery registry.
 
 use aex_wire::error::PrecedenceStage;
-use aex_wire::routes::{Plane, RouteId, TransportKind, route};
+use aex_wire::routes::{Plane, RouteId, route};
 use aex_wire::server::RouteGroup;
 use aex_wire::types::Region;
 
 /// One-to-one with the wire-contract precedence table.
 pub const EDGE_PRECEDENCE: [PrecedenceStage; 13] = PrecedenceStage::ALL;
 
-/// Exactly one deployable owner for every generated regional route.
+/// Exactly one planned deployable owner for every generated regional route.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RouteOwner {
     /// Finite session/resource API.
@@ -51,11 +51,10 @@ impl RouteOwner {
         }
     }
 
-    /// Every regional route this deployable owns, in `RouteId` order.
+    /// Every regional route this deployable is planned to own, in `RouteId` order.
     ///
-    /// This is what a composition root mounts. Because it is derived from the
-    /// table, a route that is authored and never mounted fails the composition
-    /// test rather than answering `404` in production.
+    /// A composition root may mount only the generated actual-service subset;
+    /// callers must not treat this planned partition as mount evidence.
     #[must_use]
     pub fn routes(self) -> Vec<RouteId> {
         RouteId::ALL
@@ -65,12 +64,12 @@ impl RouteOwner {
             .collect()
     }
 
-    /// The subset of `group` this deployable owns, in `RouteId` order.
+    /// The planned subset of `group` for this deployable, in `RouteId` order.
     ///
     /// A group is one authoring fragment, and two fragments are split across two
     /// deployables: `regional:secrets` (metadata reads here, plaintext admission
-    /// there) and `regional:provider-credentials`. Mounting therefore iterates a
-    /// group and filters by owner; it never lists templates.
+    /// there) and `regional:provider-credentials`. A composition narrows this
+    /// planned slice to its actual-service set before mounting.
     #[must_use]
     pub fn routes_in(self, group: RouteGroup) -> Vec<RouteId> {
         group
@@ -92,7 +91,7 @@ impl RouteOwner {
     }
 }
 
-/// Resolves a generated route to its one regional deployable.
+/// Resolves a generated route to its one planned regional deployable.
 ///
 /// Returns `None` for a central route, which no regional deployable may serve.
 #[must_use]
@@ -101,25 +100,14 @@ pub fn route_owner(id: RouteId) -> Option<RouteOwner> {
     if descriptor.plane != Plane::Regional {
         return None;
     }
-    if descriptor.transport == TransportKind::Ndjson {
-        return Some(RouteOwner::Stream);
+    match descriptor.serving_artifact {
+        "regional-session-api" => Some(RouteOwner::SessionApi),
+        "regional-secret-api" => Some(RouteOwner::SecretApi),
+        "regional-stream" => Some(RouteOwner::Stream),
+        "regional-observation-api" => Some(RouteOwner::ObservationApi),
+        "regional-otlp" => Some(RouteOwner::Otlp),
+        _ => None,
     }
-    if descriptor.fragment == "otlp" {
-        return Some(RouteOwner::Otlp);
-    }
-    if matches!(descriptor.fragment, "observations" | "telemetry-lifecycle") {
-        return Some(RouteOwner::ObservationApi);
-    }
-    if matches!(
-        id,
-        RouteId::SecretPut
-            | RouteId::SecretDelete
-            | RouteId::SecretRevoke
-            | RouteId::ProviderCredentialRegister
-    ) {
-        return Some(RouteOwner::SecretApi);
-    }
-    Some(RouteOwner::SessionApi)
 }
 
 /// Shared edge services passed to each generated router.

@@ -3,19 +3,15 @@
 # This crate owns the identity and the public shape only. Enforcement and the
 # audited override path belong to the regional capacity authority.
 limits:
-  - { id: "query.page", shape: scalar, doc: "Largest accepted collection page size." }
-  - { id: "request.body_bytes", shape: scalar, doc: "Largest accepted encoded JSON request body." }
-  - { id: "otlp.body_bytes", shape: map, doc: "Largest accepted encoded and decoded OTLP body." }
-  - { id: "stream.frame", shape: map, doc: "Largest NDJSON records frame in observations and bytes." }
-  - { id: "session.concurrent", shape: scalar, doc: "Concurrently non-idle sessions in the workspace." }
-  - { id: "session.subagent_depth", shape: scalar, doc: "Deepest subagent nesting inside one run." }
-  - { id: "session.subagent_concurrency", shape: scalar, doc: "Concurrently admitted subagents inside one run." }
-  - { id: "upload.part_bytes", shape: scalar, doc: "Largest single staged upload part." }
-  - { id: "upload.object_bytes", shape: scalar, doc: "Largest staged upload object." }
-  - { id: "download.range_bytes", shape: scalar, doc: "Largest byte range one download grant may sign." }
-  - { id: "registry.value_bytes", shape: scalar, doc: "Largest registered resource value." }
-  - { id: "registry.entries", shape: map, doc: "Registered resource count per kind." }
-  - { id: "secret.value_bytes", shape: scalar, doc: "Largest accepted secret value." }
-  - { id: "telemetry.retention_days", shape: scalar, doc: "Days an admitted observation is retained." }
-  - { id: "telemetry.export_bytes", shape: scalar, doc: "Largest telemetry export artifact." }
-  - { id: "observation.filter", shape: map, doc: "Structural bounds of an observation filter." }
+  - { id: "context.tool_result_bytes", shape: scalar, doc: "Largest tool result admitted into the next model context." }
+  - { id: "session.materialized_agents", shape: scalar, doc: "Root-plus-subagents concurrently materialized in one session." }
+  - { id: "api.json_body", shape: scalar, doc: "Largest accepted encoded JSON request body." }
+  - { id: "telemetry.batch", shape: map, dimensions: [encoded_bytes, decoded_bytes, records, observation_bytes, attributes, attribute_key_bytes, attribute_value_bytes, array_elements], doc: "Encoded, decoded, record and normalized-observation admission bounds." }
+  - { id: "telemetry.ingest_rate", shape: map, dimensions: [sustained_bytes_per_second, burst_bytes, sustained_requests_per_second, burst_requests], doc: "Sustained and burst byte and request rates per workspace." }
+  - { id: "telemetry.metric_series", shape: scalar, doc: "Exact active metric-series ceiling per workspace." }
+  - { id: "query.filter", shape: map, dimensions: [depth, leaves, children_per_boolean, in_values, string_bytes], doc: "Structural bounds of an observation query filter." }
+  - { id: "query.page", shape: map, dimensions: [items, serialized_bytes], doc: "Largest accepted collection page in items and serialized bytes." }
+  - { id: "stream.frame", shape: map, dimensions: [records, encoded_bytes], doc: "Largest NDJSON records frame in observations and encoded bytes." }
+  - { id: "metric.aggregate", shape: map, dimensions: [interval_min_seconds, interval_max_seconds, group_fields, calculations, buckets_per_series, rows], doc: "Interval, grouping, calculation, bucket and row aggregation bounds." }
+  - { id: "content.bundle_expand", shape: map, dimensions: [expanded_bytes, entries, path_bytes], doc: "Expanded bytes, entries and path length admitted from a bundle." }
+  - { id: "tools.io_safety", shape: map, dimensions: [web_fetch_bytes, shell_output_bytes, grep_input_bytes, head_tail_input_bytes, walk_files, list_entries, list_depth], doc: "Per-tool byte, traversal and listing safety bounds." }

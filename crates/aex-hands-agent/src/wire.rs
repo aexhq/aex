@@ -511,6 +511,36 @@ pub fn decode_response<'a>(
     bytes: &'a [u8],
     expected: &FrameExpectation,
 ) -> Result<Frame<'a, ResponsePreamble>, FrameError> {
+    let preamble = decode_response_preamble(bytes, expected)?;
+    let declared_total = RESPONSE_PREAMBLE_LEN as u64 + u64::from(preamble.payload_len);
+    if bytes.len() as u64 != declared_total {
+        return Err(FrameError::LengthMismatch {
+            declared: declared_total,
+            received: bytes.len() as u64,
+        });
+    }
+    Ok(Frame {
+        preamble,
+        payload: &bytes[RESPONSE_PREAMBLE_LEN..],
+    })
+}
+
+/// Decodes and validates only a response preamble.
+///
+/// A streaming client calls this as soon as the fixed 56-byte preamble arrives.
+/// In particular, the declared payload bound is checked before that client
+/// allocates a payload-sized buffer. [`decode_response`] uses the same function,
+/// so the streaming and whole-frame paths cannot disagree about the protocol.
+///
+/// # Errors
+///
+/// Returns [`FrameError`] for a short preamble, wrong magic or version, unknown
+/// verb or status, failed header check, non-zero reserved bytes, wrong generation,
+/// stale fence, or oversized declared payload.
+pub fn decode_response_preamble(
+    bytes: &[u8],
+    expected: &FrameExpectation,
+) -> Result<ResponsePreamble, FrameError> {
     if bytes.len() < RESPONSE_PREAMBLE_LEN {
         return Err(FrameError::Malformed {
             at: "length",
@@ -580,27 +610,17 @@ pub fn decode_response<'a>(
             actual: u64::from(payload_len),
         });
     }
-    let declared_total = RESPONSE_PREAMBLE_LEN as u64 + u64::from(payload_len);
-    if bytes.len() as u64 != declared_total {
-        return Err(FrameError::LengthMismatch {
-            declared: declared_total,
-            received: bytes.len() as u64,
-        });
-    }
     let mut agent_build = [0u8; 8];
     agent_build.copy_from_slice(&bytes[40..48]);
-    Ok(Frame {
-        preamble: ResponsePreamble {
-            schema_version: expected.schema_version,
-            verb,
-            status,
-            generation,
-            fence,
-            payload_len,
-            guest_revision: read_u32(bytes, 36),
-            agent_build,
-        },
-        payload: &bytes[RESPONSE_PREAMBLE_LEN..],
+    Ok(ResponsePreamble {
+        schema_version: expected.schema_version,
+        verb,
+        status,
+        generation,
+        fence,
+        payload_len,
+        guest_revision: read_u32(bytes, 36),
+        agent_build,
     })
 }
 
@@ -681,8 +701,8 @@ mod tests {
     use super::{
         DECODE_STEPS, FLAG_TRAILING_BINARY, Frame, FrameError, FrameExpectation, PROTOCOL_V1,
         REQUEST_PREAMBLE_LEN, RESPONSE_PREAMBLE_LEN, RequestPreamble, ResponsePreamble,
-        ResponseStatus, Verb, decode_request, decode_response, encode_request, encode_response,
-        split_result_payload, verify_body,
+        ResponseStatus, Verb, decode_request, decode_response, decode_response_preamble,
+        encode_request, encode_response, split_result_payload, verify_body,
     };
     use aex_hands_protocol::rpc::Fence;
     use aex_internal_contracts::SchemaVersion;
@@ -755,6 +775,23 @@ mod tests {
         assert_eq!(frame.preamble.guest_revision, 7);
         assert_eq!(frame.preamble.agent_build, [1, 2, 3, 4, 5, 6, 7, 8]);
         assert_eq!(frame.payload, payload);
+    }
+
+    #[test]
+    fn a_streaming_reader_can_refuse_a_declared_oversize_from_the_preamble_alone() {
+        let valid = encode_response(&response(1_048_576), &[]);
+        let preamble = decode_response_preamble(&valid[..RESPONSE_PREAMBLE_LEN], &expectation())
+            .expect("the exact ceiling is accepted before a body is allocated");
+        assert_eq!(preamble.payload_len, 1_048_576);
+
+        let oversize = encode_response(&response(1_048_577), &[]);
+        assert!(matches!(
+            decode_response_preamble(&oversize[..RESPONSE_PREAMBLE_LEN], &expectation()),
+            Err(FrameError::Oversize {
+                limit: 1_048_576,
+                actual: 1_048_577
+            })
+        ));
     }
 
     #[test]

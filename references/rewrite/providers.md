@@ -1,6 +1,6 @@
 ---
 title: Providers and model catalog — what landed
-description: The implemented state of aex-model-catalog, aex-brain-provider-gateway and tests/live/aex-live-model-catalog. Records the canonical vocabulary Brain re-exports, the reconciliations taken against plan 08, what is deliberately deferred, and what each peer stream must change.
+description: The implemented state of aex-model-catalog, aex-brain-provider-gateway, aex-brain-provider-custody, and tests/live/aex-live-model-catalog. Records the canonical vocabulary Brain re-exports, the reconciliations taken against plan 08, what is deliberately deferred, and what each peer stream must change.
 keywords:
   - byok
   - providers
@@ -10,7 +10,7 @@ keywords:
   - credentials
 audience: implementation agents and maintainers
 status: accepted
-last_verified: 2026-08-01
+last_verified: 2026-08-03
 related:
   - references/rewrite/contracts.md
   - references/rewrite/test-architecture.md
@@ -20,8 +20,9 @@ related:
 
 Plans of record: `references/rust-native-rewrite-2026-07-31/plans/08-providers-byok.md` and `references/rust-native-rewrite-2026-07-31/plans/07-brain-core.md`, in the parent workspace.
 
-Three packages: `crates/aex-model-catalog` (pure), `crates/aex-brain-provider-gateway`
-(the adapter), and `tests/live/aex-live-model-catalog` (the conformance harness).
+Four packages: `crates/aex-model-catalog` (pure), `crates/aex-brain-provider-gateway`
+(the transport/dialects), `crates/aex-brain-provider-custody` (regional binding and
+KMS custody), and `tests/live/aex-live-model-catalog` (the conformance harness).
 
 Six providers, no gateway, no `OpenRouter`, no arbitrary base URL, no
 cross-provider fallback, no model-name inference. `anthropic` is canonical and
@@ -64,8 +65,8 @@ The launch document ships every `(provider, model)` pair `Staged`, so a fresh
 
 | Module | What it owns |
 | --- | --- |
-| `wire_pending` | the Brain ports and secret-custody types this crate implements but does not own |
-| `error` | `RedactedDetail`, `ProviderFailure`, `RateLimitFeedback`, `RateLimitSource` |
+| `wire_pending` | temporary memory-reservation and ciphertext-reference shapes; Brain ports and secret generations are re-exported from their owners |
+| `error` | `ProviderFailure`, `RateLimitFeedback`, `RateLimitSource`; canonical failure kinds/classes/details are re-exported from `aex-model-catalog` |
 | `redact` | the bounded, credential-safe redactor |
 | `sse` | the incremental bounded SSE decoder |
 | `budget` | `StreamBudget`, `BudgetOverrun`, `BudgetLedger` |
@@ -74,6 +75,9 @@ The launch document ships every `(provider, model)` pair `Staged`, so a fresh
 | `credential` | binding model, the two consumed ports, `DenyAllCredentialDirectory`, `ProviderApiKey`, `CredentialCache` |
 | `adapter` | the `ProviderAdapter` trait, `DialectState`, `RequestBuildError`, `FrameOutcome`, `FrameDecodeError` |
 | `openai` `anthropic` `deepseek` `zai` `moonshotai` `google` | the six dialect adapters |
+| `build_identity` | one compile-time source-tree identity for the complete six-adapter build; runtime environment variables cannot relabel it |
+| `catalog_port` | bounded signed-collection loading into an immutable content-addressed revision cache, with explicit still-live session-pin coverage |
+| `router` | the total six-provider route, credential affinity/revocation, isolated pool, in-call retry, bounded stream, durable response-start evidence, sealing and receipt |
 
 Three properties are structural rather than conventional:
 
@@ -93,6 +97,53 @@ Three properties are structural rather than conventional:
   frame calls `DialectState::mark_started`, which returns `ResponseStarted`
   exactly once, because `mark_response_started` is a durable write that must
   mean "the provider is generating".
+- **Tenant scope is carried per dispatch, never stored as process authority.**
+  The immutable ticket supplies organization and workspace. Credential-cache
+  and HTTP-pool keys include both plus exact binding revision/generation, and
+  each cache uses 16 bounded shards so unrelated brains do not serialize on one
+  process-wide mutex. A hot credential hit shares one private zeroizing
+  allocation instead of copying plaintext under the shard lock. The KMS branch
+  material cache also includes the complete encryption-context digest, so a
+  hit cannot bypass exact organization/workspace/name/generation context
+  equality.
+- **Revocation is a strongest-practical pre-send fence, not atomic with provider
+  I/O.** Every send attempt re-reads the exact provider binding, secret metadata,
+  and hidden generation concurrently, immediately before socket submission.
+  Binding state/revision, secret epoch/state, generation `revoked_at`, ciphertext,
+  and context digest must still match. An observed failure invalidates the exact
+  decrypted-key and HTTP-pool entries. DynamoDB cannot transact with an external
+  provider; a revocation that commits after this read may race with the already
+  in-flight attempt, while the next attempt must fail closed.
+- **Catalog startup verifies a collection, not merely its newest head.** The
+  release supplies an oldest-to-newest contiguous chain plus a sorted unique
+  list produced by exact still-live session-retention accounting. Aggregate
+  bytes, revision count, envelope bytes, signatures, content addresses, chain,
+  adapter identity and every `Active` receipt gate must all pass before the
+  immutable synchronous lookup cache exists. Every declared live pin must be
+  present; the loader never guesses a retention window or accepts last-N.
+- **Signature verification is all-supplied strict.** An envelope needs at least
+  one signature, and every supplied signature must be unique, bounded, trusted
+  and valid. A valid trusted signature cannot hide an unknown or bad extra in
+  either order. Release rotation is an overlapping, sorted, unique 1–8-key
+  compiled trust-root set that can verify old live-pin artifacts and the new
+  head together; it is not an any-valid relaxation.
+- **The adapter identity is source-derived for every build.** The gateway build
+  script hashes the complete recursively sorted Rust source tree with explicit
+  path/content length framing and asserts all six provider modules are in
+  scope. Runtime environment cannot relabel it, and the catalog receipt must
+  name that exact digest.
+
+### `aex-brain-provider-custody`
+
+This stateless adapter bridges the gateway's narrow credential ports to the
+sole workspace-secret ciphertext authority. Resolution performs one
+provider-qualified, strongly consistent `pcr_` point read, then reads secret
+metadata and the pinned hidden generation concurrently. Revalidation reads all
+three exact rows concurrently. Decrypt reconstructs the complete typed
+plane/region/organization/workspace/name/generation context, proves its digest
+equals the digest stored with the ciphertext, and only then invokes KMS. Tenant
+authority comes from the immutable dispatch ticket; no current tenant/default
+is stored in `brain-mux`.
 
 ### `tests/live/aex-live-model-catalog`
 
@@ -107,15 +158,16 @@ diff. `ReceiptBuilder::build` refuses a receipt missing any probe run;
 
 | Gap | How it is handled |
 | --- | --- |
-| `ProviderAdapter::source_digest` returns a per-module compiled tag | A catalog document carries **one** `required_adapter_source`, so six differing digests can never all match it. Every adapter flagged this independently. The digest must be stamped by the build over the whole adapter source tree, or injected rather than derived — a build-system decision, not a per-file one. `Catalog::load` already refuses a mismatch, so this fails closed today. |
 | `anthropic.rs` pins an offline P-256 public key and signature in its test module | `openai.rs` was migrated to `fixture::qualified`; `anthropic.rs` still loads a signed fixture document, which breaks loudly (`"re-sign it if the document shape changed"`) if `document.rs` or `fixture::entry` moves. Migrating it is a mechanical follow-up now that `fixture::qualified` exists. |
 | Z.AI's path is recorded two ways in plan 08 §5.4 | The row gives the base as `https://api.z.ai/api/paas/v4` and the path as `POST /paas/v4/chat/completions`, which cannot both be right. The adapter follows the explicit path, producing `https://api.z.ai/paas/v4/chat/completions`. Probe P-01 settles it before any Z.AI pair can go `Active`; until then every Z.AI entry is `Staged`, so nothing dispatches. |
 | `decode`, `finish` and `classify_http` are not handed the `QualifiedModel` | Each adapter therefore compiles its own stop-token and error tables rather than reading `entry.stop_reason_map` / `entry.error_map`. For these six dialects both are provider-invariant, and `anthropic.rs` asserts the compiled table and the catalog's copy agree. But it means the catalog's copies are documentation for the decode path rather than its source of truth. Widening the trait to take the model would make them authoritative. |
 | The 23 probes need a real customer key per provider | The `[[test]]` targets stay undeclared and the manifest keeps `not_applicable.targets` naming OD-07. The harness is compiled and unit-tested; adding the target is one change. `ProviderKeys::require` panics with the variable name, proved by a `#[should_panic]` case. |
 | No `(provider, model)` pair can ship `Active` | Every launch entry is `Staged` with an `unearned()` receipt — a positive record that the evidence has not been earned, not an absence. |
-| The `pcr_` binding table, its routes and the KMS decrypt adapter | Owned by the regional secret stream (OD-23). This crate defines `ProviderCredentialDirectory` and `ProviderCredentialDecryptor`, consumes them, and ships `DenyAllCredentialDirectory` / `DenyAllCredentialDecryptor`. There is **no** plaintext-from-environment path — not disabled, absent. |
+| Provider credential registration | The existing `pcr_` row is a reference to one workspace-secret generation. Exact provider-qualified reads, mutable binding/secret revalidation, and KMS reveal are composed through `aex-brain-provider-custody`; registration remains unmounted because the request has no decided workspace-secret name/collision contract and the active wrapped branch key is not exposed by a port. There is **no** plaintext-from-environment path — not disabled, absent. |
 | `resolve_unknown` | Returns `UnknownResolution::NoDurableOperation` for all six. Implemented, not stubbed: no provider in this set documents a result lookup for a completed streaming generation. Anthropic is stateless; OpenAI's `GET /v1/responses/{id}` requires `store: true`, which AEX disables; Gemini Interactions is not the launch dialect. |
-| The composed `impl ProviderPort` (`router`) | The `ProviderPort` trait is declared and the six adapters implement `ProviderAdapter`. The composed router, the in-call retry policy and the `loom` cancel-race model are the remaining Slice 5 items. |
+| Brain session credential pin | Complete for runtime: `ResolvedAgentConfig` journals a required four-scalar `SessionCredentialPin`, `ProviderPort` requires it, and `DispatchTicket` carries workspace plus organization authority. Revision and generation are non-zero at construction and serde boundaries; epoch zero remains the valid initial epoch. Missing prelaunch pins fail decode; mismatched scope, revision, generation, provider, context digest, binding state, or revocation epoch fails before the next provider send. Session-create admission still has to mint the pin from an explicit credential selection. |
+| Real production catalog release inputs | `brain-mux` now composes a verified immutable collection when its exact canonical trust-root set and signed collection are build-bound with independent SHA-256 digests. The release plan records those values using a stable workspace-relative collection path; runtime environment is never consulted. Ordinary local builds carry an exact blocker and stay unready. Protected publication invokes the required-input preflight before compilation. This repository still has no real publisher set or signed collection, and the launch catalog has no `Active` entry, so publication/readiness correctly remain blocked rather than inventing authority. |
+| Brain content hydration | Canonical requests carry inline user turns. A configured system reference or placed user block fails before dispatch because the application has no content-hydration port yet. |
 | `trybuild` type-level leak test | The workspace has no `trybuild` dependency. The same property is asserted by construction — `ProviderApiKey` implements none of `Clone`, `Debug`, `Display`, `Serialize`, `Deref`, and `WireRequest` has no field that can hold one — plus runtime cases over `Debug` output, error bodies and receipts. Adding `trybuild` is a workspace-manifest change and belongs to whoever owns that decision. |
 | `miri` over the `credential` module | Not run: the module contains no `unsafe` and the crate forbids it, so `miri` would add build time without a proposition to test. |
 
@@ -148,7 +200,7 @@ pub struct CompleteProof(pub aex_wire::ContentHash);
 pub enum StopReason { EndTurn, ToolUse, MaxOutputTokens, StopSequence, Refusal }
 pub enum SealError { EmptyBlocks, UnbalancedToolUse, DuplicateToolCallId,
     RefusalWithoutContent, ReasoningTokenMissing, ReasoningProvenanceMismatch,
-    BlockLimit, InvalidToolInputJson }
+    BlockLimit, InvalidToolInputJson, InconsistentUsage }
 pub fn seal(blocks, stop, usage, model) -> Result<CompleteAssistantMessage, SealError>;
 
 // usage
@@ -244,13 +296,12 @@ aex_model_catalog::document::{ModelEntry, ModelLimits, CapabilitySet, Capability
 - `TODO(cross-stream): aex-brain-application may widen ProviderFailureClass to the
   fifteen ProviderFailureKind members. Until then ProviderFailureKind::class() is
   the single translation site.`
-- `TODO(cross-stream): aex-secret-domain owns SourceGeneration, RevocationEpoch,
-  CiphertextRef and EncryptionContext; they are restated in the gateway's
-  wire_pending and marked for replacement.`
-- `TODO(cross-stream): the regional secret stream owns the pcr_ binding table, its
-  registration/list/revoke routes and the KMS decrypt adapter, and implements
-  ProviderCredentialDirectory and ProviderCredentialDecryptor. Until then brain-mux
-  binds DenyAllCredentialDirectory.`
+- `DONE: aex-secret-domain owns SourceGeneration, RevocationEpoch, CiphertextRef
+  and EncryptionContext; the gateway imports/re-exports those exact types.`
+- `PARTIAL: regional custody owns the pcr_ binding table and secret ciphertext.
+  aex-brain-provider-custody implements exact directory reads, revalidation and
+  KMS reveal, and brain-mux composes it. Provider registration remains blocked by
+  the two explicit contract gaps recorded in §2.`
 - `TODO(cross-stream): the contracts stream renders CatalogRevision as
   mc1_<hex of blake3-256> and adds no other catalog field to the public wire.
   aex_wire::CatalogRevision does not exist yet; it lives in
@@ -260,9 +311,9 @@ aex_model_catalog::document::{ModelEntry, ModelLimits, CapabilitySet, Capability
   grammar; otherwise Brain re-exports aex_model_catalog::ToolCallId (D-32).`
 - `TODO(cross-stream): aex-brain-test-support hosts the provider_fake module this
   stream owns; the peer owns the crate manifest.`
-- `TODO(cross-stream): runtimes/brain-mux composes CompositeCatalog { models:
-  Arc<Catalog>, tools: Arc<ToolCatalog> } to satisfy CatalogPort, and calls
-  ClientPool::close plus CredentialCache::invalidate on every revocation wake.`
+- `PARTIAL: runtimes/brain-mux now composes provider custody/KMS/router and reports
+  that binding independently. Signed catalog, tool executors, and Hands backend
+  remain named readiness blockers; no wake is received while any remains absent.`
 
 ---
 

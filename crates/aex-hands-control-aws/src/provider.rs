@@ -63,9 +63,12 @@ pub const INTERNET_EGRESS: &str = "INTERNET_EGRESS";
 ///
 /// Image mutation lives in a separate release role. `CreateMicrovmShellAuthToken`
 /// is absent, which is what makes "no shell ingress" an IAM fact rather than a
-/// promise not to call something.
-pub const RUNTIME_IAM_ACTIONS: [&str; 7] = [
+/// promise not to call something. `PassNetworkConnector` is a permission-only
+/// dependency of `RunMicrovm` when the request uses AWS-managed ingress or
+/// egress connectors; it does not grant connector mutation or network control.
+pub const RUNTIME_IAM_ACTIONS: [&str; 8] = [
     "lambda:RunMicrovm",
+    "lambda:PassNetworkConnector",
     "lambda:GetMicrovm",
     "lambda:CreateMicrovmAuthToken",
     "lambda:SuspendMicrovm",
@@ -259,6 +262,9 @@ pub struct MicrovmDescription {
     pub endpoint: Option<String>,
     /// When the provider says it launched.
     pub launched_at: Option<Timestamp>,
+    /// The request identity on an effect response. `GetMicrovm` and list reads
+    /// carry none; `RunMicrovm` must preserve it for the durable launch receipt.
+    pub request_id: Option<ProviderRequestId>,
 }
 
 /// An endpoint authorization token.
@@ -464,6 +470,7 @@ mod tests {
     #[test]
     fn no_shell_ingress_action_is_in_the_runtime_role() {
         assert!(RUNTIME_IAM_ACTIONS.contains(&"lambda:RunMicrovm"));
+        assert!(RUNTIME_IAM_ACTIONS.contains(&"lambda:PassNetworkConnector"));
         for forbidden in FORBIDDEN_IAM_ACTIONS {
             assert!(
                 !RUNTIME_IAM_ACTIONS.contains(&forbidden),

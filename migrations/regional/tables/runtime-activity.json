@@ -2,7 +2,7 @@
   "schema": "aex.regional-table.v1",
   "table": "runtime-activity",
   "owner": "regional-stores",
-  "purpose": "The exact Hands generation head, lifecycle intents and immutable receipts, transactional usage outbox, true-idle probes, the current-generation pointer a Brain activation reads, and a sharded evaluation due index for the reaper.",
+  "purpose": "The exact Hands generation head, idempotent open-operation admission markers, lifecycle intents and immutable receipts, transactional usage outbox, true-idle probes, the current-generation pointer a Brain activation reads, and a sharded evaluation due index for the reaper.",
   "billingMode": "PAY_PER_REQUEST",
   "deletionProtection": true,
   "pointInTimeRecovery": { "enabled": true, "retentionDays": 35 },
@@ -60,7 +60,8 @@
     "lifecycle_receipt",
     "idle_probe",
     "current_generation",
-    "usage_outbox"
+    "usage_outbox",
+    "hands_operation_admission"
   ],
   "iam": [
     {
@@ -83,6 +84,7 @@
         "dynamodb:Query",
         "dynamodb:PutItem",
         "dynamodb:UpdateItem",
+        "dynamodb:DeleteItem",
         "dynamodb:TransactWriteItems"
       ],
       "resources": ["table"]

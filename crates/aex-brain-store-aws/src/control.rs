@@ -7,7 +7,7 @@
 use aex_brain_application::ports::AgentHead;
 use aex_brain_domain::budget::{BudgetNode, DIMENSIONS, DimensionVector};
 use aex_brain_domain::ids::{
-    AgentKey, AgentRevision, CancelEpoch, EffectId, Fence, JournalSeq, Timestamp,
+    AgentKey, AgentRevision, CancelEpoch, ContentHash, EffectId, Fence, JournalSeq, Timestamp,
 };
 use aex_brain_domain::journal::FinishReason;
 use aex_session_dynamodb::attr::{CodecError, Item, Row};
@@ -36,12 +36,24 @@ pub fn decode(
     let row = Row::bind(item, AGENT_CONTROL)?;
     let tail = row.u64("journalTail")?;
     let has_journal = row.boolean("hasJournal").unwrap_or(tail > 0);
+    let tail_hash = row
+        .opt_string("journalTailHash")?
+        .map(parse_hash)
+        .transpose()?;
+    if has_journal != tail_hash.is_some() {
+        return Err(CodecError::Malformed {
+            item_type: AGENT_CONTROL,
+            attribute: "journalTailHash",
+            reason: "journal tail sequence and hash must be present together".to_owned(),
+        });
+    }
     Ok(AgentHead {
         key,
         generation: row.id::<GenerationId>("generationId")?,
         revision: AgentRevision(row.u64("revision")?),
         fence: Fence(row.u64("fence")?),
         journal_tail: has_journal.then_some(JournalSeq(tail)),
+        journal_tail_hash: tail_hash,
         cancel_epoch: CancelEpoch(row.opt_u64("cancelEpoch")?.unwrap_or(0)),
         finish: row
             .opt_string("finishReason")?
@@ -57,6 +69,31 @@ pub fn decode(
                 Timestamp::from_millis(value.unix_millis())
             }),
     })
+}
+
+fn parse_hash(text: &str) -> Result<ContentHash, CodecError> {
+    if text.len() != 64
+        || !text
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(CodecError::Malformed {
+            item_type: AGENT_CONTROL,
+            attribute: "journalTailHash",
+            reason: "expected 32 lowercase hexadecimal bytes".to_owned(),
+        });
+    }
+    let mut bytes = [0_u8; 32];
+    for (index, slot) in bytes.iter_mut().enumerate() {
+        *slot = u8::from_str_radix(&text[index * 2..index * 2 + 2], 16).map_err(|_| {
+            CodecError::Malformed {
+                item_type: AGENT_CONTROL,
+                attribute: "journalTailHash",
+                reason: "expected 32 lowercase hexadecimal bytes".to_owned(),
+            }
+        })?;
+    }
+    Ok(ContentHash(bytes))
 }
 
 fn decode_budget(row: &Row<'_>) -> Result<BudgetNode, CodecError> {
@@ -135,11 +172,13 @@ mod tests {
     }
 
     fn row() -> ItemBuilder {
+        let tail_hash = aex_brain_domain::ids::ContentHash::of(b"tail");
         ItemBuilder::new(AGENT_CONTROL)
             .set("generationId", s(generation().to_string()))
             .set("revision", n(7))
             .set("fence", n(3))
             .set("journalTail", n(11))
+            .set("journalTailHash", s(tail_hash.to_hex()))
             .set("hasJournal", aex_session_dynamodb::attr::boolean(true))
             .set("cancelEpoch", n(2))
             .set("status", s("awaiting_model"))
@@ -159,6 +198,10 @@ mod tests {
         assert_eq!(head.generation, generation());
         assert_eq!(head.fence, Fence(3));
         assert_eq!(head.journal_tail, Some(JournalSeq(11)));
+        assert_eq!(
+            head.journal_tail_hash,
+            Some(aex_brain_domain::ids::ContentHash::of(b"tail"))
+        );
         assert_eq!(head.phase, "awaiting_model");
         assert_eq!(
             head.lease_expires_at,
@@ -182,6 +225,14 @@ mod tests {
             .build();
         let head = decode(&item, key(), Vec::new()).expect("a fresh row");
         assert_eq!(head.journal_tail, None);
+        assert_eq!(head.journal_tail_hash, None);
+    }
+
+    #[test]
+    fn a_tail_sequence_without_its_hash_is_refused() {
+        let mut item = row().build();
+        item.remove("journalTailHash");
+        assert!(decode(&item, key(), Vec::new()).is_err());
     }
 
     #[test]

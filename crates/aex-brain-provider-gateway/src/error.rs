@@ -7,78 +7,10 @@
 
 use core::time::Duration;
 
-use aex_model_catalog::primitives::BoundedString;
 use aex_wire::types::Timestamp;
 use serde::{Deserialize, Serialize};
 
-pub use aex_model_catalog::{ProviderFailureClass, ProviderFailureKind};
-
-/// Bounded, redacted failure detail. Never carries a credential.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RedactedDetail {
-    /// The operational kind.
-    pub kind: ProviderFailureKind,
-    /// The HTTP status, where one was received.
-    pub http_status: Option<u16>,
-    /// The provider's own `type` or `code` string.
-    pub provider_code: Option<BoundedString<64>>,
-    /// The bounded, redacted message.
-    pub message: BoundedString<512>,
-}
-
-impl core::fmt::Display for RedactedDetail {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(formatter, "{:?}", self.kind)?;
-        if let Some(status) = self.http_status {
-            write!(formatter, " http={status}")?;
-        }
-        if let Some(code) = &self.provider_code {
-            write!(formatter, " code={code}")?;
-        }
-        write!(formatter, ": {}", self.message)
-    }
-}
-
-impl RedactedDetail {
-    /// Builds a detail whose message is already bounded and redacted.
-    #[must_use]
-    pub fn new(kind: ProviderFailureKind, message: BoundedString<512>) -> Self {
-        Self {
-            kind,
-            http_status: None,
-            provider_code: None,
-            message,
-        }
-    }
-
-    /// Builds a detail from a message this crate produced itself, which by
-    /// construction contains no provider bytes.
-    #[must_use]
-    pub fn internal(kind: ProviderFailureKind, message: &str) -> Self {
-        Self::new(kind, BoundedString::truncating(message))
-    }
-
-    /// Attaches the HTTP status.
-    #[must_use]
-    pub fn with_status(mut self, status: u16) -> Self {
-        self.http_status = Some(status);
-        self
-    }
-
-    /// Attaches the provider's own code.
-    #[must_use]
-    pub fn with_code(mut self, code: &str) -> Self {
-        self.provider_code = Some(BoundedString::truncating(code));
-        self
-    }
-
-    /// The port-facing class.
-    #[must_use]
-    pub const fn class(&self) -> ProviderFailureClass {
-        self.kind.class()
-    }
-}
+pub use aex_model_catalog::{ProviderFailureClass, ProviderFailureKind, RedactedDetail};
 
 /// A classified provider failure plus whatever backpressure the provider
 /// published alongside it.

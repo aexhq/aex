@@ -9,7 +9,7 @@ keywords:
   - evidence
 audience: implementation agents and maintainers
 status: accepted
-last_verified: 2026-08-01
+last_verified: 2026-08-03
 related:
   - references/rewrite/README.md
   - references/rewrite/test-architecture.md
@@ -23,6 +23,61 @@ Branch `rw/delivery`. Nothing is deployed, published, credentialed or applied.
 Every gate below was run locally and passes; the one intentional exception is
 `graph verify` against the real repository, which is red by design and is the
 first item under "What every stream owes me".
+
+### 2026-08-03 clean-cut ownership ledger
+
+D19/D20 ownership is now mechanically split. Public `aex` owns immutable,
+plane-neutral build/publication inputs and the release contract vocabulary;
+private `platform` owns every binding value and is the only manual hosted
+release entry point. The public `release.yml` and `_release-engine.yml` were
+removed, and `assurance.yml` no longer accepts or resolves a plane. A structural
+test refuses their return, any public `binding_ref`, private-repository checkout,
+hosted environment, or AWS credential step.
+
+The public contract set now also includes `aex.resolved-placement.v1` and
+`aex.saved-plan-envelope.v1`. Typed validation rejects self-digest tampering,
+plaintext credential shapes, mutable secret versions, unsafe endpoints,
+unsorted regions, stale or over-60-minute plans, mutable workflow refs and
+opaque-plan byte mismatches. The saved-plan envelope binds the private source
+and public module bundle, release tool and Terraform binary bytes, provider lock
+and packages, fixed runner paths, encrypted plan object and KMS identity, and an
+explicit present/absent state snapshot with backend configuration identity.
+No artifact was published and no hosted system was touched by this slice.
+
+### Non-circular artifact evidence identity
+
+`envelopeDigest` remains the self-digest of the complete artifact envelope,
+including its receipt references. Receipts do not bind to that digest: doing so
+would require a receipt to predict the digest of an envelope that does not yet
+contain the receipt. Artifact-scoped freshness now binds
+`subject.artifactSubjectDigest` instead.
+
+`artifactSubjectDigest` is RFC 8785 canonical JSON over an explicit
+`aex.artifact-subject.v1` projection: unit, media, exact clean source repository,
+commit and ref, the complete build-input block, and the complete output byte
+identity. The output projection includes size, target, symbols and every OCI
+manifest/config/layer digest. It excludes the workflow execution, publication
+location, scanner/provenance verdicts and receipt references. A local draft can
+therefore mint the subject immediately after packaging. `evidence bind-artifact`
+verifies an already-earned receipt and the recomputed draft subject, requires
+its repository, commit and unit scope to agree, refuses rebinding, sets only
+`artifactSubjectDigest`, and reseals it to a new auditable receipt digest.
+Certification applies the exact workflow and immutable location, recomputes the
+subject, refuses any drift, verifies every artifact-bound receipt names it
+exactly, inserts the receipt refs, then seals the complete envelope. It never
+silently binds or rewrites evidence.
+
+The exclusions are deliberate. Workflow/run identity remains an independent
+exact receipt and envelope binding, and the final envelope still binds the
+content-addressed publication location. Neither changes the bytes or input
+closure a test or scanner observed. Supply-chain verdicts are evidence about
+the subject, never inputs to its identity. Computing one small canonical
+projection in addition to the full envelope digest is bounded by envelope size
+and does not hash artifact bytes again.
+
+This identity change earns no evidence by itself. CI must still run each real
+per-unit producer and pass its sealed receipt to `artifact certify`; missing,
+misbound, stale or failing receipts remain refusals.
 
 ## 1. What was implemented
 
@@ -47,7 +102,8 @@ no self-skip, no empty suite.
 | `migration` | Bundle packaging, header parsing, below-head insert and edit rejection. |
 | `private_path` | The public classifier the private repository invokes, with its own glob matcher. |
 | `policy` | Terraform source policy, Dockerfile COPY-only policy, workflow structural gates, Terraform plan policy. |
-| `schemas` | The five release JSON Schemas, embedded. |
+| `schemas` | The seven release JSON Schemas, embedded. |
+| `release_contract` | Typed environment-binding, resolved-placement, and saved-plan-envelope validation for the private hosted-release consumer. |
 | `selftest` | Determinism and monotonicity probed against the real graph. |
 | `test_registry` | Reads `release/test-registry.json` and `release/unearned-evidence.json` through `aex-workspace-check`'s own types. Derives nothing; asserts the delivery graph and the registry agree on the live set. |
 
@@ -58,6 +114,7 @@ Subcommands landed: `graph build|verify|select|explain|diff|matrix`,
 `verification new|verify`, `admit`,
 `plan summarize|policy`, `ledger append|list|verify`, `private-path check`,
 `migration bundle|verify`, `policy terraform|workflows|dockerfile`, `schema`,
+`contract validate`,
 `selftest`.
 
 `describe` is in `src/describe.rs` and assembles an envelope from a build that
@@ -71,10 +128,11 @@ location and nothing attested the bytes.
 
 ### `api/schemas/release/`
 
-Five schemas, authored here per D14-05 so the contract generator needs no
+Seven schemas, authored here per D14-05 so the contract generator needs no
 special case: `artifact-envelope.json`, `composition-manifest.json`,
 `verification-statement.json`, `environment-binding.json`,
-`evidence-receipt.json`. The contracts stream had not created that directory,
+`evidence-receipt.json`, `resolved-placement.json`, and
+`saved-plan-envelope.json`. The contracts stream had not created that directory,
 so there is no conflict to record.
 
 ### `release/`
@@ -87,11 +145,12 @@ so there is no conflict to record.
 
 ### `.github/workflows/`
 
-The old `ci.yml` and `live-user-tests.yml` are deleted, not aliased. Eleven
-files: four lane classes (`pr`, `main`, `assurance`, `release`) and seven
+The old `ci.yml` and `live-user-tests.yml` are deleted, not aliased. Ten
+files: three lane classes (`pr`, `main`, `assurance`) and seven
 reusable workflows (`_route`, `_rust-lane`, `_node-lane`, `_terraform-lane`,
-`_build-artifacts`, `_receipts`, `_release-engine`). `.github/dependabot.yml`
-gains cargo and terraform ecosystems.
+`_scenario-lane`, `_build-artifacts`, `_receipts`). Hosted release orchestration
+lives only in the private repository.
+`.github/dependabot.yml` gains cargo and terraform ecosystems.
 
 ### `infra/`
 
@@ -114,10 +173,13 @@ terraform fmt -check -recursive infra/                        clean
 terraform init -backend=false && validate && test             29/29 directories pass
 ```
 
-`graph verify` against the real repository exits `10` with 148 violations. 146
-are `aex-route-uncovered`, one for every route the contract registry declares
-and no scenario observes, which is accurate: the routes are genuinely unmounted.
-The other two are named in §3. That is the designed state, not a regression.
+The 2026-08-02 count of 148 graph violations is superseded by the actual-mount
+and runnable-scenario correction below. The current authorities deliberately
+imply 176 delivery violations while no scenario has an executable claim: 20
+`scenario-runnable-missing`, 51 `aex-route-unserved`, and 105
+`aex-route-uncovered` scenario references across the 95 actually served routes.
+Malformed, cross-plane, and planned/actual owner disagreements are all zero.
+That red state names missing work; it is not a release receipt.
 
 ## 3. What every stream owes me
 
@@ -162,6 +224,32 @@ edges and the path map routes their directories to their real npm nodes.
 3. **`api/generated/registries/routes.json`** with a `scenarios` array per
    `operationId`. When that file exists, `graph verify` requires every public
    route to name a declared scenario.
+
+   **Corrected 2026-08-03.** `routes-meta.yaml` now distinguishes planned
+   ownership from actual service. `scenarioOwners` plus `operationOwners`
+   resolve `servingArtifact`, the immutable unit responsible for closing the
+   route; `servedOperations` resolves the optional `servedArtifact`, which is
+   emitted only when a runnable production composition really mounts the
+   operation. The first value drives ownership and selection and is not mount
+   proof. `graph verify` reports `aex-route-unserved` for every route with no
+   actual mount, rejects malformed and cross-plane owners, and checks service
+   mount sets against the generated actual projection. The account read remains
+   planned for `central-identity-api` but unserved; the identity process mounts
+   only Auth. Session telemetry export admission is likewise honestly absent,
+   and `regional-session-api` currently serves exactly 15 operations.
+
+   Scenario selection is also executable now: an `observes` edge is necessary
+   but insufficient. Every scenario must name a namespaced Cargo/npm `package`
+   and exact `target`, and the package must claim both in its AEX metadata. The
+   route workflow emits and downstream lanes consume a scenario matrix carrying
+   those exact claims. Existing scenario rows intentionally have no invented
+   runnable claims, so the graph remains red until real targets land.
+
+   Freshness starts from authored OpenAPI/route metadata rather than optional
+   generated sentinels. Deleting both `bundle.json` and `routes.json`, or
+   deleting `routes-meta.yaml` while outputs remain, is therefore a failure.
+   Both planned and actual delivery metadata remain outside `bundle.json`, so
+   neither can mint a new public wire identity.
 4. **`migrations/central/*.sql`** with an `-- aex-migration: tx= destructive= phase=`
    header on every file, `grants.toml` for privileges, and `bundle.lock.json`
    produced by `aex-release-tool migration bundle`. A `GRANT` inside a
@@ -300,10 +388,59 @@ to fabricate them from.
    rather than reporting a green sweep that removed nothing. The engine, the
    guard, the order and the report are complete; the adapter is one
    `Reclaimer` implementation away.
-7. **Live publication.** Every publish step in `main.yml` and every apply step
-   in `_release-engine.yml` refuses with a stated reason and a classified exit
-   code rather than pretending. The lanes are wired end to end; the buckets,
-   repositories, roles and GitHub Environments are not.
+
+7. **Complete composition handoff.** `manifest inputs` now derives the public
+   composition identities from the exact protected run, acquired release
+   assets and checked-out source. It byte-compares generated module/regional
+   bundles, rebuilds the central migration lock, derives the provider closure,
+   binds the source tool-catalogue snapshot to the certified Brain envelope,
+   and refuses a registry package without a real publication identity. The
+   regional generator now authors generation `1` in its canonical bundle.
+   The release remains a draft until `main.yml` verifies all certified
+   envelopes, emits and attests the manifest/store, uploads them without
+   replacement, reads back identical bytes and exposes the prerelease. Unit
+   builders still emit only `draft-envelope.json`, so missing real per-unit
+   certification remains a visible exit-`40` blocker. Hosted planning and
+   apply remain private responsibilities.
+
+### 4.1 Exact remaining composition-handoff blocker
+
+`CompositionInputs` is not a convenient summary that may be reconstructed from
+plausible values. Each member must come from the producer that earned it. This
+is the authority map for the first public Rust-native candidate:
+
+| Input                 | Existing authority                                                                                                         | Candidate status                                                                                                                                                         |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `contractDigest`      | `api/generated/bundle.lock.json`, checked by `aex-contract-gen`                                                            | Available.                                                                                                                                                               |
+| `source`              | `GITHUB_REPOSITORY`, `GITHUB_SHA`, `GITHUB_RUN_ID` and `GITHUB_RUN_ATTEMPT`, cross-checked against the unique release tag  | Available only inside the publishing workflow.                                                                                                                           |
+| `releaseTool`         | Rebuilt deterministic executable plus digest, size, version, HTTPS release URI and verified GitHub attestation             | Available.                                                                                                                                                               |
+| `packages`            | Registry version, integrity and provenance from the package publisher                                                      | The hosted registry currently has no `npm-package` unit, so the producer emits an explicitly verified empty map; adding one makes composition fail until its publisher supplies identities. |
+| `migrations.central`  | Canonical `migrations/central/bundle.lock.json` and the certified `central-schema-admin` envelope                          | The producer rebuilds and byte-checks the lock, and refuses unless the certified admin envelope carries the same bundle digest. Embedding those bytes in the worker image remains required. |
+| `migrations.regional` | Published `regional-tables.json` transport identity plus an authored monotone table generation                             | Produced from the acquired/tracked byte-identical bundle, including authored generation `1`.                                                                             |
+| `infra`               | Published module-bundle identity plus one exact Terraform/provider lock closure                                            | Produced from a deterministic module rebuild, the exact version in `_terraform-lane.yml`, and every module provider lock; version drift is refused.                     |
+| `catalogs`            | Signed catalogue publication identities carried by certified runtime envelopes                                             | Brain build plans now bind model and tool digests; composition requires both from a certified Brain envelope and checks the tool digest against source.                  |
+| `policy`              | Canonical digest producers for the artifact and freshness policies, the pinned Rust channel, and the source-policy version | Produced directly from the policy files and pinned toolchain.                                                                                                             |
+| unit envelopes        | `artifact certify` over immutable readback, GitHub provenance, real scanner outputs and artifact-bound passing receipts    | The workflow uploads only drafts. Required deny, SBOM, licence, vulnerability, package-integrity, determinism and other per-unit receipts are not all produced or bound. |
+| manifest publication  | Exact manifest bytes, HTTPS release asset identity and GitHub attestation under the workflow the private verifier trusts   | `main.yml` attests and uploads manifest/store before undrafting, then reads both back. The private verifier must pin `main.yml` for these two subjects.                  |
+
+The smallest honest completion sequence is:
+
+1. Make the validation lanes earn every receipt class in `release/units.toml`.
+   Download those receipts in the artifact workflow, bind each to the computed
+   artifact subject, publish/read back the bytes, and run `artifact certify`.
+   Upload exactly one `certified-envelope.json` per registered unit.
+2. Expose the manifest URI, blob digest, size, `releaseId` and attestation
+   locator as reusable-workflow outputs. Private binding and root-input files
+   remain private, separately reviewed inputs; the public workflow must never
+   manufacture them.
+
+The reusable Rust lane also owns one feature-specific target that an ordinary
+package build cannot discover: whenever `aex-session-dynamodb` is selected it
+checks, clippies and tests the crate with only
+`capacity-limit-projection-write`. The same job compiles central control under
+its declared dependency and runs the `authz-projection-write` compile-fail
+boundary proof, so feature unification cannot silently hand central control the
+regional capacity producer.
 
 ## 5. Decisions taken
 
@@ -320,7 +457,7 @@ to fabricate them from.
 | D-9 | Publishing is not deploying, for the purpose of the permission-overlap gate | The gate fires when a job holds both publish scopes and applies a plan or holds a GitHub Environment. Uploading bytes to an immutable object store is publication; treating it as deployment would forbid the one job that must build and upload. |
 | D-10 | The workflow linter reads both `on:` and `true:` | A YAML 1.1 reader resolves a bare `on:` key to the boolean `true`. Looking under both spellings keeps quoting the key a style choice rather than a way past the gate. |
 | D-11 | `.terraform/`, `*.tfstate` and `*.tfstate.*` are added to `.gitignore`; `.terraform.lock.hcl` is not | `terraform init` drops provider binaries into the worktree. The lock file is deliberately tracked: the resolved provider versions are part of what a plan means. |
-| D-12 | The `assurance` and `release` lanes exit with a classified code rather than a green no-op where their subject does not exist | A scheduled suite that reports success having checked nothing is worse than one that is red for a stated reason. `admit` then refuses on a missing receipt (exit 40) instead of accepting silence as evidence. |
+| D-12 | The `assurance` lane exits with a classified code rather than a green no-op where its subject does not exist | A scheduled suite that reports success having checked nothing is worse than one that is red for a stated reason. `admit` then refuses on a missing receipt (exit 40) instead of accepting silence as evidence. Hosted release is private-owned. |
 | D-13 | `github-oidc-role` pins the workflow path through `job_workflow_ref`, not `sub` | GitHub carries the workflow path in `job_workflow_ref` unless subject customization is configured. Plan 14 §8.1 says `sub`; the module pins repo and ref via `sub` and the exact workflow path via `job_workflow_ref`, with no wildcard in either. Documented in that module's README. |
 | D-14 | Example roots carry an `aex.toml` with `role = "composition"` | Fail-closed rule 1 requires every Terraform root to be classified. Without the sidecar `graph verify` would exit `10` on the examples this stream shipped. |
 | D-15 | `aex-release-tool` depends on `aex-workspace-check` and consumes the derived registry rather than deriving a second one | Orchestrator ruling. Two parsers for one metadata block is exactly the drift both crates exist to prevent. `graph verify` adds one check neither authority can do alone: the live-target set the delivery graph derives must equal the one the registry derives, so a disagreement is a failure rather than a silent divergence. |
@@ -350,3 +487,14 @@ to fabricate them from.
    `declares-policy-or-rate-logic`) are declared in the policy and not
    implemented; they are content predicates rather than path globs. The corpus
    test skips them explicitly rather than counting them as covered.
+9. **Certified unit envelopes remain absent.** The raw Linux x86_64 release
+   tool, Terraform module bundle, regional-table bundle, authoritative
+   `CompositionInputs`, and manifest/store publication path now have exact
+   producers. The workflow must still earn and bind every required per-unit
+   supply-chain and semantic receipt before composition can run; private
+   immutable acquisition must continue to fail until that release completes.
+10. **Private roots still use sibling public-module paths.** A hosted plan may
+    satisfy those paths only from the verified module bundle extracted at the
+    fixed path recorded in its saved-plan envelope—never by checking out public
+    source beside `platform`. The private engine refuses planning until those
+    roots are converted.

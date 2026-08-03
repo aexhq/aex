@@ -13,6 +13,7 @@ pub mod drain;
 pub mod permits;
 pub mod registry;
 pub mod renewer;
+pub mod snapshot_cache;
 
 /// The synchronization primitives, swapped for Loom's model-checking versions when the
 /// `loom` feature is on.
@@ -40,3 +41,4 @@ pub use drain::{DrainGate, DrainPermit};
 pub use permits::{PermitKind, PermitSet, PermitSetFull, Reservation};
 pub use registry::{ActivationRegistry, Busy, RegistrySlot};
 pub use renewer::{RenewalOutcome, RenewalState};
+pub use snapshot_cache::{SnapshotBodyCache, SnapshotCacheError};

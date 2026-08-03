@@ -39,6 +39,15 @@ run "the_runtime_platform_is_explicit" {
   }
 }
 
+run "task_definition_revisions_are_retained" {
+  command = plan
+
+  assert {
+    condition     = aws_ecs_task_definition.this.skip_destroy == true
+    error_message = "Terraform must retain old task definition revisions so the release role does not need unscopable deregistration authority."
+  }
+}
+
 run "no_public_address_is_ever_assigned" {
   command = plan
 

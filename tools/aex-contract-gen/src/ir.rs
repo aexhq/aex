@@ -101,6 +101,8 @@ pub struct LimitRow {
     pub variant: String,
     /// Whether the effective value is a scalar or a keyed map.
     pub shape: LimitShape,
+    /// Complete ordered dimension vocabulary for a map limit.
+    pub dimensions: Vec<String>,
     /// One-line documentation.
     pub doc: String,
 }
@@ -310,6 +312,20 @@ pub struct OperationIr {
     pub plane: String,
     /// Owning fragment stem.
     pub fragment: String,
+    /// Release artifact planned to serve this operation.
+    ///
+    /// This is ownership and selection metadata, not evidence that the route
+    /// is mounted by a runnable composition.
+    pub serving_artifact: String,
+    /// Release artifact that actually mounts this operation today.
+    ///
+    /// Absence is an intentional delivery gap. This is route-registry
+    /// metadata, not part of the public wire bundle.
+    pub served_artifact: Option<String>,
+    /// Release scenarios that exercise this operation.
+    ///
+    /// This is route-registry metadata, not part of the public wire bundle.
+    pub scenarios: Vec<String>,
     /// HTTP method.
     pub method: String,
     /// Path template, rooted at `/api`.
