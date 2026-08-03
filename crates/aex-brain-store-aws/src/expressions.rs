@@ -159,7 +159,7 @@ pub fn claim_conditions(
 /// identity after advancing agent control. Current ownership is checked on the control item
 /// by [`dispatch_control_conditions`] in the same transaction.
 #[must_use]
-pub fn dispatch_started_conditions(effect: EffectId) -> Vec<Condition> {
+pub fn dispatch_started_conditions(effect: EffectId, attempt: u16) -> Vec<Condition> {
     vec![
         Condition::Equals {
             attribute: "state",
@@ -168,6 +168,10 @@ pub fn dispatch_started_conditions(effect: EffectId) -> Vec<Condition> {
         Condition::Equals {
             attribute: "effect_id",
             value: effect.to_hex(),
+        },
+        Condition::Equals {
+            attribute: "attempt",
+            value: attempt.to_string(),
         },
     ]
 }
@@ -385,11 +389,15 @@ mod tests {
 
     #[test]
     fn dispatch_started_checks_current_control_and_allows_prepared_takeover() {
-        let conditions = dispatch_started_conditions(EffectId([7; 16]));
-        assert_eq!(names(&conditions), vec!["state", "effect_id"]);
+        let conditions = dispatch_started_conditions(EffectId([7; 16]), 3);
+        assert_eq!(names(&conditions), vec!["state", "effect_id", "attempt"]);
         assert!(conditions.contains(&Condition::Equals {
             attribute: "state",
             value: "prepared".to_owned()
+        }));
+        assert!(conditions.contains(&Condition::Equals {
+            attribute: "attempt",
+            value: "3".to_owned()
         }));
         let control = dispatch_control_conditions(4, "owner-4");
         assert_eq!(names(&control), vec!["fence", "claimOwner"]);

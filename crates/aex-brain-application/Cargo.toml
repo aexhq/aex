@@ -39,6 +39,7 @@ loom = ["dep:loom"]
 testing = []
 
 [dependencies]
+futures.workspace = true
 loom = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true

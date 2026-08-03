@@ -24,9 +24,9 @@ use super::{
 use crate::kernel::{ActivationRegistry, DrainGate, RenewalOutcome, RenewalState};
 use crate::ports::{
     BoxFuture, CancelToken, Claim, ClaimError, CommitError, ConditionFailure, ControlStateView,
-    DecisionContext, DetachedStatus, DueScanCursor, FenceGuard, NullPreviewSink, PreparedToolCall,
-    ReleaseDisposition, SessionAuthority, StoreError, StreamBudget, ToolOutcome, WakeDelivery,
-    WakeOrigin, WakeState,
+    DecisionContext, DetachedStatus, DueRowIsolation, DueScanCursor, FenceGuard,
+    MAX_DUE_ROW_ISOLATIONS, NullPreviewSink, PreparedToolCall, ReleaseDisposition,
+    SessionAuthority, StoreError, StreamBudget, ToolOutcome, WakeDelivery, WakeOrigin, WakeState,
 };
 use aex_brain_domain::canonical::canonicalize_value;
 use aex_brain_domain::child::QueuedReason;
@@ -47,6 +47,7 @@ use aex_brain_domain::planner::{OwedStep, PlanPolicy, model_effect_id, plan};
 use aex_brain_domain::wire_pending::{
     CanonicalBlock, CanonicalModelRequest, DurableOperationSupport, ResolvedAgentConfig,
 };
+use futures::stream::{self, StreamExt as _};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -310,6 +311,12 @@ impl Activation {
                     // extension remains one polled child below; it cannot postpone the next
                     // lease renewal or stop the claimed work being polled.
                     timer = self.ports.clock.sleep(self.policy.renew_interval);
+                    if self.drain.is_draining() {
+                        // The adapter receives an honest cancellation request before this
+                        // scope can be aborted. The token cannot prove whether a byte left,
+                        // so the effect's returned dispatch proof still decides settlement.
+                        cancel.cancel();
+                    }
                 }
             }
 
@@ -412,7 +419,7 @@ pub struct WakeLoop {
 }
 
 /// What one pass over the queue did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PollReport {
     /// How many deliveries the receive returned.
     pub received: usize,
@@ -426,6 +433,29 @@ pub struct PollReport {
     pub recovered: usize,
     /// How many malformed due rows were isolated while valid siblings continued.
     pub malformed: usize,
+    /// How many malformed queue records were isolated while valid siblings continued.
+    pub malformed_queue: usize,
+    /// How many malformed queue records reached the configured poison threshold.
+    pub poisoned: usize,
+    /// A process-wide bounded, redacted sample of malformed due rows from this pass.
+    pub isolations: Vec<DueRowIsolation>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DriveClass {
+    Stable,
+    Transient,
+}
+
+struct ScheduledDelivery {
+    delivery: WakeDelivery,
+    due_pages: Vec<usize>,
+}
+
+struct DuePageProgress {
+    shard: u16,
+    next: Option<DueScanCursor>,
+    advance: bool,
 }
 
 impl WakeLoop {
@@ -464,24 +494,62 @@ impl WakeLoop {
             return Ok(report);
         }
         let policy = self.activation.policy();
-        let deliveries = self
+        let batch = self
             .activation
             .ports()
             .wakes
             .receive(policy.receive_batch, policy.long_poll)
             .await?;
-        report.received = deliveries.len();
-        for delivery in deliveries {
-            self.record_drive(&mut report, delivery).await;
-        }
-        // SQS is deliberately first. A due page can neither consume the receive batch nor
-        // advance a cursor before a failed receive, and a ready queue is never suppressed by
-        // recovery work. The burst is cadence-limited below, so a busy queue cannot make the
-        // DynamoDB backstop hot-poll.
+        report.received = batch.deliveries.len().saturating_add(batch.malformed.len());
+
+        // Receive remains first so a transport failure cannot move a due cursor. Recovery
+        // is the first post-receive I/O: neither poison-record handling nor ten 600-second
+        // provider calls may postpone the lost-hint backstop.
+        let mut scheduled: Vec<ScheduledDelivery> = batch
+            .deliveries
+            .into_iter()
+            .map(|delivery| ScheduledDelivery {
+                delivery,
+                due_pages: Vec::new(),
+            })
+            .collect();
+        let mut due_pages = Vec::new();
         if self.claim_due_pass() {
-            self.recover_due(&mut report).await?;
+            self.scan_due(&mut report, &mut scheduled, &mut due_pages)
+                .await;
         }
+        self.handle_malformed(&mut report, batch.malformed).await;
+        self.drive_scheduled(&mut report, scheduled, &mut due_pages)
+            .await;
+        self.commit_due_cursors(due_pages);
         Ok(report)
+    }
+
+    async fn handle_malformed(
+        &self,
+        report: &mut PollReport,
+        malformed: Vec<crate::ports::MalformedWakeDelivery>,
+    ) {
+        for delivery in malformed {
+            report.malformed_queue = report.malformed_queue.saturating_add(1);
+            if delivery.receive_count >= self.activation.policy().max_receives {
+                match self.activation.ports().wakes.ack_malformed(delivery).await {
+                    Ok(()) => report.poisoned = report.poisoned.saturating_add(1),
+                    Err(_) => report.refused = report.refused.saturating_add(1),
+                }
+            } else {
+                match self
+                    .activation
+                    .ports()
+                    .wakes
+                    .release_malformed(delivery, self.activation.policy().requeue_after)
+                    .await
+                {
+                    Ok(()) => report.released = report.released.saturating_add(1),
+                    Err(_) => report.refused = report.refused.saturating_add(1),
+                }
+            }
+        }
     }
 
     fn claim_due_pass(&self) -> bool {
@@ -504,7 +572,12 @@ impl WakeLoop {
         }
     }
 
-    async fn recover_due(&self, report: &mut PollReport) -> Result<(), ActivationError> {
+    async fn scan_due(
+        &self,
+        report: &mut PollReport,
+        scheduled: &mut Vec<ScheduledDelivery>,
+        progress: &mut Vec<DuePageProgress>,
+    ) {
         let policy = self.activation.policy();
         let shard_count = policy.due_shards.max(1);
         let shards = policy.due_scan_shards_per_pass.max(1).min(shard_count);
@@ -526,42 +599,112 @@ impl WakeLoop {
                     policy.due_scan_page.max(1),
                     after,
                 )
-                .await?;
+                .await;
+            let page = match page {
+                Ok(page) => page,
+                Err(_) => {
+                    // A failed shard is retained at its prior cursor. Rotation continues so
+                    // one throttled partition cannot suppress recovery in later shards.
+                    report.refused = report.refused.saturating_add(1);
+                    continue;
+                }
+            };
             report.malformed = report.malformed.saturating_add(page.malformed);
+            let sample_room = MAX_DUE_ROW_ISOLATIONS.saturating_sub(report.isolations.len());
+            report
+                .isolations
+                .extend(page.isolations.into_iter().take(sample_room));
             report.recovered = report.recovered.saturating_add(page.wakes.len());
             report.received = report.received.saturating_add(page.wakes.len());
+            let page_index = progress.len();
+            progress.push(DuePageProgress {
+                shard,
+                next: page.next,
+                advance: true,
+            });
             for wake in page.wakes {
-                self.record_drive(
-                    report,
-                    WakeDelivery {
-                        wake,
-                        origin: WakeOrigin::DueScan,
-                    },
-                )
-                .await;
-            }
-            // A continuation describes rows this process has now admitted and driven. It is
-            // intentionally installed after the page, not after the query: a failed SQS
-            // receive or an interrupted drive therefore cannot make the next pass skip work
-            // that existed only in this local future.
-            let mut cursors = self.due_cursors.lock().expect("not poisoned");
-            match page.next {
-                Some(next) => {
-                    cursors.insert(shard, next);
-                }
-                None => {
-                    cursors.remove(&shard);
+                if let Some(existing) = scheduled
+                    .iter_mut()
+                    .find(|delivery| delivery.delivery.wake.dedup_key == wake.dedup_key)
+                {
+                    // The queue and due index are two hints for one durable row. Drive it
+                    // once, but make cursor progress depend on that shared drive's outcome.
+                    existing.due_pages.push(page_index);
+                } else {
+                    scheduled.push(ScheduledDelivery {
+                        delivery: WakeDelivery {
+                            wake,
+                            origin: WakeOrigin::DueScan,
+                        },
+                        due_pages: vec![page_index],
+                    });
                 }
             }
         }
-        Ok(())
     }
 
-    async fn record_drive(&self, report: &mut PollReport, delivery: WakeDelivery) {
-        match self.drive(delivery).await {
-            Ok(Outcome::Released(_)) => report.released += 1,
-            Ok(_) => report.driven += 1,
-            Err(_) => report.refused += 1,
+    async fn drive_scheduled(
+        &self,
+        report: &mut PollReport,
+        scheduled: Vec<ScheduledDelivery>,
+        due_pages: &mut [DuePageProgress],
+    ) {
+        let concurrency = self.activation.policy().max_concurrent_drives.max(1);
+        let mut outcomes = stream::iter(scheduled)
+            .map(|scheduled| async move {
+                let outcome = self.drive(scheduled.delivery).await;
+                (scheduled.due_pages, outcome)
+            })
+            .buffer_unordered(concurrency);
+        while let Some((due_page_indexes, outcome)) = outcomes.next().await {
+            let class = match outcome {
+                Ok(Outcome::Released(_)) => {
+                    report.released = report.released.saturating_add(1);
+                    DriveClass::Transient
+                }
+                Ok(Outcome::Poisoned { .. }) => {
+                    // Queue poison handling consumes only the SQS projection. If the same
+                    // durable row was also in this due page, it remains pending authority
+                    // and the page must revisit it rather than advancing past it.
+                    report.driven = report.driven.saturating_add(1);
+                    DriveClass::Transient
+                }
+                Ok(_) => {
+                    report.driven = report.driven.saturating_add(1);
+                    DriveClass::Stable
+                }
+                Err(_) => {
+                    report.refused = report.refused.saturating_add(1);
+                    DriveClass::Transient
+                }
+            };
+            if class == DriveClass::Transient {
+                for index in due_page_indexes {
+                    if let Some(page) = due_pages.get_mut(index) {
+                        page.advance = false;
+                    }
+                }
+            }
+        }
+    }
+
+    fn commit_due_cursors(&self, pages: Vec<DuePageProgress>) {
+        let mut cursors = self.due_cursors.lock().expect("not poisoned");
+        for page in pages {
+            if !page.advance {
+                continue;
+            }
+            // A cursor is installed only after every valid wake in the page reached a
+            // durable stable outcome. Transient releases and typed refusals revisit the old
+            // position; shard rotation remains independent, so later shards still run.
+            match page.next {
+                Some(next) => {
+                    cursors.insert(page.shard, next);
+                }
+                None => {
+                    cursors.remove(&page.shard);
+                }
+            }
         }
     }
 
@@ -944,6 +1087,11 @@ impl Session<'_> {
     /// hand-back that merely stopped would leave the work durable and unscheduled.
     async fn hand_back(&mut self) -> Result<(), ActivationError> {
         let mut draft = self.draft(phase_tag(&self.state.phase));
+        self.wake_continuation(&mut draft);
+        self.commit(draft).await
+    }
+
+    fn wake_continuation(&self, draft: &mut Draft) {
         draft.wake(
             self.ports.ids.wake_id(),
             ParkReason::AwaitingCapacity {
@@ -953,7 +1101,6 @@ impl Session<'_> {
             self.authority.workspace.to_string(),
             self.policy.shard_for(self.agent()),
         );
-        self.commit(draft).await
     }
 
     /// Retires the source wake under the same session and agent fence as every decision.
@@ -1194,6 +1341,14 @@ impl Session<'_> {
                             deadline,
                             provider_call_reservation(&self.state),
                         );
+                        if self.guard.cancel().is_cancelled() {
+                            // Drain may re-arm only because the adapter proved no byte left.
+                            // The replacement and its continuation wake share this commit,
+                            // so shutdown cannot strand a prepared identity between them.
+                            self.wake_continuation(&mut draft);
+                            self.commit(draft).await?;
+                            return Ok(Step::Stop(Stop::HandedBack));
+                        }
                         self.commit(draft).await?;
                         return Ok(Step::Continue);
                     }
@@ -1352,8 +1507,28 @@ impl Session<'_> {
                 Ok(Step::Stop(Stop::Parked))
             }
             Err(error) => match classify_tool_failure(&error, attempt) {
-                FailureSettlement::NotSent { stage, .. } => {
+                FailureSettlement::NotSent { stage, retryable } => {
                     decide::settle_known_failure(&mut draft, effect, stage, DispatchProof::NotSent);
+                    if retryable && self.guard.cancel().is_cancelled() {
+                        let next = self.ports.ids.effect_id(
+                            &self.agent(),
+                            draft.next_seq(),
+                            EffectKind::ToolCall,
+                        );
+                        decide::prepare(
+                            &mut draft,
+                            next,
+                            EffectKind::ToolCall,
+                            route.class,
+                            request_hash,
+                            attempt.saturating_add(1),
+                            deadline,
+                            Vec::new(),
+                        );
+                        self.wake_continuation(&mut draft);
+                        self.commit(draft).await?;
+                        return Ok(Step::Stop(Stop::HandedBack));
+                    }
                     // A tool that could not be dispatched is a *result* the model decides
                     // about, not a reason to end the run: the alternative is terminalizing a
                     // whole session because one optional tool was unavailable.

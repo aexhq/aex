@@ -20,11 +20,11 @@ use crate::ports::{
     DispatchTicket, DueRowIsolation, DueRowIsolationReason, DueScanCursor, DueScanPage,
     DurableWake, EffectStore, FenceGuard, HandsAccepted, HandsEndpoint, HandsError,
     HandsOperationStart, HandsOperationStatus, HandsPort, IdPort, JournalCursor, JournalPage,
-    JournalStore, LeaseStore, MAX_DUE_ROW_ISOLATIONS, PreparedToolCall, PreviewSink,
-    ProviderDispatchError, ProviderOutcome, ProviderPort, ReadBudget, RedactedDetail,
-    ReleaseDisposition, ResultBounds, SessionAuthority, SteadyInstant, StoreError, StreamBudget,
-    ToolDispatchError, ToolOutcome, ToolPort, ToolRoute, ToolRoutingError, WakeDelivery,
-    WakeOrigin, WakeQueue, WakeState,
+    JournalStore, LeaseStore, MAX_DUE_ROW_ISOLATIONS, MalformedWakeDelivery, MalformedWakeReason,
+    PreparedToolCall, PreviewSink, ProviderDispatchError, ProviderOutcome, ProviderPort,
+    ReadBudget, RedactedDetail, ReleaseDisposition, ResultBounds, SessionAuthority, SteadyInstant,
+    StoreError, StreamBudget, ToolDispatchError, ToolOutcome, ToolPort, ToolRoute,
+    ToolRoutingError, WakeBatch, WakeDelivery, WakeOrigin, WakeQueue, WakeState,
 };
 use aex_brain_domain::budget::BudgetNode;
 use aex_brain_domain::commit::{DecisionCommit, EffectWrite};
@@ -669,6 +669,13 @@ impl MemoryStore {
             .insert(session, authority);
     }
 
+    /// Advances the session cancellation epoch observed by the next renewal.
+    pub fn cancel_session(&self, key: AgentKey) {
+        let mut agents = self.agents.lock().expect("not poisoned");
+        let row = agents.get_mut(&key).expect("the seeded agent exists");
+        row.cancel_epoch = CancelEpoch(row.cancel_epoch.0.saturating_add(1));
+    }
+
     /// Advances cancellation after the next effect preparation commits but before its
     /// pre-dispatch transaction checks the session head.
     pub fn cancel_before_next_dispatch(&self) {
@@ -1147,8 +1154,15 @@ impl EffectStore for MemoryStore {
             let durable = row.effects.get_mut(effect).ok_or(CommitError::Condition(
                 ConditionFailure::EffectStateMismatch { effect: *effect },
             ))?;
-            // One durable pre-send write authorizes exactly one attempt.
-            if !matches!(durable.state, EffectState::Prepared { .. }) {
+            // Ownership takeover is not a retry: no byte left the predecessor. The
+            // prepared attempt is immutable and the successor must mint its ticket for
+            // that exact attempt rather than rewriting durable history.
+            if !matches!(
+                durable.state,
+                EffectState::Prepared {
+                    attempt: prepared_attempt
+                } if prepared_attempt == attempt
+            ) {
                 return Err(ConditionFailure::EffectStateMismatch { effect: *effect }.into());
             }
             durable.state = EffectState::DispatchStarted { attempt };
@@ -1260,8 +1274,21 @@ impl LeaseStore for MemoryStore {
     ) -> BoxFuture<'a, Result<Claim, ClaimError>> {
         Box::pin(async move {
             self.log.note("renew_lease");
+            let authority = self
+                .authorities
+                .lock()
+                .expect("not poisoned")
+                .get(&claim.key.session)
+                .cloned()
+                .ok_or(ClaimError::Terminal)?;
+            if authority != claim.authority {
+                return Err(ClaimError::Terminal);
+            }
             let mut agents = self.agents.lock().expect("not poisoned");
             let row = agents.get_mut(&claim.key).ok_or(ClaimError::Terminal)?;
+            if row.cancel_epoch != claim.head.cancel_epoch {
+                return Err(ClaimError::Terminal);
+            }
             if row.fence != claim.fence || row.lease_owner != Some(claim.owner) {
                 return Err(ClaimError::Fenced { current: row.fence });
             }
@@ -1304,11 +1331,14 @@ pub struct MemoryQueue {
     durable: Mutex<BTreeMap<WakeId, (DurableWake, WorkShard)>>,
     malformed_due: Mutex<BTreeMap<WakeId, WorkShard>>,
     visible: Mutex<VecDeque<WakeDelivery>>,
+    malformed_visible: Mutex<VecDeque<MalformedWakeDelivery>>,
     acked: Mutex<Vec<WakeDelivery>>,
     receive_faults: Mutex<VecDeque<StoreError>>,
     ack_faults: Mutex<VecDeque<StoreError>>,
     receipts: AtomicU64,
     visibility_extensions: AtomicU64,
+    malformed_released: AtomicU64,
+    malformed_acked: AtomicU64,
     log: Mutex<Option<Arc<Recorder>>>,
 }
 
@@ -1320,11 +1350,14 @@ impl MemoryQueue {
             durable: Mutex::new(BTreeMap::new()),
             malformed_due: Mutex::new(BTreeMap::new()),
             visible: Mutex::new(VecDeque::new()),
+            malformed_visible: Mutex::new(VecDeque::new()),
             acked: Mutex::new(Vec::new()),
             receive_faults: Mutex::new(VecDeque::new()),
             ack_faults: Mutex::new(VecDeque::new()),
             receipts: AtomicU64::new(0),
             visibility_extensions: AtomicU64::new(0),
+            malformed_released: AtomicU64::new(0),
+            malformed_acked: AtomicU64::new(0),
             log: Mutex::new(Some(log)),
         }
     }
@@ -1332,6 +1365,20 @@ impl MemoryQueue {
     /// Projects one durable wake onto the queue, as the work stream does.
     pub fn project(&self, wake: DurableWake) {
         self.project_in_shard(wake, WorkShard(0));
+    }
+
+    /// Projects one malformed queue record beside valid siblings.
+    pub fn project_malformed(&self, receive_count: u32) {
+        let receipt = self.receipts.fetch_add(1, Ordering::SeqCst);
+        self.malformed_visible
+            .lock()
+            .expect("not poisoned")
+            .push_back(MalformedWakeDelivery {
+                receipt: Some(format!("bad-rh-{receipt}")),
+                receive_count,
+                reason: MalformedWakeReason::InvalidProjection,
+                fingerprint: format!("{receipt:016x}"),
+            });
     }
 
     /// Persists a durable wake without projecting its stream hint.
@@ -1432,6 +1479,18 @@ impl MemoryQueue {
         self.visibility_extensions.load(Ordering::SeqCst)
     }
 
+    /// How many malformed records were explicitly returned for another receive.
+    #[must_use]
+    pub fn malformed_released(&self) -> u64 {
+        self.malformed_released.load(Ordering::SeqCst)
+    }
+
+    /// How many malformed records reached the poison threshold and were acknowledged.
+    #[must_use]
+    pub fn malformed_acked(&self) -> u64 {
+        self.malformed_acked.load(Ordering::SeqCst)
+    }
+
     fn note(&self, what: &str) {
         if let Some(log) = self.log.lock().expect("not poisoned").as_ref() {
             log.note(what);
@@ -1444,7 +1503,7 @@ impl WakeQueue for MemoryQueue {
         &self,
         max: usize,
         _wait: core::time::Duration,
-    ) -> BoxFuture<'_, Result<Vec<WakeDelivery>, StoreError>> {
+    ) -> BoxFuture<'_, Result<WakeBatch, StoreError>> {
         Box::pin(async move {
             self.note("receive");
             if let Some(fault) = self
@@ -1456,8 +1515,42 @@ impl WakeQueue for MemoryQueue {
                 return Err(fault);
             }
             let mut visible = self.visible.lock().expect("not poisoned");
-            let taken = visible.len().min(max);
-            Ok(visible.drain(..taken).collect())
+            let mut malformed = self.malformed_visible.lock().expect("not poisoned");
+            let valid_taken = visible.len().min(max);
+            let remaining = max.saturating_sub(valid_taken);
+            let malformed_taken = malformed.len().min(remaining);
+            Ok(WakeBatch {
+                deliveries: visible.drain(..valid_taken).collect(),
+                malformed: malformed.drain(..malformed_taken).collect(),
+            })
+        })
+    }
+
+    fn release_malformed(
+        &self,
+        mut delivery: MalformedWakeDelivery,
+        _after: core::time::Duration,
+    ) -> BoxFuture<'_, Result<(), StoreError>> {
+        Box::pin(async move {
+            self.note("release_malformed");
+            self.malformed_released.fetch_add(1, Ordering::SeqCst);
+            delivery.receive_count = delivery.receive_count.saturating_add(1);
+            self.malformed_visible
+                .lock()
+                .expect("not poisoned")
+                .push_back(delivery);
+            Ok(())
+        })
+    }
+
+    fn ack_malformed(
+        &self,
+        _delivery: MalformedWakeDelivery,
+    ) -> BoxFuture<'_, Result<(), StoreError>> {
+        Box::pin(async move {
+            self.note("ack_malformed");
+            self.malformed_acked.fetch_add(1, Ordering::SeqCst);
+            Ok(())
         })
     }
 

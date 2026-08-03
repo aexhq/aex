@@ -15,6 +15,7 @@ dependencies = [
  "aex-brain-domain",
  "aex-brain-test-support",
  "aex-wire",
+ "futures",
  "loom",
  "serde",
  "serde_json",

@@ -150,6 +150,12 @@ pub struct ActivationPolicy {
     pub due_scan_shards_per_pass: u16,
     /// The most due rows one shard contributes to one burst.
     pub due_scan_page: usize,
+    /// The most delivery futures polled concurrently by one receive pass.
+    ///
+    /// This bounds hydrated context, stream buffers and runnable future state even when a
+    /// queue batch and due-recovery burst arrive together. Admission remains the stricter
+    /// resource authority; this is the scheduler's local fan-out bound.
+    pub max_concurrent_drives: usize,
     /// How many provider attempts one activation may make.
     ///
     /// Only a [`DispatchProof::NotSent`](aex_brain_domain::effect::DispatchProof::NotSent)
@@ -196,6 +202,7 @@ impl Default for ActivationPolicy {
             due_scan_interval: core::time::Duration::from_secs(20),
             due_scan_shards_per_pass: 16,
             due_scan_page: 1,
+            max_concurrent_drives: 10,
             max_provider_attempts: 3,
         }
     }

@@ -79,6 +79,9 @@ pub enum RunError {
         /// What failed.
         reason: String,
     },
+    /// Graceful drain could not prove every admitted activation stopped.
+    #[error(transparent)]
+    Drain(#[from] drain::DrainError),
 }
 
 /// Environment variable naming the deployment plane.
@@ -268,18 +271,24 @@ pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Resul
         composition.health.catalog_verified();
     }
 
-    main_runtime.block_on(async {
+    let drain_result = main_runtime.block_on(async {
         let sampler = tokio::spawn(sample_reactor_delay(std::sync::Arc::clone(&composition)));
-        let pump = tokio::spawn(pump(std::sync::Arc::clone(&composition), config.clone()));
+        let pump = tokio::spawn(pump(
+            std::sync::Arc::clone(&composition),
+            config.clone(),
+            telemetry.clone(),
+        ));
         wait_for_shutdown().await;
         let stages = drain_sequence(&composition, pump).await;
         sampler.abort();
+        let _ = sampler.await;
         stages
     });
 
     // The control thread stops when the health state reports drain, so joining it is how the
     // process proves it stopped answering rather than merely stopped listening.
     let _ = control.join();
+    drain_result?;
     Ok(())
 }
 
@@ -289,7 +298,11 @@ pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Resul
 /// unsatisfied. Production provider, catalog, tool-executor, and Hands-runtime peers are
 /// still absent, so the newly bound store remains idle rather than taking work that cannot
 /// complete.
-async fn pump(composition: std::sync::Arc<compose::Composition>, config: Config) {
+async fn pump(
+    composition: std::sync::Arc<compose::Composition>,
+    config: Config,
+    telemetry: aex_platform_telemetry::Handle,
+) {
     let (store, queue) = wake::aws_bindings(
         &config.region,
         &config.wake_queue_url,
@@ -307,17 +320,61 @@ async fn pump(composition: std::sync::Arc<compose::Composition>, config: Config)
     );
     while !composition.drain.is_draining() {
         match pump.poll_once().await {
-            Ok(report) if report.received == 0 => {
-                // Nothing to do, and nothing to receive while a binding is unsatisfied. The
-                // tick is what makes drain observable without a second channel.
-                tokio::time::sleep(compose::REACTOR_TICK).await;
+            Ok(report) => {
+                emit_due_isolations(&telemetry, &config, &report);
+                if report.received == 0 {
+                    // Nothing to do, and nothing to receive while a binding is unsatisfied.
+                    // The tick makes drain observable without a second channel.
+                    tokio::time::sleep(compose::REACTOR_TICK).await;
+                }
             }
-            Ok(_) => {}
             Err(error) => {
                 eprintln!("brain-mux: the wake loop refused: {error}");
                 tokio::time::sleep(compose::REACTOR_TICK).await;
             }
         }
+    }
+}
+
+fn emit_due_isolations(
+    telemetry: &aex_platform_telemetry::Handle,
+    config: &Config,
+    report: &aex_brain_application::activation::PollReport,
+) {
+    let count = u32::try_from(report.malformed).unwrap_or(u32::MAX);
+    for isolation in &report.isolations {
+        let reason = match isolation.reason {
+            aex_brain_application::ports::DueRowIsolationReason::MalformedProjection => {
+                "malformed_projection"
+            }
+            aex_brain_application::ports::DueRowIsolationReason::BaseKeyMismatch => {
+                "base_key_mismatch"
+            }
+            aex_brain_application::ports::DueRowIsolationReason::ShardMismatch => "shard_mismatch",
+            aex_brain_application::ports::DueRowIsolationReason::DuePositionMismatch => {
+                "due_position_mismatch"
+            }
+        };
+        telemetry.emit(
+            aex_platform_telemetry::Record::event(
+                aex_telemetry_schema::generated::EVENT_AEX_BRAIN_DUE_ROW_ISOLATED,
+            )
+            .with(
+                aex_telemetry_schema::generated::AEX_PLANE,
+                config.plane.clone(),
+            )
+            .with(
+                aex_telemetry_schema::generated::AEX_REGION,
+                config.region.clone(),
+            )
+            .with(aex_telemetry_schema::generated::AEX_DEPLOYABLE, "brain-mux")
+            .with(aex_telemetry_schema::generated::AEX_ERROR_CLASS, reason)
+            .with(aex_telemetry_schema::generated::AEX_ISOLATION_COUNT, count)
+            .with(
+                aex_telemetry_schema::generated::AEX_ISOLATION_FINGERPRINT,
+                isolation.fingerprint.clone(),
+            ),
+        );
     }
 }
 
@@ -329,33 +386,75 @@ async fn pump(composition: std::sync::Arc<compose::Composition>, config: Config)
 pub async fn drain_sequence(
     composition: &std::sync::Arc<compose::Composition>,
     pump: tokio::task::JoinHandle<()>,
-) -> Vec<drain::Stage> {
+) -> Result<Vec<drain::Stage>, drain::DrainError> {
     let mut performed = vec![composition.begin_drain()];
 
-    // The loop observes the gate on its next iteration and returns; joining it is how the
-    // process proves it stopped receiving rather than merely intended to.
-    let _ = tokio::time::timeout(drain::COMMIT_MARGIN, pump).await;
+    // Closing the gate prevents every post-signal admission, including deliveries returned
+    // by a long-poll already in progress. The join below proves the receive scope eventually
+    // stopped; the stage records when its authority to receive was revoked.
     performed.push(drain::Stage::StopReceiving);
 
     // Replay-safe work is abandoned at once: its lease is released by the activation itself,
     // and a surviving task claims it in milliseconds.
     performed.push(drain::Stage::AbandonReplaySafe);
 
-    // Dispatched non-replayable effects run to the commit margin. Anything that still cannot
-    // commit settles `OutcomeUnknown` and terminalizes the run `interrupted`, which is honest;
-    // reporting a clean cancellation for a request that may have been served is not.
+    // Dispatched non-replayable effects run to the commit margin. Cooperative adapters
+    // preserve their dispatch proof: ambiguous work settles unknown, while `NotSent` may
+    // re-arm. Anything still pending at the hard deadline is dropped only by the explicit
+    // abort-and-join below and remains recoverable from its dispatch-started durable state.
     let deadline = tokio::time::Instant::now() + drain::STOP_TIMEOUT - drain::COMMIT_MARGIN;
     while !composition.is_quiesced() && tokio::time::Instant::now() < deadline {
         tokio::time::sleep(compose::REACTOR_TICK).await;
     }
     performed.push(drain::Stage::AwaitNonReplayable);
 
-    // Every activation released its own lease on the way out; there is nothing left holding
-    // one, which is what quiescence means.
+    // Keep the handle across timeout. Consuming it in `timeout` detaches the task when the
+    // deadline expires, allowing the process to report Exit while the pump still owns live
+    // activations. The commit margin is the last cooperative window; expiry explicitly
+    // aborts and then joins the task, which drops every child future in this structured
+    // scope before any later stage is reported.
+    join_pump(pump, drain::COMMIT_MARGIN).await?;
+    if !composition.is_quiesced() {
+        return Err(drain::DrainError::ActivationsRemain {
+            in_flight: composition.drain.in_flight(),
+        });
+    }
+
+    // No activation future remains able to use a lease. Cooperative paths released their
+    // exact claim; an explicitly aborted path cannot write again and its 15-second durable
+    // lease expires normally. Quiescence is an in-process liveness proof, not a fabricated
+    // claim that every best-effort release reached DynamoDB.
     performed.push(drain::Stage::ReleaseLeases);
     performed.push(drain::Stage::Flush);
     performed.push(drain::Stage::Exit);
-    performed
+    Ok(performed)
+}
+
+async fn join_pump(
+    mut pump: tokio::task::JoinHandle<()>,
+    grace: core::time::Duration,
+) -> Result<(), drain::DrainError> {
+    match tokio::time::timeout(grace, &mut pump).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            return Err(drain::DrainError::PumpFailed {
+                reason: error.to_string(),
+            });
+        }
+        Err(_) => {
+            pump.abort();
+            match pump.await {
+                Err(error) if error.is_cancelled() => {}
+                Ok(()) => {}
+                Err(error) => {
+                    return Err(drain::DrainError::PumpFailed {
+                        reason: error.to_string(),
+                    });
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Serves `/internal/healthz` and `/internal/readyz` until drain completes.
@@ -482,8 +581,11 @@ fn main() -> std::process::ExitCode {
 mod tests {
     use super::{
         BUDGET_VAR, Config, ConfigError, PLANE_VAR, REGION_VAR, RESOURCE_VAR, WAKE_QUEUE_VAR,
-        WORK_TABLE_VAR,
+        WORK_TABLE_VAR, emit_due_isolations,
     };
+    use aex_brain_application::activation::PollReport;
+    use aex_brain_application::ports::{DueRowIsolation, DueRowIsolationReason};
+    use aex_platform_telemetry::{AttributeValue, InMemoryExporter};
     use std::collections::BTreeMap;
 
     fn complete() -> BTreeMap<&'static str, String> {
@@ -596,6 +698,45 @@ mod tests {
                 }
             ),
             "{error:?}"
+        );
+    }
+
+    #[test]
+    fn due_isolation_samples_reach_structured_telemetry_without_raw_keys() {
+        let exporter = std::sync::Arc::new(InMemoryExporter::new());
+        let telemetry = aex_platform_telemetry::Handle::install(
+            &aex_platform_telemetry::Settings::default(),
+            Some(std::sync::Arc::clone(&exporter) as std::sync::Arc<_>),
+        );
+        let config = read(&complete()).expect("complete environment");
+        let report = PollReport {
+            malformed: 17,
+            isolations: vec![DueRowIsolation {
+                reason: DueRowIsolationReason::ShardMismatch,
+                fingerprint: "0123456789abcdef".to_owned(),
+            }],
+            ..PollReport::default()
+        };
+
+        emit_due_isolations(&telemetry, &config, &report);
+        let _ = telemetry.flush(core::time::Duration::from_secs(1));
+        let delivered = exporter.delivered();
+        assert_eq!(delivered.len(), 1);
+        assert_eq!(
+            delivered[0].name,
+            aex_telemetry_schema::generated::EVENT_AEX_BRAIN_DUE_ROW_ISOLATED
+        );
+        assert_eq!(
+            delivered[0].attribute(aex_telemetry_schema::generated::AEX_ERROR_CLASS),
+            Some(&AttributeValue::Text("shard_mismatch".to_owned()))
+        );
+        assert_eq!(
+            delivered[0].attribute(aex_telemetry_schema::generated::AEX_ISOLATION_COUNT),
+            Some(&AttributeValue::Integer(17))
+        );
+        assert_eq!(
+            delivered[0].attribute(aex_telemetry_schema::generated::AEX_ISOLATION_FINGERPRINT),
+            Some(&AttributeValue::Text("0123456789abcdef".to_owned()))
         );
     }
 }

@@ -43,6 +43,16 @@ pub const AEX_DEPLOYABLE: &str = "aex.deployable";
 /// Cardinality: `bounded`. Visibility: `public`. Maximum length: 48 bytes.
 pub const AEX_ERROR_CLASS: &str = "aex.error.class";
 
+/// `aex.isolation.count` — Complete number of malformed rows isolated in one bounded recovery pass.
+///
+/// Cardinality: `bounded`. Visibility: `public`. Maximum length: 10 bytes.
+pub const AEX_ISOLATION_COUNT: &str = "aex.isolation.count";
+
+/// `aex.isolation.fingerprint` — Redacted sixteen-hex correlation digest for one isolated row.
+///
+/// Cardinality: `bounded`. Visibility: `public`. Maximum length: 16 bytes.
+pub const AEX_ISOLATION_FINGERPRINT: &str = "aex.isolation.fingerprint";
+
 /// `aex.meter` — Usage meter identity, one of the four launch meters.
 ///
 /// Cardinality: `fixed`. Visibility: `public`. Maximum length: 32 bytes.
@@ -149,6 +159,18 @@ pub const ATTRIBUTES: &[AttributeSpec] = &[
         cardinality: Cardinality::Bounded,
         visibility: Visibility::Public,
         max_len: 48,
+    },
+    AttributeSpec {
+        name: AEX_ISOLATION_COUNT,
+        cardinality: Cardinality::Bounded,
+        visibility: Visibility::Public,
+        max_len: 10,
+    },
+    AttributeSpec {
+        name: AEX_ISOLATION_FINGERPRINT,
+        cardinality: Cardinality::Bounded,
+        visibility: Visibility::Public,
+        max_len: 16,
     },
     AttributeSpec {
         name: AEX_METER,
@@ -339,6 +361,9 @@ pub const SPANS: &[SpanSpec] = &[
 
 // --- event names -----------------------------------------------------------------
 
+/// `aex.brain.due_row.isolated` — Brain isolated a malformed due-index row while valid siblings continued.
+pub const EVENT_AEX_BRAIN_DUE_ROW_ISOLATED: &str = "aex.brain.due_row.isolated";
+
 /// `aex.process.configuration.rejected` — A deployable refused to start because its configuration was invalid.
 pub const EVENT_AEX_PROCESS_CONFIGURATION_REJECTED: &str = "aex.process.configuration.rejected";
 
@@ -350,6 +375,17 @@ pub const EVENT_AEX_TELEMETRY_EXPORTER_ABSENT: &str = "aex.telemetry.exporter.ab
 
 /// Every declared event, ordered by name.
 pub const EVENTS: &[EventSpec] = &[
+    EventSpec {
+        name: EVENT_AEX_BRAIN_DUE_ROW_ISOLATED,
+        attributes: &[
+            AEX_DEPLOYABLE,
+            AEX_ERROR_CLASS,
+            AEX_ISOLATION_COUNT,
+            AEX_ISOLATION_FINGERPRINT,
+            AEX_PLANE,
+            AEX_REGION,
+        ],
+    },
     EventSpec {
         name: EVENT_AEX_PROCESS_CONFIGURATION_REJECTED,
         attributes: &[AEX_DEPLOYABLE, AEX_ERROR_CLASS, AEX_PLANE, AEX_REGION],

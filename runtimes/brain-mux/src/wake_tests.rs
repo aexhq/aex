@@ -25,7 +25,7 @@ use aex_brain_application::ports::{
 use aex_brain_domain::budget::DimensionVector;
 use aex_brain_domain::effect::{DispatchEvidence, DurableEffect};
 use aex_brain_domain::ids::{
-    AgentId, AgentKey, CatalogPin, ContentHash, JournalSeq, ModelSlug, SessionId, Timestamp,
+    AgentId, AgentKey, CatalogPin, ContentHash, JournalSeq, ModelSlug, SessionId, Timestamp, WakeId,
 };
 use aex_brain_domain::journal::{FinishReason, JournalEntry, JournalRecord, MessageOrigin};
 use aex_brain_domain::wire_pending::{
@@ -44,7 +44,7 @@ use aex_usage_domain::wire_pending::{
 };
 use aex_wire::ids::{GenerationId, PrefixedId as _, Uuid7};
 use std::collections::{BTreeMap, VecDeque};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
@@ -228,6 +228,132 @@ async fn the_composed_loop_drives_a_turn_end_to_end() {
     assert_eq!(composed.queue.acked().len(), 1);
 }
 
+#[derive(Debug)]
+struct ConcurrentProvider {
+    target: usize,
+    active: AtomicUsize,
+    maximum: AtomicUsize,
+}
+
+impl ConcurrentProvider {
+    const fn new(target: usize) -> Self {
+        Self {
+            target,
+            active: AtomicUsize::new(0),
+            maximum: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl ProviderPort for ConcurrentProvider {
+    fn dispatch<'a>(
+        &'a self,
+        _ticket: &'a DispatchTicket,
+        _request: &'a CanonicalModelRequest,
+        _budget: &'a StreamBudget,
+        _preview: &'a dyn PreviewSink,
+        _cancel: &'a CancelToken,
+    ) -> BoxFuture<'a, Result<ProviderOutcome, ProviderDispatchError>> {
+        let mut entered = false;
+        Box::pin(core::future::poll_fn(move |context| {
+            if !entered {
+                entered = true;
+                let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+                self.maximum.fetch_max(active, Ordering::SeqCst);
+            }
+            if self.maximum.load(Ordering::SeqCst) >= self.target {
+                self.active.fetch_sub(1, Ordering::SeqCst);
+                return core::task::Poll::Ready(Ok(produced()));
+            }
+            context.waker().wake_by_ref();
+            core::task::Poll::Pending
+        }))
+    }
+
+    fn resolve_unknown<'a>(
+        &'a self,
+        _identity: &'a DurableEffect,
+        _evidence: &'a DispatchEvidence,
+    ) -> BoxFuture<'a, Result<UnknownResolution, ProviderDispatchError>> {
+        Box::pin(async { Ok(UnknownResolution::NoDurableOperation) })
+    }
+}
+
+/// One receive schedules all ten long-effect slots concurrently, bounded by the explicit
+/// drive limit. If the loop regresses to serial execution, the first provider future never
+/// observes the other nine and this test cannot complete.
+#[tokio::test(flavor = "current_thread")]
+async fn ten_long_effects_are_polled_concurrently_under_the_drive_bound() {
+    const COUNT: usize = 10;
+    const COUNT_U32: u32 = 10;
+    const COUNT_U64: u64 = 10;
+    let log = Arc::new(Recorder::default());
+    let clock = Arc::new(FixedClock::at(START));
+    let queue = Arc::new(MemoryQueue::new(Arc::clone(&log)));
+    let store = Arc::new(MemoryStore::new(
+        Arc::clone(&clock),
+        Arc::clone(&queue),
+        Arc::clone(&log),
+    ));
+    for ordinal in 0..COUNT {
+        let ordinal = u128::try_from(ordinal).expect("fixture ordinal fits u128");
+        let key = AgentKey::new(
+            key().session,
+            AgentId(Uuid::from_u128(0xa6e7_3000 + ordinal)),
+        );
+        store.seed(key, history());
+        let mut wake = wake_for(key, &format!("wrk-concurrent-{ordinal}"));
+        wake.id = WakeId(Uuid::from_u128(0x5000 + ordinal));
+        queue.project(wake);
+    }
+    let provider = Arc::new(ConcurrentProvider::new(COUNT));
+    let drain = Arc::new(DrainGate::new());
+    let ports = Ports {
+        journal: Arc::clone(&store) as Arc<_>,
+        effects: Arc::clone(&store) as Arc<_>,
+        leases: Arc::clone(&store) as Arc<_>,
+        wakes: Arc::clone(&queue) as Arc<_>,
+        provider: Arc::clone(&provider) as Arc<_>,
+        tools: Arc::new(ScriptedTools::new(Vec::new(), Vec::new())),
+        hands: Arc::new(AbsentHands),
+        catalog: Arc::new(FixedCatalog::with_model(capability())),
+        clock,
+        ids: Arc::new(CountingIds::new()),
+    };
+    let permits = Arc::new(PermitSet::new(BTreeMap::from([(
+        PermitKind::Activation,
+        COUNT_U64,
+    )])));
+    let admission = Arc::new(Admission::new(
+        AdmissionBounds {
+            target: COUNT_U32,
+            safety_cap: COUNT_U32,
+            offered_ceiling: COUNT_U32 * 2,
+        },
+        permits,
+        Arc::clone(&drain),
+    ));
+    let mut policy = ActivationPolicy::default();
+    policy.max_concurrent_drives = COUNT;
+    let pump = WakeLoop::new(
+        Activation::new(
+            ports,
+            policy,
+            Arc::new(ActivationRegistry::new()),
+            Arc::clone(&drain),
+        ),
+        Arc::new(MuxAdmission::new(admission, bound())),
+    );
+
+    let report = tokio::time::timeout(core::time::Duration::from_secs(1), pump.poll_once())
+        .await
+        .expect("a serial regression must fail promptly instead of waiting for a long effect")
+        .expect("the bounded batch completes");
+    assert_eq!(report.driven, COUNT);
+    assert_eq!(provider.maximum.load(Ordering::SeqCst), COUNT);
+    assert_eq!(provider.active.load(Ordering::SeqCst), 0);
+}
+
 /// A draining task takes nothing off the queue, whatever else it is doing.
 #[tokio::test(flavor = "current_thread")]
 async fn a_draining_composition_receives_nothing() {
@@ -260,7 +386,9 @@ async fn the_drain_sequence_walks_every_stage_in_order() {
     );
     let idle = tokio::spawn(async {});
 
-    let performed = crate::drain_sequence(&composition, idle).await;
+    let performed = crate::drain_sequence(&composition, idle)
+        .await
+        .expect("an idle pump joins cleanly");
     assert_eq!(performed, Stage::ORDER.to_vec());
     assert!(composition.drain.is_draining());
     assert_eq!(
@@ -279,6 +407,38 @@ async fn the_drain_sequence_walks_every_stage_in_order() {
         200,
         "liveness is never touched: failing it kills the task along with its effects"
     );
+}
+
+struct PendingUntilDropped(Arc<AtomicBool>);
+
+impl core::future::Future for PendingUntilDropped {
+    type Output = ();
+
+    fn poll(
+        self: core::pin::Pin<&mut Self>,
+        _context: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<Self::Output> {
+        core::task::Poll::Pending
+    }
+}
+
+impl Drop for PendingUntilDropped {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+/// Expiring the cooperative window aborts and joins the exact task. A dropped join handle
+/// would detach this future and leave the flag false after the helper returned.
+#[tokio::test(flavor = "current_thread")]
+async fn an_expired_drain_window_aborts_and_joins_the_pump() {
+    let dropped = Arc::new(AtomicBool::new(false));
+    let pump = tokio::spawn(PendingUntilDropped(Arc::clone(&dropped)));
+
+    crate::join_pump(pump, core::time::Duration::ZERO)
+        .await
+        .expect("explicit cancellation is a joined drain outcome");
+    assert!(dropped.load(Ordering::SeqCst));
 }
 
 /// A provider that is pending exactly once. It stands in for provider HTTP, a tool call and
@@ -431,6 +591,7 @@ async fn a_handed_back_agent_leaves_a_wake_the_decision_created() {
                 .receive(1, core::time::Duration::ZERO)
                 .await
                 .expect("the queue answers")
+                .deliveries
                 .pop()
                 .expect("a delivery"),
         )

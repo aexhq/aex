@@ -10,7 +10,8 @@
 
 use aex_brain_application::ports::{
     BoxFuture, DueRowIsolation, DueRowIsolationReason, DueScanCursor, DueScanPage, DurableWake,
-    MAX_DUE_ROW_ISOLATIONS, StoreError, WakeDelivery, WakeOrigin, WakeQueue, WakeState,
+    MAX_DUE_ROW_ISOLATIONS, MalformedWakeDelivery, MalformedWakeReason, StoreError, WakeBatch,
+    WakeDelivery, WakeOrigin, WakeQueue, WakeState,
 };
 use aex_brain_domain::ids::{AgentId, AgentKey, SessionId, Timestamp, WakeId, WorkShard};
 use aex_brain_domain::journal::ParkReason;
@@ -75,7 +76,7 @@ impl WakeQueue for SqsWakeQueue {
         &self,
         max: usize,
         wait: core::time::Duration,
-    ) -> BoxFuture<'_, Result<Vec<WakeDelivery>, StoreError>> {
+    ) -> BoxFuture<'_, Result<WakeBatch, StoreError>> {
         Box::pin(async move {
             let output = self
                 .client
@@ -87,12 +88,53 @@ impl WakeQueue for SqsWakeQueue {
                 .send()
                 .await
                 .map_err(|error| sqs_error("receive", &error))?;
-            output
-                .messages
-                .unwrap_or_default()
-                .into_iter()
-                .map(decode_message)
-                .collect()
+            Ok(decode_messages(output.messages.unwrap_or_default()))
+        })
+    }
+
+    fn release_malformed(
+        &self,
+        delivery: MalformedWakeDelivery,
+        after: core::time::Duration,
+    ) -> BoxFuture<'_, Result<(), StoreError>> {
+        Box::pin(async move {
+            let receipt = delivery.receipt.ok_or_else(|| {
+                undecodable(
+                    "wake delivery",
+                    "a malformed message carried no receipt handle and cannot be released",
+                )
+            })?;
+            self.client
+                .change_message_visibility()
+                .queue_url(&self.queue_url)
+                .receipt_handle(receipt)
+                .visibility_timeout(i32::try_from(after.as_secs()).unwrap_or(0))
+                .send()
+                .await
+                .map_err(|error| sqs_error("release_malformed", &error))?;
+            Ok(())
+        })
+    }
+
+    fn ack_malformed(
+        &self,
+        delivery: MalformedWakeDelivery,
+    ) -> BoxFuture<'_, Result<(), StoreError>> {
+        Box::pin(async move {
+            let receipt = delivery.receipt.ok_or_else(|| {
+                undecodable(
+                    "wake delivery",
+                    "a malformed message carried no receipt handle and cannot be acknowledged",
+                )
+            })?;
+            self.client
+                .delete_message()
+                .queue_url(&self.queue_url)
+                .receipt_handle(receipt)
+                .send()
+                .await
+                .map_err(|error| sqs_error("ack_malformed", &error))?;
+            Ok(())
         })
     }
 
@@ -264,6 +306,18 @@ impl WakeQueue for SqsWakeQueue {
     }
 }
 
+fn decode_messages(messages: Vec<aws_sdk_sqs::types::Message>) -> WakeBatch {
+    let mut batch = WakeBatch::default();
+    for message in messages {
+        let malformed = malformed_delivery(&message);
+        match decode_message(message) {
+            Ok(delivery) => batch.deliveries.push(delivery),
+            Err(_) => batch.malformed.push(malformed),
+        }
+    }
+    batch
+}
+
 /// Decodes one queue message into a durable wake.
 ///
 /// The message body is the projection of the durable row, so a message that does not carry
@@ -298,6 +352,35 @@ pub fn decode_message(message: aws_sdk_sqs::types::Message) -> Result<WakeDelive
             receive_count,
         },
     })
+}
+
+fn malformed_delivery(message: &aws_sdk_sqs::types::Message) -> MalformedWakeDelivery {
+    let reason = if message.receipt_handle.is_none() {
+        MalformedWakeReason::MissingReceipt
+    } else if message.body.is_none() {
+        MalformedWakeReason::MissingBody
+    } else {
+        MalformedWakeReason::InvalidProjection
+    };
+    let receive_count = message
+        .attributes
+        .as_ref()
+        .and_then(|it| it.get(&MessageSystemAttributeName::ApproximateReceiveCount))
+        .and_then(|it| it.parse::<u32>().ok())
+        .unwrap_or(1);
+    let digest = blake3::hash(
+        message
+            .body
+            .as_deref()
+            .unwrap_or("<missing-body>")
+            .as_bytes(),
+    );
+    MalformedWakeDelivery {
+        receipt: message.receipt_handle.clone(),
+        receive_count,
+        reason,
+        fingerprint: digest.to_hex()[..16].to_owned(),
+    }
 }
 
 /// Decodes the wake payload a `regional-work` row projects onto the queue.
@@ -618,7 +701,7 @@ where
 mod tests {
     use super::{
         cursor_from_key, cursor_key, decode_body, decode_due_entries, decode_due_entry,
-        decode_message,
+        decode_message, decode_messages,
     };
     use aex_brain_application::ports::{DueRowIsolationReason, MAX_DUE_ROW_ISOLATIONS};
     use aex_session_dynamodb::attr::{Item, n, s, stamp};
@@ -696,6 +779,29 @@ mod tests {
             .build();
         let delivery = decode_message(message).expect("well-formed");
         assert_eq!(delivery.receive_count(), Some(7));
+    }
+
+    #[test]
+    fn one_malformed_queue_record_does_not_reject_valid_siblings() {
+        let valid = aws_sdk_sqs::types::Message::builder()
+            .body(body())
+            .receipt_handle("valid-rh")
+            .build();
+        let malformed = aws_sdk_sqs::types::Message::builder()
+            .body("not-json")
+            .receipt_handle("bad-rh")
+            .attributes(
+                aws_sdk_sqs::types::MessageSystemAttributeName::ApproximateReceiveCount,
+                "4",
+            )
+            .build();
+
+        let batch = decode_messages(vec![malformed, valid]);
+        assert_eq!(batch.deliveries.len(), 1);
+        assert_eq!(batch.malformed.len(), 1);
+        assert_eq!(batch.malformed[0].receive_count, 4);
+        assert_eq!(batch.malformed[0].fingerprint.len(), 16);
+        assert_eq!(batch.malformed[0].receipt.as_deref(), Some("bad-rh"));
     }
 
     fn due_entry_for(

@@ -335,6 +335,47 @@ pub struct WakeDelivery {
     pub origin: WakeOrigin,
 }
 
+/// One queue record that could not be decoded into a durable wake.
+///
+/// The body and receipt are never exposed as diagnostics. The adapter retains only the
+/// receipt needed to apply the poison policy, the approximate receive count, a closed reason
+/// class and a short digest suitable for bounded correlation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MalformedWakeDelivery {
+    /// Queue receipt, when the transport supplied one.
+    pub receipt: Option<String>,
+    /// Approximate number of times the queue has delivered this record.
+    pub receive_count: u32,
+    /// Closed decode failure class.
+    pub reason: MalformedWakeReason,
+    /// Sixteen lowercase hexadecimal characters derived from the body, never the body.
+    pub fingerprint: String,
+}
+
+/// Why a queue record could not become a wake.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MalformedWakeReason {
+    /// The transport supplied no receipt, so the record cannot be released or acknowledged.
+    MissingReceipt,
+    /// The transport supplied no message body.
+    MissingBody,
+    /// The body was present but was not a valid durable-wake projection.
+    InvalidProjection,
+}
+
+/// One isolated queue receive.
+///
+/// Malformed records are siblings of valid deliveries, not an error for the whole receive.
+/// The application applies the configured max-receive policy to each malformed record while
+/// valid siblings continue through admission.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct WakeBatch {
+    /// Valid decoded deliveries.
+    pub deliveries: Vec<WakeDelivery>,
+    /// Invalid records retained only for release or poison acknowledgement.
+    pub malformed: Vec<MalformedWakeDelivery>,
+}
+
 impl WakeDelivery {
     /// How many times the queue has delivered this hint.
     ///
@@ -485,7 +526,23 @@ pub trait WakeQueue: Send + Sync + 'static {
         &self,
         max: usize,
         wait: core::time::Duration,
-    ) -> BoxFuture<'_, Result<Vec<WakeDelivery>, StoreError>>;
+    ) -> BoxFuture<'_, Result<WakeBatch, StoreError>>;
+
+    /// Returns one malformed queue record to visibility.
+    ///
+    /// This is intentionally separate from [`WakeQueue::release`]: an undecodable body has
+    /// no [`DurableWake`] and must never be padded with an invented identity.
+    fn release_malformed(
+        &self,
+        delivery: MalformedWakeDelivery,
+        after: core::time::Duration,
+    ) -> BoxFuture<'_, Result<(), StoreError>>;
+
+    /// Acknowledges one malformed record after its max-receive threshold is reached.
+    fn ack_malformed(
+        &self,
+        delivery: MalformedWakeDelivery,
+    ) -> BoxFuture<'_, Result<(), StoreError>>;
 
     /// Strongly verifies the source row and reports whether it remains outstanding.
     ///

@@ -182,10 +182,10 @@ async fn a_claim_advances_the_fence_and_returns_the_agent_head_with_the_write() 
     );
 }
 
-/// A renewal must never move the fence: it proves nothing changed hands, and moving it
-/// would fence out the very owner doing the renewing.
+/// A renewal must never move the fence, and it must observe session lifecycle, cancellation
+/// and deletion in the same transaction that extends the agent lease.
 #[tokio::test]
-async fn a_renewal_extends_the_lease_without_touching_the_fence() {
+async fn a_renewal_guards_session_authority_without_touching_the_fence() {
     let (store, receiver) = capturing();
     let _ = store
         .renew(
@@ -195,14 +195,36 @@ async fn a_renewal_extends_the_lease_without_touching_the_fence() {
         )
         .await;
     let body = captured(receiver);
-    let update = body["UpdateExpression"].as_str().expect("an update");
+    let actions = body["TransactItems"]
+        .as_array()
+        .expect("renewal is a transaction");
+    assert_eq!(actions.len(), 2);
+    let session = &actions[0]["ConditionCheck"];
+    let session_condition = session["ConditionExpression"]
+        .as_str()
+        .expect("a session condition");
+    for required in [
+        "cancelEpoch = :cancelEpoch",
+        "deletionEpoch = :deletionEpoch",
+        "lifecycle = :active",
+    ] {
+        assert!(session_condition.contains(required), "{session_condition}");
+    }
+    let control = &actions[1]["Update"];
+    let update = control["UpdateExpression"].as_str().expect("an update");
     assert!(
         !update.contains("fence"),
         "extending a lease is not a new claim: {update}"
     );
-    let condition = body["ConditionExpression"].as_str().expect("conditional");
+    let condition = control["ConditionExpression"]
+        .as_str()
+        .expect("conditional");
     assert!(condition.contains("fence = :fence"), "{condition}");
     assert!(condition.contains("claimOwner = :owner"), "{condition}");
+    assert!(
+        condition.contains("cancelEpoch = :cancelEpoch"),
+        "{condition}"
+    );
 }
 
 /// Every completed ownership scope gives the lease back immediately. Removing the owner
@@ -342,16 +364,24 @@ async fn the_pre_send_write_atomically_checks_current_control_and_takes_over_the
         "{effect_condition}"
     );
     assert!(
+        effect_condition.contains("attempt = :attempt"),
+        "{effect_condition}"
+    );
+    assert!(
         !effect_condition.contains("agentFence"),
         "the predecessor's prepare fence must not prevent takeover: {effect_condition}"
     );
     let update = effect["UpdateExpression"].as_str().expect("an update");
     assert!(update.contains("agentFence = :fence"), "{update}");
+    assert!(
+        !update.contains("attempt = :attempt"),
+        "takeover rewrote the immutable prepared attempt: {update}"
+    );
 }
 
-/// A cursor returned by `DynamoDB` must be sent back verbatim as the next query's native
-/// `ExclusiveStartKey`; restarting at the shard head lets a full page of held rows starve
-/// every younger row forever.
+/// Once the application classifies a page stable and installs its cursor, the adapter must
+/// return that cursor verbatim as DynamoDB's native `ExclusiveStartKey`. Transient pages
+/// retain their previous cursor in the application and never reach this adapter assertion.
 #[tokio::test]
 async fn a_due_scan_resumes_from_the_native_per_shard_continuation() {
     let (queue, receiver) = capturing_wake_queue();

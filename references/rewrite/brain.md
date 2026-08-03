@@ -443,9 +443,10 @@ their mutation proof.
 #### `runtimes/brain-mux` — the composition
 
 `Config` grows the two variables §10 named. `wake` resolves each port to an
-adapter or refuses it by name; `pump` receives and drives until drain;
-`drain_sequence` walks all seven stages and joins the receive task, so the
-process proves it stopped receiving rather than merely intended to.
+adapter or refuses it by name; `pump` receives, recovers due work and drives a
+bounded concurrent batch until drain; `drain_sequence` walks all seven stages
+and joins or explicitly aborts-then-joins the receive task, so the process
+proves every admitted activation stopped rather than merely intending to stop.
 
 A11-MUX is asserted through the composition and not only inside the probe: the
 loop's future is metered across a provider that is pending for a scripted 999 ms
@@ -474,12 +475,12 @@ and none of it is attributed.
 
 | # | Decision | Why |
 | --- | --- | --- |
-| BR-30 | One bounded `regional-work/gsi_due` shard is swept before every queue receive; recovered rows carry `WakeOrigin::DueScan`, never a synthetic receipt | the stream and SQS are delivery hints, so a lost hint must not strand authority. Explicit provenance makes visibility, poison counting and ack no-ops for a scan result instead of issuing an invalid queue call. Sixty-four shards matches the strict-v1 table descriptor, and one shard plus one receive batch bounds every pass. |
+| BR-30 | A bounded rotating `regional-work/gsi_due` scan is the queue's durable backstop; recovered rows carry `WakeOrigin::DueScan`, never a synthetic receipt | the stream and SQS are delivery hints, so a lost hint must not strand authority. Explicit provenance makes visibility, poison counting and ack no-ops for a scan result instead of issuing an invalid queue call. Sixty-four shards matches the strict-v1 table descriptor; BR-35 and BR-41 fix the current receive/scan/drive ordering and bounds. |
 | BR-31 | Every successful or already-terminal agent activation ends with a retirement-only `DecisionCommit`: the session head and agent control are condition-checked under the live claim, while the exact pending source wake is moved to `done` and loses both due-index keys in the same transaction | a separate `UpdateItem` cleanup would have no agent fence, and acking first would lose the recovery path. The pure retirement does not manufacture a journal tail or advance the revision; terminal agents remain claimable solely so this transaction still has a live fence. |
 | BR-32 | A retirement-only transaction hashes agent, revision, tail and source work identity into its own 36-character client request token | it follows the final journal decision without advancing that decision's tail. Reusing the tail-only token with different transaction parameters would make DynamoDB reject the retirement as an idempotent-parameter mismatch. |
 | BR-33 | Hands effects bind the canonical runtime `aex_wire::ids::GenerationId` read from session authority; Brain has no local numeric generation or unbound-generation state | runtime idle recount and recovery select the exact generation that admitted an operation. `AgentControl`, child fanout, `AgentHead`, `HandsPort`, pinned agent config and Hands effect rows now carry the same typed UUID. |
-| BR-34 | One structured activation supervisor races the claimed work future against a five-second timer, renews the 15-second lease, and extends a live SQS receipt to 30 seconds only after renewal succeeds | provider, managed-tool and Hands waits may last 600 seconds. The timer future sleeps rather than polling the effect; ownership loss cancels and drops the pending work, while every late commit still carries the durable fence. A visibility failure permits a duplicate hint instead of hiding work whose ownership is uncertain. |
-| BR-35 | SQS receive and drive remain first; the due backstop is a cadence-limited rotating burst whose cursor advances only after its recovered row was driven | a failed receive can no longer strand a page behind an advanced cursor, and a full due page cannot consume the SQS batch. Every 20 seconds the backstop queries 16 of 64 shards and takes at most one exceptional lost-hint row per shard: a full sweep is bounded at 80 seconds, at most 0.8 query and 0.8 recovered row per second per task. The explicit trade is low recovery throughput for a path that is exceptional by design; normal throughput remains SQS's batch path, and due recovery cannot hot-poll while SQS is continuously ready. |
+| BR-34 | One structured activation supervisor races claimed work against a five-second timer; each renewal atomically rechecks session lifecycle, cancellation, deletion and current agent ownership before extending the 15-second lease, then extends a live SQS receipt to 30 seconds | provider, managed-tool and Hands waits may last 600 seconds. Ownership or session-authority loss sets the adapter cancellation token and drops the pending work under its existing fence. Drain also sets the token; returned dispatch proof, never the token, decides whether the effect settles unknown or may be safely re-armed. A visibility failure permits a duplicate hint instead of hiding work whose ownership is uncertain. |
+| BR-35 | SQS receive remains first, but the cadence-limited rotating due burst completes immediately after that receive and before any external effect is polled; queue and recovered deliveries then share one bounded concurrent scheduler | a failed receive cannot advance a due cursor, and ten 600-second effects no longer serialize into roughly 100 minutes or delay lost-hint recovery until they finish. Every 20 seconds the backstop queries 16 of 64 shards and takes at most one exceptional lost-hint row per shard. Admission and the explicit drive bound cap aggregate context, stream and future state. |
 
 ### 13.3 Decisions taken in the pre-send-integrity pass
 
@@ -495,6 +496,18 @@ and none of it is attributed.
 | BR-38 | Journal pagination carries `DynamoDB`'s complete native `LastEvaluatedKey`; every `pk`/`sk`, partition, journal sort key and resume sequence is decoded and revalidated, and activation accepts a restore only when its final `(sequence, content hash)` equals the pair returned in the claimed `AgentHead` | `DynamoDB` may return a short page with a continuation, so entry count cannot distinguish EOF. Sequence alone also cannot distinguish a same-tail fork. Either ambiguity reaching recovery or planning can dispatch from a prefix or a different history. |
 | BR-39 | Cold restore has strict activation-wide entry and hydrated-byte ceilings in addition to per-page bounds; mux admission reserves the total byte ceiling before hydration and releases it by RAII with the activation | many valid pages are still unbounded in aggregate. Journal body bytes and entry count are measurable; model token limits are not memory measurements and are not used. Histories above the ceiling fail closed until a verified snapshot authority can provide a bounded suffix. |
 
+### 13.5 Decisions taken in the runtime-liveness pass
+
+| # | Decision | Why |
+| --- | --- | --- |
+| BR-40 | Prepared-effect takeover mints a ticket only for the attempt already stored on the durable effect and never writes a replacement attempt number | ownership takeover is not a retry: the predecessor sent no byte. Rewriting the attempt would mutate durable history and make settlement evidence describe a generation that never existed. |
+| BR-41 | Drain retains the exact pump join handle across the cooperative timeout; expiry explicitly aborts and joins it, and `Stage::Exit` is refused while any drain permit remains | dropping a timed-out join handle detaches the pump. Readiness can fail at drain start, but a clean exit is true only after every admitted activation quiesced or its structured parent was cancelled and joined. |
+| BR-42 | Drain and session-authority loss set the downstream cancellation token; an ambiguous dispatch settles unknown, while only `NotSent` may create a replacement effect and continuation wake in one commit | cancellation in one process cannot unsend a request. Proof-preserving settlement prevents duplicate billing, and atomic re-arm prevents shutdown from stranding a prepared effect without a wake. Every late write retains the original session and agent fences. |
+| BR-43 | One receive pass scans due shards before driving anything, deduplicates queue/due hints, and polls all deliveries through `max_concurrent_drives` unordered futures | recovery latency is independent of effect duration, ten long effects overlap instead of serializing, and the explicit bound caps runnable futures and their reserved memory/CPU. |
+| BR-44 | A due page advances its native cursor only when every valid wake reached a stable outcome; a release, refusal or scan fault retains the prior cursor, while the shard rotor advances independently | a cursor is an assertion that earlier work was handled. Transient work must be revisited, but one hot or malformed shard must not starve later shards. |
+| BR-45 | SQS decoding returns valid and malformed siblings separately. Each malformed record is released below `max_receives` and acknowledged only at or above that threshold | one poison body cannot reject or repeatedly hide nine valid messages, and poison handling is an explicit per-record policy rather than an accidental batch error. |
+| BR-46 | Every poll carries the complete due-isolation count plus at most eight closed-reason, sixteen-hex fingerprints into the host's structured telemetry event | discarding the adapter's bounded diagnostics made logical quarantine operationally invisible. The event contains no tenant, session, work id, row key or body. |
+
 ### 14. Still deferred, with what unblocks each
 
 | Deferred | Unblocked by |
@@ -505,7 +518,6 @@ and none of it is attributed.
 | The recovery controller's `RetrySameEffect` on a *dispatched* effect | nothing moves a dispatched effect back to `prepared`, so the arm is a named refusal. Unreachable for the classes this loop prepares, which a test asserts |
 | `ReconstructFromReceipt` | `aex-content-aws`'s placement API: the receipt is a digest, and the body it names lives in the content authority |
 | `OwedStep::SpawnChildren` | the `create_subagent` tool, which is the only thing that produces a fanout request for `subagent::plan_spawn`. The planner has no arm that reaches it today |
-| Concurrent activation of one batch | the loop drives a batch sequentially. The local slot already refuses a concurrent duplicate, and the composition root can spawn per delivery; nothing asserts the fan-out yet |
 | Restore above the activation-wide entry/byte ceiling | a verified snapshot authority carrying the exact absorbed journal sequence and hash, plus a store API that conditionally reads only the bounded suffix from that identity. No such authority or port exists today, so Brain refuses rather than inventing snapshot trust or inferring memory from token limits |
 
 ### 14.1 BR-33 canonical generation and production injection

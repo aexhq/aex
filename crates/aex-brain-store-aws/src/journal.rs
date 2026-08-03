@@ -292,9 +292,11 @@ impl EffectStore for BrainStore {
                 aws_sdk_dynamodb::types::Update::builder()
                     .table_name(self.table())
                     .set_key(Some(item_key(&effect_key.pk, &effect_key.sk)))
-                    .condition_expression("#state = :prepared AND effectId = :id")
+                    .condition_expression(
+                        "#state = :prepared AND effectId = :id AND attempt = :attempt",
+                    )
                     .update_expression(
-                        "SET #state = :next, attempt = :attempt, dispatchStartedAt = :now, \
+                        "SET #state = :next, dispatchStartedAt = :now, \
                          agentFence = :fence",
                     )
                     .expression_attribute_names("#state", "state")
