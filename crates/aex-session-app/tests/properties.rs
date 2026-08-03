@@ -334,7 +334,7 @@ async fn admission_is_atomic() {
     let mut has_head = false;
     for write in &plan.writes {
         match write {
-            Write::AppendMessage(_) => has_message = true,
+            Write::PutMessage(_) => has_message = true,
             Write::PutRun(_) => has_run = true,
             Write::PutSessionHead(head) => {
                 has_head = true;
