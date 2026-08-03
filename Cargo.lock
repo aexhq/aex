@@ -108,6 +108,7 @@ dependencies = [
  "aex-wire",
  "async-trait",
  "futures",
+ "proptest",
  "tokio",
 ]
 

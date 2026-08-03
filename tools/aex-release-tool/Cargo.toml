@@ -39,6 +39,7 @@ policy = "unit"
 janitor = "unit"
 failing_fixtures = "unit"
 contracts = "unit"
+publication = "unit"
 
 [package.metadata.aex.not_applicable]
 live_suite = "workspace tool; it observes releases and is never itself deployed"

@@ -11,7 +11,7 @@
     "awaiting_owner": 44,
     "capacity_gates": 19,
     "live_targets": 35,
-    "packages": 143,
+    "packages": 144,
     "seams_claimed": 32,
     "seams_declared": 34,
     "workloads": 8
@@ -305,6 +305,40 @@
           "integration": "integration"
         },
         "not_applicable": {}
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": false
+    },
+    "crates/aex-brain-provider-custody": {
+      "name": "aex-brain-provider-custody",
+      "kind": "cargo",
+      "meta": {
+        "owner": "providers",
+        "role": "adapter",
+        "artifact": "none",
+        "live_suite": "aex-live-brain-mux",
+        "layers": [
+          "unit",
+          "integration"
+        ],
+        "concerns": [
+          "contract",
+          "property",
+          "fault",
+          "security"
+        ],
+        "seams": [],
+        "security_tier": "secret",
+        "risk": [
+          "none"
+        ],
+        "scenarios": [],
+        "targets": {
+          "authority": "unit"
+        },
+        "not_applicable": {
+          "integration": "port-composition adapter with no datastore or transport engine of its own; DynamoDB and KMS integration evidence belongs to the regional-stores adapters"
+        }
       },
       "unmapped_targets": [],
       "awaiting_owner": false
@@ -4393,6 +4427,7 @@
         "scenarios": [],
         "targets": {
           "artifacts": "unit",
+          "contracts": "unit",
           "evidence": "unit",
           "failing_fixtures": "unit",
           "graph": "unit",
@@ -4401,6 +4436,7 @@
           "monotonicity": "unit",
           "policy": "unit",
           "private_path": "unit",
+          "publication": "unit",
           "schemas": "unit",
           "selection": "unit"
         },
