@@ -1165,6 +1165,41 @@ impl ProviderPort for CancelAwareProvider {
     }
 }
 
+#[derive(Debug)]
+struct DrainOnFirstNotSent {
+    drain: Arc<DrainGate>,
+    dispatches: AtomicUsize,
+}
+
+impl ProviderPort for DrainOnFirstNotSent {
+    fn dispatch<'a>(
+        &'a self,
+        _ticket: &'a DispatchTicket,
+        _request: &'a CanonicalModelRequest,
+        _budget: &'a StreamBudget,
+        _preview: &'a dyn PreviewSink,
+        _cancel: &'a CancelToken,
+    ) -> BoxFuture<'a, Result<ProviderOutcome, ProviderDispatchError>> {
+        if self.dispatches.fetch_add(1, Ordering::SeqCst) == 0 {
+            self.drain.start_drain();
+        }
+        Box::pin(async {
+            Err(failure(
+                DispatchProof::NotSent,
+                ProviderFailureClass::Transient,
+            ))
+        })
+    }
+
+    fn resolve_unknown<'a>(
+        &'a self,
+        _identity: &'a DurableEffect,
+        _evidence: &'a aex_brain_domain::effect::DispatchEvidence,
+    ) -> BoxFuture<'a, Result<UnknownResolution, ProviderDispatchError>> {
+        Box::pin(async { Ok(UnknownResolution::NoDurableOperation) })
+    }
+}
+
 /// Drain reaches an already-dispatched provider through its cancellation token. A
 /// possibly-sent request settles unknown and interrupts; it is never described as a clean
 /// cancellation or dispatched a second time.
@@ -1252,6 +1287,51 @@ fn drain_rearms_only_a_proven_not_sent_effect_without_dispatching_the_replacemen
             .any(|effect| matches!(effect.state, EffectState::Prepared { attempt: 2 }))
     );
     assert_eq!(harness.queue.durable_depth(), 1);
+}
+
+/// A ready adapter can observe shutdown and return in the same poll, before the renewal
+/// supervisor gets control again. The session must observe the drain gate itself or it will
+/// immediately dispatch the replacement it just prepared during shutdown.
+#[test]
+fn drain_starting_inside_a_not_sent_dispatch_never_dispatches_its_replacement() {
+    let harness = Harness::new(Vec::new());
+    let provider = Arc::new(DrainOnFirstNotSent {
+        drain: Arc::clone(&harness.drain),
+        dispatches: AtomicUsize::new(0),
+    });
+    let mut ports = harness.ports();
+    ports.provider = Arc::clone(&provider) as Arc<_>;
+    let activation = Activation::new(
+        ports,
+        harness.policy.clone(),
+        Arc::clone(&harness.registry),
+        Arc::clone(&harness.drain),
+    );
+    harness.wake();
+    let delivery = block_on(harness.queue.receive(1, core::time::Duration::ZERO))
+        .expect("the queue answers")
+        .deliveries
+        .pop()
+        .expect("one delivery exists");
+
+    let outcome = block_on(activation.run(delivery)).expect("NotSent can be re-armed safely");
+    assert!(matches!(
+        outcome,
+        Outcome::Progressed {
+            stop: Stop::HandedBack,
+            ..
+        }
+    ));
+    assert_eq!(provider.dispatches.load(Ordering::SeqCst), 1);
+    assert!(
+        harness
+            .store
+            .effects(key())
+            .iter()
+            .any(|effect| matches!(effect.state, EffectState::Prepared { attempt: 2 }))
+    );
+    assert_eq!(harness.queue.durable_depth(), 1);
+    assert!(harness.drain.is_quiesced());
 }
 
 /// Two independent loops overlap for longer than both the original 15-second lease and the

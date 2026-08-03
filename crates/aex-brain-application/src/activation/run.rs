@@ -162,6 +162,7 @@ impl Activation {
         let mut session = Session {
             ports: &self.ports,
             policy: &self.policy,
+            drain: &self.drain,
             key,
             authority: claim.authority.clone(),
             claim: Arc::clone(&claim_state),
@@ -792,6 +793,7 @@ impl Drop for InflightKey<'_> {
 struct Session<'a> {
     ports: &'a Ports,
     policy: &'a ActivationPolicy,
+    drain: &'a DrainGate,
     key: AgentKey,
     authority: SessionAuthority,
     claim: Arc<Mutex<Claim>>,
@@ -1103,6 +1105,17 @@ impl Session<'_> {
         );
     }
 
+    fn cancellation_requested(&self) -> bool {
+        if self.drain.is_draining() {
+            // The supervisor normally propagates drain on its renewal tick, but a ready
+            // downstream future may start drain and return without yielding back to that
+            // supervisor. Observe the gate inside the session as well so the same poll
+            // cannot dispatch a replacement after shutdown has begun.
+            self.guard.cancel().cancel();
+        }
+        self.guard.cancel().is_cancelled()
+    }
+
     /// Retires the source wake under the same session and agent fence as every decision.
     ///
     /// This decision carries no journal mutation: the control item is a condition check,
@@ -1281,6 +1294,11 @@ impl Session<'_> {
             (id, 1)
         };
 
+        if self.cancellation_requested() {
+            self.hand_back().await?;
+            return Ok(Step::Stop(Stop::HandedBack));
+        }
+
         // The durable pre-send write. Nothing below this line may run without the ticket it
         // mints, which is why `dispatch` accepts nothing else.
         let ticket = self
@@ -1341,7 +1359,7 @@ impl Session<'_> {
                             deadline,
                             provider_call_reservation(&self.state),
                         );
-                        if self.guard.cancel().is_cancelled() {
+                        if self.cancellation_requested() {
                             // Drain may re-arm only because the adapter proved no byte left.
                             // The replacement and its continuation wake share this commit,
                             // so shutdown cannot strand a prepared identity between them.
@@ -1419,6 +1437,11 @@ impl Session<'_> {
             self.commit(draft).await?;
             (id, 1)
         };
+
+        if self.cancellation_requested() {
+            self.hand_back().await?;
+            return Ok(Step::Stop(Stop::HandedBack));
+        }
 
         let ticket = self
             .ports
@@ -1509,7 +1532,7 @@ impl Session<'_> {
             Err(error) => match classify_tool_failure(&error, attempt) {
                 FailureSettlement::NotSent { stage, retryable } => {
                     decide::settle_known_failure(&mut draft, effect, stage, DispatchProof::NotSent);
-                    if retryable && self.guard.cancel().is_cancelled() {
+                    if retryable && self.cancellation_requested() {
                         let next = self.ports.ids.effect_id(
                             &self.agent(),
                             draft.next_seq(),
