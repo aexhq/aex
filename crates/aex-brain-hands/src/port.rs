@@ -172,7 +172,7 @@ mod tests {
         AgentId, AgentKey, AgentRevision, CancelEpoch, ContentHash, EffectId, Fence,
         HandsOperationId, OwnerToken, SessionId, Timestamp,
     };
-    use aex_wire::ids::{GenerationId, PrefixedId as _, Uuid7};
+    use aex_wire::ids::{GenerationId, PrefixedId as _, Uuid7, WorkspaceId};
 
     fn generation(seed: u8) -> GenerationId {
         GenerationId::from_uuid7(Uuid7::compose(1, [seed; 10]))
@@ -196,7 +196,13 @@ mod tests {
             CancelEpoch::ZERO,
             CancelToken::new(),
         );
-        DispatchTicket::mint(&guard, EffectId([7; 16]), 1, Timestamp::from_millis(0))
+        DispatchTicket::mint(
+            &guard,
+            WorkspaceId::from_uuid7(Uuid7::compose(1, [8; 10])),
+            EffectId([7; 16]),
+            1,
+            Timestamp::from_millis(0),
+        )
     }
 
     #[derive(Debug)]

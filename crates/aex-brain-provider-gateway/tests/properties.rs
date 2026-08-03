@@ -6,14 +6,11 @@
 //! the type system itself. The wire surfaces — headers, `URL`, request body —
 //! are in `protocol.rs`, where a real server records what actually arrived.
 
-use aex_brain_provider_gateway::credential::{
-    CredentialBindingRef, CredentialRevision, ProviderApiKey,
-};
+use aex_brain_provider_gateway::credential::{CredentialBindingRef, ProviderApiKey};
 use aex_brain_provider_gateway::error::{ProviderFailureKind, RedactedDetail};
 use aex_brain_provider_gateway::redact::redact;
 use aex_brain_provider_gateway::sse::{SseDecoder, SseError};
 use aex_brain_provider_gateway::transport::{Accept, AuthScheme, WireRequest};
-use aex_brain_provider_gateway::wire_pending::SourceGeneration;
 use aex_model_catalog::canonical::{
     CanonicalBlock, CanonicalMessage, ReasoningBlock, ReasoningBody, ReasoningToken, Role,
     ToolResultPart,
@@ -249,8 +246,8 @@ fn leak_tool_output_a_result_part_is_scanned_and_bounded() {
 fn leak_exports_a_binding_ref_carries_no_material() {
     let reference = CredentialBindingRef {
         id: aex_wire::ids::ProviderCredentialId::from_uuid7(aex_wire::Uuid7::compose(1, [2; 10])),
-        revision: CredentialRevision(3),
-        generation: SourceGeneration(4),
+        revision: 3,
+        generation: 4,
     };
     let rendered = serde_json::to_string(&reference).expect("serialize");
     for key in KEYS {

@@ -62,13 +62,15 @@ mod tests {
     use aex_brain_domain::ids::Timestamp;
     use aex_brain_domain::journal::{JournalRecord, MessageOrigin};
     use aex_brain_domain::wire_pending::{CanonicalBlock, ContentBlockRef};
+    use aex_model_catalog::BoundedString;
 
     fn entry(seq: u64, key: &str, text: &str) -> MailboxEntry {
         MailboxEntry {
             seq,
             content: vec![ContentBlockRef::Inline {
                 block: CanonicalBlock::Text {
-                    text: text.to_owned(),
+                    text: BoundedString::truncating(text),
+                    annotations: Vec::new(),
                 },
             }],
             idempotency_key: key.to_owned(),
@@ -83,8 +85,8 @@ mod tests {
                 JournalRecord::UserMessage { content, .. } => {
                     content.first().map(|block| match block {
                         ContentBlockRef::Inline {
-                            block: CanonicalBlock::Text { text },
-                        } => text.clone(),
+                            block: CanonicalBlock::Text { text, .. },
+                        } => text.as_str().to_owned(),
                         _ => "other".to_owned(),
                     })
                 }

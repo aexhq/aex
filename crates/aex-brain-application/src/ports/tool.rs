@@ -8,7 +8,8 @@ use aex_brain_domain::ids::{
     CatalogPin, ContentHash, DetachedOperationId, Fence, ToolCallId, ToolName,
 };
 use aex_brain_domain::journal::ExecutorRoute;
-use aex_brain_domain::wire_pending::CanonicalBlock;
+use aex_model_catalog::canonical::ToolResultPart;
+use aex_wire::CanonicalJson;
 
 /// One tool invocation, whichever executor actually runs it.
 pub trait ToolPort: Send + Sync + 'static {
@@ -83,7 +84,7 @@ pub enum ToolRoutingError {
     #[error("catalog pin {pin} is not loaded")]
     UnknownPin {
         /// The pin.
-        pin: ContentHash,
+        pin: CatalogPin,
     },
 }
 
@@ -95,7 +96,7 @@ pub struct PreparedToolCall {
     /// Where it runs.
     pub route: ToolRoute,
     /// The canonical input, already validated against the manifest schema.
-    pub input: serde_json::Value,
+    pub input: CanonicalJson,
     /// The most bytes the result may carry.
     pub max_result_bytes: usize,
     /// A read-only view of the agent's control state.
@@ -155,8 +156,8 @@ pub enum ToolOutcome {
 /// A tool result, bounded and checksummed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolResultBody {
-    /// The result blocks.
-    pub blocks: Vec<CanonicalBlock>,
+    /// The canonical non-recursive result content.
+    pub content: Vec<ToolResultPart>,
     /// Whether the tool reported failure. A tool that failed is a *result*, not a dispatch
     /// error: the model decides what to do about it.
     pub is_error: bool,
@@ -164,8 +165,8 @@ pub struct ToolResultBody {
     pub duration_ms: u32,
     /// Which executor ran it.
     pub executed_on: ExecutorRoute,
-    /// A checksum over the canonical blocks, so a detached result can be verified before
-    /// it enters the journal.
+    /// A checksum over the canonical result content, so a detached result can
+    /// be verified before it enters the journal.
     pub checksum: ContentHash,
 }
 

@@ -321,7 +321,9 @@ pub fn recover(
                     attempt: attempt.saturating_add(1),
                 },
                 EffectClass::IdempotentManaged => match (support, evidence.operation.clone()) {
-                    (Support::Proven, Some(id)) => RecoveryDecision::QueryDurableOperation { id },
+                    (Support::ResultLookup { .. } | Support::ResumableStream { .. }, Some(id)) => {
+                        RecoveryDecision::QueryDurableOperation { id }
+                    }
                     _ => RecoveryDecision::Interrupt { evidence },
                 },
                 EffectClass::DurableDetached => match evidence.operation.clone() {
@@ -412,6 +414,9 @@ mod tests {
     use crate::ids::{ContentHash, DetachedOperationId, EffectId, Timestamp};
     use crate::wire_pending::DurableOperationSupport;
 
+    const PROVEN: DurableOperationSupport =
+        DurableOperationSupport::ResultLookup { ttl_ms: 60_000 };
+
     fn effect(state: EffectState, class: EffectClass) -> DurableEffect {
         DurableEffect {
             id: EffectId([7; 16]),
@@ -446,10 +451,7 @@ mod tests {
                 provider_request_id: None,
             },
         ] {
-            let decision = recover(
-                &effect(state, EffectClass::NonReplayable),
-                DurableOperationSupport::Proven,
-            );
+            let decision = recover(&effect(state, EffectClass::NonReplayable), PROVEN);
             assert!(
                 matches!(decision, RecoveryDecision::Interrupt { .. }),
                 "{decision:?}"
@@ -468,7 +470,7 @@ mod tests {
             ..DispatchEvidence::ambiguous(1, DispatchStage::Dispatched)
         });
         assert!(matches!(
-            recover(&with_operation, DurableOperationSupport::Proven),
+            recover(&with_operation, PROVEN),
             RecoveryDecision::QueryDurableOperation { .. }
         ));
         assert!(
@@ -483,7 +485,7 @@ mod tests {
             EffectClass::IdempotentManaged,
         );
         assert!(matches!(
-            recover(&without_operation, DurableOperationSupport::Proven),
+            recover(&without_operation, PROVEN),
             RecoveryDecision::Interrupt { .. }
         ));
     }

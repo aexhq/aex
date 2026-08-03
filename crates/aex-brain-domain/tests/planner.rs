@@ -5,15 +5,26 @@ use aex_brain_domain::context::{
     view,
 };
 use aex_brain_domain::fold::{FoldState, apply, fold};
-use aex_brain_domain::ids::{JournalSeq, ModelSlug, Timestamp};
+use aex_brain_domain::ids::{JournalSeq, Timestamp};
 use aex_brain_domain::journal::{FinishReason, JournalEntry, JournalRecord};
 use aex_brain_domain::planner::{OwedStep, PlanPolicy, plan};
-use aex_brain_domain::wire_pending::{CanonicalBlock, CompleteProof, ProviderId, StopReason, Turn};
+use aex_brain_domain::wire_pending::{
+    CanonicalBlock, CanonicalMessage, ProviderId, Role, StopReason, ToolResultPart,
+};
 use aex_brain_test_support::histories::{Expectation, all};
 use aex_brain_test_support::journal_gen::{
     HistoryBuilder, TURN_USAGE, agent, assistant_text, assistant_tool_use, config, effect_complete,
     effect_prepared, grant, model_effect, started, user_text,
 };
+use aex_model_catalog::document::CapabilitySet;
+use aex_model_catalog::{BoundedString, fixture};
+
+fn text(value: &str) -> CanonicalBlock {
+    CanonicalBlock::Text {
+        text: BoundedString::truncating(value),
+        annotations: Vec::new(),
+    }
+}
 
 fn policy(now_millis: i64) -> PlanPolicy {
     PlanPolicy::from_limits(Timestamp(now_millis), config().limits)
@@ -39,11 +50,6 @@ fn every_reachable_state_owes_exactly_one_step() {
 #[test]
 fn a_truncated_response_finishes_failed() {
     let effect = model_effect(agent(1), JournalSeq(2));
-    let blocks = vec![CanonicalBlock::Text {
-        text: "half a doc".to_owned(),
-    }];
-    // A truncating stop cannot mint its own proof, so the fold would reject the record. The
-    // planner's rule is therefore proved against the folded state directly.
     let mut state = fold(
         &HistoryBuilder::new()
             .push(started(grant(1_000)))
@@ -68,13 +74,7 @@ fn a_truncated_response_finishes_failed() {
     );
 
     // Now the same turn as the provider actually truncated it.
-    state.model_history.pop();
-    state.model_history.push(Turn::Assistant {
-        blocks,
-        provider: ProviderId::Deepseek,
-        model: ModelSlug("deepseek-chat".to_owned()),
-        stop_reason: StopReason::MaxTokens,
-    });
+    state.last_stop_reason = Some(StopReason::MaxOutputTokens);
     assert_eq!(
         plan(&state, &policy(0)),
         OwedStep::Finish {
@@ -175,7 +175,7 @@ fn the_phase_decides_the_step() {
     assert_eq!(
         calls
             .iter()
-            .map(|call| call.call.0.as_str())
+            .map(|call| call.call.as_str())
             .collect::<Vec<_>>(),
         vec!["second", "first"]
     );
@@ -220,15 +220,15 @@ fn a_terminal_agent_owes_nothing() {
 /// compacts it, which is the failure mode this rule exists to prevent.
 #[test]
 fn the_context_trigger_counts_the_whole_window() {
-    let capability = aex_brain_domain::wire_pending::ModelCapability {
-        provider: ProviderId::Deepseek,
-        model: ModelSlug("deepseek-chat".to_owned()),
-        context_window_tokens: 1_000,
-        max_output_tokens: 100,
-        min_cacheable_prefix_tokens: Some(512),
-        supports_tools: true,
-        admitted: true,
-    };
+    let mut entry = fixture::entry(
+        ProviderId::Deepseek,
+        "deepseek-chat",
+        CapabilitySet::default(),
+    );
+    entry.limits.context_window_tokens = 1_000;
+    entry.limits.max_output_tokens = 100;
+    entry.limits.min_cacheable_prefix_tokens = 512;
+    let capability = fixture::qualified(entry);
     let mut state = FoldState::empty();
     state.usage = TURN_USAGE;
     let policy = ContextPolicy::default();
@@ -237,7 +237,7 @@ fn the_context_trigger_counts_the_whole_window() {
 
     // The same input tokens, now mostly served from the provider's prompt cache. A trigger
     // that counted input alone would see 100 tokens and never compact a full window.
-    state.usage.cache_read_tokens = 900;
+    state.usage.cache_read_input_tokens = 900;
     let above = decide(&state, &capability, &policy, 0);
     assert_eq!(above.prompt_tokens, 1_000);
     assert!(
@@ -246,7 +246,7 @@ fn the_context_trigger_counts_the_whole_window() {
     );
     assert_eq!(
         above.target_tokens,
-        capability.context_window_tokens / 2,
+        u64::from(capability.limits().context_window_tokens) / 2,
         "one batched pass targets half the window"
     );
 
@@ -269,10 +269,9 @@ fn the_context_trigger_counts_the_whole_window() {
 fn clearing_is_deterministic_and_protects_the_tail() {
     let mut state = FoldState::empty();
     for index in 0..8 {
-        state.model_history.push(Turn::User {
-            blocks: vec![CanonicalBlock::Text {
-                text: format!("turn {index}"),
-            }],
+        state.model_history.push(CanonicalMessage {
+            role: Role::User,
+            blocks: vec![text(&format!("turn {index}"))],
         });
     }
     let policy = ContextPolicy::default();
@@ -283,24 +282,22 @@ fn clearing_is_deterministic_and_protects_the_tail() {
     let cleared = once
         .iter()
         .filter(|turn| {
-            match turn {
-            Turn::User { blocks } => blocks.iter().any(|block| {
-                matches!(block, CanonicalBlock::Text { text } if text == CLEARED_PLACEHOLDER)
-            }),
-            Turn::Assistant { .. } => false,
-        }
+            turn.role == Role::User
+                && turn.blocks.iter().any(|block| {
+                    matches!(block, CanonicalBlock::Text { text, .. } if text.as_str() == CLEARED_PLACEHOLDER)
+                })
         })
         .count();
     assert!(cleared > 0, "something must actually be cleared");
 
     let protected = &once[once.len() - PROTECTED_TAIL_TURNS..];
     for turn in protected {
-        let Turn::User { blocks } = turn else {
+        if turn.role != Role::User {
             continue;
-        };
-        for block in blocks {
-            if let CanonicalBlock::Text { text } = block {
-                assert_ne!(text, CLEARED_PLACEHOLDER, "the tail is protected");
+        }
+        for block in &turn.blocks {
+            if let CanonicalBlock::Text { text, .. } = block {
+                assert_ne!(text.as_str(), CLEARED_PLACEHOLDER, "the tail is protected");
             }
         }
     }
@@ -313,14 +310,15 @@ fn clearing_is_deterministic_and_protects_the_tail() {
 #[test]
 fn the_tool_result_cap_is_idempotent() {
     let oversized = CanonicalBlock::ToolResult {
-        call: aex_brain_domain::ids::ToolCallId("c1".to_owned()),
-        content: vec![aex_brain_domain::wire_pending::ResultContent::Text {
-            text: "x".repeat(DEFAULT_TOOL_RESULT_BYTES * 2),
+        call: aex_brain_domain::ids::ToolCallId::truncating("c1"),
+        content: vec![ToolResultPart::Text {
+            text: BoundedString::truncating(&"x".repeat(DEFAULT_TOOL_RESULT_BYTES * 2)),
         }],
         is_error: false,
     };
     let mut state = FoldState::empty();
-    state.model_history.push(Turn::User {
+    state.model_history.push(CanonicalMessage {
+        role: Role::User,
         blocks: vec![oversized],
     });
     let policy = ContextPolicy::default();
@@ -334,13 +332,11 @@ fn the_tool_result_cap_is_idempotent() {
         "capping is not idempotent"
     );
 
-    let Turn::User { blocks } = &once[0] else {
-        panic!("the turn survives capping");
-    };
-    let CanonicalBlock::ToolResult { content, .. } = &blocks[0] else {
+    assert_eq!(once[0].role, Role::User);
+    let CanonicalBlock::ToolResult { content, .. } = &once[0].blocks[0] else {
         panic!("the block stays a tool result");
     };
-    let aex_brain_domain::wire_pending::ResultContent::Text { text } = &content[0] else {
+    let ToolResultPart::Text { text } = &content[0] else {
         panic!("the content stays text");
     };
     assert!(
@@ -351,16 +347,27 @@ fn the_tool_result_cap_is_idempotent() {
     assert!(text.ends_with(CLEARED_PLACEHOLDER), "truncation is visible");
 }
 
-/// A completeness proof cannot be minted for a truncating stop, so a truncated stream is
-/// structurally unable to become model-visible history.
+/// A max-output stop is terminal and therefore sealable; the planner still
+/// reports the turn as failed rather than completed.
 #[test]
-fn a_truncating_stop_cannot_mint_a_proof() {
-    let blocks = vec![CanonicalBlock::Text {
-        text: "half".to_owned(),
-    }];
-    assert!(CompleteProof::mint(StopReason::MaxTokens, &blocks).is_err());
-    assert!(CompleteProof::mint(StopReason::EndTurn, &[]).is_err());
-    assert!(CompleteProof::mint(StopReason::EndTurn, &blocks).is_ok());
+fn a_truncating_stop_is_sealable_but_never_completed() {
+    let model = fixture::qualified_entry(
+        ProviderId::Deepseek,
+        "deepseek-chat",
+        CapabilitySet::default(),
+    );
+    let message = aex_model_catalog::canonical::seal(
+        vec![text("half")],
+        StopReason::MaxOutputTokens,
+        &TURN_USAGE,
+        &model,
+    )
+    .expect("max output is a complete terminal stop");
+    assert!(message.proof_covers(&TURN_USAGE));
+    assert!(
+        aex_model_catalog::canonical::seal(Vec::new(), StopReason::EndTurn, &TURN_USAGE, &model,)
+            .is_err()
+    );
 }
 
 /// The model-call effect identity is a function of the state, so a redelivered wake that

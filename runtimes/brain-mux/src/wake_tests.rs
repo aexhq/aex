@@ -30,10 +30,12 @@ use aex_brain_domain::ids::{
 };
 use aex_brain_domain::journal::{FinishReason, JournalEntry, JournalRecord, MessageOrigin};
 use aex_brain_domain::wire_pending::{
-    AgentLimits, CanonicalBlock, CanonicalModelRequest, CompleteAssistantMessage, CompleteProof,
-    ContentBlockRef, ModelCapability, NormalizedUsage, ProviderId, ProviderReceipt,
-    ResolvedAgentConfig, StopReason,
+    AgentLimits, CanonicalBlock, CanonicalModelRequest, ContentBlockRef, NormalizedUsage,
+    ProviderId, ResolvedAgentConfig, StopReason,
 };
+use aex_model_catalog::canonical::{CredentialBindingRef, ProviderReceipt, ReceiptBounds, seal};
+use aex_model_catalog::document::CapabilitySet;
+use aex_model_catalog::{BoundedString, QualifiedModel, fixture};
 use aex_usage_application::probe::{
     ActivationKey, ActivationScoped, CpuInstant, PhysicalCpuSource, ProbeContext, ProbeError,
     ThreadCpuClock,
@@ -43,7 +45,7 @@ use aex_usage_domain::wire_pending::{
     ActivationId, AgentId as UsageAgentId, OrganizationId, PricingVersion, RegionId, ServiceId,
     SessionId as UsageSessionId, WorkspaceId,
 };
-use aex_wire::ids::{GenerationId, PrefixedId as _, Uuid7};
+use aex_wire::ids::{GenerationId, PrefixedId as _, ProviderCredentialId, Uuid7};
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -59,12 +61,12 @@ fn key() -> AgentKey {
 }
 
 fn model() -> ModelSlug {
-    ModelSlug("deepseek-chat".to_owned())
+    ModelSlug::truncating("deepseek-chat")
 }
 
 fn config() -> ResolvedAgentConfig {
     ResolvedAgentConfig {
-        catalog_pin: CatalogPin(ContentHash::of(b"catalog")),
+        catalog_pin: capability().catalog(),
         provider: ProviderId::Deepseek,
         model: model(),
         system: None,
@@ -78,16 +80,16 @@ fn config() -> ResolvedAgentConfig {
     }
 }
 
-fn capability() -> ModelCapability {
-    ModelCapability {
-        provider: ProviderId::Deepseek,
-        model: model(),
-        context_window_tokens: 64_000,
-        max_output_tokens: 4_096,
-        min_cacheable_prefix_tokens: None,
-        supports_tools: true,
-        admitted: true,
-    }
+fn capability() -> QualifiedModel {
+    let mut entry = fixture::entry(
+        ProviderId::Deepseek,
+        "deepseek-chat",
+        CapabilitySet::default(),
+    );
+    entry.limits.context_window_tokens = 64_000;
+    entry.limits.max_output_tokens = 4_096;
+    entry.limits.min_cacheable_prefix_tokens = 0;
+    fixture::qualified(entry)
 }
 
 fn history() -> Vec<JournalEntry> {
@@ -110,7 +112,8 @@ fn history() -> Vec<JournalEntry> {
             JournalRecord::UserMessage {
                 content: vec![ContentBlockRef::Inline {
                     block: CanonicalBlock::Text {
-                        text: "summarize this".to_owned(),
+                        text: BoundedString::truncating("summarize this"),
+                        annotations: Vec::new(),
                     },
                 }],
                 origin: MessageOrigin::Submission,
@@ -121,22 +124,52 @@ fn history() -> Vec<JournalEntry> {
 }
 
 fn produced() -> ProviderOutcome {
-    let blocks = vec![CanonicalBlock::Text {
-        text: "here is the summary".to_owned(),
-    }];
+    let usage = NormalizedUsage::default();
+    let selected = capability();
+    let message = seal(
+        vec![CanonicalBlock::Text {
+            text: BoundedString::truncating("here is the summary"),
+            annotations: Vec::new(),
+        }],
+        StopReason::EndTurn,
+        &usage,
+        &selected,
+    )
+    .expect("a whole message");
+    let at = fixture::at(START);
+    let receipt = ProviderReceipt {
+        provider: message.provider,
+        model: message.model.clone(),
+        catalog: message.catalog,
+        dialect: selected.dialect(),
+        dialect_revision: selected.dialect_revision(),
+        credential: CredentialBindingRef {
+            id: ProviderCredentialId::from_uuid7(Uuid7::compose(1, [4; 10])),
+            revision: 1,
+            generation: 1,
+        },
+        provider_request_id: None,
+        http_status: 200,
+        attempts: 1,
+        started_at: at,
+        first_frame_at: Some(at),
+        completed_at: at,
+        request_bytes: 1,
+        response_bytes: 1,
+        frames: 1,
+        rate_limit: None,
+        response_receipt: Some(message.proof.0),
+        bounds: ReceiptBounds {
+            max_frame_bytes: 1_024,
+            max_response_bytes: 1_024,
+            idle_frame_timeout_ms: 1_000,
+            total_deadline_ms: 10_000,
+        },
+    };
     ProviderOutcome {
-        message: CompleteAssistantMessage {
-            complete: CompleteProof::mint(StopReason::EndTurn, &blocks).expect("a whole message"),
-            blocks,
-            stop_reason: StopReason::EndTurn,
-        },
-        usage: NormalizedUsage::default(),
-        receipt: ProviderReceipt {
-            provider: ProviderId::Deepseek,
-            model: model(),
-            request_id: None,
-            route_revision: 1,
-        },
+        message,
+        usage,
+        receipt,
     }
 }
 

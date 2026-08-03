@@ -10,7 +10,7 @@ keywords:
   - credentials
 audience: implementation agents and maintainers
 status: accepted
-last_verified: 2026-08-01
+last_verified: 2026-08-03
 related:
   - references/rewrite/contracts.md
   - references/rewrite/test-architecture.md
@@ -64,8 +64,8 @@ The launch document ships every `(provider, model)` pair `Staged`, so a fresh
 
 | Module | What it owns |
 | --- | --- |
-| `wire_pending` | the Brain ports and secret-custody types this crate implements but does not own |
-| `error` | `RedactedDetail`, `ProviderFailure`, `RateLimitFeedback`, `RateLimitSource` |
+| `wire_pending` | temporary memory-reservation and ciphertext-reference shapes; Brain ports and secret generations are re-exported from their owners |
+| `error` | `ProviderFailure`, `RateLimitFeedback`, `RateLimitSource`; canonical failure kinds/classes/details are re-exported from `aex-model-catalog` |
 | `redact` | the bounded, credential-safe redactor |
 | `sse` | the incremental bounded SSE decoder |
 | `budget` | `StreamBudget`, `BudgetOverrun`, `BudgetLedger` |
@@ -74,6 +74,9 @@ The launch document ships every `(provider, model)` pair `Staged`, so a fresh
 | `credential` | binding model, the two consumed ports, `DenyAllCredentialDirectory`, `ProviderApiKey`, `CredentialCache` |
 | `adapter` | the `ProviderAdapter` trait, `DialectState`, `RequestBuildError`, `FrameOutcome`, `FrameDecodeError` |
 | `openai` `anthropic` `deepseek` `zai` `moonshotai` `google` | the six dialect adapters |
+| `build_identity` | one compile-time source-tree identity for the complete six-adapter build; runtime environment variables cannot relabel it |
+| `catalog_port` | bounded signed-envelope loading into an immutable content-addressed revision cache |
+| `router` | the total six-provider route, credential affinity/revocation, isolated pool, in-call retry, bounded stream, durable response-start evidence, sealing and receipt |
 
 Three properties are structural rather than conventional:
 
@@ -107,7 +110,7 @@ diff. `ReceiptBuilder::build` refuses a receipt missing any probe run;
 
 | Gap | How it is handled |
 | --- | --- |
-| `ProviderAdapter::source_digest` returns a per-module compiled tag | A catalog document carries **one** `required_adapter_source`, so six differing digests can never all match it. Every adapter flagged this independently. The digest must be stamped by the build over the whole adapter source tree, or injected rather than derived — a build-system decision, not a per-file one. `Catalog::load` already refuses a mismatch, so this fails closed today. |
+| Release injection of the whole-tree adapter digest | Per-module identities were removed. `build_identity` accepts only the compile-time `AEX_PROVIDER_ADAPTER_SOURCE_DIGEST` stamp and both catalog loading and router construction refuse a missing or malformed stamp. The release/conformance builder still has to calculate and inject the same digest. |
 | `anthropic.rs` pins an offline P-256 public key and signature in its test module | `openai.rs` was migrated to `fixture::qualified`; `anthropic.rs` still loads a signed fixture document, which breaks loudly (`"re-sign it if the document shape changed"`) if `document.rs` or `fixture::entry` moves. Migrating it is a mechanical follow-up now that `fixture::qualified` exists. |
 | Z.AI's path is recorded two ways in plan 08 §5.4 | The row gives the base as `https://api.z.ai/api/paas/v4` and the path as `POST /paas/v4/chat/completions`, which cannot both be right. The adapter follows the explicit path, producing `https://api.z.ai/paas/v4/chat/completions`. Probe P-01 settles it before any Z.AI pair can go `Active`; until then every Z.AI entry is `Staged`, so nothing dispatches. |
 | `decode`, `finish` and `classify_http` are not handed the `QualifiedModel` | Each adapter therefore compiles its own stop-token and error tables rather than reading `entry.stop_reason_map` / `entry.error_map`. For these six dialects both are provider-invariant, and `anthropic.rs` asserts the compiled table and the catalog's copy agree. But it means the catalog's copies are documentation for the decode path rather than its source of truth. Widening the trait to take the model would make them authoritative. |
@@ -115,7 +118,8 @@ diff. `ReceiptBuilder::build` refuses a receipt missing any probe run;
 | No `(provider, model)` pair can ship `Active` | Every launch entry is `Staged` with an `unearned()` receipt — a positive record that the evidence has not been earned, not an absence. |
 | The `pcr_` binding table, its routes and the KMS decrypt adapter | Owned by the regional secret stream (OD-23). This crate defines `ProviderCredentialDirectory` and `ProviderCredentialDecryptor`, consumes them, and ships `DenyAllCredentialDirectory` / `DenyAllCredentialDecryptor`. There is **no** plaintext-from-environment path — not disabled, absent. |
 | `resolve_unknown` | Returns `UnknownResolution::NoDurableOperation` for all six. Implemented, not stubbed: no provider in this set documents a result lookup for a completed streaming generation. Anthropic is stateless; OpenAI's `GET /v1/responses/{id}` requires `store: true`, which AEX disables; Gemini Interactions is not the launch dialect. |
-| The composed `impl ProviderPort` (`router`) | The `ProviderPort` trait is declared and the six adapters implement `ProviderAdapter`. The composed router, the in-call retry policy and the `loom` cancel-race model are the remaining Slice 5 items. |
+| Brain session credential pin | The composed router and its full `dispatch_pinned` path exist. The public `ProviderPort` fails `NotSent` because `ResolvedAgentConfig` does not carry an immutable `SessionCredentialPin`; dispatching without it would re-resolve mutable default state. |
+| Brain content hydration | Canonical requests carry inline user turns. A configured system reference or placed user block fails before dispatch because the application has no content-hydration port yet. |
 | `trybuild` type-level leak test | The workspace has no `trybuild` dependency. The same property is asserted by construction — `ProviderApiKey` implements none of `Clone`, `Debug`, `Display`, `Serialize`, `Deref`, and `WireRequest` has no field that can hold one — plus runtime cases over `Debug` output, error bodies and receipts. Adding `trybuild` is a workspace-manifest change and belongs to whoever owns that decision. |
 | `miri` over the `credential` module | Not run: the module contains no `unsafe` and the crate forbids it, so `miri` would add build time without a proposition to test. |
 
@@ -148,7 +152,7 @@ pub struct CompleteProof(pub aex_wire::ContentHash);
 pub enum StopReason { EndTurn, ToolUse, MaxOutputTokens, StopSequence, Refusal }
 pub enum SealError { EmptyBlocks, UnbalancedToolUse, DuplicateToolCallId,
     RefusalWithoutContent, ReasoningTokenMissing, ReasoningProvenanceMismatch,
-    BlockLimit, InvalidToolInputJson }
+    BlockLimit, InvalidToolInputJson, InconsistentUsage }
 pub fn seal(blocks, stop, usage, model) -> Result<CompleteAssistantMessage, SealError>;
 
 // usage

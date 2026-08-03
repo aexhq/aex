@@ -342,6 +342,19 @@ pub enum ActivationError {
     /// A record or a request could not be canonicalized, so its identity is unknown.
     #[error(transparent)]
     Canonical(#[from] aex_brain_domain::canonical::CanonicalizeError),
+    /// The canonical provider request could not be sealed.
+    #[error(transparent)]
+    ProviderCanonical(#[from] aex_model_catalog::canonical::SealError),
+    /// The provider returned message, usage and receipt values that do not
+    /// commit to the same canonical outcome.
+    #[error("provider outcome proof, usage and receipt do not match")]
+    InvalidProviderOutcome,
+    /// A system instruction reference reached activation without content hydration.
+    #[error("system instruction content was not hydrated before provider request construction")]
+    UnhydratedSystem,
+    /// A placed user block reached activation without content hydration.
+    #[error("placed user content was not hydrated before provider request construction")]
+    UnhydratedContent,
     /// The same effect identity arrived carrying a different request.
     ///
     /// The agent quarantines rather than dispatching either one: two requests under one

@@ -12,12 +12,13 @@ use crate::budget::{BudgetDelta, BudgetGrant};
 use crate::child::{ChildOutcome, ChildState, QueuedReason};
 use crate::effect::{EffectClass, EffectKind, SettledOutcome};
 use crate::ids::{
-    AgentId, ContentHash, EffectId, JoinId, JournalSeq, ModelSlug, Timestamp, ToolCallId, WaitId,
+    AgentId, ContentHash, EffectId, JoinId, JournalSeq, Timestamp, ToolCallId, WaitId,
 };
 use crate::wire_pending::{
-    CanonicalBlock, CompleteProof, ContentBlockRef, ContentRef, JoinMode, JournalEnvelope,
-    NormalizedUsage, ProviderId, ResolvedAgentConfig, StopReason,
+    CanonicalBlock, CompleteAssistantMessage, ContentBlockRef, ContentRef, JoinMode,
+    JournalEnvelope, NormalizedUsage, ResolvedAgentConfig, ToolResultPart,
 };
+use aex_model_catalog::canonical::ProviderReceipt;
 
 /// The inline body boundary.
 ///
@@ -185,27 +186,21 @@ pub enum JournalRecord {
     },
     /// A **complete** assistant message. Partial deltas can never reach here.
     AssistantMessage {
-        /// The whole block set.
-        blocks: Vec<CanonicalBlock>,
+        /// The whole provider/model/catalog-bound message and completeness proof.
+        message: CompleteAssistantMessage,
         /// Provider-reported usage.
         usage: NormalizedUsage,
-        /// Why generation stopped.
-        stop_reason: StopReason,
-        /// The provider that actually served it.
-        provider: ProviderId,
-        /// The model that actually served it.
-        model: ModelSlug,
+        /// Dispatch identity, byte counts, attempts and binding identity.
+        receipt: ProviderReceipt,
         /// The effect that produced it.
         effect: EffectId,
-        /// Proof the message is whole.
-        complete: CompleteProof,
     },
     /// The result of one tool call.
     ToolResult {
         /// Which call this answers.
         call: ToolCallId,
-        /// Result blocks.
-        blocks: Vec<CanonicalBlock>,
+        /// Result content in the canonical non-recursive tool-result vocabulary.
+        content: Vec<ToolResultPart>,
         /// Whether the tool reported failure.
         is_error: bool,
         /// Which executor ran it.

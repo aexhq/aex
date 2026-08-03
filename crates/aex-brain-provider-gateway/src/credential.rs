@@ -21,6 +21,8 @@ use aex_wire::provider::ProviderId;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
+pub use aex_model_catalog::canonical::CredentialBindingRef;
+
 use crate::transport::AuthScheme;
 use crate::wire_pending::{
     BoxFuture, CiphertextRef, EncryptionContext, RevocationEpoch, SourceGeneration,
@@ -77,8 +79,7 @@ pub struct ProviderCredentialBinding {
 ///
 /// Runtime behaviour never depends on a mutable "current default": the session
 /// records the exact binding, revision and generation it was admitted with.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SessionCredentialPin {
     /// Which binding.
     pub binding: ProviderCredentialId,
@@ -91,27 +92,14 @@ pub struct SessionCredentialPin {
     pub epoch_at_admission: RevocationEpoch,
 }
 
-/// The non-secret reference a receipt carries.
-///
-/// It names the binding; it can hold neither ciphertext nor plaintext, so an
-/// exported receipt is safe by construction rather than by review.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CredentialBindingRef {
-    /// Which binding.
-    pub id: ProviderCredentialId,
-    /// Which revision.
-    pub revision: CredentialRevision,
-    /// Which generation.
-    pub generation: SourceGeneration,
-}
-
-impl From<&ProviderCredentialBinding> for CredentialBindingRef {
-    fn from(binding: &ProviderCredentialBinding) -> Self {
-        Self {
-            id: binding.id,
-            revision: binding.revision,
-            generation: binding.generation,
+impl ProviderCredentialBinding {
+    /// The non-secret identity recorded on a canonical provider receipt.
+    #[must_use]
+    pub const fn receipt_ref(&self) -> CredentialBindingRef {
+        CredentialBindingRef {
+            id: self.id,
+            revision: self.revision.0,
+            generation: self.generation.0,
         }
     }
 }
@@ -119,6 +107,12 @@ impl From<&ProviderCredentialBinding> for CredentialBindingRef {
 /// Why credential resolution failed. Every arm is `DispatchProof::NotSent`.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CredentialResolveError {
+    /// The regional authority cannot yet mint a workspace-bound provider
+    /// credential record safely.
+    #[error(
+        "provider credential registration authority is unavailable: no port exposes the wrapped branch key required by SecretCrypto::seal, and the workspace secret-name mint/collision contract is undecided"
+    )]
+    RegistrationAuthorityUnavailable,
     /// No such binding.
     #[error("no provider credential binding matched")]
     NotFound {
@@ -177,8 +171,9 @@ impl CredentialResolveError {
 
 /// The binding directory this crate consumes.
 ///
-/// `TODO(cross-stream): implemented by the regional secret stream over the
-/// `regional-secret-custody` table (OD-23).`
+/// The regional secret crates do not yet expose a provider-binding record or
+/// the wrapped branch-key input required to mint one; the deny-all adapter
+/// below remains the only composition until that authority is published.
 pub trait ProviderCredentialDirectory: Send + Sync + 'static {
     /// Resolves a binding, either by explicit id or by the workspace default.
     fn resolve(
@@ -198,7 +193,9 @@ pub trait ProviderCredentialDirectory: Send + Sync + 'static {
 
 /// The decryptor this crate consumes.
 ///
-/// `TODO(cross-stream): implemented by the regional secret stream over `KMS`.`
+/// A production implementation must consume the regional secret authority's
+/// exact ciphertext generation and encryption context. No local alternate
+/// custody path is permitted.
 pub trait ProviderCredentialDecryptor: Send + Sync + 'static {
     /// Decrypts a binding's ciphertext immediately before dispatch.
     fn decrypt<'a>(
@@ -221,7 +218,8 @@ impl ProviderCredentialDirectory for DenyAllCredentialDirectory {
         _provider: ProviderId,
         id: Option<ProviderCredentialId>,
     ) -> BoxFuture<'_, Result<ProviderCredentialBinding, CredentialResolveError>> {
-        Box::pin(async move { Err(CredentialResolveError::NotFound { requested: id }) })
+        let _ = id;
+        Box::pin(async move { Err(CredentialResolveError::RegistrationAuthorityUnavailable) })
     }
 
     fn current_epoch(
@@ -229,11 +227,8 @@ impl ProviderCredentialDirectory for DenyAllCredentialDirectory {
         _workspace: WorkspaceId,
         id: ProviderCredentialId,
     ) -> BoxFuture<'_, Result<RevocationEpoch, CredentialResolveError>> {
-        Box::pin(async move {
-            Err(CredentialResolveError::NotFound {
-                requested: Some(id),
-            })
-        })
+        let _ = id;
+        Box::pin(async move { Err(CredentialResolveError::RegistrationAuthorityUnavailable) })
     }
 }
 
@@ -245,11 +240,8 @@ impl ProviderCredentialDecryptor for DenyAllCredentialDecryptor {
         &'a self,
         binding: &'a ProviderCredentialBinding,
     ) -> BoxFuture<'a, Result<ProviderApiKey, CredentialResolveError>> {
-        Box::pin(async move {
-            Err(CredentialResolveError::NotFound {
-                requested: Some(binding.id),
-            })
-        })
+        let _ = binding;
+        Box::pin(async move { Err(CredentialResolveError::RegistrationAuthorityUnavailable) })
     }
 }
 
@@ -522,8 +514,8 @@ mod tests {
     use aex_wire::provider::ProviderId;
 
     use super::{
-        BindingState, CredentialBindingRef, CredentialCache, CredentialResolveError,
-        CredentialRevision, DenyAllCredentialDecryptor, DenyAllCredentialDirectory, ProviderApiKey,
+        BindingState, CredentialCache, CredentialResolveError, CredentialRevision,
+        DenyAllCredentialDecryptor, DenyAllCredentialDirectory, ProviderApiKey,
         ProviderCredentialBinding, ProviderCredentialDecryptor, ProviderCredentialDirectory,
         SessionCredentialPin, resolve,
     };
@@ -599,7 +591,10 @@ mod tests {
         let error = resolve(&directory, workspace(), ProviderId::Anthropic, None, None)
             .await
             .expect_err("the placeholder must refuse");
-        assert!(matches!(error, CredentialResolveError::NotFound { .. }));
+        assert_eq!(
+            error,
+            CredentialResolveError::RegistrationAuthorityUnavailable
+        );
         assert_eq!(
             error.error_code(),
             aex_wire::ErrorCode::ProviderCredentialNotFound
@@ -616,7 +611,10 @@ mod tests {
             .await
         {
             Ok(_) => panic!("the placeholder must refuse"),
-            Err(error) => assert!(matches!(error, CredentialResolveError::NotFound { .. })),
+            Err(error) => assert_eq!(
+                error,
+                CredentialResolveError::RegistrationAuthorityUnavailable
+            ),
         }
     }
 
@@ -818,7 +816,7 @@ mod tests {
     #[test]
     fn a_binding_ref_carries_only_non_secret_identity() {
         let binding = binding(ProviderId::Openai, BindingState::Ready, 0);
-        let reference = CredentialBindingRef::from(&binding);
+        let reference = binding.receipt_ref();
         let rendered = serde_json::to_string(&reference).expect("serialize");
         assert!(!rendered.contains("kms://"), "{rendered}");
         assert!(rendered.contains("pcr_"), "{rendered}");

@@ -36,6 +36,7 @@ mutation = "unit"
 live_suite = "pure domain crate; Area 9's registry declares no independent live seam"
 
 [dependencies]
+aex-model-catalog = { path = "../aex-model-catalog" }
 aex-wire = { path = "../aex-wire" }
 blake3.workspace = true
 hex.workspace = true

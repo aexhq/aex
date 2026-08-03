@@ -41,6 +41,7 @@ thiserror.workspace = true
 time.workspace = true
 
 [dev-dependencies]
+aex-model-catalog = { path = "../aex-model-catalog" }
 insta.workspace = true
 
 [[test]]

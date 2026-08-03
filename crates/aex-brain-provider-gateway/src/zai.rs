@@ -29,12 +29,8 @@ use aex_model_catalog::canonical::{
     ReasoningRequest, ReasoningToken, Role, StopReason, StructuredOutputRequest, SystemBlock,
     TEXT_MAX, ToolChoice, ToolResultPart, UsageCompleteness, UsageField, UsageFieldSet,
 };
-use aex_model_catalog::document::{
-    AdapterSourceDigest, Capability, EndpointPin, ModelEntry, SamplingSupport,
-};
-use aex_model_catalog::primitives::{
-    Blake3Digest, BoundedString, ProviderRequestId, ToolCallId, ToolName,
-};
+use aex_model_catalog::document::{Capability, EndpointPin, ModelEntry, SamplingSupport};
+use aex_model_catalog::primitives::{BoundedString, ProviderRequestId, ToolCallId, ToolName};
 use aex_wire::CanonicalJson;
 use aex_wire::provider::ProviderId;
 use serde_json::{Value, json};
@@ -72,9 +68,6 @@ pub const OUTPUT_TOKEN_RANGE: (u32, u32) = (1, 131_072);
 /// Z.AI's `request_id` must be 6–64 characters.
 const REQUEST_ID_BYTES: (usize, usize) = (6, 64);
 
-/// The compiled tag this module's conformance receipts are bound to.
-const SOURCE_TAG: &[u8] = b"aex-brain-provider-gateway::zai@1";
-
 /// The Z.AI chat-completions adapter.
 ///
 /// A unit struct: the dialect is entirely compiled, and everything that varies
@@ -85,10 +78,6 @@ pub struct ZaiAdapter;
 impl ProviderAdapter for ZaiAdapter {
     fn provider(&self) -> ProviderId {
         ProviderId::Zai
-    }
-
-    fn source_digest(&self) -> AdapterSourceDigest {
-        AdapterSourceDigest(Blake3Digest::of(SOURCE_TAG))
     }
 
     fn build_request(
@@ -1623,14 +1612,8 @@ mod tests {
     }
 
     #[test]
-    fn the_adapter_speaks_for_zai_and_pins_its_own_source_digest() {
+    fn the_adapter_speaks_for_zai() {
         assert_eq!(ZaiAdapter.provider(), ProviderId::Zai);
-        assert_eq!(ZaiAdapter.source_digest(), ZaiAdapter.source_digest());
-        assert_ne!(
-            ZaiAdapter.source_digest(),
-            fixture::adapter("fixture-adapter"),
-            "the compiled tag is the adapter's own, not the fixture's"
-        );
     }
 
     // -----------------------------------------------------------------------

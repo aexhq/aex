@@ -22,7 +22,7 @@ use crate::kernel::{ActivationRegistry, DrainGate, PermitKind, PermitSet};
 use crate::ports::{
     BoxFuture, CancelToken, ClaimError, ClockPort as _, CommitError, ConditionFailure,
     DispatchTicket, EffectStore as _, FenceGuard, JournalCursor, JournalPage, LeaseStore as _,
-    PreviewSink, ProviderDispatchError, ProviderFailureClass, ProviderOutcome, ProviderPort,
+    PreviewSink, ProviderDispatchError, ProviderFailureKind, ProviderOutcome, ProviderPort,
     RedactedDetail, ReleaseDisposition, StoreError, StreamBudget, UnknownResolution,
     WakeQueue as _,
 };
@@ -38,11 +38,13 @@ use aex_brain_domain::journal::{
     FinishReason, JournalEntry, JournalRecord, MessageOrigin, ParkReason,
 };
 use aex_brain_domain::wire_pending::{
-    AgentLimits, CanonicalBlock, CanonicalModelRequest, CompleteAssistantMessage, CompleteProof,
-    ContentBlockRef, ModelCapability, NormalizedUsage, ProviderId, ProviderReceipt,
-    ResolvedAgentConfig, StopReason,
+    AgentLimits, CanonicalBlock, CanonicalModelRequest, ContentBlockRef, NormalizedUsage,
+    ProviderId, ResolvedAgentConfig, Role, StopReason,
 };
-use aex_wire::ids::{GenerationId, PrefixedId as _, Uuid7};
+use aex_model_catalog::canonical::{CredentialBindingRef, ProviderReceipt, ReceiptBounds, seal};
+use aex_model_catalog::document::CapabilitySet;
+use aex_model_catalog::{BoundedString, QualifiedModel, fixture};
+use aex_wire::ids::{GenerationId, PrefixedId as _, ProviderCredentialId, Uuid7};
 use core::future::Future as _;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -73,11 +75,11 @@ fn key() -> AgentKey {
 }
 
 fn pin() -> CatalogPin {
-    CatalogPin(ContentHash::of(b"catalog"))
+    capability().catalog()
 }
 
 fn model() -> ModelSlug {
-    ModelSlug("deepseek-chat".to_owned())
+    ModelSlug::truncating("deepseek-chat")
 }
 
 fn config() -> ResolvedAgentConfig {
@@ -96,16 +98,16 @@ fn config() -> ResolvedAgentConfig {
     }
 }
 
-fn capability() -> ModelCapability {
-    ModelCapability {
-        provider: ProviderId::Deepseek,
-        model: model(),
-        context_window_tokens: 64_000,
-        max_output_tokens: 4_096,
-        min_cacheable_prefix_tokens: None,
-        supports_tools: true,
-        admitted: true,
-    }
+fn capability() -> QualifiedModel {
+    let mut entry = fixture::entry(
+        ProviderId::Deepseek,
+        "deepseek-chat",
+        CapabilitySet::default(),
+    );
+    entry.limits.context_window_tokens = 64_000;
+    entry.limits.max_output_tokens = 4_096;
+    entry.limits.min_cacheable_prefix_tokens = 0;
+    fixture::qualified(entry)
 }
 
 /// An agent that has been started and given one user message, so a model call is owed.
@@ -128,7 +130,8 @@ fn history() -> Vec<JournalEntry> {
         JournalRecord::UserMessage {
             content: vec![ContentBlockRef::Inline {
                 block: CanonicalBlock::Text {
-                    text: "summarize this".to_owned(),
+                    text: BoundedString::truncating("summarize this"),
+                    annotations: Vec::new(),
                 },
             }],
             origin: MessageOrigin::Submission,
@@ -163,40 +166,81 @@ fn journal_page(entries: Vec<JournalEntry>, next: Option<JournalSeq>) -> Journal
 }
 
 fn produced() -> ProviderOutcome {
-    let blocks = vec![CanonicalBlock::Text {
-        text: "here is the summary".to_owned(),
-    }];
+    let usage = NormalizedUsage {
+        input_tokens: 12,
+        output_tokens: 34,
+        ..NormalizedUsage::default()
+    };
+    let selected = capability();
+    let message = seal(
+        vec![CanonicalBlock::Text {
+            text: BoundedString::truncating("here is the summary"),
+            annotations: Vec::new(),
+        }],
+        StopReason::EndTurn,
+        &usage,
+        &selected,
+    )
+    .expect("a whole message");
+    let at = fixture::at(START);
+    let receipt = ProviderReceipt {
+        provider: message.provider,
+        model: message.model.clone(),
+        catalog: message.catalog,
+        dialect: selected.dialect(),
+        dialect_revision: selected.dialect_revision(),
+        credential: CredentialBindingRef {
+            id: ProviderCredentialId::from_uuid7(Uuid7::compose(1, [4; 10])),
+            revision: 1,
+            generation: 1,
+        },
+        provider_request_id: None,
+        http_status: 200,
+        attempts: 1,
+        started_at: at,
+        first_frame_at: Some(at),
+        completed_at: at,
+        request_bytes: 1,
+        response_bytes: 1,
+        frames: 1,
+        rate_limit: None,
+        response_receipt: Some(message.proof.0),
+        bounds: ReceiptBounds {
+            max_frame_bytes: 1_024,
+            max_response_bytes: 1_024,
+            idle_frame_timeout_ms: 1_000,
+            total_deadline_ms: 10_000,
+        },
+    };
     ProviderOutcome {
-        message: CompleteAssistantMessage {
-            complete: CompleteProof::mint(StopReason::EndTurn, &blocks).expect("a whole message"),
-            blocks,
-            stop_reason: StopReason::EndTurn,
-        },
-        usage: NormalizedUsage {
-            input_tokens: 12,
-            output_tokens: 34,
-            ..NormalizedUsage::default()
-        },
-        receipt: ProviderReceipt {
-            provider: ProviderId::Deepseek,
-            model: model(),
-            request_id: None,
-            route_revision: 1,
-        },
+        message,
+        usage,
+        receipt,
     }
 }
 
-fn failure(proof: DispatchProof, class: ProviderFailureClass) -> ProviderDispatchError {
+fn failure(proof: DispatchProof, kind: ProviderFailureKind) -> ProviderDispatchError {
     ProviderDispatchError {
         stage: match proof {
             DispatchProof::NotSent => DispatchStage::PreDispatch,
             _ => DispatchStage::Dispatched,
         },
         proof,
-        class,
+        kind,
         provider_request_id: None,
         retry_after: None,
-        detail: RedactedDetail::new("the fixture refuses"),
+        detail: RedactedDetail::internal(kind, "the fixture refuses"),
+    }
+}
+
+fn terminal_failure(kind: ProviderFailureKind) -> ProviderDispatchError {
+    ProviderDispatchError {
+        stage: DispatchStage::Terminal,
+        proof: DispatchProof::ResponseStarted,
+        kind,
+        provider_request_id: None,
+        retry_after: None,
+        detail: RedactedDetail::internal(kind, "the provider refused definitively"),
     }
 }
 
@@ -313,6 +357,15 @@ fn one_wake_drives_a_turn_from_claim_to_ack() {
     );
     assert_eq!(harness.store.finish(key()), Some(FinishReason::Completed));
     assert_eq!(harness.provider.dispatched().len(), 1);
+    let requests = harness.provider.requests();
+    assert_eq!(requests.len(), 1);
+    assert!(requests[0].hash_is_consistent().expect("canonical request"));
+    assert_eq!(requests[0].messages.len(), 1);
+    assert_eq!(requests[0].messages[0].role, Role::User);
+    assert!(matches!(
+        &requests[0].messages[0].blocks[..],
+        [CanonicalBlock::Text { text, .. }] if text.as_str() == "summarize this"
+    ));
     assert_eq!(harness.queue.acked().len(), 1);
     assert_eq!(harness.queue.depth(), 0, "nothing was left outstanding");
 }
@@ -829,13 +882,13 @@ fn a_second_local_activation_for_one_agent_releases_rather_than_racing() {
     drop(held);
 }
 
-/// The matrix is the `proof` field and nothing else. A `PossiblySent` failure is
-/// indistinguishable from a served request, so it settles unknown and the run interrupts.
+/// A non-terminal `PossiblySent` failure is indistinguishable from a served
+/// request, so it settles unknown and the run interrupts.
 #[test]
 fn a_possibly_sent_request_settles_unknown_and_is_never_attempted_again() {
     let harness = Harness::new(vec![ProviderScript::Fail(Box::new(failure(
         DispatchProof::PossiblySent,
-        ProviderFailureClass::Transient,
+        ProviderFailureKind::ServerError,
     )))]);
     harness.wake();
 
@@ -855,6 +908,33 @@ fn a_possibly_sent_request_settles_unknown_and_is_never_attempted_again() {
     assert_eq!(harness.store.finish(key()), Some(FinishReason::Interrupted));
 }
 
+/// A complete provider error response proves failure even though the request
+/// reached the upstream. It is terminal and non-retryable, not ambiguous.
+#[test]
+fn a_definitive_provider_refusal_settles_known_failure() {
+    let harness = Harness::new(vec![ProviderScript::Fail(Box::new(terminal_failure(
+        ProviderFailureKind::Authentication,
+    )))]);
+    harness.wake();
+
+    let outcome = harness.run_next().expect("the activation runs");
+    assert_eq!(
+        outcome,
+        Outcome::Progressed {
+            steps: 2,
+            stop: Stop::Finished(FinishReason::Failed)
+        }
+    );
+    assert_eq!(harness.provider.dispatched().len(), 1);
+    assert!(matches!(
+        harness.store.effects(key())[0].state,
+        EffectState::KnownFailure {
+            stage: DispatchStage::Terminal,
+            proof: DispatchProof::ResponseStarted,
+        }
+    ));
+}
+
 /// `NotSent` is the one value that permits another attempt, because it is the only one that
 /// says the upstream cannot have seen the request.
 #[test]
@@ -862,7 +942,7 @@ fn only_a_provably_unsent_request_is_attempted_again() {
     let harness = Harness::new(vec![
         ProviderScript::Fail(Box::new(failure(
             DispatchProof::NotSent,
-            ProviderFailureClass::Transient,
+            ProviderFailureKind::ServerError,
         ))),
         ProviderScript::Produce(Box::new(produced())),
     ]);
@@ -892,7 +972,7 @@ fn only_a_provably_unsent_request_is_attempted_again() {
 fn a_permanent_refusal_finishes_failed_rather_than_looping() {
     let harness = Harness::new(vec![ProviderScript::Fail(Box::new(failure(
         DispatchProof::NotSent,
-        ProviderFailureClass::Permanent,
+        ProviderFailureKind::InvalidRequest,
     )))]);
     harness.wake();
 
@@ -1100,7 +1180,7 @@ impl ProviderPort for GatedProvider {
             if cancel.is_cancelled() {
                 return core::task::Poll::Ready(Err(failure(
                     DispatchProof::PossiblySent,
-                    ProviderFailureClass::Transient,
+                    ProviderFailureKind::ServerError,
                 )));
             }
             if self.released.load(Ordering::SeqCst) {

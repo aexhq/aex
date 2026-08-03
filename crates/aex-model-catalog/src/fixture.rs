@@ -252,6 +252,20 @@ pub fn promote(entry: &mut ModelEntry, adapter: AdapterSourceDigest, now: Timest
             duration_ms: 1,
         })
         .collect();
+    bind_receipt(entry);
+}
+
+/// Rebinds a fixture receipt after a test deliberately edits entry policy.
+///
+/// Production publishing code must bind the digest produced by the live
+/// conformance run; this helper exists only for explicit fixture construction.
+///
+/// # Panics
+///
+/// Panics if the closed fixture entry cannot be rendered as canonical JSON.
+pub fn bind_receipt(entry: &mut ModelEntry) {
+    entry.receipt.catalog_entry_digest = crate::catalog::catalog_entry_digest(entry)
+        .expect("a fixture model entry is canonicalizable");
 }
 
 /// Records an observed fact on a probe result.

@@ -9,6 +9,10 @@ use core::fmt;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+pub use aex_model_catalog::{
+    CatalogRevision as CatalogPin, ModelSlug, ProviderRequestId, ToolCallId, ToolName,
+};
+
 /// A regional session. Every agent, budget item and Hands generation hangs off one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -212,34 +216,6 @@ impl fmt::Display for ContentHash {
     }
 }
 
-/// A tool call identifier as the provider emitted it.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct ToolCallId(pub String);
-
-impl ToolCallId {
-    /// Borrows the underlying string.
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-/// A tool name from the catalog manifest.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct ToolName(pub String);
-
-/// A model slug within one provider.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct ModelSlug(pub String);
-
-/// The signed catalog artifact an agent is pinned to for its whole life.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct CatalogPin(pub ContentHash);
-
 /// A durable operation identity a detached tool or MCP Task returned.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -249,11 +225,6 @@ pub struct DetachedOperationId(pub String);
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct HandsOperationId(pub String);
-
-/// A provider request id, preserved verbatim for support and reconciliation.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct ProviderRequestId(pub String);
 
 /// A caller-supplied idempotency key.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

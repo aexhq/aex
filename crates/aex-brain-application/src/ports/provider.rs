@@ -3,10 +3,12 @@
 use super::BoxFuture;
 use super::proof::{CancelToken, DispatchTicket, PreviewSink, StreamBudget};
 use aex_brain_domain::effect::{DispatchEvidence, DispatchProof, DispatchStage};
-use aex_brain_domain::ids::ProviderRequestId;
-use aex_brain_domain::wire_pending::{
+use aex_model_catalog::ProviderRequestId;
+use aex_model_catalog::canonical::{
     CanonicalModelRequest, CompleteAssistantMessage, NormalizedUsage, ProviderReceipt,
 };
+
+pub use aex_model_catalog::{ProviderFailureClass, ProviderFailureKind, RedactedDetail};
 
 /// One model dispatch over the six admitted `BYOK` providers.
 ///
@@ -18,8 +20,10 @@ pub trait ProviderPort: Send + Sync + 'static {
     /// Dispatches `request` and streams it to completion.
     ///
     /// The ticket is the proof that the durable `dispatch_started` write already committed.
-    /// An implementation must not send a byte before it holds one, and must not send a
-    /// second request under the same ticket.
+    /// An implementation must not send a byte before it holds one, and must never send a
+    /// second generation after an ambiguous send or an accepted generation. A verified
+    /// catalog may authorize a bounded in-call retry only after a definitive `429` or `503`
+    /// non-generation rejection.
     fn dispatch<'a>(
         &'a self,
         ticket: &'a DispatchTicket,
@@ -53,67 +57,37 @@ pub struct ProviderOutcome {
     pub receipt: ProviderReceipt,
 }
 
+impl ProviderOutcome {
+    /// Whether the message proof, usage and receipt commit to one exact
+    /// successful outcome.
+    #[must_use]
+    pub fn is_consistent(&self) -> bool {
+        self.receipt.matches_outcome(&self.message, &self.usage)
+    }
+}
+
 /// Why a dispatch did not produce an outcome.
 ///
-/// `proof` is the load-bearing field. It is the adapter's assertion about whether the
-/// request reached the upstream, and the recovery matrix consumes nothing else:
-/// [`DispatchProof::NotSent`] is the only value that permits an automatic retry.
+/// `proof` is the load-bearing retry field. It is the adapter's assertion about
+/// whether the request reached the upstream, and [`DispatchProof::NotSent`] is
+/// the only value that permits an automatic retry. `stage` additionally
+/// distinguishes an explicitly observed terminal refusal from an ambiguous
+/// in-flight failure; neither is retried.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("provider dispatch failed at {stage:?} ({class:?}, {proof:?})")]
+#[error("provider dispatch failed at {stage:?} ({kind:?}, {proof:?})")]
 pub struct ProviderDispatchError {
     /// How far the attempt got.
     pub stage: DispatchStage,
     /// What the adapter can prove about whether bytes left the process.
     pub proof: DispatchProof,
-    /// How the failure should be treated by a retry policy.
-    pub class: ProviderFailureClass,
+    /// The canonical operational failure kind.
+    pub kind: ProviderFailureKind,
     /// The provider's own request id, when one was observed.
     pub provider_request_id: Option<ProviderRequestId>,
     /// How long the provider asked the caller to wait.
     pub retry_after: Option<core::time::Duration>,
     /// A redacted description. Never carries a credential.
     pub detail: RedactedDetail,
-}
-
-/// How a provider failure should be treated.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProviderFailureClass {
-    /// Retryable within the effect deadline.
-    Transient,
-    /// Retrying will not help: a bad request, an unknown model, a rejected credential.
-    Permanent,
-    /// The provider is at capacity. Retryable, but back off.
-    Overloaded,
-    /// The caller cancelled.
-    Cancelled,
-}
-
-/// A description safe to log.
-///
-/// A newtype rather than a `String` so that "this text has been through redaction" is a
-/// fact the type system carries. Constructing one is where an adapter must have already
-/// removed credentials, prompts and customer content.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RedactedDetail(String);
-
-impl RedactedDetail {
-    /// Records `text` as already redacted.
-    #[must_use]
-    pub fn new(text: impl Into<String>) -> Self {
-        Self(text.into())
-    }
-
-    /// The redacted text.
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl core::fmt::Display for RedactedDetail {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        formatter.write_str(&self.0)
-    }
 }
 
 /// What an upstream said about an effect whose outcome could not be proved locally.

@@ -429,6 +429,7 @@ async fn a_response_start_records_the_evidence_the_decoder_reads_back() {
     );
     let ticket = DispatchTicket::mint(
         &guard,
+        authority().workspace,
         EffectId([9; 16]),
         1,
         Timestamp::from_millis(1_767_225_600_000),
@@ -441,7 +442,7 @@ async fn a_response_start_records_the_evidence_the_decoder_reads_back() {
                 stage: DispatchStage::Streaming,
                 proof: DispatchProof::ResponseStarted,
                 attempt: 1,
-                provider_request_id: Some(ProviderRequestId("req-1".to_owned())),
+                provider_request_id: Some(ProviderRequestId::truncating("req-1")),
                 operation: Some(DetachedOperationId("op-1".to_owned())),
                 receipt: Some(receipt),
                 detail: None,
@@ -480,6 +481,7 @@ async fn absent_evidence_is_left_absent_rather_than_written_empty() {
     );
     let ticket = DispatchTicket::mint(
         &guard,
+        authority().workspace,
         EffectId([9; 16]),
         1,
         Timestamp::from_millis(1_767_225_600_000),

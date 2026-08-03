@@ -628,6 +628,22 @@ fn mc8_a_changed_adapter_digest_invalidates_every_receipt_at_load() {
 }
 
 #[test]
+fn mc8_a_receipt_for_different_entry_bytes_cannot_load() {
+    let publisher = Publisher::new();
+    let mut document = active_document();
+    document.entries[0].limits.max_output_tokens = document.entries[0]
+        .limits
+        .max_output_tokens
+        .saturating_sub(1);
+    let error = load(&publisher, &document)
+        .expect_err("a receipt cannot admit policy bytes it did not prove");
+    assert!(matches!(
+        error,
+        CatalogLoadError::ReceiptEntryMismatch { .. }
+    ));
+}
+
+#[test]
 fn mc8_an_incomplete_receipt_cannot_load_even_when_staged() {
     let publisher = Publisher::new();
     let mut document = launch_document();
@@ -781,6 +797,7 @@ fn the_anthropic_spelling_has_no_alias() {
 fn qualified(publisher: &Publisher, replay: ReasoningReplay) -> QualifiedModel {
     let mut document = active_document();
     document.entries[0].reasoning.replay = replay;
+    fixture::bind_receipt(&mut document.entries[0]);
     let catalog = load(publisher, &document).expect("load");
     let entry = &catalog.document().entries[0];
     catalog
@@ -875,6 +892,21 @@ fn s02_seal_rejects_an_empty_block_set() {
             &model
         ),
         Err(aex_model_catalog::canonical::SealError::EmptyBlocks)
+    );
+}
+
+#[test]
+fn s02_seal_rejects_inconsistent_usage() {
+    let publisher = Publisher::new();
+    let model = qualified(&publisher, ReasoningReplay::NotRequired);
+    let usage = NormalizedUsage {
+        output_tokens: 1,
+        reasoning_tokens: 2,
+        ..NormalizedUsage::default()
+    };
+    assert_eq!(
+        seal(vec![text("answer")], StopReason::EndTurn, &usage, &model),
+        Err(aex_model_catalog::canonical::SealError::InconsistentUsage)
     );
 }
 

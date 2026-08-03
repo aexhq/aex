@@ -35,7 +35,9 @@ path = "src/main.rs"
 aex-brain-application = { path = "../../crates/aex-brain-application" }
 aex-brain-domain = { path = "../../crates/aex-brain-domain" }
 aex-brain-hands = { path = "../../crates/aex-brain-hands" }
+aex-brain-provider-gateway = { path = "../../crates/aex-brain-provider-gateway" }
 aex-brain-store-aws = { path = "../../crates/aex-brain-store-aws" }
+aex-model-catalog = { path = "../../crates/aex-model-catalog" }
 # The composed `ToolPort`. It is linked with no executor registered, because nothing
 # implements `ToolExecutor` yet; the router then refuses by its own typed error
 # rather than by one invented in this composition.

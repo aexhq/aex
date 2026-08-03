@@ -34,12 +34,10 @@ use aex_model_catalog::canonical::{
     StructuredOutputRequest, TEXT_MAX, ToolChoice, ToolResultPart, UsageCompleteness,
 };
 use aex_model_catalog::document::{
-    AdapterSourceDigest, CacheMode, Capability, Dialect, EndpointPin, ReasoningMode,
-    SamplingSupport, SchemaEncoding, StopResolution, StructuredOutputPolicy,
+    CacheMode, Capability, Dialect, EndpointPin, ReasoningMode, SamplingSupport, SchemaEncoding,
+    StopResolution, StructuredOutputPolicy,
 };
-use aex_model_catalog::primitives::{
-    Blake3Digest, BoundedString, ProviderRequestId, ToolCallId, ToolName,
-};
+use aex_model_catalog::primitives::{BoundedString, ProviderRequestId, ToolCallId, ToolName};
 use aex_wire::CanonicalJson;
 use aex_wire::provider::ProviderId;
 use aex_wire::types::Timestamp;
@@ -115,16 +113,6 @@ const RESET_HEADERS: [&str; 4] = [
 /// of the provider's, and being wrong in the safe direction before a socket
 /// exists is cheaper than being wrong after one.
 const BYTES_PER_TOKEN: u64 = 4;
-
-/// This module's own source bytes, which [`AnthropicAdapter::source_digest`]
-/// hashes.
-///
-/// `TODO(cross-stream): the six adapters must agree on one digest over the
-/// whole adapter source tree, because a catalog document carries a single
-/// required_adapter_source. That shared constant belongs in a module every
-/// adapter can see; this per-module digest is a placeholder that is correct in
-/// kind but not yet shared.`
-const SOURCE: &[u8] = include_bytes!("anthropic.rs");
 
 /// The Anthropic Messages dialect adapter.
 ///
@@ -323,10 +311,6 @@ struct WireOutputFormat {
 impl ProviderAdapter for AnthropicAdapter {
     fn provider(&self) -> ProviderId {
         ProviderId::Anthropic
-    }
-
-    fn source_digest(&self) -> AdapterSourceDigest {
-        AdapterSourceDigest(Blake3Digest::of(SOURCE))
     }
 
     fn build_request(
@@ -2094,14 +2078,6 @@ mod tests {
     #[test]
     fn the_adapter_speaks_only_for_anthropic() {
         assert_eq!(AnthropicAdapter.provider(), ProviderId::Anthropic);
-    }
-
-    #[test]
-    fn the_source_digest_is_deterministic() {
-        assert_eq!(
-            AnthropicAdapter.source_digest(),
-            AnthropicAdapter.source_digest()
-        );
     }
 
     #[test]

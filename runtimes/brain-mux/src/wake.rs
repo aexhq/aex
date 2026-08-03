@@ -12,8 +12,8 @@
 //! | `JournalStore`, `EffectStore`, `LeaseStore` | `aex_brain_store_aws::BrainStore` | real; each claim derives tenant and deletion authority from its session head |
 //! | `ToolPort` | injected production router, or explicit unavailable composition | managed-web and MCP do not yet implement `ToolExecutor` |
 //! | `ClockPort`, `IdPort` | this module | composition facts, not a peer's |
-//! | `ProviderPort` | [`AbsentProvider`] | `aex-brain-provider-gateway` restates its own `ProviderPort` over `aex_model_catalog::canonical` types and takes no dependency on `aex-brain-application` |
-//! | `CatalogPort` | [`AbsentCatalog`] | `aex-model-catalog` publishes no `ModelCapability` |
+//! | `ProviderPort` | [`AbsentProvider`] | the six-adapter gateway is implemented, but a Brain session carries no immutable credential pin and regional custody cannot mint a binding yet |
+//! | `CatalogPort` | [`AbsentCatalog`] | the verified loader exists, but startup has no content-addressed envelope or compiled trust root to bind |
 //! | `HandsPort` | [`aex_brain_hands::HandsAdapter`] in production injection | the adapter is real; no concrete guest transport/runtime backend exists yet |
 //!
 //! Every refusal is `DispatchProof::NotSent` and carries the name of the crate that owes the
@@ -41,11 +41,10 @@ use aex_brain_domain::effect::{
 };
 use aex_brain_domain::ids::{
     AgentId, AgentKey, CatalogPin, DetachedOperationId, EffectId, HandsOperationId, JournalSeq,
-    ModelSlug, OwnerToken, SessionId, Timestamp, ToolName, WakeId,
+    ModelSlug, OwnerToken, SessionId, Timestamp, WakeId,
 };
-use aex_brain_domain::wire_pending::{
-    CanonicalModelRequest, DurableOperationSupport, ModelCapability, ProviderId, ToolManifestEntry,
-};
+use aex_brain_domain::wire_pending::{CanonicalModelRequest, DurableOperationSupport, ProviderId};
+use aex_model_catalog::{ProviderFailureKind, QualifiedModel};
 use aex_wire::ids::GenerationId;
 use std::sync::Arc;
 
@@ -57,14 +56,13 @@ use std::sync::Arc;
 pub const STORE_UNBOUND: &str = "aex-brain-store-aws is not bound into this composition";
 
 /// Why the provider is not bound.
-pub const PROVIDER_ABSENT: &str = "aex-brain-provider-gateway restates its own ProviderPort over \
-                                   aex_model_catalog::canonical types and takes no dependency on \
-                                   aex-brain-application";
+pub const PROVIDER_ABSENT: &str = "the Brain session contract carries no immutable provider \
+                                   credential pin, and regional secret custody cannot yet mint \
+                                   the provider credential record";
 
 /// Why the catalog is not bound.
-pub const CATALOG_ABSENT: &str = "aex-model-catalog publishes no ModelCapability; it describes a \
-                                  model with document::ModelEntry over ModelLimits and \
-                                  CapabilitySet";
+pub const CATALOG_ABSENT: &str = "no content-addressed signed model catalog and compiled trust \
+                                  root were bound at startup";
 
 /// Why tool execution is not bound.
 pub const TOOL_EXECUTORS_ABSENT: &str = "aex-brain-managed-web and aex-brain-mcp do not implement \
@@ -294,7 +292,7 @@ impl LeaseStore for UnboundStore {
     }
 }
 
-/// A provider whose adapter does not implement this port.
+/// A provider binding whose required credential authorities are unavailable.
 ///
 /// Every dispatch fails `NotSent`, which is the strongest thing an adapter may assert and the
 /// only value that permits another attempt. Answering anything weaker would make an
@@ -315,10 +313,13 @@ impl ProviderPort for AbsentProvider {
             Err(ProviderDispatchError {
                 stage: DispatchStage::PreDispatch,
                 proof: DispatchProof::NotSent,
-                class: aex_brain_application::ports::ProviderFailureClass::Permanent,
+                kind: ProviderFailureKind::InvalidRequest,
                 provider_request_id: None,
                 retry_after: None,
-                detail: RedactedDetail::new(PROVIDER_ABSENT),
+                detail: RedactedDetail::internal(
+                    ProviderFailureKind::InvalidRequest,
+                    PROVIDER_ABSENT,
+                ),
             })
         })
     }
@@ -334,7 +335,7 @@ impl ProviderPort for AbsentProvider {
     }
 }
 
-/// A catalog whose artifact type does not exist yet.
+/// A catalog binding with no startup artifact or trust root.
 ///
 /// `durable_operation_support` answers [`DurableOperationSupport::None`], which is not a stub:
 /// it is the correct launch answer for every admitted model, and the safe answer to "can this
@@ -344,7 +345,7 @@ pub struct AbsentCatalog;
 
 impl CatalogPort for AbsentCatalog {
     fn digest(&self, pin: &CatalogPin) -> Result<CatalogDigest, CatalogError> {
-        Err(CatalogError::UnknownPin { pin: pin.0 })
+        Err(CatalogError::UnknownPin { pin: *pin })
     }
 
     fn model(
@@ -352,12 +353,8 @@ impl CatalogPort for AbsentCatalog {
         pin: &CatalogPin,
         _provider: ProviderId,
         _model: &ModelSlug,
-    ) -> Result<ModelCapability, CatalogError> {
-        Err(CatalogError::UnknownPin { pin: pin.0 })
-    }
-
-    fn tool(&self, pin: &CatalogPin, _name: &ToolName) -> Result<ToolManifestEntry, CatalogError> {
-        Err(CatalogError::UnknownPin { pin: pin.0 })
+    ) -> Result<QualifiedModel, CatalogError> {
+        Err(CatalogError::UnknownPin { pin: *pin })
     }
 
     fn durable_operation_support(
@@ -379,7 +376,7 @@ impl AbsentHands {
         HandsError::Transport {
             stage: DispatchStage::PreDispatch,
             proof: DispatchProof::NotSent,
-            detail: RedactedDetail::new(HANDS_ABSENT),
+            detail: RedactedDetail::internal(ProviderFailureKind::ServerError, HANDS_ABSENT),
         }
     }
 }
@@ -658,11 +655,10 @@ mod tests {
         CatalogPort, ClockPort, IdPort, JournalStore, LeaseStore, StoreError,
     };
     use aex_brain_domain::effect::EffectKind;
-    use aex_brain_domain::ids::{
-        AgentId, AgentKey, CatalogPin, ContentHash, JournalSeq, ModelSlug, OwnerToken, SessionId,
-        Timestamp,
-    };
+    use aex_brain_domain::ids::{AgentId, AgentKey, JournalSeq, OwnerToken, SessionId, Timestamp};
     use aex_brain_domain::wire_pending::{DurableOperationSupport, ProviderId};
+    use aex_model_catalog::document::CapabilitySet;
+    use aex_model_catalog::fixture;
     use std::collections::BTreeMap;
     use std::sync::Arc;
     use uuid::Uuid;
@@ -708,24 +704,21 @@ mod tests {
     fn the_absent_provider_proves_nothing_was_sent() {
         let ports: &dyn aex_brain_application::ports::ProviderPort = &AbsentProvider;
         let _ = ports;
-        assert!(PROVIDER_ABSENT.contains("aex-brain-provider-gateway"));
+        assert!(PROVIDER_ABSENT.contains("immutable provider credential pin"));
     }
 
     /// The safe answer to "can this be resumed?" is "no", so an unknown pin still answers
     /// the one infallible question rather than tempting the caller to guess.
     #[test]
     fn the_absent_catalog_answers_no_durable_operation_and_refuses_everything_else() {
-        let pin = CatalogPin(ContentHash::of(b"pin"));
+        let model = fixture::qualified_entry(ProviderId::Deepseek, "m", CapabilitySet::default());
+        let pin = model.catalog();
         assert_eq!(
-            AbsentCatalog.durable_operation_support(
-                &pin,
-                ProviderId::Deepseek,
-                &ModelSlug("m".to_owned())
-            ),
+            AbsentCatalog.durable_operation_support(&pin, ProviderId::Deepseek, model.model()),
             DurableOperationSupport::None
         );
         assert!(AbsentCatalog.digest(&pin).is_err());
-        assert!(CATALOG_ABSENT.contains("aex-model-catalog"));
+        assert!(CATALOG_ABSENT.contains("signed model catalog"));
     }
 
     /// The store is bound, while all four absent production peers remain named blockers.

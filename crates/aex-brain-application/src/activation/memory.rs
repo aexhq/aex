@@ -35,9 +35,8 @@ use aex_brain_domain::ids::{
     ToolName, WakeId, WorkShard,
 };
 use aex_brain_domain::journal::{FinishReason, JournalEntry, ParkReason};
-use aex_brain_domain::wire_pending::{
-    CanonicalModelRequest, DurableOperationSupport, ModelCapability, ProviderId, ToolManifestEntry,
-};
+use aex_brain_domain::wire_pending::{CanonicalModelRequest, DurableOperationSupport, ProviderId};
+use aex_model_catalog::{CatalogError as ModelCatalogError, QualifiedModel};
 use aex_wire::ids::{GenerationId, PrefixedId, Uuid7};
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
@@ -202,38 +201,36 @@ impl IdPort for CountingIds {
 /// A catalog holding exactly the entries a test installed.
 #[derive(Debug)]
 pub struct FixedCatalog {
-    models: Mutex<BTreeMap<(ProviderId, String), ModelCapability>>,
+    models: Mutex<BTreeMap<(ProviderId, String), QualifiedModel>>,
     support: Mutex<DurableOperationSupport>,
 }
 
 impl FixedCatalog {
     /// A catalog with one admitted model.
     #[must_use]
-    pub fn with_model(capability: ModelCapability) -> Self {
+    pub fn with_model(model: QualifiedModel) -> Self {
         let catalog = Self {
             models: Mutex::new(BTreeMap::new()),
             support: Mutex::new(DurableOperationSupport::None),
         };
-        catalog.models.lock().expect("not poisoned").insert(
-            (capability.provider, capability.model.0.clone()),
-            capability,
-        );
+        catalog
+            .models
+            .lock()
+            .expect("not poisoned")
+            .insert((model.provider(), model.model().as_str().to_owned()), model);
         catalog
     }
 
     /// Declares that this catalog's models expose a proven durable operation.
     pub fn prove_durable_operations(&self) {
-        *self.support.lock().expect("not poisoned") = DurableOperationSupport::Proven;
+        *self.support.lock().expect("not poisoned") =
+            DurableOperationSupport::ResultLookup { ttl_ms: 60_000 };
     }
 }
 
 impl CatalogPort for FixedCatalog {
     fn digest(&self, pin: &CatalogPin) -> Result<CatalogDigest, CatalogError> {
-        Ok(CatalogDigest {
-            digest: pin.0,
-            revision: 1,
-            signature_verified: true,
-        })
+        Ok(CatalogDigest(pin.0))
     }
 
     fn model(
@@ -241,24 +238,19 @@ impl CatalogPort for FixedCatalog {
         pin: &CatalogPin,
         provider: ProviderId,
         model: &ModelSlug,
-    ) -> Result<ModelCapability, CatalogError> {
+    ) -> Result<QualifiedModel, CatalogError> {
         self.models
             .lock()
             .expect("not poisoned")
-            .get(&(provider, model.0.clone()))
+            .get(&(provider, model.as_str().to_owned()))
             .cloned()
-            .ok_or_else(|| CatalogError::UnknownModel {
-                pin: pin.0,
-                provider,
-                model: model.clone(),
+            .filter(|qualified| qualified.catalog() == *pin)
+            .ok_or_else(|| {
+                CatalogError::Lookup(ModelCatalogError::UnknownModel {
+                    provider,
+                    model: model.clone(),
+                })
             })
-    }
-
-    fn tool(&self, pin: &CatalogPin, name: &ToolName) -> Result<ToolManifestEntry, CatalogError> {
-        Err(CatalogError::UnknownTool {
-            pin: pin.0,
-            name: name.clone(),
-        })
     }
 
     fn durable_operation_support(
@@ -288,6 +280,7 @@ pub enum ProviderScript {
 pub struct ScriptedProvider {
     script: Mutex<VecDeque<ProviderScript>>,
     dispatched: Mutex<Vec<(EffectId, Fence, u16)>>,
+    requests: Mutex<Vec<CanonicalModelRequest>>,
 }
 
 impl ScriptedProvider {
@@ -297,6 +290,7 @@ impl ScriptedProvider {
         Self {
             script: Mutex::new(script.into_iter().collect()),
             dispatched: Mutex::new(Vec::new()),
+            requests: Mutex::new(Vec::new()),
         }
     }
 
@@ -305,18 +299,28 @@ impl ScriptedProvider {
     pub fn dispatched(&self) -> Vec<(EffectId, Fence, u16)> {
         self.dispatched.lock().expect("not poisoned").clone()
     }
+
+    /// Every canonical request it was asked to perform.
+    #[must_use]
+    pub fn requests(&self) -> Vec<CanonicalModelRequest> {
+        self.requests.lock().expect("not poisoned").clone()
+    }
 }
 
 impl ProviderPort for ScriptedProvider {
     fn dispatch<'a>(
         &'a self,
         ticket: &'a DispatchTicket,
-        _request: &'a CanonicalModelRequest,
+        request: &'a CanonicalModelRequest,
         _budget: &'a StreamBudget,
         _preview: &'a dyn PreviewSink,
         _cancel: &'a CancelToken,
     ) -> BoxFuture<'a, Result<ProviderOutcome, ProviderDispatchError>> {
         Box::pin(async move {
+            self.requests
+                .lock()
+                .expect("not poisoned")
+                .push(request.clone());
             self.dispatched.lock().expect("not poisoned").push((
                 ticket.effect(),
                 ticket.fence(),
@@ -328,10 +332,13 @@ impl ProviderPort for ScriptedProvider {
                 None => Err(ProviderDispatchError {
                     stage: aex_brain_domain::effect::DispatchStage::Dispatched,
                     proof: aex_brain_domain::effect::DispatchProof::PossiblySent,
-                    class: crate::ports::ProviderFailureClass::Transient,
+                    kind: crate::ports::ProviderFailureKind::ServerError,
                     provider_request_id: None,
                     retry_after: None,
-                    detail: RedactedDetail::new("the script is exhausted"),
+                    detail: RedactedDetail::internal(
+                        crate::ports::ProviderFailureKind::ServerError,
+                        "the script is exhausted",
+                    ),
                 }),
             }
         })
@@ -366,7 +373,7 @@ impl ScriptedTools {
             routes: Mutex::new(
                 routes
                     .into_iter()
-                    .map(|route| (route.name.0.clone(), route))
+                    .map(|route| (route.name.as_str().to_owned(), route))
                     .collect(),
             ),
             invocations: Mutex::new(script.into_iter().collect()),
@@ -392,12 +399,12 @@ impl ToolPort for ScriptedTools {
         self.routes
             .lock()
             .expect("not poisoned")
-            .get(&name.0)
+            .get(name.as_str())
             .cloned()
             .ok_or_else(|| {
                 let _ = pin;
                 ToolRoutingError::Unknown {
-                    name: name.0.clone(),
+                    name: name.as_str().to_owned(),
                 }
             })
     }
@@ -412,7 +419,7 @@ impl ToolPort for ScriptedTools {
             self.invoked
                 .lock()
                 .expect("not poisoned")
-                .push(call.call.0.clone());
+                .push(call.call.as_str().to_owned());
             self.invocations
                 .lock()
                 .expect("not poisoned")
@@ -422,7 +429,10 @@ impl ToolPort for ScriptedTools {
                         stage: aex_brain_domain::effect::DispatchStage::Dispatched,
                         proof: aex_brain_domain::effect::DispatchProof::PossiblySent,
                         retryable: false,
-                        detail: RedactedDetail::new("the script is exhausted"),
+                        detail: RedactedDetail::internal(
+                            crate::ports::ProviderFailureKind::ServerError,
+                            "the script is exhausted",
+                        ),
                     })
                 })
         })
@@ -464,7 +474,10 @@ impl AbsentHands {
         HandsError::Transport {
             stage: aex_brain_domain::effect::DispatchStage::PreDispatch,
             proof: aex_brain_domain::effect::DispatchProof::NotSent,
-            detail: RedactedDetail::new("the activation test did not bind a Hands peer"),
+            detail: RedactedDetail::internal(
+                crate::ports::ProviderFailureKind::ServerError,
+                "the activation test did not bind a Hands peer",
+            ),
         }
     }
 }
@@ -1170,7 +1183,13 @@ impl EffectStore for MemoryStore {
                 attempt,
                 aex_brain_domain::effect::DispatchStage::Dispatched,
             ));
-            Ok(DispatchTicket::mint(guard, *effect, attempt, at))
+            Ok(DispatchTicket::mint(
+                guard,
+                authority.workspace,
+                *effect,
+                attempt,
+                at,
+            ))
         })
     }
 

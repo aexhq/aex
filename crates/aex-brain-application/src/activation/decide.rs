@@ -21,14 +21,12 @@ use aex_brain_domain::effect::{
 };
 use aex_brain_domain::fold::{FoldState, Phase};
 use aex_brain_domain::ids::{
-    AgentKey, ContentHash, EffectId, JournalSeq, ModelSlug, Timestamp, WakeId, WorkShard,
+    AgentKey, ContentHash, EffectId, JournalSeq, Timestamp, WakeId, WorkShard,
 };
 use aex_brain_domain::journal::{
     ExecutorRoute, FinishReason, JournalRecord, ParkReason, TypedFailure,
 };
-use aex_brain_domain::wire_pending::{
-    CanonicalBlock, CompleteAssistantMessage, NormalizedUsage, ProviderId,
-};
+use aex_brain_domain::wire_pending::{CanonicalBlock, ToolResultPart};
 
 use crate::ports::{FenceGuard, ProviderDispatchError, ProviderOutcome, ToolDispatchError};
 
@@ -291,23 +289,11 @@ pub fn prepare(
 
 /// Settles a model call that produced a whole message, atomically with the message itself.
 ///
-/// # Errors
-///
-/// Returns [`aex_brain_domain::canonical::CanonicalizeError`] when the message cannot be
-/// canonicalized, which is the same condition that would stop the record being sized. The
-/// receipt is the digest of the message the settlement is atomic with, so it can be checked
-/// later without asking the provider anything.
-pub fn settle_model_call(
-    draft: &mut Draft,
-    effect: EffectId,
-    provider: ProviderId,
-    model: ModelSlug,
-    message: &CompleteAssistantMessage,
-    usage: NormalizedUsage,
-) -> Result<(), aex_brain_domain::canonical::CanonicalizeError> {
-    let receipt = ContentHash::of(&aex_brain_domain::canonical::canonicalize_value(
-        &message.blocks,
-    )?);
+pub fn settle_model_call(draft: &mut Draft, effect: EffectId, outcome: &ProviderOutcome) {
+    // `CompleteProof` is the wire authority's SHA-256 type; Brain's durable
+    // `ContentHash` is explicitly blake3. Hash the proof bytes rather than
+    // relabelling one algorithm's digest as the other.
+    let receipt = ContentHash::of(outcome.message.proof.0.as_bytes());
     draft.append(JournalRecord::EffectSettled {
         effect,
         outcome: SettledOutcome::Complete { receipt },
@@ -318,20 +304,16 @@ pub fn settle_model_call(
         outcome: SettledOutcome::Complete { receipt },
     });
     draft.append(JournalRecord::AssistantMessage {
-        blocks: message.blocks.clone(),
-        usage,
-        stop_reason: message.stop_reason,
-        provider,
-        model,
+        message: outcome.message.clone(),
+        usage: outcome.usage,
+        receipt: outcome.receipt.clone(),
         effect,
-        complete: message.complete,
     });
-    draft.phase(if message.blocks.iter().any(is_tool_use) {
+    draft.phase(if outcome.message.blocks.iter().any(is_tool_use) {
         "awaiting_tools"
     } else {
         "awaiting_finish"
     });
-    Ok(())
 }
 
 fn is_tool_use(block: &CanonicalBlock) -> bool {
@@ -347,7 +329,7 @@ pub fn settle_tool_call(
     draft: &mut Draft,
     effect: EffectId,
     call: aex_brain_domain::ids::ToolCallId,
-    blocks: Vec<CanonicalBlock>,
+    content: Vec<ToolResultPart>,
     is_error: bool,
     executed_on: ExecutorRoute,
     duration_ms: u32,
@@ -364,7 +346,7 @@ pub fn settle_tool_call(
     });
     draft.append(JournalRecord::ToolResult {
         call,
-        blocks,
+        content,
         is_error,
         executed_on,
         duration_ms,
@@ -419,11 +401,13 @@ pub fn finish(draft: &mut Draft, reason: FinishReason, failure: Option<TypedFail
 
 /// What a failed provider dispatch settles as.
 ///
-/// The whole matrix is the `proof` field and nothing else. [`DispatchProof::NotSent`] is the
-/// only value that permits a further attempt, because it is the only one that says the
-/// upstream cannot have seen the request. Everything else is `OutcomeUnknown`: an
-/// over-generous reading here is exactly how a possibly-served request becomes a second
-/// generation the customer is billed for.
+/// [`DispatchProof::NotSent`] is the only value that permits a further attempt,
+/// because it is the only one that says the upstream cannot have seen the
+/// request. An explicitly observed [`DispatchStage::Terminal`] refusal is a
+/// known failure but never retryable. Every other sent failure is
+/// `OutcomeUnknown`: an over-generous reading there is exactly how a
+/// possibly-served request becomes a second generation the customer is billed
+/// for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FailureSettlement {
     /// Nothing left the process. The effect closes and the agent may plan again.
@@ -432,6 +416,14 @@ pub enum FailureSettlement {
         stage: DispatchStage,
         /// Whether the planner may open a new effect, or must terminalize.
         retryable: bool,
+    },
+    /// The upstream returned a definitive terminal refusal. It must not be
+    /// retried, but it is also not an ambiguous outcome.
+    KnownFailure {
+        /// How far the attempt got.
+        stage: DispatchStage,
+        /// What the adapter proved about the observed response.
+        proof: DispatchProof,
     },
     /// The upstream may have served it. The effect settles unknown and the run interrupts.
     Unknown(Box<DispatchEvidence>),
@@ -445,9 +437,15 @@ pub fn classify_provider_failure(error: &ProviderDispatchError, attempt: u16) ->
         return FailureSettlement::NotSent {
             stage: error.stage,
             retryable: matches!(
-                error.class,
+                error.kind.class(),
                 ProviderFailureClass::Transient | ProviderFailureClass::Overloaded
             ),
+        };
+    }
+    if error.stage == DispatchStage::Terminal {
+        return FailureSettlement::KnownFailure {
+            stage: error.stage,
+            proof: error.proof,
         };
     }
     FailureSettlement::Unknown(Box::new(DispatchEvidence {
@@ -470,6 +468,12 @@ pub fn classify_tool_failure(error: &ToolDispatchError, attempt: u16) -> Failure
             retryable: error.retryable,
         };
     }
+    if error.stage == DispatchStage::Terminal {
+        return FailureSettlement::KnownFailure {
+            stage: error.stage,
+            proof: error.proof,
+        };
+    }
     FailureSettlement::Unknown(Box::new(DispatchEvidence {
         stage: error.stage,
         proof: error.proof,
@@ -489,17 +493,4 @@ pub fn refusal(code: &str, message: &str) -> TypedFailure {
         message: message.to_owned(),
         detail: None,
     }
-}
-
-/// The outcome a completed provider dispatch carries into the journal.
-///
-/// Extracted so the asynchronous half hands over a value rather than a port response, which
-/// keeps the settlement path assertable without a provider.
-#[must_use]
-pub fn model_settlement(outcome: &ProviderOutcome) -> (ProviderId, ModelSlug, NormalizedUsage) {
-    (
-        outcome.receipt.provider,
-        outcome.receipt.model.clone(),
-        outcome.usage,
-    )
 }

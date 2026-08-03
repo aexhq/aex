@@ -45,9 +45,12 @@ use aex_brain_domain::journal::{
 };
 use aex_brain_domain::planner::{OwedStep, PlanPolicy, model_effect_id, plan};
 use aex_brain_domain::wire_pending::{
-    CanonicalBlock, CanonicalModelRequest, DurableOperationSupport, ResolvedAgentConfig,
+    CanonicalMessage, CanonicalModelRequest, ContentBlockRef, DurableOperationSupport,
+    ResolvedAgentConfig, Role,
 };
 use futures::stream::{self, StreamExt as _};
+use aex_model_catalog::BoundedString;
+use aex_model_catalog::canonical::{CorrelationId, ReasoningRequest, ToolChoice, ToolResultPart};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -1263,19 +1266,64 @@ impl Session<'_> {
             self.ports
                 .catalog
                 .model(&config.catalog_pin, config.provider, &config.model)?;
-        let request = CanonicalModelRequest {
-            provider: config.provider,
-            model: config.model.clone(),
-            system: config.system.clone(),
-            turns: context::view(&self.state, &self.policy.context, 0),
-            tools: Vec::new(),
-            max_output_tokens: capability.max_output_tokens,
-        };
-        let request_hash = ContentHash::of(&canonicalize_value(&request)?);
         let now = self.ports.clock.now();
         let deadline = now.plus_millis(self.policy.effect_deadline_ms);
 
         let existing = resumed.map(Prepared::from).or_else(|| self.open_prepared());
+        let effect = existing.as_ref().map_or_else(
+            || model_effect_id(self.agent(), &self.state),
+            |open| open.id,
+        );
+        if config.system.is_some() {
+            return Err(ActivationError::UnhydratedSystem);
+        }
+        if self
+            .state
+            .open_user
+            .iter()
+            .any(|reference| matches!(reference, ContentBlockRef::Placed { .. }))
+        {
+            return Err(ActivationError::UnhydratedContent);
+        }
+        let mut messages = context::view(&self.state, &self.policy.context, 0);
+        let open_user = self
+            .state
+            .open_user
+            .iter()
+            .filter_map(|reference| match reference {
+                ContentBlockRef::Inline { block } => Some(block.clone()),
+                ContentBlockRef::Placed { .. } => None,
+            })
+            .collect::<Vec<_>>();
+        if !open_user.is_empty() {
+            messages.push(CanonicalMessage {
+                role: Role::User,
+                blocks: open_user,
+            });
+        }
+        let max_output_tokens = capability.limits().max_output_tokens;
+        let mut request = CanonicalModelRequest {
+            selection: capability,
+            system: Vec::new(),
+            messages,
+            tools: Vec::new(),
+            tool_choice: ToolChoice::None,
+            parallel_tools: false,
+            max_output_tokens,
+            temperature_milli: None,
+            top_p_milli: None,
+            stop_sequences: Vec::new(),
+            reasoning: ReasoningRequest::ProviderDefault,
+            structured_output: None,
+            cache_breakpoints: Vec::new(),
+            correlation: CorrelationId::from_effect(effect.0),
+            request_hash: aex_wire::ContentHash::of(b"pending"),
+        };
+        request.request_hash = request.digest()?;
+        // The canonical provider request owns a wire SHA-256 digest; Brain's
+        // effect identity owns a blake3 `ContentHash`. Commit to the exact wire
+        // digest bytes without relabelling one algorithm as the other.
+        let request_hash = ContentHash::of(request.request_hash.as_bytes());
         // A prepared effect has never had its pre-send write, so this *is* its attempt.
         // Opening a second effect instead would leave the first dangling for the rest of the
         // agent's life and charge its reservation twice.
@@ -1288,7 +1336,7 @@ impl Session<'_> {
             }
             (open.id, open.attempt)
         } else {
-            let id = model_effect_id(self.agent(), &self.state);
+            let id = effect;
             let mut draft = self.draft(phase_tag(&self.state.phase));
             decide::prepare(
                 &mut draft,
@@ -1337,15 +1385,10 @@ impl Session<'_> {
         let mut draft = self.draft("effecting");
         match outcome {
             Ok(produced) => {
-                let (provider, model, usage) = decide::model_settlement(&produced);
-                decide::settle_model_call(
-                    &mut draft,
-                    effect,
-                    provider,
-                    model,
-                    &produced.message,
-                    usage,
-                )?;
+                if !produced.is_consistent() {
+                    return Err(ActivationError::InvalidProviderOutcome);
+                }
+                decide::settle_model_call(&mut draft, effect, &produced);
                 self.commit(draft).await?;
                 Ok(Step::Continue)
             }
@@ -1359,12 +1402,17 @@ impl Session<'_> {
                             draft.next_seq(),
                             EffectKind::ModelCall,
                         );
+                        let mut next_request = request.clone();
+                        next_request.correlation = CorrelationId::from_effect(next.0);
+                        next_request.request_hash = next_request.digest()?;
+                        let next_request_hash =
+                            ContentHash::of(next_request.request_hash.as_bytes());
                         decide::prepare(
                             &mut draft,
                             next,
                             EffectKind::ModelCall,
                             EffectClass::NonReplayable,
-                            request_hash,
+                            next_request_hash,
                             attempt.saturating_add(1),
                             deadline,
                             provider_call_reservation(&self.state),
@@ -1380,6 +1428,19 @@ impl Session<'_> {
                         self.commit(draft).await?;
                         return Ok(Step::Continue);
                     }
+                    decide::finish(
+                        &mut draft,
+                        FinishReason::Failed,
+                        Some(decide::refusal(
+                            "provider_dispatch_failed",
+                            error.detail.as_str(),
+                        )),
+                    );
+                    self.commit(draft).await?;
+                    Ok(Step::Stop(Stop::Finished(FinishReason::Failed)))
+                }
+                FailureSettlement::KnownFailure { stage, proof } => {
+                    decide::settle_known_failure(&mut draft, effect, stage, proof);
                     decide::finish(
                         &mut draft,
                         FinishReason::Failed,
@@ -1488,7 +1549,7 @@ impl Session<'_> {
                     &mut draft,
                     effect,
                     call.call.clone(),
-                    body.blocks,
+                    body.content,
                     body.is_error,
                     body.executed_on,
                     body.duration_ms,
@@ -1567,8 +1628,23 @@ impl Session<'_> {
                     // whole session because one optional tool was unavailable.
                     draft.append(JournalRecord::ToolResult {
                         call: call.call.clone(),
-                        blocks: vec![CanonicalBlock::Text {
-                            text: error.detail.as_str().to_owned(),
+                        content: vec![ToolResultPart::Text {
+                            text: BoundedString::truncating(error.detail.as_str()),
+                        }],
+                        is_error: true,
+                        executed_on: route.executor,
+                        duration_ms: 0,
+                        effect,
+                    });
+                    self.commit(draft).await?;
+                    Ok(Step::Continue)
+                }
+                FailureSettlement::KnownFailure { stage, proof } => {
+                    decide::settle_known_failure(&mut draft, effect, stage, proof);
+                    draft.append(JournalRecord::ToolResult {
+                        call: call.call.clone(),
+                        content: vec![ToolResultPart::Text {
+                            text: BoundedString::truncating(error.detail.as_str()),
                         }],
                         is_error: true,
                         executed_on: route.executor,
@@ -1626,7 +1702,7 @@ impl Session<'_> {
                     effect.id,
                     wait,
                     call,
-                    body.blocks,
+                    body.content,
                     body.is_error,
                     body.executed_on,
                     body.duration_ms,
@@ -1636,14 +1712,16 @@ impl Session<'_> {
                 Ok(Stop::HandedBack)
             }
             Ok(DetachedStatus::Failed { reason }) => {
-                let blocks = vec![CanonicalBlock::Text { text: reason }];
-                let checksum = ContentHash::of(&canonicalize_value(&blocks)?);
+                let content = vec![ToolResultPart::Text {
+                    text: BoundedString::truncating(&reason),
+                }];
+                let checksum = ContentHash::of(&canonicalize_value(&content)?);
                 Self::settle_detached(
                     &mut draft,
                     effect.id,
                     wait,
                     call,
-                    blocks,
+                    content,
                     true,
                     // A failed detached operation carries no executor on its durable record,
                     // and inventing one would attribute the failure to an executor that may
@@ -1683,7 +1761,7 @@ impl Session<'_> {
         effect: EffectId,
         wait: WaitId,
         call: ToolCallId,
-        blocks: Vec<CanonicalBlock>,
+        content: Vec<ToolResultPart>,
         is_error: bool,
         executed_on: ExecutorRoute,
         duration_ms: u32,
@@ -1700,7 +1778,7 @@ impl Session<'_> {
         });
         draft.append(JournalRecord::ToolResult {
             call,
-            blocks,
+            content,
             is_error,
             executed_on,
             duration_ms,

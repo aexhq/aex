@@ -44,8 +44,8 @@ pub use proof::{
     TicketMismatch,
 };
 pub use provider::{
-    ProviderDispatchError, ProviderFailureClass, ProviderOutcome, ProviderPort, RedactedDetail,
-    UnknownResolution,
+    ProviderDispatchError, ProviderFailureClass, ProviderFailureKind, ProviderOutcome,
+    ProviderPort, RedactedDetail, UnknownResolution,
 };
 pub use store::{
     AgentHead, Claim, ClaimError, CommitError, CommitReceipt, ConditionFailure, DecisionContext,

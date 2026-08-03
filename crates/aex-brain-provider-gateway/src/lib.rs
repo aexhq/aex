@@ -20,6 +20,8 @@
 pub mod adapter;
 pub mod anthropic;
 pub mod budget;
+pub mod build_identity;
+pub mod catalog_port;
 pub mod credential;
 pub mod deepseek;
 pub mod error;
@@ -28,6 +30,7 @@ pub mod moonshotai;
 pub mod openai;
 pub mod pool;
 pub mod redact;
+pub mod router;
 pub mod sse;
 pub mod transport;
 pub mod wire_pending;

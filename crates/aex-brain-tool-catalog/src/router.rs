@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use aex_brain_application::ports::{
-    BoxFuture, CancelToken, DetachedStatus, DispatchTicket, PreparedToolCall, RedactedDetail,
-    ToolDispatchError, ToolOutcome, ToolPort, ToolRoute, ToolRoutingError,
+    BoxFuture, CancelToken, DetachedStatus, DispatchTicket, PreparedToolCall, ProviderFailureKind,
+    RedactedDetail, ToolDispatchError, ToolOutcome, ToolPort, ToolRoute, ToolRoutingError,
 };
 use aex_brain_domain::effect::{DispatchProof, DispatchStage};
 use aex_brain_domain::ids::{
@@ -83,26 +83,25 @@ impl CompositeToolRouter {
         Ok(())
     }
 
-    /// Installs one frozen catalog pin.
+    /// Associates one verified tool manifest with a frozen model-catalog pin.
+    ///
+    /// `pin` and `digest` deliberately use different algorithms and identify
+    /// different artifacts. The composition that verified both makes the
+    /// association explicitly; this router never compares their raw bytes.
     ///
     /// # Errors
     ///
-    /// Refuses a pin/digest mismatch, duplicate pin, or duplicate tool name.
+    /// Refuses a duplicate tool name or a name outside the shared grammar.
     pub fn install_catalog(
         &mut self,
         pin: CatalogPin,
         digest: ContentHash,
         entries: &[ToolManifestEntry],
     ) -> Result<(), RouterBuildError> {
-        if pin.0 != digest {
-            return Err(RouterBuildError::PinDigestMismatch);
-        }
-        if self.catalogs.contains_key(&pin) {
-            return Err(RouterBuildError::DuplicateCatalog);
-        }
-        let mut routes = BTreeMap::new();
+        let mut candidates = BTreeMap::new();
         for entry in entries {
-            let name = DomainToolName(entry.descriptor.name.as_str().to_owned());
+            let name = DomainToolName::parse(entry.descriptor.name.as_str())
+                .map_err(|_| RouterBuildError::InvalidToolName)?;
             let route = ToolRoute {
                 name: name.clone(),
                 executor: coarse_route(entry.descriptor.route),
@@ -110,7 +109,7 @@ impl CompositeToolRouter {
                 timeout_ms: entry.descriptor.bounds.timeout_ms,
                 manifest_digest: digest,
             };
-            if routes
+            if candidates
                 .insert(
                     name.clone(),
                     InstalledRoute {
@@ -120,10 +119,19 @@ impl CompositeToolRouter {
                 )
                 .is_some()
             {
-                return Err(RouterBuildError::DuplicateTool { name: name.0 });
+                return Err(RouterBuildError::DuplicateTool {
+                    name: name.as_str().to_owned(),
+                });
             }
         }
-        self.catalogs.insert(pin, routes);
+        if let Some(routes) = self.catalogs.get(&pin)
+            && let Some(name) = candidates.keys().find(|name| routes.contains_key(*name))
+        {
+            return Err(RouterBuildError::DuplicateTool {
+                name: name.as_str().to_owned(),
+            });
+        }
+        self.catalogs.entry(pin).or_default().extend(candidates);
         Ok(())
     }
 
@@ -139,7 +147,10 @@ impl CompositeToolRouter {
                 stage: DispatchStage::PreDispatch,
                 proof: DispatchProof::NotSent,
                 retryable: false,
-                detail: RedactedDetail::new("tool executor is not ready"),
+                detail: RedactedDetail::internal(
+                    ProviderFailureKind::ServerError,
+                    "tool executor is not ready",
+                ),
             })
     }
 }
@@ -153,13 +164,13 @@ impl ToolPort for CompositeToolRouter {
         let catalog = self
             .catalogs
             .get(pin)
-            .ok_or(ToolRoutingError::UnknownPin { pin: pin.0 })?;
+            .ok_or(ToolRoutingError::UnknownPin { pin: *pin })?;
         let installed = catalog.get(name).ok_or_else(|| ToolRoutingError::Unknown {
-            name: name.0.clone(),
+            name: name.as_str().to_owned(),
         })?;
         if !installed.admitted {
             return Err(ToolRoutingError::NotAdmitted {
-                name: name.0.clone(),
+                name: name.as_str().to_owned(),
             });
         }
         Ok(installed.route.clone())
@@ -177,7 +188,10 @@ impl ToolPort for CompositeToolRouter {
                     stage: DispatchStage::PreDispatch,
                     proof: DispatchProof::NotSent,
                     retryable: false,
-                    detail: RedactedDetail::new("tool call cancelled before dispatch"),
+                    detail: RedactedDetail::internal(
+                        ProviderFailureKind::Cancelled,
+                        "tool call cancelled before dispatch",
+                    ),
                 });
             }
             let executor = self.executor(call.route.executor)?;
@@ -253,24 +267,22 @@ pub enum RouterBuildError {
         /// Ambiguous route.
         route: DomainExecutorRoute,
     },
-    /// Catalog pin did not equal its supplied digest.
-    #[error("catalog pin does not match digest")]
-    PinDigestMismatch,
-    /// Same immutable pin was installed twice.
-    #[error("catalog pin installed twice")]
-    DuplicateCatalog,
     /// Catalog contained the same name twice.
     #[error("catalog contains duplicate tool `{name}`")]
     DuplicateTool {
         /// Duplicate name.
         name: String,
     },
+    /// A signed manifest carried a name outside the shared resource-name grammar.
+    #[error("catalog contains a tool name outside the shared resource-name grammar")]
+    InvalidToolName,
 }
 
 #[cfg(test)]
 mod tests {
     use aex_brain_application::ports::{ToolPort as _, ToolRoutingError};
     use aex_brain_domain::ids::{CatalogPin, ContentHash, ToolName};
+    use aex_model_catalog::Blake3Digest;
 
     use super::CompositeToolRouter;
     use crate::catalog::builtin_entries;
@@ -278,20 +290,20 @@ mod tests {
     #[test]
     fn routing_is_exactly_pinned_and_staged_entries_fail_closed() {
         let digest = ContentHash([7; 32]);
-        let pin = CatalogPin(digest);
+        let pin = CatalogPin(Blake3Digest::of(b"model catalog"));
         let mut router = CompositeToolRouter::new();
         let entries = builtin_entries().expect("built-in fixture");
         router
             .install_catalog(pin, digest, &entries)
             .expect("catalog install");
-        let name = ToolName("web_fetch".to_owned());
+        let name = ToolName::parse("web_fetch").expect("tool name");
         let route = router.route(&pin, &name).expect("active route");
         assert_eq!(route.name, name);
         assert_eq!(route.manifest_digest, digest);
         assert!(matches!(
             router.route(
-                &CatalogPin(ContentHash([8; 32])),
-                &ToolName("web_fetch".into())
+                &CatalogPin(Blake3Digest::from_bytes([8; 32])),
+                &ToolName::parse("web_fetch").expect("tool name")
             ),
             Err(ToolRoutingError::UnknownPin { .. })
         ));

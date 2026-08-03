@@ -317,7 +317,13 @@ impl EffectStore for BrainStore {
                 .send()
                 .await
                 .map_err(|error| dispatch_transaction_error(*id, &participants, &error))?;
-            Ok(DispatchTicket::mint(guard, *id, attempt, at))
+            Ok(DispatchTicket::mint(
+                guard,
+                authority.workspace,
+                *id,
+                attempt,
+                at,
+            ))
         })
     }
 
@@ -360,7 +366,7 @@ impl EffectStore for BrainStore {
                 update.push_str(", providerRequestId = :providerRequestId");
                 request = request.expression_attribute_values(
                     ":providerRequestId",
-                    s(provider_request.0.clone()),
+                    s(provider_request.as_str()),
                 );
             }
             if let Some(receipt) = evidence.receipt {

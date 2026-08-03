@@ -40,13 +40,14 @@ testing = []
 
 [dependencies]
 futures.workspace = true
+aex-brain-domain = { path = "../aex-brain-domain" }
+aex-model-catalog = { path = "../aex-model-catalog" }
+aex-wire = { path = "../aex-wire" }
 loom = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
-aex-brain-domain = { path = "../aex-brain-domain" }
-aex-wire = { path = "../aex-wire" }
 
 [dev-dependencies]
 aex-brain-test-support = { path = "../aex-brain-test-support" }

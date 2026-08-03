@@ -15,12 +15,14 @@ use aex_brain_domain::ids::{
 use aex_brain_domain::wire_pending::DurableOperationSupport;
 use aex_wire::ids::{GenerationId, PrefixedId as _, Uuid7};
 
+const PROVEN: DurableOperationSupport = DurableOperationSupport::ResultLookup { ttl_ms: 60_000 };
+
 const STATES: [fn() -> EffectState; 6] = [
     || EffectState::Prepared { attempt: 1 },
     || EffectState::DispatchStarted { attempt: 1 },
     || EffectState::ResponseStarted {
         attempt: 1,
-        provider_request_id: Some(ProviderRequestId("req_1".to_owned())),
+        provider_request_id: Some(ProviderRequestId::truncating("req_1")),
     },
     || EffectState::Complete {
         receipt: ContentHash::of(b"receipt"),
@@ -41,10 +43,7 @@ const CLASSES: [EffectClass; 4] = [
     EffectClass::NonReplayable,
 ];
 
-const SUPPORT: [DurableOperationSupport; 2] = [
-    DurableOperationSupport::None,
-    DurableOperationSupport::Proven,
-];
+const SUPPORT: [DurableOperationSupport; 2] = [DurableOperationSupport::None, PROVEN];
 
 const KINDS: [EffectKind; 5] = [
     EffectKind::ModelCall,
@@ -195,8 +194,8 @@ fn an_ambiguous_model_call_interrupts_rather_than_regenerating() {
 #[test]
 fn a_managed_effect_queries_only_with_proof_and_an_operation_id() {
     let cases = [
-        (DurableOperationSupport::Proven, true, true),
-        (DurableOperationSupport::Proven, false, false),
+        (PROVEN, true, true),
+        (PROVEN, false, false),
         (DurableOperationSupport::None, true, false),
         (DurableOperationSupport::None, false, false),
     ];
@@ -337,7 +336,7 @@ fn the_split_phase_transitions_refuse_to_skip() {
 
     subject
         .mark_response_started(DispatchEvidence {
-            provider_request_id: Some(ProviderRequestId("req_9".to_owned())),
+            provider_request_id: Some(ProviderRequestId::truncating("req_9")),
             ..DispatchEvidence::ambiguous(1, DispatchStage::Streaming)
         })
         .expect("a validated byte moves it on");

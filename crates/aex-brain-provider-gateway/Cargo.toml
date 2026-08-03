@@ -28,7 +28,10 @@ properties = "unit"
 protocol = "integration"
 
 [dependencies]
+aex-brain-application = { path = "../aex-brain-application" }
+aex-brain-domain = { path = "../aex-brain-domain" }
 aex-model-catalog = { path = "../aex-model-catalog" }
+aex-secret-domain = { path = "../aex-secret-domain" }
 aex-wire = { path = "../aex-wire" }
 async-trait.workspace = true
 bytes.workspace = true

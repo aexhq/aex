@@ -73,7 +73,11 @@ fn decode_evidence(row: &Row<'_>, attempt: u16) -> Result<Option<DispatchEvidenc
         proof: parse_proof(proof)?,
         provider_request_id: row
             .opt_string("providerRequestId")?
-            .map(|text| ProviderRequestId(text.to_owned())),
+            .map(|text| {
+                ProviderRequestId::new(text)
+                    .map_err(|error| malformed("providerRequestId", error.to_string()))
+            })
+            .transpose()?,
         operation: row
             .opt_string("operationId")?
             .map(|text| DetachedOperationId(text.to_owned())),
@@ -272,6 +276,16 @@ mod tests {
         assert!(decode(&item).is_err());
         let item = row("prepared").set("requestHash", s("zz")).build();
         assert!(decode(&item).is_err());
+    }
+
+    #[test]
+    fn an_overlong_provider_request_id_is_refused_rather_than_truncated() {
+        let item = row("responding")
+            .set("dispatchStage", s("ResponseStarted"))
+            .set("providerRequestId", s("r".repeat(81)))
+            .build();
+        let error = decode(&item).expect_err("stored authority is decoded strictly");
+        assert!(format!("{error}").contains("providerRequestId"), "{error}");
     }
 
     #[test]

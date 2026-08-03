@@ -9,7 +9,7 @@ use aex_model_catalog::canonical::{
     CanonicalBlock, CanonicalModelRequest, NormalizedUsage, StopReason, StructuredOutputRequest,
     ToolChoice,
 };
-use aex_model_catalog::document::{AdapterSourceDigest, Capability};
+use aex_model_catalog::document::Capability;
 use aex_model_catalog::primitives::{ProviderRequestId, ToolCallId, ToolName};
 use aex_wire::provider::ProviderId;
 
@@ -281,10 +281,6 @@ impl BoundedBody {
 pub trait ProviderAdapter: Send + Sync + 'static {
     /// Which provider this adapter speaks for.
     fn provider(&self) -> ProviderId;
-
-    /// The digest of the adapter source tree, which every conformance receipt
-    /// is bound to (D-06).
-    fn source_digest(&self) -> AdapterSourceDigest;
 
     /// Builds the wire request. Pure: no I/O, no clock, no credential.
     ///

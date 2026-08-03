@@ -255,18 +255,21 @@ pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Resul
             reason: format!("the main runtime could not start: {error}"),
         })?;
 
-    // Configuration and the composition itself are the only bindings validated so far. The
-    // catalog, the store and the schema hashes are each set by the component that proves
-    // them; readiness stays false until every one of them has.
-    composition.health.bindings_validated();
+    // The process configuration parsed, but production authorities did not all bind. Do
+    // not translate "the binary started" into "secret bindings validated": readiness must
+    // remain false until the immutable provider credential pin, regional custody, signed
+    // catalog/trust root, tool executors and Hands backend actually exist.
     composition.health.schema_matched();
     // Provider, catalog, tool-executor and Hands-runtime peers remain unproved and are not
     // claimed. `Bindings::unavailable` names each one rather than collapsing them to a bare
     // false.
     let bindings = wake::Bindings::unavailable();
-    composition
-        .health
-        .store_reachable(bindings.store.is_ready());
+    if let Err(error) = aex_brain_provider_gateway::build_identity::adapter_source_digest() {
+        eprintln!("brain-mux: production binding unavailable: {error}");
+    }
+    for reason in bindings.unsatisfied() {
+        eprintln!("brain-mux: production binding unavailable: {reason}");
+    }
     if bindings.catalog.is_ready() {
         composition.health.catalog_verified();
     }

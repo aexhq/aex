@@ -14,6 +14,7 @@ version = "0.1.0"
 dependencies = [
  "aex-brain-domain",
  "aex-brain-test-support",
+ "aex-model-catalog",
  "aex-wire",
  "futures",
  "loom",
@@ -28,6 +29,7 @@ name = "aex-brain-domain"
 version = "0.1.0"
 dependencies = [
  "aex-brain-test-support",
+ "aex-model-catalog",
  "aex-wire",
  "blake3",
  "hex",
@@ -98,7 +100,10 @@ dependencies = [
 name = "aex-brain-provider-gateway"
 version = "0.1.0"
 dependencies = [
+ "aex-brain-application",
+ "aex-brain-domain",
  "aex-model-catalog",
+ "aex-secret-domain",
  "aex-wire",
  "async-trait",
  "bytes",
@@ -149,6 +154,7 @@ name = "aex-brain-test-support"
 version = "0.1.0"
 dependencies = [
  "aex-brain-domain",
+ "aex-model-catalog",
  "aex-test-harness",
  "aex-wire",
  "proptest",
@@ -164,6 +170,7 @@ version = "0.1.0"
 dependencies = [
  "aex-brain-application",
  "aex-brain-domain",
+ "aex-model-catalog",
  "aex-wire",
  "insta",
  "jsonschema",
@@ -2751,8 +2758,10 @@ dependencies = [
  "aex-brain-application",
  "aex-brain-domain",
  "aex-brain-hands",
+ "aex-brain-provider-gateway",
  "aex-brain-store-aws",
  "aex-brain-tool-catalog",
+ "aex-model-catalog",
  "aex-platform-telemetry",
  "aex-telemetry-schema",
  "aex-usage-application",

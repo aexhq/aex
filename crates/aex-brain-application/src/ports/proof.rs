@@ -6,7 +6,8 @@ use aex_brain_domain::commit::FenceGuardRef;
 use aex_brain_domain::ids::{
     AgentKey, AgentRevision, CancelEpoch, EffectId, Fence, JournalSeq, OwnerToken, Timestamp,
 };
-use aex_brain_domain::wire_pending::PreviewFrame;
+use aex_model_catalog::canonical::PreviewFrame;
+use aex_wire::ids::WorkspaceId;
 
 /// Proof that the holder claimed an agent and has not been fenced out.
 ///
@@ -136,6 +137,7 @@ pub struct DispatchTicket {
     fence: Fence,
     key: AgentKey,
     at: Timestamp,
+    workspace: WorkspaceId,
 }
 
 impl DispatchTicket {
@@ -144,13 +146,20 @@ impl DispatchTicket {
     /// Requiring the guard is the point: a ticket cannot exist without proof of ownership,
     /// so a losing owner cannot manufacture permission to dispatch.
     #[must_use]
-    pub const fn mint(guard: &FenceGuard, effect: EffectId, attempt: u16, at: Timestamp) -> Self {
+    pub const fn mint(
+        guard: &FenceGuard,
+        workspace: WorkspaceId,
+        effect: EffectId,
+        attempt: u16,
+        at: Timestamp,
+    ) -> Self {
         Self {
             effect,
             attempt,
             fence: guard.fence,
             key: guard.key,
             at,
+            workspace,
         }
     }
 
@@ -182,6 +191,12 @@ impl DispatchTicket {
     #[must_use]
     pub const fn issued_at(&self) -> Timestamp {
         self.at
+    }
+
+    /// The workspace whose credentials and transport pools this dispatch may use.
+    #[must_use]
+    pub const fn workspace(&self) -> WorkspaceId {
+        self.workspace
     }
 
     /// Checks that this ticket belongs to `effect`.
@@ -296,6 +311,8 @@ mod tests {
         SessionId, Timestamp,
     };
     use aex_brain_domain::wire_pending::PreviewFrame;
+    use aex_model_catalog::BoundedString;
+    use aex_wire::ids::{PrefixedId as _, Uuid7, WorkspaceId};
     use uuid::Uuid;
 
     fn guard() -> FenceGuard {
@@ -336,16 +353,24 @@ mod tests {
     #[test]
     fn a_ticket_carries_the_fence_it_was_minted_under() {
         let guard = guard();
-        let ticket = DispatchTicket::mint(&guard, EffectId([1; 16]), 2, Timestamp(10));
+        let workspace = WorkspaceId::from_uuid7(Uuid7::compose(1, [8; 10]));
+        let ticket = DispatchTicket::mint(&guard, workspace, EffectId([1; 16]), 2, Timestamp(10));
         assert_eq!(ticket.fence(), Fence(4));
         assert_eq!(ticket.attempt(), 2);
         assert_eq!(ticket.key(), guard.key());
         assert_eq!(ticket.issued_at(), Timestamp(10));
+        assert_eq!(ticket.workspace(), workspace);
     }
 
     #[test]
     fn a_ticket_refuses_an_effect_it_does_not_authorize() {
-        let ticket = DispatchTicket::mint(&guard(), EffectId([1; 16]), 1, Timestamp(0));
+        let ticket = DispatchTicket::mint(
+            &guard(),
+            WorkspaceId::from_uuid7(Uuid7::compose(1, [8; 10])),
+            EffectId([1; 16]),
+            1,
+            Timestamp(0),
+        );
         ticket.expect(EffectId([1; 16])).expect("its own effect");
         let error = ticket
             .expect(EffectId([2; 16]))
@@ -367,10 +392,9 @@ mod tests {
 
     #[test]
     fn the_null_sink_accepts_nothing_and_says_so() {
-        let accepted = NullPreviewSink.offer(PreviewFrame {
-            journal_seq: JournalSeq(0),
-            sub_slot: 0,
-            payload: "delta".to_owned(),
+        let accepted = NullPreviewSink.offer(PreviewFrame::TextDelta {
+            index: 0,
+            text: BoundedString::truncating("delta"),
         });
         assert!(!accepted);
     }
