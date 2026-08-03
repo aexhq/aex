@@ -786,6 +786,7 @@ fn the_restore_reservation_releases_with_the_activation() {
     harness.wake();
     let delivery = block_on(harness.queue.receive(1, core::time::Duration::from_secs(0)))
         .expect("the queue answers")
+        .deliveries
         .pop()
         .expect("a delivery is waiting");
     let loop_ = WakeLoop::new(harness.activation(), Arc::clone(&admission) as Arc<_>);
