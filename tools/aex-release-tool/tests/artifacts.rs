@@ -28,21 +28,85 @@ fn every_shipped_unit_has_a_recipe() {
     let units = shipped_units();
     assert!(!units.units.is_empty());
     for unit in &units.units {
+        if unit.kind == "rootfs" {
+            let err = plan(unit).expect_err("rootfs must refuse until it can emit ext4 bytes");
+            assert!(
+                err.rules()
+                    .contains(&"artifact-rootfs-output-unimplemented")
+            );
+            continue;
+        }
         let recipe = plan(unit).unwrap_or_else(|err| panic!("`{}`: {err}", unit.id));
         assert!(!recipe.argv.is_empty());
         assert_eq!(recipe.target, unit.target);
+        assert!(!recipe.input.is_empty());
     }
 }
 
 #[test]
 fn recipes_are_byte_stable_across_runs() {
-    let units = shipped_units();
+    let mut units = shipped_units();
+    units.units.retain(|unit| unit.kind != "rootfs");
     let first = aex_release_tool::artifact::recipes(&units).unwrap();
     let second = aex_release_tool::artifact::recipes(&units).unwrap();
     assert_eq!(
         canon::to_string(&first).unwrap(),
         canon::to_string(&second).unwrap()
     );
+}
+
+#[test]
+fn recipes_name_the_real_build_output_instead_of_guessing_from_the_unit_id() {
+    let units = shipped_units();
+    let recipe = |id: &str| {
+        plan(
+            units
+                .units
+                .iter()
+                .find(|unit| unit.id == id)
+                .expect("registered unit"),
+        )
+        .expect("runnable recipe")
+    };
+
+    assert_eq!(
+        recipe("regional-session-api").input,
+        "target/lambda/regional-session-api/bootstrap"
+    );
+    assert_eq!(
+        recipe("stripe-command-edge").input,
+        "services/stripe-command-edge/dist/handler.js"
+    );
+    assert_eq!(
+        recipe("brain-mux").input,
+        "target/aarch64-unknown-linux-gnu/release/brain-mux"
+    );
+    assert_eq!(
+        recipe("hands-agent").input,
+        "target/x86_64-unknown-linux-musl/release/hands-agent"
+    );
+}
+
+#[test]
+fn oci_recipes_pin_a_runtime_base_and_lambda_recipes_pin_the_archive_name() {
+    let units = shipped_units();
+    for unit in &units.units {
+        if unit.kind.starts_with("rust-oci-") {
+            let recipe = plan(unit).expect("OCI compile recipe");
+            assert!(
+                recipe
+                    .base_image
+                    .as_deref()
+                    .is_some_and(|image| image.contains("@sha256:")),
+                "unit `{}` must pin the base image by digest",
+                unit.id
+            );
+        }
+        if unit.kind.ends_with("lambda") {
+            let recipe = plan(unit).expect("Lambda recipe");
+            assert_eq!(recipe.entrypoint.as_deref(), unit.entrypoint.as_deref());
+        }
+    }
 }
 
 #[test]

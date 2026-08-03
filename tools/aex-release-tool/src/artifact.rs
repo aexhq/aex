@@ -53,6 +53,15 @@ pub struct BuildPlan {
     pub env: BTreeMap<String, String>,
     /// Packaged form.
     pub form: String,
+    /// Repository-relative path the build command produces. Packaging consumes
+    /// this exact path; workflows must not reconstruct it from the unit id.
+    pub input: String,
+    /// Archive member loaded by the runtime, where the form has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entrypoint: Option<String>,
+    /// Digest-pinned runtime base for an OCI image.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_image: Option<String>,
     /// Digest over the argv and environment, recorded in the envelope.
     pub digest: String,
 }
@@ -67,48 +76,77 @@ pub struct BuildPlan {
 /// Returns [`Exit::Usage`] for a unit kind with no recipe.
 pub fn plan(unit: &Unit) -> Result<BuildPlan> {
     let package = unit.package.clone();
-    let (argv, form) = match unit.kind.as_str() {
+    let binary = || {
+        unit.bin.clone().ok_or_else(|| {
+            ToolError::single(
+                Exit::Usage,
+                "artifact-binary-target-missing",
+                format!(
+                    "unit `{}` does not declare its Cargo binary target",
+                    unit.id
+                ),
+            )
+        })
+    };
+    let rust_target = unit
+        .target
+        .strip_suffix(".2.34")
+        .unwrap_or(&unit.target)
+        .to_owned();
+    let (argv, form, input) = match unit.kind.as_str() {
         // `cargo lambda build` drives `cargo zigbuild`, so the `bootstrap`
         // rename is native and the glibc floor is explicit rather than
         // whatever a container image happened to ship.
-        "rust-lambda" => (
-            vec![
-                "cargo".to_owned(),
-                "lambda".to_owned(),
-                "build".to_owned(),
-                "--profile".to_owned(),
-                unit.profile.clone(),
-                "--package".to_owned(),
-                package,
-                "--target".to_owned(),
-                unit.target.clone(),
-            ],
-            "lambda-zip",
-        ),
-        "rust-oci-service" | "rust-oci-task" => (
-            vec![
-                "cargo".to_owned(),
-                "zigbuild".to_owned(),
-                "--release".to_owned(),
-                "--package".to_owned(),
-                package,
-                "--target".to_owned(),
-                unit.target.clone(),
-            ],
-            "oci",
-        ),
-        "rust-binary" => (
-            vec![
-                "cargo".to_owned(),
-                "zigbuild".to_owned(),
-                "--release".to_owned(),
-                "--package".to_owned(),
-                package,
-                "--target".to_owned(),
-                unit.target.clone(),
-            ],
-            "tarball",
-        ),
+        "rust-lambda" => {
+            let binary = binary()?;
+            (
+                vec![
+                    "cargo".to_owned(),
+                    "lambda".to_owned(),
+                    "build".to_owned(),
+                    "--profile".to_owned(),
+                    unit.profile.clone(),
+                    "--package".to_owned(),
+                    package,
+                    "--target".to_owned(),
+                    unit.target.clone(),
+                ],
+                "lambda-zip",
+                format!("target/lambda/{binary}/bootstrap"),
+            )
+        }
+        "rust-oci-service" | "rust-oci-task" => {
+            let binary = binary()?;
+            (
+                vec![
+                    "cargo".to_owned(),
+                    "zigbuild".to_owned(),
+                    "--release".to_owned(),
+                    "--package".to_owned(),
+                    package,
+                    "--target".to_owned(),
+                    unit.target.clone(),
+                ],
+                "oci",
+                format!("target/{rust_target}/release/{binary}"),
+            )
+        }
+        "rust-binary" => {
+            let binary = binary()?;
+            (
+                vec![
+                    "cargo".to_owned(),
+                    "zigbuild".to_owned(),
+                    "--release".to_owned(),
+                    "--package".to_owned(),
+                    package,
+                    "--target".to_owned(),
+                    unit.target.clone(),
+                ],
+                "tarball",
+                format!("target/{rust_target}/release/{binary}"),
+            )
+        }
         // The entry is the module that exports the Lambda handler symbol, which
         // is `handler.ts` in both edges. The output directory is the package's
         // own, so two edges built in one job cannot overwrite each other. There
@@ -125,19 +163,25 @@ pub fn plan(unit: &Unit) -> Result<BuildPlan> {
                 format!("services/{}/src/handler.ts", unit.id),
             ],
             "lambda-zip",
+            format!("services/{}/dist/handler.js", unit.id),
         ),
         "build-output" => (
             vec!["bun".to_owned(), "run".to_owned(), "build".to_owned()],
             "build-output",
+            format!("services/{}/dist", unit.id),
         ),
-        "rootfs" => (
-            vec![
-                "runtimes".to_owned(),
-                "hands-image".to_owned(),
-                "build".to_owned(),
-            ],
-            "rootfs",
-        ),
+        "rootfs" => {
+            return Err(ToolError::single(
+                Exit::Usage,
+                "artifact-rootfs-output-unimplemented",
+                format!(
+                    "unit `{}` declares an ext4 artifact, but the Hands image CLI only builds a \
+                     Docker image and emits no ext4 bytes; implement a deterministic exporter or \
+                     change the clean-cut artifact contract before publication",
+                    unit.id
+                ),
+            ));
+        }
         other => {
             return Err(ToolError::single(
                 Exit::Usage,
@@ -156,6 +200,9 @@ pub fn plan(unit: &Unit) -> Result<BuildPlan> {
         "env": env,
         "target": unit.target,
         "profile": unit.profile,
+        "input": input,
+        "entrypoint": unit.entrypoint,
+        "baseImage": unit.base_image,
     }))?;
     Ok(BuildPlan {
         unit: unit.id.clone(),
@@ -165,6 +212,9 @@ pub fn plan(unit: &Unit) -> Result<BuildPlan> {
         argv,
         env,
         form: form.to_owned(),
+        input,
+        entrypoint: unit.entrypoint.clone(),
+        base_image: unit.base_image.clone(),
         digest,
     })
 }
