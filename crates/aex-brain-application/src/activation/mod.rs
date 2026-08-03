@@ -61,7 +61,10 @@ pub use run::{Activation, PollReport, WakeLoop};
 pub struct RestoreBudget {
     /// The most entries one activation may retain while rebuilding its fold.
     pub max_entries: usize,
-    /// The most hydrated journal bytes one activation may retain while rebuilding its fold.
+    /// The most canonical inline journal-body bytes one activation may retain.
+    ///
+    /// This is a payload ceiling, not a claim about the exact heap footprint of the decoded
+    /// fold or `DynamoDB`'s response encoding.
     pub max_bytes: usize,
 }
 
@@ -174,9 +177,9 @@ impl Default for ActivationPolicy {
                 max_entries: 256,
                 max_bytes: 8 * 1_024 * 1_024,
             },
-            // This fail-closed ceiling is intentionally small enough that the candidate
-            // mux's 1 GiB context pool can reserve it at the 100-activation target. A
-            // verified snapshot plus bounded suffix is the path for histories above it.
+            // The mux reserves this payload ceiling in its context pool before restore. A
+            // verified snapshot plus bounded suffix is the path for histories above it;
+            // this number does not pretend to be a byte-exact Rust heap measurement.
             restore: RestoreBudget {
                 max_entries: 4_096,
                 max_bytes: 8 * 1_024 * 1_024,

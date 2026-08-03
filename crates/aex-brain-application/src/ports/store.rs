@@ -140,7 +140,11 @@ impl JournalCursor {
 pub struct JournalPage {
     /// The entries, contiguous and in order.
     pub entries: Vec<JournalEntry>,
-    /// Bytes hydrated by this page, including placed bodies.
+    /// Canonical inline journal-body bytes decoded from this page.
+    ///
+    /// This is the exact payload bound enforced by the current Brain store. It does not
+    /// claim to measure `DynamoDB` response overhead or the heap footprint of decoded Rust
+    /// values, and Brain does not currently place journal bodies out of line.
     pub hydrated_bytes: usize,
     /// The native continuation when the service did not reach EOF.
     pub next: Option<JournalCursor>,
@@ -151,10 +155,10 @@ pub struct JournalPage {
 pub struct ReadBudget {
     /// The most entries one page returns.
     pub max_entries: usize,
-    /// The most bytes one page hydrates, including placed bodies.
+    /// The most canonical inline journal-body bytes one page decodes.
     ///
-    /// Bounded on purpose: an unbounded read is how one large agent takes the whole task's
-    /// memory envelope with it.
+    /// This bounds retained payload, not `DynamoDB`'s encoded response size or exact heap
+    /// allocation. `DynamoDB`'s own 1 MiB service page can stop the query first.
     pub max_bytes: usize,
 }
 
