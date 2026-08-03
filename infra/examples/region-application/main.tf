@@ -28,6 +28,7 @@ module "role" {
   assume_principal            = each.value.assume_principal
   action_grants               = each.value.action_grants
   wildcard_resource_allowlist = each.value.wildcard_resource_allowlist
+  boundary_policy_arn         = var.permissions_boundary_policy_arn
   tags                        = var.tags
 }
 

@@ -8,6 +8,11 @@ variable "region" {
   description = "Region the central plane runs in."
 }
 
+variable "permissions_boundary_policy_arn" {
+  type        = string
+  description = "Owner-managed permissions boundary required on every deployable execution role."
+}
+
 variable "subnet_ids" {
   type        = list(string)
   description = "Private subnets from the region foundation."
