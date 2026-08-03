@@ -19,8 +19,8 @@ use aex_brain_application::activation::{
 };
 use aex_brain_application::kernel::{ActivationRegistry, DrainGate, PermitKind, PermitSet};
 use aex_brain_application::ports::{
-    BoxFuture, CancelToken, DispatchTicket, PreviewSink, ProviderDispatchError, ProviderOutcome,
-    ProviderPort, StreamBudget, UnknownResolution, WakeQueue as _,
+    BoxFuture, CancelToken, ClockPort, DispatchTicket, PreviewSink, ProviderDispatchError,
+    ProviderOutcome, ProviderPort, SteadyInstant, StreamBudget, UnknownResolution, WakeQueue as _,
 };
 use aex_brain_domain::budget::DimensionVector;
 use aex_brain_domain::effect::{DispatchEvidence, DurableEffect};
@@ -321,10 +321,15 @@ async fn ten_long_effects_are_polled_concurrently_under_the_drive_bound() {
         clock,
         ids: Arc::new(CountingIds::new()),
     };
-    let permits = Arc::new(PermitSet::new(BTreeMap::from([(
-        PermitKind::Activation,
-        COUNT_U64,
-    )])));
+    let mut policy = ActivationPolicy::default();
+    policy.max_concurrent_drives = COUNT;
+    let context_bytes = u64::try_from(policy.restore.max_bytes)
+        .expect("the restore budget fits u64")
+        .saturating_mul(COUNT_U64);
+    let permits = Arc::new(PermitSet::new(BTreeMap::from([
+        (PermitKind::Activation, COUNT_U64),
+        (PermitKind::ContextBytes, context_bytes),
+    ])));
     let admission = Arc::new(Admission::new(
         AdmissionBounds {
             target: COUNT_U32,
@@ -334,8 +339,6 @@ async fn ten_long_effects_are_polled_concurrently_under_the_drive_bound() {
         permits,
         Arc::clone(&drain),
     ));
-    let mut policy = ActivationPolicy::default();
-    policy.max_concurrent_drives = COUNT;
     let pump = WakeLoop::new(
         Activation::new(
             ports,
@@ -365,6 +368,35 @@ struct RefillProvider {
     maximum: AtomicUsize,
 }
 
+/// A scheduler test needs production-like sleeping without making durable timestamps depend on
+/// the wall clock of the machine running the suite.
+#[derive(Debug)]
+struct ReactorClock {
+    base: std::time::Instant,
+}
+
+impl ReactorClock {
+    fn new() -> Self {
+        Self {
+            base: std::time::Instant::now(),
+        }
+    }
+}
+
+impl ClockPort for ReactorClock {
+    fn now(&self) -> Timestamp {
+        Timestamp::from_millis(START)
+    }
+
+    fn steady(&self) -> SteadyInstant {
+        SteadyInstant(u64::try_from(self.base.elapsed().as_millis()).unwrap_or(u64::MAX))
+    }
+
+    fn sleep(&self, duration: core::time::Duration) -> BoxFuture<'_, ()> {
+        Box::pin(tokio::time::sleep(duration))
+    }
+}
+
 impl ProviderPort for RefillProvider {
     fn dispatch<'a>(
         &'a self,
@@ -375,26 +407,24 @@ impl ProviderPort for RefillProvider {
         cancel: &'a CancelToken,
     ) -> BoxFuture<'a, Result<ProviderOutcome, ProviderDispatchError>> {
         let key = ticket.key();
-        let mut entered = false;
-        Box::pin(core::future::poll_fn(move |context| {
-            if !entered {
-                entered = true;
-                let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
-                self.maximum.fetch_max(active, Ordering::SeqCst);
-                if key == self.slow {
-                    self.slow_started.store(true, Ordering::SeqCst);
-                }
-                if key == self.recovered {
-                    self.recovered_started.store(true, Ordering::SeqCst);
-                }
+        Box::pin(async move {
+            let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+            self.maximum.fetch_max(active, Ordering::SeqCst);
+            if key == self.slow {
+                self.slow_started.store(true, Ordering::SeqCst);
             }
+            if key == self.recovered {
+                self.recovered_started.store(true, Ordering::SeqCst);
+            }
+
             if key == self.slow && !cancel.is_cancelled() {
-                context.waker().wake_by_ref();
-                return core::task::Poll::Pending;
+                while !cancel.is_cancelled() {
+                    tokio::time::sleep(core::time::Duration::from_millis(5)).await;
+                }
             }
             self.active.fetch_sub(1, Ordering::SeqCst);
-            core::task::Poll::Ready(Ok(produced()))
-        }))
+            Ok(produced())
+        })
     }
 
     fn resolve_unknown<'a>(
@@ -416,10 +446,10 @@ async fn the_scheduler_refills_below_the_aggregate_cap_and_keeps_due_recovery_li
     let fast = AgentKey::new(key().session, AgentId(Uuid::from_u128(0xa6e7_4011)));
     let recovered = AgentKey::new(key().session, AgentId(Uuid::from_u128(0xa6e7_4012)));
     let log = Arc::new(Recorder::default());
-    let clock = Arc::new(FixedClock::at(START));
+    let store_clock = Arc::new(FixedClock::at(START));
     let queue = Arc::new(MemoryQueue::new(Arc::clone(&log)));
     let store = Arc::new(MemoryStore::new(
-        Arc::clone(&clock),
+        Arc::clone(&store_clock),
         Arc::clone(&queue),
         Arc::clone(&log),
     ));
@@ -450,21 +480,9 @@ async fn the_scheduler_refills_below_the_aggregate_cap_and_keeps_due_recovery_li
         tools: Arc::new(ScriptedTools::new(Vec::new(), Vec::new())),
         hands: Arc::new(AbsentHands),
         catalog: Arc::new(FixedCatalog::with_model(capability())),
-        clock,
+        clock: Arc::new(ReactorClock::new()),
         ids: Arc::new(CountingIds::new()),
     };
-    let admission = Arc::new(Admission::new(
-        AdmissionBounds {
-            target: u32::try_from(CAP).expect("the test cap fits u32"),
-            safety_cap: u32::try_from(CAP).expect("the test cap fits u32"),
-            offered_ceiling: 4,
-        },
-        Arc::new(PermitSet::new(BTreeMap::from([(
-            PermitKind::Activation,
-            u64::try_from(CAP).expect("the test cap fits u64"),
-        )]))),
-        Arc::clone(&drain),
-    ));
     let mut policy = ActivationPolicy::default();
     policy.receive_batch = 1;
     policy.max_concurrent_drives = 1;
@@ -472,6 +490,25 @@ async fn the_scheduler_refills_below_the_aggregate_cap_and_keeps_due_recovery_li
     policy.due_scan_shards_per_pass = 1;
     policy.due_scan_page = 1;
     policy.due_scan_interval = core::time::Duration::ZERO;
+    policy.renew_interval = core::time::Duration::from_millis(10);
+    let context_bytes = u64::try_from(policy.restore.max_bytes)
+        .expect("the restore budget fits u64")
+        .saturating_mul(u64::try_from(CAP).expect("the test cap fits u64"));
+    let admission = Arc::new(Admission::new(
+        AdmissionBounds {
+            target: u32::try_from(CAP).expect("the test cap fits u32"),
+            safety_cap: u32::try_from(CAP).expect("the test cap fits u32"),
+            offered_ceiling: 4,
+        },
+        Arc::new(PermitSet::new(BTreeMap::from([
+            (
+                PermitKind::Activation,
+                u64::try_from(CAP).expect("the test cap fits u64"),
+            ),
+            (PermitKind::ContextBytes, context_bytes),
+        ]))),
+        Arc::clone(&drain),
+    ));
     let pump = WakeLoop::new(
         Activation::new(
             ports,
