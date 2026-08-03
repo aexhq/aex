@@ -95,14 +95,46 @@ pub struct RegionalMigrations {
     pub generation: u32,
 }
 
+/// Exact public source and workflow run that minted the release inputs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PublicSource {
+    /// Public GitHub repository.
+    pub repository: String,
+    /// Exact public source commit.
+    pub commit_sha: String,
+    /// GitHub workflow run id used in the immutable release tag.
+    pub workflow_run_id: String,
+    /// GitHub workflow attempt used in the immutable release tag.
+    pub workflow_run_attempt: u64,
+}
+
+/// Raw, directly executable public release-tool identity.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReleaseToolIdentity {
+    /// Exact release-tool semantic version.
+    pub version: String,
+    /// SHA-256 digest of the raw executable bytes.
+    pub digest: String,
+    /// Exact raw executable byte length.
+    pub size_bytes: u64,
+    /// Commit/run-addressed public HTTPS release asset.
+    pub uri: String,
+    /// Rust target triple of the executable.
+    pub target: String,
+}
+
 /// The infrastructure module bundle a root pins.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Infra {
     /// Module bundle digest.
     pub module_bundle_digest: String,
-    /// Where the bundle is stored.
-    pub source_archive_uri: String,
+    /// Exact bundle byte length.
+    pub module_bundle_size_bytes: u64,
+    /// Commit/run-addressed public HTTPS release asset.
+    pub module_bundle_uri: String,
     /// Terraform version.
     pub terraform_version: String,
     /// Provider versions.
@@ -148,6 +180,10 @@ pub struct CompositionManifest {
     pub release_id: String,
     /// Generated contract bundle digest.
     pub contract_digest: String,
+    /// Exact public source and workflow run.
+    pub source: PublicSource,
+    /// Raw public release-tool identity consumed by hosted acquisition.
+    pub release_tool: ReleaseToolIdentity,
     /// Every unit.
     pub units: BTreeMap<String, ManifestUnit>,
     /// Published packages.
@@ -168,6 +204,30 @@ pub struct CompositionManifest {
     /// not mint a new release identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub annotations: Option<serde_json::Value>,
+}
+
+/// The composition identities no artifact envelope carries.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CompositionInputs {
+    /// Generated contract bundle digest.
+    pub contract_digest: String,
+    /// Exact public source and workflow run.
+    pub source: PublicSource,
+    /// Raw public release-tool identity.
+    pub release_tool: ReleaseToolIdentity,
+    /// Published packages.
+    #[serde(default)]
+    pub packages: BTreeMap<String, BTreeMap<String, PackageRef>>,
+    /// Migration identities.
+    pub migrations: Migrations,
+    /// Terraform module bundle and provider closure.
+    pub infra: Infra,
+    /// Catalogue digests.
+    #[serde(default)]
+    pub catalogs: BTreeMap<String, String>,
+    /// Policy digests.
+    pub policy: Policy,
 }
 
 /// The default stage order.
@@ -310,6 +370,7 @@ impl CompositionManifest {
                 "a composition with no unit is not a release",
             ));
         }
+        validate_public_inputs(self, &mut structural);
         let ordered: Vec<&String> = self.order.iter().flat_map(|stage| &stage.units).collect();
         for unit in self.units.keys() {
             if !ordered.contains(&unit) {
@@ -366,6 +427,32 @@ impl CompositionManifest {
         Ok(())
     }
 
+    /// Validate the manifest and the exact public inputs downloaded for hosted
+    /// acquisition.
+    ///
+    /// # Errors
+    /// Propagates manifest validation failures and returns
+    /// [`Exit::ArtifactMismatch`] when either downloaded subject is missing,
+    /// truncated, or altered.
+    pub fn validate_acquired_inputs(
+        &self,
+        release_tool: &std::path::Path,
+        module_bundle: &std::path::Path,
+        strict_environment_scan: bool,
+    ) -> Result<()> {
+        self.validate(strict_environment_scan)?;
+        crate::publication::verify_blob(
+            release_tool,
+            &self.release_tool.digest,
+            self.release_tool.size_bytes,
+        )?;
+        crate::publication::verify_blob(
+            module_bundle,
+            &self.infra.module_bundle_digest,
+            self.infra.module_bundle_size_bytes,
+        )
+    }
+
     /// Replace one unit's entry, producing a new complete manifest.
     ///
     /// # Errors
@@ -416,13 +503,8 @@ impl ManifestUnit {
 /// Returns [`Exit::CompositionIncompatible`] when a unit belongs to no stage,
 /// and propagates canonicalization failure.
 pub fn new_manifest(
-    contract_digest: String,
+    inputs: CompositionInputs,
     envelopes: &BTreeMap<String, crate::artifact::ArtifactEnvelope>,
-    packages: BTreeMap<String, BTreeMap<String, PackageRef>>,
-    migrations: Migrations,
-    infra: Infra,
-    catalogs: BTreeMap<String, String>,
-    policy: Policy,
 ) -> Result<CompositionManifest> {
     let units: BTreeMap<String, ManifestUnit> = envelopes
         .iter()
@@ -432,17 +514,162 @@ pub fn new_manifest(
     CompositionManifest {
         schema: "aex.composition-manifest.v1".to_owned(),
         release_id: "sha256:0".to_owned(),
-        contract_digest,
+        contract_digest: inputs.contract_digest,
+        source: inputs.source,
+        release_tool: inputs.release_tool,
         units,
-        packages,
-        migrations,
-        infra,
-        catalogs,
+        packages: inputs.packages,
+        migrations: inputs.migrations,
+        infra: inputs.infra,
+        catalogs: inputs.catalogs,
         order,
-        policy,
+        policy: inputs.policy,
         annotations: None,
     }
     .seal()
+}
+
+// Keep this accumulator together so one admission run reports every malformed
+// public identity rather than turning review into a sequence of failures.
+#[allow(clippy::too_many_lines)]
+fn validate_public_inputs(manifest: &CompositionManifest, violations: &mut Vec<Violation>) {
+    let sha256 = |value: &str| {
+        value.len() == 71
+            && value.starts_with("sha256:")
+            && value[7..]
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    };
+    let sha1 = |value: &str| {
+        value.len() == 40
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    };
+    let exact_version = |value: &str| {
+        regex::Regex::new(r"^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$")
+            .expect("static exact-version regex")
+            .is_match(value)
+    };
+
+    if manifest.source.repository != "aexhq/aex" {
+        violations.push(Violation::new(
+            "manifest-public-repository",
+            format!(
+                "`{}` is not the public source repository `aexhq/aex`",
+                manifest.source.repository
+            ),
+        ));
+    }
+    if !sha1(&manifest.source.commit_sha) {
+        violations.push(Violation::new(
+            "manifest-public-commit",
+            format!(
+                "`{}` is not an exact lowercase Git commit",
+                manifest.source.commit_sha
+            ),
+        ));
+    }
+    if manifest.source.workflow_run_id.is_empty()
+        || !manifest
+            .source
+            .workflow_run_id
+            .bytes()
+            .all(|byte| byte.is_ascii_digit())
+        || manifest.source.workflow_run_id.starts_with('0')
+    {
+        violations.push(Violation::new(
+            "manifest-public-run-id",
+            format!(
+                "`{}` is not a positive GitHub workflow run id",
+                manifest.source.workflow_run_id
+            ),
+        ));
+    }
+    if manifest.source.workflow_run_attempt == 0 {
+        violations.push(Violation::new(
+            "manifest-public-run-attempt",
+            "the GitHub workflow run attempt must be positive",
+        ));
+    }
+    if !exact_version(&manifest.release_tool.version) {
+        violations.push(Violation::new(
+            "manifest-release-tool-version",
+            format!(
+                "`{}` is not an exact release-tool version",
+                manifest.release_tool.version
+            ),
+        ));
+    }
+    if !sha256(&manifest.release_tool.digest) {
+        violations.push(Violation::new(
+            "manifest-release-tool-digest",
+            format!("`{}` is not a SHA-256 digest", manifest.release_tool.digest),
+        ));
+    }
+    if manifest.release_tool.size_bytes == 0 {
+        violations.push(Violation::new(
+            "manifest-release-tool-size",
+            "the raw release tool must contain at least one byte",
+        ));
+    }
+    if manifest.release_tool.target != "x86_64-unknown-linux-musl" {
+        violations.push(Violation::new(
+            "manifest-release-tool-target",
+            format!(
+                "`{}` is not the hosted acquisition target `x86_64-unknown-linux-musl`",
+                manifest.release_tool.target
+            ),
+        ));
+    }
+    if !sha256(&manifest.infra.module_bundle_digest) {
+        violations.push(Violation::new(
+            "manifest-module-bundle-digest",
+            format!(
+                "`{}` is not a SHA-256 digest",
+                manifest.infra.module_bundle_digest
+            ),
+        ));
+    }
+    if manifest.infra.module_bundle_size_bytes == 0 {
+        violations.push(Violation::new(
+            "manifest-module-bundle-size",
+            "the Terraform module bundle must contain at least one byte",
+        ));
+    }
+
+    if sha1(&manifest.source.commit_sha)
+        && !manifest.source.workflow_run_id.is_empty()
+        && manifest.source.workflow_run_attempt > 0
+    {
+        let base = format!(
+            "https://github.com/{}/releases/download/main-{}-run-{}-attempt-{}",
+            manifest.source.repository,
+            manifest.source.commit_sha,
+            manifest.source.workflow_run_id,
+            manifest.source.workflow_run_attempt,
+        );
+        let expected_tool = format!("{base}/{}", crate::publication::RELEASE_TOOL_ASSET);
+        if manifest.release_tool.uri != expected_tool {
+            violations.push(Violation::new(
+                "manifest-release-tool-uri",
+                format!(
+                    "`{}` is not the exact public release-tool asset `{expected_tool}`",
+                    manifest.release_tool.uri
+                ),
+            ));
+        }
+        let expected_modules = format!("{base}/{}", crate::publication::MODULE_BUNDLE_ASSET);
+        if manifest.infra.module_bundle_uri != expected_modules {
+            violations.push(Violation::new(
+                "manifest-module-bundle-uri",
+                format!(
+                    "`{}` is not the exact public module asset `{expected_modules}`",
+                    manifest.infra.module_bundle_uri
+                ),
+            ));
+        }
+    }
 }
 
 /// Deployables that are neither described by an envelope nor recorded as
@@ -636,10 +863,14 @@ fn scan_string(text: &str, path: &str, findings: &mut Vec<Violation>) {
         let host = text
             .split_once("//")
             .map_or("", |(_, rest)| rest.split('/').next().unwrap_or(""));
-        if !matches!(
-            host,
-            "schemas.aex.dev" | "slsa.dev" | "json-schema.org" | "spdx.org" | "cyclonedx.org"
-        ) {
+        let exact_public_asset =
+            host == "github.com" && matches!(path, ".releaseTool.uri" | ".infra.moduleBundleUri");
+        if !exact_public_asset
+            && !matches!(
+                host,
+                "schemas.aex.dev" | "slsa.dev" | "json-schema.org" | "spdx.org" | "cyclonedx.org"
+            )
+        {
             findings.push(Violation::new(
                 "manifest-environment-identity",
                 format!("`{path}` names host `{host}`, which is outside the schema host set"),
@@ -796,6 +1027,19 @@ mod tests {
             "schema": "aex.composition-manifest.v1",
             "releaseId": release,
             "contractDigest": "sha256:aa",
+            "source": {
+                "repository": "aexhq/aex",
+                "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "workflowRunId": "123",
+                "workflowRunAttempt": 1
+            },
+            "releaseTool": {
+                "version": "0.1.0",
+                "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "sizeBytes": 8192,
+                "uri": "https://github.com/aexhq/aex/releases/download/main-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-run-123-attempt-1/aex-release-tool",
+                "target": "x86_64-unknown-linux-musl"
+            },
             "units": {},
             "migrations": {
                 "central": { "bundleDigest": "sha256:bb", "head": "0007", "adminImageDigest": "sha256:cc" },
@@ -803,7 +1047,8 @@ mod tests {
             },
             "infra": {
                 "moduleBundleDigest": "sha256:ee",
-                "sourceArchiveUri": "s3://bucket/modules.tar.gz",
+                "moduleBundleSizeBytes": 16384,
+                "moduleBundleUri": "https://github.com/aexhq/aex/releases/download/main-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-run-123-attempt-1/terraform-modules.tar.gz",
                 "terraformVersion": "1.14.0",
                 "providerVersions": {}
             },

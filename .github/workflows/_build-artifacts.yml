@@ -23,6 +23,43 @@ on:
         type: boolean
         required: false
         default: false
+    outputs:
+      release_tag:
+        description: Unique non-overwriting public prerelease tag.
+        value: ${{ jobs.public_release_inputs.outputs.release_tag }}
+      release_tool_uri:
+        description: Public raw release-tool asset URL.
+        value: ${{ jobs.public_release_inputs.outputs.release_tool_uri }}
+      release_tool_digest:
+        description: SHA-256 identity of the raw release tool.
+        value: ${{ jobs.public_release_inputs.outputs.release_tool_digest }}
+      release_tool_size_bytes:
+        description: Exact raw release-tool byte length.
+        value: ${{ jobs.public_release_inputs.outputs.release_tool_size_bytes }}
+      release_tool_version:
+        description: Exact release-tool semantic version.
+        value: ${{ jobs.public_release_inputs.outputs.release_tool_version }}
+      release_tool_attestation_id:
+        description: Official GitHub provenance locator; admission re-verifies subject and signer.
+        value: ${{ jobs.public_release_inputs.outputs.release_tool_attestation_id }}
+      release_tool_attestation_url:
+        description: GitHub provenance URL returned by the official action.
+        value: ${{ jobs.public_release_inputs.outputs.release_tool_attestation_url }}
+      module_bundle_uri:
+        description: Public Terraform module bundle asset URL.
+        value: ${{ jobs.public_release_inputs.outputs.module_bundle_uri }}
+      module_bundle_digest:
+        description: SHA-256 identity of the Terraform module bundle.
+        value: ${{ jobs.public_release_inputs.outputs.module_bundle_digest }}
+      module_bundle_size_bytes:
+        description: Exact Terraform module bundle byte length.
+        value: ${{ jobs.public_release_inputs.outputs.module_bundle_size_bytes }}
+      module_bundle_attestation_id:
+        description: Official GitHub provenance locator; admission re-verifies subject and signer.
+        value: ${{ jobs.public_release_inputs.outputs.module_bundle_attestation_id }}
+      module_bundle_attestation_url:
+        description: GitHub provenance URL returned by the official action.
+        value: ${{ jobs.public_release_inputs.outputs.module_bundle_attestation_url }}
 
 permissions:
   contents: read
@@ -35,6 +72,7 @@ jobs:
       contents: read
       id-token: write
       attestations: write
+      artifact-metadata: write
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(inputs.matrix) }}
@@ -110,18 +148,9 @@ jobs:
 
       - name: Attest the build provenance
         if: inputs.publish
-        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a  # v3.0.0
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26  # v4.1.0
         with:
           subject-path: artifact.bin
-
-      - name: Publish
-        if: inputs.publish
-        run: |
-          set -euo pipefail
-          echo "Publication needs the artifact bucket, the ECR repositories and"
-          echo "the publish OIDC role. The cut-readiness review has not created"
-          echo "them, so this step refuses rather than pretending to publish."
-          exit 1
 
       - name: Upload the packaged bytes
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
@@ -129,3 +158,154 @@ jobs:
           name: artifact-${{ matrix.name }}
           path: artifact.bin
           if-no-files-found: error
+
+  public_release_inputs:
+    name: Public release inputs
+    if: inputs.publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    outputs:
+      release_tag: ${{ steps.publish.outputs.release_tag }}
+      release_tool_uri: ${{ steps.publish.outputs.release_tool_uri }}
+      release_tool_digest: ${{ steps.identities.outputs.release_tool_digest }}
+      release_tool_size_bytes: ${{ steps.identities.outputs.release_tool_size_bytes }}
+      release_tool_version: ${{ steps.identities.outputs.release_tool_version }}
+      release_tool_attestation_id: ${{ steps.attest_release_tool.outputs['attestation-id'] }}
+      release_tool_attestation_url: ${{ steps.attest_release_tool.outputs['attestation-url'] }}
+      module_bundle_uri: ${{ steps.publish.outputs.module_bundle_uri }}
+      module_bundle_digest: ${{ steps.identities.outputs.module_bundle_digest }}
+      module_bundle_size_bytes: ${{ steps.identities.outputs.module_bundle_size_bytes }}
+      module_bundle_attestation_id: ${{ steps.attest_module_bundle.outputs['attestation-id'] }}
+      module_bundle_attestation_url: ${{ steps.attest_module_bundle.outputs['attestation-url'] }}
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
+        with:
+          toolchain: "1.97.1"
+          targets: x86_64-unknown-linux-musl
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@bc2d2e71bd35c5549942babaa51a89c586b981d1  # v2.8.1
+        with:
+          save-if: true
+          shared-key: public-release-inputs
+
+      - name: Build twice and prove byte determinism
+        env:
+          CARGO_INCREMENTAL: "0"
+          SOURCE_DATE_EPOCH: "0"
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: rust-lld
+          RUSTFLAGS: >-
+            --remap-path-prefix=${{ github.workspace }}=/workspace/aex
+            -C link-self-contained=yes
+        run: |
+          set -euo pipefail
+          target=x86_64-unknown-linux-musl
+          cargo build --locked --release -p aex-release-tool --target "$target" \
+            --target-dir target/release-tool-first
+          cargo build --locked --release -p aex-release-tool --target "$target" \
+            --target-dir target/release-tool-second
+          mkdir -p dist
+          first="target/release-tool-first/$target/release/aex-release-tool"
+          second="target/release-tool-second/$target/release/aex-release-tool"
+          cmp "$first" "$second"
+          install -m 0755 "$first" dist/aex-release-tool
+
+      - name: Package modules twice and prove byte determinism
+        run: |
+          set -euo pipefail
+          dist/aex-release-tool --root "$GITHUB_WORKSPACE" --quiet \
+            artifact module-bundle --out dist/terraform-modules.tar.gz
+          dist/aex-release-tool --root "$GITHUB_WORKSPACE" --quiet \
+            artifact module-bundle --out dist/terraform-modules.check.tar.gz
+          cmp dist/terraform-modules.tar.gz dist/terraform-modules.check.tar.gz
+          rm dist/terraform-modules.check.tar.gz
+
+      - name: Record exact identities
+        id: identities
+        run: |
+          set -euo pipefail
+          tool_digest="sha256:$(sha256sum dist/aex-release-tool | cut -d' ' -f1)"
+          module_digest="sha256:$(sha256sum dist/terraform-modules.tar.gz | cut -d' ' -f1)"
+          tool_size=$(stat -c '%s' dist/aex-release-tool)
+          module_size=$(stat -c '%s' dist/terraform-modules.tar.gz)
+          tool_version=$(dist/aex-release-tool --version | awk '{print $2}')
+          [[ "$tool_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$module_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$tool_size" =~ ^[1-9][0-9]*$ ]]
+          [[ "$module_size" =~ ^[1-9][0-9]*$ ]]
+          [[ "$tool_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]
+          echo "release_tool_digest=$tool_digest" >> "$GITHUB_OUTPUT"
+          echo "release_tool_size_bytes=$tool_size" >> "$GITHUB_OUTPUT"
+          echo "release_tool_version=$tool_version" >> "$GITHUB_OUTPUT"
+          echo "module_bundle_digest=$module_digest" >> "$GITHUB_OUTPUT"
+          echo "module_bundle_size_bytes=$module_size" >> "$GITHUB_OUTPUT"
+
+      - name: Attest raw release tool provenance
+        id: attest_release_tool
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26  # v4.1.0
+        with:
+          subject-path: dist/aex-release-tool
+
+      - name: Attest module bundle provenance
+        id: attest_module_bundle
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26  # v4.1.0
+        with:
+          subject-path: dist/terraform-modules.tar.gz
+
+      - name: Create immutable public prerelease
+        id: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="main-${GITHUB_SHA}-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "release $tag already exists; published identities are never replaced" >&2
+            exit 21
+          fi
+          if git ls-remote --exit-code --tags \
+            "https://github.com/${GITHUB_REPOSITORY}.git" "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "tag $tag already exists; published identities are never reused" >&2
+            exit 21
+          fi
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "$tag" --notes "Plane-neutral public inputs from $GITHUB_SHA." --prerelease
+          # Never clean up or replace a partial upload. A failed attempt stays
+          # visible, and the fixed-forward retry receives a new attempt tag.
+          gh release upload "$tag" dist/aex-release-tool dist/terraform-modules.tar.gz \
+            --repo "$GITHUB_REPOSITORY"
+          asset_names=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" \
+            --json assets --jq '[.assets[].name] | sort | join(",")')
+          [[ "$asset_names" == "aex-release-tool,terraform-modules.tar.gz" ]]
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag"
+          echo "release_tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "release_tool_uri=$base/aex-release-tool" >> "$GITHUB_OUTPUT"
+          echo "module_bundle_uri=$base/terraform-modules.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Record provenance outputs
+        env:
+          TOOL_ATTESTATION_ID: ${{ steps.attest_release_tool.outputs['attestation-id'] }}
+          TOOL_ATTESTATION_URL: ${{ steps.attest_release_tool.outputs['attestation-url'] }}
+          MODULE_ATTESTATION_ID: ${{ steps.attest_module_bundle.outputs['attestation-id'] }}
+          MODULE_ATTESTATION_URL: ${{ steps.attest_module_bundle.outputs['attestation-url'] }}
+        run: |
+          set -euo pipefail
+          test -n "$TOOL_ATTESTATION_ID"
+          test -n "$TOOL_ATTESTATION_URL"
+          test -n "$MODULE_ATTESTATION_ID"
+          test -n "$MODULE_ATTESTATION_URL"
+          {
+            echo "### Public release input provenance"
+            echo "- release tool: $TOOL_ATTESTATION_URL"
+            echo "- module bundle: $MODULE_ATTESTATION_URL"
+          } >> "$GITHUB_STEP_SUMMARY"

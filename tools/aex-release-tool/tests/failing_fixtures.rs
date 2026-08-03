@@ -244,7 +244,7 @@ fn mutable_tag_exits_31() {
 #[test]
 fn an_environment_identity_exits_31() {
     let mut value = valid_manifest();
-    value["infra"]["sourceArchiveUri"] =
+    value["units"][UNIT]["location"]["uri"] =
         serde_json::json!("arn:aws:s3:::aex-prd-artifacts/modules.tar.gz");
     let manifest = serde_json::from_value::<CompositionManifest>(value)
         .unwrap()

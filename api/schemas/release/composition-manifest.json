@@ -9,6 +9,8 @@
     "schema",
     "releaseId",
     "contractDigest",
+    "source",
+    "releaseTool",
     "units",
     "migrations",
     "infra",
@@ -19,6 +21,29 @@
     "schema": { "const": "aex.composition-manifest.v1" },
     "releaseId": { "$ref": "#/$defs/sha256" },
     "contractDigest": { "$ref": "#/$defs/sha256" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "commitSha", "workflowRunId", "workflowRunAttempt"],
+      "properties": {
+        "repository": { "const": "aexhq/aex" },
+        "commitSha": { "$ref": "#/$defs/sha1" },
+        "workflowRunId": { "type": "string", "pattern": "^[1-9][0-9]*$" },
+        "workflowRunAttempt": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "releaseTool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "digest", "sizeBytes", "uri", "target"],
+      "properties": {
+        "version": { "$ref": "#/$defs/version" },
+        "digest": { "$ref": "#/$defs/sha256" },
+        "sizeBytes": { "type": "integer", "minimum": 1 },
+        "uri": { "type": "string", "pattern": "^https://github\\.com/aexhq/aex/releases/download/main-[0-9a-f]{40}-run-[1-9][0-9]*-attempt-[1-9][0-9]*/aex-release-tool$" },
+        "target": { "const": "x86_64-unknown-linux-musl" }
+      }
+    },
     "units": {
       "type": "object",
       "minProperties": 1,
@@ -131,10 +156,11 @@
     "infra": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["moduleBundleDigest", "sourceArchiveUri", "terraformVersion", "providerVersions"],
+      "required": ["moduleBundleDigest", "moduleBundleSizeBytes", "moduleBundleUri", "terraformVersion", "providerVersions"],
       "properties": {
         "moduleBundleDigest": { "$ref": "#/$defs/sha256" },
-        "sourceArchiveUri": { "type": "string" },
+        "moduleBundleSizeBytes": { "type": "integer", "minimum": 1 },
+        "moduleBundleUri": { "type": "string", "pattern": "^https://github\\.com/aexhq/aex/releases/download/main-[0-9a-f]{40}-run-[1-9][0-9]*-attempt-[1-9][0-9]*/terraform-modules\\.tar\\.gz$" },
         "terraformVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
         "providerVersions": { "type": "object", "additionalProperties": { "type": "string" } }
       }
@@ -177,6 +203,8 @@
     }
   },
   "$defs": {
-    "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+    "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "sha1": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$" }
   }
 }

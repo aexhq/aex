@@ -27,6 +27,7 @@ use aex_release_tool::manifest::CompositionManifest;
 use aex_release_tool::migration;
 use aex_release_tool::policy;
 use aex_release_tool::private_path;
+use aex_release_tool::publication;
 use aex_release_tool::release_contract;
 use aex_release_tool::schemas::{self, SchemaName};
 use aex_release_tool::selftest;
@@ -194,6 +195,12 @@ enum DiffFormat {
 
 #[derive(Debug, Subcommand)]
 enum ArtifactCommand {
+    /// Package the committed public Terraform module closure deterministically.
+    ModuleBundle {
+        /// Where to write `terraform-modules.tar.gz`.
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// Print every build recipe.
     Recipes {
         /// Restrict to one unit.
@@ -318,6 +325,21 @@ enum ManifestCommand {
         /// The manifest.
         #[arg(long)]
         file: PathBuf,
+        /// Also reject environment identities, mutable references and ranges.
+        #[arg(long)]
+        strict_environment_scan: bool,
+    },
+    /// Validate a manifest and the exact downloaded public acquisition inputs.
+    ValidateInputs {
+        /// The manifest.
+        #[arg(long)]
+        file: PathBuf,
+        /// Raw downloaded `aex-release-tool` executable.
+        #[arg(long)]
+        release_tool: PathBuf,
+        /// Downloaded `terraform-modules.tar.gz`.
+        #[arg(long)]
+        module_bundle: PathBuf,
         /// Also reject environment identities, mutable references and ranges.
         #[arg(long)]
         strict_environment_scan: bool,
@@ -816,6 +838,7 @@ fn run_graph(cli: &Cli, root: &Path, command: &GraphCommand) -> Result<()> {
 
 fn run_artifact(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()> {
     match command {
+        ArtifactCommand::ModuleBundle { out } => run_module_bundle(cli, root, out),
         ArtifactCommand::Recipes { unit } => {
             let units = read_units(root)?;
             let plans = artifact::recipes(&units)?;
@@ -912,6 +935,20 @@ fn run_artifact(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()>
     }
 }
 
+fn run_module_bundle(cli: &Cli, root: &Path, out: &Path) -> Result<()> {
+    let bytes = publication::package_module_bundle(root)?;
+    std::fs::write(out, &bytes).map_err(|err| io(&out.display().to_string(), &err))?;
+    emit(
+        cli,
+        &serde_json::json!({
+            "asset": publication::MODULE_BUNDLE_ASSET,
+            "digest": canon::digest_bytes(&bytes),
+            "sizeBytes": bytes.len(),
+            "path": out.display().to_string(),
+        }),
+    )
+}
+
 /// Assemble an envelope for a unit built on this machine.
 ///
 /// Everything the tree can establish is read from it; the ledger the call
@@ -991,7 +1028,7 @@ fn run_manifest_new(
             Ok((envelope.unit.id.clone(), envelope))
         })
         .collect::<Result<_>>()?;
-    let inputs: CompositionInputs = read_json(composition)?;
+    let inputs: aex_release_tool::manifest::CompositionInputs = read_json(composition)?;
     let recorded: Vec<aex_workspace_check::registry::UnearnedRow> = match unearned {
         Some(path) => read_json(path)?,
         None => Vec::new(),
@@ -1001,15 +1038,7 @@ fn run_manifest_new(
     if !holes.is_empty() {
         return Err(ToolError::many(Exit::CompositionIncompatible, holes));
     }
-    let manifest = aex_release_tool::manifest::new_manifest(
-        inputs.contract_digest,
-        &described,
-        inputs.packages,
-        inputs.migrations,
-        inputs.infra,
-        inputs.catalogs,
-        inputs.policy,
-    )?;
+    let manifest = aex_release_tool::manifest::new_manifest(inputs, &described)?;
     write_canonical(out, &manifest)?;
     emit(
         cli,
@@ -1049,6 +1078,23 @@ fn run_manifest(cli: &Cli, root: &Path, command: &ManifestCommand) -> Result<()>
             emit(
                 cli,
                 &serde_json::json!({ "releaseId": manifest.release_id, "valid": true }),
+            )
+        }
+        ManifestCommand::ValidateInputs {
+            file,
+            release_tool,
+            module_bundle,
+            strict_environment_scan,
+        } => {
+            let manifest: CompositionManifest = read_json(file)?;
+            manifest.validate_acquired_inputs(
+                release_tool,
+                module_bundle,
+                *strict_environment_scan,
+            )?;
+            emit(
+                cli,
+                &serde_json::json!({ "releaseId": manifest.release_id, "inputsValid": true }),
             )
         }
         ManifestCommand::Order { file } => {
@@ -1529,25 +1575,6 @@ fn run_janitor(cli: &Cli, command: &JanitorCommand) -> Result<()> {
             }
         }
     }
-}
-
-/// The composition inputs no artifact envelope carries.
-///
-/// They are read from one document rather than from a dozen flags because they
-/// are a single decision — which contract, which migrations, which modules,
-/// which policy digests this release is — and splitting a decision across flags
-/// is how half of it gets forgotten.
-#[derive(Debug, serde::Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct CompositionInputs {
-    contract_digest: String,
-    #[serde(default)]
-    packages: BTreeMap<String, BTreeMap<String, aex_release_tool::manifest::PackageRef>>,
-    migrations: aex_release_tool::manifest::Migrations,
-    infra: aex_release_tool::manifest::Infra,
-    #[serde(default)]
-    catalogs: BTreeMap<String, String>,
-    policy: aex_release_tool::manifest::Policy,
 }
 
 /// Which lockfile pins a unit kind's dependency versions.

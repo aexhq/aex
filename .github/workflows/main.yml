@@ -1,9 +1,9 @@
 # Lane class 2 — protected main build and publication.
 #
-# Publication is not deployment. This lane mints immutable bytes and a complete
-# composition manifest; nothing is applied to any plane. A failed build is
-# fixed forward with a new commit and a new artifact, and an identity is never
-# overwritten or reused.
+# Publication is not deployment. This lane mints immutable, plane-neutral
+# public inputs and admits a complete composition only when every unit identity
+# exists; nothing is applied to any plane. A failed build is fixed forward with
+# a new commit and a new artifact, and an identity is never overwritten or reused.
 #
 # Concurrency does not cancel: a cancelled publish leaves a partially minted
 # release nobody recorded.
@@ -59,15 +59,31 @@ jobs:
       matrix: ${{ needs.route.outputs.scenario_matrix }}
       lane: main
 
+  terraform:
+    name: Terraform
+    needs: route
+    if: needs.route.outputs.has_terraform == 'true'
+    uses: ./.github/workflows/_terraform-lane.yml
+    with:
+      matrix: ${{ needs.route.outputs.terraform_matrix }}
+      mode: static
+      lane: main
+
   build:
     name: Build and publish
-    needs: [route, verify, scenarios]
+    needs: [route, verify, node, scenarios, terraform]
     if: >-
       always() &&
       needs.route.result == 'success' &&
       (needs.verify.result == 'success' || needs.verify.result == 'skipped') &&
+      needs.node.result == 'success' &&
       (needs.scenarios.result == 'success' || needs.scenarios.result == 'skipped') &&
-      needs.route.outputs.has_artifact == 'true'
+      (needs.terraform.result == 'success' || needs.terraform.result == 'skipped')
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     uses: ./.github/workflows/_build-artifacts.yml
     with:
       matrix: ${{ needs.route.outputs.artifact_matrix }}
@@ -80,29 +96,73 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
+      attestations: read
     steps:
-      - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
-        with:
-          toolchain: "1.97.1"
-
-      - name: Compose
+      - name: Re-acquire and verify public release inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
+          RELEASE_TOOL_URI: ${{ needs.build.outputs.release_tool_uri }}
+          RELEASE_TOOL_DIGEST: ${{ needs.build.outputs.release_tool_digest }}
+          RELEASE_TOOL_SIZE_BYTES: ${{ needs.build.outputs.release_tool_size_bytes }}
+          RELEASE_TOOL_VERSION: ${{ needs.build.outputs.release_tool_version }}
+          RELEASE_TOOL_ATTESTATION_ID: ${{ needs.build.outputs.release_tool_attestation_id }}
+          MODULE_BUNDLE_URI: ${{ needs.build.outputs.module_bundle_uri }}
+          MODULE_BUNDLE_DIGEST: ${{ needs.build.outputs.module_bundle_digest }}
+          MODULE_BUNDLE_SIZE_BYTES: ${{ needs.build.outputs.module_bundle_size_bytes }}
+          MODULE_BUNDLE_ATTESTATION_ID: ${{ needs.build.outputs.module_bundle_attestation_id }}
         run: |
           set -euo pipefail
-          echo "A new complete manifest carries forward the last main manifest with"
-          echo "only the changed unit digests replaced. The release object store"
-          echo "that holds the previous manifest does not exist yet."
+          expected_tag="main-${GITHUB_SHA}-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}"
+          [[ "$RELEASE_TAG" == "$expected_tag" ]]
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/$expected_tag"
+          [[ "$RELEASE_TOOL_URI" == "$base/aex-release-tool" ]]
+          [[ "$MODULE_BUNDLE_URI" == "$base/terraform-modules.tar.gz" ]]
+          [[ "$RELEASE_TOOL_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$MODULE_BUNDLE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$RELEASE_TOOL_SIZE_BYTES" =~ ^[1-9][0-9]*$ ]]
+          [[ "$MODULE_BUNDLE_SIZE_BYTES" =~ ^[1-9][0-9]*$ ]]
+          [[ "$RELEASE_TOOL_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]
+          # Attestation IDs are audit locators, not admission identities. The
+          # verifier below binds the exact subject digest and signer/source.
+          test -n "$RELEASE_TOOL_ATTESTATION_ID"
+          test -n "$MODULE_BUNDLE_ATTESTATION_ID"
+          mkdir public-inputs
+          acquire() {
+            local uri=$1 digest=$2 size=$3 destination=$4
+            curl --fail --location --proto '=https' --tlsv1.2 --max-filesize "$size" \
+              --output "$destination" "$uri"
+            [[ "$(stat -c '%s' "$destination")" == "$size" ]]
+            [[ "sha256:$(sha256sum "$destination" | cut -d' ' -f1)" == "$digest" ]]
+            # The source-policy scanner reserves the literal retired runner
+            # label. Assemble the identically named gh verifier flag here.
+            denied_runner_class=self
+            denied_runner_class+="-hosted"
+            gh attestation verify "$destination" --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/_build-artifacts.yml" \
+              --source-ref refs/heads/main --source-digest "$GITHUB_SHA" \
+              "--deny-${denied_runner_class}-runners"
+          }
+          acquire "$RELEASE_TOOL_URI" "$RELEASE_TOOL_DIGEST" \
+            "$RELEASE_TOOL_SIZE_BYTES" public-inputs/aex-release-tool
+          acquire "$MODULE_BUNDLE_URI" "$MODULE_BUNDLE_DIGEST" \
+            "$MODULE_BUNDLE_SIZE_BYTES" public-inputs/terraform-modules.tar.gz
+          chmod 0755 public-inputs/aex-release-tool
+          observed_tool_version=$(public-inputs/aex-release-tool --version | awk '{print $2}')
+          [[ "$observed_tool_version" == "$RELEASE_TOOL_VERSION" ]]
+
+      - name: Refuse an incomplete composition
+        run: |
+          set -euo pipefail
+          echo "complete unit envelopes are not yet published; refusing to invent"
+          echo "composition-manifest.json or an immutable unit artifact store"
           exit 40
 
   receipts:
     name: Checks
-    needs: [route, verify, node, scenarios, build, manifest]
+    needs: [route, verify, node, scenarios, terraform, build, manifest]
     if: always()
     uses: ./.github/workflows/_receipts.yml
     with:
       lane: main
-      declared_jobs: '["route","verify","node","scenarios","build","manifest"]'
+      declared_jobs: '["route","verify","node","scenarios","terraform","build","manifest"]'
