@@ -50,9 +50,10 @@ pub use provider::{
 pub use store::{
     AgentHead, Claim, ClaimError, CommitError, CommitReceipt, ConditionFailure, DecisionContext,
     DueRowIsolation, DueRowIsolationReason, DueScanCursor, DueScanPage, DurableWake, EffectStore,
-    JournalCursor, JournalPage, JournalStore, LeaseStore, MAX_DUE_ROW_ISOLATIONS,
-    MalformedWakeDelivery, MalformedWakeReason, ReadBudget, ReleaseDisposition, SessionAuthority,
-    StoreError, WakeBatch, WakeDelivery, WakeOrigin, WakeQueue, WakeState,
+    FoldSnapshotStore, JournalCursor, JournalPage, JournalStore, LeaseStore,
+    MAX_DUE_ROW_ISOLATIONS, MalformedWakeDelivery, MalformedWakeReason, ReadBudget,
+    ReleaseDisposition, SessionAuthority, SnapshotDiagnostic, SnapshotPublishOutcome, StoreError,
+    WakeBatch, WakeDelivery, WakeOrigin, WakeQueue, WakeState,
 };
 pub use tool::{
     ControlStateView, DetachedStatus, PreparedToolCall, ToolDispatchError, ToolOutcome, ToolPort,

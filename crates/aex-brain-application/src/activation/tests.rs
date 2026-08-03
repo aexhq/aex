@@ -16,14 +16,15 @@ use super::memory::{
 };
 use super::{
     Activation, ActivationError, ActivationPolicy, AdmissionControl, AdmissionDecision, Outcome,
-    Ports, Release, RestoreBudget, Stop, WakeLoop,
+    Ports, Release, RestoreBudget, RestoreSource, Stop, WakeLoop,
 };
 use crate::kernel::{ActivationRegistry, DrainGate, PermitKind, PermitSet};
 use crate::ports::{
     BoxFuture, CancelToken, ClaimError, ClockPort as _, CommitError, ConditionFailure,
-    DetachedStatus, DispatchTicket, EffectStore as _, FenceGuard, JournalCursor, JournalPage,
-    LeaseStore as _, PreviewSink, ProviderDispatchError, ProviderFailureKind, ProviderOutcome,
-    ProviderPort, RedactedDetail, ReleaseDisposition, StoreError, StreamBudget, ToolDispatchError,
+    DetachedStatus, DispatchTicket, EffectStore as _, FenceGuard, FoldSnapshotStore as _,
+    JournalCursor, JournalPage, LeaseStore as _, PreviewSink, ProviderDispatchError,
+    ProviderFailureKind, ProviderOutcome, ProviderPort, RedactedDetail, ReleaseDisposition,
+    SnapshotDiagnostic, SnapshotPublishOutcome, StoreError, StreamBudget, ToolDispatchError,
     ToolOutcome, ToolResultBody, ToolRoute, UnknownResolution, WakeQueue as _,
 };
 use aex_brain_domain::budget::DimensionVector;
@@ -31,6 +32,7 @@ use aex_brain_domain::effect::{
     DetachedOperationRef, DispatchProof, DispatchStage, DurableEffect, EffectClass, EffectKind,
     EffectState,
 };
+use aex_brain_domain::fold::fold;
 use aex_brain_domain::ids::{
     AgentId, AgentKey, CatalogPin, ContentHash, DetachedOperationId, EffectId, JournalSeq,
     ModelSlug, OwnerToken, SessionId, Timestamp, ToolCallId, ToolName, WakeId, WorkShard,
@@ -38,6 +40,7 @@ use aex_brain_domain::ids::{
 use aex_brain_domain::journal::{
     ExecutorRoute, FinishReason, JournalEntry, JournalRecord, MessageOrigin, ParkReason,
 };
+use aex_brain_domain::snapshot::FoldSnapshotArtifact;
 use aex_brain_domain::wire_pending::{
     AgentLimits, CanonicalBlock, CanonicalModelRequest, ContentBlockRef, NormalizedUsage,
     ProviderId, ResolvedAgentConfig, Role, StopReason,
@@ -46,7 +49,10 @@ use aex_model_catalog::canonical::{CredentialBindingRef, ProviderReceipt, Receip
 use aex_model_catalog::document::CapabilitySet;
 use aex_model_catalog::{BoundedString, QualifiedModel, fixture};
 use aex_wire::CanonicalJson;
-use aex_wire::ids::{GenerationId, PrefixedId as _, ProviderCredentialId, Uuid7};
+use aex_wire::ids::{
+    ContentHash as SnapshotDigest, GenerationId, PrefixedId as _, ProviderCredentialId, Uuid7,
+    WorkspaceId,
+};
 use core::future::Future as _;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -355,6 +361,7 @@ impl Harness {
     fn ports(&self) -> Ports {
         Ports {
             journal: Arc::clone(&self.store) as Arc<_>,
+            snapshots: Arc::clone(&self.store) as Arc<_>,
             effects: Arc::clone(&self.store) as Arc<_>,
             leases: Arc::clone(&self.store) as Arc<_>,
             wakes: Arc::clone(&self.queue) as Arc<_>,
@@ -1265,7 +1272,7 @@ impl AdmissionControl for ReservingAdmission {
 #[test]
 fn the_restore_reservation_releases_with_the_activation() {
     let harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced()))]);
-    let restore_bytes = u64::try_from(harness.policy.restore.max_bytes).expect("fits u64");
+    let restore_bytes = harness.policy.restore_resident_bytes;
     let permits = Arc::new(PermitSet::new(BTreeMap::from([
         (PermitKind::Activation, 1),
         (PermitKind::ContextBytes, restore_bytes),
@@ -2474,4 +2481,368 @@ fn a_redelivered_wake_against_a_parked_agent_appends_nothing() {
     let second = harness.run_next().expect("the redelivery runs");
     assert_eq!(second, Outcome::Idle);
     assert_eq!(harness.records().len(), 2, "nothing more was appended");
+}
+
+fn restore_fixture(
+    store: &MemoryStore,
+    entries: &[JournalEntry],
+    budget: RestoreBudget,
+) -> Result<super::RestoredFold, ActivationError> {
+    let tail = entries.last().map(|entry| entry.envelope.seq);
+    let tail_hash = entries.last().map(|entry| entry.envelope.content_hash);
+    block_on(super::restore::restore(
+        store,
+        store,
+        fixture_authority().workspace,
+        key(),
+        tail,
+        tail_hash,
+        crate::ports::ReadBudget {
+            max_entries: 64,
+            max_bytes: usize::MAX,
+        },
+        budget,
+        usize::MAX,
+    ))
+}
+
+/// A snapshot is useful only if it can absorb old history while the authoritative journal
+/// continues moving. Publication therefore proves the historical row, not exact current head.
+#[test]
+fn stale_verified_snapshot_replays_only_the_bounded_suffix() {
+    let harness = Harness::new(Vec::new());
+    let entries = history();
+    let prefix_state = fold(&entries[..1]).expect("the prefix folds");
+    let artifact = FoldSnapshotArtifact::capture(key(), &prefix_state).expect("snapshot captures");
+    assert_eq!(
+        block_on(
+            harness
+                .store
+                .publish(fixture_authority().workspace, &artifact),
+        )
+        .expect("historical point is authoritative"),
+        SnapshotPublishOutcome::Published
+    );
+
+    let restored = restore_fixture(
+        &harness.store,
+        &entries,
+        RestoreBudget {
+            max_entries: 1,
+            max_bytes: artifact
+                .body
+                .len()
+                .saturating_add(journal_bytes(&entries[1..])),
+        },
+    )
+    .expect("one-entry suffix fits while sequence-zero replay does not");
+
+    assert_eq!(restored.state, fold(&entries).expect("full history folds"));
+    assert_eq!(
+        restored.source,
+        RestoreSource::Snapshot {
+            absorbed: artifact.pointer.absorbed,
+            snapshot_bytes: artifact.body.len(),
+            suffix_entries: 1,
+            suffix_bytes: journal_bytes(&entries[1..]),
+        }
+    );
+
+    let one_byte_short = artifact
+        .body
+        .len()
+        .saturating_add(journal_bytes(&entries[1..]))
+        .saturating_sub(1);
+    assert!(matches!(
+        restore_fixture(
+            &harness.store,
+            &entries,
+            RestoreBudget {
+                max_entries: 1,
+                max_bytes: one_byte_short,
+            },
+        ),
+        Err(ActivationError::Store(
+            StoreError::RestoreBudgetExhausted { .. }
+        ))
+    ));
+}
+
+/// Corrupt optimization bytes may degrade to bounded journal replay. If that replay is too
+/// large, the terminal error must retain both the snapshot rejection and the journal bound.
+#[test]
+fn corrupt_snapshot_falls_back_when_small_and_preserves_both_causes_when_large() {
+    let harness = Harness::new(Vec::new());
+    let entries = history();
+    let artifact =
+        FoldSnapshotArtifact::capture(key(), &fold(&entries[..1]).expect("the prefix folds"))
+            .expect("snapshot captures");
+    block_on(
+        harness
+            .store
+            .publish(fixture_authority().workspace, &artifact),
+    )
+    .expect("snapshot publishes");
+    let mut corrupt = artifact.body.clone();
+    corrupt[0] ^= 1;
+    harness
+        .store
+        .corrupt_snapshot_body(artifact.pointer.body_digest, corrupt);
+
+    let restored = restore_fixture(
+        &harness.store,
+        &entries,
+        RestoreBudget {
+            max_entries: entries.len(),
+            max_bytes: artifact.body.len().saturating_add(journal_bytes(&entries)),
+        },
+    )
+    .expect("authoritative fallback fits");
+    assert!(
+        matches!(
+            restored.source,
+            RestoreSource::JournalFallback {
+                diagnostic: SnapshotDiagnostic::Rejected(_)
+            }
+        ),
+        "unexpected restore source: {:?}",
+        restored.source
+    );
+
+    let error = restore_fixture(
+        &harness.store,
+        &entries,
+        RestoreBudget {
+            max_entries: 1,
+            max_bytes: artifact.body.len().saturating_add(journal_bytes(&entries)),
+        },
+    )
+    .expect_err("the same corrupt snapshot cannot hide an oversized fallback");
+    assert!(matches!(
+        error,
+        ActivationError::SnapshotFallbackFailed {
+            snapshot: SnapshotDiagnostic::Rejected(_),
+            fallback,
+        } if matches!(*fallback, ActivationError::Store(StoreError::RestoreBudgetExhausted { .. }))
+    ));
+}
+
+/// Two fresh restore calls against one durable fixture model process restart/horizontal
+/// handoff: neither call depends on mux-local state or a previous decoded `FoldState`.
+#[test]
+fn snapshot_restore_survives_process_handoff_without_local_authority() {
+    let harness = Harness::new(Vec::new());
+    let entries = history();
+    let artifact =
+        FoldSnapshotArtifact::capture(key(), &fold(&entries[..1]).expect("the prefix folds"))
+            .expect("snapshot captures");
+    block_on(
+        harness
+            .store
+            .publish(fixture_authority().workspace, &artifact),
+    )
+    .expect("snapshot publishes");
+    let budget = RestoreBudget {
+        max_entries: 1,
+        max_bytes: usize::MAX,
+    };
+
+    let first = restore_fixture(&harness.store, &entries, budget).expect("first process restores");
+    let second =
+        restore_fixture(&harness.store, &entries, budget).expect("successor process restores");
+    assert_eq!(first, second);
+    assert_eq!(harness.log.count("snapshot_load_latest"), 2);
+    assert_eq!(harness.log.count("snapshot_load_body"), 2);
+}
+
+/// Workspace authority is request-scoped but still mandatory. A mismatch is not treated as
+/// an unavailable optimization because sequence-zero fallback would hide an authorization bug.
+#[test]
+fn snapshot_body_workspace_mismatch_is_fatal_before_journal_fallback() {
+    let harness = Harness::new(Vec::new());
+    let entries = history();
+    let artifact =
+        FoldSnapshotArtifact::capture(key(), &fold(&entries[..1]).expect("the prefix folds"))
+            .expect("snapshot captures");
+    block_on(
+        harness
+            .store
+            .publish(fixture_authority().workspace, &artifact),
+    )
+    .expect("snapshot publishes");
+    let wrong_workspace = WorkspaceId::from_uuid7(Uuid7::compose(2, [7; 10]));
+    let tail = entries.last().expect("history is non-empty");
+
+    assert_eq!(
+        block_on(super::restore::restore(
+            harness.store.as_ref(),
+            harness.store.as_ref(),
+            wrong_workspace,
+            key(),
+            Some(tail.envelope.seq),
+            Some(tail.envelope.content_hash),
+            crate::ports::ReadBudget {
+                max_entries: 64,
+                max_bytes: usize::MAX,
+            },
+            RestoreBudget {
+                max_entries: entries.len(),
+                max_bytes: usize::MAX,
+            },
+            usize::MAX,
+        )),
+        Err(ActivationError::Store(StoreError::SessionWorkspaceMismatch))
+    );
+    assert_eq!(harness.log.count("read_page"), 0);
+}
+
+/// Pointer selection is monotonic. A slower publisher cannot roll back a newer cut, and an
+/// impossible second body at the same sequence is quarantined rather than selected.
+#[test]
+fn snapshot_publication_refuses_rollback_and_same_sequence_conflict() {
+    let harness = Harness::new(Vec::new());
+    let entries = history();
+    let old = FoldSnapshotArtifact::capture(key(), &fold(&entries[..1]).expect("the prefix folds"))
+        .expect("old snapshot captures");
+    let current = FoldSnapshotArtifact::capture(key(), &fold(&entries).expect("history folds"))
+        .expect("current snapshot captures");
+    let wrong_workspace = WorkspaceId::from_uuid7(Uuid7::compose(2, [7; 10]));
+    assert_eq!(
+        block_on(harness.store.publish(wrong_workspace, &current)),
+        Err(StoreError::SessionWorkspaceMismatch)
+    );
+    assert_eq!(
+        block_on(
+            harness
+                .store
+                .publish(fixture_authority().workspace, &current),
+        )
+        .expect("current snapshot publishes"),
+        SnapshotPublishOutcome::Published
+    );
+    assert_eq!(
+        block_on(
+            harness
+                .store
+                .publish(fixture_authority().workspace, &current),
+        )
+        .expect("exact retry is idempotent"),
+        SnapshotPublishOutcome::AlreadyCurrent
+    );
+    assert_eq!(
+        block_on(harness.store.publish(fixture_authority().workspace, &old),)
+            .expect("rollback is a typed no-op"),
+        SnapshotPublishOutcome::Superseded {
+            current: current.pointer.absorbed,
+        }
+    );
+    assert_eq!(
+        harness.store.snapshot_pointer(key()),
+        Some(current.pointer.clone())
+    );
+
+    let mut hostile = current.pointer.clone();
+    hostile.body_digest = SnapshotDigest::of(b"different derived bytes");
+    harness
+        .store
+        .seed_snapshot_unchecked(hostile, b"different derived bytes".to_vec());
+    assert_eq!(
+        block_on(
+            harness
+                .store
+                .publish(fixture_authority().workspace, &current),
+        ),
+        Err(StoreError::SnapshotPointerConflict {
+            seq: current.pointer.absorbed.seq,
+        })
+    );
+}
+
+/// A valid body that is ahead of the fenced claim is never allowed to seed planning. If
+/// authoritative replay sees more rows than the claimed bound, both refusals remain typed.
+#[test]
+fn snapshot_ahead_of_claim_is_diagnostic_not_authority() {
+    let harness = Harness::new(Vec::new());
+    let entries = history();
+    let current = FoldSnapshotArtifact::capture(key(), &fold(&entries).expect("history folds"))
+        .expect("snapshot captures");
+    block_on(
+        harness
+            .store
+            .publish(fixture_authority().workspace, &current),
+    )
+    .expect("snapshot publishes");
+    let claimed = &entries[..1];
+
+    let restored = block_on(super::restore::restore(
+        harness.store.as_ref(),
+        harness.store.as_ref(),
+        fixture_authority().workspace,
+        key(),
+        claimed.last().map(|entry| entry.envelope.seq),
+        claimed.last().map(|entry| entry.envelope.content_hash),
+        crate::ports::ReadBudget {
+            max_entries: 64,
+            max_bytes: usize::MAX,
+        },
+        RestoreBudget {
+            max_entries: claimed.len(),
+            max_bytes: usize::MAX,
+        },
+        usize::MAX,
+    ))
+    .expect_err("the fixture journal still exposes rows beyond the historical claim");
+    assert!(
+        matches!(
+            restored,
+            ActivationError::SnapshotFallbackFailed {
+                snapshot: SnapshotDiagnostic::AheadOfClaim { .. },
+                ref fallback,
+            } if matches!(**fallback, ActivationError::Store(StoreError::RestoreBudgetExhausted { .. }))
+        ),
+        "unexpected restore error: {restored:?}"
+    );
+}
+
+/// Same sequence is insufficient authority: a claimed hash fork rejects the snapshot and
+/// preserves the authoritative replay's independent tail mismatch.
+#[test]
+fn snapshot_same_sequence_fork_never_reaches_planning() {
+    let harness = Harness::new(Vec::new());
+    let entries = history();
+    let snapshot =
+        FoldSnapshotArtifact::capture(key(), &fold(&entries[..1]).expect("the prefix folds"))
+            .expect("snapshot captures");
+    block_on(
+        harness
+            .store
+            .publish(fixture_authority().workspace, &snapshot),
+    )
+    .expect("snapshot publishes");
+
+    let error = block_on(super::restore::restore(
+        harness.store.as_ref(),
+        harness.store.as_ref(),
+        fixture_authority().workspace,
+        key(),
+        Some(snapshot.pointer.absorbed.seq),
+        Some(ContentHash([0xaa; 32])),
+        crate::ports::ReadBudget {
+            max_entries: 64,
+            max_bytes: usize::MAX,
+        },
+        RestoreBudget {
+            max_entries: entries.len(),
+            max_bytes: usize::MAX,
+        },
+        usize::MAX,
+    ))
+    .expect_err("same-sequence different-hash authority must refuse");
+    assert!(matches!(
+        error,
+        ActivationError::SnapshotFallbackFailed {
+            snapshot: SnapshotDiagnostic::ForkAtClaim { .. },
+            fallback,
+        } if matches!(*fallback, ActivationError::Store(StoreError::JournalTailMismatch { .. }))
+    ));
 }

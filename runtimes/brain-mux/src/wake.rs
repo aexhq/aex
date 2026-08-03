@@ -29,11 +29,11 @@ use aex_brain_application::kernel::{ActivationRegistry, DrainGate};
 use aex_brain_application::ports::{
     AgentHead, BoxFuture, CancelToken, CatalogDigest, CatalogError, CatalogPort, Claim, ClaimError,
     ClockPort, CommitError, CommitReceipt, DecisionContext, DispatchTicket, EffectStore,
-    FenceGuard, HandsAccepted, HandsEndpoint, HandsError, HandsOperationStart,
+    FenceGuard, FoldSnapshotStore, HandsAccepted, HandsEndpoint, HandsError, HandsOperationStart,
     HandsOperationStatus, HandsPort, HandsResult, IdPort, JournalPage, JournalStore, LeaseStore,
     PreviewSink, ProviderDispatchError, ProviderOutcome, ProviderPort, ReadBudget, RedactedDetail,
-    ReleaseDisposition, ResultBounds, SessionAuthority, SteadyInstant, StoreError, StreamBudget,
-    ToolPort, UnknownResolution,
+    ReleaseDisposition, ResultBounds, SessionAuthority, SnapshotPublishOutcome, SteadyInstant,
+    StoreError, StreamBudget, ToolPort, UnknownResolution,
 };
 use aex_brain_domain::commit::DecisionCommit;
 use aex_brain_domain::effect::{
@@ -43,6 +43,7 @@ use aex_brain_domain::ids::{
     AgentId, AgentKey, CatalogPin, DetachedOperationId, EffectId, HandsOperationId, JournalSeq,
     ModelSlug, OwnerToken, SessionId, Timestamp, WakeId,
 };
+use aex_brain_domain::snapshot::{FoldSnapshotArtifact, FoldSnapshotPointer};
 use aex_brain_domain::wire_pending::{CanonicalModelRequest, DurableOperationSupport, ProviderId};
 use aex_model_catalog::{ProviderFailureKind, QualifiedModel};
 use aex_wire::ids::GenerationId;
@@ -54,6 +55,10 @@ use std::sync::Arc;
 /// claimed session. Keeping the refusal fixture proves an accidentally unbound store remains
 /// fail closed.
 pub const STORE_UNBOUND: &str = "aex-brain-store-aws is not bound into this composition";
+
+/// Why verified fold snapshots are not yet bound.
+pub const SNAPSHOT_ABSENT: &str = "the regional content-authority fold snapshot reader and \
+                                  monotonic publisher are not bound";
 
 /// Why the provider is not bound.
 pub const PROVIDER_ABSENT: &str =
@@ -235,6 +240,32 @@ impl JournalStore for UnboundStore {
         _commit: &'a DecisionCommit,
     ) -> BoxFuture<'a, Result<CommitReceipt, CommitError>> {
         Box::pin(async { Err(CommitError::Store(Self::refusal())) })
+    }
+}
+
+impl FoldSnapshotStore for UnboundStore {
+    fn load_latest<'a>(
+        &'a self,
+        _key: &'a AgentKey,
+    ) -> BoxFuture<'a, Result<Option<FoldSnapshotPointer>, StoreError>> {
+        Box::pin(async { Err(Self::refusal()) })
+    }
+
+    fn load_body<'a>(
+        &'a self,
+        _workspace: aex_wire::ids::WorkspaceId,
+        _pointer: &'a FoldSnapshotPointer,
+        _max_bytes: usize,
+    ) -> BoxFuture<'a, Result<Vec<u8>, StoreError>> {
+        Box::pin(async { Err(Self::refusal()) })
+    }
+
+    fn publish<'a>(
+        &'a self,
+        _workspace: aex_wire::ids::WorkspaceId,
+        _artifact: &'a FoldSnapshotArtifact,
+    ) -> BoxFuture<'a, Result<SnapshotPublishOutcome, StoreError>> {
+        Box::pin(async { Err(Self::refusal()) })
     }
 }
 
@@ -456,6 +487,8 @@ impl BindingState {
 pub struct Bindings {
     /// Whether the journal, effect and lease ports reach a real authority.
     pub store: BindingState,
+    /// Whether immutable fold snapshots and their monotonic pointer are real.
+    pub snapshots: BindingState,
     /// Whether the provider port reaches a real adapter.
     pub provider: BindingState,
     /// Whether the catalog port reaches a verified artifact.
@@ -472,6 +505,7 @@ impl Bindings {
     pub const fn unavailable() -> Self {
         Self {
             store: BindingState::Ready,
+            snapshots: BindingState::Unavailable(SNAPSHOT_ABSENT),
             provider: BindingState::Unavailable(PROVIDER_ABSENT),
             catalog: BindingState::Unavailable(CATALOG_ABSENT),
             tools: BindingState::Unavailable(TOOL_EXECUTORS_ABSENT),
@@ -484,6 +518,7 @@ impl Bindings {
     pub const fn provider_ready() -> Self {
         Self {
             store: BindingState::Ready,
+            snapshots: BindingState::Unavailable(SNAPSHOT_ABSENT),
             provider: BindingState::Ready,
             catalog: BindingState::Unavailable(CATALOG_ABSENT),
             tools: BindingState::Unavailable(TOOL_EXECUTORS_ABSENT),
@@ -511,6 +546,7 @@ impl Bindings {
     pub const fn production() -> Self {
         Self {
             store: BindingState::Ready,
+            snapshots: BindingState::Ready,
             provider: BindingState::Ready,
             catalog: BindingState::Ready,
             tools: BindingState::Ready,
@@ -522,6 +558,7 @@ impl Bindings {
     #[must_use]
     pub const fn complete(&self) -> bool {
         self.store.is_ready()
+            && self.snapshots.is_ready()
             && self.provider.is_ready()
             && self.catalog.is_ready()
             && self.tools.is_ready()
@@ -534,6 +571,7 @@ impl Bindings {
         let mut missing = Vec::new();
         for state in [
             self.store,
+            self.snapshots,
             self.provider,
             self.catalog,
             self.tools,
@@ -556,6 +594,7 @@ pub struct ProductionPeers {
     tools: Arc<dyn ToolPort>,
     hands: Arc<dyn HandsPort>,
     catalog: Arc<dyn CatalogPort>,
+    snapshots: Arc<dyn FoldSnapshotStore>,
 }
 
 impl ProductionPeers {
@@ -566,12 +605,14 @@ impl ProductionPeers {
         tools: Arc<dyn ToolPort>,
         hands_backend: Arc<dyn aex_brain_hands::HandsBackend>,
         catalog: Arc<dyn CatalogPort>,
+        snapshots: Arc<dyn FoldSnapshotStore>,
     ) -> Self {
         Self {
             provider,
             tools,
             hands: Arc::new(aex_brain_hands::HandsAdapter::new(hands_backend)),
             catalog,
+            snapshots,
         }
     }
 }
@@ -694,6 +735,7 @@ pub fn partial_ports_with_catalog(
 ) -> Ports {
     Ports {
         journal: Arc::clone(&store) as Arc<_>,
+        snapshots: Arc::new(UnboundStore),
         effects: Arc::clone(&store) as Arc<_>,
         leases: store,
         wakes,
@@ -717,6 +759,7 @@ pub fn production_ports(
 ) -> Ports {
     Ports {
         journal: Arc::clone(&store) as Arc<_>,
+        snapshots: peers.snapshots,
         effects: Arc::clone(&store) as Arc<_>,
         leases: store,
         wakes,
@@ -831,18 +874,19 @@ mod tests {
         assert!(!bindings.complete());
         assert!(bindings.store.is_ready());
         let missing = bindings.unsatisfied();
-        assert_eq!(missing.len(), 4);
+        assert_eq!(missing.len(), 5);
         assert!(!missing.contains(&STORE_UNBOUND));
         assert!(missing.contains(&PROVIDER_ABSENT));
         assert!(missing.contains(&CATALOG_ABSENT));
         assert!(missing.contains(&super::TOOL_EXECUTORS_ABSENT));
         assert!(missing.contains(&super::HANDS_ABSENT));
+        assert!(missing.contains(&super::SNAPSHOT_ABSENT));
 
         let with_provider = Bindings::provider_ready();
         assert!(!with_provider.complete());
         assert!(with_provider.provider.is_ready());
         let missing = with_provider.unsatisfied();
-        assert_eq!(missing.len(), 3);
+        assert_eq!(missing.len(), 4);
         assert!(!missing.contains(&PROVIDER_ABSENT));
         assert!(Bindings::production().complete());
     }
@@ -930,6 +974,7 @@ mod tests {
             Arc::clone(&admission),
             Bindings {
                 store: super::BindingState::Ready,
+                snapshots: super::BindingState::Ready,
                 provider: super::BindingState::Ready,
                 catalog: super::BindingState::Ready,
                 tools: super::BindingState::Ready,
@@ -968,6 +1013,7 @@ mod tests {
             admission,
             Bindings {
                 store: super::BindingState::Ready,
+                snapshots: super::BindingState::Ready,
                 provider: super::BindingState::Ready,
                 catalog: super::BindingState::Ready,
                 tools: super::BindingState::Ready,

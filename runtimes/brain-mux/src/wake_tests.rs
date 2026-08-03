@@ -182,6 +182,7 @@ fn produced() -> ProviderOutcome {
 fn bound() -> Bindings {
     Bindings {
         store: BindingState::Ready,
+        snapshots: BindingState::Ready,
         provider: BindingState::Ready,
         catalog: BindingState::Ready,
         tools: BindingState::Ready,
@@ -224,6 +225,7 @@ fn compose_loop(provider: Arc<dyn ProviderPort>) -> Composed {
     let drain = Arc::new(DrainGate::new());
     let ports = Ports {
         journal: Arc::clone(&store) as Arc<_>,
+        snapshots: Arc::clone(&store) as Arc<_>,
         effects: Arc::clone(&store) as Arc<_>,
         leases: Arc::clone(&store) as Arc<_>,
         wakes: Arc::clone(&queue) as Arc<_>,
@@ -351,6 +353,7 @@ async fn ten_long_effects_are_polled_concurrently_under_the_drive_bound() {
     let drain = Arc::new(DrainGate::new());
     let ports = Ports {
         journal: Arc::clone(&store) as Arc<_>,
+        snapshots: Arc::clone(&store) as Arc<_>,
         effects: Arc::clone(&store) as Arc<_>,
         leases: Arc::clone(&store) as Arc<_>,
         wakes: Arc::clone(&queue) as Arc<_>,
@@ -365,9 +368,7 @@ async fn ten_long_effects_are_polled_concurrently_under_the_drive_bound() {
         max_concurrent_drives: COUNT,
         ..ActivationPolicy::default()
     };
-    let context_bytes = u64::try_from(policy.restore.max_bytes)
-        .expect("the restore budget fits u64")
-        .saturating_mul(COUNT_U64);
+    let context_bytes = policy.restore_resident_bytes.saturating_mul(COUNT_U64);
     let permits = Arc::new(PermitSet::new(BTreeMap::from([
         (PermitKind::Activation, COUNT_U64),
         (PermitKind::ContextBytes, context_bytes),
@@ -520,6 +521,7 @@ async fn the_scheduler_refills_below_the_aggregate_cap_and_keeps_due_recovery_li
     let drain = Arc::new(DrainGate::new());
     let ports = Ports {
         journal: Arc::clone(&store) as Arc<_>,
+        snapshots: Arc::clone(&store) as Arc<_>,
         effects: Arc::clone(&store) as Arc<_>,
         leases: Arc::clone(&store) as Arc<_>,
         wakes: Arc::clone(&queue) as Arc<_>,
@@ -540,8 +542,8 @@ async fn the_scheduler_refills_below_the_aggregate_cap_and_keeps_due_recovery_li
         renew_interval: core::time::Duration::from_millis(10),
         ..ActivationPolicy::default()
     };
-    let context_bytes = u64::try_from(policy.restore.max_bytes)
-        .expect("the restore budget fits u64")
+    let context_bytes = policy
+        .restore_resident_bytes
         .saturating_mul(u64::try_from(CAP).expect("the test cap fits u64"));
     let admission = Arc::new(Admission::new(
         AdmissionBounds {

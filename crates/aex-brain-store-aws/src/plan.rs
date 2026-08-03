@@ -59,6 +59,13 @@ pub mod participant {
     pub const MAILBOX: Participant = Participant::new("brain.mailbox");
     /// One paged fanout intent.
     pub const FANOUT_INTENT: Participant = Participant::new("brain.fanout_intent");
+    /// The immutable journal row whose exact hash a snapshot absorbed.
+    pub const FOLD_SNAPSHOT_JOURNAL_POINT: Participant =
+        Participant::new("brain.fold_snapshot.journal_point");
+    /// The agent control row proving the historical point is not ahead of authority.
+    pub const FOLD_SNAPSHOT_CONTROL: Participant = Participant::new("brain.fold_snapshot.control");
+    /// The monotonically selected fold-snapshot pointer.
+    pub const FOLD_SNAPSHOT_POINTER: Participant = Participant::new("brain.fold_snapshot.pointer");
 }
 
 /// The only physical tables Brain's durable store addresses.

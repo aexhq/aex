@@ -92,12 +92,15 @@ pub struct FoldState {
     /// The user turn currently accumulating.
     pub open_user: Vec<ContentBlockRef>,
     /// Tool calls asked for and not yet resolved, keyed by call id.
+    #[serde(with = "ordered_map_entries")]
     pub pending_calls: BTreeMap<ToolCallId, PendingCall>,
     /// Tool results resolved but not yet emitted into a turn.
+    #[serde(with = "ordered_map_entries")]
     pub resolved_calls: BTreeMap<ToolCallId, ResolvedCall>,
     /// Calls already resolved in this turn, so a duplicate result is refused.
     pub retired_calls: BTreeSet<ToolCallId>,
     /// Effects opened and not yet settled.
+    #[serde(with = "ordered_map_entries")]
     pub open_effects: BTreeMap<EffectId, EffectState>,
     /// Effects that have settled, so a settlement without a preparation is refused.
     pub settled_effects: BTreeSet<EffectId>,
@@ -106,10 +109,13 @@ pub struct FoldState {
     /// This agent's budget node.
     pub budget: BudgetNode,
     /// Children, keyed by identity.
+    #[serde(with = "ordered_map_entries")]
     pub children: BTreeMap<AgentId, ChildRecord>,
     /// Join groups this agent opened.
+    #[serde(with = "ordered_map_entries")]
     pub joins: BTreeMap<JoinId, JoinGroup>,
     /// Open durable waits.
+    #[serde(with = "ordered_map_entries")]
     pub waits: BTreeMap<WaitId, ParkReason>,
     /// Where the agent is.
     pub phase: Phase,
@@ -134,6 +140,42 @@ pub struct FoldState {
     pub failure: Option<TypedFailure>,
     /// The structural limits every spawn is checked against.
     pub structural: StructuralLimits,
+}
+
+/// Stable JSON representation for typed-key maps.
+///
+/// JSON object keys can only be strings. Encoding a typed identifier as a string-keyed
+/// object would make its display spelling part of the snapshot contract and would bypass
+/// the identifier's normal serde validation. A sorted array of `(key, value)` pairs keeps
+/// the typed codec, inherits `BTreeMap` ordering, and permits duplicate rejection on read.
+mod ordered_map_entries {
+    use std::collections::BTreeMap;
+
+    use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
+
+    pub fn serialize<K, V, S>(map: &BTreeMap<K, V>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        K: Serialize + Ord,
+        V: Serialize,
+        S: Serializer,
+    {
+        map.iter().collect::<Vec<_>>().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, K, V, D>(deserializer: D) -> Result<BTreeMap<K, V>, D::Error>
+    where
+        K: Deserialize<'de> + Ord,
+        V: Deserialize<'de>,
+        D: Deserializer<'de>,
+    {
+        let entries = Vec::<(K, V)>::deserialize(deserializer)?;
+        let expected = entries.len();
+        let map = entries.into_iter().collect::<BTreeMap<_, _>>();
+        if map.len() != expected {
+            return Err(D::Error::custom("duplicate typed map key"));
+        }
+        Ok(map)
+    }
 }
 
 /// Why a record could not be folded.

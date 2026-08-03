@@ -739,8 +739,7 @@ impl WakeLoop {
                 .await;
             return Ok(Outcome::Released(Release::LocallyBusy));
         };
-        let restore_bytes =
-            u64::try_from(self.activation.policy().restore.max_bytes).unwrap_or(u64::MAX);
+        let restore_bytes = self.activation.policy().restore_resident_bytes;
         let _permits = match self.admission.admit(restore_bytes) {
             AdmissionDecision::Admitted(permits) => permits,
             AdmissionDecision::Deferred { requeue_after } => {
@@ -859,110 +858,38 @@ impl Session<'_> {
         }
     }
 
-    /// Rebuilds the fold from the journal.
+    /// Rebuilds the fold from a verified immutable snapshot plus a bounded journal suffix,
+    /// or one explicit bounded sequence-zero fallback.
     ///
     /// A page that observes a gap returns no entries at all, so the agent never acts on a
     /// prefix of its own history: `read_page` refuses and this propagates the refusal. The
     /// complete restore must also equal the `(sequence, hash)` tail returned with the claim;
     /// neither an early EOF nor a same-sequence fork may reach recovery or planning.
     async fn reload(&mut self) -> Result<(), ActivationError> {
-        let mut state = FoldState::empty();
-        let mut from = JournalSeq::ZERO;
-        let mut cursor = None;
-        let mut restored_entries = 0_usize;
-        let mut restored_bytes = 0_usize;
-        loop {
-            let remaining_entries = self
-                .policy
-                .restore
-                .max_entries
-                .saturating_sub(restored_entries);
-            let remaining_bytes = self.policy.restore.max_bytes.saturating_sub(restored_bytes);
-            if remaining_entries == 0 || remaining_bytes == 0 {
-                return Err(StoreError::RestoreBudgetExhausted {
-                    entries: restored_entries.saturating_add(usize::from(remaining_entries == 0)),
-                    bytes: restored_bytes.saturating_add(usize::from(remaining_bytes == 0)),
-                    max_entries: self.policy.restore.max_entries,
-                    max_bytes: self.policy.restore.max_bytes,
-                }
-                .into());
-            }
-            let page_budget = crate::ports::ReadBudget {
-                max_entries: self.policy.read.max_entries.min(remaining_entries),
-                max_bytes: self.policy.read.max_bytes.min(remaining_bytes),
-            };
-            let page = match self
-                .ports
-                .journal
-                .read_page(&self.key, from, page_budget, cursor.take())
-                .await
-            {
-                Ok(page) => page,
-                Err(StoreError::ReadBudgetExhausted { entries, bytes })
-                    if remaining_bytes <= self.policy.read.max_bytes =>
-                {
-                    return Err(StoreError::RestoreBudgetExhausted {
-                        entries: restored_entries.saturating_add(entries),
-                        bytes: restored_bytes.saturating_add(bytes),
-                        max_entries: self.policy.restore.max_entries,
-                        max_bytes: self.policy.restore.max_bytes,
-                    }
-                    .into());
-                }
-                Err(error) => return Err(error.into()),
-            };
-            let next_entries = restored_entries.saturating_add(page.entries.len());
-            let next_bytes = restored_bytes.saturating_add(page.hydrated_bytes);
-            if next_entries > self.policy.restore.max_entries
-                || next_bytes > self.policy.restore.max_bytes
-            {
-                return Err(StoreError::RestoreBudgetExhausted {
-                    entries: next_entries,
-                    bytes: next_bytes,
-                    max_entries: self.policy.restore.max_entries,
-                    max_bytes: self.policy.restore.max_bytes,
-                }
-                .into());
-            }
-            for entry in &page.entries {
-                apply(&mut state, entry)?;
-            }
-            restored_entries = next_entries;
-            restored_bytes = next_bytes;
-            match page.next {
-                Some(next) => {
-                    if page.entries.is_empty() {
-                        return Err(StoreError::Undecodable {
-                            location: "journal continuation".to_owned(),
-                            reason: "a continuation followed a page with no journal entries"
-                                .to_owned(),
-                        }
-                        .into());
-                    }
-                    from = next.next();
-                    cursor = Some(next);
-                }
-                None => break,
-            }
-        }
-        let claim = self
-            .claim
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let claimed_seq = claim.head.journal_tail;
-        let claimed_hash = claim.head.journal_tail_hash;
-        drop(claim);
-        let folded_hash = state.hashes.last().copied();
-        if state.tail != claimed_seq || folded_hash != claimed_hash {
-            return Err(StoreError::JournalTailMismatch {
-                claimed_seq,
-                claimed_hash,
-                folded_seq: state.tail,
-                folded_hash,
-            }
-            .into());
-        }
-        self.state = state;
+        let (claimed_seq, claimed_hash, workspace) = {
+            let claim = self
+                .claim
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            (
+                claim.head.journal_tail,
+                claim.head.journal_tail_hash,
+                claim.authority.workspace,
+            )
+        };
+        let restored = super::restore::restore(
+            self.ports.journal.as_ref(),
+            self.ports.snapshots.as_ref(),
+            workspace,
+            self.key,
+            claimed_seq,
+            claimed_hash,
+            self.policy.read,
+            self.policy.restore,
+            self.policy.max_snapshot_bytes,
+        )
+        .await?;
+        self.state = restored.state;
         Ok(())
     }
 
