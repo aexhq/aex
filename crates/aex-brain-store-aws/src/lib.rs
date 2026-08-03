@@ -29,5 +29,6 @@ pub use expressions::{Action, ActionKind, Condition, Table, WakeItem, WorkExpres
 pub use journal::BrainStore;
 pub use keys::{BRAIN_AGENT_PARTITION_PREFIX, BRAIN_PREFIX, BrainKeyError};
 pub use plan::{BrainTables, PlanError};
+pub use snapshot::{AwsFoldSnapshotStore, SnapshotBodyStore, SnapshotContentContext};
 pub use translate::TranslateError;
 pub use wake::{DueScan, SqsWakeQueue};

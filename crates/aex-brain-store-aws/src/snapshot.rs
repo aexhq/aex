@@ -6,11 +6,25 @@
 //! append-only journal. Keeping this compiler usable before the body adapter exists lets
 //! production wiring fail closed without weakening the transaction contract.
 
-use aex_brain_domain::snapshot::{
-    FOLD_SNAPSHOT_SCHEMA, FoldSnapshotPointer, MAX_FOLD_SNAPSHOT_BYTES,
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use aex_brain_application::ports::{
+    BoxFuture, FoldSnapshotStore, SnapshotPublishOutcome, StoreError,
 };
+use aex_brain_domain::snapshot::{
+    FOLD_SNAPSHOT_SCHEMA, FoldSnapshotArtifact, FoldSnapshotPointer, MAX_FOLD_SNAPSHOT_BYTES,
+};
+use aex_content_aws::object_store::{
+    ContentObjectStore, ObjectHead, PutImmutable, S3ContentObjects,
+};
+use aex_content_aws::{ContentObjectError, ObjectKey};
 use aex_session_dynamodb::attr::{CodecError, Item, ItemBuilder, Row, n, s};
 use aex_session_dynamodb::plan::{TransactionPlan, key};
+use aex_wire::ids::{ContentHash as BodyDigest, WorkspaceId};
+use aex_wire::types::Region;
+use async_trait::async_trait;
+use aws_sdk_dynamodb::Client;
 
 use crate::keys;
 use crate::plan::{BrainTables, PlanError, participant};
@@ -18,6 +32,514 @@ use crate::translate;
 
 /// The `itemType` of the selected fold-snapshot pointer.
 pub const FOLD_SNAPSHOT_POINTER: &str = "brain_fold_snapshot_pointer";
+
+const SNAPSHOT_CONTENT_DOMAIN: &str = "brain-fold-snapshot";
+
+/// Process-scoped deployment facts used to build a workspace-scoped SSE-KMS context.
+///
+/// Tenant identity is deliberately absent. [`WorkspaceId`] is supplied to each body
+/// operation from the session authority claimed for that activation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnapshotContentContext {
+    plane: String,
+    region: Region,
+}
+
+impl SnapshotContentContext {
+    /// Validates the deployment facts used for snapshot content encryption.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError::Transport`] for an unsupported plane or region because either
+    /// means the runtime composition does not name a real strict-v1 plane.
+    pub fn new(plane: &str, region: &str) -> Result<Self, StoreError> {
+        if !matches!(plane, "dev" | "prd") {
+            return Err(composition_error(
+                "snapshot content plane must be `dev` or `prd`",
+            ));
+        }
+        let region = Region::from_name(region)
+            .ok_or_else(|| composition_error("snapshot content region is not supported"))?;
+        Ok(Self {
+            plane: plane.to_owned(),
+            region,
+        })
+    }
+
+    fn encryption_context(&self, workspace: WorkspaceId) -> Result<Vec<u8>, StoreError> {
+        let pairs = BTreeMap::from([
+            ("aex:domain", SNAPSHOT_CONTENT_DOMAIN.to_owned()),
+            ("aex:plane", self.plane.clone()),
+            ("aex:region", self.region.as_str().to_owned()),
+            ("aex:workspace", workspace.to_string()),
+        ]);
+        aex_wire::to_jcs_bytes(&pairs).map_err(|_| {
+            composition_error("snapshot content encryption context could not be encoded")
+        })
+    }
+}
+
+/// The narrow regional-content seam the fold-snapshot adapter consumes.
+///
+/// `aex-content-aws` remains the physical S3 authority. This seam exists so the Brain
+/// adapter can assert ordering and failure mapping without faking `DynamoDB` or every
+/// unrelated multipart/grant operation on [`ContentObjectStore`].
+#[async_trait]
+pub trait SnapshotBodyStore: Send + Sync + 'static {
+    /// Places one immutable workspace-scoped body.
+    async fn publish_immutable(
+        &self,
+        workspace: WorkspaceId,
+        digest: BodyDigest,
+        body: Vec<u8>,
+        encryption_context: Vec<u8>,
+    ) -> Result<(), ContentObjectError>;
+
+    /// Reads one immutable body without collecting a provider stream above `max_bytes`.
+    async fn read_bounded(
+        &self,
+        workspace: WorkspaceId,
+        digest: BodyDigest,
+        max_bytes: u64,
+    ) -> Result<Vec<u8>, ContentObjectError>;
+}
+
+#[async_trait]
+impl SnapshotBodyStore for S3ContentObjects {
+    async fn publish_immutable(
+        &self,
+        workspace: WorkspaceId,
+        digest: BodyDigest,
+        body: Vec<u8>,
+        encryption_context: Vec<u8>,
+    ) -> Result<(), ContentObjectError> {
+        let body_bytes = u64::try_from(body.len()).map_err(|_| ContentObjectError::Invalid {
+            detail: "the snapshot body cannot be described as u64 bytes".to_owned(),
+        })?;
+        match self
+            .put_immutable(PutImmutable {
+                workspace,
+                digest: &digest,
+                plaintext_bytes: body_bytes,
+                body,
+                encryption_context: &encryption_context,
+            })
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(ContentObjectError::CommitAmbiguous { .. }) => {
+                let key = ObjectKey::new(workspace, &digest);
+                let head = self.head(&key).await?;
+                verify_committed_body(&head, digest, body_bytes)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn read_bounded(
+        &self,
+        workspace: WorkspaceId,
+        digest: BodyDigest,
+        max_bytes: u64,
+    ) -> Result<Vec<u8>, ContentObjectError> {
+        ContentObjectStore::read_bounded(self, workspace, &digest, max_bytes)
+            .await
+            .map(|object| object.body)
+    }
+}
+
+fn verify_committed_body(
+    head: &ObjectHead,
+    digest: BodyDigest,
+    expected_bytes: u64,
+) -> Result<(), ContentObjectError> {
+    let expected_digest = digest.to_wire();
+    let expected_digest = expected_digest
+        .strip_prefix("sha256:")
+        .unwrap_or(expected_digest.as_str());
+    if head.content_length == expected_bytes
+        && head.declared_digest.as_deref() == Some(expected_digest)
+    {
+        Ok(())
+    } else {
+        Err(ContentObjectError::IntegrityMismatch {
+            detail: "an ambiguous snapshot put did not resolve to the expected object".to_owned(),
+        })
+    }
+}
+
+/// Production fold-snapshot adapter over `DynamoDB` pointer selection and regional S3 content.
+#[derive(Clone)]
+pub struct AwsFoldSnapshotStore {
+    dynamo: Client,
+    tables: BrainTables,
+    bodies: Arc<dyn SnapshotBodyStore>,
+    context: SnapshotContentContext,
+}
+
+impl core::fmt::Debug for AwsFoldSnapshotStore {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("AwsFoldSnapshotStore")
+            .field("tables", &self.tables)
+            .field("context", &self.context)
+            .finish_non_exhaustive()
+    }
+}
+
+impl AwsFoldSnapshotStore {
+    /// Binds the production regional-content implementation.
+    #[must_use]
+    pub fn new(
+        dynamo: Client,
+        tables: BrainTables,
+        bodies: S3ContentObjects,
+        context: SnapshotContentContext,
+    ) -> Self {
+        Self::with_body_store(dynamo, tables, Arc::new(bodies), context)
+    }
+
+    /// Binds the same adapter to the narrow body seam used by deterministic tests.
+    #[must_use]
+    pub fn with_body_store(
+        dynamo: Client,
+        tables: BrainTables,
+        bodies: Arc<dyn SnapshotBodyStore>,
+        context: SnapshotContentContext,
+    ) -> Self {
+        Self {
+            dynamo,
+            tables,
+            bodies,
+            context,
+        }
+    }
+
+    async fn latest(
+        &self,
+        agent_key: aex_brain_domain::ids::AgentKey,
+    ) -> Result<Option<FoldSnapshotPointer>, StoreError> {
+        let selected =
+            keys::fold_snapshot(&agent_key).map_err(|error| StoreError::Undecodable {
+                location: "fold snapshot pointer key".to_owned(),
+                reason: error.to_string(),
+            })?;
+        let output = self
+            .dynamo
+            .get_item()
+            .table_name(&self.tables.session_authority)
+            .set_key(Some(key(&selected.pk, &selected.sk)))
+            .consistent_read(true)
+            .send()
+            .await
+            .map_err(|error| crate::journal::transport("load_fold_snapshot_pointer", &error))?;
+        output
+            .item
+            .map(|item| {
+                decode_pointer(agent_key, &item).map_err(|error| StoreError::Undecodable {
+                    location: "fold snapshot pointer".to_owned(),
+                    reason: error.to_string(),
+                })
+            })
+            .transpose()
+    }
+}
+
+impl FoldSnapshotStore for AwsFoldSnapshotStore {
+    fn load_latest<'a>(
+        &'a self,
+        agent_key: &'a aex_brain_domain::ids::AgentKey,
+    ) -> BoxFuture<'a, Result<Option<FoldSnapshotPointer>, StoreError>> {
+        Box::pin(async move { self.latest(*agent_key).await })
+    }
+
+    fn load_body<'a>(
+        &'a self,
+        workspace: WorkspaceId,
+        pointer: &'a FoldSnapshotPointer,
+        max_bytes: usize,
+    ) -> BoxFuture<'a, Result<Vec<u8>, StoreError>> {
+        Box::pin(async move {
+            let max_bytes = max_bytes.min(MAX_FOLD_SNAPSHOT_BYTES);
+            if pointer.body_bytes > u64::try_from(max_bytes).unwrap_or(u64::MAX) {
+                return Err(StoreError::SnapshotBodyTooLarge {
+                    declared: pointer.body_bytes,
+                    max: max_bytes,
+                });
+            }
+            let body = self
+                .bodies
+                .read_bounded(workspace, pointer.body_digest, pointer.body_bytes)
+                .await
+                .map_err(|error| map_content_read(error, pointer, max_bytes))?;
+            if u64::try_from(body.len()).ok() != Some(pointer.body_bytes) {
+                return Err(StoreError::SnapshotRejected {
+                    diagnostic: aex_brain_application::ports::SnapshotDiagnostic::Rejected(
+                        aex_brain_domain::snapshot::FoldSnapshotError::BodyLengthMismatch {
+                            declared: pointer.body_bytes,
+                            actual: body.len(),
+                        },
+                    ),
+                });
+            }
+            if BodyDigest::of(&body) != pointer.body_digest {
+                return Err(StoreError::SnapshotRejected {
+                    diagnostic: aex_brain_application::ports::SnapshotDiagnostic::Rejected(
+                        aex_brain_domain::snapshot::FoldSnapshotError::BodyDigestMismatch,
+                    ),
+                });
+            }
+            Ok(body)
+        })
+    }
+
+    fn publish<'a>(
+        &'a self,
+        workspace: WorkspaceId,
+        artifact: &'a FoldSnapshotArtifact,
+    ) -> BoxFuture<'a, Result<SnapshotPublishOutcome, StoreError>> {
+        Box::pin(async move {
+            let pointer = artifact.pointer();
+            validate_artifact(artifact)?;
+            let previous = self.latest(pointer.agent).await?;
+            if let Some(outcome) = selected_outcome(pointer, previous.as_ref())? {
+                return Ok(outcome);
+            }
+
+            let encryption_context = self.context.encryption_context(workspace)?;
+            self.bodies
+                .publish_immutable(
+                    workspace,
+                    pointer.body_digest,
+                    artifact.body().to_vec(),
+                    encryption_context,
+                )
+                .await
+                .map_err(map_content_write)?;
+
+            let publication = compile_publication(&self.tables, previous.as_ref(), pointer)
+                .map_err(map_plan_error)?;
+            let participants = publication.participants().to_vec();
+            let request = publication
+                .compile(&self.dynamo)
+                .map_err(|error| map_shared_error(&error))?;
+            match request.send().await {
+                Ok(_) if previous.as_ref() == Some(pointer) => {
+                    Ok(SnapshotPublishOutcome::AlreadyCurrent)
+                }
+                Ok(_) => Ok(SnapshotPublishOutcome::Published),
+                Err(error) => {
+                    let mapped = match error.as_service_error() {
+                        Some(service) => {
+                            aex_session_dynamodb::error::decode_cancellation(service, &participants)
+                        }
+                        None => aex_session_dynamodb::error::classify(
+                            &error,
+                            aex_session_dynamodb::error::Idempotence::Write(
+                                aex_session_dynamodb::error::Resolution::TargetItem,
+                            ),
+                        ),
+                    };
+                    self.resolve_publication_failure(pointer, previous.as_ref(), mapped)
+                        .await
+                }
+            }
+        })
+    }
+}
+
+impl AwsFoldSnapshotStore {
+    async fn resolve_publication_failure(
+        &self,
+        proposed: &FoldSnapshotPointer,
+        previous: Option<&FoldSnapshotPointer>,
+        error: aex_session_dynamodb::error::StoreError,
+    ) -> Result<SnapshotPublishOutcome, StoreError> {
+        use aex_session_dynamodb::error::StoreError as Shared;
+        match error {
+            Shared::PreconditionFailed { participant, .. }
+                if participant == participant::FOLD_SNAPSHOT_JOURNAL_POINT
+                    || participant == participant::FOLD_SNAPSHOT_CONTROL =>
+            {
+                Err(StoreError::SnapshotHistoricalMismatch)
+            }
+            Shared::PreconditionFailed { participant, .. }
+                if participant == participant::FOLD_SNAPSHOT_POINTER =>
+            {
+                let selected = self.latest(proposed.agent).await?;
+                resolve_changed_pointer(proposed, previous, selected.as_ref(), false)
+            }
+            Shared::CommitAmbiguous { .. } => {
+                let selected = self.latest(proposed.agent).await?;
+                resolve_changed_pointer(proposed, previous, selected.as_ref(), true)
+            }
+            other => Err(map_shared_error(&other)),
+        }
+    }
+}
+
+fn validate_artifact(artifact: &FoldSnapshotArtifact) -> Result<(), StoreError> {
+    let pointer = artifact.pointer();
+    if usize::try_from(pointer.body_bytes).ok() != Some(artifact.body().len()) {
+        return Err(StoreError::SnapshotRejected {
+            diagnostic: aex_brain_application::ports::SnapshotDiagnostic::Rejected(
+                aex_brain_domain::snapshot::FoldSnapshotError::BodyLengthMismatch {
+                    declared: pointer.body_bytes,
+                    actual: artifact.body().len(),
+                },
+            ),
+        });
+    }
+    if BodyDigest::of(artifact.body()) != pointer.body_digest {
+        return Err(StoreError::SnapshotRejected {
+            diagnostic: aex_brain_application::ports::SnapshotDiagnostic::Rejected(
+                aex_brain_domain::snapshot::FoldSnapshotError::BodyDigestMismatch,
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn selected_outcome(
+    proposed: &FoldSnapshotPointer,
+    selected: Option<&FoldSnapshotPointer>,
+) -> Result<Option<SnapshotPublishOutcome>, StoreError> {
+    let Some(selected) = selected else {
+        return Ok(None);
+    };
+    if selected.absorbed.seq > proposed.absorbed.seq {
+        return Ok(Some(SnapshotPublishOutcome::Superseded {
+            current: selected.absorbed,
+        }));
+    }
+    if selected.absorbed.seq == proposed.absorbed.seq && selected != proposed {
+        return Err(StoreError::SnapshotPointerConflict {
+            seq: proposed.absorbed.seq,
+        });
+    }
+    Ok(None)
+}
+
+fn resolve_changed_pointer(
+    proposed: &FoldSnapshotPointer,
+    previous: Option<&FoldSnapshotPointer>,
+    selected: Option<&FoldSnapshotPointer>,
+    ambiguous: bool,
+) -> Result<SnapshotPublishOutcome, StoreError> {
+    if selected == Some(proposed) {
+        return Ok(SnapshotPublishOutcome::AlreadyCurrent);
+    }
+    if let Some(outcome) = selected_outcome(proposed, selected)? {
+        return Ok(outcome);
+    }
+    let unchanged = selected == previous;
+    Err(StoreError::Transport {
+        reason: if ambiguous && unchanged {
+            "fold snapshot pointer commit remains unknown after a strong target read".to_owned()
+        } else {
+            "fold snapshot pointer changed concurrently before publication".to_owned()
+        },
+        retryable: !ambiguous,
+    })
+}
+
+fn map_content_read(
+    error: ContentObjectError,
+    pointer: &FoldSnapshotPointer,
+    max_bytes: usize,
+) -> StoreError {
+    match error {
+        ContentObjectError::InvalidRange { requested, .. } => {
+            if requested > u64::try_from(max_bytes).unwrap_or(u64::MAX) {
+                StoreError::SnapshotBodyTooLarge {
+                    declared: requested,
+                    max: max_bytes,
+                }
+            } else if let Ok(actual) = usize::try_from(requested) {
+                StoreError::SnapshotRejected {
+                    diagnostic: aex_brain_application::ports::SnapshotDiagnostic::Rejected(
+                        aex_brain_domain::snapshot::FoldSnapshotError::BodyLengthMismatch {
+                            declared: pointer.body_bytes,
+                            actual,
+                        },
+                    ),
+                }
+            } else {
+                content_error(error)
+            }
+        }
+        other => content_error(other),
+    }
+}
+
+fn map_content_write(error: ContentObjectError) -> StoreError {
+    content_error(error)
+}
+
+fn content_error(error: ContentObjectError) -> StoreError {
+    let retryable = error.retryable();
+    let reason = match &error {
+        ContentObjectError::DigestCollision { .. } => "content digest collision",
+        ContentObjectError::ContentMissing { .. } => "content object is missing",
+        ContentObjectError::IntegrityMismatch { .. } => "content object failed integrity checks",
+        ContentObjectError::InvalidRange { .. } => "content object exceeded its read bound",
+        ContentObjectError::Contended => "content object write contended",
+        ContentObjectError::Throttled => "content object store throttled",
+        ContentObjectError::Forbidden => "content object action was denied",
+        ContentObjectError::CommitAmbiguous { .. } => "content object commit remains unknown",
+        ContentObjectError::Unavailable { .. } => "content object store was unavailable",
+        ContentObjectError::Invalid { .. } => "content object request was invalid",
+    }
+    .to_owned();
+    match error {
+        ContentObjectError::DigestCollision { key }
+        | ContentObjectError::ContentMissing { digest: key }
+        | ContentObjectError::IntegrityMismatch { detail: key } => StoreError::ContentUnavailable {
+            reference: redact_reference(&key),
+            reason,
+        },
+        _ => StoreError::Transport { reason, retryable },
+    }
+}
+
+fn redact_reference(value: &str) -> String {
+    BodyDigest::of(value.as_bytes()).to_wire()
+}
+
+fn map_plan_error(error: PlanError) -> StoreError {
+    match error {
+        PlanError::Key(error) => StoreError::Undecodable {
+            location: "fold snapshot pointer key".to_owned(),
+            reason: error.to_string(),
+        },
+        PlanError::Store(error) => map_shared_error(&error),
+        PlanError::Envelope(error) => StoreError::Transport {
+            reason: error.to_string(),
+            retryable: false,
+        },
+    }
+}
+
+fn map_shared_error(error: &aex_session_dynamodb::error::StoreError) -> StoreError {
+    use aex_session_dynamodb::error::StoreError as Shared;
+    match error {
+        Shared::Corrupt(error) => StoreError::Undecodable {
+            location: "fold snapshot publication".to_owned(),
+            reason: error.to_string(),
+        },
+        other => StoreError::Transport {
+            reason: other.to_string(),
+            retryable: other.retryable(),
+        },
+    }
+}
+
+fn composition_error(reason: &str) -> StoreError {
+    StoreError::Transport {
+        reason: reason.to_owned(),
+        retryable: false,
+    }
+}
 
 /// Why a selected pointer row cannot become a typed snapshot pointer.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
