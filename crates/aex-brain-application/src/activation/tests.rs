@@ -526,6 +526,151 @@ fn a_new_activation_recovers_the_executor_from_durable_effect_and_journal_state(
     );
 }
 
+/// The detached operation identity and its wait are intentionally separate durable writes.
+/// If the process dies between them, the next owner must reconstruct the wait from the
+/// response-started effect rather than query early, dispatch twice, or wedge forever.
+#[test]
+fn a_crash_between_detached_operation_and_wait_is_repaired_without_redispatch() {
+    let harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced_tool_use()))])
+        .with_tools(
+            [detached_route()],
+            [Ok(ToolOutcome::Detached {
+                operation: detached_ref().id,
+                poll_after: core::time::Duration::from_secs(1),
+            })],
+        );
+    harness
+        .tools
+        .script_queries([Ok(completed_detached_result())]);
+    harness.wake();
+    // Model prepare, model settlement and tool prepare commit. The following wait commit
+    // dies after `mark_response_started` has already persisted the operation reference.
+    harness.store.pass_commits(3);
+    harness
+        .store
+        .fail_next_commit(CommitError::Store(StoreError::Transport {
+            reason: "the task died after persisting the detached operation".to_owned(),
+            retryable: true,
+        }));
+
+    let error = harness.run_next().expect_err("the wait did not commit");
+    assert!(
+        matches!(error, ActivationError::Commit(CommitError::Store(_))),
+        "{error:?}"
+    );
+    assert_eq!(harness.tools.invoked().len(), 1);
+    assert!(harness.tools.queried().is_empty());
+    assert!(
+        !harness
+            .store
+            .entries(key())
+            .iter()
+            .any(|entry| { matches!(entry.record, JournalRecord::WaitOpened { .. }) })
+    );
+    let tool_effect = harness
+        .store
+        .effects(key())
+        .into_iter()
+        .find(|effect| effect.kind == EffectKind::ToolCall)
+        .expect("the detached tool effect is durable");
+    assert_eq!(
+        tool_effect
+            .evidence
+            .as_ref()
+            .and_then(|evidence| evidence.detached_tool.clone()),
+        Some(detached_ref())
+    );
+
+    let repaired = harness
+        .run_next()
+        .expect("the next owner restores the wait");
+    assert!(matches!(
+        repaired,
+        Outcome::Progressed {
+            stop: Stop::Parked,
+            ..
+        }
+    ));
+    assert_eq!(
+        harness.tools.invoked().len(),
+        1,
+        "repair never dispatches a second tool call"
+    );
+    assert!(
+        harness.tools.queried().is_empty(),
+        "repair commits authority before external lookup"
+    );
+    assert_eq!(
+        harness
+            .store
+            .entries(key())
+            .iter()
+            .filter(|entry| matches!(entry.record, JournalRecord::WaitOpened { .. }))
+            .count(),
+        1
+    );
+
+    harness.clock.advance(5_000);
+    harness
+        .run_next()
+        .expect("ordinary recovery resolves the exact operation");
+    assert_eq!(harness.tools.queried(), vec![detached_ref()]);
+    assert_eq!(harness.tools.invoked().len(), 1);
+}
+
+#[test]
+fn an_expired_detached_inter_write_repair_opens_then_closes_the_wait_atomically() {
+    let harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced_tool_use()))])
+        .with_tools(
+            [detached_route()],
+            [Ok(ToolOutcome::Detached {
+                operation: detached_ref().id,
+                poll_after: core::time::Duration::from_secs(1),
+            })],
+        );
+    harness.wake();
+    harness.store.pass_commits(3);
+    harness
+        .store
+        .fail_next_commit(CommitError::Store(StoreError::Transport {
+            reason: "the task died after persisting the detached operation".to_owned(),
+            retryable: true,
+        }));
+    harness.run_next().expect_err("the wait did not commit");
+    harness.clock.advance(60_000);
+
+    let recovered = harness
+        .run_next()
+        .expect("expired repair settles without upstream I/O");
+    assert!(matches!(
+        recovered,
+        Outcome::Progressed {
+            stop: Stop::Finished(FinishReason::Interrupted),
+            ..
+        }
+    ));
+    assert!(harness.tools.queried().is_empty());
+    assert_eq!(harness.tools.invoked().len(), 1);
+    let entries = harness.store.entries(key());
+    assert!(entries.windows(3).any(|records| {
+        matches!(records[0].record, JournalRecord::WaitOpened { .. })
+            && matches!(
+                records[1].record,
+                JournalRecord::WaitResolved {
+                    resolution: aex_brain_domain::journal::WaitResolution::Cancelled,
+                    ..
+                }
+            )
+            && matches!(
+                records[2].record,
+                JournalRecord::EffectSettled {
+                    outcome: aex_brain_domain::effect::SettledOutcome::OutcomeUnknown { .. },
+                    ..
+                }
+            )
+    }));
+}
+
 #[test]
 fn retryable_detached_query_failure_rearms_without_settling_then_completes() {
     let harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced_tool_use()))])

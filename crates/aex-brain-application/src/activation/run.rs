@@ -1696,10 +1696,7 @@ impl Session<'_> {
         operation: &DetachedOperationRef,
     ) -> Result<Stop, ActivationError> {
         let Some((wait, call, waiting_on)) = self.open_tool_wait() else {
-            return Err(ActivationError::Unsupported {
-                step: "detached_result_without_wait",
-                owed_by: "nothing: a detached effect is always committed with the wait it parks on, so this state means the journal and the effect row disagree",
-            });
+            return self.repair_detached_wait(effect, operation).await;
         };
         if waiting_on != *operation {
             return Err(ActivationError::Unsupported {
@@ -1810,6 +1807,77 @@ impl Session<'_> {
                 Ok(Stop::Finished(FinishReason::Interrupted))
             }
         }
+    }
+
+    /// Repairs the sole valid inter-write state of a detached tool dispatch.
+    ///
+    /// `mark_response_started` must persist the operation identity before `WaitOpened`:
+    /// reversing them would allow a crash to leave an unresolvable wait. A crash between
+    /// those writes therefore leaves an effect row with the operation and a journal whose
+    /// phase is still `Effecting`. The journal is serial, so its first pending call is the
+    /// exact call this one open effect dispatched. Re-checking the request hash and pinned
+    /// executor makes that inference fail closed before the missing wait is reconstructed.
+    ///
+    /// This activation never queries or dispatches the operation. It only restores the
+    /// durable wait (or atomically opens and expires it), after which ordinary recovery owns
+    /// the external lookup.
+    async fn repair_detached_wait(
+        &mut self,
+        effect: &DurableEffect,
+        operation: &DetachedOperationRef,
+    ) -> Result<Stop, ActivationError> {
+        if effect.kind != EffectKind::ToolCall
+            || !matches!(self.state.phase, Phase::Effecting { effect: open } if open == effect.id)
+        {
+            return Err(ActivationError::Unsupported {
+                step: "detached_result_without_wait",
+                owed_by: "nothing: only the response-started/tool-effecting inter-write state may reconstruct a missing detached wait",
+            });
+        }
+        let Some(call) = first_pending(&self.state) else {
+            return Err(ActivationError::Unsupported {
+                step: "detached_result_without_pending_call",
+                owed_by: "nothing: an open detached tool effect must still have its ordered pending call",
+            });
+        };
+        let request_hash = ContentHash::of(&canonicalize_value(&call.input)?);
+        let config = self.config()?;
+        let route = self.ports.tools.route(&config.catalog_pin, &call.name)?;
+        if effect.request_hash != request_hash
+            || effect.class != route.class
+            || operation.executor != route.executor
+        {
+            return Err(ActivationError::RequestConflict { effect: effect.id });
+        }
+
+        let now = self.ports.clock.now();
+        let mut draft = self.draft("effecting");
+        let wait = wait_id(self.agent(), draft.next_seq());
+        let due = detached_query_retry_due(now, effect.deadline);
+        let reason = ParkReason::AwaitingToolResult {
+            call: call.call,
+            operation: operation.clone(),
+        };
+        draft.append(JournalRecord::WaitOpened {
+            wait,
+            reason: reason.clone(),
+            due: Some(due),
+        });
+        if now >= effect.deadline {
+            Self::settle_detached_unknown(&mut draft, effect, wait);
+            self.commit(draft).await?;
+            return Ok(Stop::Finished(FinishReason::Interrupted));
+        }
+        draft.phase("parked");
+        draft.wake(
+            self.ports.ids.wake_id(),
+            reason,
+            due,
+            self.authority.workspace.to_string(),
+            self.policy.shard_for(self.agent()),
+        );
+        self.commit(draft).await?;
+        Ok(Stop::Parked)
     }
 
     /// Appends the settlement, the wait resolution and the result, in the order the fold
