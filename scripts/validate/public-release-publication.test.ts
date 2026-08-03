@@ -56,7 +56,7 @@ describe("public main-push publication", () => {
       source.indexOf("gh release edit \"$tag\"")
     );
     expect(source.indexOf("Record the explicit OCI publication blocker")).toBeLessThan(
-      source.indexOf("- name: Build\n")
+      source.indexOf("- name: Build")
     );
     expect(source).not.toContain("aws-actions/configure-aws-credentials");
     expect(source).not.toMatch(/\bsecrets\./);
