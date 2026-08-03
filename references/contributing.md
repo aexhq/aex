@@ -59,7 +59,7 @@ pack checks.
 
 ## CI and release ownership
 
-There are four lane classes. Every other workflow file is a reusable lane one of
+There are three lane classes. Every other workflow file is a reusable lane one of
 them calls, and each lane ends in a receipts job that compares what the lane
 declared it would run against the receipts it actually produced.
 
@@ -67,14 +67,13 @@ declared it would run against the receipts it actually produced.
 | --- | --- |
 | [`pr`](../.github/workflows/pr.yml) | Pull request and merge queue. Repository gates plus the routed Rust, TypeScript, Terraform, and artifact lanes. No cloud, registry, publish, or signing credential reaches it. |
 | [`main`](../.github/workflows/main.yml) | Protected `main` build and publication. Mints immutable bytes and a composition manifest; applies nothing to any plane. |
-| [`assurance`](../.github/workflows/assurance.yml) | Scheduled full-graph, supply-chain, deep-risk, cold-rebuild, and plane suites whose receipts a release admits against. |
-| [`release`](../.github/workflows/release.yml) | Explicit environment release, dispatched with an exact manifest digest. Never a branch, tag, run, or floating pointer. |
+| [`assurance`](../.github/workflows/assurance.yml) | Scheduled full-graph, supply-chain, deep-risk, and cold-rebuild suites. It has no hosted-plane input or credentials. |
 
 Publication is not deployment. `main` produces artifacts and a manifest;
-`release` is the only lane that touches a plane, and it is manual, per-plane
-serialized, and refuses anything but a pinned composition digest. Workflow
-configuration is the exact source of truth and secret values must never enter
-docs.
+the private `aexhq/platform` repository is the sole manual hosted-release
+owner. Public workflows accept no private binding ref, have no hosted-plane
+input, and never acquire hosted credentials. Workflow configuration is the
+exact source of truth and secret values must never enter docs.
 
 ## Review criteria
 
