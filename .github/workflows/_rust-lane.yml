@@ -17,6 +17,14 @@ on:
       lane:
         type: string
         required: true
+      job_name:
+        description: Caller job id recorded in the lane receipt.
+        type: string
+        required: true
+      selection_mode:
+        description: affected | full | shadow
+        type: string
+        required: true
       cache_mode:
         description: restore | restore-save
         type: string
@@ -65,6 +73,22 @@ jobs:
           CARGO_INCREMENTAL: "0"
         run: cargo clippy --locked -p "${{ matrix.name }}" --all-targets -- -D warnings
 
+      - name: Record the declared test inventory
+        env:
+          RECEIPT_DIR: target/aex-evidence/${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          mkdir -p "$RECEIPT_DIR"
+          date --utc +'%Y-%m-%dT%H:%M:%SZ' > "$RECEIPT_DIR/started-at.txt"
+          cargo nextest list --locked --profile "${{ inputs.profile }}" \
+            -p "${{ matrix.name }}" --all-targets --message-format json \
+            > "$RECEIPT_DIR/nextest-list.json"
+
       - name: Test
         env:
           CARGO_INCREMENTAL: "0"
@@ -76,14 +100,139 @@ jobs:
       - name: Doctests
         env:
           CARGO_INCREMENTAL: "0"
-        run: cargo test --locked --doc -p "${{ matrix.name }}"
+          RECEIPT_DIR: target/aex-evidence/${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          cargo test --locked --doc -p "${{ matrix.name }}" 2>&1 \
+            | tee "$RECEIPT_DIR/doctest.log"
 
-      - name: Upload the JUnit report
+      - name: Prove the no-skip inventory
+        env:
+          RECEIPT_DIR: target/aex-evidence/${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          cargo run --locked --release -p aex-workspace-check -- flake scan \
+            --list "$RECEIPT_DIR/nextest-list.json" \
+            --junit "target/nextest/${{ inputs.profile }}/junit.xml" \
+            --doctest "$RECEIPT_DIR/doctest.log" \
+            --profile "${{ inputs.profile }}" \
+            --package "${{ matrix.name }}" \
+            > "$RECEIPT_DIR/inventory.json"
+
+      - name: Build and verify the unit receipt
+        env:
+          CALLER_JOB: ${{ inputs.job_name }}
+          RECEIPT_DIR: target/aex-evidence/${{ matrix.name }}
+          SELECTED_PACKAGE: ${{ matrix.name }}
+          SELECTED_UNITS_JSON: ${{ toJSON(matrix.units) }}
+          SELECTION_MODE: ${{ inputs.selection_mode }}
+          PARTITION_INDEX: ${{ matrix.partition }}
+          PARTITION_TOTAL: ${{ matrix.partitions }}
+          RECEIPT_LANE: ${{ inputs.lane }}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          completed_at=$(date --utc +'%Y-%m-%dT%H:%M:%SZ')
+          started_at=$(<"$RECEIPT_DIR/started-at.txt")
+          declared=$(jq -er '.declared | select(. > 0)' "$RECEIPT_DIR/inventory.json")
+          cargo_lock_digest="sha256:$(sha256sum Cargo.lock | cut -d' ' -f1)"
+          package_key=$(printf '%s' "$SELECTED_PACKAGE" | sha256sum | cut -c1-12)
+          receipt_id="rc_${RECEIPT_LANE}_rust_${package_key}_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+          jq -n \
+            --arg receiptId "$receipt_id" \
+            --arg lane "$RECEIPT_LANE" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg commitSha "$GITHUB_SHA" \
+            --arg workflowRunId "$GITHUB_RUN_ID" \
+            --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+            --arg jobName "$CALLER_JOB" \
+            --arg builderId "https://github.com/$GITHUB_REPOSITORY/.github/workflows/_rust-lane.yml@$GITHUB_SHA" \
+            --arg cargoLockDigest "$cargo_lock_digest" \
+            --argjson unitIds "$SELECTED_UNITS_JSON" \
+            --arg mode "$SELECTION_MODE" \
+            --arg package "$SELECTED_PACKAGE" \
+            --argjson partitionIndex "$PARTITION_INDEX" \
+            --argjson partitionTotal "$PARTITION_TOTAL" \
+            --argjson declared "$declared" \
+            --arg startedAt "$started_at" \
+            --arg completedAt "$completed_at" \
+            '{
+              receiptId: $receiptId,
+              class: "unit",
+              layer: "unit",
+              lane: $lane,
+              concerns: [],
+              declared: $declared,
+              source: {
+                repository: $repository,
+                commitSha: $commitSha,
+                treeClean: true,
+                workflowRunId: $workflowRunId,
+                runAttempt: $runAttempt,
+                jobName: $jobName,
+                builderId: $builderId
+              },
+              inputs: {cargoLockDigest: $cargoLockDigest},
+              subject: {unitIds: $unitIds},
+              selection: {
+                mode: $mode,
+                filterset: "all()",
+                packages: [$package],
+                partition: {index: $partitionIndex, total: $partitionTotal}
+              },
+              data: {residue: "none", secretCanaryObserved: false},
+              startedAt: $startedAt,
+              completedAt: $completedAt
+            }' > "$RECEIPT_DIR/context.json"
+          cargo run --locked --release -p aex-release-tool -- evidence new \
+            --context "$RECEIPT_DIR/context.json" \
+            --junit "target/nextest/${{ inputs.profile }}/junit.xml" \
+            --out "$RECEIPT_DIR/receipt.json"
+          cargo run --locked --release -p aex-release-tool -- evidence attach \
+            --receipt "$RECEIPT_DIR/receipt.json" --kind junit \
+            --file "target/nextest/${{ inputs.profile }}/junit.xml" \
+            --uri "artifact://junit-${RECEIPT_LANE}-${SELECTED_PACKAGE}-${PARTITION_INDEX}/junit.xml"
+          cargo run --locked --release -p aex-release-tool -- evidence attach \
+            --receipt "$RECEIPT_DIR/receipt.json" --kind nextest-list \
+            --file "$RECEIPT_DIR/nextest-list.json" \
+            --uri "artifact://junit-${RECEIPT_LANE}-${SELECTED_PACKAGE}-${PARTITION_INDEX}/nextest-list.json"
+          cargo run --locked --release -p aex-release-tool -- evidence attach \
+            --receipt "$RECEIPT_DIR/receipt.json" --kind log \
+            --file "$RECEIPT_DIR/doctest.log" \
+            --uri "artifact://junit-${RECEIPT_LANE}-${SELECTED_PACKAGE}-${PARTITION_INDEX}/doctest.log"
+          jq -e --slurpfile scan "$RECEIPT_DIR/inventory.json" '
+            .schema == "aex.evidence-receipt.v1" and
+            .source.commitSha == env.GITHUB_SHA and
+            .source.workflowRunId == env.GITHUB_RUN_ID and
+            .source.runAttempt == (env.GITHUB_RUN_ATTEMPT | tonumber) and
+            .inventory.declared == $scan[0].declared and
+            .inventory.collected == $scan[0].collected and
+            .inventory.skipped == $scan[0].skipped and
+            .inventory.ignored == $scan[0].ignored and
+            .inventory.filteredAtRuntime == $scan[0].filtered_at_runtime and
+            .inventory.retried == $scan[0].retried and
+            .inventory.flaky == $scan[0].flaky
+          ' "$RECEIPT_DIR/receipt.json" >/dev/null
+          cargo run --locked --release -p aex-release-tool -- evidence verify \
+            --receipt "$RECEIPT_DIR/receipt.json"
+
+      - name: Upload the unit receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: receipt-${{ inputs.lane }}-rust-${{ matrix.name }}-${{ matrix.partition }}
+          path: target/aex-evidence/${{ matrix.name }}/receipt.json
+          if-no-files-found: error
+
+      - name: Upload the test evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: junit-${{ inputs.lane }}-${{ matrix.name }}-${{ matrix.partition }}
-          path: target/nextest/${{ inputs.profile }}/junit.xml
+          path: |
+            target/nextest/${{ inputs.profile }}/junit.xml
+            target/aex-evidence/${{ matrix.name }}/nextest-list.json
+            target/aex-evidence/${{ matrix.name }}/doctest.log
           if-no-files-found: error
 
   capacity-limit-projection:

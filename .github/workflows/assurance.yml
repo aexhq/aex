@@ -84,6 +84,8 @@ jobs:
     with:
       matrix: ${{ needs.route.outputs.test_matrix }}
       lane: assurance
+      job_name: full-graph
+      selection_mode: shadow
       cache_mode: restore
 
   full-scenarios:

@@ -94,6 +94,8 @@ jobs:
     with:
       matrix: ${{ needs.route.outputs.test_matrix }}
       lane: pr
+      job_name: rust
+      selection_mode: affected
       cache_mode: restore
 
   node:

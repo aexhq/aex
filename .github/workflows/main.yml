@@ -44,6 +44,8 @@ jobs:
     with:
       matrix: ${{ needs.route.outputs.test_matrix }}
       lane: main
+      job_name: verify
+      selection_mode: full
       cache_mode: restore-save
 
   node:

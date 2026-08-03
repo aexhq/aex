@@ -13,14 +13,14 @@ use serde::{Deserialize, Serialize};
 use crate::error::{Exit, Result, ToolError};
 
 use super::NodeKind;
-use super::inputs::ScenarioOwnership;
+use super::inputs::{ScenarioOwnership, Units};
 use super::select::Selection;
 
 /// Which slice of the selection to emit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 #[clap(rename_all = "kebab-case")]
 pub enum MatrixKind {
-    /// Cargo and npm packages to test.
+    /// Cargo packages to test in the Rust lane.
     Test,
     /// Artifacts to build.
     Artifact,
@@ -46,6 +46,9 @@ pub struct MatrixEntry {
     /// Exact package target for a scenario entry.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
+    /// Deployable unit ids whose own package this entry exercises.
+    #[serde(default)]
+    pub units: Vec<String>,
     /// Zero-based shard index.
     pub partition: usize,
     /// Total shard count.
@@ -95,6 +98,7 @@ pub fn build(
     partitions: usize,
     durations: &BTreeMap<String, u64>,
     scenarios: &ScenarioOwnership,
+    units: &Units,
 ) -> Result<MatrixOutput> {
     if partitions == 0 {
         return Err(ToolError::single(
@@ -108,8 +112,7 @@ pub fn build(
             .test
             .iter()
             .filter(|selected| {
-                matches!(selected.id.namespace(), "cargo" | "npm")
-                    && !selected.id.local().starts_with("aex-live-")
+                selected.id.namespace() == "cargo" && !selected.id.local().starts_with("aex-live-")
             })
             .map(|selected| (selected.id.to_string(), selected.id.local().to_owned()))
             .collect(),
@@ -169,6 +172,16 @@ pub fn build(
                 name: name.clone(),
                 package,
                 target,
+                units: if kind == MatrixKind::Test {
+                    units
+                        .units
+                        .iter()
+                        .filter(|unit| unit.package == *name)
+                        .map(|unit| unit.id.clone())
+                        .collect()
+                } else {
+                    Vec::new()
+                },
                 partition: index,
                 partitions: used,
             });
@@ -267,7 +280,7 @@ mod tests {
 
     use super::{MatrixKind, OUTPUT_KEYS, build, degraded, partition, to_github_output};
     use crate::graph::NodeId;
-    use crate::graph::inputs::ScenarioOwnership;
+    use crate::graph::inputs::{ScenarioOwnership, Units};
     use crate::graph::select::{Lane, Mode, Selected, Selection, SelectionReason};
 
     fn selection(ids: &[NodeId]) -> Selection {
@@ -300,6 +313,13 @@ mod tests {
         }
     }
 
+    fn no_units() -> Units {
+        Units {
+            schema: "aex.units.v1".to_owned(),
+            units: Vec::new(),
+        }
+    }
+
     #[test]
     fn healthy_and_degraded_paths_emit_the_same_output_keys() {
         let healthy = to_github_output(
@@ -309,6 +329,7 @@ mod tests {
                 1,
                 &BTreeMap::new(),
                 &no_scenarios(),
+                &no_units(),
             )
             .unwrap(),
         )
@@ -337,6 +358,7 @@ mod tests {
         let selection = selection(&[
             NodeId::cargo("aex-wire"),
             NodeId::cargo("aex-live-brain-mux"),
+            NodeId::npm("@aexhq/sdk"),
         ]);
         let unit = build(
             &selection,
@@ -344,6 +366,7 @@ mod tests {
             4,
             &BTreeMap::new(),
             &no_scenarios(),
+            &no_units(),
         )
         .unwrap();
         let live = build(
@@ -352,6 +375,7 @@ mod tests {
             4,
             &BTreeMap::new(),
             &no_scenarios(),
+            &no_units(),
         )
         .unwrap();
         assert_eq!(
@@ -367,6 +391,12 @@ mod tests {
                 .map(|e| e.name.as_str())
                 .collect::<Vec<_>>(),
             vec!["aex-live-brain-mux"]
+        );
+        assert!(
+            unit.include
+                .iter()
+                .all(|entry| entry.id.starts_with("cargo:")),
+            "the Rust lane must never receive an npm package"
         );
     }
 
@@ -395,6 +425,7 @@ target = "live"
             1,
             &BTreeMap::new(),
             &registry,
+            &no_units(),
         )
         .expect("scenario matrix");
         assert_eq!(output.include.len(), 1);
@@ -419,6 +450,7 @@ target = "live"
             1,
             &BTreeMap::new(),
             &no_scenarios(),
+            &no_units(),
         )
         .unwrap_err();
         assert_eq!(err.rules(), vec!["scenario-runnable-missing"]);
@@ -457,6 +489,53 @@ target = "live"
     }
 
     #[test]
+    fn test_entries_carry_units_owned_by_the_selected_package() {
+        let units: Units = toml::from_str(
+            r#"
+schema = "aex.units.v1"
+[[unit]]
+id = "hands-image-small"
+kind = "microvm-image"
+plane = "regional"
+package = "hands-image"
+target = "aarch64-unknown-linux-musl"
+profile = "release"
+form = "raw"
+config_env_namespace = "AEX_HANDS_IMAGE_"
+config_schema_version = 1
+required_receipts = ["unit"]
+alarm_spec = "hands-image-small"
+[[unit]]
+id = "hands-image-large"
+kind = "microvm-image"
+plane = "regional"
+package = "hands-image"
+target = "aarch64-unknown-linux-musl"
+profile = "release"
+form = "raw"
+config_env_namespace = "AEX_HANDS_IMAGE_"
+config_schema_version = 1
+required_receipts = ["unit"]
+alarm_spec = "hands-image-large"
+"#,
+        )
+        .unwrap();
+        let output = build(
+            &selection(&[NodeId::cargo("hands-image")]),
+            MatrixKind::Test,
+            1,
+            &BTreeMap::new(),
+            &no_scenarios(),
+            &units,
+        )
+        .unwrap();
+        assert_eq!(
+            output.include[0].units,
+            vec!["hands-image-small", "hands-image-large"]
+        );
+    }
+
+    #[test]
     fn an_empty_selection_yields_no_shards_and_says_so() {
         let output = build(
             &selection(&[]),
@@ -464,6 +543,7 @@ target = "live"
             4,
             &BTreeMap::new(),
             &no_scenarios(),
+            &no_units(),
         )
         .unwrap();
         assert!(!output.has_entries);
@@ -479,6 +559,7 @@ target = "live"
             0,
             &BTreeMap::new(),
             &no_scenarios(),
+            &no_units(),
         )
         .unwrap_err();
         assert_eq!(err.exit.code(), 2);
