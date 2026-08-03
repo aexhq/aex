@@ -1360,6 +1360,21 @@ mod tests {
     }
 
     #[test]
+    fn aggregation_accepts_no_receipts_when_no_producer_was_selected() {
+        let declared = DeclaredJobs {
+            schema: "aex.declared-jobs.v1".to_owned(),
+            lane: "pr".to_owned(),
+            jobs: Vec::new(),
+        };
+
+        let lane = aggregate(&[], &declared).unwrap();
+
+        assert!(lane.declared.is_empty());
+        assert!(lane.collected.is_empty());
+        assert_eq!(lane.conclusion, "passed");
+    }
+
+    #[test]
     fn aggregation_fails_when_a_collected_receipt_did_not_pass() {
         let declared = DeclaredJobs {
             schema: "aex.declared-jobs.v1".to_owned(),

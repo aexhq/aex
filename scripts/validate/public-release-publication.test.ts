@@ -9,8 +9,17 @@ describe("public main-push publication", () => {
   test("main gates publication on every public validation lane", () => {
     const source = read(".github/workflows/main.yml");
     const workflow = Bun.YAML.parse(source) as { readonly jobs: Record<string, any> };
+    expect(workflow.jobs).toHaveProperty("gates");
     expect(workflow.jobs).toHaveProperty("terraform");
-    expect(workflow.jobs.build.needs).toEqual(["route", "verify", "node", "scenarios", "terraform"]);
+    expect(workflow.jobs.build.needs).toEqual([
+      "route",
+      "gates",
+      "verify",
+      "node",
+      "scenarios",
+      "terraform"
+    ]);
+    expect(workflow.jobs.build.if).toContain("needs.gates.result == 'success'");
     expect(source).not.toContain("needs.route.outputs.has_artifact == 'true'");
     expect(workflow.jobs.build.with.publish).toBeTrue();
     expect(workflow.jobs.build.permissions).toEqual({
@@ -21,6 +30,17 @@ describe("public main-push publication", () => {
       packages: "write"
     });
     expect(workflow.jobs.route.with.mode).toBe("full");
+  });
+
+  test("main publication uses the same root gates as pull requests", () => {
+    const main = Bun.YAML.parse(read(".github/workflows/main.yml")) as {
+      readonly jobs: Record<string, any>;
+    };
+    const pr = Bun.YAML.parse(read(".github/workflows/pr.yml")) as {
+      readonly jobs: Record<string, any>;
+    };
+
+    expect(main.jobs.gates).toEqual(pr.jobs.gates);
   });
 
   test("the reusable workflow mints non-overwriting public inputs", () => {

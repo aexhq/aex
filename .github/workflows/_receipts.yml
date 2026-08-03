@@ -1,9 +1,10 @@
 # The single required status.
 #
-# It compares the jobs the lane declared it would run against the receipts the
-# lane actually produced. A required job that emitted nothing is not a pass; a
-# routed matrix that selected nothing must still emit a `no-affected-unit`
-# receipt. Those two states are the whole reason this job exists.
+# It first checks the result of every required workflow job, including jobs
+# such as routing and publication that do not produce test evidence. It then
+# compares the selected evidence producers with the receipts they actually
+# emitted. A selected producer that emitted nothing is not a pass; an
+# unselected producer makes no evidence claim.
 
 name: receipts
 
@@ -13,8 +14,12 @@ on:
       lane:
         type: string
         required: true
-      declared_jobs:
-        description: JSON array of job names the lane declared.
+      receipt_jobs:
+        description: JSON object mapping receipt-producing job names to true when selected.
+        type: string
+        required: true
+      required_job_results:
+        description: JSON object mapping every required job to its result and skip policy.
         type: string
         required: true
 
@@ -36,27 +41,71 @@ jobs:
         with:
           toolchain: "1.97.1"
 
+      - name: Require every workflow job to pass
+        env:
+          REQUIRED_JOB_RESULTS: ${{ inputs.required_job_results }}
+          RECEIPT_LANE: ${{ inputs.lane }}
+        run: |
+          set -euo pipefail
+          jq -e '
+            type == "object" and length > 0 and
+            all(to_entries[];
+              (.key | type == "string" and length > 0) and
+              (.value | type == "object") and
+              (.value | keys | sort) == ["allowSkipped", "result"] and
+              (.value.allowSkipped | type == "boolean") and
+              (
+                .value.result == "success" or
+                (.value.allowSkipped and .value.result == "skipped")
+              )
+            )
+          ' <<<"$REQUIRED_JOB_RESULTS" >/dev/null
+          jq -cn --arg lane "$RECEIPT_LANE" --argjson jobs "$REQUIRED_JOB_RESULTS" '
+            {schema: "aex.workflow-job-results.v1", lane: $lane, jobs: $jobs}
+          ' > required-job-results.json
+
+      - name: Declare the expected receipt job set
+        id: expected
+        env:
+          RECEIPT_JOBS: ${{ inputs.receipt_jobs }}
+          RECEIPT_LANE: ${{ inputs.lane }}
+        run: |
+          set -euo pipefail
+          jq -e '
+            type == "object" and
+            all(to_entries[];
+              (.key | type == "string" and length > 0) and
+              (.value == "true" or .value == "false")
+            )
+          ' <<<"$RECEIPT_JOBS" >/dev/null
+          jq -cn --arg lane "$RECEIPT_LANE" --argjson selected "$RECEIPT_JOBS" '
+            {
+              schema: "aex.declared-jobs.v1",
+              lane: $lane,
+              jobs: [
+                $selected | to_entries[] | select(.value == "true") | .key
+              ] | sort
+            }
+          ' > declared-jobs.json
+          if [ "$(jq '.jobs | length' declared-jobs.json)" -gt 0 ]; then
+            echo "has_receipts=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_receipts=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Download every receipt
+        if: steps.expected.outputs.has_receipts == 'true'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
         with:
           pattern: receipt-*
           path: receipts
           merge-multiple: true
 
-      - name: Declare the expected job set
-        run: |
-          set -euo pipefail
-          printf '%s\n' '{"schema":"aex.declared-jobs.v1","lane":"${{ inputs.lane }}","jobs":${{ inputs.declared_jobs }}}' > declared-jobs.json
-
       - name: Aggregate
         run: |
           set -euo pipefail
           shopt -s nullglob
           receipts=(receipts/*.json)
-          if [ ${#receipts[@]} -eq 0 ]; then
-            echo "no receipt was collected at all; a lane that proves nothing does not pass"
-            exit 40
-          fi
           args=()
           for receipt in "${receipts[@]}"; do
             args+=(--receipt "$receipt")
@@ -70,5 +119,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: lane-receipt-${{ inputs.lane }}
-          path: lane-receipt.json
+          path: |
+            lane-receipt.json
+            required-job-results.json
           if-no-files-found: error

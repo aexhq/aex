@@ -146,4 +146,7 @@ jobs:
     uses: ./.github/workflows/_receipts.yml
     with:
       lane: pr
-      declared_jobs: '["route","gates","rust","node","scenarios","terraform","artifacts"]'
+      receipt_jobs: >-
+        {"rust":"${{ needs.route.outputs.has_test }}","node":"${{ needs.route.outputs.has_node }}","terraform":"${{ needs.route.outputs.has_terraform }}"}
+      required_job_results: >-
+        {"route":{"result":"${{ needs.route.result }}","allowSkipped":false},"gates":{"result":"${{ needs.gates.result }}","allowSkipped":false},"rust":{"result":"${{ needs.rust.result }}","allowSkipped":true},"node":{"result":"${{ needs.node.result }}","allowSkipped":false},"scenarios":{"result":"${{ needs.scenarios.result }}","allowSkipped":true},"terraform":{"result":"${{ needs.terraform.result }}","allowSkipped":true},"artifacts":{"result":"${{ needs.artifacts.result }}","allowSkipped":true}}

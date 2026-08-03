@@ -227,4 +227,71 @@ describe("workflow evidence producers", () => {
       expect(inputs.selection_mode).toBe(mode);
     }
   });
+
+  test("final checks gate all jobs but request receipts only from selected producers", () => {
+    const cases = [
+      {
+        path: ".github/workflows/pr.yml",
+        resultJobs: ["route", "gates", "rust", "node", "scenarios", "terraform", "artifacts"],
+        receiptJobs: ["rust", "node", "terraform"]
+      },
+      {
+        path: ".github/workflows/main.yml",
+        resultJobs: ["route", "gates", "verify", "node", "scenarios", "terraform", "build", "manifest"],
+        receiptJobs: ["verify", "node", "terraform"]
+      }
+    ] as const;
+
+    for (const { path, resultJobs, receiptJobs } of cases) {
+      const checks = workflowJob(readWorkflow(path), path.endsWith("pr.yml") ? "checks" : "receipts");
+      const inputs = checks.with as Readonly<Record<string, string>>;
+      const results = JSON.parse(inputs.required_job_results) as Readonly<
+        Record<string, { readonly result: string; readonly allowSkipped: boolean }>
+      >;
+      const producers = JSON.parse(inputs.receipt_jobs) as Readonly<Record<string, string>>;
+
+      expect(Object.keys(results)).toEqual([...resultJobs]);
+      expect(Object.keys(producers)).toEqual([...receiptJobs]);
+      expect(inputs).not.toHaveProperty("declared_jobs");
+      for (const job of receiptJobs) {
+        expect(producers[job]).toContain("needs.route.outputs.has_");
+      }
+    }
+  });
+
+  test("receipt aggregation validates job results before collecting selected evidence", () => {
+    const source = readRepoFile(".github/workflows/_receipts.yml");
+    const workflow = readWorkflow(".github/workflows/_receipts.yml");
+    const job = workflowJob(workflow, "aggregate");
+    const workflowCall = workflowTriggers(workflow).workflow_call as {
+      readonly inputs: Readonly<Record<string, { readonly required?: boolean }>>;
+    };
+
+    expect(workflowCall.inputs.receipt_jobs?.required).toBeTrue();
+    expect(workflowCall.inputs.required_job_results?.required).toBeTrue();
+    expect(stepIndex(job, "Require every workflow job to pass")).toBeLessThan(
+      stepIndex(job, "Declare the expected receipt job set")
+    );
+    expect(stepIndex(job, "Declare the expected receipt job set")).toBeLessThan(
+      stepIndex(job, "Download every receipt")
+    );
+    expect(workflowStep(job, "Require every workflow job to pass").run).toContain(
+      '.value.result == "success"'
+    );
+    expect(workflowStep(job, "Require every workflow job to pass").run).toContain(
+      '.value.allowSkipped and .value.result == "skipped"'
+    );
+    expect(workflowStep(job, "Require every workflow job to pass").run).toContain(
+      'aex.workflow-job-results.v1'
+    );
+    expect(workflowStep(job, "Require every workflow job to pass").run).toContain(
+      '> required-job-results.json'
+    );
+    expect(workflowStep(job, "Declare the expected receipt job set").run).toContain(
+      'select(.value == "true")'
+    );
+    expect(source).toContain("if: steps.expected.outputs.has_receipts == 'true'");
+    expect(source).toContain("required-job-results.json");
+    expect(source).not.toContain("no receipt was collected at all");
+  });
 });

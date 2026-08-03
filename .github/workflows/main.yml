@@ -36,6 +36,60 @@ jobs:
       head_sha: ${{ github.sha }}
       partitions: 8
 
+  gates:
+    name: Gates
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
+        with:
+          toolchain: "1.97.1"
+          components: rustfmt, clippy
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@bc2d2e71bd35c5549942babaa51a89c586b981d1  # v2.8.1
+        with:
+          save-if: false
+          shared-key: gates
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@2cdf2d81f4edfc3b41d5ddf56083c70b48ac2475  # v2.62.35
+        with:
+          tool: cargo-deny
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Workspace structure
+        run: cargo run --locked -p aex-workspace-check
+
+      - name: Delivery graph
+        run: cargo run --locked --release -p aex-release-tool -- graph verify
+
+      - name: Router selftest
+        run: cargo run --locked --release -p aex-release-tool -- selftest
+
+      - name: Workflow structure
+        run: cargo run --locked --release -p aex-release-tool -- policy workflows
+
+      - name: Terraform packages no code
+        run: cargo run --locked --release -p aex-release-tool -- policy terraform
+
+      - name: Supply chain
+        run: cargo deny --all-features check
+
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7  # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
   verify:
     name: Verify
     needs: route
@@ -81,10 +135,11 @@ jobs:
 
   build:
     name: Build and publish
-    needs: [route, verify, node, scenarios, terraform]
+    needs: [route, gates, verify, node, scenarios, terraform]
     if: >-
       always() &&
       needs.route.result == 'success' &&
+      needs.gates.result == 'success' &&
       (needs.verify.result == 'success' || needs.verify.result == 'skipped') &&
       needs.node.result == 'success' &&
       (needs.scenarios.result == 'success' || needs.scenarios.result == 'skipped') &&
@@ -311,9 +366,12 @@ jobs:
 
   receipts:
     name: Checks
-    needs: [route, verify, node, scenarios, terraform, build, manifest]
+    needs: [route, gates, verify, node, scenarios, terraform, build, manifest]
     if: always()
     uses: ./.github/workflows/_receipts.yml
     with:
       lane: main
-      declared_jobs: '["route","verify","node","scenarios","terraform","build","manifest"]'
+      receipt_jobs: >-
+        {"verify":"${{ needs.route.outputs.has_test }}","node":"${{ needs.route.outputs.has_node }}","terraform":"${{ needs.route.outputs.has_terraform }}"}
+      required_job_results: >-
+        {"route":{"result":"${{ needs.route.result }}","allowSkipped":false},"gates":{"result":"${{ needs.gates.result }}","allowSkipped":false},"verify":{"result":"${{ needs.verify.result }}","allowSkipped":true},"node":{"result":"${{ needs.node.result }}","allowSkipped":false},"scenarios":{"result":"${{ needs.scenarios.result }}","allowSkipped":true},"terraform":{"result":"${{ needs.terraform.result }}","allowSkipped":true},"build":{"result":"${{ needs.build.result }}","allowSkipped":false},"manifest":{"result":"${{ needs.manifest.result }}","allowSkipped":false}}
