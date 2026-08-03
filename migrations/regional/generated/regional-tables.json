@@ -1,7 +1,7 @@
 {
   "schema": "aex.regional-tables.v1",
   "generation": 1,
-  "digest": "blake3:a3cf22679373a3f6e7478f580eaa818dd9f2ef0e0d554f1d4c804eb101e802bb",
+  "digest": "blake3:d39c1be206dc482d66c4c18ba28ceab9d41c77bd64f2c1ea86c42a9d299e5cae",
   "tables": [
     {
       "schema": "aex.regional-table.v1",
@@ -1300,7 +1300,7 @@
       "schema": "aex.regional-table.v1",
       "table": "runtime-activity",
       "owner": "regional-stores",
-      "purpose": "The exact Hands generation head, lifecycle intents and immutable receipts, transactional usage outbox, true-idle probes, the current-generation pointer a Brain activation reads, and a sharded evaluation due index for the reaper.",
+      "purpose": "The exact Hands generation head, idempotent open-operation admission markers, lifecycle intents and immutable receipts, transactional usage outbox, true-idle probes, the current-generation pointer a Brain activation reads, and a sharded evaluation due index for the reaper.",
       "billingMode": "PAY_PER_REQUEST",
       "deletionProtection": true,
       "pointInTimeRecovery": {
@@ -1380,7 +1380,8 @@
         "lifecycle_receipt",
         "idle_probe",
         "current_generation",
-        "usage_outbox"
+        "usage_outbox",
+        "hands_operation_admission"
       ],
       "iam": [
         {
@@ -1406,6 +1407,7 @@
             "dynamodb:Query",
             "dynamodb:PutItem",
             "dynamodb:UpdateItem",
+            "dynamodb:DeleteItem",
             "dynamodb:TransactWriteItems"
           ],
           "resources": [
