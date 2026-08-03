@@ -528,6 +528,9 @@ mod tests {
             },
             input: aex_wire::CanonicalJson::from_value(input).expect("canonical input"),
             max_result_bytes,
+            hands_generation: aex_wire::ids::GenerationId::from_uuid7(
+                aex_wire::ids::Uuid7::compose(1, [3; 10]),
+            ),
             control: ControlStateView::default(),
         }
     }

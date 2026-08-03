@@ -402,6 +402,7 @@ fn a_detached_tool_returns_an_operation_rather_than_blocking() {
             .expect("the tool routes"),
         input: CanonicalJson::parse("{}").expect("tool input"),
         max_result_bytes: 65_536,
+        hands_generation: generation(3),
         control: ControlStateView::default(),
     };
     let outcome = block_on(tools.invoke(&ticket(EffectId([2; 16])), &call, &CancelToken::new()))

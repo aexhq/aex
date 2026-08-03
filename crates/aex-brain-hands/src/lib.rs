@@ -16,11 +16,13 @@
 
 pub mod adapter;
 pub mod backend;
+pub mod executor;
 pub mod guest;
 pub mod operation;
 pub mod port;
 
 pub use backend::ProductionHandsBackend;
+pub use executor::HandsToolExecutor;
 pub use port::{HandsAdapter, HandsBackend};
 
 pub use guest::{AuthenticatedGuestEndpoint, GuestReply, HttpGuestTransport};

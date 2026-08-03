@@ -10,6 +10,7 @@ use aex_brain_domain::ids::{
 use aex_brain_domain::journal::ExecutorRoute;
 use aex_model_catalog::canonical::ToolResultPart;
 use aex_wire::CanonicalJson;
+use aex_wire::ids::GenerationId;
 
 /// One tool invocation, whichever executor actually runs it.
 pub trait ToolPort: Send + Sync + 'static {
@@ -104,6 +105,12 @@ pub struct PreparedToolCall {
     pub input: CanonicalJson,
     /// The most bytes the result may carry.
     pub max_result_bytes: usize,
+    /// The immutable session Hands generation this call must use.
+    ///
+    /// Non-Hands executors ignore this value. Carrying it on the prepared call keeps the
+    /// tenant-scoped generation out of the process-global router and gives detached Hands
+    /// recovery an exact generation to persist in its operation reference.
+    pub hands_generation: GenerationId,
     /// A read-only view of the agent's control state.
     ///
     /// Carried on the call so a control-reading tool such as `todo_read` stays a pure

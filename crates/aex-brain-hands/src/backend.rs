@@ -949,6 +949,10 @@ impl crate::HandsBackend for ProductionHandsBackend {
             let inline = String::from_utf8(bytes).map_err(|_| {
                 result_rejected(operation, "the inline terminal result is not UTF-8")
             })?;
+            let duration_ms = terminal
+                .ended_at
+                .unix_millis()
+                .saturating_sub(terminal.started_at.unix_millis());
             Ok(HandsResult {
                 operation: operation.clone(),
                 generation,
@@ -956,6 +960,7 @@ impl crate::HandsBackend for ProductionHandsBackend {
                 inline: Some(inline),
                 placed: None,
                 truncated: terminal.truncated,
+                duration_ms: u32::try_from(duration_ms.max(0)).unwrap_or(u32::MAX),
                 checksum: BrainContentHash(*terminal.digest.as_bytes()),
             })
         })

@@ -46,11 +46,13 @@ version = "0.1.0"
 dependencies = [
  "aex-brain-application",
  "aex-brain-domain",
+ "aex-brain-tool-catalog",
  "aex-hands-agent",
  "aex-hands-control-aws",
  "aex-hands-protocol",
  "aex-hands-tools",
  "aex-internal-contracts",
+ "aex-model-catalog",
  "aex-runtime-control",
  "aex-runtime-control-aws",
  "aex-wire",
