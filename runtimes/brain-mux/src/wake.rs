@@ -103,11 +103,11 @@ impl AdmissionControl for MuxAdmission {
         self.bindings.complete() && self.admission.should_receive()
     }
 
-    fn admit(&self) -> AdmissionDecision {
-        // Context bytes are reserved by the activation once it knows how much history it is
-        // hydrating; admission takes the activation permit alone, so an agent that turns out
-        // to be small does not hold a large reservation for its whole life.
-        match self.admission.admit(0) {
+    fn admit(&self, restore_bytes: u64) -> AdmissionDecision {
+        // The activation's strict total restore ceiling is reserved before the first page.
+        // `DynamoDB` page count is not a memory measurement, and reserving zero here would
+        // let many individually bounded pages overrun the task's context pool.
+        match self.admission.admit(restore_bytes) {
             AdmissionOutcome::Admitted(permits) => AdmissionDecision::Admitted(permits),
             AdmissionOutcome::Deferred { requeue_after } => {
                 AdmissionDecision::Deferred { requeue_after }
@@ -223,6 +223,7 @@ impl JournalStore for UnboundStore {
         _key: &'a AgentKey,
         _from: JournalSeq,
         _budget: ReadBudget,
+        _after: Option<aex_brain_application::ports::JournalCursor>,
     ) -> BoxFuture<'a, Result<JournalPage, StoreError>> {
         Box::pin(async { Err(Self::refusal()) })
     }
@@ -809,6 +810,44 @@ mod tests {
         );
         drain.start_drain();
         assert!(!control.should_receive());
-        assert!(matches!(control.admit(), AdmissionDecision::Shed { .. }));
+        assert!(matches!(control.admit(0), AdmissionDecision::Shed { .. }));
+    }
+
+    /// The application supplies its measured restore-byte ceiling to mux admission. The
+    /// context pool holds those bytes before hydration and returns them through RAII when
+    /// the activation ends.
+    #[test]
+    fn mux_admission_reserves_the_activation_restore_bytes() {
+        let permits = Arc::new(PermitSet::new(BTreeMap::from([
+            (PermitKind::Activation, 1_u64),
+            (PermitKind::ContextBytes, 512_u64),
+        ])));
+        let admission = Arc::new(Admission::new(
+            AdmissionBounds {
+                target: 1,
+                safety_cap: 1,
+                offered_ceiling: 1,
+            },
+            Arc::clone(&permits),
+            Arc::new(DrainGate::new()),
+        ));
+        let control = MuxAdmission::new(
+            admission,
+            Bindings {
+                store: super::BindingState::Ready,
+                provider: super::BindingState::Ready,
+                catalog: super::BindingState::Ready,
+                tools: super::BindingState::Ready,
+                hands: super::BindingState::Ready,
+            },
+        );
+
+        let AdmissionDecision::Admitted(held) = control.admit(512) else {
+            panic!("the exact context boundary is admitted");
+        };
+        assert_eq!(permits.held(PermitKind::ContextBytes), 512);
+        drop(held);
+        assert_eq!(permits.held(PermitKind::ContextBytes), 0);
+        assert_eq!(permits.held(PermitKind::Activation), 0);
     }
 }

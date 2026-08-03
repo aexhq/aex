@@ -657,7 +657,8 @@ pub fn compile_decision(
                  AND fence = :fence",
             )
             .update_expression(
-                "SET revision = :nextRevision, journalTail = :nextTail, #status = :status, \
+                "SET revision = :nextRevision, journalTail = :nextTail, \
+                 journalTailHash = :nextTailHash, hasJournal = :hasJournal, #status = :status, \
                  leaseExpiresAt = :lease, updatedAt = :now",
             )
             .expression_attribute_names("#status", "status")
@@ -672,6 +673,8 @@ pub fn compile_decision(
             .expression_attribute_values(":fence", n(control.fence))
             .expression_attribute_values(":nextRevision", n(control.revision + 1))
             .expression_attribute_values(":nextTail", n(request.entry.seq))
+            .expression_attribute_values(":nextTailHash", s(request.entry.entry_id.clone()))
+            .expression_attribute_values(":hasJournal", crate::attr::boolean(true))
             .expression_attribute_values(":status", s(request.next_status.clone()))
             .expression_attribute_values(":lease", stamp(request.lease_expires_at))
             .expression_attribute_values(":now", stamp(request.now)),
@@ -840,6 +843,7 @@ pub fn compile_fanout_page(
                     .set("status", s("queued"))
                     .set("revision", n(0))
                     .set("journalTail", n(0))
+                    .set("hasJournal", crate::attr::boolean(false))
                     .set("fence", n(0))
                     .set("childBudgetRemaining", n(child.child_budget))
                     .set("childBudgetGranted", n(child.child_budget))

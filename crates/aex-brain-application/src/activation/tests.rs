@@ -15,14 +15,16 @@ use super::memory::{
     ProviderScript, Recorder, ScriptedProvider, ScriptedTools, wake_for,
 };
 use super::{
-    Activation, ActivationError, ActivationPolicy, Outcome, Ports, Release, Stop, WakeLoop,
+    Activation, ActivationError, ActivationPolicy, AdmissionControl, AdmissionDecision, Outcome,
+    Ports, Release, RestoreBudget, Stop, WakeLoop,
 };
-use crate::kernel::{ActivationRegistry, DrainGate};
+use crate::kernel::{ActivationRegistry, DrainGate, PermitKind, PermitSet};
 use crate::ports::{
     BoxFuture, CancelToken, ClaimError, ClockPort as _, CommitError, ConditionFailure,
-    DispatchTicket, EffectStore as _, FenceGuard, LeaseStore as _, PreviewSink,
-    ProviderDispatchError, ProviderFailureClass, ProviderOutcome, ProviderPort, RedactedDetail,
-    ReleaseDisposition, StoreError, StreamBudget, UnknownResolution, WakeQueue as _,
+    DispatchTicket, EffectStore as _, FenceGuard, JournalCursor, JournalPage, LeaseStore as _,
+    PreviewSink, ProviderDispatchError, ProviderFailureClass, ProviderOutcome, ProviderPort,
+    RedactedDetail, ReleaseDisposition, StoreError, StreamBudget, UnknownResolution,
+    WakeQueue as _,
 };
 use aex_brain_domain::budget::DimensionVector;
 use aex_brain_domain::effect::{
@@ -42,8 +44,9 @@ use aex_brain_domain::wire_pending::{
 };
 use aex_wire::ids::{GenerationId, PrefixedId as _, Uuid7};
 use core::future::Future as _;
+use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use uuid::Uuid;
 
 /// Drives a fixture future to completion.
@@ -133,6 +136,30 @@ fn history() -> Vec<JournalEntry> {
     )
     .expect("the record canonicalizes");
     vec![started, message]
+}
+
+fn journal_bytes(entries: &[JournalEntry]) -> usize {
+    entries
+        .iter()
+        .map(|entry| {
+            entry
+                .record
+                .canonical_bytes()
+                .expect("the fixture record remains canonical")
+                .len()
+        })
+        .sum()
+}
+
+fn journal_page(entries: Vec<JournalEntry>, next: Option<JournalSeq>) -> JournalPage {
+    let hydrated_bytes = journal_bytes(&entries);
+    JournalPage {
+        entries,
+        hydrated_bytes,
+        next: next.map(|seq| {
+            JournalCursor::new([("offset", seq.get().to_string())], JournalSeq::ZERO, seq)
+        }),
+    }
 }
 
 fn produced() -> ProviderOutcome {
@@ -551,6 +578,221 @@ fn a_journal_gap_does_not_fold_does_not_act_and_does_not_ack() {
     assert_eq!(harness.provider.dispatched().len(), 0);
     assert_eq!(harness.queue.acked().len(), 0);
     assert_eq!(harness.queue.depth(), 1);
+}
+
+/// A service page can reach EOF before the control head it was claimed with. That is not a
+/// shorter valid history: recovery and planning must see the whole authoritative journal or
+/// neither may run.
+#[test]
+fn early_eof_is_refused_before_recovery_or_planning() {
+    let harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced()))]);
+    let entries = history();
+    harness
+        .store
+        .page_next_read(journal_page(vec![entries[0].clone()], None));
+    harness.wake();
+
+    let error = harness.run_next().expect_err("EOF before the claimed tail");
+    assert!(
+        matches!(
+            error,
+            ActivationError::Store(StoreError::JournalTailMismatch { .. })
+        ),
+        "{error:?}"
+    );
+    assert_eq!(harness.log.count("load_open"), 0, "recovery never ran");
+    assert_eq!(harness.log.count("commit"), 0, "planning never wrote");
+    assert!(harness.provider.dispatched().is_empty());
+    assert!(harness.queue.acked().is_empty());
+}
+
+/// Equal sequence counts are insufficient: the claimed head hash is the exact history
+/// identity, so a same-sequence fork is refused before any effect recovery.
+#[test]
+fn an_exact_sequence_with_the_wrong_tail_hash_is_refused() {
+    let harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced()))]);
+    harness.store.set_claimed_tail(
+        key(),
+        Some(JournalSeq(1)),
+        Some(ContentHash::of(b"another tail at the same sequence")),
+    );
+    harness.wake();
+
+    let error = harness
+        .run_next()
+        .expect_err("the hash must equal the claimed tail");
+    assert!(matches!(
+        error,
+        ActivationError::Store(StoreError::JournalTailMismatch {
+            claimed_seq: Some(JournalSeq(1)),
+            folded_seq: Some(JournalSeq(1)),
+            ..
+        })
+    ));
+    assert_eq!(harness.log.count("load_open"), 0);
+    assert_eq!(harness.log.count("commit"), 0);
+    assert!(harness.provider.dispatched().is_empty());
+}
+
+/// Native continuations, rather than a page's item count, carry a valid restore across as
+/// many short pages as the total budget permits.
+#[test]
+fn a_valid_multipage_restore_reaches_the_exact_claimed_tail() {
+    let mut harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced()))]);
+    harness.policy.read.max_entries = 1;
+    harness.wake();
+
+    harness
+        .run_next()
+        .expect("both pages restore and the turn runs");
+    assert_eq!(harness.log.count("read_page"), 2);
+    assert_eq!(harness.provider.dispatched().len(), 1);
+}
+
+/// Per-page limits are not an activation limit. Three one-entry pages exceed a two-entry
+/// restore ceiling even though each page is individually valid, and nothing downstream may
+/// plan or dispatch from the retained prefix.
+#[test]
+fn multiple_pages_cannot_exceed_the_total_restore_budget() {
+    let mut harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced()))]);
+    let id = EffectId([9; 16]);
+    let mut entries = history();
+    entries.push(
+        JournalEntry::seal(
+            JournalSeq(2),
+            Timestamp::from_millis(START),
+            JournalRecord::EffectPrepared {
+                effect: id,
+                kind: EffectKind::ModelCall,
+                class: EffectClass::NonReplayable,
+                request_hash: ContentHash::of(b"prepared but not recoverable under this cap"),
+                deadline: Timestamp::from_millis(START + 60_000),
+                attempt: 1,
+                reservation: Vec::new(),
+            },
+        )
+        .expect("the third record canonicalizes"),
+    );
+    harness.store.seed(key(), entries);
+    harness.policy.read.max_entries = 1;
+    harness.policy.restore = RestoreBudget {
+        max_entries: 2,
+        max_bytes: usize::MAX,
+    };
+    harness.wake();
+
+    let error = harness
+        .run_next()
+        .expect_err("the third page is beyond the activation ceiling");
+    assert!(matches!(
+        error,
+        ActivationError::Store(StoreError::RestoreBudgetExhausted { .. })
+    ));
+    assert_eq!(
+        harness.log.count("read_page"),
+        2,
+        "two bounded pages were read"
+    );
+    assert_eq!(harness.log.count("load_open"), 0);
+    assert_eq!(harness.log.count("commit"), 0);
+    assert!(harness.provider.dispatched().is_empty());
+    assert!(harness.queue.acked().is_empty());
+}
+
+/// The byte dimension is cumulative too. The second page is refused against the bytes left
+/// by the first, even though either page fits the ordinary per-page limit by itself.
+#[test]
+fn multiple_pages_cannot_exceed_the_total_restore_byte_budget() {
+    let mut harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced()))]);
+    let entries = history();
+    harness.policy.read.max_entries = 1;
+    harness.policy.restore = RestoreBudget {
+        max_entries: entries.len(),
+        max_bytes: journal_bytes(&entries).saturating_sub(1),
+    };
+    harness.wake();
+
+    let error = harness
+        .run_next()
+        .expect_err("the second page is one byte beyond the activation ceiling");
+    assert!(matches!(
+        error,
+        ActivationError::Store(StoreError::RestoreBudgetExhausted { .. })
+    ));
+    assert_eq!(harness.log.count("read_page"), 2);
+    assert_eq!(harness.log.count("load_open"), 0);
+    assert_eq!(harness.log.count("commit"), 0);
+    assert!(harness.provider.dispatched().is_empty());
+}
+
+/// The ceiling is inclusive. A two-page history whose measured bytes and entry count equal
+/// both limits is valid; using `>=` here would reject the largest safe restore.
+#[test]
+fn the_exact_total_restore_boundary_succeeds() {
+    let mut harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced()))]);
+    let entries = history();
+    harness.policy.read.max_entries = 1;
+    harness.policy.restore = RestoreBudget {
+        max_entries: entries.len(),
+        max_bytes: journal_bytes(&entries),
+    };
+    harness.wake();
+
+    harness.run_next().expect("the inclusive boundary restores");
+    assert_eq!(harness.log.count("read_page"), 2);
+    assert_eq!(harness.provider.dispatched().len(), 1);
+}
+
+#[derive(Debug)]
+struct ReservingAdmission {
+    permits: Arc<PermitSet>,
+    requested: AtomicU64,
+}
+
+impl AdmissionControl for ReservingAdmission {
+    fn should_receive(&self) -> bool {
+        true
+    }
+
+    fn admit(&self, restore_bytes: u64) -> AdmissionDecision {
+        self.requested.store(restore_bytes, Ordering::SeqCst);
+        let activation = self
+            .permits
+            .acquire(PermitKind::Activation, 1)
+            .expect("the activation permit is available");
+        let context = self
+            .permits
+            .acquire(PermitKind::ContextBytes, restore_bytes)
+            .expect("the restore reservation is available");
+        AdmissionDecision::Admitted(vec![activation, context])
+    }
+}
+
+/// Restore memory is an admission reservation, not a counter callers must remember to
+/// decrement. Both the activation and context permits return on every completed drive.
+#[test]
+fn the_restore_reservation_releases_with_the_activation() {
+    let harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced()))]);
+    let restore_bytes = u64::try_from(harness.policy.restore.max_bytes).expect("fits u64");
+    let permits = Arc::new(PermitSet::new(BTreeMap::from([
+        (PermitKind::Activation, 1),
+        (PermitKind::ContextBytes, restore_bytes),
+    ])));
+    let admission = Arc::new(ReservingAdmission {
+        permits: Arc::clone(&permits),
+        requested: AtomicU64::new(0),
+    });
+    harness.wake();
+    let delivery = block_on(harness.queue.receive(1, core::time::Duration::from_secs(0)))
+        .expect("the queue answers")
+        .pop()
+        .expect("a delivery is waiting");
+    let loop_ = WakeLoop::new(harness.activation(), Arc::clone(&admission) as Arc<_>);
+
+    block_on(loop_.drive(delivery)).expect("the activation runs");
+    assert_eq!(admission.requested.load(Ordering::SeqCst), restore_bytes);
+    assert_eq!(permits.held(PermitKind::Activation), 0);
+    assert_eq!(permits.held(PermitKind::ContextBytes), 0);
 }
 
 /// Drain stops the loop taking new work. The delivery is released at zero visibility so a

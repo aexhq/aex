@@ -549,6 +549,26 @@ fn the_decision_transaction_compiles_to_exactly_the_declared_participants_in_ord
 }
 
 #[test]
+fn a_decision_moves_the_authoritative_tail_sequence_and_hash_together() {
+    let request = decision();
+    let plan = compile_decision(&tables(), &request, None).expect("compiles");
+    let control = plan.actions()[1].update().expect("the control update");
+    assert!(control.update_expression().contains("journalTailHash"));
+    assert!(control.update_expression().contains("hasJournal"));
+    let values = control
+        .expression_attribute_values()
+        .expect("control values");
+    assert_eq!(
+        values[":nextTailHash"].as_s().expect("hash string"),
+        &request.entry.entry_id
+    );
+    assert_eq!(
+        values[":hasJournal"].as_bool().expect("journal marker"),
+        &true
+    );
+}
+
+#[test]
 fn a_decision_guards_the_head_without_writing_it() {
     let plan = compile_decision(&tables(), &decision(), None).expect("compiles");
     let head = &plan.actions()[0];

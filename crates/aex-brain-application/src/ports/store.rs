@@ -62,6 +62,13 @@ pub struct AgentHead {
     pub fence: Fence,
     /// The last committed sequence.
     pub journal_tail: Option<JournalSeq>,
+    /// The content hash at `journal_tail`.
+    ///
+    /// Sequence alone cannot prove a restored journal is the history the control authority
+    /// claimed: a fork at the same tail has the same count. The two values are therefore
+    /// either both present or both absent, and activation verifies both before recovery or
+    /// planning.
+    pub journal_tail_hash: Option<ContentHash>,
     /// The session cancellation epoch.
     pub cancel_epoch: CancelEpoch,
     /// The terminal reason, once the agent has one.
@@ -78,13 +85,65 @@ pub struct AgentHead {
     pub lease_expires_at: Timestamp,
 }
 
+/// An opaque native continuation for one journal query.
+///
+/// The application reads only `next`; the adapter owns `parts` and must validate the whole
+/// tuple before using it. Keeping the native key prevents a short `DynamoDB` page from being
+/// mistaken for EOF merely because it returned fewer than the caller's entry limit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JournalCursor {
+    parts: BTreeMap<String, String>,
+    start: JournalSeq,
+    next: JournalSeq,
+}
+
+impl JournalCursor {
+    /// Builds an adapter-owned cursor.
+    #[must_use]
+    pub fn new<I, K, V>(parts: I, start: JournalSeq, next: JournalSeq) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
+        Self {
+            parts: parts
+                .into_iter()
+                .map(|(name, value)| (name.into(), value.into()))
+                .collect(),
+            start,
+            next,
+        }
+    }
+
+    /// Returns the complete adapter-owned native key.
+    #[must_use]
+    pub fn parts(&self) -> &BTreeMap<String, String> {
+        &self.parts
+    }
+
+    /// The first sequence in the original query whose native key produced this cursor.
+    #[must_use]
+    pub const fn start(&self) -> JournalSeq {
+        self.start
+    }
+
+    /// The sequence the next page must begin with.
+    #[must_use]
+    pub const fn next(&self) -> JournalSeq {
+        self.next
+    }
+}
+
 /// One page of an agent's journal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JournalPage {
     /// The entries, contiguous and in order.
     pub entries: Vec<JournalEntry>,
-    /// The sequence to resume from, when the page did not reach the tail.
-    pub next: Option<JournalSeq>,
+    /// Bytes hydrated by this page, including placed bodies.
+    pub hydrated_bytes: usize,
+    /// The native continuation when the service did not reach EOF.
+    pub next: Option<JournalCursor>,
 }
 
 /// The bounds one page read runs under.
@@ -129,6 +188,7 @@ pub trait JournalStore: Send + Sync + 'static {
         key: &'a AgentKey,
         from: JournalSeq,
         budget: ReadBudget,
+        after: Option<JournalCursor>,
     ) -> BoxFuture<'a, Result<JournalPage, StoreError>>;
 
     /// Commits one decision as one transaction.
@@ -573,6 +633,34 @@ pub enum StoreError {
         entries: usize,
         /// How many bytes were read.
         bytes: usize,
+    },
+    /// The whole activation restore ceiling was exhausted.
+    #[error(
+        "restore budget exhausted after {entries} entries and {bytes} bytes (limits: {max_entries} entries, {max_bytes} bytes)"
+    )]
+    RestoreBudgetExhausted {
+        /// How many entries would be retained.
+        entries: usize,
+        /// How many bytes would be retained.
+        bytes: usize,
+        /// The activation-wide entry ceiling.
+        max_entries: usize,
+        /// The activation-wide byte ceiling.
+        max_bytes: usize,
+    },
+    /// The completely folded journal did not equal the tail claimed with the lease.
+    #[error(
+        "folded journal tail {folded_seq:?}/{folded_hash:?} does not match claimed tail {claimed_seq:?}/{claimed_hash:?}"
+    )]
+    JournalTailMismatch {
+        /// The sequence claimed by the agent head.
+        claimed_seq: Option<JournalSeq>,
+        /// The hash claimed by the agent head.
+        claimed_hash: Option<ContentHash>,
+        /// The sequence reached by the complete fold.
+        folded_seq: Option<JournalSeq>,
+        /// The hash reached by the complete fold.
+        folded_hash: Option<ContentHash>,
     },
     /// The underlying service failed.
     #[error("store transport failed: {reason}")]

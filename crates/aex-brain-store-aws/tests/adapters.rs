@@ -8,8 +8,8 @@
 
 use aex_brain_application::ports::{
     AgentHead, CancelToken, Claim, ClaimError, ConditionFailure, DispatchTicket, DueScanCursor,
-    DurableWake, EffectStore, FenceGuard, JournalStore, LeaseStore, ReadBudget, ReleaseDisposition,
-    SessionAuthority, StoreError, WakeQueue,
+    DurableWake, EffectStore, FenceGuard, JournalCursor, JournalStore, LeaseStore, ReadBudget,
+    ReleaseDisposition, SessionAuthority, StoreError, WakeQueue,
 };
 use aex_brain_domain::ids::{
     AgentId, AgentKey, AgentRevision, CancelEpoch, ContentHash, EffectId, Fence, JournalSeq,
@@ -110,6 +110,7 @@ fn head() -> AgentHead {
         revision: AgentRevision(1),
         fence: Fence(3),
         journal_tail: Some(JournalSeq(4)),
+        journal_tail_hash: Some(ContentHash::of(b"tail")),
         cancel_epoch: CancelEpoch(0),
         finish: None,
         phase: "awaiting_model".to_owned(),
@@ -479,6 +480,7 @@ async fn a_journal_page_is_strongly_consistent_and_bounded() {
                 max_entries: 25,
                 max_bytes: 1_024,
             },
+            None,
         )
         .await;
     let body = captured(receiver);
@@ -490,6 +492,46 @@ async fn a_journal_page_is_strongly_consistent_and_bounded() {
     );
 }
 
+/// A native continuation is sent back as `ExclusiveStartKey`; deriving the next query only
+/// from the number of returned items would repeat or skip rows after a short service page.
+#[tokio::test]
+async fn a_journal_page_carries_the_complete_native_continuation() {
+    let (store, receiver) = capturing();
+    let partition = aex_brain_store_aws::keys::agent_partition(&key()).expect("a valid key");
+    let cursor = JournalCursor::new(
+        [
+            (aex_session_dynamodb::attr::PK, partition.clone()),
+            (
+                aex_session_dynamodb::attr::SK,
+                aex_brain_store_aws::keys::journal_sort_key(JournalSeq(4)),
+            ),
+        ],
+        JournalSeq(4),
+        JournalSeq(5),
+    );
+    let _ = store
+        .read_page(
+            &key(),
+            JournalSeq(5),
+            ReadBudget {
+                max_entries: 25,
+                max_bytes: 1_024,
+            },
+            Some(cursor),
+        )
+        .await;
+    let body = captured(receiver);
+    assert_eq!(body["ExclusiveStartKey"]["pk"]["S"], partition);
+    assert_eq!(
+        body["ExclusiveStartKey"]["sk"]["S"],
+        "J#00000000000000000004"
+    );
+    assert_eq!(
+        body["ExpressionAttributeValues"][":from"]["S"], "J#00000000000000000004",
+        "native pagination retains the original key condition"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // page rules
 // ---------------------------------------------------------------------------
@@ -497,6 +539,14 @@ async fn a_journal_page_is_strongly_consistent_and_bounded() {
 fn entry(seq: u64, record: &JournalRecord) -> aex_session_dynamodb::attr::Item {
     let body = record.canonical_bytes().expect("canonical");
     ItemBuilder::new(aex_session_dynamodb::codec::JOURNAL_ENTRY)
+        .set(
+            aex_session_dynamodb::attr::PK,
+            s(aex_brain_store_aws::keys::agent_partition(&key()).expect("a valid key")),
+        )
+        .set(
+            aex_session_dynamodb::attr::SK,
+            s(aex_brain_store_aws::keys::journal_sort_key(JournalSeq(seq))),
+        )
         .set("seq", n(seq))
         .set("entryId", s(ContentHash::of(&body).to_hex()))
         .set("kind", s(record.kind_name()))
@@ -509,6 +559,23 @@ fn entry(seq: u64, record: &JournalRecord) -> aex_session_dynamodb::attr::Item {
             ),
         )
         .build()
+}
+
+fn continuation(seq: u64) -> aex_session_dynamodb::attr::Item {
+    aex_session_dynamodb::attr::Item::from([
+        (
+            aex_session_dynamodb::attr::PK.to_owned(),
+            s(aex_brain_store_aws::keys::agent_partition(&key()).expect("a valid key")),
+        ),
+        (
+            aex_session_dynamodb::attr::SK.to_owned(),
+            s(aex_brain_store_aws::keys::journal_sort_key(JournalSeq(seq))),
+        ),
+    ])
+}
+
+fn partition() -> String {
+    aex_brain_store_aws::keys::agent_partition(&key()).expect("a valid key")
 }
 
 fn finished() -> JournalRecord {
@@ -529,9 +596,15 @@ fn budget(entries: usize, bytes: usize) -> ReadBudget {
 fn a_contiguous_page_decodes_in_order() {
     let record = finished();
     let items = [entry(4, &record), entry(5, &record), entry(6, &record)];
-    let page =
-        aex_brain_store_aws::journal::decode_page(&items, JournalSeq(4), budget(25, 1 << 20))
-            .expect("a contiguous page folds");
+    let page = aex_brain_store_aws::journal::decode_page(
+        &items,
+        None,
+        &partition(),
+        JournalSeq(4),
+        JournalSeq(4),
+        budget(25, 1 << 20),
+    )
+    .expect("a contiguous page folds");
     assert_eq!(page.entries.len(), 3);
     assert_eq!(page.entries[0].envelope.seq, JournalSeq(4));
     assert_eq!(page.entries[2].envelope.seq, JournalSeq(6));
@@ -544,13 +617,40 @@ fn a_contiguous_page_decodes_in_order() {
 fn a_page_that_observes_a_gap_returns_no_entries_at_all() {
     let record = finished();
     let items = [entry(4, &record), entry(6, &record)];
-    let error =
-        aex_brain_store_aws::journal::decode_page(&items, JournalSeq(4), budget(25, 1 << 20))
-            .expect_err("a gap is a typed error, never a fold");
+    let error = aex_brain_store_aws::journal::decode_page(
+        &items,
+        None,
+        &partition(),
+        JournalSeq(4),
+        JournalSeq(4),
+        budget(25, 1 << 20),
+    )
+    .expect_err("a gap is a typed error, never a fold");
     assert_eq!(
         error,
         StoreError::JournalGap {
             missing: JournalSeq(5)
+        }
+    );
+}
+
+#[test]
+fn a_page_that_is_not_in_ascending_sequence_order_is_refused() {
+    let record = finished();
+    let items = [entry(5, &record), entry(4, &record)];
+    let error = aex_brain_store_aws::journal::decode_page(
+        &items,
+        None,
+        &partition(),
+        JournalSeq(4),
+        JournalSeq(4),
+        budget(25, 1 << 20),
+    )
+    .expect_err("query order is part of the page contract");
+    assert_eq!(
+        error,
+        StoreError::JournalGap {
+            missing: JournalSeq(4)
         }
     );
 }
@@ -561,9 +661,15 @@ fn a_page_that_observes_a_gap_returns_no_entries_at_all() {
 fn a_body_that_disagrees_with_its_recorded_hash_quarantines() {
     let mut item = entry(4, &finished());
     item.insert("entryId".to_owned(), s("f".repeat(64)));
-    let error =
-        aex_brain_store_aws::journal::decode_page(&[item], JournalSeq(4), budget(25, 1 << 20))
-            .expect_err("a fork is never folded");
+    let error = aex_brain_store_aws::journal::decode_page(
+        &[item],
+        None,
+        &partition(),
+        JournalSeq(4),
+        JournalSeq(4),
+        budget(25, 1 << 20),
+    )
+    .expect_err("a fork is never folded");
     assert!(
         matches!(error, StoreError::JournalForked { seq, .. } if seq == JournalSeq(4)),
         "{error:?}"
@@ -574,8 +680,15 @@ fn a_body_that_disagrees_with_its_recorded_hash_quarantines() {
 fn a_page_that_exhausts_its_byte_budget_says_so_rather_than_truncating() {
     let record = finished();
     let items = [entry(4, &record), entry(5, &record)];
-    let error = aex_brain_store_aws::journal::decode_page(&items, JournalSeq(4), budget(25, 1))
-        .expect_err("an exhausted budget is reported");
+    let error = aex_brain_store_aws::journal::decode_page(
+        &items,
+        None,
+        &partition(),
+        JournalSeq(4),
+        JournalSeq(4),
+        budget(25, 1),
+    )
+    .expect_err("an exhausted budget is reported");
     assert!(
         matches!(error, StoreError::ReadBudgetExhausted { .. }),
         "{error:?}"
@@ -583,12 +696,72 @@ fn a_page_that_exhausts_its_byte_budget_says_so_rather_than_truncating() {
 }
 
 #[test]
-fn a_full_page_reports_where_to_resume() {
+fn a_short_page_with_a_last_evaluated_key_reports_where_to_resume() {
     let record = finished();
     let items = [entry(4, &record), entry(5, &record)];
-    let page = aex_brain_store_aws::journal::decode_page(&items, JournalSeq(4), budget(2, 1 << 20))
-        .expect("a full page");
-    assert_eq!(page.next, Some(JournalSeq(6)));
+    let last_evaluated_key = continuation(5);
+    let page = aex_brain_store_aws::journal::decode_page(
+        &items,
+        Some(&last_evaluated_key),
+        &partition(),
+        JournalSeq(4),
+        JournalSeq(4),
+        budget(25, 1 << 20),
+    )
+    .expect("a short service page");
+    assert_eq!(
+        page.next.as_ref().map(JournalCursor::next),
+        Some(JournalSeq(6))
+    );
+}
+
+#[test]
+fn a_full_page_without_a_native_continuation_is_eof() {
+    let record = finished();
+    let items = [entry(4, &record), entry(5, &record)];
+    let page = aex_brain_store_aws::journal::decode_page(
+        &items,
+        None,
+        &partition(),
+        JournalSeq(4),
+        JournalSeq(4),
+        budget(2, 1 << 20),
+    )
+    .expect("the service reached EOF exactly at the caller limit");
+    assert_eq!(page.next, None);
+}
+
+#[test]
+fn every_native_continuation_component_is_required_and_validated() {
+    let items = [entry(4, &finished())];
+    let mut missing_sk = continuation(4);
+    missing_sk.remove(aex_session_dynamodb::attr::SK);
+    let missing = aex_brain_store_aws::journal::decode_page(
+        &items,
+        Some(&missing_sk),
+        &partition(),
+        JournalSeq(4),
+        JournalSeq(4),
+        budget(25, 1 << 20),
+    )
+    .expect_err("a partial native key is unusable");
+    assert!(matches!(missing, StoreError::Undecodable { .. }));
+
+    let mut wrong_partition = continuation(4);
+    wrong_partition.insert(
+        aex_session_dynamodb::attr::PK.to_owned(),
+        s("AGENT#another-session#another-agent"),
+    );
+    let wrong = aex_brain_store_aws::journal::decode_page(
+        &items,
+        Some(&wrong_partition),
+        &partition(),
+        JournalSeq(4),
+        JournalSeq(4),
+        budget(25, 1 << 20),
+    )
+    .expect_err("a continuation for another partition is unusable");
+    assert!(matches!(wrong, StoreError::Undecodable { .. }));
 }
 
 /// Every named participant maps to exactly one precondition failure, and the four answers

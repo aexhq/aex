@@ -51,6 +51,20 @@ use std::sync::Arc;
 pub use decide::{Draft, phase_tag};
 pub use run::{Activation, PollReport, WakeLoop};
 
+/// The strict activation-wide ceiling for cold journal restore.
+///
+/// This is separate from [`ReadBudget`]: a service may return many individually valid short
+/// pages, and retaining all of them is still unbounded unless the activation accounts for
+/// the whole restore. It is an entry/byte ceiling only; model token limits are not a memory
+/// measurement and are deliberately absent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RestoreBudget {
+    /// The most entries one activation may retain while rebuilding its fold.
+    pub max_entries: usize,
+    /// The most hydrated journal bytes one activation may retain while rebuilding its fold.
+    pub max_bytes: usize,
+}
+
 /// Every port one activation is driven through.
 ///
 /// One value rather than ten parameters: the ports have to agree about the agent they are
@@ -102,6 +116,8 @@ pub struct ActivationPolicy {
     pub visibility_timeout: core::time::Duration,
     /// The bounds one journal page read runs under.
     pub read: ReadBudget,
+    /// The strict total journal restore ceiling across every page.
+    pub restore: RestoreBudget,
     /// The context view policy.
     pub context: ContextPolicy,
     /// How long one external effect attempt may run, in milliseconds.
@@ -150,6 +166,13 @@ impl Default for ActivationPolicy {
             visibility_timeout: core::time::Duration::from_secs(30),
             read: ReadBudget {
                 max_entries: 256,
+                max_bytes: 8 * 1_024 * 1_024,
+            },
+            // This fail-closed ceiling is intentionally small enough that the candidate
+            // mux's 1 GiB context pool can reserve it at the 100-activation target. A
+            // verified snapshot plus bounded suffix is the path for histories above it.
+            restore: RestoreBudget {
+                max_entries: 4_096,
                 max_bytes: 8 * 1_024 * 1_024,
             },
             context: ContextPolicy::default(),
@@ -208,7 +231,7 @@ pub trait AdmissionControl: Send + Sync + 'static {
     fn should_receive(&self) -> bool;
 
     /// Decides whether one activation may start.
-    fn admit(&self) -> AdmissionDecision;
+    fn admit(&self, restore_bytes: u64) -> AdmissionDecision;
 }
 
 /// What admission decided.

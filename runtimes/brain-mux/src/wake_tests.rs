@@ -156,10 +156,10 @@ fn admission(drain: &Arc<DrainGate>) -> Arc<Admission> {
             safety_cap: 8,
             offered_ceiling: 16,
         },
-        Arc::new(PermitSet::new(BTreeMap::from([(
-            PermitKind::Activation,
-            8_u64,
-        )]))),
+        Arc::new(PermitSet::new(BTreeMap::from([
+            (PermitKind::Activation, 8_u64),
+            (PermitKind::ContextBytes, 64 * 1_024 * 1_024),
+        ]))),
         Arc::clone(drain),
     ))
 }

@@ -194,6 +194,7 @@ pub fn control() -> AgentControl {
         generation: generation(),
         revision: 4,
         journal_tail: 9,
+        journal_tail_hash: Some("a".repeat(64)),
         claim_owner: Some("worker-1".to_owned()),
         lease_expires_at: Some(later(30_000)),
         fence: 2,
@@ -328,7 +329,7 @@ pub fn decision() -> AgentDecisionPlan {
         lease_expires_at: later(30_000),
         entry: JournalEntry {
             seq: 10,
-            entry_id: "je-10".to_owned(),
+            entry_id: "b".repeat(64),
             kind: "tool_call".to_owned(),
             body: Body::Inline(b"{}".to_vec()),
             body_bytes: 2,

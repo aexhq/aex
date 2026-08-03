@@ -10,7 +10,7 @@ keywords:
   - loom
 audience: implementation agents and maintainers
 status: accepted
-last_verified: 2026-08-02
+last_verified: 2026-08-03
 related:
   - references/rewrite/contracts.md
   - references/rewrite/test-architecture.md
@@ -137,7 +137,8 @@ pub trait IdPort: Send + Sync + 'static {
 pub trait JournalStore: Send + Sync + 'static {
     fn load_head<'a>(&'a self, key: &'a AgentKey)
         -> BoxFuture<'a, Result<Option<AgentHead>, StoreError>>;
-    fn read_page<'a>(&'a self, key: &'a AgentKey, from: JournalSeq, budget: ReadBudget)
+    fn read_page<'a>(&'a self, key: &'a AgentKey, from: JournalSeq, budget: ReadBudget,
+        after: Option<JournalCursor>)
         -> BoxFuture<'a, Result<JournalPage, StoreError>>;
     fn commit<'a>(&'a self, commit: &'a DecisionCommit)
         -> BoxFuture<'a, Result<CommitReceipt, CommitError>>;
@@ -484,8 +485,15 @@ and none of it is attributed.
 
 | # | Decision | Why |
 | --- | --- | --- |
-| BR-34 | Ticket minting reuses the decision compiler's canonical session-head condition as the first participant in the pre-dispatch transaction; the following participants prove current agent owner/fence and move the exact prepared effect | `EffectPrepared` is not dispatch authority. Cancellation, trash or purge can commit after preparation, and a separate pre-send read would leave another race while adding latency. One `ConditionCheck` makes the session fact and effect transition share the serialization point. |
-| BR-35 | A due row becomes a wake only when its base key, derived shard and effective due position all match `workId`, `dueAt` and priority. Invalid rows are skipped while the native cursor advances; each page returns the full invalid count plus at most eight closed-reason, key-digest diagnostics | trusting projected fields lets a forged past index key wake future work or address a different base row. The delivery port cannot delete or rewrite work authority, so logical isolation plus a bounded redacted diagnostic is the only boundary-correct quarantine; it never carries tenant identifiers or row keys. |
+| BR-36 | Ticket minting reuses the decision compiler's canonical session-head condition as the first participant in the pre-dispatch transaction; the following participants prove current agent owner/fence and move the exact prepared effect | `EffectPrepared` is not dispatch authority. Cancellation, trash or purge can commit after preparation, and a separate pre-send read would leave another race while adding latency. One `ConditionCheck` makes the session fact and effect transition share the serialization point. |
+| BR-37 | A due row becomes a wake only when its base key, derived shard and effective due position all match `workId`, `dueAt` and priority. Invalid rows are skipped while the native cursor advances; each page returns the full invalid count plus at most eight closed-reason, key-digest diagnostics | trusting projected fields lets a forged past index key wake future work or address a different base row. The delivery port cannot delete or rewrite work authority, so logical isolation plus a bounded redacted diagnostic is the only boundary-correct quarantine; it never carries tenant identifiers or row keys. |
+
+### 13.4 Decisions taken in the tail-and-restore-budget pass
+
+| # | Decision | Why |
+| --- | --- | --- |
+| BR-38 | Journal pagination carries `DynamoDB`'s complete native `LastEvaluatedKey`; every `pk`/`sk`, partition, journal sort key and resume sequence is decoded and revalidated, and activation accepts a restore only when its final `(sequence, content hash)` equals the pair returned in the claimed `AgentHead` | `DynamoDB` may return a short page with a continuation, so entry count cannot distinguish EOF. Sequence alone also cannot distinguish a same-tail fork. Either ambiguity reaching recovery or planning can dispatch from a prefix or a different history. |
+| BR-39 | Cold restore has strict activation-wide entry and hydrated-byte ceilings in addition to per-page bounds; mux admission reserves the total byte ceiling before hydration and releases it by RAII with the activation | many valid pages are still unbounded in aggregate. Journal body bytes and entry count are measurable; model token limits are not memory measurements and are not used. Histories above the ceiling fail closed until a verified snapshot authority can provide a bounded suffix. |
 
 ### 14. Still deferred, with what unblocks each
 
@@ -498,6 +506,7 @@ and none of it is attributed.
 | `ReconstructFromReceipt` | `aex-content-aws`'s placement API: the receipt is a digest, and the body it names lives in the content authority |
 | `OwedStep::SpawnChildren` | the `create_subagent` tool, which is the only thing that produces a fanout request for `subagent::plan_spawn`. The planner has no arm that reaches it today |
 | Concurrent activation of one batch | the loop drives a batch sequentially. The local slot already refuses a concurrent duplicate, and the composition root can spawn per delivery; nothing asserts the fan-out yet |
+| Restore above the activation-wide entry/byte ceiling | a verified snapshot authority carrying the exact absorbed journal sequence and hash, plus a store API that conditionally reads only the bounded suffix from that identity. No such authority or port exists today, so Brain refuses rather than inventing snapshot trust or inferring memory from token limits |
 
 ### 14.1 BR-33 canonical generation and production injection
 

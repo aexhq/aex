@@ -19,19 +19,20 @@ use crate::ports::{
     ClockPort, CommitError, CommitReceipt, ConditionFailure, DecisionContext, DetachedStatus,
     DispatchTicket, DueRowIsolation, DueRowIsolationReason, DueScanCursor, DueScanPage,
     DurableWake, EffectStore, FenceGuard, HandsAccepted, HandsEndpoint, HandsError,
-    HandsOperationStart, HandsOperationStatus, HandsPort, IdPort, JournalPage, JournalStore,
-    LeaseStore, MAX_DUE_ROW_ISOLATIONS, PreparedToolCall, PreviewSink, ProviderDispatchError,
-    ProviderOutcome, ProviderPort, ReadBudget, RedactedDetail, ReleaseDisposition, ResultBounds,
-    SessionAuthority, SteadyInstant, StoreError, StreamBudget, ToolDispatchError, ToolOutcome,
-    ToolPort, ToolRoute, ToolRoutingError, WakeDelivery, WakeOrigin, WakeQueue, WakeState,
+    HandsOperationStart, HandsOperationStatus, HandsPort, IdPort, JournalCursor, JournalPage,
+    JournalStore, LeaseStore, MAX_DUE_ROW_ISOLATIONS, PreparedToolCall, PreviewSink,
+    ProviderDispatchError, ProviderOutcome, ProviderPort, ReadBudget, RedactedDetail,
+    ReleaseDisposition, ResultBounds, SessionAuthority, SteadyInstant, StoreError, StreamBudget,
+    ToolDispatchError, ToolOutcome, ToolPort, ToolRoute, ToolRoutingError, WakeDelivery,
+    WakeOrigin, WakeQueue, WakeState,
 };
 use aex_brain_domain::budget::BudgetNode;
 use aex_brain_domain::commit::{DecisionCommit, EffectWrite};
 use aex_brain_domain::effect::{DispatchEvidence, DurableEffect, EffectState, SettledOutcome};
 use aex_brain_domain::ids::{
-    AgentId, AgentKey, AgentRevision, CancelEpoch, CatalogPin, DetachedOperationId, EffectId,
-    Fence, HandsOperationId, JournalSeq, ModelSlug, OwnerToken, SessionId, Timestamp, ToolName,
-    WakeId, WorkShard,
+    AgentId, AgentKey, AgentRevision, CancelEpoch, CatalogPin, ContentHash, DetachedOperationId,
+    EffectId, Fence, HandsOperationId, JournalSeq, ModelSlug, OwnerToken, SessionId, Timestamp,
+    ToolName, WakeId, WorkShard,
 };
 use aex_brain_domain::journal::{FinishReason, JournalEntry, ParkReason};
 use aex_brain_domain::wire_pending::{
@@ -523,7 +524,7 @@ impl AdmissionControl for AlwaysAdmit {
         true
     }
 
-    fn admit(&self) -> AdmissionDecision {
+    fn admit(&self, _restore_bytes: u64) -> AdmissionDecision {
         AdmissionDecision::Admitted(Vec::new())
     }
 }
@@ -535,6 +536,7 @@ struct AgentRow {
     revision: AgentRevision,
     fence: Fence,
     tail: Option<JournalSeq>,
+    tail_hash: Option<ContentHash>,
     cancel_epoch: CancelEpoch,
     finish: Option<FinishReason>,
     phase: String,
@@ -562,6 +564,7 @@ pub struct MemoryStore {
     authorities: Mutex<BTreeMap<SessionId, SessionAuthority>>,
     commit_faults: Mutex<VecDeque<Option<CommitError>>>,
     read_faults: Mutex<VecDeque<StoreError>>,
+    read_pages: Mutex<VecDeque<JournalPage>>,
     dispatch_head_races: Mutex<VecDeque<DispatchHeadRace>>,
     clock: Arc<FixedClock>,
     queue: Arc<MemoryQueue>,
@@ -577,6 +580,7 @@ impl MemoryStore {
             authorities: Mutex::new(BTreeMap::new()),
             commit_faults: Mutex::new(VecDeque::new()),
             read_faults: Mutex::new(VecDeque::new()),
+            read_pages: Mutex::new(VecDeque::new()),
             dispatch_head_races: Mutex::new(VecDeque::new()),
             clock,
             queue,
@@ -594,6 +598,7 @@ impl MemoryStore {
     /// Panics if the lock is poisoned.
     pub fn seed(&self, key: AgentKey, entries: Vec<JournalEntry>) {
         let tail = entries.last().map(|entry| entry.envelope.seq);
+        let tail_hash = entries.last().map(|entry| entry.envelope.content_hash);
         self.agents.lock().expect("not poisoned").insert(
             key,
             AgentRow {
@@ -601,6 +606,7 @@ impl MemoryStore {
                 revision: AgentRevision::ZERO,
                 fence: Fence::ZERO,
                 tail,
+                tail_hash,
                 cancel_epoch: CancelEpoch::ZERO,
                 finish: None,
                 phase: "awaiting_model".to_owned(),
@@ -719,6 +725,30 @@ impl MemoryStore {
             .push_back(error);
     }
 
+    /// Supplies one exact page for the next journal read.
+    ///
+    /// Used for continuation/EOF boundary tests where the authoritative head and the
+    /// service page must deliberately disagree.
+    pub fn page_next_read(&self, page: JournalPage) {
+        self.read_pages
+            .lock()
+            .expect("not poisoned")
+            .push_back(page);
+    }
+
+    /// Replaces the tail pair returned with the next claim without changing stored pages.
+    pub fn set_claimed_tail(
+        &self,
+        key: AgentKey,
+        tail: Option<JournalSeq>,
+        tail_hash: Option<ContentHash>,
+    ) {
+        let mut agents = self.agents.lock().expect("not poisoned");
+        let row = agents.get_mut(&key).expect("the agent was seeded");
+        row.tail = tail;
+        row.tail_hash = tail_hash;
+    }
+
     /// The agent's journal, as the authority holds it.
     ///
     /// # Panics
@@ -775,6 +805,7 @@ impl MemoryStore {
             revision: row.revision,
             fence: row.fence,
             journal_tail: row.tail,
+            journal_tail_hash: row.tail_hash,
             cancel_epoch: row.cancel_epoch,
             finish: row.finish,
             phase: row.phase.clone(),
@@ -812,31 +843,72 @@ impl JournalStore for MemoryStore {
         key: &'a AgentKey,
         from: JournalSeq,
         budget: ReadBudget,
+        after: Option<JournalCursor>,
     ) -> BoxFuture<'a, Result<JournalPage, StoreError>> {
         Box::pin(async move {
             self.log.note("read_page");
             if let Some(fault) = self.read_faults.lock().expect("not poisoned").pop_front() {
                 return Err(fault);
             }
+            if let Some(page) = self.read_pages.lock().expect("not poisoned").pop_front() {
+                return Ok(page);
+            }
+            if after.as_ref().is_some_and(|cursor| cursor.next() != from) {
+                return Err(StoreError::Undecodable {
+                    location: "memory journal continuation".to_owned(),
+                    reason: "the continuation sequence does not match the requested page"
+                        .to_owned(),
+                });
+            }
             let agents = self.agents.lock().expect("not poisoned");
             let Some(row) = agents.get(key) else {
                 return Ok(JournalPage {
                     entries: Vec::new(),
+                    hydrated_bytes: 0,
                     next: None,
                 });
             };
-            let entries: Vec<JournalEntry> = row
+            let mut entries = Vec::new();
+            let mut hydrated_bytes = 0_usize;
+            for entry in row
                 .entries
                 .iter()
                 .filter(|entry| entry.envelope.seq >= from)
                 .take(budget.max_entries)
-                .cloned()
-                .collect();
+            {
+                let body_bytes =
+                    entry
+                        .record
+                        .canonical_bytes()
+                        .map_err(|error| StoreError::Undecodable {
+                            location: "memory journal entry".to_owned(),
+                            reason: error.to_string(),
+                        })?;
+                hydrated_bytes = hydrated_bytes.saturating_add(body_bytes.len());
+                if hydrated_bytes > budget.max_bytes {
+                    return Err(StoreError::ReadBudgetExhausted {
+                        entries: entries.len(),
+                        bytes: hydrated_bytes,
+                    });
+                }
+                entries.push(entry.clone());
+            }
             let next = entries
                 .last()
                 .map(|entry| entry.envelope.seq.next())
-                .filter(|_| entries.len() >= budget.max_entries);
-            Ok(JournalPage { entries, next })
+                .filter(|next| row.entries.iter().any(|entry| entry.envelope.seq >= *next))
+                .map(|next| {
+                    JournalCursor::new(
+                        [("offset", next.get().saturating_sub(1).to_string())],
+                        after.as_ref().map_or(from, JournalCursor::start),
+                        next,
+                    )
+                });
+            Ok(JournalPage {
+                entries,
+                hydrated_bytes,
+                next,
+            })
         })
     }
 
@@ -972,6 +1044,9 @@ impl JournalStore for MemoryStore {
             if !commit.is_retirement_only() {
                 row.revision = commit.control.next_revision;
                 row.tail = Some(commit.control.next_tail);
+                if let Some(last) = row.entries.last() {
+                    row.tail_hash = Some(last.envelope.content_hash);
+                }
                 row.phase.clone_from(&commit.control.phase);
                 if let Some(finish) = commit.control.finish {
                     row.finish = Some(finish);

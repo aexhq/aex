@@ -301,6 +301,8 @@ pub struct AgentControl {
     pub revision: u64,
     /// The highest journal sequence committed.
     pub journal_tail: u64,
+    /// The canonical entry identity at `journal_tail`, absent before the first append.
+    pub journal_tail_hash: Option<String>,
     /// The current claim owner, when claimed.
     pub claim_owner: Option<String>,
     /// The lease expiry, when claimed.

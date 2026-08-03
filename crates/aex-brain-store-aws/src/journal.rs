@@ -12,7 +12,7 @@
 
 use aex_brain_application::ports::{
     AgentHead, BoxFuture, CommitError, CommitReceipt, ConditionFailure, DecisionContext,
-    DispatchTicket, EffectStore, FenceGuard, JournalPage, JournalStore, ReadBudget,
+    DispatchTicket, EffectStore, FenceGuard, JournalCursor, JournalPage, JournalStore, ReadBudget,
     SessionAuthority, StoreError,
 };
 use aex_brain_domain::commit::DecisionCommit;
@@ -151,26 +151,40 @@ impl JournalStore for BrainStore {
         key: &'a AgentKey,
         from: JournalSeq,
         budget: ReadBudget,
+        after: Option<JournalCursor>,
     ) -> BoxFuture<'a, Result<JournalPage, StoreError>> {
         Box::pin(async move {
             let partition = keys::agent_partition(key).map_err(|error| store_key_error(&error))?;
-            let output = self
+            let query_from = after.as_ref().map_or(from, JournalCursor::start);
+            let mut query = self
                 .client
                 .query()
                 .table_name(self.table())
                 .consistent_read(true)
                 .key_condition_expression("pk = :pk AND sk BETWEEN :from AND :to")
-                .expression_attribute_values(":pk", s(partition))
-                .expression_attribute_values(":from", s(keys::journal_sort_key(from)))
+                .expression_attribute_values(":pk", s(partition.clone()))
+                .expression_attribute_values(":from", s(keys::journal_sort_key(query_from)))
                 .expression_attribute_values(
                     ":to",
                     s(format!("{}\u{ffff}", keys::journal_prefix())),
                 )
-                .limit(i32::try_from(budget.max_entries).unwrap_or(i32::MAX))
+                .limit(i32::try_from(budget.max_entries).unwrap_or(i32::MAX));
+            if let Some(cursor) = after {
+                query =
+                    query.set_exclusive_start_key(Some(encode_cursor(&cursor, &partition, from)?));
+            }
+            let output = query
                 .send()
                 .await
                 .map_err(|error| transport("read_page", &error))?;
-            decode_page(output.items(), from, budget)
+            decode_page(
+                output.items(),
+                output.last_evaluated_key(),
+                &partition,
+                query_from,
+                from,
+                budget,
+            )
         })
     }
 
@@ -383,6 +397,9 @@ impl EffectStore for BrainStore {
 /// [`StoreError::Undecodable`] when a row is not a journal entry.
 pub fn decode_page(
     items: &[Item],
+    last_evaluated_key: Option<&Item>,
+    partition: &str,
+    query_from: JournalSeq,
     from: JournalSeq,
     budget: ReadBudget,
 ) -> Result<JournalPage, StoreError> {
@@ -396,6 +413,7 @@ pub fn decode_page(
             row.u64("seq")
                 .map_err(|error| undecodable("journal entry", &error))?,
         );
+        validate_row_key(&row, partition, seq)?;
         if seq != expected {
             return Err(StoreError::JournalGap { missing: expected });
         }
@@ -438,8 +456,117 @@ pub fn decode_page(
             break;
         }
     }
-    let next = (entries.len() >= budget.max_entries).then_some(expected);
-    Ok(JournalPage { entries, next })
+    let next = last_evaluated_key
+        .map(|key| decode_cursor(key, partition, query_from, expected))
+        .transpose()?;
+    Ok(JournalPage {
+        entries,
+        hydrated_bytes: bytes,
+        next,
+    })
+}
+
+fn validate_row_key(row: &Row<'_>, partition: &str, seq: JournalSeq) -> Result<(), StoreError> {
+    let row_partition = row
+        .string(aex_session_dynamodb::attr::PK)
+        .map_err(|error| undecodable("journal entry key", &error))?;
+    let row_sort = row
+        .string(aex_session_dynamodb::attr::SK)
+        .map_err(|error| undecodable("journal entry key", &error))?;
+    if row_partition != partition || parse_journal_sort_key(row_sort) != Some(seq) {
+        return Err(StoreError::Undecodable {
+            location: "journal entry key".to_owned(),
+            reason: "the row key does not match its agent partition and sequence".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn decode_cursor(
+    key: &Item,
+    partition: &str,
+    query_from: JournalSeq,
+    next: JournalSeq,
+) -> Result<JournalCursor, StoreError> {
+    if key.len() != 2 {
+        return Err(invalid_cursor(
+            "the native continuation must contain exactly pk and sk",
+        ));
+    }
+    let pk = string_key_part(key, aex_session_dynamodb::attr::PK)?;
+    let sk = string_key_part(key, aex_session_dynamodb::attr::SK)?;
+    let Some(evaluated) = parse_journal_sort_key(sk) else {
+        return Err(invalid_cursor("the continuation sk is not a journal key"));
+    };
+    if pk != partition || evaluated.next() != next || query_from > evaluated {
+        return Err(invalid_cursor(
+            "the continuation does not match the requested agent and decoded page tail",
+        ));
+    }
+    Ok(JournalCursor::new(
+        [
+            (aex_session_dynamodb::attr::PK, pk),
+            (aex_session_dynamodb::attr::SK, sk),
+        ],
+        query_from,
+        next,
+    ))
+}
+
+fn encode_cursor(
+    cursor: &JournalCursor,
+    partition: &str,
+    from: JournalSeq,
+) -> Result<Item, StoreError> {
+    let parts = cursor.parts();
+    if parts.len() != 2 || cursor.next() != from {
+        return Err(invalid_cursor(
+            "the supplied continuation does not contain the expected native key",
+        ));
+    }
+    let pk = parts
+        .get(aex_session_dynamodb::attr::PK)
+        .ok_or_else(|| invalid_cursor("the supplied continuation has no pk"))?;
+    let sk = parts
+        .get(aex_session_dynamodb::attr::SK)
+        .ok_or_else(|| invalid_cursor("the supplied continuation has no sk"))?;
+    let evaluated = parse_journal_sort_key(sk);
+    if pk != partition
+        || evaluated.map(JournalSeq::next) != Some(from)
+        || evaluated.is_none_or(|seq| cursor.start() > seq)
+    {
+        return Err(invalid_cursor(
+            "the supplied continuation addresses another agent or sequence",
+        ));
+    }
+    Ok(Item::from([
+        (aex_session_dynamodb::attr::PK.to_owned(), s(pk.clone())),
+        (aex_session_dynamodb::attr::SK.to_owned(), s(sk.clone())),
+    ]))
+}
+
+fn string_key_part<'a>(key: &'a Item, name: &str) -> Result<&'a str, StoreError> {
+    match key.get(name) {
+        Some(aws_sdk_dynamodb::types::AttributeValue::S(value)) => Ok(value),
+        _ => Err(invalid_cursor(
+            "a native continuation component is absent or is not a string",
+        )),
+    }
+}
+
+fn parse_journal_sort_key(value: &str) -> Option<JournalSeq> {
+    let digits = value.strip_prefix(keys::journal_prefix())?;
+    if digits.len() != 20 || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse().ok().map(JournalSeq)
+}
+
+fn invalid_cursor(reason: &str) -> StoreError {
+    StoreError::Undecodable {
+        location: "journal continuation".to_owned(),
+        reason: reason.to_owned(),
+    }
 }
 
 fn undecodable(location: &str, error: &impl core::fmt::Display) -> StoreError {

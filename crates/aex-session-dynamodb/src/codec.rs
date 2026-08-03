@@ -355,6 +355,14 @@ pub fn encode_control(control: &AgentControl) -> Item {
         .set("status", s(control.status.clone()))
         .set("revision", n(control.revision))
         .set("journalTail", n(control.journal_tail))
+        .set("hasJournal", boolean(control.journal_tail_hash.is_some()))
+        .set_opt(
+            "journalTailHash",
+            control
+                .journal_tail_hash
+                .as_ref()
+                .map(|hash| s(hash.clone())),
+        )
         .set_opt(
             "claimOwner",
             control.claim_owner.as_ref().map(|owner| s(owner.clone())),
@@ -376,13 +384,26 @@ pub fn encode_control(control: &AgentControl) -> Item {
 pub fn decode_control(item: &Item, asserted: WorkspaceId) -> Result<AgentControl, CodecError> {
     let row = Row::bind(item, AGENT_CONTROL)?;
     row.owned_by("workspaceId", &asserted.to_string())?;
+    let journal_tail = row.u64("journalTail")?;
+    let journal_tail_hash = row.opt_string("journalTailHash")?.map(str::to_owned);
+    let has_journal = row
+        .boolean("hasJournal")
+        .unwrap_or(journal_tail > 0 || journal_tail_hash.is_some());
+    if has_journal != journal_tail_hash.is_some() {
+        return Err(CodecError::Malformed {
+            item_type: AGENT_CONTROL,
+            attribute: "journalTailHash",
+            reason: "journal tail sequence and hash must be present together".to_owned(),
+        });
+    }
     Ok(AgentControl {
         agent: row.id::<AgentId>("agentId")?,
         session: row.id::<SessionId>("sessionId")?,
         workspace: asserted,
         generation: row.id::<GenerationId>("generationId")?,
         revision: row.u64("revision")?,
-        journal_tail: row.u64("journalTail")?,
+        journal_tail,
+        journal_tail_hash,
         claim_owner: row.opt_string("claimOwner")?.map(str::to_owned),
         lease_expires_at: row.opt_timestamp("leaseExpiresAt")?,
         fence: row.u64("fence")?,
@@ -943,6 +964,7 @@ mod tests {
             generation: GenerationId::from_uuid7(Uuid7::compose(1, [5; 10])),
             revision: 2,
             journal_tail: 7,
+            journal_tail_hash: Some("a".repeat(64)),
             claim_owner: None,
             lease_expires_at: None,
             fence: 3,
