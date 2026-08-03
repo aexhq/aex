@@ -36,7 +36,7 @@ pub const OBSERVATION_TABLE: &str = "AEX_OBSERVATION_TABLE";
 pub const SESSION_TABLE_STREAM_ARN: &str = "AEX_SESSION_TABLE_STREAM_ARN";
 /// The `observation-authority` stream this task tails in `ddb_streams` mode.
 pub const OBSERVATION_TABLE_STREAM_ARN: &str = "AEX_OBSERVATION_TABLE_STREAM_ARN";
-/// The endpoint-specific HTTPS origin of the DynamoDB Streams interface endpoint.
+/// The endpoint-specific HTTPS origin of the `DynamoDB` Streams interface endpoint.
 pub const DYNAMODB_STREAMS_ENDPOINT_URL: &str = "AEX_DYNAMODB_STREAMS_ENDPOINT_URL";
 /// The regional content bucket, read for large stored records.
 pub const CONTENT_BUCKET: &str = "AEX_CONTENT_BUCKET";
@@ -171,7 +171,7 @@ pub struct Config {
     pub session_stream: Option<Arn>,
     /// `observation-authority` stream, in `ddb_streams` mode.
     pub observation_stream: Option<Arn>,
-    /// Endpoint-specific DynamoDB Streams origin, in `ddb_streams` mode.
+    /// Endpoint-specific `DynamoDB` Streams origin, in `ddb_streams` mode.
     pub dynamodb_streams_endpoint_url: Option<String>,
     /// Regional content bucket.
     pub content_bucket: String,
