@@ -35,7 +35,7 @@ pub const NON_CARGO_DIRECTORIES: &[&str] = &[
     "tests/load/workloads",
 ];
 
-/// The 66 library crates under `crates/`.
+/// The 67 library crates under `crates/`.
 pub const CRATES: &[&str] = &[
     "aex-brain-application",
     "aex-brain-domain",
@@ -47,6 +47,7 @@ pub const CRATES: &[&str] = &[
     "aex-brain-store-aws",
     "aex-brain-test-support",
     "aex-brain-tool-catalog",
+    "aex-capacity-dynamodb",
     "aex-central-http",
     "aex-central-runtime",
     "aex-central-test-support",
@@ -119,7 +120,7 @@ pub const SERVICES: &[&str] = &[
     "regional-stream",
 ];
 
-/// The 17 deployable workers.
+/// The 18 deployable workers.
 pub const WORKERS: &[&str] = &[
     "central-control-worker",
     "central-schema-admin",
@@ -130,6 +131,7 @@ pub const WORKERS: &[&str] = &[
     "observation-export-task",
     "observation-reconciler",
     "provider-cost-reconciler",
+    "regional-capacity-controller",
     "regional-control",
     "regional-secret-key-admin",
     "runtime-control-worker",
@@ -175,6 +177,7 @@ pub const LIVE_TARGETS: &[&str] = &[
     "observation-export-task",
     "observation-reconciler",
     "provider-cost-reconciler",
+    "regional-capacity-controller",
     "regional-control",
     "regional-observation-api",
     "regional-otlp",
@@ -195,13 +198,13 @@ pub const LIVE_TARGETS: &[&str] = &[
 
 /// The shared test-infrastructure packages, as `(root, package name)`.
 ///
-/// Both live outside `crates/` so the frozen 66-crate inventory stays exactly
-/// Area 9's, and both are `publish = false` dev-dependency-only packages that
-/// must never appear in a production link graph. `aex-test-harness` owns run
-/// identity, prefixes, budget, TTL, the cleanup ledger, the secret canary, the
-/// fault ports and the pinned image registry; `aex-load-harness` owns the load
-/// driver, arrival process, recorder and sampler. They are split so load code
-/// is not built by the unit lane.
+/// Both live outside `crates/` so the frozen crate inventory remains limited
+/// to product libraries. Both are `publish = false` dev-dependency-only
+/// packages that must never appear in a production link graph.
+/// `aex-test-harness` owns run identity, prefixes, budget, TTL, the cleanup
+/// ledger, the secret canary, the fault ports and the pinned image registry;
+/// `aex-load-harness` owns the load driver, arrival process, recorder and
+/// sampler. They are split so load code is not built by the unit lane.
 pub const HARNESSES: &[(&str, &str)] = &[
     ("tests/support", "aex-test-harness"),
     ("tests/load", "aex-load-harness"),
@@ -254,16 +257,16 @@ mod tests {
     fn the_frozen_counts_match_the_accepted_architecture() {
         assert_eq!(
             CRATES.len(),
-            66,
-            "Area 9 inventory minus aex-observation-clickhouse, plus aex-central-runtime and aex-brain-provider-custody"
+            67,
+            "accepted inventory minus aex-observation-clickhouse, plus aex-central-runtime, aex-brain-provider-custody, and aex-capacity-dynamodb"
         );
         assert_eq!(SERVICES.len(), 10);
-        assert_eq!(WORKERS.len(), 17);
+        assert_eq!(WORKERS.len(), 18);
         assert_eq!(RUNTIMES.len(), 3);
         assert_eq!(TOOLS.len(), 4);
-        assert_eq!(LIVE_TARGETS.len(), 35);
+        assert_eq!(LIVE_TARGETS.len(), 36);
         assert_eq!(HARNESSES.len(), 2);
-        assert_eq!(expected_members().len(), 137);
+        assert_eq!(expected_members().len(), 140);
     }
 
     #[test]

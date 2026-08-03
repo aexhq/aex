@@ -19,13 +19,14 @@ deployable = "regional-capacity-controller"
 live_suite = "aex-live-regional-capacity-controller"
 layers = ["unit", "smoke", "e2e"]
 concerns = ["contract", "fault", "security", "performance"]
-seams = ["aws.dynamodb.transact_write", "aws.lambda.microvm", "aws.iam.denial"]
+seams = ["aws.dynamodb.transact_write", "aws.iam.denial"]
 security_tier = "authority"
 risk = ["iam", "concurrency"]
 scenarios = []
 
 [package.metadata.aex.targets]
 composition = "unit"
+performance_contract = "e2e"
 
 [[bin]]
 name = "regional-capacity-controller"
@@ -47,3 +48,7 @@ tokio.workspace = true
 [[test]]
 name = "composition"
 path = "tests/composition.rs"
+
+[[test]]
+name = "performance_contract"
+path = "tests/load.rs"

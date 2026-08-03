@@ -8,12 +8,12 @@
     "scenario_ownership": "present"
   },
   "totals": {
-    "awaiting_owner": 45,
+    "awaiting_owner": 46,
     "capacity_gates": 19,
     "live_targets": 36,
     "packages": 147,
-    "seams_claimed": 32,
-    "seams_declared": 34,
+    "seams_claimed": 33,
+    "seams_declared": 35,
     "workloads": 8
   },
   "packages": {
@@ -493,6 +493,7 @@
         ],
         "concerns": [
           "contract",
+          "property",
           "fault",
           "security",
           "performance"
@@ -508,18 +509,15 @@
           "iam"
         ],
         "scenarios": [],
-        "targets": {
-          "defaults": "unit",
-          "model": "unit",
-          "store": "unit"
-        },
+        "targets": {},
         "not_applicable": {
           "integration": "the transaction request and ambiguity resolver use deterministic SDK replay; the workspace has no approved DynamoDB Local harness",
-          "live_suite": "the adapter is exercised through regional-capacity-controller's live companion"
+          "live_suite": "the adapter is exercised through regional-capacity-controller's live companion",
+          "targets": "the `regional-stores` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
         }
       },
       "unmapped_targets": [],
-      "awaiting_owner": false
+      "awaiting_owner": true
     },
     "crates/aex-central-http": {
       "name": "aex-central-http",
@@ -639,6 +637,7 @@
         ],
         "seams": [
           "aws.s3.conditional_put",
+          "aws.s3.bounded_get",
           "aws.s3.multipart",
           "aws.s3.unversioned_delete",
           "aws.s3.presigned_expiry",
@@ -3773,7 +3772,7 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "targets": "live evidence requires the private regional deployment composition"
+          "targets": "regional-services owns this live companion; live evidence requires the private regional deployment composition"
         }
       },
       "unmapped_targets": [],
@@ -3985,6 +3984,7 @@
           "aws.dynamodb.ttl",
           "aws.iam.denial",
           "aws.kms.encryption_context",
+          "aws.s3.bounded_get",
           "aws.s3.conditional_put",
           "aws.s3.multipart",
           "aws.s3.presigned_expiry",
@@ -4976,7 +4976,6 @@
         ],
         "seams": [
           "aws.dynamodb.transact_write",
-          "aws.lambda.microvm",
           "aws.iam.denial"
         ],
         "security_tier": "authority",
@@ -4986,7 +4985,8 @@
         ],
         "scenarios": [],
         "targets": {
-          "composition": "unit"
+          "composition": "unit",
+          "performance_contract": "e2e"
         },
         "not_applicable": {}
       },
@@ -5469,6 +5469,9 @@
       "aex-live-finance-settlement-worker",
       "aex-live-provider-cost-reconciler",
       "aex-live-usage-receipt-dispatcher"
+    ],
+    "aws.s3.bounded_get": [
+      "aex-live-regional-session-api"
     ],
     "aws.s3.conditional_put": [
       "aex-live-brain-mux",

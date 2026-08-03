@@ -15,6 +15,13 @@
   },
   {
     "reason_class": "awaiting_owner",
+    "subject": "crates/aex-capacity-dynamodb",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "the `regional-stores` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
+  },
+  {
+    "reason_class": "awaiting_owner",
     "subject": "crates/aex-central-test-support",
     "owner": "central-identity",
     "blocking_rule": "aex-empty-unit",
@@ -179,7 +186,7 @@
     "subject": "tests/live/aex-live-regional-capacity-controller",
     "owner": "regional-services",
     "blocking_rule": "aex-empty-unit",
-    "detail": "live evidence requires the private regional deployment composition"
+    "detail": "regional-services owns this live companion; live evidence requires the private regional deployment composition"
   },
   {
     "reason_class": "awaiting_owner",
@@ -1545,6 +1552,13 @@
     "owner": "regional-stores",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.kms.encryption_context` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "crates/aex-content-aws",
+    "owner": "regional-stores",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.bounded_get` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
@@ -3014,6 +3028,13 @@
     "subject": "tests/live/aex-live-regional-session-api",
     "owner": "regional-services",
     "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.bounded_get` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-regional-session-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.s3.conditional_put` cannot be satisfied by any local substitute"
   },
   {
@@ -3463,13 +3484,6 @@
     "owner": "regional-services",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "workers/regional-capacity-controller",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.lambda.microvm` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
