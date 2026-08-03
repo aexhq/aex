@@ -15,10 +15,12 @@
 //! - runtime lifecycle (`aex-runtime-control`, `aex-hands-control-aws`)
 
 pub mod adapter;
+pub mod backend;
 pub mod guest;
 pub mod operation;
 pub mod port;
 
+pub use backend::ProductionHandsBackend;
 pub use port::{HandsAdapter, HandsBackend};
 
 pub use guest::{AuthenticatedGuestEndpoint, GuestReply, HttpGuestTransport};

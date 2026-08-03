@@ -65,6 +65,18 @@ impl AuthenticatedGuestEndpoint {
             token,
         })
     }
+
+    /// The provider endpoint address, without its memory-only credential.
+    #[must_use]
+    pub fn address(&self) -> &str {
+        &self.endpoint
+    }
+
+    /// When the memory-only endpoint credential expires.
+    #[must_use]
+    pub const fn lease_expires_at(&self) -> aex_wire::types::Timestamp {
+        self.token.expires_at
+    }
 }
 
 impl core::fmt::Debug for AuthenticatedGuestEndpoint {
