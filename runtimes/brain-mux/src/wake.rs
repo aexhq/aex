@@ -10,11 +10,12 @@
 //! | --- | --- | --- |
 //! | `WakeQueue` | `aex_brain_store_aws::SqsWakeQueue` | real, over the configured queue and the `regional-work` due index |
 //! | `JournalStore`, `EffectStore`, `LeaseStore` | `aex_brain_store_aws::BrainStore` | real; each claim derives tenant and deletion authority from its session head |
-//! | `ToolPort` | injected production router, or explicit unavailable composition | managed-web and MCP do not yet implement `ToolExecutor` |
+//! | `FoldSnapshotStore` | `AwsFoldSnapshotStore` over the regional content bucket | immutable bodies and the monotonic pointer use the same session/content authorities as the activation |
+//! | `ToolPort` | injected production router | startup refuses unless all four coarse routes have concrete executors |
 //! | `ClockPort`, `IdPort` | this module | composition facts, not a peer's |
 //! | `ProviderPort` | regional custody + KMS + six-provider router, or explicit startup refusal | dispatch uses the immutable session pin and ticket-scoped tenant authority; registration remains owned by the secret API |
-//! | `CatalogPort` | [`AbsentCatalog`] | the verified loader exists, but startup has no content-addressed envelope or compiled trust root to bind |
-//! | `HandsPort` | [`aex_brain_hands::HandsAdapter`] in production injection | the adapter is real; no concrete guest transport/runtime backend exists yet |
+//! | `CatalogPort` | release-bound `VerifiedCatalogPort` | the complete retained collection verifies before a port exists |
+//! | `HandsPort` | `HandsAdapter` over `ProductionHandsBackend` | shares the runtime store and MicroVM client with the runtime-control engine |
 //!
 //! Every refusal is `DispatchProof::NotSent` and carries the name of the crate that owes the
 //! implementation. None of them is a stub: a stub would let an activation appear to make
@@ -43,11 +44,17 @@ use aex_brain_domain::ids::{
     AgentId, AgentKey, CatalogPin, DetachedOperationId, EffectId, HandsOperationId, JournalSeq,
     ModelSlug, OwnerToken, SessionId, Timestamp, WakeId,
 };
+use aex_brain_domain::journal::ExecutorRoute;
 use aex_brain_domain::snapshot::{FoldSnapshotArtifact, FoldSnapshotPointer};
 use aex_brain_domain::wire_pending::{CanonicalModelRequest, DurableOperationSupport, ProviderId};
 use aex_model_catalog::{ProviderFailureKind, QualifiedModel};
 use aex_wire::ids::GenerationId;
 use std::sync::Arc;
+
+use aex_brain_tool_catalog::router::{CompositeToolRouter, ToolExecutor};
+use aex_runtime_control::store::{OpenEffectCounter, PageBudget, RuntimeActivityStore};
+use aex_runtime_control::usage::UsageFactSink;
+use aex_runtime_control_aws::worker::{Pace, RuntimeControl, RuntimePorts, RuntimeSettings};
 
 /// Historical refusal used by the explicit unbound-store fixture.
 ///
@@ -73,12 +80,25 @@ pub const CATALOG_NO_ACTIVE_MODELS: &str =
     "the signed model catalog collection contains no Active serviceable model";
 
 /// Why tool execution is not bound.
-pub const TOOL_EXECUTORS_ABSENT: &str = "aex-brain-managed-web and aex-brain-mcp do not implement \
-                                        aex-brain-tool-catalog::router::ToolExecutor";
+pub const TOOL_EXECUTORS_ABSENT: &str = "one or more production tool executors are not bound";
+
+/// Missing in-process implementation of control, park, and subagent scheduling tools.
+pub const BRAIN_INLINE_EXECUTOR_ABSENT: &str =
+    "Brain-inline control, park, and subagent scheduling authority is not implemented";
+
+/// Missing session-scoped managed-search credential authority.
+pub const MANAGED_WEB_EXECUTOR_ABSENT: &str = "managed web search cannot bind a session-scoped, \
+                                               revocation-aware credential authority";
+
+/// Missing qualified MCP transport, task-recovery, and registry authority.
+pub const MCP_EXECUTOR_ABSENT: &str = "MCP has no production ToolExecutor with qualified \
+                                      transport, task recovery, and exact registry authority";
+
+/// Missing concrete Hands tool route.
+pub const HANDS_TOOL_EXECUTOR_ABSENT: &str = "Hands tool executor is not bound";
 
 /// Why Hands is not bound.
-pub const HANDS_ABSENT: &str = "aex-brain-hands implements HandsPort, but no concrete guest \
-                                transport/runtime-store HandsBackend is available";
+pub const HANDS_ABSENT: &str = "the production Hands backend is not bound";
 
 /// The admission controller, as the loop sees it.
 #[derive(Debug)]
@@ -630,6 +650,288 @@ impl core::fmt::Debug for ProductionPeers {
     }
 }
 
+/// Concrete executors for every coarse tool route.
+///
+/// The options exist only so startup diagnostics and tests can name every absent authority.
+/// [`ProductionToolExecutors::compose`] never substitutes a refusal executor.
+#[derive(Default)]
+pub struct ProductionToolExecutors {
+    /// Control, park, and subagent scheduling tools.
+    pub brain_inline: Option<Arc<dyn ToolExecutor>>,
+    /// Managed web search.
+    pub managed_web: Option<Arc<dyn ToolExecutor>>,
+    /// Qualified MCP calls and task recovery.
+    pub mcp: Option<Arc<dyn ToolExecutor>>,
+    /// Exact-generation Hands tools.
+    pub hands: Option<Arc<dyn ToolExecutor>>,
+}
+
+impl core::fmt::Debug for ProductionToolExecutors {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("ProductionToolExecutors")
+            .field("missing", &self.missing())
+            .finish()
+    }
+}
+
+impl ProductionToolExecutors {
+    /// Names every route whose concrete executor is absent.
+    #[must_use]
+    pub fn missing(&self) -> Vec<&'static str> {
+        [
+            (BRAIN_INLINE_EXECUTOR_ABSENT, self.brain_inline.is_none()),
+            (MANAGED_WEB_EXECUTOR_ABSENT, self.managed_web.is_none()),
+            (MCP_EXECUTOR_ABSENT, self.mcp.is_none()),
+            (HANDS_TOOL_EXECUTOR_ABSENT, self.hands.is_none()),
+        ]
+        .into_iter()
+        .filter_map(|(reason, missing)| missing.then_some(reason))
+        .collect()
+    }
+
+    /// Builds one immutable router for every retained model-catalog revision.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ToolCompositionError::Unbound`] before constructing a router when any
+    /// route is absent, or [`ToolCompositionError::InvalidCatalog`] when the compiled tool
+    /// manifest cannot be installed exactly.
+    pub fn compose(
+        self,
+        pins: impl IntoIterator<Item = CatalogPin>,
+    ) -> Result<Arc<dyn ToolPort>, ToolCompositionError> {
+        let missing = self.missing();
+        if !missing.is_empty() {
+            return Err(ToolCompositionError::Unbound { missing });
+        }
+        let (Some(brain_inline), Some(managed_web), Some(mcp), Some(hands)) =
+            (self.brain_inline, self.managed_web, self.mcp, self.hands)
+        else {
+            unreachable!("the missing set is derived from exactly these four executors");
+        };
+        let mut router = CompositeToolRouter::new();
+        for (route, executor) in [
+            (ExecutorRoute::BrainInline, brain_inline),
+            (ExecutorRoute::ManagedWeb, managed_web),
+            (ExecutorRoute::Mcp, mcp),
+            (ExecutorRoute::Hands, hands),
+        ] {
+            router.register_executor(route, executor).map_err(|error| {
+                ToolCompositionError::InvalidCatalog {
+                    reason: error.to_string(),
+                }
+            })?;
+        }
+        let entries = aex_brain_tool_catalog::catalog::builtin_entries().map_err(|error| {
+            ToolCompositionError::InvalidCatalog {
+                reason: error.to_string(),
+            }
+        })?;
+        let manifest = aex_brain_domain::ids::ContentHash::of(
+            &aex_brain_tool_catalog::catalog::builtin_catalog_bytes().map_err(|error| {
+                ToolCompositionError::InvalidCatalog {
+                    reason: error.to_string(),
+                }
+            })?,
+        );
+        let mut installed = 0_usize;
+        for pin in pins {
+            router
+                .install_catalog(pin, manifest, &entries)
+                .map_err(|error| ToolCompositionError::InvalidCatalog {
+                    reason: error.to_string(),
+                })?;
+            installed = installed.saturating_add(1);
+        }
+        if installed == 0 {
+            return Err(ToolCompositionError::InvalidCatalog {
+                reason: "the verified model catalog retained no revision".to_owned(),
+            });
+        }
+        Ok(Arc::new(router))
+    }
+}
+
+/// Why the production tool router could not be composed.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ToolCompositionError {
+    /// Concrete executors are missing.
+    #[error("no production adapter is bound for: {}", .missing.join(", "))]
+    Unbound {
+        /// Every missing authority, in stable route order.
+        missing: Vec<&'static str>,
+    },
+    /// The immutable catalog could not be installed.
+    #[error("the production tool catalog could not be installed: {reason}")]
+    InvalidCatalog {
+        /// Exact build failure.
+        reason: String,
+    },
+}
+
+/// Real snapshot adapter settings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnapshotBinding {
+    /// Regional content bucket.
+    pub bucket: String,
+    /// Account that must own the bucket.
+    pub expected_owner: String,
+    /// Exact content KMS key ARN.
+    pub kms_key_arn: String,
+    /// Deployment plane used in the encryption context.
+    pub plane: String,
+    /// Deployment region used in the encryption context.
+    pub region: String,
+}
+
+/// Binds immutable snapshot bodies and their monotonic session-authority pointer.
+///
+/// # Errors
+///
+/// Returns a store composition error when deployment placement is invalid.
+pub fn snapshot_binding(
+    aws: &aws_config::SdkConfig,
+    tables: aex_brain_store_aws::BrainTables,
+    binding: SnapshotBinding,
+) -> Result<Arc<dyn FoldSnapshotStore>, StoreError> {
+    let bodies = aex_content_aws::S3ContentObjects::new(
+        aws_sdk_s3::Client::new(aws),
+        aex_content_aws::BucketBinding {
+            bucket: binding.bucket,
+            expected_owner: binding.expected_owner,
+            kms_key_id: binding.kms_key_arn,
+        },
+    );
+    let context =
+        aex_brain_store_aws::SnapshotContentContext::new(&binding.plane, &binding.region)?;
+    Ok(Arc::new(aex_brain_store_aws::AwsFoldSnapshotStore::new(
+        aws_sdk_dynamodb::Client::new(aws),
+        tables,
+        bodies,
+        context,
+    )))
+}
+
+/// Real Hands ports sharing one runtime authority and one MicroVM client.
+pub struct HandsBindings {
+    /// Lower backend consumed by `HandsAdapter`.
+    pub backend: Arc<dyn aex_brain_hands::HandsBackend>,
+    /// Tool executor for the coarse Hands route.
+    pub executor: Arc<dyn ToolExecutor>,
+}
+
+impl core::fmt::Debug for HandsBindings {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("HandsBindings")
+            .finish_non_exhaustive()
+    }
+}
+
+/// Settings for Brain's runtime-control dependency.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HandsBinding {
+    /// Deployment region.
+    pub region: aex_wire::types::Region,
+    /// Runtime-activity table.
+    pub runtime_activity_table: String,
+    /// Session-authority table used to recount open Hands effects.
+    pub session_authority_table: String,
+    /// Compute usage ingress.
+    pub compute_queue_url: String,
+    /// Storage usage ingress.
+    pub storage_queue_url: String,
+    /// Runtime due-index shard count.
+    pub due_shards: u16,
+    /// Runtime due scan budget.
+    pub due_page: PageBudget,
+    /// Exact pricing version attached to usage drafts.
+    pub pricing_version: String,
+}
+
+#[derive(Debug)]
+struct TokioPace;
+
+impl Pace for TokioPace {
+    fn sleep(&self, millis: u64) -> core::pin::Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Box::pin(tokio::time::sleep(core::time::Duration::from_millis(
+            millis,
+        )))
+    }
+}
+
+/// Binds the production Hands backend and tool executor.
+///
+/// The backend and runtime engine share the exact same store and provider `Arc`s; this avoids
+/// split ownership of generation state or duplicate per-client resource pools.
+///
+/// # Errors
+///
+/// Returns the typed Hands construction error when its bounded HTTPS transport cannot start.
+pub fn hands_binding(
+    aws: &aws_config::SdkConfig,
+    binding: HandsBinding,
+) -> Result<HandsBindings, HandsError> {
+    let dynamo = aws_sdk_dynamodb::Client::new(aws);
+    let sqs = aws_sdk_sqs::Client::new(aws);
+    let store: Arc<dyn RuntimeActivityStore> = Arc::new(
+        aex_runtime_activity_dynamodb::RuntimeActivityDynamoStore::new(
+            dynamo.clone(),
+            binding.runtime_activity_table,
+        ),
+    );
+    let effects: Arc<dyn OpenEffectCounter> = Arc::new(
+        aex_session_dynamodb::runtime_effects::OpenHandsEffectCounter::new(
+            dynamo,
+            binding.session_authority_table,
+        ),
+    );
+    let provider: Arc<dyn aex_hands_control_aws::MicrovmControlApi> =
+        Arc::new(aex_hands_control_aws::AwsMicrovmControl::new(
+            aws_sdk_lambdamicrovms::Client::new(aws),
+            binding.region.as_str(),
+        ));
+    let compute: Arc<dyn UsageFactSink> = Arc::new(
+        aex_runtime_control_aws::usage_ingress::SqsFactDraftSink::new(
+            sqs.clone(),
+            binding.compute_queue_url,
+            aex_usage_domain::meter::Category::Compute,
+        ),
+    );
+    let storage: Arc<dyn UsageFactSink> = Arc::new(
+        aex_runtime_control_aws::usage_ingress::SqsFactDraftSink::new(
+            sqs,
+            binding.storage_queue_url,
+            aex_usage_domain::meter::Category::Storage,
+        ),
+    );
+    let runtime = Arc::new(RuntimeControl::new(
+        RuntimePorts {
+            store: Arc::clone(&store),
+            effects,
+            provider: Arc::clone(&provider),
+            compute,
+            storage,
+            pace: Arc::new(TokioPace),
+        },
+        RuntimeSettings {
+            region: binding.region,
+            pricing_version: aex_internal_contracts::PricingVersion(binding.pricing_version),
+            shards: binding.due_shards,
+            page: binding.due_page,
+            schedule_jitter_ms: 0,
+        },
+    ));
+    let backend: Arc<dyn aex_brain_hands::HandsBackend> = Arc::new(
+        aex_brain_hands::ProductionHandsBackend::new(store, provider, runtime)?,
+    );
+    let hands: Arc<dyn HandsPort> =
+        Arc::new(aex_brain_hands::HandsAdapter::new(Arc::clone(&backend)));
+    let executor: Arc<dyn ToolExecutor> = Arc::new(aex_brain_hands::HandsToolExecutor::new(hands));
+    Ok(HandsBindings { backend, executor })
+}
+
 /// Real AWS clients shared by store, queue, provider custody, and KMS composition.
 pub struct AwsBindings {
     /// Session-authority store.
@@ -796,23 +1098,58 @@ pub fn wake_loop(
 #[cfg(test)]
 mod tests {
     use super::{
-        AbsentCatalog, AbsentProvider, Bindings, CATALOG_ABSENT, CATALOG_NO_ACTIVE_MODELS,
-        MuxAdmission, PROVIDER_ABSENT, ProcessIds, STORE_UNBOUND, SystemClock, UnboundStore,
+        AbsentCatalog, AbsentProvider, BRAIN_INLINE_EXECUTOR_ABSENT, Bindings, CATALOG_ABSENT,
+        CATALOG_NO_ACTIVE_MODELS, HANDS_TOOL_EXECUTOR_ABSENT, MANAGED_WEB_EXECUTOR_ABSENT,
+        MCP_EXECUTOR_ABSENT, MuxAdmission, PROVIDER_ABSENT, ProcessIds, ProductionToolExecutors,
+        STORE_UNBOUND, SystemClock, ToolCompositionError, UnboundStore,
     };
     use crate::admission::{ActivationResources, Admission, AdmissionBounds};
     use aex_brain_application::activation::{AdmissionControl, AdmissionDecision};
     use aex_brain_application::kernel::{DrainGate, PermitKind, PermitSet};
     use aex_brain_application::ports::{
-        CatalogPort, ClockPort, IdPort, JournalStore, LeaseStore, StoreError,
+        BoxFuture, CancelToken, CatalogPort, ClockPort, DetachedStatus, DispatchTicket, IdPort,
+        JournalStore, LeaseStore, PreparedToolCall, StoreError, ToolDispatchError, ToolOutcome,
     };
     use aex_brain_domain::effect::EffectKind;
-    use aex_brain_domain::ids::{AgentId, AgentKey, JournalSeq, OwnerToken, SessionId, Timestamp};
+    use aex_brain_domain::ids::{
+        AgentId, AgentKey, CatalogPin, DetachedOperationId, Fence, JournalSeq, OwnerToken,
+        SessionId, Timestamp, ToolName,
+    };
     use aex_brain_domain::wire_pending::{DurableOperationSupport, ProviderId};
     use aex_model_catalog::document::CapabilitySet;
     use aex_model_catalog::fixture;
     use std::collections::BTreeMap;
     use std::sync::Arc;
     use uuid::Uuid;
+
+    #[derive(Debug)]
+    struct NeverExecutor;
+
+    impl aex_brain_tool_catalog::router::ToolExecutor for NeverExecutor {
+        fn invoke<'a>(
+            &'a self,
+            _ticket: &'a DispatchTicket,
+            _call: &'a PreparedToolCall,
+            _cancel: &'a CancelToken,
+        ) -> BoxFuture<'a, Result<ToolOutcome, ToolDispatchError>> {
+            Box::pin(async { panic!("composition test never dispatches") })
+        }
+
+        fn query<'a>(
+            &'a self,
+            _operation: &'a DetachedOperationId,
+        ) -> BoxFuture<'a, Result<DetachedStatus, ToolDispatchError>> {
+            Box::pin(async { panic!("composition test never queries") })
+        }
+
+        fn cancel<'a>(
+            &'a self,
+            _operation: &'a DetachedOperationId,
+            _fence: Fence,
+        ) -> BoxFuture<'a, Result<(), ToolDispatchError>> {
+            Box::pin(async { panic!("composition test never cancels") })
+        }
+    }
 
     fn activation_resources(context_bytes: u64) -> ActivationResources {
         ActivationResources {
@@ -903,6 +1240,51 @@ mod tests {
         assert_eq!(missing.len(), 4);
         assert!(!missing.contains(&PROVIDER_ABSENT));
         assert!(Bindings::production().complete());
+    }
+
+    #[test]
+    fn missing_tool_authorities_fail_startup_by_exact_name() {
+        let outcome = ProductionToolExecutors {
+            hands: Some(Arc::new(NeverExecutor)),
+            ..ProductionToolExecutors::default()
+        }
+        .compose([CatalogPin(aex_model_catalog::Blake3Digest::of(b"catalog"))]);
+        let Err(error) = outcome else {
+            panic!("three missing production authorities refuse composition");
+        };
+        assert_eq!(
+            error,
+            ToolCompositionError::Unbound {
+                missing: vec![
+                    BRAIN_INLINE_EXECUTOR_ABSENT,
+                    MANAGED_WEB_EXECUTOR_ABSENT,
+                    MCP_EXECUTOR_ABSENT,
+                ]
+            }
+        );
+        assert!(!error.to_string().contains(HANDS_TOOL_EXECUTOR_ABSENT));
+    }
+
+    #[test]
+    fn a_fully_supplied_executor_set_installs_routes_for_the_retained_pin() {
+        let executor = Arc::new(NeverExecutor);
+        let pin = CatalogPin(aex_model_catalog::Blake3Digest::of(b"catalog"));
+        let tools = ProductionToolExecutors {
+            brain_inline: Some(Arc::clone(&executor) as Arc<_>),
+            managed_web: Some(Arc::clone(&executor) as Arc<_>),
+            mcp: Some(Arc::clone(&executor) as Arc<_>),
+            hands: Some(executor),
+        }
+        .compose([pin])
+        .expect("all four real route objects compose");
+        let first = aex_brain_tool_catalog::catalog::builtin_entries()
+            .expect("the build-time catalog is valid")
+            .remove(0);
+        let name = ToolName::parse(first.descriptor.name.as_str()).expect("built-in name is valid");
+        assert_eq!(
+            tools.route(&pin, &name).expect("route is installed").name,
+            name
+        );
     }
 
     #[test]

@@ -263,6 +263,15 @@ impl VerifiedCatalogPort {
         self.admission_pin
     }
 
+    /// Every immutable revision retained for sessions that may still wake.
+    ///
+    /// Composition uses this exact set when installing the tool catalog. Installing tools
+    /// only for the admission head would make an older, explicitly retained session fail
+    /// after its wake had already been consumed.
+    pub fn retained_pins(&self) -> impl Iterator<Item = CatalogPin> + '_ {
+        self.catalogs.keys().copied()
+    }
+
     /// How many verified revisions the process holds.
     #[must_use]
     pub fn len(&self) -> usize {
