@@ -291,6 +291,21 @@ pub struct CustodyHead {
     pub updated_at: Timestamp,
 }
 
+/// One immutable session binding at an exact custody revision.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CustodyBinding {
+    /// The session whose custody owns the binding.
+    pub session: SessionId,
+    /// The workspace whose source secret was admitted.
+    pub workspace: WorkspaceId,
+    /// The custody revision at which the binding was written.
+    pub revision: CustodyRevision,
+    /// The admitted secret and its session-scoped ciphertext.
+    pub entry: CustodyEntry,
+    /// The authenticated encryption-context digest stored beside the ciphertext.
+    pub context_digest: [u8; 32],
+}
+
 /// Encodes one custody head.
 #[must_use]
 pub fn encode_custody_head(head: &CustodyHead) -> Item {
@@ -358,6 +373,7 @@ pub fn encode_binding(
         .set("custodyRevision", n(revision.0))
         .set("name", s(entry.name.as_str().to_owned()))
         .set("sourceGeneration", n(entry.source_generation.0))
+        .set("sourceRevision", n(entry.source_revision.0))
         .set("epochAtAdmission", n(entry.epoch_at_admission.0))
         .set("keyGeneration", n(entry.ciphertext.key_generation))
         .set("wrappedKey", b(entry.ciphertext.wrapped_key.clone()))
@@ -373,19 +389,26 @@ pub fn encode_binding(
 /// # Errors
 ///
 /// [`CodecError`] as for every decode here.
-pub fn decode_binding(item: &Item, asserted: WorkspaceId) -> Result<CustodyEntry, CodecError> {
+pub fn decode_binding(item: &Item, asserted: WorkspaceId) -> Result<CustodyBinding, CodecError> {
     let row = Row::bind(item, CUSTODY_BINDING)?;
     row.owned_by("workspaceId", &asserted.to_string())?;
-    Ok(CustodyEntry {
-        name: name_of(&row, CUSTODY_BINDING)?,
-        source_generation: SourceGeneration(row.u64("sourceGeneration")?),
-        epoch_at_admission: RevocationEpoch(row.u64("epochAtAdmission")?),
-        ciphertext: CiphertextRef {
-            key_generation: row.u64("keyGeneration")?,
-            wrapped_key: row.bytes("wrappedKey")?.to_vec(),
-            nonce: row.bytes("nonce")?.to_vec(),
-            ciphertext: row.bytes("ciphertext")?.to_vec(),
+    Ok(CustodyBinding {
+        session: row.id::<SessionId>("sessionId")?,
+        workspace: asserted,
+        revision: CustodyRevision(row.u64("custodyRevision")?),
+        entry: CustodyEntry {
+            name: name_of(&row, CUSTODY_BINDING)?,
+            source_generation: SourceGeneration(row.u64("sourceGeneration")?),
+            source_revision: SecretRevision(row.u64("sourceRevision")?),
+            epoch_at_admission: RevocationEpoch(row.u64("epochAtAdmission")?),
+            ciphertext: CiphertextRef {
+                key_generation: row.u64("keyGeneration")?,
+                wrapped_key: row.bytes("wrappedKey")?.to_vec(),
+                nonce: row.bytes("nonce")?.to_vec(),
+                ciphertext: row.bytes("ciphertext")?.to_vec(),
+            },
         },
+        context_digest: digest_of(&row, CUSTODY_BINDING, "encContextDigest")?,
     })
 }
 

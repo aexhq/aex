@@ -16,7 +16,9 @@ use aex_wire::ids::{SessionId, Uuid7, WorkspaceId};
 use aex_wire::types::Timestamp;
 
 use crate::revocation::RevocationEpoch;
-use crate::secret::{CiphertextRef, SecretName, SecretState, SourceGeneration, WorkspaceSecret};
+use crate::secret::{
+    CiphertextRef, SecretName, SecretRevision, SecretState, SourceGeneration, WorkspaceSecret,
+};
 
 /// The monotone revision of one session's custody.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -64,6 +66,9 @@ pub struct CustodyEntry {
     pub name: SecretName,
     /// The source generation admitted.
     pub source_generation: SourceGeneration,
+    /// The source metadata revision admitted. Managed-call authorization uses
+    /// this immutable fence against `revokedThroughRevision`.
+    pub source_revision: SecretRevision,
     /// The revocation epoch in force at admission.
     pub epoch_at_admission: RevocationEpoch,
     /// The session-scoped ciphertext.
@@ -285,6 +290,7 @@ fn entries_from(selection: &[WorkspaceSecret]) -> Result<Vec<CustodyEntry>, Cust
             Ok(CustodyEntry {
                 name: secret.name.clone(),
                 source_generation: secret.generation,
+                source_revision: secret.revision,
                 epoch_at_admission: secret.revocation_epoch,
                 ciphertext: secret
                     .ciphertext

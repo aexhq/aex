@@ -12,8 +12,9 @@
 //!
 //! - tool policy or approval (`aex-brain-tool-catalog`)
 //! - customer egress from the Hands guest (`aex-hands-tools`)
-//! - credential handling
+//! - credential admission and rebind policy (`aex-secret-domain`)
 
+pub mod credential;
 pub mod egress;
 pub mod executor;
 pub mod fetch;

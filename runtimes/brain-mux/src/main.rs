@@ -503,7 +503,7 @@ fn resolve_production_ports(
         &config.resource,
         &config.work_table,
     ));
-    let provider = wake::provider_binding(
+    let credentials = wake::credential_bindings(
         &aws.sdk,
         std::sync::Arc::clone(&aws.store),
         &config.secret_custody_table,
@@ -550,18 +550,18 @@ fn resolve_production_ports(
         reason: format!("production Hands binding failed: {error}"),
     })?;
 
-    // These authorities do not yet have safe production implementations. Their absence is
-    // a startup error, never a refusal executor installed behind a ready task. Hands is
-    // included to prove the available route is wired while the other three are named.
+    // BrainInline and MCP do not yet have safe production implementations. Their absence is
+    // a startup error, never a refusal executor installed behind a ready task. Managed web
+    // and Hands are bound to their real authorities even while those remaining routes block.
     let tools = wake::ProductionToolExecutors {
         brain_inline: None,
-        managed_web: None,
+        managed_web: Some(std::sync::Arc::clone(&credentials.managed_web)),
         mcp: None,
         hands: Some(std::sync::Arc::clone(&hands.executor)),
     }
     .compose(catalog.retained_pins())?;
     let peers = wake::ProductionPeers::new(
-        provider,
+        credentials.provider,
         tools,
         hands.backend,
         std::sync::Arc::clone(&catalog) as std::sync::Arc<_>,

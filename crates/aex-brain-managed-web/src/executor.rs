@@ -2,8 +2,8 @@
 //!
 //! The executor owns only call decoding and the dispatch-proof boundary. URL,
 //! DNS, response, decompression, media and timeout policy remain in the fetch
-//! and search adapters. Search credentials are resolved from the ticket's
-//! request-scoped workspace; no tenant credential is retained in the mux.
+//! and search adapters. Search credentials are resolved from the complete
+//! dispatch ticket; no tenant credential is retained in the mux.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -18,7 +18,6 @@ use aex_brain_domain::journal::ExecutorRoute;
 use aex_brain_tool_catalog::router::ToolExecutor;
 use aex_model_catalog::canonical::ToolResultPart;
 use aex_wire::CanonicalJson;
-use aex_wire::ids::WorkspaceId;
 use serde::Deserialize;
 
 use crate::egress::{DnsResolver, SystemDnsResolver};
@@ -29,23 +28,23 @@ use crate::search::{
 
 /// Resolves the one optional managed-search credential for the current request.
 ///
-/// Implementations must decrypt from workspace custody on every generation
-/// change and must not return a credential from another workspace. The trait
-/// receives no session-global fallback, so a mux cannot accidentally acquire
-/// tenant state at startup.
+/// Implementations must authorize against the exact session custody revision
+/// before decrypt and must not return a credential from another tenant. The
+/// complete ticket supplies session, workspace, organization, effect, attempt,
+/// and time without any process-global fallback.
 pub trait WebSearchCredentialSource: Send + Sync + 'static {
-    /// Resolves and parses the current workspace's credential.
-    fn resolve(
-        &self,
-        workspace: WorkspaceId,
-    ) -> BoxFuture<'_, Result<WebSearchCredential, CredentialSourceError>>;
+    /// Resolves and parses the current session's admitted credential.
+    fn resolve<'a>(
+        &'a self,
+        ticket: &'a DispatchTicket,
+    ) -> BoxFuture<'a, Result<WebSearchCredential, CredentialSourceError>>;
 }
 
 /// Why workspace search authority could not be resolved.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CredentialSourceError {
-    /// The workspace has not configured managed search.
-    #[error("workspace has no managed-search credential")]
+    /// The session has not admitted managed search.
+    #[error("session has no admitted managed-search credential")]
     Missing,
     /// Custody was temporarily unavailable.
     #[error("managed-search credential custody is unavailable")]
@@ -204,7 +203,7 @@ impl ToolExecutor for ManagedWebExecutor {
                 "web_search" => {
                     let credential = self
                         .credentials
-                        .resolve(ticket.workspace())
+                        .resolve(ticket)
                         .await
                         .map_err(|error| credential_error(&error))?;
                     execute_search(self.client.as_ref(), &call.input, &credential).await?
@@ -357,7 +356,7 @@ fn credential_error(error: &CredentialSourceError) -> ToolDispatchError {
     let (kind, message) = match error {
         CredentialSourceError::Missing => (
             ProviderFailureKind::Authentication,
-            "workspace has no managed-search credential",
+            "session has no admitted managed-search credential",
         ),
         CredentialSourceError::Unavailable => (
             ProviderFailureKind::Transport,
@@ -470,11 +469,11 @@ mod tests {
     struct FixtureCredentials;
 
     impl WebSearchCredentialSource for FixtureCredentials {
-        fn resolve(
-            &self,
-            _workspace: WorkspaceId,
+        fn resolve<'a>(
+            &'a self,
+            _ticket: &'a DispatchTicket,
         ) -> aex_brain_application::ports::BoxFuture<
-            '_,
+            'a,
             Result<WebSearchCredential, CredentialSourceError>,
         > {
             Box::pin(async {

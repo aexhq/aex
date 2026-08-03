@@ -973,12 +973,30 @@ pub async fn aws_bindings(
     }
 }
 
-/// Binds exact regional custody plus KMS reveal into the six-provider router.
+/// Provider and managed-search ports sharing one custody client, KMS client,
+/// and context-partitioned branch-key cache.
+pub struct CredentialBindings {
+    /// Six-provider direct dispatch.
+    pub provider: Arc<dyn ProviderPort>,
+    /// Session-scoped managed-web executor.
+    pub managed_web: Arc<dyn ToolExecutor>,
+}
+
+impl core::fmt::Debug for CredentialBindings {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("CredentialBindings")
+            .finish_non_exhaustive()
+    }
+}
+
+/// Binds exact regional custody plus KMS reveal into provider and managed-web
+/// authorities without duplicating SDK pools or plaintext caches.
 ///
 /// # Errors
 ///
 /// The build-stamped adapter identity must be valid before this port can exist.
-pub fn provider_binding(
+pub fn credential_bindings(
     aws: &aws_config::SdkConfig,
     store: Arc<aex_brain_store_aws::BrainStore>,
     custody_table: &str,
@@ -986,10 +1004,8 @@ pub fn provider_binding(
     plane: aex_secret_domain::context::Plane,
     region: aex_wire::types::Region,
     cache_partition: &str,
-) -> Result<
-    Arc<dyn ProviderPort>,
-    aex_brain_provider_gateway::build_identity::AdapterBuildIdentityError,
-> {
+) -> Result<CredentialBindings, aex_brain_provider_gateway::build_identity::AdapterBuildIdentityError>
+{
     let custody = Arc::new(aex_secret_custody_dynamodb::CustodyStore::new(
         aws_sdk_dynamodb::Client::new(aws),
         custody_table.to_owned(),
@@ -1001,15 +1017,29 @@ pub fn provider_binding(
         )),
         cache_partition.to_owned(),
     ));
-    let authority = Arc::new(aex_brain_provider_custody::CredentialAuthority::new(
-        custody, crypto, plane, region,
+    let provider_authority = Arc::new(aex_brain_provider_custody::CredentialAuthority::new(
+        Arc::clone(&custody),
+        Arc::clone(&crypto),
+        plane,
+        region,
     ));
     let router = aex_brain_provider_gateway::router::ProviderRouter::from_build(
-        Arc::clone(&authority) as Arc<_>,
-        authority,
+        Arc::clone(&provider_authority) as Arc<_>,
+        provider_authority,
         store,
     )?;
-    Ok(Arc::new(router))
+    let search_authority: Arc<dyn aex_brain_managed_web::executor::WebSearchCredentialSource> =
+        Arc::new(
+            aex_brain_managed_web::credential::SessionCredentialAuthority::new(
+                custody, crypto, plane, region,
+            ),
+        );
+    let managed_web: Arc<dyn ToolExecutor> =
+        Arc::new(aex_brain_managed_web::executor::ManagedWebExecutor::production(search_authority));
+    Ok(CredentialBindings {
+        provider: Arc::new(router),
+        managed_web,
+    })
 }
 
 /// Fail-closed ports for a task whose production peers are not composed yet.

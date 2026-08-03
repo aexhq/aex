@@ -390,6 +390,7 @@ fn use_requires_an_exact_match() {
     let unbound = CustodyEntry {
         name: beta.name.clone(),
         source_generation: beta.generation,
+        source_revision: beta.revision,
         epoch_at_admission: beta.revocation_epoch,
         ciphertext: ciphertext(1),
     };

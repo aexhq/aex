@@ -35,6 +35,7 @@ path = "src/main.rs"
 aex-brain-application = { path = "../../crates/aex-brain-application" }
 aex-brain-domain = { path = "../../crates/aex-brain-domain" }
 aex-brain-hands = { path = "../../crates/aex-brain-hands" }
+aex-brain-managed-web = { path = "../../crates/aex-brain-managed-web" }
 aex-content-aws = { path = "../../crates/aex-content-aws" }
 aex-hands-control-aws = { path = "../../crates/aex-hands-control-aws" }
 aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }

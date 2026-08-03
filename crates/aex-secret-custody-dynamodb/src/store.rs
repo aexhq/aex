@@ -6,7 +6,7 @@
 //! secret" is not a bug that can be written here.
 
 use aex_secret_domain::custody::CustodyRevision;
-use aex_secret_domain::secret::{SecretName, SourceGeneration};
+use aex_secret_domain::secret::{SecretName, SecretRevision, SourceGeneration};
 use aex_session_dynamodb::attr::{Item, s};
 use aex_session_dynamodb::error::{
     Idempotence, Resolution, StoreError, classify, decode_cancellation,
@@ -22,7 +22,8 @@ use aws_sdk_dynamodb::types::ReturnValuesOnConditionCheckFailure;
 use aws_sdk_dynamodb::types::builders::UpdateBuilder;
 
 use crate::codec::{
-    self, CustodyHead, ProviderCredential, RedactionManifest, SecretMetadata, StoredGeneration,
+    self, CallAuthorization, CustodyBinding, CustodyHead, ProviderCredential, RedactionManifest,
+    SecretMetadata, StoredGeneration,
 };
 use crate::keys;
 
@@ -234,6 +235,46 @@ impl CustodyStore {
             None => Ok(None),
             Some(item) => Ok(Some(codec::decode_provider_credential(&item, workspace)?)),
         }
+    }
+
+    /// Reads one immutable session binding by its complete custody key.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError`] for a transport, key, or decode failure.
+    pub async fn load_custody_binding(
+        &self,
+        workspace: WorkspaceId,
+        session: SessionId,
+        revision: CustodyRevision,
+        name: &SecretName,
+    ) -> Result<Option<CustodyBinding>, StoreError> {
+        let target = keys::binding(session, revision, name.as_str())?;
+        match self.get(&target.pk, &target.sk).await? {
+            None => Ok(None),
+            Some(item) => Ok(Some(codec::decode_binding(&item, workspace)?)),
+        }
+    }
+
+    /// Atomically revalidates the mutable secret and custody fences and writes
+    /// one immutable managed-call authorization before any decrypt occurs.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::PreconditionFailed`] when revocation, rebind, deletion, or
+    /// a duplicate authorization wins; other variants retain their usual
+    /// transport and corruption meanings.
+    pub async fn authorize_managed_call(
+        &self,
+        authorization: &CallAuthorization,
+        bound_source_revision: SecretRevision,
+    ) -> Result<(), StoreError> {
+        let plan = crate::expressions::authorize_managed_call(
+            &self.table,
+            authorization,
+            bound_source_revision,
+        )?;
+        SecretCustodyStore::commit(self, &plan).await
     }
 
     async fn get(&self, pk: &str, sk: &str) -> Result<Option<Item>, StoreError> {

@@ -67,6 +67,26 @@ proptest! {
             prop_assert!(earlier.sk < later.sk);
         }
     }
+
+    #[test]
+    fn a_binding_preserves_the_exact_source_revision(
+        source_revision in 1_u64..1_000_000,
+        digest in any::<[u8; 32]>(),
+    ) {
+        let mut original = entry();
+        original.source_revision = SecretRevision(source_revision);
+        let encoded = encode_binding(
+            session(),
+            workspace(),
+            CustodyRevision::FIRST,
+            &original,
+            digest,
+            now(),
+        ).expect("encodes");
+        let decoded = decode_binding(&encoded, workspace()).expect("decodes");
+        prop_assert_eq!(decoded.entry, original);
+        prop_assert_eq!(decoded.context_digest, digest);
+    }
 }
 
 #[test]
@@ -103,7 +123,13 @@ fn every_row_family_round_trips() {
     .expect("encodes");
     assert_eq!(
         decode_binding(&binding, workspace()).expect("decodes"),
-        entry()
+        aex_secret_custody_dynamodb::codec::CustodyBinding {
+            session: session(),
+            workspace: workspace(),
+            revision: CustodyRevision::FIRST,
+            entry: entry(),
+            context_digest: [3; 32],
+        }
     );
 
     let manifest_row = encode_manifest(&manifest());
