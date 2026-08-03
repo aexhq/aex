@@ -42,9 +42,10 @@ Plan of record: `references/rust-native-rewrite-2026-07-31/plans/09-tools-mcp-we
   composition honestly omits optional `web_search` and browser authority.
 - `CompositeToolRouter` implements the peer `aex_brain_application::ToolPort`.
   Routes are resolved only from an exact immutable `CatalogPin`; duplicate
-  executors/catalogs/tools fail at construction; detached operations remember
-  the executor that created them, and an unknown durable identity returns
-  `DetachedStatus::Unknown` instead of starting new work.
+  executors/catalogs/tools fail at construction. Detached query and cancel take
+  the durable `DetachedOperationRef { id, executor }`, address that executor's
+  fixed slot directly, and keep no process-local operation registry or lock.
+  Equal raw ids from different executors therefore cannot collide or broadcast.
 - `aex-brain-managed-web::egress` enforces absolute HTTPS, port 443, no
   userinfo, a URL-size bound, the complete IPv4/IPv6 deny table, embedded IPv4
   unwrapping, full-record-set screening, and exact screened-address pinning.
@@ -75,6 +76,9 @@ Plan of record: `references/rust-native-rewrite-2026-07-31/plans/09-tools-mcp-we
 
 The principal published paths are:
 
+- `aex_brain_domain::effect::DetachedOperationRef`; this is the durable,
+  executor-qualified recovery address shared by effect evidence, journal waits,
+  `ToolPort`, and the composite router.
 - `aex_brain_tool_catalog::manifest::{ToolName, ToolDescriptor,
   ToolManifestEntry, ToolBoundary, RecoveryClass, ApprovalPolicy, ToolBounds,
   UsageDimensionSet, EgressClass, CredentialClass, Determinism,

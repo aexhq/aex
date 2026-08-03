@@ -32,8 +32,8 @@ use aex_brain_domain::canonical::canonicalize_value;
 use aex_brain_domain::child::QueuedReason;
 use aex_brain_domain::context;
 use aex_brain_domain::effect::{
-    DispatchEvidence, DispatchProof, DispatchStage, DurableEffect, EffectClass, EffectKind,
-    EffectState, RecoveryDecision, recover,
+    DetachedOperationRef, DispatchEvidence, DispatchProof, DispatchStage, DurableEffect,
+    EffectClass, EffectKind, EffectState, RecoveryDecision, recover,
 };
 use aex_brain_domain::fold::{FoldState, PendingCall, Phase, apply};
 use aex_brain_domain::ids::{
@@ -989,8 +989,12 @@ impl Session<'_> {
                 self.commit(draft).await?;
                 Ok(Some(Stop::Finished(FinishReason::Interrupted)))
             }
-            RecoveryDecision::QueryDurableOperation { id } => {
-                self.resolve_detached(&effect, &id).await.map(Some)
+            RecoveryDecision::QueryDurableOperation { .. } => Err(ActivationError::Unsupported {
+                step: "query_non_tool_durable_operation",
+                owed_by: "the provider or Hands recovery adapter selected by the effect kind; a tool executor route cannot safely answer this identity",
+            }),
+            RecoveryDecision::QueryDetachedTool { operation } => {
+                self.resolve_detached(&effect, &operation).await.map(Some)
             }
             RecoveryDecision::ReconstructFromReceipt { .. } => Err(ActivationError::Unsupported {
                 step: "reconstruct_from_receipt",
@@ -1539,6 +1543,24 @@ impl Session<'_> {
         let mut draft = self.draft("effecting");
         match outcome {
             Ok(ToolOutcome::Completed(body)) => {
+                if body.executed_on != route.executor {
+                    let evidence = DispatchEvidence {
+                        stage: DispatchStage::Terminal,
+                        proof: DispatchProof::ResponseStarted,
+                        attempt,
+                        provider_request_id: None,
+                        external_operation: None,
+                        detached_tool: None,
+                        receipt: None,
+                        detail: Some(
+                            "tool executor receipt route does not match the pinned route"
+                                .to_owned(),
+                        ),
+                    };
+                    decide::settle_unknown(&mut draft, effect, evidence);
+                    self.commit(draft).await?;
+                    return Ok(Step::Stop(Stop::Finished(FinishReason::Interrupted)));
+                }
                 decide::settle_tool_call(
                     &mut draft,
                     effect,
@@ -1560,12 +1582,17 @@ impl Session<'_> {
                 // never holds a socket or a lease. The operation id goes into the durable
                 // evidence first: without it the effect would be unresolvable rather than
                 // detached.
+                let operation = DetachedOperationRef {
+                    id: operation,
+                    executor: route.executor,
+                };
                 let evidence = DispatchEvidence {
                     stage: DispatchStage::Streaming,
                     proof: DispatchProof::ResponseStarted,
                     attempt,
                     provider_request_id: None,
-                    operation: Some(operation),
+                    external_operation: None,
+                    detached_tool: Some(operation.clone()),
                     receipt: None,
                     detail: None,
                 };
@@ -1573,10 +1600,11 @@ impl Session<'_> {
                     .effects
                     .mark_response_started(&ticket, &evidence)
                     .await?;
-                let due = now.plus_millis(millis(poll_after));
+                let due = detached_poll_due(now, deadline, poll_after);
                 let wait = wait_id(self.agent(), draft.next_seq());
                 let reason = ParkReason::AwaitingToolResult {
                     call: call.call.clone(),
+                    operation,
                 };
                 draft.append(JournalRecord::WaitOpened {
                     wait,
@@ -1665,24 +1693,49 @@ impl Session<'_> {
     async fn resolve_detached(
         &mut self,
         effect: &DurableEffect,
-        operation: &aex_brain_domain::ids::DetachedOperationId,
+        operation: &DetachedOperationRef,
     ) -> Result<Stop, ActivationError> {
-        let status = self.ports.tools.query(operation).await;
-        let Some((wait, call)) = self.open_tool_wait() else {
+        let Some((wait, call, waiting_on)) = self.open_tool_wait() else {
             return Err(ActivationError::Unsupported {
                 step: "detached_result_without_wait",
                 owed_by: "nothing: a detached effect is always committed with the wait it parks on, so this state means the journal and the effect row disagree",
             });
         };
+        if waiting_on != *operation {
+            return Err(ActivationError::Unsupported {
+                step: "detached_operation_ref_mismatch",
+                owed_by: "nothing: the effect evidence and journal wait must bind the same operation id and executor",
+            });
+        }
+        let now = self.ports.clock.now();
+        if now >= effect.deadline {
+            let mut draft = self.draft("effecting");
+            Self::settle_detached_unknown(&mut draft, effect, wait);
+            self.commit(draft).await?;
+            return Ok(Stop::Finished(FinishReason::Interrupted));
+        }
+        let status = self.ports.tools.query(operation).await;
+        let query_now = self.ports.clock.now();
+        // The query may have taken a material fraction of the effect lifetime. Build the
+        // decision only after it returns so its timestamp describes the commit attempt,
+        // while `query_now` independently enforces and bounds the persisted deadline.
         let mut draft = self.draft("effecting");
         match status {
             Ok(DetachedStatus::Running { poll_after }) => {
+                if query_now >= effect.deadline {
+                    Self::settle_detached_unknown(&mut draft, effect, wait);
+                    self.commit(draft).await?;
+                    return Ok(Stop::Finished(FinishReason::Interrupted));
+                }
                 // Still running. The poll timer is a wake, and a wake exists only inside a
                 // decision, so re-arming it is a commit rather than a queue call.
-                let due = self.ports.clock.now().plus_millis(millis(poll_after));
+                let due = detached_poll_due(query_now, effect.deadline, poll_after);
                 draft.wake(
                     self.ports.ids.wake_id(),
-                    ParkReason::AwaitingToolResult { call },
+                    ParkReason::AwaitingToolResult {
+                        call,
+                        operation: operation.clone(),
+                    },
                     due,
                     self.authority.workspace.to_string(),
                     self.policy.shard_for(self.agent()),
@@ -1691,6 +1744,11 @@ impl Session<'_> {
                 Ok(Stop::Parked)
             }
             Ok(DetachedStatus::Completed(body)) => {
+                if body.executed_on != operation.executor {
+                    Self::settle_detached_unknown(&mut draft, effect, wait);
+                    self.commit(draft).await?;
+                    return Ok(Stop::Finished(FinishReason::Interrupted));
+                }
                 Self::settle_detached(
                     &mut draft,
                     effect.id,
@@ -1702,6 +1760,7 @@ impl Session<'_> {
                     body.duration_ms,
                     body.checksum,
                 );
+                self.wake_continuation(&mut draft);
                 self.commit(draft).await?;
                 Ok(Stop::HandedBack)
             }
@@ -1717,24 +1776,36 @@ impl Session<'_> {
                     call,
                     content,
                     true,
-                    // A failed detached operation carries no executor on its durable record,
-                    // and inventing one would attribute the failure to an executor that may
-                    // never have run.
-                    ExecutorRoute::BrainInline,
+                    operation.executor,
                     0,
                     checksum,
                 );
+                self.wake_continuation(&mut draft);
                 self.commit(draft).await?;
                 Ok(Stop::HandedBack)
             }
+            Err(error) if error.retryable => {
+                if query_now >= effect.deadline {
+                    Self::settle_detached_unknown(&mut draft, effect, wait);
+                    self.commit(draft).await?;
+                    return Ok(Stop::Finished(FinishReason::Interrupted));
+                }
+                let due = detached_query_retry_due(query_now, effect.deadline);
+                draft.wake(
+                    self.ports.ids.wake_id(),
+                    ParkReason::AwaitingToolResult {
+                        call,
+                        operation: operation.clone(),
+                    },
+                    due,
+                    self.authority.workspace.to_string(),
+                    self.policy.shard_for(self.agent()),
+                );
+                self.commit(draft).await?;
+                Ok(Stop::Parked)
+            }
             Ok(DetachedStatus::Unknown) | Err(_) => {
-                let evidence = effect.evidence.clone().unwrap_or_else(|| {
-                    DispatchEvidence::ambiguous(
-                        effect.state.attempt().unwrap_or(1),
-                        DispatchStage::Streaming,
-                    )
-                });
-                decide::settle_unknown(&mut draft, effect.id, evidence);
+                Self::settle_detached_unknown(&mut draft, effect, wait);
                 self.commit(draft).await?;
                 Ok(Stop::Finished(FinishReason::Interrupted))
             }
@@ -1780,15 +1851,55 @@ impl Session<'_> {
         });
     }
 
-    fn open_tool_wait(&self) -> Option<(WaitId, ToolCallId)> {
+    fn settle_detached_unknown(draft: &mut Draft, effect: &DurableEffect, wait: WaitId) {
+        let evidence = effect.evidence.clone().unwrap_or_else(|| {
+            DispatchEvidence::ambiguous(
+                effect.state.attempt().unwrap_or(1),
+                DispatchStage::Streaming,
+            )
+        });
+        // `OutcomeUnknown` is terminal in the pure fold. Close the wait first so every
+        // record in this atomic decision remains foldable; reversing these two appends
+        // would place `WaitResolved` after an absorbing terminal.
+        draft.append(JournalRecord::WaitResolved {
+            wait,
+            resolution: WaitResolution::Cancelled,
+        });
+        decide::settle_unknown(draft, effect.id, evidence);
+    }
+
+    fn open_tool_wait(&self) -> Option<(WaitId, ToolCallId, DetachedOperationRef)> {
         self.state
             .waits
             .iter()
             .find_map(|(wait, reason)| match reason {
-                ParkReason::AwaitingToolResult { call } => Some((*wait, call.clone())),
+                ParkReason::AwaitingToolResult { call, operation } => {
+                    Some((*wait, call.clone(), operation.clone()))
+                }
                 _ => None,
             })
     }
+}
+
+const DETACHED_POLL_FLOOR: core::time::Duration = core::time::Duration::from_millis(250);
+const DETACHED_QUERY_RETRY_AFTER: core::time::Duration = core::time::Duration::from_secs(5);
+
+fn detached_poll_due(
+    now: Timestamp,
+    deadline: Timestamp,
+    requested: core::time::Duration,
+) -> Timestamp {
+    let delay = requested.max(DETACHED_POLL_FLOOR);
+    bounded_due(now, deadline, delay)
+}
+
+fn detached_query_retry_due(now: Timestamp, deadline: Timestamp) -> Timestamp {
+    bounded_due(now, deadline, DETACHED_QUERY_RETRY_AFTER)
+}
+
+fn bounded_due(now: Timestamp, deadline: Timestamp, delay: core::time::Duration) -> Timestamp {
+    let proposed = now.plus_millis(millis(delay));
+    proposed.min(deadline)
 }
 
 /// An effect whose intent is committed and whose pre-send write has not happened.

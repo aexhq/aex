@@ -28,7 +28,9 @@ use crate::ports::{
 };
 use aex_brain_domain::budget::BudgetNode;
 use aex_brain_domain::commit::{DecisionCommit, EffectWrite};
-use aex_brain_domain::effect::{DispatchEvidence, DurableEffect, EffectState, SettledOutcome};
+use aex_brain_domain::effect::{
+    DetachedOperationRef, DispatchEvidence, DurableEffect, EffectState, SettledOutcome,
+};
 use aex_brain_domain::ids::{
     AgentId, AgentKey, AgentRevision, CancelEpoch, CatalogPin, ContentHash, DetachedOperationId,
     EffectId, Fence, HandsOperationId, JournalSeq, ModelSlug, OwnerToken, SessionId, Timestamp,
@@ -371,8 +373,10 @@ impl ProviderPort for ScriptedProvider {
 pub struct ScriptedTools {
     routes: Mutex<BTreeMap<String, ToolRoute>>,
     invocations: Mutex<VecDeque<Result<ToolOutcome, ToolDispatchError>>>,
-    queries: Mutex<VecDeque<DetachedStatus>>,
+    queries: Mutex<VecDeque<Result<DetachedStatus, ToolDispatchError>>>,
     invoked: Mutex<Vec<String>>,
+    queried: Mutex<Vec<DetachedOperationRef>>,
+    cancelled: Mutex<Vec<(DetachedOperationRef, Fence)>>,
 }
 
 impl ScriptedTools {
@@ -392,11 +396,16 @@ impl ScriptedTools {
             invocations: Mutex::new(script.into_iter().collect()),
             queries: Mutex::new(VecDeque::new()),
             invoked: Mutex::new(Vec::new()),
+            queried: Mutex::new(Vec::new()),
+            cancelled: Mutex::new(Vec::new()),
         }
     }
 
     /// Scripts what a durable-operation query answers, in order.
-    pub fn script_queries(&self, script: impl IntoIterator<Item = DetachedStatus>) {
+    pub fn script_queries(
+        &self,
+        script: impl IntoIterator<Item = Result<DetachedStatus, ToolDispatchError>>,
+    ) {
         *self.queries.lock().expect("not poisoned") = script.into_iter().collect();
     }
 
@@ -404,6 +413,18 @@ impl ScriptedTools {
     #[must_use]
     pub fn invoked(&self) -> Vec<String> {
         self.invoked.lock().expect("not poisoned").clone()
+    }
+
+    /// Every executor-bound durable operation it was asked to query.
+    #[must_use]
+    pub fn queried(&self) -> Vec<DetachedOperationRef> {
+        self.queried.lock().expect("not poisoned").clone()
+    }
+
+    /// Every executor-bound durable operation it was asked to cancel.
+    #[must_use]
+    pub fn cancelled(&self) -> Vec<(DetachedOperationRef, Fence)> {
+        self.cancelled.lock().expect("not poisoned").clone()
     }
 }
 
@@ -453,24 +474,33 @@ impl ToolPort for ScriptedTools {
 
     fn query<'a>(
         &'a self,
-        _operation: &'a DetachedOperationId,
+        operation: &'a DetachedOperationRef,
     ) -> BoxFuture<'a, Result<DetachedStatus, ToolDispatchError>> {
         Box::pin(async move {
-            Ok(self
-                .queries
+            self.queried
+                .lock()
+                .expect("not poisoned")
+                .push(operation.clone());
+            self.queries
                 .lock()
                 .expect("not poisoned")
                 .pop_front()
-                .unwrap_or(DetachedStatus::Unknown))
+                .unwrap_or(Ok(DetachedStatus::Unknown))
         })
     }
 
     fn cancel<'a>(
         &'a self,
-        _operation: &'a DetachedOperationId,
-        _fence: Fence,
+        operation: &'a DetachedOperationRef,
+        fence: Fence,
     ) -> BoxFuture<'a, Result<(), ToolDispatchError>> {
-        Box::pin(async { Ok(()) })
+        Box::pin(async move {
+            self.cancelled
+                .lock()
+                .expect("not poisoned")
+                .push((operation.clone(), fence));
+            Ok(())
+        })
     }
 }
 

@@ -453,7 +453,8 @@ pub fn classify_provider_failure(error: &ProviderDispatchError, attempt: u16) ->
         proof: error.proof,
         attempt,
         provider_request_id: error.provider_request_id.clone(),
-        operation: None,
+        external_operation: None,
+        detached_tool: None,
         receipt: None,
         detail: Some(error.detail.as_str().to_owned()),
     }))
@@ -479,7 +480,8 @@ pub fn classify_tool_failure(error: &ToolDispatchError, attempt: u16) -> Failure
         proof: error.proof,
         attempt,
         provider_request_id: None,
-        operation: None,
+        external_operation: None,
+        detached_tool: None,
         receipt: None,
         detail: Some(error.detail.as_str().to_owned()),
     }))

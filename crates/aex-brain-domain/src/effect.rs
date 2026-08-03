@@ -12,6 +12,21 @@ use aex_wire::ids::GenerationId;
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{ContentHash, DetachedOperationId, EffectId, ProviderRequestId, Timestamp};
+use crate::journal::ExecutorRoute;
+
+/// A detached tool operation plus the exact executor that accepted it.
+///
+/// Upstream operation ids are scoped to an executor. Persisting only the raw id would make
+/// two executors that returned the same bytes collide and would force a restarted mux to
+/// rediscover routing state it is not allowed to own.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DetachedOperationRef {
+    /// Executor-scoped operation identity.
+    pub id: DetachedOperationId,
+    /// The exact coarse Brain executor route that accepted the operation.
+    pub executor: ExecutorRoute,
+}
 
 /// What kind of external work an effect performs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -89,6 +104,7 @@ pub enum DispatchStage {
 
 /// The durable evidence recorded about one dispatch attempt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DispatchEvidence {
     /// How far the attempt got.
     pub stage: DispatchStage,
@@ -98,8 +114,10 @@ pub struct DispatchEvidence {
     pub attempt: u16,
     /// The upstream request id, when one was observed.
     pub provider_request_id: Option<ProviderRequestId>,
-    /// A durable operation id, when the upstream accepted one.
-    pub operation: Option<DetachedOperationId>,
+    /// A non-tool durable operation id, when an upstream accepted one.
+    pub external_operation: Option<DetachedOperationId>,
+    /// A detached tool operation bound to the executor that accepted it.
+    pub detached_tool: Option<DetachedOperationRef>,
     /// A checksummed durable response receipt, when one committed.
     pub receipt: Option<ContentHash>,
     /// Redacted diagnostic text. Never carries a credential.
@@ -115,7 +133,8 @@ impl DispatchEvidence {
             proof: DispatchProof::NotSent,
             attempt,
             provider_request_id: None,
-            operation: None,
+            external_operation: None,
+            detached_tool: None,
             receipt: None,
             detail: None,
         }
@@ -129,7 +148,8 @@ impl DispatchEvidence {
             proof: DispatchProof::PossiblySent,
             attempt,
             provider_request_id: None,
-            operation: None,
+            external_operation: None,
+            detached_tool: None,
             receipt: None,
             detail: None,
         }
@@ -256,6 +276,11 @@ pub enum RecoveryDecision {
         /// The operation the upstream accepted.
         id: DetachedOperationId,
     },
+    /// Ask the exact tool executor about the detached operation it accepted.
+    QueryDetachedTool {
+        /// Executor-bound operation identity. Never broadcast or rediscover this route.
+        operation: DetachedOperationRef,
+    },
     /// Rebuild the outcome from the committed checksummed receipt.
     ReconstructFromReceipt {
         /// The receipt digest.
@@ -316,20 +341,44 @@ pub fn recover(
             if let Some(receipt) = evidence.receipt {
                 return RecoveryDecision::ReconstructFromReceipt { receipt };
             }
+            if evidence.external_operation.is_some() && evidence.detached_tool.is_some() {
+                return RecoveryDecision::Interrupt { evidence };
+            }
             match effect.class {
                 EffectClass::Pure => RecoveryDecision::RetrySameEffect {
                     attempt: attempt.saturating_add(1),
                 },
-                EffectClass::IdempotentManaged => match (support, evidence.operation.clone()) {
-                    (Support::ResultLookup { .. } | Support::ResumableStream { .. }, Some(id)) => {
-                        RecoveryDecision::QueryDurableOperation { id }
+                EffectClass::IdempotentManaged => {
+                    if !matches!(
+                        support,
+                        Support::ResultLookup { .. } | Support::ResumableStream { .. }
+                    ) {
+                        RecoveryDecision::Interrupt { evidence }
+                    } else if effect.kind == EffectKind::ToolCall {
+                        match evidence.detached_tool.clone() {
+                            Some(operation) => RecoveryDecision::QueryDetachedTool { operation },
+                            None => RecoveryDecision::Interrupt { evidence },
+                        }
+                    } else {
+                        match evidence.external_operation.clone() {
+                            Some(id) => RecoveryDecision::QueryDurableOperation { id },
+                            None => RecoveryDecision::Interrupt { evidence },
+                        }
                     }
-                    _ => RecoveryDecision::Interrupt { evidence },
-                },
-                EffectClass::DurableDetached => match evidence.operation.clone() {
-                    Some(id) => RecoveryDecision::QueryDurableOperation { id },
-                    None => RecoveryDecision::Interrupt { evidence },
-                },
+                }
+                EffectClass::DurableDetached => {
+                    if effect.kind == EffectKind::ToolCall {
+                        match evidence.detached_tool.clone() {
+                            Some(operation) => RecoveryDecision::QueryDetachedTool { operation },
+                            None => RecoveryDecision::Interrupt { evidence },
+                        }
+                    } else {
+                        match evidence.external_operation.clone() {
+                            Some(id) => RecoveryDecision::QueryDurableOperation { id },
+                            None => RecoveryDecision::Interrupt { evidence },
+                        }
+                    }
+                }
                 EffectClass::NonReplayable => RecoveryDecision::Interrupt { evidence },
             }
         }
@@ -408,10 +457,11 @@ impl DurableEffect {
 #[cfg(test)]
 mod tests {
     use super::{
-        DispatchEvidence, DispatchProof, DispatchStage, DurableEffect, EffectClass, EffectError,
-        EffectKind, EffectState, RecoveryDecision, recover,
+        DetachedOperationRef, DispatchEvidence, DispatchProof, DispatchStage, DurableEffect,
+        EffectClass, EffectError, EffectKind, EffectState, RecoveryDecision, recover,
     };
     use crate::ids::{ContentHash, DetachedOperationId, EffectId, Timestamp};
+    use crate::journal::ExecutorRoute;
     use crate::wire_pending::DurableOperationSupport;
 
     const PROVEN: DurableOperationSupport =
@@ -466,7 +516,7 @@ mod tests {
             EffectClass::IdempotentManaged,
         );
         with_operation.evidence = Some(DispatchEvidence {
-            operation: Some(DetachedOperationId("op-1".to_owned())),
+            external_operation: Some(DetachedOperationId("op-1".to_owned())),
             ..DispatchEvidence::ambiguous(1, DispatchStage::Dispatched)
         });
         assert!(matches!(
@@ -507,6 +557,27 @@ mod tests {
         assert_eq!(
             recover(&settled, DurableOperationSupport::None),
             RecoveryDecision::ReconstructFromReceipt { receipt }
+        );
+    }
+
+    #[test]
+    fn a_detached_operation_ref_has_one_closed_persisted_shape() {
+        let reference = DetachedOperationRef {
+            id: DetachedOperationId("same-id".to_owned()),
+            executor: ExecutorRoute::Mcp,
+        };
+        let encoded = serde_json::to_vec(&reference).expect("the reference serializes");
+        assert_eq!(
+            serde_json::from_slice::<DetachedOperationRef>(&encoded)
+                .expect("the reference round trips"),
+            reference
+        );
+        assert!(
+            serde_json::from_str::<DetachedOperationRef>(
+                r#"{"id":"same-id","executor":"mcp","broadcast":true}"#,
+            )
+            .is_err(),
+            "unknown routing fields must fail closed"
         );
     }
 

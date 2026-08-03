@@ -469,13 +469,15 @@ async fn a_due_scan_resumes_from_the_native_per_shard_continuation() {
     );
 }
 
-/// Every attribute the decoder reads back is written. The operation id in particular is the
-/// whole `DurableDetached` arm of the recovery matrix: without it a detached effect decodes
-/// with no operation, and `recover` interrupts a run the upstream is still working on.
+/// Every attribute the decoder reads back is written. A detached id and executor are one
+/// closed binding: without the route a restarted mux cannot address the accepting backend.
 #[tokio::test]
 async fn a_response_start_records_the_evidence_the_decoder_reads_back() {
-    use aex_brain_domain::effect::{DispatchEvidence, DispatchProof, DispatchStage};
+    use aex_brain_domain::effect::{
+        DetachedOperationRef, DispatchEvidence, DispatchProof, DispatchStage,
+    };
     use aex_brain_domain::ids::{ContentHash, DetachedOperationId, ProviderRequestId};
+    use aex_brain_domain::journal::ExecutorRoute;
 
     let (store, receiver) = capturing();
     let guard = FenceGuard::new(
@@ -504,7 +506,11 @@ async fn a_response_start_records_the_evidence_the_decoder_reads_back() {
                 proof: DispatchProof::ResponseStarted,
                 attempt: 1,
                 provider_request_id: Some(ProviderRequestId::truncating("req-1")),
-                operation: Some(DetachedOperationId("op-1".to_owned())),
+                external_operation: None,
+                detached_tool: Some(DetachedOperationRef {
+                    id: DetachedOperationId("op-1".to_owned()),
+                    executor: ExecutorRoute::Mcp,
+                }),
                 receipt: Some(receipt),
                 detail: None,
             },
@@ -512,16 +518,72 @@ async fn a_response_start_records_the_evidence_the_decoder_reads_back() {
         .await;
     let body = captured(receiver);
     let update = body["UpdateExpression"].as_str().expect("an update");
-    assert!(update.contains("operationId = :operation"), "{update}");
+    assert!(
+        update.contains("detachedOperationId = :detachedOperation"),
+        "{update}"
+    );
+    assert!(
+        update.contains("detachedExecutor = :detachedExecutor"),
+        "{update}"
+    );
     assert!(
         update.contains("providerRequestId = :providerRequestId"),
         "{update}"
     );
     assert!(update.contains("receiptHash = :receipt"), "{update}");
     let values = &body["ExpressionAttributeValues"];
-    assert_eq!(values[":operation"]["S"], "op-1");
+    assert_eq!(values[":detachedOperation"]["S"], "op-1");
+    assert_eq!(values[":detachedExecutor"]["S"], "Mcp");
     assert_eq!(values[":providerRequestId"]["S"], "req-1");
     assert_eq!(values[":receipt"]["S"], receipt.to_hex());
+}
+
+#[tokio::test]
+async fn a_response_start_refuses_two_operation_authorities_before_aws() {
+    use aex_brain_domain::effect::{
+        DetachedOperationRef, DispatchEvidence, DispatchProof, DispatchStage,
+    };
+    use aex_brain_domain::ids::DetachedOperationId;
+    use aex_brain_domain::journal::ExecutorRoute;
+
+    let (store, _receiver) = capturing();
+    let guard = FenceGuard::new(
+        key(),
+        OwnerToken(uuid::Uuid::from_u128(5)),
+        Fence(7),
+        AgentRevision(2),
+        Some(JournalSeq(4)),
+        CancelEpoch(0),
+        CancelToken::new(),
+    );
+    let ticket = DispatchTicket::mint(
+        &guard,
+        authority().workspace,
+        authority().organization,
+        EffectId([9; 16]),
+        1,
+        Timestamp::from_millis(1_767_225_600_000),
+    );
+    let error = store
+        .mark_response_started(
+            &ticket,
+            &DispatchEvidence {
+                stage: DispatchStage::Streaming,
+                proof: DispatchProof::ResponseStarted,
+                attempt: 1,
+                provider_request_id: None,
+                external_operation: Some(DetachedOperationId("external".to_owned())),
+                detached_tool: Some(DetachedOperationRef {
+                    id: DetachedOperationId("tool".to_owned()),
+                    executor: ExecutorRoute::Mcp,
+                }),
+                receipt: None,
+                detail: None,
+            },
+        )
+        .await
+        .expect_err("one effect cannot be recovered through two authorities");
+    assert!(format!("{error}").contains("mutually exclusive"), "{error}");
 }
 
 /// Evidence a dispatch did not produce is not written as an empty string: an absent optional
@@ -556,7 +618,8 @@ async fn absent_evidence_is_left_absent_rather_than_written_empty() {
         .await;
     let body = captured(receiver);
     let update = body["UpdateExpression"].as_str().expect("an update");
-    assert!(!update.contains("operationId"), "{update}");
+    assert!(!update.contains("OperationId"), "{update}");
+    assert!(!update.contains("detachedExecutor"), "{update}");
     assert!(!update.contains("receiptHash"), "{update}");
 }
 

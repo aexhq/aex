@@ -3,7 +3,7 @@
 
 use super::BoxFuture;
 use super::proof::{CancelToken, DispatchTicket};
-use aex_brain_domain::effect::{DispatchProof, DispatchStage, EffectClass};
+use aex_brain_domain::effect::{DetachedOperationRef, DispatchProof, DispatchStage, EffectClass};
 use aex_brain_domain::ids::{
     CatalogPin, ContentHash, DetachedOperationId, Fence, ToolCallId, ToolName,
 };
@@ -35,16 +35,21 @@ pub trait ToolPort: Send + Sync + 'static {
     ) -> BoxFuture<'a, Result<ToolOutcome, ToolDispatchError>>;
 
     /// Asks about a detached operation. Never creates a second one.
+    ///
+    /// [`DetachedStatus::Unknown`] is reserved for an authoritative durable-absence
+    /// response from the selected executor. Read-after-accept propagation lag must be a
+    /// retryable [`ToolDispatchError`], so the activation can retry until the persisted
+    /// effect deadline instead of prematurely settling an unknown outcome.
     fn query<'a>(
         &'a self,
-        operation: &'a DetachedOperationId,
+        operation: &'a DetachedOperationRef,
     ) -> BoxFuture<'a, Result<DetachedStatus, ToolDispatchError>>;
 
     /// Best-effort cancellation of a detached operation, fenced by the caller's ownership
     /// generation so a stale owner cannot cancel the new owner's work.
     fn cancel<'a>(
         &'a self,
-        operation: &'a DetachedOperationId,
+        operation: &'a DetachedOperationRef,
         fence: Fence,
     ) -> BoxFuture<'a, Result<(), ToolDispatchError>>;
 }
@@ -185,12 +190,13 @@ pub enum DetachedStatus {
         /// A redacted reason.
         reason: String,
     },
-    /// The transport dropped before an operation id could settle, so nothing can be
-    /// proved. The effect settles `OutcomeUnknown`.
+    /// The selected executor authoritatively reports that the accepted durable operation
+    /// does not exist. The effect settles `OutcomeUnknown`.
     ///
     /// This arm exists on the status response rather than in a shared enum because these
     /// are the responses that can settle a dropped connection, and a caller must be forced
-    /// to handle it rather than being able to reach for a default.
+    /// to handle it rather than being able to reach for a default. Eventual-consistency lag
+    /// is not `Unknown`; it is a retryable [`ToolDispatchError`].
     Unknown,
 }
 

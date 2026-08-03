@@ -21,21 +21,22 @@ use super::{
 use crate::kernel::{ActivationRegistry, DrainGate, PermitKind, PermitSet};
 use crate::ports::{
     BoxFuture, CancelToken, ClaimError, ClockPort as _, CommitError, ConditionFailure,
-    DispatchTicket, EffectStore as _, FenceGuard, JournalCursor, JournalPage, LeaseStore as _,
-    PreviewSink, ProviderDispatchError, ProviderFailureKind, ProviderOutcome, ProviderPort,
-    RedactedDetail, ReleaseDisposition, StoreError, StreamBudget, UnknownResolution,
-    WakeQueue as _,
+    DetachedStatus, DispatchTicket, EffectStore as _, FenceGuard, JournalCursor, JournalPage,
+    LeaseStore as _, PreviewSink, ProviderDispatchError, ProviderFailureKind, ProviderOutcome,
+    ProviderPort, RedactedDetail, ReleaseDisposition, StoreError, StreamBudget, ToolDispatchError,
+    ToolOutcome, ToolResultBody, ToolRoute, UnknownResolution, WakeQueue as _,
 };
 use aex_brain_domain::budget::DimensionVector;
 use aex_brain_domain::effect::{
-    DispatchProof, DispatchStage, DurableEffect, EffectClass, EffectKind, EffectState,
+    DetachedOperationRef, DispatchProof, DispatchStage, DurableEffect, EffectClass, EffectKind,
+    EffectState,
 };
 use aex_brain_domain::ids::{
-    AgentId, AgentKey, CatalogPin, ContentHash, EffectId, JournalSeq, ModelSlug, OwnerToken,
-    SessionId, Timestamp, WakeId, WorkShard,
+    AgentId, AgentKey, CatalogPin, ContentHash, DetachedOperationId, EffectId, JournalSeq,
+    ModelSlug, OwnerToken, SessionId, Timestamp, ToolCallId, ToolName, WakeId, WorkShard,
 };
 use aex_brain_domain::journal::{
-    FinishReason, JournalEntry, JournalRecord, MessageOrigin, ParkReason,
+    ExecutorRoute, FinishReason, JournalEntry, JournalRecord, MessageOrigin, ParkReason,
 };
 use aex_brain_domain::wire_pending::{
     AgentLimits, CanonicalBlock, CanonicalModelRequest, ContentBlockRef, NormalizedUsage,
@@ -44,6 +45,7 @@ use aex_brain_domain::wire_pending::{
 use aex_model_catalog::canonical::{CredentialBindingRef, ProviderReceipt, ReceiptBounds, seal};
 use aex_model_catalog::document::CapabilitySet;
 use aex_model_catalog::{BoundedString, QualifiedModel, fixture};
+use aex_wire::CanonicalJson;
 use aex_wire::ids::{GenerationId, PrefixedId as _, ProviderCredentialId, Uuid7};
 use core::future::Future as _;
 use std::collections::BTreeMap;
@@ -226,6 +228,64 @@ fn produced() -> ProviderOutcome {
     }
 }
 
+fn produced_tool_use() -> ProviderOutcome {
+    let mut outcome = produced();
+    let selected = capability();
+    let message = seal(
+        vec![CanonicalBlock::ToolUse {
+            id: ToolCallId::truncating("call-1"),
+            name: ToolName::parse("web_fetch").expect("tool name"),
+            input: CanonicalJson::parse("{}").expect("canonical tool input"),
+        }],
+        StopReason::ToolUse,
+        &outcome.usage,
+        &selected,
+    )
+    .expect("a whole tool-use message");
+    outcome.receipt.response_receipt = Some(message.proof.0);
+    outcome.message = message;
+    outcome
+}
+
+fn detached_route() -> ToolRoute {
+    ToolRoute {
+        name: ToolName::parse("web_fetch").expect("tool name"),
+        executor: ExecutorRoute::ManagedWeb,
+        class: EffectClass::DurableDetached,
+        timeout_ms: 60_000,
+        manifest_digest: ContentHash::of(b"tool manifest"),
+    }
+}
+
+fn detached_ref() -> DetachedOperationRef {
+    DetachedOperationRef {
+        id: DetachedOperationId("shared-operation-id".to_owned()),
+        executor: ExecutorRoute::ManagedWeb,
+    }
+}
+
+fn completed_detached_result() -> DetachedStatus {
+    DetachedStatus::Completed(Box::new(ToolResultBody {
+        content: Vec::new(),
+        is_error: false,
+        duration_ms: 10,
+        executed_on: ExecutorRoute::ManagedWeb,
+        checksum: ContentHash::of(b"detached result"),
+    }))
+}
+
+fn retryable_query_error() -> ToolDispatchError {
+    ToolDispatchError {
+        stage: DispatchStage::PreDispatch,
+        proof: DispatchProof::NotSent,
+        retryable: true,
+        detail: RedactedDetail::internal(
+            ProviderFailureKind::Transport,
+            "durable operation lookup is temporarily unavailable",
+        ),
+    }
+}
+
 fn failure(proof: DispatchProof, kind: ProviderFailureKind) -> ProviderDispatchError {
     ProviderDispatchError {
         stage: match proof {
@@ -257,7 +317,9 @@ struct Harness {
     queue: Arc<MemoryQueue>,
     store: Arc<MemoryStore>,
     provider: Arc<ScriptedProvider>,
+    tools: Arc<ScriptedTools>,
     catalog: Arc<FixedCatalog>,
+    ids: Arc<CountingIds>,
     log: Arc<Recorder>,
     drain: Arc<DrainGate>,
     registry: Arc<ActivationRegistry>,
@@ -280,7 +342,9 @@ impl Harness {
             queue,
             store,
             provider: Arc::new(ScriptedProvider::new(script)),
+            tools: Arc::new(ScriptedTools::new(Vec::new(), Vec::new())),
             catalog: Arc::new(FixedCatalog::with_model(capability())),
+            ids: Arc::new(CountingIds::new()),
             log,
             drain: Arc::new(DrainGate::new()),
             registry: Arc::new(ActivationRegistry::new()),
@@ -295,11 +359,11 @@ impl Harness {
             leases: Arc::clone(&self.store) as Arc<_>,
             wakes: Arc::clone(&self.queue) as Arc<_>,
             provider: Arc::clone(&self.provider) as Arc<_>,
-            tools: Arc::new(ScriptedTools::new(Vec::new(), Vec::new())) as Arc<_>,
+            tools: Arc::clone(&self.tools) as Arc<_>,
             hands: Arc::new(AbsentHands) as Arc<_>,
             catalog: Arc::clone(&self.catalog) as Arc<_>,
             clock: Arc::clone(&self.clock) as Arc<_>,
-            ids: Arc::new(CountingIds::new()) as Arc<_>,
+            ids: Arc::clone(&self.ids) as Arc<_>,
         }
     }
 
@@ -310,6 +374,15 @@ impl Harness {
             Arc::clone(&self.registry),
             Arc::clone(&self.drain),
         )
+    }
+
+    fn with_tools(
+        mut self,
+        routes: impl IntoIterator<Item = ToolRoute>,
+        script: impl IntoIterator<Item = Result<ToolOutcome, ToolDispatchError>>,
+    ) -> Self {
+        self.tools = Arc::new(ScriptedTools::new(routes, script));
+        self
     }
 
     /// Projects the wake the session authority would have created, and drives it.
@@ -376,6 +449,218 @@ fn one_wake_drives_a_turn_from_claim_to_ack() {
     ));
     assert_eq!(harness.queue.acked().len(), 1);
     assert_eq!(harness.queue.depth(), 0, "nothing was left outstanding");
+}
+
+#[test]
+fn a_new_activation_recovers_the_executor_from_durable_effect_and_journal_state() {
+    let harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced_tool_use()))])
+        .with_tools(
+            [detached_route()],
+            [Ok(ToolOutcome::Detached {
+                operation: detached_ref().id,
+                poll_after: core::time::Duration::from_secs(1),
+            })],
+        );
+    harness.tools.script_queries([Ok(DetachedStatus::Failed {
+        reason: "the managed fetch failed".to_owned(),
+    })]);
+    harness.wake();
+
+    let first = harness.run_next().expect("the invocation detaches");
+    assert!(matches!(
+        first,
+        Outcome::Progressed {
+            stop: Stop::Parked,
+            ..
+        }
+    ));
+    let tool_effect = harness
+        .store
+        .effects(key())
+        .into_iter()
+        .find(|effect| effect.kind == EffectKind::ToolCall)
+        .expect("the detached effect is durable");
+    assert_eq!(
+        tool_effect
+            .evidence
+            .as_ref()
+            .and_then(|evidence| evidence.detached_tool.clone()),
+        Some(detached_ref())
+    );
+    assert!(harness.store.entries(key()).iter().any(|entry| {
+        matches!(
+            &entry.record,
+            JournalRecord::WaitOpened {
+                reason: ParkReason::AwaitingToolResult { operation, .. },
+                ..
+            } if *operation == detached_ref()
+        )
+    }));
+
+    // `run_next` constructs a new Activation, modeling another mux owner after restart.
+    let second = harness
+        .run_next()
+        .expect("the successor resolves the operation");
+    assert!(matches!(
+        second,
+        Outcome::Progressed {
+            stop: Stop::HandedBack,
+            ..
+        }
+    ));
+    assert_eq!(harness.tools.queried(), vec![detached_ref()]);
+    assert!(harness.store.entries(key()).iter().any(|entry| {
+        matches!(
+            &entry.record,
+            JournalRecord::ToolResult {
+                is_error: true,
+                executed_on: ExecutorRoute::ManagedWeb,
+                ..
+            }
+        )
+    }));
+    assert_eq!(
+        harness.queue.depth(),
+        1,
+        "settlement atomically creates the continuation the next model call needs"
+    );
+}
+
+#[test]
+fn retryable_detached_query_failure_rearms_without_settling_then_completes() {
+    let harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced_tool_use()))])
+        .with_tools(
+            [detached_route()],
+            [Ok(ToolOutcome::Detached {
+                operation: detached_ref().id,
+                poll_after: core::time::Duration::ZERO,
+            })],
+        );
+    harness.tools.script_queries([
+        Err(retryable_query_error()),
+        Ok(completed_detached_result()),
+    ]);
+    harness.wake();
+    harness.run_next().expect("the invocation detaches");
+
+    harness.clock.advance(250);
+    let retry = harness
+        .run_next()
+        .expect("propagation lag is retryable rather than unknown");
+    assert!(matches!(
+        retry,
+        Outcome::Progressed {
+            stop: Stop::Parked,
+            ..
+        }
+    ));
+    let entries = harness.store.entries(key());
+    assert_eq!(
+        entries
+            .iter()
+            .filter(|entry| matches!(entry.record, JournalRecord::WaitResolved { .. }))
+            .count(),
+        0,
+        "the original wait remains the sole authority while lookup is retryable"
+    );
+    let tool_effect = harness
+        .store
+        .effects(key())
+        .into_iter()
+        .find(|effect| effect.kind == EffectKind::ToolCall)
+        .expect("tool effect");
+    assert!(!tool_effect.state.is_settled());
+
+    harness.clock.advance(5_000);
+    harness
+        .run_next()
+        .expect("the next bounded query completes");
+    assert_eq!(
+        harness.tools.queried(),
+        vec![detached_ref(), detached_ref()]
+    );
+    assert!(
+        harness
+            .store
+            .entries(key())
+            .iter()
+            .any(|entry| { matches!(entry.record, JournalRecord::WaitResolved { .. }) })
+    );
+}
+
+#[test]
+fn detached_query_stops_at_the_persisted_effect_deadline_without_network_io() {
+    let harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced_tool_use()))])
+        .with_tools(
+            [detached_route()],
+            [Ok(ToolOutcome::Detached {
+                operation: detached_ref().id,
+                poll_after: core::time::Duration::from_secs(1),
+            })],
+        );
+    harness.tools.script_queries([Err(retryable_query_error())]);
+    harness.wake();
+    harness.run_next().expect("the invocation detaches");
+    harness.clock.advance(60_000);
+
+    let terminal = harness
+        .run_next()
+        .expect("the exact persisted deadline settles honestly unknown");
+    assert!(matches!(
+        terminal,
+        Outcome::Progressed {
+            stop: Stop::Finished(FinishReason::Interrupted),
+            ..
+        }
+    ));
+    assert!(
+        harness.tools.queried().is_empty(),
+        "expiry is checked before issuing another upstream query"
+    );
+    let entries = harness.store.entries(key());
+    assert!(entries.windows(2).any(|pair| {
+        matches!(
+            pair[0].record,
+            JournalRecord::WaitResolved {
+                resolution: aex_brain_domain::journal::WaitResolution::Cancelled,
+                ..
+            }
+        ) && matches!(
+            pair[1].record,
+            JournalRecord::EffectSettled {
+                outcome: aex_brain_domain::effect::SettledOutcome::OutcomeUnknown { .. },
+                ..
+            }
+        )
+    }));
+}
+
+#[test]
+fn authoritative_detached_absence_settles_unknown_immediately() {
+    let harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced_tool_use()))])
+        .with_tools(
+            [detached_route()],
+            [Ok(ToolOutcome::Detached {
+                operation: detached_ref().id,
+                poll_after: core::time::Duration::from_secs(1),
+            })],
+        );
+    harness.tools.script_queries([Ok(DetachedStatus::Unknown)]);
+    harness.wake();
+    harness.run_next().expect("the invocation detaches");
+
+    harness.clock.advance(1_000);
+    let terminal = harness
+        .run_next()
+        .expect("authoritative absence settles unknown");
+    assert!(matches!(
+        terminal,
+        Outcome::Progressed {
+            stop: Stop::Finished(FinishReason::Interrupted),
+            ..
+        }
+    ));
+    assert_eq!(harness.tools.queried(), vec![detached_ref()]);
 }
 
 /// A wake's tenant is a projection hint, never authority. A forged or stale projection is

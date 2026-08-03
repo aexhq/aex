@@ -20,7 +20,8 @@ use aex_brain_application::ports::{
     ToolDispatchError, ToolOutcome, ToolPort, ToolRoute, ToolRoutingError, UnknownResolution,
 };
 use aex_brain_domain::effect::{
-    DispatchEvidence, DispatchProof, DispatchStage, DurableEffect, EffectClass, EffectKind,
+    DetachedOperationRef, DispatchEvidence, DispatchProof, DispatchStage, DurableEffect,
+    EffectClass, EffectKind,
 };
 use aex_brain_domain::ids::{
     AgentId, AgentKey, AgentRevision, CancelEpoch, CatalogPin, ContentHash, DetachedOperationId,
@@ -162,14 +163,14 @@ impl ToolPort for StubTools {
 
     fn query<'a>(
         &'a self,
-        _operation: &'a DetachedOperationId,
+        _operation: &'a DetachedOperationRef,
     ) -> BoxFuture<'a, Result<DetachedStatus, ToolDispatchError>> {
         Box::pin(async { Ok(DetachedStatus::Unknown) })
     }
 
     fn cancel<'a>(
         &'a self,
-        _operation: &'a DetachedOperationId,
+        _operation: &'a DetachedOperationRef,
         _fence: Fence,
     ) -> BoxFuture<'a, Result<(), ToolDispatchError>> {
         Box::pin(async { Ok(()) })

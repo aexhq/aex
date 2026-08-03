@@ -92,9 +92,9 @@ pub trait ToolPort: Send + Sync + 'static {
     fn route(&self, pin: &CatalogPin, name: &ToolName) -> Result<ToolRoute, ToolRoutingError>;
     fn invoke<'a>(&'a self, ticket: &'a DispatchTicket, call: &'a PreparedToolCall,
         cancel: &'a CancelToken) -> BoxFuture<'a, Result<ToolOutcome, ToolDispatchError>>;
-    fn query<'a>(&'a self, operation: &'a DetachedOperationId)
+    fn query<'a>(&'a self, operation: &'a DetachedOperationRef)
         -> BoxFuture<'a, Result<DetachedStatus, ToolDispatchError>>;
-    fn cancel<'a>(&'a self, operation: &'a DetachedOperationId, fence: Fence)
+    fn cancel<'a>(&'a self, operation: &'a DetachedOperationRef, fence: Fence)
         -> BoxFuture<'a, Result<(), ToolDispatchError>>;
 }
 
@@ -462,7 +462,7 @@ and none of it is attributed.
 | BR-24 | A failed ack releases the delivery instead of consuming it | the decision has already committed; consuming the delivery would strand an agent with work owed and nothing to wake it. This was a real defect the boundary test caught |
 | BR-25 | Admission stops receiving entirely while any binding is unsatisfied | a task that took deliveries only to release them would, after `max_receives` redeliveries, have the poison policy ack a wake nothing ever served. Not receiving is the only behaviour that cannot lose work |
 | BR-26 | A tool that could not be dispatched is recorded as a `ToolResult` with `is_error`, not as a terminal | the alternative ends a whole session because one optional tool was unavailable, and the manifest already says a failed tool is a result the model decides about |
-| BR-27 | `mark_response_started` writes every attribute `effect::decode` reads back | the decoder read `operationId`, `providerRequestId` and `receiptHash`; the writer wrote none of them. A detached effect therefore decoded with no operation, and `recover` would interrupt a run the upstream was still working on |
+| BR-27 | `mark_response_started` writes every attribute `effect::decode` reads back | the decoder reads the closed external-operation or detached-id-plus-executor binding, `providerRequestId` and `receiptHash`. Omitting any half of a detached binding would make restart recovery either impossible or route-ambiguous. |
 | BR-28 | The wake loop's step bound counts **committed decisions**, not planner steps | it exists to stop one activation holding a lease indefinitely, and a lease is held across commits. The planner's own limits are what stop a run |
 
 ### 13.1 Decision taken in the continuation pass
@@ -507,6 +507,14 @@ and none of it is attributed.
 | BR-44 | A due page advances its native cursor only when every valid wake reached a stable outcome; a release, refusal or scan fault retains the prior cursor, while the shard rotor advances independently | a cursor is an assertion that earlier work was handled. Transient work must be revisited, but one hot or malformed shard must not starve later shards. |
 | BR-45 | SQS decoding returns valid and malformed siblings separately. Each malformed record is released below `max_receives` and acknowledged only at or above that threshold | one poison body cannot reject or repeatedly hide nine valid messages, and poison handling is an explicit per-record policy rather than an accidental batch error. |
 | BR-46 | Every poll carries the complete due-isolation count plus at most eight closed-reason, sixteen-hex fingerprints into the host's structured telemetry event | discarding the adapter's bounded diagnostics made logical quarantine operationally invisible. The event contains no tenant, session, work id, row key or body. |
+
+### 13.6 Decisions taken in the stateless detached-recovery pass
+
+| # | Decision | Why |
+| --- | --- | --- |
+| BR-47 | A detached tool is durably named by `DetachedOperationRef { id, executor }` in both effect evidence and the journal wait; recovery refuses if those bindings disagree | upstream ids are executor-scoped. A process-local id-to-route map disappears on restart and lets equal raw ids from two executors overwrite each other. The composed router now indexes four fixed executor slots directly and holds no per-operation state or lock. |
+| BR-48 | `DetachedStatus::Unknown` means an authoritative durable-absence response. Read-after-accept propagation lag and retryable query transport failures re-arm the existing wait until the effect's persisted deadline | treating eventual-consistency lag as absence interrupts valid work; retrying from a process-local deadline can poll forever after restart. Poll wakes remain delivery hints created only in `DecisionCommit`, with a non-zero scheduler floor so a zero hint cannot hot-loop. |
+| BR-49 | A completed or definitively failed detached query settles the effect, resolves its existing wait, records the exact executor result, and creates the continuation wake in one `DecisionCommit` | handing back after only the result commit strands the next model call. A separate enqueue would make the queue a second authority and reopen the commit/ack crash window. |
 
 ### 14. Still deferred, with what unblocks each
 
