@@ -528,6 +528,10 @@ and none of it is attributed.
 | BR-55 | Snapshot bodies are capped before allocation and valid body bytes share the activation-wide suffix byte ceiling. Admission reserves a separate 64 MiB restore working set; the `snapshot_memory` example canonically replays four 1,000,000-byte journal text blocks in one process and verifies that all four blocks and 4,000,000 text bytes survive in the resulting 4,002,554-byte body in a fresh process | JSON decode plus JCS verification temporarily holds multiple representations. Across five independent Windows debug runs, baseline peak working set was 4,431,872–4,435,968 bytes and verify peak was 23,085,056–23,138,304 bytes; the medians differ by 18,685,952 bytes (about 4.67× body bytes). The four-bytes-per-token shape is a planning approximation, not tokenizer truth; 64 MiB conservatively covers linear extrapolation through the 8 MiB launch ceiling plus suffix/accounting headroom, but does not become a semantic context limit. |
 | BR-56 | The optional snapshot-body cache is keyed by `(WorkspaceId, SHA-256 immutable identity)`, verifies the digest before insert, refuses same-digest distinct bytes, has independent entry/aggregate byte ceilings and LRU eviction, and stores no mutable pointer | a cache may improve latency only. Workspace in the key makes cross-tenant reuse impossible by construction; the adapter must still authorize the request-scoped workspace before lookup. Keeping it below the future store adapter means mux stays process-only; cache clear, eviction and process restart are ordinary misses. It is not wired until the real content adapter exists and a workload measurement proves benefit. |
 | BR-57 | A publishable snapshot artifact is opaque and can be created only by `SnapshotReplay`: it starts with an empty fold at sequence zero, accepts journal entries only through the canonical `fold::apply`, and consumes itself only at an exact target `(sequence, hash)`. Direct capture from a caller-supplied mutable `FoldState` is impossible | pointer/body digests prove internal byte identity, not semantic derivation. Without this boundary a writer could alter history, phase, budgets or effects while retaining a plausible tail/config and publish a self-consistent derived lie. The production publisher must still stream every bounded page from the trusted journal source for one stable target before this optimization may become ready. |
+| BR-58 | `brain-mux` compiles its CPU and memory shape from its unique `rust-oci-service` row in `release/units.toml`; the build refuses a missing, duplicate, wrong-package, non-service or malformed row and any shape other than the pinned 2048 CPU units/4096 MiB launch contract | the previous composition hard-coded 2 GiB while the release authority deployed 4 GiB, so tests proved a process that would never run. Binding and checking the constants at build time keeps release shape authoritative without parsing TOML or installing mutable task state on the hot path; a future shape change must update the complete internal envelope explicitly. |
+| BR-59 | Admission atomically acquires one RAII bundle containing activation, 64 MiB restore, 1 MiB stream-buffer, one provider-stream and one Hands-RPC reservation before claim or any body/page read; `should_receive` checks the exact same bundle | acquiring resources independently permits split capacity under concurrency, and waiting for provider/Hands capacity after claim holds a durable lease while no progress is possible. Reserving both external paths for the activation lifetime is conservative and may leave a permit unused, but eliminates post-claim local waits and preserves the no-unreserved-read/OOM guarantee. |
+| BR-60 | The 4096 MiB task is split into 3072 MiB context, 128 MiB stream buffers, 512 MiB warm cache and 384 MiB unavailable headroom. Provider and Hands pools each hold 48. Composition rejects a target above the minimum of every resource capacity and scheduler width; the launch target and outer scheduler width are 48, while each receive scope still owns one drive | 48 simultaneous worst-case restores consume exactly 3072 MiB. A scheduler width of 10 silently capped throughput far below the declared target; a width above 48 would advertise work the context pool cannot retain. One-delivery scopes prevent nested batch fan-out from multiplying the process cap. |
+| BR-61 | Restore scratch is not yet shrunk to a smaller retained-context reservation after hydration | there is a reproducible upper bound for peak decode/verify RSS but not for the allocator-retained folded state. Releasing the 64 MiB reservation from a guessed payload ratio could admit the next body while the first allocation remained resident. The conservative full-lifetime reservation costs concurrency only beyond the proven target; revisit after a fresh-process retained-RSS campaign publishes a reproducible bound. |
 
 ### 14. Still deferred, with what unblocks each
 
@@ -676,3 +680,21 @@ session guards. Converting claim to one `TransactWriteItems` would remove that
 temporary lease but lose `ReturnValues=ALL_NEW`, forcing another strong agent
 read. The current choice keeps the hot successful claim at two round trips and
 preserves the returned fence/head atomically with the claim update.
+
+### 19. Capacity-accounting pass gate output
+
+```text
+cargo fmt -p aex-brain-application -p brain-mux                      clean
+cargo test -p aex-brain-application -p brain-mux
+    application unit 101, threaded concurrency 15, ports 6,
+    brain-mux 112; 234 passed, 0 failed
+LOOM_MAX_PREEMPTIONS=3 cargo test -p aex-brain-application \
+    --features loom --test concurrency                               7 passed
+cargo clippy -p aex-brain-application -p brain-mux \
+    --all-targets --all-features -- -D warnings                      clean
+git diff --check                                                     clean
+```
+
+The local target directory is on a Windows volume where Cargo incremental
+hard-link creation falls back to copying. Those host warnings do not originate
+in source and no lint or test was suppressed.

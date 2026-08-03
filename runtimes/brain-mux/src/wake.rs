@@ -113,7 +113,12 @@ impl AdmissionControl for MuxAdmission {
         // The activation's strict total restore ceiling is reserved before the first page.
         // `DynamoDB` page count is not a memory measurement, and reserving zero here would
         // let many individually bounded pages overrun the task's context pool.
-        match self.admission.admit(restore_bytes) {
+        if restore_bytes != self.admission.resources().context_bytes {
+            return AdmissionDecision::Shed {
+                retry_after: core::time::Duration::from_millis(500),
+            };
+        }
+        match self.admission.admit() {
             AdmissionOutcome::Admitted(permits) => AdmissionDecision::Admitted(permits),
             AdmissionOutcome::Deferred { requeue_after } => {
                 AdmissionDecision::Deferred { requeue_after }
@@ -794,7 +799,7 @@ mod tests {
         AbsentCatalog, AbsentProvider, Bindings, CATALOG_ABSENT, CATALOG_NO_ACTIVE_MODELS,
         MuxAdmission, PROVIDER_ABSENT, ProcessIds, STORE_UNBOUND, SystemClock, UnboundStore,
     };
-    use crate::admission::{Admission, AdmissionBounds};
+    use crate::admission::{ActivationResources, Admission, AdmissionBounds};
     use aex_brain_application::activation::{AdmissionControl, AdmissionDecision};
     use aex_brain_application::kernel::{DrainGate, PermitKind, PermitSet};
     use aex_brain_application::ports::{
@@ -808,6 +813,15 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::Arc;
     use uuid::Uuid;
+
+    fn activation_resources(context_bytes: u64) -> ActivationResources {
+        ActivationResources {
+            context_bytes,
+            stream_buffer_bytes: 1,
+            provider_streams: 1,
+            hands_rpcs: 1,
+        }
+    }
 
     fn block_on<F: core::future::Future>(future: F) -> F::Output {
         let mut future = Box::pin(future);
@@ -914,6 +928,7 @@ mod tests {
             },
             permits,
             drain,
+            activation_resources(1),
         ));
         assert!(
             !MuxAdmission::new(admission, bindings).should_receive(),
@@ -956,10 +971,13 @@ mod tests {
     /// A draining task admits nothing, and the loop asks before it receives.
     #[test]
     fn admission_stops_receiving_the_moment_drain_starts() {
-        let permits = Arc::new(PermitSet::new(BTreeMap::from([(
-            PermitKind::Activation,
-            4_u64,
-        )])));
+        let permits = Arc::new(PermitSet::new(BTreeMap::from([
+            (PermitKind::Activation, 4_u64),
+            (PermitKind::ContextBytes, 2_u64),
+            (PermitKind::StreamBufferBytes, 2_u64),
+            (PermitKind::ProviderStream, 2_u64),
+            (PermitKind::HandsRpc, 2_u64),
+        ])));
         let drain = Arc::new(DrainGate::new());
         let admission = Arc::new(Admission::new(
             AdmissionBounds {
@@ -969,6 +987,7 @@ mod tests {
             },
             permits,
             Arc::clone(&drain),
+            activation_resources(1),
         ));
         let control = MuxAdmission::new(
             Arc::clone(&admission),
@@ -999,6 +1018,9 @@ mod tests {
         let permits = Arc::new(PermitSet::new(BTreeMap::from([
             (PermitKind::Activation, 1_u64),
             (PermitKind::ContextBytes, 512_u64),
+            (PermitKind::StreamBufferBytes, 1_u64),
+            (PermitKind::ProviderStream, 1_u64),
+            (PermitKind::HandsRpc, 1_u64),
         ])));
         let admission = Arc::new(Admission::new(
             AdmissionBounds {
@@ -1008,6 +1030,7 @@ mod tests {
             },
             Arc::clone(&permits),
             Arc::new(DrainGate::new()),
+            activation_resources(512),
         ));
         let control = MuxAdmission::new(
             admission,
@@ -1025,8 +1048,14 @@ mod tests {
             panic!("the exact context boundary is admitted");
         };
         assert_eq!(permits.held(PermitKind::ContextBytes), 512);
+        assert_eq!(permits.held(PermitKind::StreamBufferBytes), 1);
+        assert_eq!(permits.held(PermitKind::ProviderStream), 1);
+        assert_eq!(permits.held(PermitKind::HandsRpc), 1);
         drop(held);
         assert_eq!(permits.held(PermitKind::ContextBytes), 0);
         assert_eq!(permits.held(PermitKind::Activation), 0);
+        assert_eq!(permits.held(PermitKind::StreamBufferBytes), 0);
+        assert_eq!(permits.held(PermitKind::ProviderStream), 0);
+        assert_eq!(permits.held(PermitKind::HandsRpc), 0);
     }
 }

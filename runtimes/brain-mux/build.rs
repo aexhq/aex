@@ -13,6 +13,28 @@ const COLLECTION_SHA_VAR: &str = "AEX_MODEL_CATALOG_COLLECTION_SHA256";
 const TRUST_ROOTS_SCHEMA: &str = "aex.model-catalog-trust-roots.v1";
 const MAX_TRUST_ROOTS: usize = 8;
 const MAX_TRUST_ROOTS_BYTES: usize = 8 * 1024;
+const UNITS_SCHEMA: &str = "aex.units.v1";
+const BRAIN_MUX_UNIT: &str = "brain-mux";
+
+#[derive(Deserialize)]
+struct UnitsRegistry {
+    schema: String,
+    unit: Vec<ReleaseUnit>,
+}
+
+#[derive(Deserialize)]
+struct ReleaseUnit {
+    id: String,
+    kind: String,
+    package: String,
+    fargate: Option<FargateShape>,
+}
+
+#[derive(Deserialize)]
+struct FargateShape {
+    cpu: u32,
+    memory_mb: u32,
+}
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -58,6 +80,7 @@ fn main() {
     );
 
     let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("Cargo supplies OUT_DIR"));
+    generate_task_shape(&out);
     let generated = out.join("model_catalog_release.rs");
     let source = generate_release_source(
         &out,
@@ -69,6 +92,90 @@ fn main() {
         ),
     );
     fs::write(generated, source).expect("write model catalog release binding");
+}
+
+fn generate_task_shape(out: &std::path::Path) {
+    let manifest = PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("Cargo supplies CARGO_MANIFEST_DIR"),
+    );
+    let workspace = manifest
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("brain-mux lives two directories below the workspace root");
+    let units_path = workspace.join("release/units.toml");
+    println!("cargo:rerun-if-changed={}", units_path.display());
+    let source = fs::read_to_string(&units_path).unwrap_or_else(|error| {
+        panic!(
+            "cannot read release registry {}: {error}",
+            units_path.display()
+        )
+    });
+    let registry: UnitsRegistry = toml::from_str(&source).unwrap_or_else(|error| {
+        panic!(
+            "cannot parse release registry {}: {error}",
+            units_path.display()
+        )
+    });
+    assert_eq!(
+        registry.schema, UNITS_SCHEMA,
+        "release/units.toml has an unsupported schema"
+    );
+    let mut matches = registry
+        .unit
+        .iter()
+        .filter(|unit| unit.id == BRAIN_MUX_UNIT);
+    let unit = matches
+        .next()
+        .expect("release/units.toml must declare brain-mux exactly once");
+    assert!(
+        matches.next().is_none(),
+        "release/units.toml declares brain-mux more than once"
+    );
+    assert_eq!(
+        unit.kind, "rust-oci-service",
+        "brain-mux must remain a service-shaped OCI unit"
+    );
+    assert_eq!(
+        unit.package, BRAIN_MUX_UNIT,
+        "brain-mux release unit must build the brain-mux package"
+    );
+    let shape = unit
+        .fargate
+        .as_ref()
+        .expect("the brain-mux release unit must declare a Fargate shape");
+    assert!(shape.cpu >= 1_024, "brain-mux requires at least one vCPU");
+    assert_eq!(
+        shape.cpu % 1_024,
+        0,
+        "brain-mux CPU units must describe whole vCPUs"
+    );
+    assert!(
+        valid_fargate_memory(shape.cpu, shape.memory_mb),
+        "brain-mux CPU/memory is not a valid Fargate task shape"
+    );
+    let parallelism = shape.cpu / 1_024;
+    let generated = format!(
+        "/// CPU units declared by the brain-mux Fargate release row.\n\
+         pub const TASK_CPU_UNITS: u32 = {};\n\
+         /// Memory in MiB declared by the brain-mux Fargate release row.\n\
+         pub const TASK_MEMORY_MIB: u32 = {};\n\
+         const TASK_PARALLELISM: usize = {parallelism};\n\
+         const TASK_MEMORY_BYTES: u64 = {}_u64 * 1_024 * 1_024;\n",
+        shape.cpu, shape.memory_mb, shape.memory_mb,
+    );
+    fs::write(out.join("brain_mux_task_shape.rs"), generated)
+        .expect("write build-bound brain-mux task shape");
+}
+
+const fn valid_fargate_memory(cpu: u32, memory_mib: u32) -> bool {
+    match cpu {
+        1_024 => memory_mib >= 2_048 && memory_mib <= 8_192 && memory_mib.is_multiple_of(1_024),
+        2_048 => memory_mib >= 4_096 && memory_mib <= 16_384 && memory_mib.is_multiple_of(1_024),
+        4_096 => memory_mib >= 8_192 && memory_mib <= 30_720 && memory_mib.is_multiple_of(1_024),
+        8_192 => memory_mib >= 16_384 && memory_mib <= 61_440 && memory_mib.is_multiple_of(4_096),
+        16_384 => memory_mib >= 32_768 && memory_mib <= 122_880 && memory_mib.is_multiple_of(8_192),
+        _ => false,
+    }
 }
 
 fn generate_release_source(

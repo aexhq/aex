@@ -17,6 +17,7 @@ pub mod measure;
 pub mod release_catalog;
 pub mod runtime;
 pub mod scale;
+pub mod task_shape;
 pub mod wake;
 
 /// The composed loop's own assertions: one turn end to end, the drain order, and A11-MUX
@@ -271,6 +272,11 @@ pub fn compose(config: &Config) -> Result<compose::Composition, RunError> {
         safety_cap: config.budget.saturating_mul(2),
         offered_ceiling: config.budget.saturating_mul(5),
     };
+    let policy = aex_brain_application::activation::ActivationPolicy {
+        receive_batch: 1,
+        max_concurrent_drives: usize::try_from(config.budget).unwrap_or(usize::MAX),
+        ..aex_brain_application::activation::ActivationPolicy::default()
+    };
     compose::Composition::build(
         bounds,
         compose::Envelope::candidate_launch(),
@@ -280,7 +286,8 @@ pub fn compose(config: &Config) -> Result<compose::Composition, RunError> {
             max_tasks: 32,
             target_work_seconds_per_task: 10.0,
         },
-        runtime::RuntimeShape::detected(),
+        runtime::RuntimeShape::for_parallelism(task_shape::task_parallelism()),
+        policy,
     )
     .map_err(RunError::Composition)
 }
@@ -455,12 +462,10 @@ async fn pump(
     telemetry: aex_platform_telemetry::Handle,
     ports: PumpPorts,
 ) {
-    let mut policy = aex_brain_application::activation::ActivationPolicy::default();
+    let mut policy = composition.policy.clone();
     let aggregate_cap = policy.max_concurrent_drives.max(1);
-    // One receive scope owns one activation slot. Keeping the lane width at one lets the
-    // outer scheduler refill a completed slot while an unrelated provider remains pending,
-    // without multiplying the process-wide cap through nested batch concurrency.
-    policy.receive_batch = 1;
+    // One receive scope owns one activation slot. The outer scheduler owns the aggregate
+    // target, so nested batch concurrency remains one and cannot multiply that target.
     policy.max_concurrent_drives = 1;
     let pump = wake::wake_loop(
         wake::partial_ports_with_catalog(ports.store, ports.queue, ports.provider, ports.catalog),
@@ -810,7 +815,7 @@ fn main() -> std::process::ExitCode {
 mod tests {
     use super::{
         BUDGET_VAR, Config, ConfigError, PLANE_VAR, REGION_VAR, RESOURCE_VAR,
-        SECRET_CUSTODY_TABLE_VAR, SECRET_KMS_KEY_ARN_VAR, WAKE_QUEUE_VAR, WORK_TABLE_VAR,
+        SECRET_CUSTODY_TABLE_VAR, SECRET_KMS_KEY_ARN_VAR, WAKE_QUEUE_VAR, WORK_TABLE_VAR, compose,
         emit_due_isolations,
     };
     use aex_brain_application::activation::PollReport;
@@ -856,6 +861,25 @@ mod tests {
         );
         assert_eq!(config.work_table, "aex-regional-work-fixture");
         assert_eq!(config.budget, 8);
+    }
+
+    /// The deployed target is executable capacity, not a tuning hint. The scheduler width
+    /// and all per-activation pools prove 48 together; a 49th worst-case restore is refused
+    /// before the process can receive a wake.
+    #[test]
+    fn composition_accepts_the_proven_target_and_refuses_one_more() {
+        let mut vars = complete();
+        vars.insert(BUDGET_VAR, "48".to_owned());
+        let config = read(&vars).expect("the proven target parses");
+        let composition = compose(&config).expect("the release task proves target 48");
+        assert_eq!(composition.admission.bounds().target, 48);
+        assert_eq!(composition.policy.max_concurrent_drives, 48);
+        assert_eq!(composition.shape.worker_threads, 2);
+
+        vars.insert(BUDGET_VAR, "49".to_owned());
+        let config = read(&vars).expect("capacity is a composition concern");
+        let error = compose(&config).expect_err("target 49 has no reserved restore capacity");
+        assert!(error.to_string().contains("context capacity"), "{error}");
     }
 
     #[test]

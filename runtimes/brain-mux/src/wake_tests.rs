@@ -6,7 +6,7 @@
 //! ports are used here, so a divergence between what the engine promises and what the mux
 //! wires it to shows up as a failure rather than as a difference nobody compared.
 
-use crate::admission::{Admission, AdmissionBounds};
+use crate::admission::{ActivationResources, Admission, AdmissionBounds};
 use crate::drain::Stage;
 use crate::measure::Measurement;
 use crate::wake::{BindingState, Bindings, MuxAdmission};
@@ -190,7 +190,17 @@ fn bound() -> Bindings {
     }
 }
 
+fn activation_resources(policy: &ActivationPolicy) -> ActivationResources {
+    ActivationResources {
+        context_bytes: policy.restore_resident_bytes,
+        stream_buffer_bytes: u64::try_from(policy.stream_buffer_bytes).unwrap_or(u64::MAX),
+        provider_streams: 1,
+        hands_rpcs: 1,
+    }
+}
+
 fn admission(drain: &Arc<DrainGate>) -> Arc<Admission> {
+    let policy = ActivationPolicy::default();
     Arc::new(Admission::new(
         AdmissionBounds {
             target: 4,
@@ -199,9 +209,16 @@ fn admission(drain: &Arc<DrainGate>) -> Arc<Admission> {
         },
         Arc::new(PermitSet::new(BTreeMap::from([
             (PermitKind::Activation, 8_u64),
-            (PermitKind::ContextBytes, 64 * 1_024 * 1_024),
+            (PermitKind::ContextBytes, policy.restore_resident_bytes),
+            (
+                PermitKind::StreamBufferBytes,
+                u64::try_from(policy.stream_buffer_bytes).unwrap_or(u64::MAX),
+            ),
+            (PermitKind::ProviderStream, 1_u64),
+            (PermitKind::HandsRpc, 1_u64),
         ]))),
         Arc::clone(drain),
+        activation_resources(&policy),
     ))
 }
 
@@ -369,9 +386,15 @@ async fn ten_long_effects_are_polled_concurrently_under_the_drive_bound() {
         ..ActivationPolicy::default()
     };
     let context_bytes = policy.restore_resident_bytes.saturating_mul(COUNT_U64);
+    let stream_buffer_bytes = u64::try_from(policy.stream_buffer_bytes)
+        .unwrap_or(u64::MAX)
+        .saturating_mul(COUNT_U64);
     let permits = Arc::new(PermitSet::new(BTreeMap::from([
         (PermitKind::Activation, COUNT_U64),
         (PermitKind::ContextBytes, context_bytes),
+        (PermitKind::StreamBufferBytes, stream_buffer_bytes),
+        (PermitKind::ProviderStream, COUNT_U64),
+        (PermitKind::HandsRpc, COUNT_U64),
     ])));
     let admission = Arc::new(Admission::new(
         AdmissionBounds {
@@ -381,6 +404,7 @@ async fn ten_long_effects_are_polled_concurrently_under_the_drive_bound() {
         },
         permits,
         Arc::clone(&drain),
+        activation_resources(&policy),
     ));
     let pump = WakeLoop::new(
         Activation::new(
@@ -545,6 +569,9 @@ async fn the_scheduler_refills_below_the_aggregate_cap_and_keeps_due_recovery_li
     let context_bytes = policy
         .restore_resident_bytes
         .saturating_mul(u64::try_from(CAP).expect("the test cap fits u64"));
+    let stream_buffer_bytes = u64::try_from(policy.stream_buffer_bytes)
+        .unwrap_or(u64::MAX)
+        .saturating_mul(u64::try_from(CAP).expect("the test cap fits u64"));
     let admission = Arc::new(Admission::new(
         AdmissionBounds {
             target: u32::try_from(CAP).expect("the test cap fits u32"),
@@ -557,8 +584,18 @@ async fn the_scheduler_refills_below_the_aggregate_cap_and_keeps_due_recovery_li
                 u64::try_from(CAP).expect("the test cap fits u64"),
             ),
             (PermitKind::ContextBytes, context_bytes),
+            (PermitKind::StreamBufferBytes, stream_buffer_bytes),
+            (
+                PermitKind::ProviderStream,
+                u64::try_from(CAP).expect("the test cap fits u64"),
+            ),
+            (
+                PermitKind::HandsRpc,
+                u64::try_from(CAP).expect("the test cap fits u64"),
+            ),
         ]))),
         Arc::clone(&drain),
+        activation_resources(&policy),
     ));
     let pump = WakeLoop::new(
         Activation::new(
