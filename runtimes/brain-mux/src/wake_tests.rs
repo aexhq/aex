@@ -637,6 +637,8 @@ async fn the_drain_sequence_walks_every_stage_in_order() {
             resource: "table".to_owned(),
             wake_queue_url: "https://sqs.invalid/queue".to_owned(),
             work_table: "work".to_owned(),
+            secret_custody_table: "secret-custody".to_owned(),
+            secret_kms_key_arn: "arn:aws:kms:eu-west-1:123456789012:key/fixture".to_owned(),
             budget: 4,
         })
         .expect("the candidate shape composes"),

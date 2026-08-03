@@ -147,7 +147,8 @@ where
             validate_stored_identity(&stored, workspace, provider, id)?;
 
             // These rows are in separate partitions and neither result depends
-            // on the other, so one authority RTT reads both.
+            // on the other, so issue both SDK requests concurrently in one
+            // sequential latency stage.
             let (metadata, generation) = futures::future::join(
                 self.custody.load_secret(workspace, &stored.secret_name),
                 self.custody.load_generation(
@@ -195,10 +196,10 @@ where
     ) -> BoxFuture<'a, Result<RevocationEpoch, CredentialResolveError>> {
         Box::pin(async move {
             // All three mutable authorities are independent point reads, so
-            // keep the revalidation to one network round trip. The generation
-            // row is a fence in its own right: the lazy audit sweep may mark
-            // exactly this ciphertext generation revoked without rewriting the
-            // metadata row.
+            // issue the three SDK requests concurrently in one sequential
+            // latency stage. The generation row is a fence in its own right:
+            // the lazy audit sweep may mark exactly this ciphertext generation
+            // revoked without rewriting the metadata row.
             let (stored, metadata, generation) = futures::future::join3(
                 self.custody
                     .load_binding(binding.workspace, binding.provider, binding.id),
