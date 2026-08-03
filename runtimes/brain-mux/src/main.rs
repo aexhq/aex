@@ -453,10 +453,51 @@ pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Resul
             reason: format!("the main runtime could not start: {error}"),
         })?;
 
-    // One SDK configuration feeds the store, queue, exact credential directory,
-    // and KMS decryptor. Provider composition is per-request tenant scoped; no
-    // workspace state is installed on the process.
-    let aws = main_runtime.block_on(wake::aws_bindings(
+    let PumpPorts { ports, bindings } = resolve_production_ports(config, &main_runtime)?;
+
+    composition.health.schema_matched();
+    composition.health.catalog_verified();
+    composition.health.bindings_validated();
+
+    // The control thread starts only after production composition succeeded. This prevents a
+    // startup error from detaching a health thread that can never observe drain.
+    let health = std::sync::Arc::clone(&composition.health);
+    let control = std::thread::Builder::new()
+        .name("brain-mux-control".to_owned())
+        .spawn(move || serve_health(&health))
+        .map_err(|error| RunError::Runtime {
+            reason: format!("the control thread could not start: {error}"),
+        })?;
+
+    let drain_result = main_runtime.block_on(async {
+        let sampler = tokio::spawn(sample_reactor_delay(std::sync::Arc::clone(&composition)));
+        let pump = tokio::spawn(pump(
+            std::sync::Arc::clone(&composition),
+            config.clone(),
+            telemetry.clone(),
+            PumpPorts { ports, bindings },
+        ));
+        wait_for_shutdown().await;
+        let stages = drain_sequence(&composition, pump).await;
+        sampler.abort();
+        let _ = sampler.await;
+        stages
+    });
+
+    // The control thread stops when the health state reports drain, so joining it is how the
+    // process proves it stopped answering rather than merely stopped listening.
+    let _ = control.join();
+    drain_result?;
+    Ok(())
+}
+
+fn resolve_production_ports(
+    config: &Config,
+    runtime: &tokio::runtime::Runtime,
+) -> Result<PumpPorts, RunError> {
+    // One SDK configuration feeds every AWS client. Per-request tenant authority still comes
+    // from each durable ticket; no workspace state is installed on the process.
+    let aws = runtime.block_on(wake::aws_bindings(
         &config.region,
         &config.wake_queue_url,
         &config.resource,
@@ -527,42 +568,10 @@ pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Resul
         snapshots,
     );
     let ports = wake::production_ports(aws.store, aws.queue, peers);
-    let bindings = wake::Bindings::production();
-
-    composition.health.schema_matched();
-    composition.health.catalog_verified();
-    composition.health.bindings_validated();
-
-    // The control thread starts only after production composition succeeded. This prevents a
-    // startup error from detaching a health thread that can never observe drain.
-    let health = std::sync::Arc::clone(&composition.health);
-    let control = std::thread::Builder::new()
-        .name("brain-mux-control".to_owned())
-        .spawn(move || serve_health(&health))
-        .map_err(|error| RunError::Runtime {
-            reason: format!("the control thread could not start: {error}"),
-        })?;
-
-    let drain_result = main_runtime.block_on(async {
-        let sampler = tokio::spawn(sample_reactor_delay(std::sync::Arc::clone(&composition)));
-        let pump = tokio::spawn(pump(
-            std::sync::Arc::clone(&composition),
-            config.clone(),
-            telemetry.clone(),
-            PumpPorts { ports, bindings },
-        ));
-        wait_for_shutdown().await;
-        let stages = drain_sequence(&composition, pump).await;
-        sampler.abort();
-        let _ = sampler.await;
-        stages
-    });
-
-    // The control thread stops when the health state reports drain, so joining it is how the
-    // process proves it stopped answering rather than merely stopped listening.
-    let _ = control.join();
-    drain_result?;
-    Ok(())
+    Ok(PumpPorts {
+        ports,
+        bindings: wake::Bindings::production(),
+    })
 }
 
 fn bind_release_catalog()

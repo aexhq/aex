@@ -15,7 +15,7 @@
 //! | `ClockPort`, `IdPort` | this module | composition facts, not a peer's |
 //! | `ProviderPort` | regional custody + KMS + six-provider router, or explicit startup refusal | dispatch uses the immutable session pin and ticket-scoped tenant authority; registration remains owned by the secret API |
 //! | `CatalogPort` | release-bound `VerifiedCatalogPort` | the complete retained collection verifies before a port exists |
-//! | `HandsPort` | `HandsAdapter` over `ProductionHandsBackend` | shares the runtime store and MicroVM client with the runtime-control engine |
+//! | `HandsPort` | `HandsAdapter` over `ProductionHandsBackend` | shares the runtime store and `MicroVM` client with the runtime-control engine |
 //!
 //! Every refusal is `DispatchProof::NotSent` and carries the name of the crate that owes the
 //! implementation. None of them is a stub: a stub would let an activation appear to make
@@ -813,7 +813,7 @@ pub fn snapshot_binding(
     )))
 }
 
-/// Real Hands ports sharing one runtime authority and one MicroVM client.
+/// Real Hands ports sharing one runtime authority and one `MicroVM` client.
 pub struct HandsBindings {
     /// Lower backend consumed by `HandsAdapter`.
     pub backend: Arc<dyn aex_brain_hands::HandsBackend>,
