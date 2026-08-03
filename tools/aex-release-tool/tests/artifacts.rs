@@ -293,6 +293,7 @@ fn described(
         unit,
         plan: &recipe,
         artifact,
+        oci_identity: None,
         repository: "aexhq/aex".to_owned(),
         commit_sha: "b".repeat(40),
         tree_clean: true,
@@ -574,9 +575,12 @@ fn oci_locations_are_ghcr_digest_only_and_kind_bound() {
     let mut value = valid_envelope();
     value["unit"]["kind"] = serde_json::json!("rust-oci-service");
     value["unit"]["id"] = serde_json::json!("brain-mux");
-    value["media"]["mediaType"] = serde_json::json!("application/vnd.oci.image.index.v1+json");
+    value["media"]["mediaType"] = serde_json::json!("application/vnd.oci.image.manifest.v1+json");
     value["media"]["form"] = serde_json::json!("oci-image");
     let digest = value["output"]["digest"].as_str().unwrap().to_owned();
+    value["output"]["ociChildDigest"] = serde_json::json!(digest.clone());
+    value["output"]["ociConfigDigest"] = serde_json::json!(crate::common::docs::digest(11));
+    value["output"]["ociLayerDigests"] = serde_json::json!([crate::common::docs::digest(12)]);
     let expected =
         aex_release_tool::publication::ghcr_unit_uri("aexhq/aex", "brain-mux", &digest).unwrap();
     value["output"]["location"] = serde_json::json!({

@@ -53,6 +53,9 @@ pub struct LocalBuild<'a> {
     pub plan: &'a BuildPlan,
     /// The packaged artifact bytes.
     pub artifact: &'a Path,
+    /// Verified OCI layout identity when the artifact bytes are an image
+    /// manifest rather than a packaged blob.
+    pub oci_identity: Option<&'a crate::oci::OciImageIdentity>,
     /// `owner/repo`.
     pub repository: String,
     /// The commit built.
@@ -132,6 +135,7 @@ pub fn target_of(recorded: &str) -> Target {
 pub fn describe(build: &LocalBuild<'_>) -> Result<(ArtifactEnvelope, Vec<UnearnedField>)> {
     let bytes = std::fs::read(build.artifact)
         .map_err(|err| io(&build.artifact.display().to_string(), &err))?;
+    validate_oci_identity(build, &bytes)?;
     let closure_digest = crate::artifact::input_closure_digest(
         &build.closure,
         build.plan,
@@ -158,6 +162,63 @@ pub fn describe(build: &LocalBuild<'_>) -> Result<(ArtifactEnvelope, Vec<Unearne
     let envelope = build_envelope(build, &bytes, closure_digest)?;
 
     Ok((envelope, unearned))
+}
+
+fn validate_oci_identity(build: &LocalBuild<'_>, bytes: &[u8]) -> Result<()> {
+    let is_oci = build.unit.kind.starts_with("rust-oci-");
+    let Some(identity) = build.oci_identity else {
+        return if is_oci {
+            Err(crate::error::ToolError::single(
+                crate::error::Exit::ArtifactMismatch,
+                "oci-identity-missing",
+                format!(
+                    "OCI unit `{}` requires an inspected reproducible image identity",
+                    build.unit.id
+                ),
+            ))
+        } else {
+            Ok(())
+        };
+    };
+    if !is_oci {
+        return Err(crate::error::ToolError::single(
+            crate::error::Exit::Usage,
+            "oci-identity-unexpected",
+            format!(
+                "non-OCI unit `{}` cannot use an OCI identity",
+                build.unit.id
+            ),
+        ));
+    }
+    let expected_base = build.unit.base_image.as_deref().and_then(|reference| {
+        reference.rsplit_once('@').map(|(_, digest)| BaseImage {
+            r#ref: reference.to_owned(),
+            digest: digest.to_owned(),
+        })
+    });
+    let valid = identity.unit == build.unit.id
+        && identity.kind == build.unit.kind
+        && identity.bin.as_str() == build.unit.bin.as_deref().unwrap_or_default()
+        && identity.target == build.unit.target
+        && identity.source.repository == build.repository
+        && identity.source.commit_sha == build.commit_sha
+        && Some(&identity.base_image) == expected_base.as_ref()
+        && identity.recipe_digest == build.plan.digest
+        && identity.output_digest == identity.manifest.digest
+        && identity.manifest.size_bytes == bytes.len() as u64
+        && identity.manifest.digest == crate::canon::digest_bytes(bytes);
+    if valid {
+        Ok(())
+    } else {
+        Err(crate::error::ToolError::single(
+            crate::error::Exit::ArtifactMismatch,
+            "oci-identity-mismatch",
+            format!(
+                "OCI identity does not bind the exact unit, source, recipe, base and manifest for `{}`",
+                build.unit.id
+            ),
+        ))
+    }
 }
 
 /// Every envelope field no local build can fill, and why.
@@ -223,6 +284,7 @@ fn build_envelope(
     bytes: &[u8],
     closure_digest: String,
 ) -> Result<ArtifactEnvelope> {
+    let oci = build.oci_identity;
     ArtifactEnvelope {
         schema: "aex.artifact-envelope.v1".to_owned(),
         envelope_digest: "sha256:0".to_owned(),
@@ -275,11 +337,24 @@ fn build_envelope(
             source_date_epoch: Some(0),
         },
         output: Output {
-            digest: crate::canon::digest_bytes(bytes),
+            digest: oci.map_or_else(
+                || crate::canon::digest_bytes(bytes),
+                |image| image.output_digest.clone(),
+            ),
             size_bytes: bytes.len() as u64,
             target: target_of(&build.unit.target),
             oci_index_digest: None,
-            oci_child_digest: None,
+            oci_child_digest: oci.map(|image| image.manifest.digest.clone()),
+            oci_config_digest: oci.map(|image| image.config.digest.clone()),
+            oci_layer_digests: oci
+                .map(|image| {
+                    image
+                        .layers
+                        .iter()
+                        .map(|layer| layer.digest.clone())
+                        .collect()
+                })
+                .unwrap_or_default(),
             location: Location {
                 kind: "local".to_owned(),
                 uri: build.location_uri.clone(),
@@ -355,7 +430,7 @@ fn build_envelope(
 fn media_type_of(form: &str) -> &'static str {
     match form {
         "lambda-zip" | "microvm-zip" => "application/zip",
-        "oci" => "application/vnd.oci.image.index.v1+json",
+        "oci" => "application/vnd.oci.image.manifest.v1+json",
         _ => "application/gzip",
     }
 }

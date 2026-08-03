@@ -93,6 +93,7 @@ jobs:
       id-token: write
       attestations: write
       artifact-metadata: write
+      packages: write
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(inputs.matrix) }}
@@ -142,6 +143,14 @@ jobs:
           [[ -n "$kind" && "$kind" != "null" ]]
           echo "kind=$kind" >> "$GITHUB_OUTPUT"
 
+      - name: Set up pinned Buildx and BuildKit
+        if: ${{ startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
+        id: buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4.0.0
+        with:
+          version: v0.34.1
+          driver-opts: image=moby/buildkit:v0.30.0@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f
+
       - name: Install TypeScript dependencies
         run: |
           set -euo pipefail
@@ -149,13 +158,61 @@ jobs:
             bun install --frozen-lockfile
           fi
 
-      - name: Record the explicit OCI publication blocker
+      - name: Build OCI ELF twice from clean target directories
+        if: ${{ startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
+        env:
+          CARGO_INCREMENTAL: "0"
+          SOURCE_DATE_EPOCH: "0"
+        run: |
+          set -euo pipefail
+          input=$(jq -er .input "$RELEASE_DIR/recipe.json")
+          [[ "$input" == target/* ]]
+          suffix=${input#target/}
+          for attempt in 1 2; do
+            target_dir="$RELEASE_DIR/cargo-$attempt"
+            CARGO_TARGET_DIR="$target_dir" python3 -c \
+              "import json,os,subprocess,sys; recipe=json.load(open(sys.argv[1])); env=os.environ.copy(); env.update(recipe['env']); sys.exit(subprocess.call(recipe['argv'], env=env))" \
+              "$RELEASE_DIR/recipe.json"
+            binary="$target_dir/$suffix"
+            test -f "$binary"
+            cargo run --locked --release -p aex-release-tool -- \
+              artifact oci-prepare --unit "${{ matrix.name }}" \
+              --recipe "$RELEASE_DIR/recipe.json" \
+              --input "$binary" \
+              --context "$RELEASE_DIR/context-$attempt" \
+              --out "$RELEASE_DIR/binding-$attempt.json" \
+              --repository "$GITHUB_REPOSITORY" \
+              --commit-sha "$GITHUB_SHA"
+          done
+
+      - name: Build and inspect two independent OCI layouts
         if: ${{ startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
         run: |
           set -euo pipefail
-          jq -n --arg unit "${{ matrix.name }}" --arg kind "${{ steps.recipe.outputs.kind }}" \
-            '{schema:"aex.artifact-publication-blocker.v1",unit:$unit,kind:$kind,reason:"the reproducible GHCR OCI layout/push path is not implemented; a compiled ELF is not an image manifest"}' \
-            > "$RELEASE_DIR/blocker.json"
+          for attempt in 1 2; do
+            docker buildx build \
+              --builder "${{ steps.buildx.outputs.name }}" \
+              --platform linux/arm64 \
+              --no-cache \
+              --build-arg SOURCE_DATE_EPOCH=0 \
+              --provenance=false \
+              --sbom=false \
+              --file "$RELEASE_DIR/context-$attempt/Dockerfile" \
+              --output "type=oci,dest=$RELEASE_DIR/image-$attempt.tar,oci-mediatypes=true,rewrite-timestamp=true,compression=gzip,compression-level=9,force-compression=true" \
+              "$RELEASE_DIR/context-$attempt"
+            mkdir "$RELEASE_DIR/layout-$attempt"
+            tar -xf "$RELEASE_DIR/image-$attempt.tar" -C "$RELEASE_DIR/layout-$attempt"
+            cargo run --locked --release -p aex-release-tool -- \
+              artifact oci-inspect \
+              --layout "$RELEASE_DIR/layout-$attempt" \
+              --binding "$RELEASE_DIR/binding-$attempt.json" \
+              --out "$RELEASE_DIR/identity-$attempt.json" \
+              --manifest-out "$RELEASE_DIR/manifest-$attempt.json"
+          done
+          cargo run --locked --release -p aex-release-tool -- \
+            artifact oci-compare \
+            --first "$RELEASE_DIR/identity-1.json" \
+            --second "$RELEASE_DIR/identity-2.json"
 
       - name: Build
         if: ${{ !startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
@@ -192,6 +249,21 @@ jobs:
           cargo run --locked --release -p aex-release-tool -- \
             artifact describe --unit "${{ matrix.name }}" \
             --file "$RELEASE_DIR/artifact.bin" \
+            --recipe "$RELEASE_DIR/recipe.json" \
+            --contract-digest "$contract_digest" \
+            --out "$RELEASE_DIR/draft-envelope.json" \
+            --unearned-out "$RELEASE_DIR/unearned.json"
+
+      - name: Describe the reproducible OCI artifact identity
+        if: ${{ startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
+        run: |
+          set -euo pipefail
+          contract_digest=$(jq -er .contractDigest api/generated/bundle.lock.json)
+          cargo run --locked --release -p aex-release-tool -- \
+            artifact describe --unit "${{ matrix.name }}" \
+            --file "$RELEASE_DIR/manifest-1.json" \
+            --recipe "$RELEASE_DIR/recipe.json" \
+            --oci-identity "$RELEASE_DIR/identity-1.json" \
             --contract-digest "$contract_digest" \
             --out "$RELEASE_DIR/draft-envelope.json" \
             --unearned-out "$RELEASE_DIR/unearned.json"
@@ -202,6 +274,96 @@ jobs:
         uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26  # v4.1.0
         with:
           subject-path: ${{ env.RELEASE_DIR }}/artifact.bin
+
+      - name: Authenticate to GHCR without minting a mutable tag
+        if: ${{ inputs.publish && startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/main" ]]
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Publish the exact OCI manifest by digest
+        if: ${{ inputs.publish && startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
+        id: publish_oci
+        run: |
+          set -euo pipefail
+          image_repository=$(jq -er .imageRepository "$RELEASE_DIR/identity-1.json")
+          expected_digest=$(jq -er .outputDigest "$RELEASE_DIR/identity-1.json")
+          docker buildx build \
+            --builder "${{ steps.buildx.outputs.name }}" \
+            --platform linux/arm64 \
+            --no-cache \
+            --build-arg SOURCE_DATE_EPOCH=0 \
+            --provenance=false \
+            --sbom=false \
+            --file "$RELEASE_DIR/context-1/Dockerfile" \
+            --metadata-file "$RELEASE_DIR/push-metadata.json" \
+            --output "type=image,name=$image_repository,push=true,push-by-digest=true,name-canonical=true,oci-mediatypes=true,rewrite-timestamp=true,compression=gzip,compression-level=9,force-compression=true" \
+            "$RELEASE_DIR/context-1"
+          pushed_digest=$(jq -er '."containerimage.digest"' "$RELEASE_DIR/push-metadata.json")
+          [[ "$pushed_digest" == "$expected_digest" ]]
+          echo "image_repository=$image_repository" >> "$GITHUB_OUTPUT"
+          echo "digest=$pushed_digest" >> "$GITHUB_OUTPUT"
+
+      - name: Attest the immutable OCI digest
+        if: ${{ inputs.publish && startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
+        id: attest_oci
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26  # v4.1.0
+        with:
+          subject-name: ${{ steps.publish_oci.outputs.image_repository }}
+          subject-digest: ${{ steps.publish_oci.outputs.digest }}
+          push-to-registry: true
+
+      - name: Verify OCI provenance and read back registry bytes
+        if: ${{ inputs.publish && startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUNDLE_PATH: ${{ steps.attest_oci.outputs.bundle-path }}
+          IMAGE_REPOSITORY: ${{ steps.publish_oci.outputs.image_repository }}
+          IMAGE_DIGEST: ${{ steps.publish_oci.outputs.digest }}
+        run: |
+          set -euo pipefail
+          subject="oci://$IMAGE_REPOSITORY@$IMAGE_DIGEST"
+          gh attestation verify "$subject" \
+            --repo "$GITHUB_REPOSITORY" \
+            --bundle "$BUNDLE_PATH" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/_build-artifacts.yml" \
+            --source-digest "$GITHUB_SHA" \
+            --source-ref refs/heads/main \
+            --deny-self-"hosted"-runners \
+            --format json > "$RELEASE_DIR/verified-provenance.json"
+          # A public artifact must be readable without the publisher's token.
+          # A fresh Docker config makes package visibility part of readback.
+          mkdir "$RELEASE_DIR/anonymous-docker"
+          DOCKER_CONFIG="$RELEASE_DIR/anonymous-docker" docker buildx imagetools inspect --raw \
+            "$IMAGE_REPOSITORY@$IMAGE_DIGEST" > "$RELEASE_DIR/readback-manifest.json"
+          DOCKER_CONFIG="$RELEASE_DIR/anonymous-docker" docker pull --platform linux/arm64 \
+            "$IMAGE_REPOSITORY@$IMAGE_DIGEST"
+          config_digest=$(docker image inspect --format '{{.Id}}' \
+            "$IMAGE_REPOSITORY@$IMAGE_DIGEST")
+          bin=$(jq -er .bin "$RELEASE_DIR/identity-1.json")
+          container=$(docker create --platform linux/arm64 \
+            "$IMAGE_REPOSITORY@$IMAGE_DIGEST")
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
+          docker cp "$container:/usr/local/bin/$bin" "$RELEASE_DIR/readback-elf"
+          docker rm "$container" >/dev/null
+          trap - EXIT
+          cargo run --locked --release -p aex-release-tool -- \
+            artifact oci-readback \
+            --identity "$RELEASE_DIR/identity-1.json" \
+            --manifest "$RELEASE_DIR/readback-manifest.json" \
+            --config-digest "$config_digest" \
+            --binary "$RELEASE_DIR/readback-elf" \
+            --workflow-repository "$GITHUB_REPOSITORY" \
+            --workflow-ref "$GITHUB_REF" \
+            --workflow-path .github/workflows/_build-artifacts.yml \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --job-name "${{ matrix.name }}" \
+            --builder-id "https://github.com/$GITHUB_REPOSITORY/.github/workflows/_build-artifacts.yml@refs/heads/main" \
+            --out "$RELEASE_DIR/oci-publication.json"
 
       - name: Upload the packaged bytes
         if: ${{ !startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
@@ -214,12 +376,24 @@ jobs:
             ${{ env.RELEASE_DIR }}/unearned.json
           if-no-files-found: error
 
-      - name: Upload the OCI blocker
+      - name: Upload reproducible OCI build evidence
         if: ${{ startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
-          name: blocked-unit-${{ matrix.name }}
-          path: ${{ env.RELEASE_DIR }}/blocker.json
+          name: oci-artifact-${{ matrix.name }}
+          path: |
+            ${{ env.RELEASE_DIR }}/binding-1.json
+            ${{ env.RELEASE_DIR }}/binding-2.json
+            ${{ env.RELEASE_DIR }}/identity-1.json
+            ${{ env.RELEASE_DIR }}/identity-2.json
+            ${{ env.RELEASE_DIR }}/manifest-1.json
+            ${{ env.RELEASE_DIR }}/manifest-2.json
+            ${{ env.RELEASE_DIR }}/draft-envelope.json
+            ${{ env.RELEASE_DIR }}/unearned.json
+            ${{ env.RELEASE_DIR }}/oci-publication.json
+            ${{ env.RELEASE_DIR }}/readback-manifest.json
+            ${{ env.RELEASE_DIR }}/verified-provenance.json
+            ${{ steps.attest_oci.outputs.bundle-path }}
           if-no-files-found: error
 
   public_release_inputs:
@@ -291,11 +465,11 @@ jobs:
           pattern: artifact-*
           path: packaged-units
 
-      - name: Download every explicit unit blocker
+      - name: Download every reproducible OCI unit identity
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
         with:
-          pattern: blocked-unit-*
-          path: blocked-units
+          pattern: oci-artifact-*
+          path: oci-units
 
       - name: Build twice and prove byte determinism
         env:
@@ -383,19 +557,23 @@ jobs:
             cp "$file" "dist/unit-assets/$asset"
             blob_count=$((blob_count + 1))
           done
-          blocker_count=0
-          for blocker in blocked-units/blocked-unit-*/blocker.json; do
-            jq -e '.schema == "aex.artifact-publication-blocker.v1" and (.unit | length > 0)' \
-              "$blocker" >/dev/null
-            blocker_count=$((blocker_count + 1))
+          oci_count=0
+          for identity in oci-units/oci-artifact-*/identity-1.json; do
+            jq -e '.schema == "aex.oci-image-identity.v1" and (.unit | length > 0) and (.outputDigest | test("^sha256:[0-9a-f]{64}$"))' \
+              "$identity" >/dev/null
+            oci_count=$((oci_count + 1))
           done
-          total=$((blob_count + blocker_count))
+          if [ "$oci_count" -ne 5 ]; then
+            echo "accounted for $oci_count OCI identities, expected exactly 5" >&2
+            exit 30
+          fi
+          total=$((blob_count + oci_count))
           if [ "$total" -ne 38 ]; then
             echo "unit inventory accounted for $total entries, expected exactly 38" >&2
             exit 30
           fi
           echo "blob_count=$blob_count" >> "$GITHUB_ENV"
-          echo "blocker_count=$blocker_count" >> "$GITHUB_ENV"
+          echo "oci_count=$oci_count" >> "$GITHUB_ENV"
 
       - name: Attest raw release tool provenance
         id: attest_release_tool
@@ -452,11 +630,6 @@ jobs:
             --json assets --jq '.assets | length')
           expected_count=$((3 + blob_count))
           [[ "$observed_count" -eq "$expected_count" ]]
-          if [ "$blocker_count" -ne 0 ]; then
-            echo "$blocker_count OCI unit(s) have no real manifest; keeping the release draft" >&2
-            echo "complete unit envelopes are not yet published; refusing a partial release" >&2
-            exit 40
-          fi
           gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
           base="https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag"
           echo "release_tag=$tag" >> "$GITHUB_OUTPUT"

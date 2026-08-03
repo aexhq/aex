@@ -62,6 +62,7 @@ impl Fixture {
             unit: &unit,
             plan: &recipe,
             artifact: &artifact,
+            oci_identity: None,
             repository: "aexhq/aex".to_owned(),
             commit_sha: sha1(),
             tree_clean: true,

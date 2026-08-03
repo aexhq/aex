@@ -25,6 +25,7 @@ use aex_release_tool::janitor::{self, Inventory, SweepMode};
 use aex_release_tool::ledger::{self, JsonlLedger, LedgerEntry, LedgerStore, Readback};
 use aex_release_tool::manifest::CompositionManifest;
 use aex_release_tool::migration;
+use aex_release_tool::oci::{self, OciBuildBinding, OciImageIdentity, OciSource, OciWorkflowRun};
 use aex_release_tool::policy;
 use aex_release_tool::private_path;
 use aex_release_tool::publication;
@@ -240,6 +241,93 @@ enum ArtifactCommand {
         #[arg(long, default_value_t = 0)]
         source_date_epoch: u64,
     },
+    /// Create a clean, source-stable OCI build context for one compiled ELF.
+    OciPrepare {
+        /// The OCI unit.
+        #[arg(long)]
+        unit: String,
+        /// Authoritative recipe JSON emitted by `artifact plan`.
+        #[arg(long)]
+        recipe: PathBuf,
+        /// Independently compiled `AArch64` ELF.
+        #[arg(long)]
+        input: PathBuf,
+        /// New build context directory; it must not already exist.
+        #[arg(long)]
+        context: PathBuf,
+        /// Where to write the context binding.
+        #[arg(long)]
+        out: PathBuf,
+        /// Source `owner/repository`.
+        #[arg(long)]
+        repository: String,
+        /// Exact source commit.
+        #[arg(long)]
+        commit_sha: String,
+    },
+    /// Inspect one unpacked OCI layout and copy its exact manifest bytes.
+    OciInspect {
+        /// Unpacked OCI layout directory.
+        #[arg(long)]
+        layout: PathBuf,
+        /// Context binding emitted by `artifact oci-prepare`.
+        #[arg(long)]
+        binding: PathBuf,
+        /// Where to write the verified OCI identity.
+        #[arg(long)]
+        out: PathBuf,
+        /// Where to copy the verified raw image manifest.
+        #[arg(long)]
+        manifest_out: PathBuf,
+    },
+    /// Require two independent OCI builds to have identical identities.
+    OciCompare {
+        /// First inspected identity.
+        #[arg(long)]
+        first: PathBuf,
+        /// Second inspected identity.
+        #[arg(long)]
+        second: PathBuf,
+    },
+    /// Verify digest-only registry readback and bind it to this workflow run.
+    OciReadback {
+        /// Expected reproducible OCI identity.
+        #[arg(long)]
+        identity: PathBuf,
+        /// Raw manifest read back from the registry.
+        #[arg(long)]
+        manifest: PathBuf,
+        /// Config digest reported by the pulled local image.
+        #[arg(long)]
+        config_digest: String,
+        /// ELF copied from the pulled image.
+        #[arg(long)]
+        binary: PathBuf,
+        /// Publishing workflow repository.
+        #[arg(long)]
+        workflow_repository: String,
+        /// Publishing workflow ref.
+        #[arg(long)]
+        workflow_ref: String,
+        /// Publishing workflow path.
+        #[arg(long)]
+        workflow_path: String,
+        /// Publishing workflow run id.
+        #[arg(long)]
+        run_id: String,
+        /// Publishing workflow attempt.
+        #[arg(long)]
+        run_attempt: u32,
+        /// Matrix job name, exactly the unit id.
+        #[arg(long)]
+        job_name: String,
+        /// OIDC builder identity for the protected workflow.
+        #[arg(long)]
+        builder_id: String,
+        /// Where to write the publication record.
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// Assemble an envelope from a build that happened here.
     ///
     /// Every field a local build establishes is read from the tree; every field
@@ -253,6 +341,12 @@ enum ArtifactCommand {
         /// The packaged artifact bytes.
         #[arg(long)]
         file: PathBuf,
+        /// Exact recipe JSON that produced the bytes; otherwise derive it now.
+        #[arg(long)]
+        recipe: Option<PathBuf>,
+        /// Verified OCI identity when `file` is an OCI manifest.
+        #[arg(long)]
+        oci_identity: Option<PathBuf>,
         /// Where to write the envelope.
         #[arg(long)]
         out: PathBuf,
@@ -941,25 +1035,11 @@ fn run_artifact(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()>
                 }),
             )
         }
-        ArtifactCommand::Describe {
-            unit,
-            file,
-            out,
-            unearned_out,
-            contract_digest,
-            ran,
-            now,
-        } => run_describe(
-            cli,
-            root,
-            unit,
-            file,
-            out,
-            unearned_out.as_deref(),
-            contract_digest,
-            ran,
-            now.as_deref(),
-        ),
+        command @ (ArtifactCommand::OciPrepare { .. }
+        | ArtifactCommand::OciInspect { .. }
+        | ArtifactCommand::OciCompare { .. }
+        | ArtifactCommand::OciReadback { .. }) => run_artifact_oci(cli, root, command),
+        ArtifactCommand::Describe { .. } => run_artifact_describe(cli, root, command),
         ArtifactCommand::Certify { .. } => run_artifact_certify(cli, root, command),
         ArtifactCommand::Verify {
             envelope,
@@ -978,6 +1058,133 @@ fn run_artifact(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()>
             emit(cli, &artifact::publish_destination(&envelope)?)
         }
         ArtifactCommand::AssetName { .. } => run_artifact_asset_name(cli, root, command),
+    }
+}
+
+fn run_artifact_describe(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()> {
+    let ArtifactCommand::Describe {
+        unit,
+        file,
+        recipe,
+        oci_identity,
+        out,
+        unearned_out,
+        contract_digest,
+        ran,
+        now,
+    } = command
+    else {
+        return Err(usage("internal artifact description dispatch mismatch"));
+    };
+    run_describe(
+        cli,
+        root,
+        unit,
+        file,
+        recipe.as_deref(),
+        oci_identity.as_deref(),
+        out,
+        unearned_out.as_deref(),
+        contract_digest,
+        ran,
+        now.as_deref(),
+    )
+}
+
+fn run_artifact_oci(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()> {
+    match command {
+        ArtifactCommand::OciPrepare {
+            unit,
+            recipe,
+            input,
+            context,
+            out,
+            repository,
+            commit_sha,
+        } => {
+            let units = read_units(root)?;
+            let found = units
+                .units
+                .iter()
+                .find(|candidate| &candidate.id == unit)
+                .ok_or_else(|| usage(format!("`{unit}` is not in release/units.toml")))?;
+            let recipe: artifact::BuildPlan = read_json(recipe)?;
+            let binding = oci::prepare_context(
+                found,
+                &recipe,
+                input,
+                context,
+                OciSource {
+                    repository: repository.clone(),
+                    commit_sha: commit_sha.clone(),
+                },
+            )?;
+            write_canonical(out, &binding)?;
+            emit(cli, &binding)
+        }
+        ArtifactCommand::OciInspect {
+            layout,
+            binding,
+            out,
+            manifest_out,
+        } => {
+            let binding: OciBuildBinding = read_json(binding)?;
+            let identity = oci::inspect_layout(layout, &binding)?;
+            let source = oci::manifest_blob_path(layout, &identity);
+            let bytes =
+                std::fs::read(&source).map_err(|err| io(&source.display().to_string(), &err))?;
+            std::fs::write(manifest_out, bytes)
+                .map_err(|err| io(&manifest_out.display().to_string(), &err))?;
+            write_canonical(out, &identity)?;
+            emit(cli, &identity)
+        }
+        ArtifactCommand::OciCompare { first, second } => {
+            let first: OciImageIdentity = read_json(first)?;
+            let second: OciImageIdentity = read_json(second)?;
+            oci::verify_reproducible(&first, &second)?;
+            emit(
+                cli,
+                &serde_json::json!({
+                    "unit": first.unit,
+                    "digest": first.output_digest,
+                    "reproducible": true,
+                }),
+            )
+        }
+        ArtifactCommand::OciReadback {
+            identity,
+            manifest,
+            config_digest,
+            binary,
+            workflow_repository,
+            workflow_ref,
+            workflow_path,
+            run_id,
+            run_attempt,
+            job_name,
+            builder_id,
+            out,
+        } => {
+            let identity: OciImageIdentity = read_json(identity)?;
+            let publication = oci::verify_readback(
+                &identity,
+                manifest,
+                config_digest,
+                binary,
+                OciWorkflowRun {
+                    repository: workflow_repository.clone(),
+                    r#ref: workflow_ref.clone(),
+                    path: workflow_path.clone(),
+                    run_id: run_id.clone(),
+                    run_attempt: *run_attempt,
+                    job_name: job_name.clone(),
+                    builder_id: builder_id.clone(),
+                },
+            )?;
+            write_canonical(out, &publication)?;
+            emit(cli, &publication)
+        }
+        _ => Err(usage("internal OCI artifact dispatch mismatch")),
     }
 }
 
@@ -1119,6 +1326,8 @@ fn run_describe(
     root: &Path,
     unit: &str,
     file: &Path,
+    recipe: Option<&Path>,
+    oci_identity: Option<&Path>,
     out: &Path,
     unearned_out: Option<&Path>,
     contract_digest: &str,
@@ -1131,13 +1340,19 @@ fn run_describe(
         .iter()
         .find(|candidate| candidate.id == unit)
         .ok_or_else(|| usage(format!("`{unit}` is not in release/units.toml")))?;
-    let plan = artifact::release_plan(found, root)?;
+    let plan = if let Some(path) = recipe {
+        read_json(path)?
+    } else {
+        artifact::release_plan(found, root)?
+    };
     let inputs = GraphInputs::load(root)?;
     let built = verify::build(&inputs)?;
+    let oci_identity: Option<OciImageIdentity> = oci_identity.map(read_json).transpose()?;
     let local = describe::LocalBuild {
         unit: found,
         plan: &plan,
         artifact: file,
+        oci_identity: oci_identity.as_ref(),
         repository: "aexhq/aex".to_owned(),
         commit_sha: git_output(root, &["rev-parse", "HEAD"])?,
         tree_clean: git_output(root, &["status", "--porcelain"])?.is_empty(),

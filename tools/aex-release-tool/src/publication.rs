@@ -85,15 +85,42 @@ pub fn github_release_unit_uri(
 /// digest.
 pub fn ghcr_unit_uri(repository: &str, unit: &str, digest: &str) -> Result<String> {
     validate_public_identity(repository, &"a".repeat(40), "1", 1, unit, digest)?;
-    let (owner, repo) = repository.split_once('/').ok_or_else(|| {
-        ToolError::single(
-            Exit::EnvelopeInvalid,
-            "publication-repository",
-            "the repository must have exact `owner/repo` form",
-        )
-    })?;
     Ok(format!(
-        "oci://ghcr.io/{}/{}-units/{unit}@{digest}",
+        "oci://{}@{digest}",
+        ghcr_unit_repository(repository, unit)?
+    ))
+}
+
+/// Closed GHCR repository for one public OCI unit, without a mutable tag.
+///
+/// # Errors
+/// Returns [`Exit::EnvelopeInvalid`] for an invalid repository or unit id.
+pub fn ghcr_unit_repository(repository: &str, unit: &str) -> Result<String> {
+    let valid_segment = |segment: &str| {
+        !segment.is_empty()
+            && segment
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    };
+    let repository_valid = repository
+        .split_once('/')
+        .is_some_and(|(owner, repo)| valid_segment(owner) && valid_segment(repo));
+    if !repository_valid || !safe_unit_id(unit) {
+        return Err(ToolError::single(
+            Exit::EnvelopeInvalid,
+            "publication-oci-repository",
+            "OCI publication requires exact `owner/repository` and a safe unit id",
+        ));
+    }
+    let Some((owner, repo)) = repository.split_once('/') else {
+        return Err(ToolError::single(
+            Exit::EnvelopeInvalid,
+            "publication-oci-repository",
+            "OCI publication requires exact `owner/repository` and a safe unit id",
+        ));
+    };
+    Ok(format!(
+        "ghcr.io/{}/{}-units/{unit}",
         owner.to_ascii_lowercase(),
         repo.to_ascii_lowercase()
     ))

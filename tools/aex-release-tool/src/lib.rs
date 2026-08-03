@@ -26,6 +26,7 @@ pub mod ledger;
 pub mod manifest;
 pub mod meta;
 pub mod migration;
+pub mod oci;
 pub mod pack;
 pub mod policy;
 pub mod private_path;

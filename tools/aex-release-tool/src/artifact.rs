@@ -613,7 +613,7 @@ fn validate_trust_root(root: &ModelCatalogTrustRoot) -> Result<()> {
     Ok(())
 }
 
-fn build_plan_digest(build: &BuildPlan) -> Result<String> {
+pub(crate) fn build_plan_digest(build: &BuildPlan) -> Result<String> {
     canon::digest_document(&serde_json::json!({
         "argv": build.argv,
         "env": build.env,
@@ -895,7 +895,7 @@ pub struct BuildCommand {
 }
 
 /// A digest-pinned base image.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BaseImage {
     /// Human-readable reference.
@@ -948,7 +948,7 @@ pub struct Target {
 }
 
 /// Where the bytes are stored.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Location {
     /// Storage kind.
@@ -992,6 +992,12 @@ pub struct Output {
     /// The child digest ECS actually runs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oci_child_digest: Option<String>,
+    /// The image configuration digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oci_config_digest: Option<String>,
+    /// Every compressed image layer digest, in order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub oci_layer_digests: Vec<String>,
     /// Where the bytes live.
     pub location: Location,
     /// Detached symbols.
@@ -1406,6 +1412,37 @@ impl ArtifactEnvelope {
             }
             _ => {}
         }
+        let is_oci = self.unit.kind.starts_with("rust-oci-");
+        let oci_identity_valid = self.output.oci_index_digest.is_none()
+            && self.output.oci_child_digest.as_deref() == Some(&self.output.digest)
+            && self
+                .output
+                .oci_config_digest
+                .as_deref()
+                .is_some_and(valid_sha256_digest)
+            && !self.output.oci_layer_digests.is_empty()
+            && self
+                .output
+                .oci_layer_digests
+                .iter()
+                .all(|digest| valid_sha256_digest(digest));
+        if is_oci && !oci_identity_valid {
+            structural.push(Violation::new(
+                "envelope-oci-identity",
+                "single-platform OCI output must bind its manifest, config and every layer digest",
+            ));
+        }
+        if !is_oci
+            && (self.output.oci_index_digest.is_some()
+                || self.output.oci_child_digest.is_some()
+                || self.output.oci_config_digest.is_some()
+                || !self.output.oci_layer_digests.is_empty())
+        {
+            structural.push(Violation::new(
+                "envelope-oci-identity",
+                "blob output cannot carry OCI manifest, config or layer identities",
+            ));
+        }
         if self.receipts.is_empty() {
             structural.push(Violation::new(
                 "envelope-no-receipts",
@@ -1555,6 +1592,15 @@ impl ArtifactEnvelope {
             Err(ToolError::many(Exit::SupplyChainDenied, supply))
         }
     }
+}
+
+fn valid_sha256_digest(value: &str) -> bool {
+    value.strip_prefix("sha256:").is_some_and(|bare| {
+        bare.len() == 64
+            && bare
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    })
 }
 
 /// The immutable destination an artifact publishes to.

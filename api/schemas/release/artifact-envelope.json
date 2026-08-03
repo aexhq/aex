@@ -158,6 +158,13 @@
         },
         "ociIndexDigest": { "$ref": "#/$defs/sha256" },
         "ociChildDigest": { "$ref": "#/$defs/sha256" },
+        "ociConfigDigest": { "$ref": "#/$defs/sha256" },
+        "ociLayerDigests": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/sha256" }
+        },
         "location": {
           "type": "object",
           "additionalProperties": false,
