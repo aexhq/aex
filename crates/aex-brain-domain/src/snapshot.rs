@@ -7,8 +7,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::fold::FoldState;
+use crate::fold::{FoldError, FoldState, apply};
 use crate::ids::{AgentKey, ContentHash as JournalHash, JournalSeq};
+use crate::journal::JournalEntry;
 use crate::wire_pending::ResolvedAgentConfig;
 use aex_wire::ids::ContentHash as BodyDigest;
 
@@ -62,9 +63,18 @@ pub struct VerifiedFoldSnapshot {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FoldSnapshotArtifact {
     /// Metadata written to the monotonic durable pointer.
-    pub pointer: FoldSnapshotPointer,
+    pointer: FoldSnapshotPointer,
     /// Uncompressed JCS bytes written through the regional content authority.
-    pub body: Vec<u8>,
+    body: Vec<u8>,
+}
+
+/// Opaque sequence-zero replay allowed to create one publishable fold snapshot.
+///
+/// The state never leaves this value. Callers can feed it authoritative journal entries,
+/// but cannot bless an arbitrary [`FoldState`] whose metadata merely looks consistent.
+#[derive(Debug)]
+pub struct SnapshotReplay {
+    state: FoldState,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -150,23 +160,16 @@ pub enum FoldSnapshotError {
 }
 
 impl FoldSnapshotArtifact {
-    /// Captures a validated fold using the workspace's sole JCS serializer and the content
-    /// authority's SHA-256 body identity.
-    ///
-    /// # Errors
-    ///
-    /// Refuses an empty/unconfigured/internally inconsistent fold or a body above
-    /// [`MAX_FOLD_SNAPSHOT_BYTES`].
-    pub fn capture(agent: AgentKey, state: &FoldState) -> Result<Self, FoldSnapshotError> {
-        let absorbed = point_of(state)?;
-        let config_digest = config_digest(state)?;
-        validate_state(state, absorbed, config_digest)?;
+    fn capture_replay(agent: AgentKey, state: FoldState) -> Result<Self, FoldSnapshotError> {
+        let absorbed = point_of(&state)?;
+        let config_digest = config_digest(&state)?;
+        validate_state(&state, absorbed, config_digest)?;
         let document = FoldSnapshotDocument {
             schema: FOLD_SNAPSHOT_SCHEMA.to_owned(),
             agent,
             absorbed,
             config_digest,
-            state: state.clone(),
+            state,
         };
         let body = canonical_bytes(&document)?;
         if body.len() > MAX_FOLD_SNAPSHOT_BYTES {
@@ -184,6 +187,59 @@ impl FoldSnapshotArtifact {
             body_bytes: u64::try_from(body.len()).unwrap_or(u64::MAX),
         };
         Ok(Self { pointer, body })
+    }
+
+    /// Metadata selected atomically after the immutable body is published.
+    #[must_use]
+    pub const fn pointer(&self) -> &FoldSnapshotPointer {
+        &self.pointer
+    }
+
+    /// Exact uncompressed canonical body bytes.
+    #[must_use]
+    pub fn body(&self) -> &[u8] {
+        &self.body
+    }
+}
+
+impl SnapshotReplay {
+    /// Starts the only publishable replay state: an empty fold expecting sequence zero.
+    #[must_use]
+    pub fn from_sequence_zero() -> Self {
+        Self {
+            state: FoldState::empty(),
+        }
+    }
+
+    /// Applies one authoritative journal entry through the canonical fold transition.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same [`FoldError`] as ordinary restore for a gap, fork, corrupt envelope
+    /// or semantic invariant violation.
+    pub fn apply(&mut self, entry: &JournalEntry) -> Result<(), FoldError> {
+        apply(&mut self.state, entry)
+    }
+
+    /// Finishes only at the exact stable journal target selected by the publisher.
+    ///
+    /// # Errors
+    ///
+    /// Refuses an empty/incomplete/forked target, a missing configuration, an inconsistent
+    /// fold, or a canonical body above [`MAX_FOLD_SNAPSHOT_BYTES`].
+    pub fn finish_exact(
+        self,
+        agent: AgentKey,
+        target: JournalPoint,
+    ) -> Result<FoldSnapshotArtifact, FoldSnapshotError> {
+        let actual = point_of(&self.state)?;
+        if actual.seq != target.seq {
+            return Err(FoldSnapshotError::StateTailMismatch);
+        }
+        if actual.hash != target.hash {
+            return Err(FoldSnapshotError::StateTailHashMismatch);
+        }
+        FoldSnapshotArtifact::capture_replay(agent, self.state)
     }
 }
 
@@ -324,17 +380,22 @@ fn validate_state(
 
 #[cfg(test)]
 mod tests {
-    use super::{FoldSnapshotArtifact, FoldSnapshotError};
-    use crate::fold::FoldState;
-    use crate::ids::{AgentId, AgentKey, SessionId};
+    use super::{FoldSnapshotError, JournalPoint, SnapshotReplay};
+    use crate::ids::{AgentId, AgentKey, ContentHash, JournalSeq, SessionId};
     use uuid::Uuid;
 
     #[test]
     fn an_empty_fold_cannot_become_snapshot_authority() {
         let key = AgentKey::new(SessionId(Uuid::from_u128(1)), AgentId(Uuid::from_u128(2)));
-        assert_eq!(
-            FoldSnapshotArtifact::capture(key, &FoldState::empty()),
+        assert!(matches!(
+            SnapshotReplay::from_sequence_zero().finish_exact(
+                key,
+                JournalPoint {
+                    seq: JournalSeq::ZERO,
+                    hash: ContentHash([0; 32]),
+                },
+            ),
             Err(FoldSnapshotError::EmptyJournal)
-        );
+        ));
     }
 }

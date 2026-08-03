@@ -1270,61 +1270,58 @@ impl FoldSnapshotStore for MemoryStore {
     ) -> BoxFuture<'a, Result<SnapshotPublishOutcome, StoreError>> {
         Box::pin(async move {
             self.log.note("snapshot_publish");
+            let pointer = artifact.pointer();
+            let body = artifact.body();
             if self
                 .authorities
                 .lock()
                 .expect("not poisoned")
-                .get(&artifact.pointer.agent.session)
+                .get(&pointer.agent.session)
                 .is_none_or(|authority| authority.workspace != workspace)
             {
                 return Err(StoreError::SessionWorkspaceMismatch);
             }
-            artifact
-                .pointer
-                .verify(artifact.pointer.agent, &artifact.body, artifact.body.len())
+            pointer
+                .verify(pointer.agent, body, body.len())
                 .map_err(|diagnostic| StoreError::SnapshotRejected {
                     diagnostic: diagnostic.into(),
                 })?;
 
             let agents = self.agents.lock().expect("not poisoned");
             let row = agents
-                .get(&artifact.pointer.agent)
+                .get(&pointer.agent)
                 .ok_or(StoreError::SnapshotHistoricalMismatch)?;
             let historical = row.entries.iter().find(|entry| {
-                entry.envelope.seq == artifact.pointer.absorbed.seq
-                    && entry.envelope.content_hash == artifact.pointer.absorbed.hash
+                entry.envelope.seq == pointer.absorbed.seq
+                    && entry.envelope.content_hash == pointer.absorbed.hash
             });
-            if historical.is_none()
-                || row
-                    .tail
-                    .is_none_or(|tail| tail < artifact.pointer.absorbed.seq)
-            {
+            if historical.is_none() || row.tail.is_none_or(|tail| tail < pointer.absorbed.seq) {
                 return Err(StoreError::SnapshotHistoricalMismatch);
             }
             drop(agents);
 
             let mut bodies = self.snapshot_bodies.lock().expect("not poisoned");
-            if let Some(existing) = bodies.get(&artifact.pointer.body_digest) {
-                if existing != &artifact.body {
+            if let Some(existing) = bodies.get(&pointer.body_digest) {
+                if existing != body {
                     return Err(StoreError::Undecodable {
                         location: "snapshot content address".to_owned(),
                         reason: "two bodies claimed one SHA-256 digest".to_owned(),
                     });
                 }
             } else {
-                bodies.insert(artifact.pointer.body_digest, artifact.body.clone());
+                bodies.insert(pointer.body_digest, body.to_vec());
             }
             drop(bodies);
 
             let mut pointers = self.snapshot_pointers.lock().expect("not poisoned");
-            if let Some(current) = pointers.get(&artifact.pointer.agent) {
-                if current.absorbed.seq > artifact.pointer.absorbed.seq {
+            if let Some(current) = pointers.get(&pointer.agent) {
+                if current.absorbed.seq > pointer.absorbed.seq {
                     return Ok(SnapshotPublishOutcome::Superseded {
                         current: current.absorbed,
                     });
                 }
-                if current.absorbed.seq == artifact.pointer.absorbed.seq {
-                    if current == &artifact.pointer {
+                if current.absorbed.seq == pointer.absorbed.seq {
+                    if current == pointer {
                         return Ok(SnapshotPublishOutcome::AlreadyCurrent);
                     }
                     return Err(StoreError::SnapshotPointerConflict {
@@ -1332,7 +1329,7 @@ impl FoldSnapshotStore for MemoryStore {
                     });
                 }
             }
-            pointers.insert(artifact.pointer.agent, artifact.pointer.clone());
+            pointers.insert(pointer.agent, pointer.clone());
             Ok(SnapshotPublishOutcome::Published)
         })
     }

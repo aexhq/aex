@@ -150,11 +150,14 @@ const fn lower_hex(byte: u8) -> Option<u8> {
 /// Publication proves the exact immutable journal row and that the current control tail is
 /// at least that far advanced. It intentionally does **not** require the current head to
 /// equal the snapshot cut: exact-head publication would starve continuously active agents.
-/// The final update advances only to a greater sequence, or accepts an exact same-cut/body
-/// retry. A slower publisher therefore cannot roll the pointer back.
+/// The final update advances only from the complete pointer tuple the caller strongly read,
+/// or accepts an exact same-cut/body retry. A slower publisher therefore cannot roll the
+/// pointer back, and a malformed older row cannot be silently overwritten.
 ///
 /// The caller must first publish `pointer.body_digest` through the regional content
-/// authority. This transaction never writes body bytes or S3 directly.
+/// authority and strongly read/decode the selected pointer into `previous`. `None` means the
+/// strongly consistent read observed true absence. This transaction never writes body bytes
+/// or S3 directly.
 ///
 /// # Errors
 ///
@@ -163,27 +166,10 @@ const fn lower_hex(byte: u8) -> Option<u8> {
 /// compiler rejects the plan.
 pub fn compile_publication(
     tables: &BrainTables,
+    previous: Option<&FoldSnapshotPointer>,
     pointer: &FoldSnapshotPointer,
 ) -> Result<TransactionPlan, PlanError> {
-    if pointer.schema != FOLD_SNAPSHOT_SCHEMA {
-        return Err(PlanError::Store(
-            aex_session_dynamodb::StoreError::Invalid {
-                detail: format!("unsupported fold snapshot schema `{}`", pointer.schema),
-            },
-        ));
-    }
-    if pointer.body_bytes == 0
-        || pointer.body_bytes > u64::try_from(MAX_FOLD_SNAPSHOT_BYTES).unwrap_or(u64::MAX)
-    {
-        return Err(PlanError::Store(
-            aex_session_dynamodb::StoreError::Invalid {
-                detail: format!(
-                    "fold snapshot body length {} is outside 1..={MAX_FOLD_SNAPSHOT_BYTES}",
-                    pointer.body_bytes
-                ),
-            },
-        ));
-    }
+    validate_publication(previous, pointer)?;
     let table = tables.session_authority.as_str();
     let journal = keys::journal(&pointer.agent, pointer.absorbed.seq)?;
     let control = keys::control(&pointer.agent)?;
@@ -191,13 +177,27 @@ pub fn compile_publication(
     let (session, agent) =
         translate::agent_key(&pointer.agent).map_err(keys::BrainKeyError::from)?;
     let token = format!(
-        "fold-snapshot:{}:{}:{}",
-        session,
-        agent,
-        pointer.body_digest.to_wire()
+        "fold-snapshot:{session}:{agent}:{previous_identity}:{}:{}",
+        pointer.absorbed.seq.get(),
+        pointer.body_digest.to_wire(),
+        previous_identity = publication_precondition_identity(previous),
     );
     let mut plan = TransactionPlan::new(token);
 
+    append_publication_proofs(&mut plan, table, &journal, &control, pointer)?;
+    append_pointer_update(
+        &mut plan, table, &selected, &session, &agent, previous, pointer,
+    )?;
+    Ok(plan)
+}
+
+fn append_publication_proofs(
+    plan: &mut TransactionPlan,
+    table: &str,
+    journal: &keys::Key,
+    control: &keys::Key,
+    pointer: &FoldSnapshotPointer,
+) -> Result<(), PlanError> {
     plan.condition_check(
         participant::FOLD_SNAPSHOT_JOURNAL_POINT,
         aws_sdk_dynamodb::types::ConditionCheck::builder()
@@ -229,19 +229,48 @@ pub fn compile_publication(
             .expression_attribute_values(":hasJournal", aex_session_dynamodb::attr::boolean(true))
             .expression_attribute_values(":absorbedSeq", n(pointer.absorbed.seq.get())),
     )?;
+    Ok(())
+}
+
+fn append_pointer_update(
+    plan: &mut TransactionPlan,
+    table: &str,
+    selected: &keys::Key,
+    session: &impl ToString,
+    agent: &impl ToString,
+    previous: Option<&FoldSnapshotPointer>,
+    pointer: &FoldSnapshotPointer,
+) -> Result<(), PlanError> {
+    let selected_update = aws_sdk_dynamodb::types::Update::builder()
+        .table_name(table)
+        .set_key(Some(key(&selected.pk, &selected.sk)));
+    let selected_update = if let Some(previous) = previous {
+        selected_update
+            .condition_expression(
+                "itemType = :itemType AND sessionId = :sessionId AND agentId = :agentId AND \
+                 schema = :previousSchema AND absorbedSeq = :previousAbsorbedSeq AND \
+                 absorbedHash = :previousAbsorbedHash AND \
+                 configDigest = :previousConfigDigest AND bodyDigest = :previousBodyDigest AND \
+                 bodyBytes = :previousBodyBytes",
+            )
+            .expression_attribute_values(":previousSchema", s(previous.schema.clone()))
+            .expression_attribute_values(":previousAbsorbedSeq", n(previous.absorbed.seq.get()))
+            .expression_attribute_values(
+                ":previousAbsorbedHash",
+                s(previous.absorbed.hash.to_hex()),
+            )
+            .expression_attribute_values(
+                ":previousConfigDigest",
+                s(previous.config_digest.to_wire()),
+            )
+            .expression_attribute_values(":previousBodyDigest", s(previous.body_digest.to_wire()))
+            .expression_attribute_values(":previousBodyBytes", n(previous.body_bytes))
+    } else {
+        selected_update.condition_expression("attribute_not_exists(pk)")
+    };
     plan.update(
         participant::FOLD_SNAPSHOT_POINTER,
-        aws_sdk_dynamodb::types::Update::builder()
-            .table_name(table)
-            .set_key(Some(key(&selected.pk, &selected.sk)))
-            .condition_expression(
-                "attribute_not_exists(pk) OR \
-                 (itemType = :itemType AND sessionId = :sessionId AND agentId = :agentId AND \
-                  (absorbedSeq < :absorbedSeq OR \
-                   (absorbedSeq = :absorbedSeq AND absorbedHash = :absorbedHash AND \
-                    configDigest = :configDigest AND bodyDigest = :bodyDigest AND \
-                    bodyBytes = :bodyBytes AND schema = :schema)))",
-            )
+        selected_update
             .update_expression(
                 "SET itemType = :itemType, sessionId = :sessionId, agentId = :agentId, \
                  schema = :schema, absorbedSeq = :absorbedSeq, absorbedHash = :absorbedHash, \
@@ -257,7 +286,73 @@ pub fn compile_publication(
             .expression_attribute_values(":bodyDigest", s(pointer.body_digest.to_wire()))
             .expression_attribute_values(":bodyBytes", n(pointer.body_bytes)),
     )?;
-    Ok(plan)
+    Ok(())
+}
+
+fn validate_publication(
+    previous: Option<&FoldSnapshotPointer>,
+    pointer: &FoldSnapshotPointer,
+) -> Result<(), PlanError> {
+    validate_pointer("next", pointer)?;
+    let Some(previous) = previous else {
+        return Ok(());
+    };
+    validate_pointer("previous", previous)?;
+    if previous.agent != pointer.agent {
+        return invalid("previous and next fold snapshot pointers address different agents");
+    }
+    if previous.absorbed.seq > pointer.absorbed.seq {
+        return invalid("a fold snapshot publication cannot roll the selected sequence back");
+    }
+    if previous.absorbed.seq == pointer.absorbed.seq && previous != pointer {
+        return invalid(
+            "one fold snapshot cut cannot select different metadata or immutable bytes",
+        );
+    }
+    Ok(())
+}
+
+fn publication_precondition_identity(previous: Option<&FoldSnapshotPointer>) -> String {
+    previous.map_or_else(
+        || "absent".to_owned(),
+        |previous| {
+            format!(
+                "{}:{}:{}:{}:{}:{}",
+                previous.schema,
+                previous.absorbed.seq.get(),
+                previous.absorbed.hash.to_hex(),
+                previous.config_digest.to_wire(),
+                previous.body_digest.to_wire(),
+                previous.body_bytes
+            )
+        },
+    )
+}
+
+fn validate_pointer(label: &str, pointer: &FoldSnapshotPointer) -> Result<(), PlanError> {
+    if pointer.schema != FOLD_SNAPSHOT_SCHEMA {
+        return invalid(format!(
+            "{label} fold snapshot uses unsupported schema `{}`",
+            pointer.schema
+        ));
+    }
+    if pointer.body_bytes == 0
+        || pointer.body_bytes > u64::try_from(MAX_FOLD_SNAPSHOT_BYTES).unwrap_or(u64::MAX)
+    {
+        return invalid(format!(
+            "{label} fold snapshot body length {} is outside 1..={MAX_FOLD_SNAPSHOT_BYTES}",
+            pointer.body_bytes
+        ));
+    }
+    Ok(())
+}
+
+fn invalid<T>(detail: impl Into<String>) -> Result<T, PlanError> {
+    Err(PlanError::Store(
+        aex_session_dynamodb::StoreError::Invalid {
+            detail: detail.into(),
+        },
+    ))
 }
 
 #[cfg(test)]
@@ -293,11 +388,18 @@ mod tests {
     #[test]
     fn publication_proves_history_and_never_requires_exact_current_head() {
         let pointer = pointer();
+        let mut previous = pointer.clone();
+        previous.absorbed.seq = JournalSeq(40);
+        previous.absorbed.hash = ContentHash([6; 32]);
+        previous.config_digest = BodyDigest::from_bytes([7; 32]);
+        previous.body_digest = BodyDigest::from_bytes([8; 32]);
+        previous.body_bytes = 120_000;
         let plan = compile_publication(
             &BrainTables {
                 session_authority: "session-authority".to_owned(),
                 regional_work: "regional-work".to_owned(),
             },
+            Some(&previous),
             &pointer,
         )
         .expect("the plan compiles");
@@ -345,13 +447,55 @@ mod tests {
         let condition = selected
             .condition_expression()
             .expect("update is conditional");
-        assert!(condition.contains("attribute_not_exists(pk)"));
         assert!(condition.contains("itemType = :itemType"));
         assert!(condition.contains("sessionId = :sessionId"));
         assert!(condition.contains("agentId = :agentId"));
-        assert!(condition.contains("absorbedSeq < :absorbedSeq"));
-        assert!(condition.contains("bodyDigest = :bodyDigest"));
+        assert!(condition.contains("absorbedSeq = :previousAbsorbedSeq"));
+        assert!(condition.contains("absorbedHash = :previousAbsorbedHash"));
+        assert!(condition.contains("configDigest = :previousConfigDigest"));
+        assert!(condition.contains("bodyDigest = :previousBodyDigest"));
+        assert!(condition.contains("bodyBytes = :previousBodyBytes"));
         assert!(!condition.contains("journalTail"));
+    }
+
+    #[test]
+    fn publication_requires_true_absence_or_the_exact_strongly_read_pointer() {
+        let tables = BrainTables {
+            session_authority: "session-authority".to_owned(),
+            regional_work: "regional-work".to_owned(),
+        };
+        let pointer = pointer();
+        let absent = compile_publication(&tables, None, &pointer).expect("absence compiles");
+        assert_eq!(
+            absent.actions()[2]
+                .update()
+                .expect("pointer update")
+                .condition_expression(),
+            Some("attribute_not_exists(pk)")
+        );
+
+        let exact_retry =
+            compile_publication(&tables, Some(&pointer), &pointer).expect("exact retry compiles");
+        assert!(
+            exact_retry.actions()[2]
+                .update()
+                .expect("pointer update")
+                .condition_expression()
+                .expect("condition")
+                .contains("bodyDigest = :previousBodyDigest")
+        );
+
+        let mut corrupt_previous = pointer.clone();
+        corrupt_previous.schema = "aex.brain.fold.corrupt".to_owned();
+        assert!(compile_publication(&tables, Some(&corrupt_previous), &pointer).is_err());
+
+        let mut conflicting_cut = pointer.clone();
+        conflicting_cut.body_digest = BodyDigest::from_bytes([9; 32]);
+        assert!(compile_publication(&tables, Some(&pointer), &conflicting_cut).is_err());
+
+        let mut stale = pointer.clone();
+        stale.absorbed.seq = JournalSeq(40);
+        assert!(compile_publication(&tables, Some(&pointer), &stale).is_err());
     }
 
     #[test]
@@ -363,7 +507,7 @@ mod tests {
         let mut invalid = pointer();
         invalid.schema = "aex.brain.fold.unknown".to_owned();
         assert!(matches!(
-            compile_publication(&tables, &invalid),
+            compile_publication(&tables, None, &invalid),
             Err(crate::plan::PlanError::Store(
                 aex_session_dynamodb::StoreError::Invalid { .. }
             ))
@@ -372,7 +516,7 @@ mod tests {
         invalid = pointer();
         invalid.body_bytes = 0;
         assert!(matches!(
-            compile_publication(&tables, &invalid),
+            compile_publication(&tables, None, &invalid),
             Err(crate::plan::PlanError::Store(
                 aex_session_dynamodb::StoreError::Invalid { .. }
             ))
@@ -382,7 +526,7 @@ mod tests {
             .expect("the hard ceiling fits u64")
             .saturating_add(1);
         assert!(matches!(
-            compile_publication(&tables, &invalid),
+            compile_publication(&tables, None, &invalid),
             Err(crate::plan::PlanError::Store(
                 aex_session_dynamodb::StoreError::Invalid { .. }
             ))

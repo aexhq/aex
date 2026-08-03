@@ -284,7 +284,7 @@ async fn read_from(
         {
             Ok(page) => page,
             Err(StoreError::ReadBudgetExhausted { entries, bytes })
-                if remaining_bytes <= page.max_bytes =>
+                if page_exhaustion_is_total(remaining_entries, remaining_bytes, page) =>
             {
                 return Err(StoreError::RestoreBudgetExhausted {
                     entries: restored_entries.saturating_add(entries),
@@ -341,6 +341,14 @@ async fn read_from(
     Ok((state, restored_entries, restored_bytes))
 }
 
+const fn page_exhaustion_is_total(
+    remaining_entries: usize,
+    remaining_bytes: usize,
+    page: ReadBudget,
+) -> bool {
+    remaining_entries <= page.max_entries || remaining_bytes <= page.max_bytes
+}
+
 fn unavailable(error: StoreError) -> SnapshotDiagnostic {
     match error {
         StoreError::SnapshotRejected { diagnostic } => diagnostic,
@@ -354,5 +362,22 @@ fn unavailable(error: StoreError) -> SnapshotDiagnostic {
             reason: other.to_string(),
             retryable: false,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::page_exhaustion_is_total;
+    use crate::ports::ReadBudget;
+
+    #[test]
+    fn either_aggregate_dimension_classifies_a_page_exhaustion() {
+        let page = ReadBudget {
+            max_entries: 256,
+            max_bytes: 1_024,
+        };
+        assert!(page_exhaustion_is_total(256, 2_048, page));
+        assert!(page_exhaustion_is_total(512, 1_024, page));
+        assert!(!page_exhaustion_is_total(512, 2_048, page));
     }
 }

@@ -40,7 +40,7 @@ use aex_brain_domain::ids::{
 use aex_brain_domain::journal::{
     ExecutorRoute, FinishReason, JournalEntry, JournalRecord, MessageOrigin, ParkReason,
 };
-use aex_brain_domain::snapshot::FoldSnapshotArtifact;
+use aex_brain_domain::snapshot::{FoldSnapshotArtifact, JournalPoint, SnapshotReplay};
 use aex_brain_domain::wire_pending::{
     AgentLimits, CanonicalBlock, CanonicalModelRequest, ContentBlockRef, NormalizedUsage,
     ProviderId, ResolvedAgentConfig, Role, StopReason,
@@ -2506,14 +2506,30 @@ fn restore_fixture(
     ))
 }
 
+fn snapshot_artifact(entries: &[JournalEntry]) -> FoldSnapshotArtifact {
+    let mut replay = SnapshotReplay::from_sequence_zero();
+    for entry in entries {
+        replay.apply(entry).expect("snapshot replay folds");
+    }
+    let tail = entries.last().expect("snapshot history is non-empty");
+    replay
+        .finish_exact(
+            key(),
+            JournalPoint {
+                seq: tail.envelope.seq,
+                hash: tail.envelope.content_hash,
+            },
+        )
+        .expect("snapshot replay finishes at its exact tail")
+}
+
 /// A snapshot is useful only if it can absorb old history while the authoritative journal
 /// continues moving. Publication therefore proves the historical row, not exact current head.
 #[test]
 fn stale_verified_snapshot_replays_only_the_bounded_suffix() {
     let harness = Harness::new(Vec::new());
     let entries = history();
-    let prefix_state = fold(&entries[..1]).expect("the prefix folds");
-    let artifact = FoldSnapshotArtifact::capture(key(), &prefix_state).expect("snapshot captures");
+    let artifact = snapshot_artifact(&entries[..1]);
     assert_eq!(
         block_on(
             harness
@@ -2530,7 +2546,7 @@ fn stale_verified_snapshot_replays_only_the_bounded_suffix() {
         RestoreBudget {
             max_entries: 1,
             max_bytes: artifact
-                .body
+                .body()
                 .len()
                 .saturating_add(journal_bytes(&entries[1..])),
         },
@@ -2541,15 +2557,15 @@ fn stale_verified_snapshot_replays_only_the_bounded_suffix() {
     assert_eq!(
         restored.source,
         RestoreSource::Snapshot {
-            absorbed: artifact.pointer.absorbed,
-            snapshot_bytes: artifact.body.len(),
+            absorbed: artifact.pointer().absorbed,
+            snapshot_bytes: artifact.body().len(),
             suffix_entries: 1,
             suffix_bytes: journal_bytes(&entries[1..]),
         }
     );
 
     let one_byte_short = artifact
-        .body
+        .body()
         .len()
         .saturating_add(journal_bytes(&entries[1..]))
         .saturating_sub(1);
@@ -2574,27 +2590,28 @@ fn stale_verified_snapshot_replays_only_the_bounded_suffix() {
 fn corrupt_snapshot_falls_back_when_small_and_preserves_both_causes_when_large() {
     let harness = Harness::new(Vec::new());
     let entries = history();
-    let artifact =
-        FoldSnapshotArtifact::capture(key(), &fold(&entries[..1]).expect("the prefix folds"))
-            .expect("snapshot captures");
+    let artifact = snapshot_artifact(&entries[..1]);
     block_on(
         harness
             .store
             .publish(fixture_authority().workspace, &artifact),
     )
     .expect("snapshot publishes");
-    let mut corrupt = artifact.body.clone();
+    let mut corrupt = artifact.body().to_vec();
     corrupt[0] ^= 1;
     harness
         .store
-        .corrupt_snapshot_body(artifact.pointer.body_digest, corrupt);
+        .corrupt_snapshot_body(artifact.pointer().body_digest, corrupt);
 
     let restored = restore_fixture(
         &harness.store,
         &entries,
         RestoreBudget {
             max_entries: entries.len(),
-            max_bytes: artifact.body.len().saturating_add(journal_bytes(&entries)),
+            max_bytes: artifact
+                .body()
+                .len()
+                .saturating_add(journal_bytes(&entries)),
         },
     )
     .expect("authoritative fallback fits");
@@ -2614,7 +2631,10 @@ fn corrupt_snapshot_falls_back_when_small_and_preserves_both_causes_when_large()
         &entries,
         RestoreBudget {
             max_entries: 1,
-            max_bytes: artifact.body.len().saturating_add(journal_bytes(&entries)),
+            max_bytes: artifact
+                .body()
+                .len()
+                .saturating_add(journal_bytes(&entries)),
         },
     )
     .expect_err("the same corrupt snapshot cannot hide an oversized fallback");
@@ -2633,9 +2653,7 @@ fn corrupt_snapshot_falls_back_when_small_and_preserves_both_causes_when_large()
 fn snapshot_restore_survives_process_handoff_without_local_authority() {
     let harness = Harness::new(Vec::new());
     let entries = history();
-    let artifact =
-        FoldSnapshotArtifact::capture(key(), &fold(&entries[..1]).expect("the prefix folds"))
-            .expect("snapshot captures");
+    let artifact = snapshot_artifact(&entries[..1]);
     block_on(
         harness
             .store
@@ -2661,9 +2679,7 @@ fn snapshot_restore_survives_process_handoff_without_local_authority() {
 fn snapshot_body_workspace_mismatch_is_fatal_before_journal_fallback() {
     let harness = Harness::new(Vec::new());
     let entries = history();
-    let artifact =
-        FoldSnapshotArtifact::capture(key(), &fold(&entries[..1]).expect("the prefix folds"))
-            .expect("snapshot captures");
+    let artifact = snapshot_artifact(&entries[..1]);
     block_on(
         harness
             .store
@@ -2702,10 +2718,8 @@ fn snapshot_body_workspace_mismatch_is_fatal_before_journal_fallback() {
 fn snapshot_publication_refuses_rollback_and_same_sequence_conflict() {
     let harness = Harness::new(Vec::new());
     let entries = history();
-    let old = FoldSnapshotArtifact::capture(key(), &fold(&entries[..1]).expect("the prefix folds"))
-        .expect("old snapshot captures");
-    let current = FoldSnapshotArtifact::capture(key(), &fold(&entries).expect("history folds"))
-        .expect("current snapshot captures");
+    let old = snapshot_artifact(&entries[..1]);
+    let current = snapshot_artifact(&entries);
     let wrong_workspace = WorkspaceId::from_uuid7(Uuid7::compose(2, [7; 10]));
     assert_eq!(
         block_on(harness.store.publish(wrong_workspace, &current)),
@@ -2733,15 +2747,15 @@ fn snapshot_publication_refuses_rollback_and_same_sequence_conflict() {
         block_on(harness.store.publish(fixture_authority().workspace, &old),)
             .expect("rollback is a typed no-op"),
         SnapshotPublishOutcome::Superseded {
-            current: current.pointer.absorbed,
+            current: current.pointer().absorbed,
         }
     );
     assert_eq!(
         harness.store.snapshot_pointer(key()),
-        Some(current.pointer.clone())
+        Some(current.pointer().clone())
     );
 
-    let mut hostile = current.pointer.clone();
+    let mut hostile = current.pointer().clone();
     hostile.body_digest = SnapshotDigest::of(b"different derived bytes");
     harness
         .store
@@ -2753,7 +2767,7 @@ fn snapshot_publication_refuses_rollback_and_same_sequence_conflict() {
                 .publish(fixture_authority().workspace, &current),
         ),
         Err(StoreError::SnapshotPointerConflict {
-            seq: current.pointer.absorbed.seq,
+            seq: current.pointer().absorbed.seq,
         })
     );
 }
@@ -2764,8 +2778,7 @@ fn snapshot_publication_refuses_rollback_and_same_sequence_conflict() {
 fn snapshot_ahead_of_claim_is_diagnostic_not_authority() {
     let harness = Harness::new(Vec::new());
     let entries = history();
-    let current = FoldSnapshotArtifact::capture(key(), &fold(&entries).expect("history folds"))
-        .expect("snapshot captures");
+    let current = snapshot_artifact(&entries);
     block_on(
         harness
             .store
@@ -2810,9 +2823,7 @@ fn snapshot_ahead_of_claim_is_diagnostic_not_authority() {
 fn snapshot_same_sequence_fork_never_reaches_planning() {
     let harness = Harness::new(Vec::new());
     let entries = history();
-    let snapshot =
-        FoldSnapshotArtifact::capture(key(), &fold(&entries[..1]).expect("the prefix folds"))
-            .expect("snapshot captures");
+    let snapshot = snapshot_artifact(&entries[..1]);
     block_on(
         harness
             .store
@@ -2825,7 +2836,7 @@ fn snapshot_same_sequence_fork_never_reaches_planning() {
         harness.store.as_ref(),
         fixture_authority().workspace,
         key(),
-        Some(snapshot.pointer.absorbed.seq),
+        Some(snapshot.pointer().absorbed.seq),
         Some(ContentHash([0xaa; 32])),
         crate::ports::ReadBudget {
             max_entries: 64,
