@@ -200,6 +200,9 @@ pub struct GenerationAccountingPlan {
     pub suspended_at: Option<Timestamp>,
     /// Next snapshot generation ordinal.
     pub snapshot_ordinal: u32,
+    /// Provider lifetime start, set exactly once when launch settles. `None`
+    /// preserves the already-recorded lifetime on later transitions.
+    pub lifetime_started_at: Option<Timestamp>,
 }
 
 /// What a committed generation write landed.
@@ -216,6 +219,9 @@ pub struct GenerationCommit {
 pub struct OperationAdmissionPlan {
     /// The exact generation admitting work.
     pub generation: GenerationId,
+    /// The deterministic operation identity. Admission is idempotent on this
+    /// value, not merely on a head revision.
+    pub operation: aex_hands_protocol::rpc::HandsOperationId,
     /// The lifecycle fence presented by Brain.
     pub fence: Fence,
     /// The head revision Brain read.
@@ -237,6 +243,9 @@ pub struct OperationAdmissionPlan {
 pub struct OperationSettlementPlan {
     /// The exact generation settling work.
     pub generation: GenerationId,
+    /// The operation whose durable admission marker is removed. Repeated
+    /// settlement of the same operation is a no-op.
+    pub operation: aex_hands_protocol::rpc::HandsOperationId,
     /// The head revision Brain read.
     pub expected_revision: Revision,
     /// The count after settlement.

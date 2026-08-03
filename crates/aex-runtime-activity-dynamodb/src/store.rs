@@ -27,7 +27,7 @@ use aex_wire::types::Timestamp;
 use aws_sdk_dynamodb::Client;
 use aws_sdk_dynamodb::types::builders::{PutBuilder, UpdateBuilder};
 use aws_sdk_dynamodb::types::{
-    Put, ReturnValuesOnConditionCheckFailure, TransactWriteItem, Update,
+    Delete, Put, ReturnValuesOnConditionCheckFailure, TransactWriteItem, Update,
 };
 use std::str::FromStr as _;
 
@@ -35,6 +35,8 @@ use crate::codec::{
     self, CurrentGeneration, GenerationRow, IdleProbe, LifecycleIntent, LifecycleReceipt,
 };
 use crate::{expressions, keys};
+
+const HANDS_OPERATION_ADMISSION: &str = "hands_operation_admission";
 
 /// One row of the slim evaluation projection.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -180,6 +182,37 @@ impl RuntimeActivityDynamoStore {
             .transpose()
     }
 
+    async fn operation_is_admitted(
+        &self,
+        generation: GenerationId,
+        operation: aex_hands_protocol::rpc::HandsOperationId,
+    ) -> Result<bool, RuntimeStoreError> {
+        let target = keys::operation_admission(generation, operation);
+        let Some(item) = self
+            .get(&target.pk, &target.sk)
+            .await
+            .map_err(|error| runtime_error(error, None))?
+        else {
+            return Ok(false);
+        };
+        let row = aex_session_dynamodb::attr::Row::bind(&item, HANDS_OPERATION_ADMISSION)
+            .map_err(|error| malformed(&error.to_string()))?;
+        if row
+            .string("generationId")
+            .map_err(|error| malformed(&error.to_string()))?
+            != generation.to_string()
+            || row
+                .string("operationId")
+                .map_err(|error| malformed(&error.to_string()))?
+                != operation.0.to_string()
+        {
+            return Err(malformed(
+                "an operation admission marker disagrees with its key",
+            ));
+        }
+        Ok(true)
+    }
+
     async fn transact(
         &self,
         items: Vec<TransactWriteItem>,
@@ -298,6 +331,20 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
                 } else {
                     remove.push("suspendedAt");
                 }
+                if let Some(launched_at) = accounting.lifetime_started_at {
+                    update.push_str(
+                        ", providerLaunchedAt = :providerLaunchedAt, providerLifetimeExpiresAt = :providerLifetimeExpiresAt",
+                    );
+                    builder = builder
+                        .expression_attribute_values(":providerLaunchedAt", stamp(launched_at))
+                        .expression_attribute_values(
+                            ":providerLifetimeExpiresAt",
+                            stamp(aex_runtime_control::clock::plus_millis(
+                                launched_at,
+                                aex_runtime_control::lifecycle::PROVIDER_LIFETIME_MS,
+                            )),
+                        );
+                }
             }
             if !evaluable {
                 remove.extend([keys::DUE_PK, keys::DUE_SK]);
@@ -381,6 +428,12 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
                     generation: plan.generation,
                 },
             )?;
+            if self
+                .operation_is_admitted(plan.generation, plan.operation)
+                .await?
+            {
+                return Ok(());
+            }
             let expected_open = plan.open_operations - 1;
             let target = keys::head_for_generation(plan.generation);
             let head = Update::builder()
@@ -418,18 +471,46 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
                 .expression_attribute_values(":at", stamp(plan.last_busy_at))
                 .build()
                 .map_err(|error| malformed(&error.to_string()))?;
-            self.transact(
-                vec![
-                    TransactWriteItem::builder().update(head).build(),
-                    TransactWriteItem::builder().update(pointer).build(),
-                ],
-                transaction_token(
-                    "operation-admit",
-                    plan.generation,
-                    &plan.expected_revision.value().to_string(),
-                ),
-            )
-            .await
+            let marker = keys::operation_admission(plan.generation, plan.operation);
+            let marker = ItemBuilder::new(HANDS_OPERATION_ADMISSION)
+                .set(PK, s(marker.pk))
+                .set(SK, s(marker.sk))
+                .set("generationId", s(plan.generation.to_string()))
+                .set("operationId", s(plan.operation.0.to_string()))
+                .set("admittedAt", stamp(plan.last_busy_at))
+                .build();
+            let marker = Put::builder()
+                .table_name(&self.table)
+                .set_item(Some(marker))
+                .condition_expression("attribute_not_exists(pk)")
+                .build()
+                .map_err(|error| malformed(&error.to_string()))?;
+            let outcome = self
+                .transact(
+                    vec![
+                        TransactWriteItem::builder().put(marker).build(),
+                        TransactWriteItem::builder().update(head).build(),
+                        TransactWriteItem::builder().update(pointer).build(),
+                    ],
+                    transaction_token(
+                        "operation-admit",
+                        plan.generation,
+                        &format!(
+                            "{}:{}",
+                            plan.operation.0,
+                            plan.expected_revision.value()
+                        ),
+                    ),
+                )
+                .await;
+            if outcome.is_err()
+                && self
+                    .operation_is_admitted(plan.generation, plan.operation)
+                    .await?
+            {
+                return Ok(());
+            }
+            outcome
         })
     }
 
@@ -445,6 +526,12 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
                     generation: plan.generation,
                 },
             )?;
+            if !self
+                .operation_is_admitted(plan.generation, plan.operation)
+                .await?
+            {
+                return Ok(());
+            }
             let expected_open = plan
                 .open_operations
                 .checked_add(1)
@@ -482,18 +569,39 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
                 .expression_attribute_values(":at", stamp(plan.last_busy_at))
                 .build()
                 .map_err(|error| malformed(&error.to_string()))?;
-            self.transact(
-                vec![
-                    TransactWriteItem::builder().update(head).build(),
-                    TransactWriteItem::builder().update(pointer).build(),
-                ],
-                transaction_token(
-                    "operation-settle",
-                    plan.generation,
-                    &plan.expected_revision.value().to_string(),
-                ),
-            )
-            .await
+            let marker = keys::operation_admission(plan.generation, plan.operation);
+            let marker = Delete::builder()
+                .table_name(&self.table)
+                .set_key(Some(key(&marker.pk, &marker.sk)))
+                .condition_expression("attribute_exists(pk)")
+                .build()
+                .map_err(|error| malformed(&error.to_string()))?;
+            let outcome = self
+                .transact(
+                    vec![
+                        TransactWriteItem::builder().delete(marker).build(),
+                        TransactWriteItem::builder().update(head).build(),
+                        TransactWriteItem::builder().update(pointer).build(),
+                    ],
+                    transaction_token(
+                        "operation-settle",
+                        plan.generation,
+                        &format!(
+                            "{}:{}",
+                            plan.operation.0,
+                            plan.expected_revision.value()
+                        ),
+                    ),
+                )
+                .await;
+            if outcome.is_err()
+                && !self
+                    .operation_is_admitted(plan.generation, plan.operation)
+                    .await?
+            {
+                return Ok(());
+            }
+            outcome
         })
     }
 
@@ -1141,6 +1249,20 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
                             .expression_attribute_values(":suspendedAt", stamp(suspended_at));
                     } else {
                         remove.push("suspendedAt");
+                    }
+                    if let Some(launched_at) = accounting.lifetime_started_at {
+                        head_update.push_str(
+                            ", providerLaunchedAt = :providerLaunchedAt, providerLifetimeExpiresAt = :providerLifetimeExpiresAt",
+                        );
+                        head_builder = head_builder
+                            .expression_attribute_values(":providerLaunchedAt", stamp(launched_at))
+                            .expression_attribute_values(
+                                ":providerLifetimeExpiresAt",
+                                stamp(aex_runtime_control::clock::plus_millis(
+                                    launched_at,
+                                    aex_runtime_control::lifecycle::PROVIDER_LIFETIME_MS,
+                                )),
+                            );
                     }
                 }
                 if !keys::is_evaluable(generation.next_state) {

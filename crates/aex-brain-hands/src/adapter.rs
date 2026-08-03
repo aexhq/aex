@@ -182,6 +182,7 @@ pub const fn launch_backoff_ms(attempt: u32) -> u64 {
 /// reached.
 pub fn admit(
     head: &GenerationHead,
+    operation: aex_hands_protocol::rpc::HandsOperationId,
     fence: Fence,
     revision: Revision,
     now: Timestamp,
@@ -189,6 +190,7 @@ pub fn admit(
     let admitted = head.admit(fence, revision, now)?;
     Ok(AdmitPlan {
         generation: head.generation,
+        operation,
         fence,
         expected_revision: revision,
         open_operations: admitted.open_operations,
@@ -204,10 +206,15 @@ pub fn admit(
 /// lifecycle transition has advanced it, or a suspend would strand the counter
 /// above zero forever and the generation would never become idle.
 #[must_use]
-pub fn settle(head: &GenerationHead, now: Timestamp) -> SettlePlan {
+pub fn settle(
+    head: &GenerationHead,
+    operation: aex_hands_protocol::rpc::HandsOperationId,
+    now: Timestamp,
+) -> SettlePlan {
     let (open_operations, next_revision, last_busy_at) = head.settle(now);
     SettlePlan {
         generation: head.generation,
+        operation,
         expected_revision: head.revision,
         open_operations,
         next_revision,
@@ -279,7 +286,7 @@ mod tests {
         admit, launch_backoff_ms, materialize_step, max_in_flight, pool_size, settle,
         transport_mode,
     };
-    use aex_hands_protocol::rpc::Fence;
+    use aex_hands_protocol::rpc::{Fence, HandsOperationId};
     use aex_runtime_control::generation::{
         AdmissionRefused, GenerationHead, GenerationState, Revision, TransportMode,
     };
@@ -293,6 +300,10 @@ mod tests {
 
     fn generation() -> GenerationId {
         GenerationId::from_uuid7(Uuid7::compose(1, [1; 10]))
+    }
+
+    fn operation() -> HandsOperationId {
+        HandsOperationId(Uuid7::compose(2, [2; 10]))
     }
 
     fn head(state: GenerationState, open: u32) -> GenerationHead {
@@ -407,12 +418,19 @@ mod tests {
     #[test]
     fn admission_refuses_a_suspending_generation_and_a_stale_fence() {
         let running = head(GenerationState::Running, 0);
-        let plan = admit(&running, Fence(3), Revision::new(11), at(2_000))
-            .expect("a running generation admits");
+        let plan = admit(
+            &running,
+            operation(),
+            Fence(3),
+            Revision::new(11),
+            at(2_000),
+        )
+        .expect("a running generation admits");
         assert_eq!(
             plan,
             AdmitPlan {
                 generation: generation(),
+                operation: operation(),
                 fence: Fence(3),
                 expected_revision: Revision::new(11),
                 open_operations: 1,
@@ -423,11 +441,23 @@ mod tests {
 
         let suspending = head(GenerationState::Suspending, 0);
         assert!(matches!(
-            admit(&suspending, Fence(3), Revision::new(11), at(2_000)),
+            admit(
+                &suspending,
+                operation(),
+                Fence(3),
+                Revision::new(11),
+                at(2_000)
+            ),
             Err(AdmissionRefused::NotRunning { .. })
         ));
         assert!(matches!(
-            admit(&running, Fence(2), Revision::new(11), at(2_000)),
+            admit(
+                &running,
+                operation(),
+                Fence(2),
+                Revision::new(11),
+                at(2_000)
+            ),
             Err(AdmissionRefused::Fenced { .. })
         ));
     }
@@ -441,7 +471,13 @@ mod tests {
         let mut refusals = 0u32;
         for step in 0..96u32 {
             let current = head(GenerationState::Running, open);
-            let Ok(plan) = admit(&current, Fence(3), Revision::new(11), at(0)) else {
+            let Ok(plan) = admit(
+                &current,
+                HandsOperationId(Uuid7::compose(u64::from(step + 3), [3; 10])),
+                Fence(3),
+                Revision::new(11),
+                at(0),
+            ) else {
                 // The shape's concurrency ceiling refused. A refusal changes
                 // nothing, which is itself part of the property.
                 refusals += 1;
@@ -456,7 +492,7 @@ mod tests {
                 0 | 3 => {
                     truth += 1;
                     let after = head(GenerationState::Running, open);
-                    open = settle(&after, at(0)).open_operations;
+                    open = settle(&after, operation(), at(0)).open_operations;
                     truth -= 1;
                 }
                 // Admit and dispatch; settle later.
@@ -481,7 +517,7 @@ mod tests {
         // never becomes idle.
         let mut advanced = head(GenerationState::Suspending, 1);
         advanced.fence = Fence(99);
-        let plan = settle(&advanced, at(5_000));
+        let plan = settle(&advanced, operation(), at(5_000));
         assert_eq!(plan.open_operations, 0);
         assert_eq!(plan.next_revision, Revision::new(12));
     }
@@ -489,8 +525,8 @@ mod tests {
     #[test]
     fn concurrent_settlements_cas_the_revision_and_recompute_the_count() {
         let observed = head(GenerationState::Running, 2);
-        let first = settle(&observed, at(5_000));
-        let racing = settle(&observed, at(5_001));
+        let first = settle(&observed, operation(), at(5_000));
+        let racing = settle(&observed, operation(), at(5_001));
         assert_eq!(first.expected_revision, Revision::new(11));
         assert_eq!(racing.expected_revision, Revision::new(11));
 
@@ -499,7 +535,7 @@ mod tests {
         let mut after_first = observed;
         after_first.open_operations = first.open_operations;
         after_first.revision = first.next_revision;
-        let retried = settle(&after_first, at(5_002));
+        let retried = settle(&after_first, operation(), at(5_002));
         assert_eq!(retried.expected_revision, Revision::new(12));
         assert_eq!(retried.next_revision, Revision::new(13));
         assert_eq!(retried.open_operations, 0);

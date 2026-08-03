@@ -985,6 +985,7 @@ impl RuntimeControl {
                 accounted_from: now,
                 suspended_at: (closure.next_state == GenerationState::Suspended).then_some(now),
                 snapshot_ordinal,
+                lifetime_started_at: None,
             }),
             at: now,
         };
