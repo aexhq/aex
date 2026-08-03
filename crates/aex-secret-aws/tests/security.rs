@@ -28,10 +28,18 @@ fn no_rendering_of_anything_this_adapter_returns_prints_a_secret() {
     let bound = context("openai-key", 1);
     let sealed = run(crypto.seal(&bound, WRAPPED, &plaintext(VALUE), now())).expect("seals");
     let revealed = run(crypto.reveal(&sealed, &bound, now())).expect("reveals");
+    let rewrapped = run(crypto.rewrap(
+        &sealed,
+        &bound,
+        &support::session_context("openai-key", 9),
+        now(),
+    ))
+    .expect("rewraps");
 
     for rendering in [
         format!("{sealed:?}"),
         format!("{revealed:?}"),
+        format!("{rewrapped:?}"),
         format!("{revealed}"),
         format!("{crypto:?}"),
     ] {

@@ -44,7 +44,8 @@ proptest! {
 
 #[test]
 fn a_rewrap_moves_a_value_between_contexts_without_the_caller_ever_holding_it() {
-    let crypto = crypto(FakeKeys::new());
+    let keys = FakeKeys::new();
+    let crypto = crypto(keys.clone());
     let source = context("openai-key", 1);
     let target = session_context("openai-key", 9);
 
@@ -53,6 +54,24 @@ fn a_rewrap_moves_a_value_between_contexts_without_the_caller_ever_holding_it() 
 
     assert_ne!(rewrapped.frame, sealed.frame);
     assert_ne!(rewrapped.context_digest, sealed.context_digest);
+    assert_ne!(
+        rewrapped.wrapped_branch_key, sealed.wrapped_branch_key,
+        "a context-changing rewrap must emit destination-bound KMS ciphertext"
+    );
+    assert_eq!(
+        keys.rewrap_calls(),
+        1,
+        "a fake that hands back context-agnostic plaintext must not mask a missing KMS ReEncrypt"
+    );
+    assert_eq!(
+        keys.rewrap_contexts(),
+        vec![(
+            aex_secret_aws::context::kms_pairs(&source),
+            aex_secret_aws::context::kms_pairs(&target)
+        )],
+        "the full source and destination maps are part of the provider contract"
+    );
+    crypto.cache().clear();
     let revealed = run(crypto.reveal(&rewrapped, &target, now())).expect("reveals");
     assert_eq!(revealed.expose_for_encryption(), b"hunter2");
     assert!(

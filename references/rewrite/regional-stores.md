@@ -585,3 +585,45 @@ after-commit hint yet. Resulting-size safety for `Update` actions must remain an
 owner-side preflight over the item already read; the root compiler cannot infer
 the resulting DynamoDB item without adding a race-prone read. No mutating
 session route should mount until that composition is complete.
+
+## 17. Secret branch-key rewrap correction (2026-08-03)
+
+An exact-context audit found that the original `EnvelopeCrypto::rewrap` opened
+the value under the source context and then presented the unchanged KMS-wrapped
+branch-key ciphertext under the destination context. A permissive fake returned
+the same plaintext for every context, and the former cache identity omitted the
+context digest, so both paths could hide the defect. Real KMS ciphertext
+requires the complete, case-sensitive encryption context used when it was
+created.
+
+`BranchKeyProvider` now owns an explicit context-changing rewrap operation. The
+AWS adapter calls KMS `ReEncrypt` with the complete source and destination maps,
+pins both sides to the configured root-key ARN, verifies that both response key
+identities equal that ARN, rejects absent or empty ciphertext, and returns a
+redacting `RewrappedBranchKey` rather than an untyped byte vector. The envelope
+stores those newly emitted bytes, derives their version, and caches the already
+opened branch material under the destination context digest. It does not spend
+a redundant destination `Decrypt`: KMS `ReEncrypt` is the authority that the
+plaintext branch key was preserved while the new ciphertext was authenticated.
+
+The provider future performs no detached work, so dropping it cancels the
+in-flight request. Its caller-supplied AWS client owns the operation/attempt
+deadline and bounded retry configuration. `Decrypt` is a read and `ReEncrypt`
+creates no durable provider-side object; timeout, transport failure and
+throttling are therefore typed as safe to retry within that caller-owned
+budget. Denial, disabled/missing key, wrong root, invalid request and exact
+context mismatch are distinct nonretryable outcomes.
+
+The fake now records the exact context bound to each wrapped ciphertext and
+refuses the same source bytes under a different map. The engine-backed case is
+defined to mirror that assertion against LocalStack KMS and assert that a
+context change returns different wrapped ciphertext that remains revealable
+only under the destination context. This prevents a fake or warm cache from
+serving as evidence for semantics the real provider rejects.
+
+This correction does **not** unblock `secret_put` or
+`provider_credential_register`. `ReEncrypt` transforms an existing wrapped
+branch key; it neither reads nor mints the active key ciphertext required by a
+first seal. The exact remaining route decisions and missing atomic receipt/
+registration plans are recorded in `regional-services.md`; both routes remain
+unserved.

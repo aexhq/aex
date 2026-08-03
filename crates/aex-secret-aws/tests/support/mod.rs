@@ -3,12 +3,12 @@
 #![allow(dead_code, reason = "each test target uses a different subset")]
 #![allow(missing_docs, reason = "the module doc states what these fixtures are")]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use aex_secret_aws::envelope::{BranchKeyMaterial, Entropy, KEY_VERSION_BYTES};
-use aex_secret_aws::keystore::{BranchKeyProvider, KeyMaterialError};
+use aex_secret_aws::keystore::{BranchKeyProvider, KeyMaterialError, RewrappedBranchKey};
 use aex_secret_domain::context::{EncryptionContext, Plane};
 use aex_secret_domain::custody::CustodyRevision;
 use aex_secret_domain::secret::{SecretName, SourceGeneration};
@@ -16,6 +16,9 @@ use aex_wire::ids::{OrganizationId, PrefixedId, Uuid7, WorkspaceId};
 use aex_wire::types::{Region, Timestamp};
 use async_trait::async_trait;
 use zeroize::Zeroizing;
+
+type ContextPairs = BTreeMap<String, String>;
+type RewrapCall = (ContextPairs, ContextPairs);
 
 #[must_use]
 pub fn now() -> Timestamp {
@@ -60,7 +63,10 @@ impl Entropy for Pinned {
 struct FakeInner {
     material: Vec<u8>,
     calls: AtomicUsize,
-    seen: Mutex<Vec<BTreeMap<String, String>>>,
+    rewrap_calls: AtomicUsize,
+    seen: Mutex<Vec<ContextPairs>>,
+    rewrap_seen: Mutex<Vec<RewrapCall>>,
+    bindings: Mutex<HashMap<Vec<u8>, ContextPairs>>,
     denied: bool,
 }
 
@@ -81,7 +87,10 @@ impl FakeKeys {
             inner: std::sync::Arc::new(FakeInner {
                 material: vec![0x2a; 32],
                 calls: AtomicUsize::new(0),
+                rewrap_calls: AtomicUsize::new(0),
                 seen: Mutex::new(Vec::new()),
+                rewrap_seen: Mutex::new(Vec::new()),
+                bindings: Mutex::new(HashMap::new()),
                 denied: false,
             }),
         }
@@ -93,7 +102,10 @@ impl FakeKeys {
             inner: std::sync::Arc::new(FakeInner {
                 material: vec![0x2a; 32],
                 calls: AtomicUsize::new(0),
+                rewrap_calls: AtomicUsize::new(0),
                 seen: Mutex::new(Vec::new()),
+                rewrap_seen: Mutex::new(Vec::new()),
+                bindings: Mutex::new(HashMap::new()),
                 denied: true,
             }),
         }
@@ -104,14 +116,24 @@ impl FakeKeys {
         self.inner.calls.load(Ordering::Relaxed)
     }
 
+    #[must_use]
+    pub fn rewrap_calls(&self) -> usize {
+        self.inner.rewrap_calls.load(Ordering::Relaxed)
+    }
+
     /// Every encryption context the provider was asked with.
     ///
     /// # Panics
     ///
     /// If the lock was poisoned.
     #[must_use]
-    pub fn contexts(&self) -> Vec<BTreeMap<String, String>> {
+    pub fn contexts(&self) -> Vec<ContextPairs> {
         self.inner.seen.lock().expect("the lock").clone()
+    }
+
+    #[must_use]
+    pub fn rewrap_contexts(&self) -> Vec<RewrapCall> {
+        self.inner.rewrap_seen.lock().expect("the lock").clone()
     }
 }
 
@@ -127,7 +149,7 @@ impl BranchKeyProvider for FakeKeys {
         &self,
         branch_key_id: &str,
         version: [u8; KEY_VERSION_BYTES],
-        _wrapped: &[u8],
+        wrapped: &[u8],
         context: &BTreeMap<String, String>,
     ) -> Result<BranchKeyMaterial, KeyMaterialError> {
         self.inner.calls.fetch_add(1, Ordering::Relaxed);
@@ -139,11 +161,44 @@ impl BranchKeyProvider for FakeKeys {
         if self.inner.denied {
             return Err(KeyMaterialError::Denied);
         }
+        let mut bindings = self.inner.bindings.lock().expect("the lock");
+        match bindings.get(wrapped) {
+            Some(bound) if bound != context => return Err(KeyMaterialError::ContextMismatch),
+            Some(_) => {}
+            None => {
+                bindings.insert(wrapped.to_vec(), context.clone());
+            }
+        }
         Ok(BranchKeyMaterial {
             branch_key_id: branch_key_id.to_owned(),
             version,
             material: Zeroizing::new(self.inner.material.clone()),
         })
+    }
+
+    async fn rewrap(
+        &self,
+        wrapped: &[u8],
+        source_context: &BTreeMap<String, String>,
+        destination_context: &BTreeMap<String, String>,
+    ) -> Result<RewrappedBranchKey, KeyMaterialError> {
+        let call = self.inner.rewrap_calls.fetch_add(1, Ordering::Relaxed);
+        self.inner
+            .rewrap_seen
+            .lock()
+            .expect("the lock")
+            .push((source_context.clone(), destination_context.clone()));
+        if self.inner.denied {
+            return Err(KeyMaterialError::Denied);
+        }
+        let mut bindings = self.inner.bindings.lock().expect("the lock");
+        if bindings.get(wrapped) != Some(source_context) {
+            return Err(KeyMaterialError::ContextMismatch);
+        }
+        let mut destination = b"aex-test-rewrapped-v1".to_vec();
+        destination.extend_from_slice(&call.to_le_bytes());
+        bindings.insert(destination.clone(), destination_context.clone());
+        RewrappedBranchKey::from_provider(destination)
     }
 }
 
