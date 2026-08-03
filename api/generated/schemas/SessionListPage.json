@@ -9,7 +9,7 @@
       "items": {
         "$ref": "aex:schema:SessionListItem"
       },
-      "maxItems": 1000,
+      "maxItems": 100,
       "type": "array"
     },
     "nextCursor": {

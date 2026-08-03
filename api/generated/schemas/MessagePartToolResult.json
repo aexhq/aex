@@ -1,0 +1,25 @@
+{
+  "$id": "https://schemas.aex.dev/v1/MessagePartToolResult.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The canonical result of a tool call.",
+  "properties": {
+    "id": {
+      "description": "The call identity.",
+      "pattern": "^tcl_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "tool_call"
+    },
+    "resultDigest": {
+      "description": "The canonical tool-result digest.",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "resultDigest"
+  ],
+  "title": "MessagePartToolResult",
+  "type": "object"
+}

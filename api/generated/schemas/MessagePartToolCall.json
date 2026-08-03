@@ -1,0 +1,25 @@
+{
+  "$id": "https://schemas.aex.dev/v1/MessagePartToolCall.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A tool call emitted by the model.",
+  "properties": {
+    "argumentsDigest": {
+      "description": "The canonical tool-argument digest.",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "id": {
+      "description": "The call identity.",
+      "pattern": "^tcl_[0-9a-hjkmnp-tv-z]{26}$",
+      "type": "string",
+      "x-aex-id": "tool_call"
+    }
+  },
+  "required": [
+    "argumentsDigest",
+    "id"
+  ],
+  "title": "MessagePartToolCall",
+  "type": "object"
+}

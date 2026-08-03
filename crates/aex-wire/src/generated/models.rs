@@ -3,7 +3,7 @@
 //! The public request, response and query models.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:1186e3b9ca9d4778ac1fea9788954f5bbfd78a2e88749cd41e198288d1206c18`.
+//! `sha256:f82dbaa7b8d6277c802be674aefa8b3969f28ceca9e0cc196cf4bda86fecfc6d`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -2832,6 +2832,10 @@ pub enum MessagePart {
     Text(MessagePartText),
     /// A persisted file reference.
     File(MessagePartFile),
+    /// A canonical tool call.
+    ToolCall(MessagePartToolCall),
+    /// A canonical tool result.
+    ToolResult(MessagePartToolResult),
 }
 
 /// A reference to a persisted file.
@@ -2853,6 +2857,26 @@ pub struct MessagePartFile {
 pub struct MessagePartText {
     /// The text.
     pub text: String,
+}
+
+/// A tool call emitted by the model.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct MessagePartToolCall {
+    /// The canonical tool-argument digest.
+    pub arguments_digest: ContentHash,
+    /// The call identity.
+    pub id: ToolCallId,
+}
+
+/// The canonical result of a tool call.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct MessagePartToolResult {
+    /// The call identity.
+    pub id: ToolCallId,
+    /// The canonical tool-result digest.
+    pub result_digest: ContentHash,
 }
 
 /// Who produced a message.
@@ -3415,7 +3439,7 @@ pub struct ResolvedNetwork {
 pub struct Run {
     /// The terminal failure.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<ApiErrorBody>,
+    pub error: Option<RunFailure>,
     /// Identity.
     pub id: RunId,
     /// The effective spend ceiling.
@@ -3443,6 +3467,21 @@ pub struct Run {
     /// When it reached a terminal status.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal_at: Option<Timestamp>,
+}
+
+/// A durable run failure with no synthetic request identity.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct RunFailure {
+    /// The stable public failure code.
+    pub code: ObservedErrorCode,
+    /// Typed customer-safe detail.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<CanonicalJson>,
+    /// Customer-safe failure detail.
+    pub message: String,
+    /// Whether the same run step may be retried.
+    pub retryable: bool,
 }
 
 /// One page of runs.
