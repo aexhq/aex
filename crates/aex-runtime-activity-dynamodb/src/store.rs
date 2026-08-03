@@ -678,15 +678,27 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
                 });
             }
             if let Some(existing) = &intent.provider_request_id {
-                if existing == &plan.provider_request_id {
+                if existing == &plan.provider_request_id
+                    && intent.microvm.as_ref() == Some(&plan.microvm)
+                {
                     return Ok(intent);
                 }
                 return Err(malformed(
-                    "one lifecycle intent has two provider request ids",
+                    "one lifecycle intent has conflicting provider evidence",
+                ));
+            }
+            if intent
+                .microvm
+                .as_ref()
+                .is_some_and(|existing| existing != &plan.microvm)
+            {
+                return Err(malformed(
+                    "one lifecycle intent has two provider MicroVM identities",
                 ));
             }
             let expected =
                 serde_json::to_string(&intent).map_err(|error| malformed(&error.to_string()))?;
+            intent.microvm = Some(plan.microvm.clone());
             intent.provider_request_id = Some(plan.provider_request_id.clone());
             let next =
                 serde_json::to_string(&intent).map_err(|error| malformed(&error.to_string()))?;
@@ -695,9 +707,10 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
                 .table_name(&self.table)
                 .set_key(Some(key(&target.pk, &target.sk)))
                 .condition_expression("openIntent = :expected")
-                .update_expression("SET openIntent = :next")
+                .update_expression("SET openIntent = :next, providerVmId = :microvm")
                 .expression_attribute_values(":expected", s(expected))
                 .expression_attribute_values(":next", s(next))
+                .expression_attribute_values(":microvm", s(plan.microvm.0.clone()))
                 .build()
                 .map_err(|error| malformed(&error.to_string()))?;
             let durable_target = keys::intent(row.session, plan.generation, &plan.intent_id.0)

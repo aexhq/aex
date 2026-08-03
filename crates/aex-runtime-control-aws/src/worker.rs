@@ -908,6 +908,7 @@ impl RuntimeControl {
         &self,
         generation: GenerationId,
         intent_id: &LifecycleIntentId,
+        microvm: &MicrovmId,
         request: &ProviderRequestId,
     ) -> Result<(), CommandOutcome> {
         self.ports
@@ -915,6 +916,7 @@ impl RuntimeControl {
             .record_provider_request(&LifecycleRequestPlan {
                 intent_id: intent_id.clone(),
                 generation,
+                microvm: microvm.clone(),
                 provider_request_id: request.clone(),
             })
             .await
@@ -1107,7 +1109,7 @@ impl RuntimeControl {
         // 4. Persist the response identity before waiting. A crash after this
         // point leaves enough evidence for exact-identity reconciliation.
         if let Err(outcome) = self
-            .remember_request(view.head.generation, &intent_id, &request)
+            .remember_request(view.head.generation, &intent_id, microvm, &request)
             .await
         {
             return outcome;
@@ -1246,7 +1248,7 @@ impl RuntimeControl {
             }
         };
         if let Err(outcome) = self
-            .remember_request(view.head.generation, &intent_id, &request)
+            .remember_request(view.head.generation, &intent_id, &microvm, &request)
             .await
         {
             return outcome;
@@ -1356,7 +1358,7 @@ impl RuntimeControl {
         };
         if let Some(request) = &request
             && let Err(outcome) = self
-                .remember_request(view.head.generation, &intent_id, request)
+                .remember_request(view.head.generation, &intent_id, &microvm, request)
                 .await
         {
             return outcome;
@@ -2102,6 +2104,7 @@ mod tests {
                     })
                 });
             }
+            intent.microvm = Some(plan.microvm.clone());
             intent.provider_request_id = Some(plan.provider_request_id.clone());
             let intent = intent.clone();
             drop(state);
@@ -2365,6 +2368,7 @@ mod tests {
                         state,
                         endpoint: None,
                         launched_at: Some(at(LAUNCHED_AT)),
+                        request_id: None,
                     }),
                     None => Err(ProviderCall::NotFound),
                 }

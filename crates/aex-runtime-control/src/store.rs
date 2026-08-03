@@ -289,6 +289,8 @@ pub struct LifecycleRequestPlan {
     pub intent_id: LifecycleIntentId,
     /// The generation the intent belongs to.
     pub generation: GenerationId,
+    /// The exact provider `MicroVM` the request acted on or produced.
+    pub microvm: MicrovmId,
     /// The exact request identity returned by the provider SDK.
     pub provider_request_id: ProviderRequestId,
 }
