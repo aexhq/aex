@@ -113,50 +113,7 @@ pub fn build(
             "--partitions must be at least 1",
         ));
     }
-    let candidates: Vec<(String, String)> = match kind {
-        MatrixKind::Test => selection
-            .test
-            .iter()
-            .filter(|selected| {
-                selected.id.namespace() == "cargo" && !selected.id.local().starts_with("aex-live-")
-            })
-            .map(|selected| (selected.id.to_string(), selected.id.local().to_owned()))
-            .collect(),
-        MatrixKind::Node => selection
-            .test
-            .iter()
-            .filter(|selected| {
-                selected.id.namespace() == "npm"
-                    && units
-                        .units
-                        .iter()
-                        .any(|unit| unit.package == selected.id.local())
-            })
-            .map(|selected| (selected.id.to_string(), selected.id.local().to_owned()))
-            .collect(),
-        MatrixKind::Live => selection
-            .test
-            .iter()
-            .filter(|selected| selected.id.local().starts_with("aex-live-"))
-            .map(|selected| (selected.id.to_string(), selected.id.local().to_owned()))
-            .collect(),
-        MatrixKind::Terraform => selection
-            .test
-            .iter()
-            .filter(|selected| selected.id.namespace() == "tf")
-            .map(|selected| (selected.id.to_string(), selected.id.local().to_owned()))
-            .collect(),
-        MatrixKind::Artifact => selection
-            .deploy
-            .iter()
-            .map(|selected| (selected.id.to_string(), selected.id.local().to_owned()))
-            .collect(),
-        MatrixKind::Scenario => selection
-            .scenarios
-            .iter()
-            .map(|selected| (selected.id.to_string(), selected.id.local().to_owned()))
-            .collect(),
-    };
+    let candidates = candidates(selection, kind, units);
 
     let shards = partition(&candidates, partitions, durations);
     let scenario_claims: BTreeMap<&str, (&str, &str)> = scenarios
@@ -232,6 +189,53 @@ pub fn build(
         count: include.len(),
         include,
     })
+}
+
+fn candidates(selection: &Selection, kind: MatrixKind, units: &Units) -> Vec<(String, String)> {
+    match kind {
+        MatrixKind::Test => selection
+            .test
+            .iter()
+            .filter(|selected| {
+                selected.id.namespace() == "cargo" && !selected.id.local().starts_with("aex-live-")
+            })
+            .map(|selected| (selected.id.to_string(), selected.id.local().to_owned()))
+            .collect(),
+        MatrixKind::Node => selection
+            .test
+            .iter()
+            .filter(|selected| {
+                selected.id.namespace() == "npm"
+                    && units
+                        .units
+                        .iter()
+                        .any(|unit| unit.package == selected.id.local())
+            })
+            .map(|selected| (selected.id.to_string(), selected.id.local().to_owned()))
+            .collect(),
+        MatrixKind::Live => selection
+            .test
+            .iter()
+            .filter(|selected| selected.id.local().starts_with("aex-live-"))
+            .map(|selected| (selected.id.to_string(), selected.id.local().to_owned()))
+            .collect(),
+        MatrixKind::Terraform => selection
+            .test
+            .iter()
+            .filter(|selected| selected.id.namespace() == "tf")
+            .map(|selected| (selected.id.to_string(), selected.id.local().to_owned()))
+            .collect(),
+        MatrixKind::Artifact => selection
+            .deploy
+            .iter()
+            .map(|selected| (selected.id.to_string(), selected.id.local().to_owned()))
+            .collect(),
+        MatrixKind::Scenario => selection
+            .scenarios
+            .iter()
+            .map(|selected| (selected.id.to_string(), selected.id.local().to_owned()))
+            .collect(),
+    }
 }
 
 /// The emission produced when routing itself failed.
