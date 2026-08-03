@@ -6,6 +6,10 @@
 
 include!(concat!(env!("OUT_DIR"), "/brain_mux_task_shape.rs"));
 
+#[cfg(test)]
+#[path = "../task_shape_policy.rs"]
+mod policy;
+
 /// Bytes declared for the complete Fargate task.
 #[must_use]
 pub const fn task_memory_bytes() -> u64 {

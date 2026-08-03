@@ -6,6 +6,9 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+#[path = "task_shape_policy.rs"]
+mod task_shape_policy;
+
 const TRUST_ROOTS_JSON_VAR: &str = "AEX_MODEL_CATALOG_TRUST_ROOTS_JSON";
 const TRUST_ROOTS_SHA_VAR: &str = "AEX_MODEL_CATALOG_TRUST_ROOTS_SHA256";
 const COLLECTION_VAR: &str = "AEX_MODEL_CATALOG_COLLECTION_FILE";
@@ -13,29 +16,6 @@ const COLLECTION_SHA_VAR: &str = "AEX_MODEL_CATALOG_COLLECTION_SHA256";
 const TRUST_ROOTS_SCHEMA: &str = "aex.model-catalog-trust-roots.v1";
 const MAX_TRUST_ROOTS: usize = 8;
 const MAX_TRUST_ROOTS_BYTES: usize = 8 * 1024;
-const UNITS_SCHEMA: &str = "aex.units.v1";
-const BRAIN_MUX_UNIT: &str = "brain-mux";
-
-#[derive(Deserialize)]
-struct UnitsRegistry {
-    schema: String,
-    unit: Vec<ReleaseUnit>,
-}
-
-#[derive(Deserialize)]
-struct ReleaseUnit {
-    id: String,
-    kind: String,
-    package: String,
-    fargate: Option<FargateShape>,
-}
-
-#[derive(Deserialize)]
-struct FargateShape {
-    cpu: u32,
-    memory_mb: u32,
-}
-
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TrustRoots {
@@ -110,49 +90,12 @@ fn generate_task_shape(out: &std::path::Path) {
             units_path.display()
         )
     });
-    let registry: UnitsRegistry = toml::from_str(&source).unwrap_or_else(|error| {
+    let shape = task_shape_policy::parse_brain_mux_shape(&source).unwrap_or_else(|reason| {
         panic!(
-            "cannot parse release registry {}: {error}",
+            "release registry {} cannot build brain-mux: {reason}",
             units_path.display()
         )
     });
-    assert_eq!(
-        registry.schema, UNITS_SCHEMA,
-        "release/units.toml has an unsupported schema"
-    );
-    let mut matches = registry
-        .unit
-        .iter()
-        .filter(|unit| unit.id == BRAIN_MUX_UNIT);
-    let unit = matches
-        .next()
-        .expect("release/units.toml must declare brain-mux exactly once");
-    assert!(
-        matches.next().is_none(),
-        "release/units.toml declares brain-mux more than once"
-    );
-    assert_eq!(
-        unit.kind, "rust-oci-service",
-        "brain-mux must remain a service-shaped OCI unit"
-    );
-    assert_eq!(
-        unit.package, BRAIN_MUX_UNIT,
-        "brain-mux release unit must build the brain-mux package"
-    );
-    let shape = unit
-        .fargate
-        .as_ref()
-        .expect("the brain-mux release unit must declare a Fargate shape");
-    assert!(shape.cpu >= 1_024, "brain-mux requires at least one vCPU");
-    assert_eq!(
-        shape.cpu % 1_024,
-        0,
-        "brain-mux CPU units must describe whole vCPUs"
-    );
-    assert!(
-        valid_fargate_memory(shape.cpu, shape.memory_mb),
-        "brain-mux CPU/memory is not a valid Fargate task shape"
-    );
     let parallelism = shape.cpu / 1_024;
     let generated = format!(
         "/// CPU units declared by the brain-mux Fargate release row.\n\
@@ -165,17 +108,6 @@ fn generate_task_shape(out: &std::path::Path) {
     );
     fs::write(out.join("brain_mux_task_shape.rs"), generated)
         .expect("write build-bound brain-mux task shape");
-}
-
-const fn valid_fargate_memory(cpu: u32, memory_mib: u32) -> bool {
-    match cpu {
-        1_024 => memory_mib >= 2_048 && memory_mib <= 8_192 && memory_mib.is_multiple_of(1_024),
-        2_048 => memory_mib >= 4_096 && memory_mib <= 16_384 && memory_mib.is_multiple_of(1_024),
-        4_096 => memory_mib >= 8_192 && memory_mib <= 30_720 && memory_mib.is_multiple_of(1_024),
-        8_192 => memory_mib >= 16_384 && memory_mib <= 61_440 && memory_mib.is_multiple_of(4_096),
-        16_384 => memory_mib >= 32_768 && memory_mib <= 122_880 && memory_mib.is_multiple_of(8_192),
-        _ => false,
-    }
 }
 
 fn generate_release_source(

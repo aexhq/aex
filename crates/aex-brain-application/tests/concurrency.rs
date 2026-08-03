@@ -299,7 +299,7 @@ mod threaded {
             for handle in handles {
                 handle.join().expect("no thread panics");
             }
-            assert!(maximum.load(Ordering::SeqCst) <= 1);
+            assert_eq!(maximum.load(Ordering::SeqCst), 1);
             assert_eq!(set.held(PermitKind::Activation), 0);
             assert_eq!(set.held(PermitKind::ProviderStream), 0);
         }
@@ -615,7 +615,7 @@ mod loom_models {
             };
             first.join().unwrap();
             second.join().unwrap();
-            assert!(maximum.load(Ordering::SeqCst) <= 1);
+            assert_eq!(maximum.load(Ordering::SeqCst), 1);
             assert_eq!(set.held(PermitKind::Activation), 0);
             assert_eq!(set.held(PermitKind::ProviderStream), 0);
         });
