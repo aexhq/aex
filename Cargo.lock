@@ -323,6 +323,7 @@ dependencies = [
  "serde_norway",
  "sha2 0.11.0",
  "similar-asserts",
+ "tempfile",
  "thiserror",
  "walkdir",
 ]
@@ -1189,10 +1190,14 @@ dependencies = [
 name = "aex-session-dynamodb"
 version = "0.1.0"
 dependencies = [
+ "aex-content-domain",
  "aex-internal-contracts",
  "aex-observation-domain",
  "aex-operation-domain",
  "aex-runtime-control",
+ "aex-secret-domain",
+ "aex-session-app",
+ "aex-session-domain",
  "aex-wire",
  "async-trait",
  "aws-config",

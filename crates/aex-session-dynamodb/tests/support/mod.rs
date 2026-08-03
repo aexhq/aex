@@ -10,15 +10,13 @@
 
 use aex_session_dynamodb::plan::RegionalTables;
 use aex_session_dynamodb::wire_pending::{
-    AdmissionPlan, AgentControl, AgentDecisionPlan, Body, EffectIntent, EffectStage,
-    FanoutPagePlan, HeadGuard, JournalEntry, LifecyclePlan, LifecycleTransition, Message,
-    PlacementGuard, ReplayIntent, Run, SessionEvent, SessionHead, SessionLifecycle, SessionStatus,
-    TerminalPlan, WakeCommit, WakeIntent,
+    AgentControl, AgentDecisionPlan, Body, EffectIntent, EffectStage, FanoutPagePlan, HeadGuard,
+    JournalEntry, ReplayIntent, SessionEvent, WakeIntent,
 };
 use aex_wire::idempotency::{IdempotencyKey, IntentDigest};
 use aex_wire::ids::{
-    AgentId, GenerationId, MessageId, ObservationId, OperationId, OrganizationId, PrefixedId,
-    RunId, SessionId, Uuid7, WorkspaceId,
+    AgentId, GenerationId, ObservationId, OperationId, OrganizationId, PrefixedId, RunId,
+    SessionId, Uuid7, WorkspaceId,
 };
 use aex_wire::types::Timestamp;
 use aws_sdk_dynamodb::Client;
@@ -136,11 +134,6 @@ pub fn run_id() -> RunId {
 }
 
 #[must_use]
-pub fn message_id() -> MessageId {
-    MessageId::from_uuid7(Uuid7::compose(1_754_051_696_789, [5; 10]))
-}
-
-#[must_use]
 pub fn root_agent() -> AgentId {
     AgentId::from_uuid7(Uuid7::compose(1_754_051_696_789, [6; 10]))
 }
@@ -158,31 +151,6 @@ pub fn child_agent(byte: u8) -> AgentId {
 #[must_use]
 pub fn operation() -> OperationId {
     OperationId::from_uuid7(Uuid7::compose(1_754_051_696_789, [7; 10]))
-}
-
-#[must_use]
-pub fn head() -> SessionHead {
-    SessionHead {
-        session: session(),
-        workspace: workspace(),
-        organization: organization(),
-        status: SessionStatus::Idle,
-        lifecycle: SessionLifecycle::Active,
-        revision: 12,
-        deletion_epoch: 0,
-        cancel_epoch: 3,
-        content_admission_epoch: 1,
-        active_run: None,
-        root_agent: root_agent(),
-        agent_budget: 256,
-        resolved_config_digest: format!("sha256:{}", "a".repeat(64)),
-        custody_revision: 2,
-        created_at: now(),
-        updated_at: now(),
-        trashed_at: None,
-        purged_at: None,
-        deletion_operation: None,
-    }
 }
 
 #[must_use]
@@ -246,76 +214,6 @@ pub fn replay() -> ReplayIntent {
 }
 
 #[must_use]
-pub fn admission() -> AdmissionPlan {
-    AdmissionPlan {
-        placement: PlacementGuard {
-            workspace: workspace(),
-            key_epoch: 1,
-            account_epoch: 2,
-            revocation_epoch: 3,
-        },
-        staged_body: None,
-        head: head(),
-        message: Message {
-            message: message_id(),
-            session: session(),
-            run: Some(run_id()),
-            role: "user".to_owned(),
-            body: Body::Inline(b"hello".to_vec()),
-            content_bytes: 5,
-            created_at: now(),
-        },
-        run: Run {
-            run: run_id(),
-            session: session(),
-            message: message_id(),
-            status: "queued",
-            max_spend_cents: 500,
-            reservation: "rsv-0001".to_owned(),
-            deadline_at: later(600_000),
-            queued_at: now(),
-            started_at: None,
-            terminal_at: None,
-            result_digest: None,
-        },
-        event: event(1, "run.admitted"),
-        root_control: control(),
-        child_budget: 255,
-        wake: wake(),
-        replay: replay(),
-        now: now(),
-    }
-}
-
-#[must_use]
-pub fn terminal() -> TerminalPlan {
-    TerminalPlan {
-        session: session(),
-        run: run_id(),
-        head_revision: 13,
-        deletion_epoch: 0,
-        terminal_status: "succeeded",
-        result_digest: Some(format!("sha256:{}", "c".repeat(64))),
-        usage_closure_id: "closure-1".to_owned(),
-        root_agent: root_agent(),
-        agent_revision: 5,
-        agent_fence: 2,
-        journal_tail: 40,
-        terminal_agent_status: "succeeded".to_owned(),
-        reservation: "rsv-0001".to_owned(),
-        event: event(2, "run.succeeded"),
-        wake: WakeCommit {
-            work_id: "wrk_01j0000000000000000000000".to_owned(),
-            fence: 2,
-            owner: "worker-1".to_owned(),
-            expires_at_epoch_seconds: 1_754_138_096,
-        },
-        usage_work_id: "wrk_01j0000000000000000000001".to_owned(),
-        now: now(),
-    }
-}
-
-#[must_use]
 pub fn decision() -> AgentDecisionPlan {
     AgentDecisionPlan {
         session: session(),
@@ -364,21 +262,6 @@ pub fn fanout(children: usize) -> FanoutPagePlan {
                 wake: wake(),
             })
             .collect(),
-        now: now(),
-    }
-}
-
-#[must_use]
-pub fn lifecycle(transition: LifecycleTransition) -> LifecyclePlan {
-    LifecyclePlan {
-        transition,
-        session: session(),
-        workspace: workspace(),
-        revision: 12,
-        created_at: now(),
-        operation: Some(operation()),
-        wake: None,
-        replay: None,
         now: now(),
     }
 }

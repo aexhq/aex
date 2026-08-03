@@ -11,7 +11,7 @@ use std::future::Future;
 
 use aex_operation_domain::operation::{CancelRejection, OperationKind, OperationStatus, cancel};
 use aex_wire::idempotency::IdempotencyKey;
-use aex_wire::ids::{AgentId, ApprovalId, OperationId, RunId, SessionId, WorkspaceId};
+use aex_wire::ids::{AgentId, ApprovalId, OperationId, SessionId, WorkspaceId};
 use aex_wire::types::Timestamp;
 use async_trait::async_trait;
 use aws_sdk_dynamodb::Client;
@@ -25,17 +25,15 @@ use crate::error::{
     decode_cancellation_with_resolution,
 };
 use crate::keys;
-use crate::paging::{CursorBinding, CursorError, CursorKey, PageBudget, PagePosition};
+use crate::paging::{CursorError, PageBudget, PagePosition};
 use crate::plan::{Participant, RegionalTables, TransactionPlan, key};
 use crate::replay::{IdempotencyScope, Receipt, ReceiptStore, key_digest};
 use crate::transactions::{
-    AdmissionForeign, Foreign, OperationCancelRequest, TerminalForeign, compile_admission,
-    compile_decision, compile_fanout_page, compile_lifecycle, compile_terminal,
-    operation_cancel_owned, operation_cancel_requested,
+    Foreign, OperationCancelRequest, compile_decision, compile_fanout_page, operation_cancel_owned,
+    operation_cancel_requested,
 };
 use crate::wire_pending::{
-    AdmissionPlan, AgentControl, AgentDecisionPlan, Approval, FanoutPagePlan, JournalEntry,
-    LifecyclePlan, Run, SessionHead, StoredOperation, TerminalPlan,
+    AgentControl, AgentDecisionPlan, Approval, FanoutPagePlan, JournalEntry, StoredOperation,
 };
 
 const OPERATION_HYDRATION_CONCURRENCY: usize = 16;
@@ -49,75 +47,6 @@ pub struct Page<T> {
     pub next: Option<aex_wire::cursor::Cursor>,
 }
 
-// TODO(cross-stream): `aex-session-app` publishes no `SessionAuthority`. Its commit-side
-// port is `aex_session_app::ports::AuthorityCommitter`, which takes an
-// `aex_session_app::plan::SessionTransaction` and returns `ports::CommitOutcome`; its
-// read side is `ports::SessionReader`.
-/// The session authority.
-#[async_trait]
-pub trait SessionAuthority: Send + Sync + 'static {
-    /// Commits the one public admission transaction.
-    ///
-    /// # Errors
-    ///
-    /// [`StoreError::PreconditionFailed`] naming the participant that lost, and
-    /// [`StoreError::CommitAmbiguous`] when the outcome is unknown — which the
-    /// caller resolves by reading the receipt and never by writing again.
-    async fn admit_message_and_run(
-        &self,
-        plan: &AdmissionPlan,
-        foreign: AdmissionForeign,
-    ) -> Result<(), StoreError>;
-
-    /// Commits the run terminal barrier.
-    ///
-    /// # Errors
-    ///
-    /// As above.
-    async fn commit_run_terminal(
-        &self,
-        plan: &TerminalPlan,
-        foreign: TerminalForeign,
-    ) -> Result<(), StoreError>;
-
-    /// Commits a trash, restore, purge admission or purge completion.
-    ///
-    /// # Errors
-    ///
-    /// As above.
-    async fn commit_lifecycle(
-        &self,
-        plan: &LifecyclePlan,
-        foreign: Vec<Foreign>,
-    ) -> Result<(), StoreError>;
-
-    /// Reads one session head.
-    ///
-    /// # Errors
-    ///
-    /// [`StoreError`] for a transport or decode failure. An absent head is
-    /// `Ok(None)`; a purged head is a decoded head with `lifecycle = purged`,
-    /// because one point read has to serve `200`, `410 session_deleting` and
-    /// `410 session_deleted`.
-    async fn load_head(
-        &self,
-        workspace: WorkspaceId,
-        session: SessionId,
-    ) -> Result<Option<SessionHead>, StoreError>;
-
-    /// Reads one run.
-    ///
-    /// # Errors
-    ///
-    /// As [`SessionAuthority::load_head`].
-    async fn load_run(
-        &self,
-        workspace: WorkspaceId,
-        session: SessionId,
-        run: RunId,
-    ) -> Result<Option<Run>, StoreError>;
-}
-
 // TODO(cross-stream): `aex-session-app` publishes no journal store port. Journal reads are
 // `aex_session_app::ports::SessionReader`, and journal writes are ordinary writes inside an
 // `aex_session_app::plan::SessionTransaction`.
@@ -128,7 +57,7 @@ pub trait AgentJournalStore: Send + Sync + 'static {
     ///
     /// # Errors
     ///
-    /// As [`SessionAuthority::admit_message_and_run`].
+    /// [`StoreError`] for a validation, conditional-write, or transport failure.
     async fn commit_decision(
         &self,
         plan: &AgentDecisionPlan,
@@ -191,9 +120,8 @@ pub struct PositionPage<T> {
 /// The narrow durable-operation authority used by continuation workers and
 /// operation point reads.
 ///
-/// It is deliberately separate from [`SessionAuthority`]: a worker that only
-/// needs to reload an operation before a fenced step must not acquire the
-/// session transaction surface as a side effect.
+/// A worker that only needs to reload an operation before a fenced step does
+/// not acquire any session mutation capability as a side effect.
 #[async_trait]
 pub trait OperationAuthority: Send + Sync + 'static {
     /// Strongly reads one operation under its asserted tenant.
@@ -922,32 +850,15 @@ mod operation_store_tests {
 
 /// The read-only `session-authority` surface the finite regional API composes.
 ///
-/// Separate from [`SessionAuthority`] because it is a different capability
-/// statement: there is no method here that commits anything, so a deployable
-/// that holds only this port cannot write the session table however it is
-/// wired. Both surfaces share [`crate::codec`] and [`crate::keys`], so the two
-/// cannot disagree about row shape.
+/// There is no method here that commits anything, so a deployable that holds
+/// only this port cannot write the session table however it is wired.
 #[async_trait]
 pub trait SessionQueries: Send + Sync + 'static {
-    /// Reads one session head.
-    ///
-    /// # Errors
-    ///
-    /// [`StoreError`] for a transport or decode failure. An absent head is
-    /// `Ok(None)`; a purged head decodes with `lifecycle = purged`, because one
-    /// point read has to serve `200`, `410 session_deleting` and
-    /// `410 session_deleted`.
-    async fn read_head(
-        &self,
-        workspace: WorkspaceId,
-        session: SessionId,
-    ) -> Result<Option<SessionHead>, StoreError>;
-
     /// Reads one approval.
     ///
     /// # Errors
     ///
-    /// As [`SessionQueries::read_head`].
+    /// As for every strongly consistent authority read.
     async fn load_approval(
         &self,
         workspace: WorkspaceId,
@@ -959,7 +870,7 @@ pub trait SessionQueries: Send + Sync + 'static {
     ///
     /// # Errors
     ///
-    /// As [`SessionQueries::read_head`].
+    /// As for every strongly consistent authority read.
     async fn page_approvals(
         &self,
         workspace: WorkspaceId,
@@ -967,6 +878,12 @@ pub trait SessionQueries: Send + Sync + 'static {
         budget: PageBudget,
         after: Option<&PagePosition>,
     ) -> Result<PositionPage<Approval>, StoreError>;
+}
+
+fn cursor_error(error: &CursorError) -> StoreError {
+    StoreError::Invalid {
+        detail: error.to_string(),
+    }
 }
 
 /// The read-only adapter.
@@ -1028,18 +945,6 @@ fn approval_for_session(
 
 #[async_trait]
 impl SessionQueries for SessionReads {
-    async fn read_head(
-        &self,
-        workspace: WorkspaceId,
-        session: SessionId,
-    ) -> Result<Option<SessionHead>, StoreError> {
-        let key = keys::head(session);
-        match self.get(&key.pk, &key.sk).await? {
-            None => Ok(None),
-            Some(item) => Ok(Some(codec::decode_head(&item, workspace)?)),
-        }
-    }
-
     async fn load_approval(
         &self,
         workspace: WorkspaceId,
@@ -1098,18 +1003,13 @@ impl SessionQueries for SessionReads {
 pub struct SessionStore {
     client: Client,
     tables: RegionalTables,
-    cursor_key: CursorKey,
 }
 
 impl SessionStore {
-    /// Binds a store to a client, the physical table names and a cursor key.
+    /// Binds a store to a client and the physical regional table names.
     #[must_use]
-    pub fn new(client: Client, tables: RegionalTables, cursor_key: CursorKey) -> Self {
-        Self {
-            client,
-            tables,
-            cursor_key,
-        }
+    pub fn new(client: Client, tables: RegionalTables) -> Self {
+        Self { client, tables }
     }
 
     /// The physical `session-authority` table name.
@@ -1157,194 +1057,6 @@ impl SessionStore {
                     Idempotence::Write(Resolution::IdempotencyReceipt),
                 ))
             }
-        }
-    }
-
-    /// Lists one page of session heads over the sparse workspace index.
-    ///
-    /// `lifecycle` selects the index partition, so the query needs no filter
-    /// expression and a purged session is physically absent rather than
-    /// filtered out.
-    ///
-    /// # Errors
-    ///
-    /// [`StoreError`] for a transport or decode failure, and
-    /// [`StoreError::Invalid`] for a cursor that is not bound to this
-    /// collection.
-    pub async fn list_sessions(
-        &self,
-        binding: CursorBinding<'_>,
-        lifecycle: &str,
-        budget: PageBudget,
-        cursor: Option<&aex_wire::cursor::Cursor>,
-        now: Timestamp,
-    ) -> Result<Page<SessionListEntry>, StoreError> {
-        let start = self.resume(binding, cursor, now)?;
-        let output = self
-            .client
-            .query()
-            .table_name(self.table())
-            .index_name(keys::workspace_index::NAME)
-            .key_condition_expression("#pk = :pk")
-            .expression_attribute_names("#pk", keys::workspace_index::PK)
-            .expression_attribute_values(
-                ":pk",
-                crate::attr::s(keys::workspace_index::session_partition(
-                    binding.workspace,
-                    lifecycle,
-                )),
-            )
-            .limit(budget.limit())
-            .set_exclusive_start_key(start.map(|position| {
-                position.to_exclusive_start(
-                    Some(keys::workspace_index::PK),
-                    Some(keys::workspace_index::SK),
-                )
-            }))
-            .send()
-            .await
-            .map_err(|error| classify(&error, Idempotence::Read))?;
-
-        let mut items = Vec::new();
-        for item in output.items.unwrap_or_default() {
-            items.push(decode_list_entry(&item, binding.workspace)?);
-        }
-        let next = self.continuation(binding, output.last_evaluated_key.as_ref(), now)?;
-        Ok(Page { items, next })
-    }
-
-    fn resume(
-        &self,
-        binding: CursorBinding<'_>,
-        cursor: Option<&aex_wire::cursor::Cursor>,
-        now: Timestamp,
-    ) -> Result<Option<PagePosition>, StoreError> {
-        cursor
-            .map(|cursor| crate::paging::verify(&self.cursor_key, binding, cursor, now))
-            .transpose()
-            .map_err(|error| cursor_error(&error))
-    }
-
-    fn continuation(
-        &self,
-        binding: CursorBinding<'_>,
-        last: Option<&Item>,
-        now: Timestamp,
-    ) -> Result<Option<aex_wire::cursor::Cursor>, StoreError> {
-        let Some(last) = last else {
-            return Ok(None);
-        };
-        let position = PagePosition::from_last_evaluated(
-            last,
-            Some(keys::workspace_index::PK),
-            Some(keys::workspace_index::SK),
-        )
-        .map_err(|error| cursor_error(&error))?;
-        crate::paging::mint(&self.cursor_key, binding, &position, now)
-            .map(Some)
-            .map_err(|error| cursor_error(&error))
-    }
-}
-
-fn cursor_error(error: &CursorError) -> StoreError {
-    StoreError::Invalid {
-        detail: error.to_string(),
-    }
-}
-
-/// One row of a session list, as the slim index projection carries it.
-///
-/// The projection deliberately does not carry a prompt, a resolved config or a
-/// receipt, so this type has nowhere to put one even if a row grew an attribute.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SessionListEntry {
-    /// Which session.
-    pub session: SessionId,
-    /// Its status.
-    pub status: String,
-    /// Its lifecycle.
-    pub lifecycle: String,
-    /// Its revision.
-    pub revision: u64,
-    /// When it was created.
-    pub created_at: Timestamp,
-    /// When it last changed.
-    pub updated_at: Timestamp,
-}
-
-/// Decodes one projected index row into a list entry.
-///
-/// # Errors
-///
-/// [`crate::attr::CodecError`] for a row that is not a session head, is missing
-/// a projected attribute, or belongs to another workspace.
-pub fn decode_list_entry(
-    item: &Item,
-    asserted: WorkspaceId,
-) -> Result<SessionListEntry, crate::attr::CodecError> {
-    let row = crate::attr::Row::bind(item, codec::SESSION_HEAD)?;
-    row.owned_by("workspaceId", &asserted.to_string())?;
-    Ok(SessionListEntry {
-        session: row.id::<SessionId>("sessionId")?,
-        status: row.enumerated("status", keys::STATUSES)?.to_owned(),
-        lifecycle: row.enumerated("lifecycle", keys::LIFECYCLES)?.to_owned(),
-        revision: row.u64("revision")?,
-        created_at: row.timestamp("createdAt")?,
-        updated_at: row.timestamp("updatedAt")?,
-    })
-}
-
-#[async_trait]
-impl SessionAuthority for SessionStore {
-    async fn admit_message_and_run(
-        &self,
-        plan: &AdmissionPlan,
-        foreign: AdmissionForeign,
-    ) -> Result<(), StoreError> {
-        let compiled = compile_admission(&self.tables, plan, foreign)?;
-        self.commit(&compiled).await
-    }
-
-    async fn commit_run_terminal(
-        &self,
-        plan: &TerminalPlan,
-        foreign: TerminalForeign,
-    ) -> Result<(), StoreError> {
-        let compiled = compile_terminal(&self.tables, plan, foreign)?;
-        self.commit(&compiled).await
-    }
-
-    async fn commit_lifecycle(
-        &self,
-        plan: &LifecyclePlan,
-        foreign: Vec<Foreign>,
-    ) -> Result<(), StoreError> {
-        let compiled = compile_lifecycle(&self.tables, plan, foreign)?;
-        self.commit(&compiled).await
-    }
-
-    async fn load_head(
-        &self,
-        workspace: WorkspaceId,
-        session: SessionId,
-    ) -> Result<Option<SessionHead>, StoreError> {
-        let key = keys::head(session);
-        match self.get(&key.pk, &key.sk).await? {
-            None => Ok(None),
-            Some(item) => Ok(Some(codec::decode_head(&item, workspace)?)),
-        }
-    }
-
-    async fn load_run(
-        &self,
-        workspace: WorkspaceId,
-        session: SessionId,
-        run: RunId,
-    ) -> Result<Option<Run>, StoreError> {
-        let key = keys::run(session, run);
-        match self.get(&key.pk, &key.sk).await? {
-            None => Ok(None),
-            Some(item) => Ok(Some(codec::decode_run(&item, workspace)?)),
         }
     }
 }

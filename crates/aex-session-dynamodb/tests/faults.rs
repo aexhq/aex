@@ -5,20 +5,13 @@
 //! precondition failure names its participant, an ambiguous commit stays
 //! ambiguous, and nothing here is ever remapped to a generic `500`.
 
-mod support;
-
 use aex_session_dynamodb::error::{
     Idempotence, Resolution, RetryPolicy, StoreError, classify_code, decode_cancellation,
 };
 use aex_session_dynamodb::plan::Participant;
-use aex_session_dynamodb::transactions::{
-    AdmissionForeign, TerminalForeign, compile_admission, compile_terminal,
-};
 use aws_sdk_dynamodb::operation::transact_write_items::TransactWriteItemsError;
 use aws_sdk_dynamodb::types::CancellationReason;
 use aws_sdk_dynamodb::types::error::TransactionCanceledException;
-
-use support::{admission, tables, terminal};
 
 /// One row of the error-mapping table: a service code and the predicate its
 /// typed error must satisfy.
@@ -37,87 +30,6 @@ fn cancellation(codes: &[&str]) -> TransactWriteItemsError {
 }
 
 /// One reason vector for the compiled admission plan, with `index` failing.
-fn admission_reasons(index: usize, total: usize) -> Vec<&'static str> {
-    (0..total)
-        .map(|position| {
-            if position == index {
-                "ConditionalCheckFailed"
-            } else {
-                "None"
-            }
-        })
-        .collect()
-}
-
-#[test]
-fn every_admission_participant_decodes_back_to_its_own_name() {
-    let plan =
-        compile_admission(&tables(), &admission(), AdmissionForeign::default()).expect("compiles");
-    let participants = plan.participants();
-    for (index, expected) in participants.iter().enumerate() {
-        let error = decode_cancellation(
-            &cancellation(&admission_reasons(index, participants.len())),
-            participants,
-        );
-        match error {
-            StoreError::PreconditionFailed { participant, .. } => {
-                assert_eq!(
-                    participant, *expected,
-                    "reason at index {index} decoded to the wrong participant"
-                );
-            }
-            other => panic!("index {index} decoded to {other}"),
-        }
-    }
-}
-
-#[test]
-fn a_lost_head_condition_is_never_remapped_to_a_generic_failure() {
-    let plan =
-        compile_admission(&tables(), &admission(), AdmissionForeign::default()).expect("compiles");
-    let participants = plan.participants();
-    let index = participants
-        .iter()
-        .position(|participant| *participant == Participant::SESSION_HEAD)
-        .expect("the head participates");
-    let error = decode_cancellation(
-        &cancellation(&admission_reasons(index, participants.len())),
-        participants,
-    );
-    assert!(
-        matches!(
-            error,
-            StoreError::PreconditionFailed {
-                participant: Participant::SESSION_HEAD,
-                ..
-            }
-        ),
-        "{error}"
-    );
-    assert!(!error.retryable(), "a lost condition is never retried");
-}
-
-#[test]
-fn a_lost_terminal_condition_names_the_run_so_the_loser_can_read_the_winner() {
-    let plan =
-        compile_terminal(&tables(), &terminal(), TerminalForeign::default()).expect("compiles");
-    let participants = plan.participants();
-    let error = decode_cancellation(
-        &cancellation(&admission_reasons(0, participants.len())),
-        participants,
-    );
-    assert!(
-        matches!(
-            error,
-            StoreError::PreconditionFailed {
-                participant: Participant::SESSION_RUN,
-                ..
-            }
-        ),
-        "{error}"
-    );
-}
-
 #[test]
 fn a_transaction_conflict_is_retryable_and_a_validation_error_is_not() {
     let participants = [Participant::SESSION_HEAD, Participant::SESSION_RUN];
