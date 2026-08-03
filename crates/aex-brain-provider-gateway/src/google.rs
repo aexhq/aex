@@ -281,10 +281,11 @@ impl GoogleAdapter {
             Self::generation_config(entry, view)?,
         );
 
-        let encoded =
-            serde_json::to_vec(&Value::Object(body)).map_err(|_| RequestBuildError::Encoding {
+        let encoded = aex_wire::to_jcs_bytes(&Value::Object(body)).map_err(|_| {
+            RequestBuildError::Encoding {
                 reason: "the request body could not be serialized",
-            })?;
+            }
+        })?;
         let size = u32::try_from(encoded.len()).unwrap_or(u32::MAX);
         if size > entry.limits.request_body_max_bytes {
             return Err(RequestBuildError::BodyTooLarge {

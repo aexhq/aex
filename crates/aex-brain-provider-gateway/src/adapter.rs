@@ -226,10 +226,20 @@ impl<'a> HeaderView<'a> {
 }
 
 /// A bounded error body. Read to the budget's ceiling and no further.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct BoundedBody {
     bytes: Vec<u8>,
     truncated: bool,
+}
+
+impl core::fmt::Debug for BoundedBody {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("BoundedBody")
+            .field("len", &self.bytes.len())
+            .field("truncated", &self.truncated)
+            .finish()
+    }
 }
 
 impl BoundedBody {
@@ -421,6 +431,15 @@ mod tests {
         assert!(body.is_truncated());
         assert!(body.as_json().is_none(), "a cut body must not parse");
         assert_eq!(body.as_str(), Some("{\"error\":"));
+    }
+
+    #[test]
+    fn an_error_body_debug_rendering_never_carries_provider_bytes() {
+        let body = BoundedBody::new(b"echoed sk-012345678901234567890123456789".to_vec(), false);
+        let rendered = format!("{body:?}");
+        assert!(rendered.contains("len"));
+        assert!(rendered.contains("truncated: false"));
+        assert!(!rendered.contains("sk-"));
     }
 
     #[test]

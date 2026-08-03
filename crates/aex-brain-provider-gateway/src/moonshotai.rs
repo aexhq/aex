@@ -457,7 +457,7 @@ fn build(
     encode_response_format(entry, request, &mut body)?;
 
     let bytes =
-        serde_json::to_vec(&Value::Object(body)).map_err(|_| RequestBuildError::Encoding {
+        aex_wire::to_jcs_bytes(&Value::Object(body)).map_err(|_| RequestBuildError::Encoding {
             reason: "the request body could not be serialized",
         })?;
     if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > u64::from(limits.request_body_max_bytes) {

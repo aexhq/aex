@@ -1,5 +1,6 @@
 //! Bounded direct-provider router over the six admitted BYOK dialects.
 
+use std::future::Future;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -97,6 +98,10 @@ impl ProviderRouter {
         dead_code,
         reason = "the complete transport is intentionally unreachable until the public Brain session contract carries its immutable credential pin"
     )]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the linear send-proof state machine is kept together so every await and retry visibly preserves its dispatch proof"
+    )]
     pub(crate) async fn dispatch_pinned(
         &self,
         ticket: &DispatchTicket,
@@ -107,6 +112,9 @@ impl ProviderRouter {
         cancel: &CancelToken,
     ) -> Result<ProviderOutcome, ProviderDispatchError> {
         validate_request(ticket, request, self.adapter_source)?;
+        let budget = gateway_budget(ticket, port_budget, request)?;
+        let started = wire_timestamp(ticket.issued_at())?;
+        let started_steady = Instant::now();
         if cancel.is_cancelled() {
             return Err(error(
                 DispatchStage::PreDispatch,
@@ -117,21 +125,27 @@ impl ProviderRouter {
         }
 
         let provider = request.selection.provider();
-        let binding = self
-            .directory
-            .resolve(ticket.workspace(), provider, Some(pin.binding))
-            .await
-            .map_err(credential_error)?;
+        let binding = await_pre_send(
+            self.directory
+                .resolve(ticket.workspace(), provider, Some(pin.binding)),
+            &budget,
+            started_steady,
+            cancel,
+        )
+        .await?;
         validate_binding(ticket, provider, pin, &binding)?;
-        let current_epoch = self
-            .directory
-            .current_epoch(ticket.workspace(), binding.id)
-            .await
-            .map_err(credential_error)?;
+        let current_epoch = await_pre_send(
+            self.directory.current_epoch(ticket.workspace(), binding.id),
+            &budget,
+            started_steady,
+            cancel,
+        )
+        .await?;
         if current_epoch != pin.epoch_at_admission || current_epoch != binding.revocation_epoch {
             self.cache.invalidate(ticket.workspace(), binding.id);
             self.pool.close(&|key| {
                 key.workspace == ticket.workspace()
+                    && key.credential_binding == binding.id
                     && key.credential_generation == binding.generation
             });
             return Err(credential_error(CredentialResolveError::Revoked {
@@ -140,18 +154,21 @@ impl ProviderRouter {
             }));
         }
 
-        let key = self
-            .cache
-            .decrypt(&binding, self.decryptor.as_ref())
-            .await
-            .map_err(credential_error)?;
-        let budget = gateway_budget(ticket, port_budget, request)?;
+        let key = await_pre_send(
+            self.cache.decrypt(&binding, self.decryptor.as_ref()),
+            &budget,
+            started_steady,
+            cancel,
+        )
+        .await?;
         let pooled = self
             .pool
             .acquire(
                 &IsolationKey {
                     origin: request.selection.endpoint(),
                     workspace: ticket.workspace(),
+                    credential_binding: binding.id,
+                    credential_revision: binding.revision,
                     credential_generation: binding.generation,
                     catalog: request.selection.catalog(),
                 },
@@ -169,8 +186,6 @@ impl ProviderRouter {
             .map_err(build_error)?;
         let request_bytes = wire.body.len() as u64;
 
-        let started = wire_timestamp(ticket.issued_at())?;
-        let started_steady = Instant::now();
         let mut attempt = 0_u16;
         loop {
             attempt = attempt.saturating_add(1);
@@ -259,6 +274,10 @@ impl ProviderRouter {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the streaming state machine is kept linear so byte, frame, idle, cancellation, and durable proof bounds can be audited in order"
+    )]
     async fn consume_success(
         &self,
         ticket: &DispatchTicket,
@@ -379,7 +398,7 @@ impl ProviderRouter {
                     })?;
                 if !response_started && state.response_started {
                     response_started = true;
-                    let observed = wire_now()?;
+                    let observed = elapsed_timestamp(started, started_steady)?;
                     first_frame_at = Some(observed);
                     let provider_request_id =
                         adapter.request_id(&HeaderView::new(&headers), &state);
@@ -430,7 +449,7 @@ impl ProviderRouter {
         }
         let frames = state.ledger.frames;
         let provider_request_id = adapter.request_id(&HeaderView::new(&headers), &state);
-        let decoded = adapter.finish(state).map_err(|_| {
+        let assembled = adapter.finish(state).map_err(|_| {
             error(
                 DispatchStage::Streaming,
                 if response_started {
@@ -442,10 +461,10 @@ impl ProviderRouter {
                 "provider stream ended without a complete admitted response",
             )
         })?;
-        let usage = decoded.usage;
+        let usage = assembled.usage;
         let message = seal(
-            decoded.blocks,
-            decoded.stop_reason,
+            assembled.blocks,
+            assembled.stop_reason,
             &usage,
             &request.selection,
         )
@@ -458,7 +477,7 @@ impl ProviderRouter {
             )
         })?;
         let rate_limit = adapter.rate_limit_feedback(&HeaderView::new(&headers));
-        let completed_at = wire_now()?;
+        let completed_at = elapsed_timestamp(started, started_steady)?;
         let receipt = ProviderReceipt {
             provider: request.selection.provider(),
             model: request.selection.model().clone(),
@@ -470,7 +489,7 @@ impl ProviderRouter {
                 revision: binding.revision.0,
                 generation: binding.generation.0,
             },
-            provider_request_id: decoded.provider_request_id.or(provider_request_id),
+            provider_request_id: assembled.provider_request_id.or(provider_request_id),
             http_status,
             attempts,
             started_at: started,
@@ -479,7 +498,7 @@ impl ProviderRouter {
             request_bytes,
             response_bytes,
             frames,
-            rate_limit: Some(receipt_rate_limit(rate_limit)),
+            rate_limit: Some(receipt_rate_limit(&rate_limit)),
             response_receipt: Some(message.proof.0),
             bounds: ReceiptBounds {
                 max_frame_bytes: budget.max_frame_bytes,
@@ -639,7 +658,7 @@ fn gateway_budget(
         ));
     }
     let mut budget = StreamBudget {
-        total_deadline: Duration::from_millis(remaining_ms as u64),
+        total_deadline: Duration::from_millis(remaining_ms.cast_unsigned()),
         idle_frame_timeout: Duration::from_millis(u64::from(port.idle_timeout_ms)),
         max_response_bytes: port.response_bytes as u64,
         max_frame_bytes: u32::try_from(port.buffer_bytes).unwrap_or(u32::MAX),
@@ -665,6 +684,43 @@ fn remaining(
                 proof,
             )
         })
+}
+
+/// Awaits one credential-authority step without letting pre-send work escape
+/// the effect deadline or ignore cooperative cancellation indefinitely.
+async fn await_pre_send<T, F>(
+    future: F,
+    budget: &StreamBudget,
+    started: Instant,
+    cancel: &CancelToken,
+) -> Result<T, ProviderDispatchError>
+where
+    F: Future<Output = Result<T, CredentialResolveError>>,
+{
+    tokio::pin!(future);
+    loop {
+        if cancel.is_cancelled() {
+            return Err(error(
+                DispatchStage::PreDispatch,
+                DispatchProof::NotSent,
+                ProviderFailureKind::Cancelled,
+                "dispatch was cancelled while resolving provider credentials",
+            ));
+        }
+        let left = remaining(budget, started, DispatchProof::NotSent)?;
+        tokio::select! {
+            result = &mut future => return result.map_err(credential_error),
+            () = tokio::time::sleep(left) => {
+                return Err(budget_error(
+                    BudgetOverrun::TotalDeadline {
+                        after: budget.total_deadline,
+                    },
+                    DispatchProof::NotSent,
+                ));
+            }
+            () = tokio::time::sleep(Duration::from_millis(25)) => {}
+        }
+    }
 }
 
 async fn cancellable_sleep(
@@ -739,11 +795,11 @@ async fn read_error_body(
     BoundedBody::new(bytes, truncated)
 }
 
-fn receipt_rate_limit(feedback: RateLimitFeedback) -> ReceiptRateLimit {
+fn receipt_rate_limit(feedback: &RateLimitFeedback) -> ReceiptRateLimit {
     ReceiptRateLimit {
         retry_after_ms: feedback
             .retry_after
-            .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64),
+            .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)),
         requests_remaining: feedback.requests_remaining,
         tokens_remaining: feedback.tokens_remaining,
         reset_at: feedback.reset_at,
@@ -773,36 +829,29 @@ fn wire_timestamp(
     })
 }
 
-fn wire_now() -> Result<aex_wire::types::Timestamp, ProviderDispatchError> {
-    let millis = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|_| {
-            error(
-                DispatchStage::Streaming,
-                DispatchProof::ResponseStarted,
-                ProviderFailureKind::ProtocolViolation,
-                "the system clock is before the Unix epoch",
-            )
-        })?
-        .as_millis();
-    let millis = i64::try_from(millis).map_err(|_| {
-        error(
-            DispatchStage::Streaming,
-            DispatchProof::ResponseStarted,
-            ProviderFailureKind::ProtocolViolation,
-            "the system clock is outside the wire range",
-        )
-    })?;
+fn elapsed_timestamp(
+    started: aex_wire::types::Timestamp,
+    started_steady: Instant,
+) -> Result<aex_wire::types::Timestamp, ProviderDispatchError> {
+    // Derive receipt ordering from the same monotonic clock as the deadline.
+    // An NTP correction during a stream must not turn a valid result into an
+    // internally impossible `completed_at < started_at` receipt.
+    let elapsed = i64::try_from(started_steady.elapsed().as_millis()).unwrap_or(i64::MAX);
+    let millis = started.unix_millis().saturating_add(elapsed);
     aex_wire::types::Timestamp::from_unix_millis(millis).map_err(|_| {
         error(
             DispatchStage::Streaming,
             DispatchProof::ResponseStarted,
             ProviderFailureKind::ProtocolViolation,
-            "the system clock is outside the wire range",
+            "the monotonic receipt timestamp is outside the wire range",
         )
     })
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "this conversion is a direct map_err adapter"
+)]
 fn build_error(failure: RequestBuildError) -> ProviderDispatchError {
     error(
         DispatchStage::PreDispatch,
@@ -812,6 +861,10 @@ fn build_error(failure: RequestBuildError) -> ProviderDispatchError {
     )
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "this conversion is a direct map_err adapter"
+)]
 fn credential_error(failure: CredentialResolveError) -> ProviderDispatchError {
     let kind = match &failure {
         CredentialResolveError::Transport => ProviderFailureKind::Transport,
@@ -832,6 +885,10 @@ fn credential_error(failure: CredentialResolveError) -> ProviderDispatchError {
     )
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "this conversion is a direct map_err adapter"
+)]
 fn pool_error(failure: PoolError) -> ProviderDispatchError {
     error(
         DispatchStage::PreDispatch,
@@ -841,6 +898,10 @@ fn pool_error(failure: PoolError) -> ProviderDispatchError {
     )
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "this conversion is a direct map_err adapter"
+)]
 fn execute_error(failure: ExecuteError) -> ProviderDispatchError {
     let proof = failure.proof();
     let kind = match &failure {
@@ -875,6 +936,10 @@ fn sse_error(failure: SseError, started: bool) -> ProviderDispatchError {
     )
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "the small typed overrun is consumed at the failure-conversion boundary"
+)]
 fn budget_error(failure: BudgetOverrun, proof: DispatchProof) -> ProviderDispatchError {
     let kind = failure.kind();
     error(
@@ -922,10 +987,66 @@ fn error(
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
+    use aex_brain_application::ports::CancelToken;
+    use aex_brain_domain::effect::DispatchProof;
+    use aex_model_catalog::ProviderFailureKind;
+
+    use crate::budget::StreamBudget;
+    use crate::credential::CredentialResolveError;
+
     #[test]
     fn all_six_providers_have_one_direct_adapter() {
         for provider in aex_wire::provider::ProviderId::ALL.iter().copied() {
             assert_eq!(super::adapter(provider).provider(), provider);
         }
+    }
+
+    #[tokio::test]
+    async fn a_hung_credential_authority_cannot_escape_the_effect_deadline() {
+        let budget = StreamBudget {
+            total_deadline: Duration::from_millis(1),
+            ..StreamBudget::default()
+        };
+        let pending = futures::future::pending::<Result<(), CredentialResolveError>>();
+        let error = super::await_pre_send(
+            pending,
+            &budget,
+            Instant::now()
+                .checked_sub(Duration::from_millis(2))
+                .expect("two milliseconds fit within Instant's range"),
+            &CancelToken::new(),
+        )
+        .await
+        .expect_err("an elapsed deadline must stop the authority wait");
+        assert_eq!(error.proof, DispatchProof::NotSent);
+        assert_eq!(error.kind, ProviderFailureKind::Timeout);
+    }
+
+    #[tokio::test]
+    async fn credential_authority_cancellation_remains_provably_unsent() {
+        let cancel = CancelToken::new();
+        cancel.cancel();
+        let pending = futures::future::pending::<Result<(), CredentialResolveError>>();
+        let error =
+            super::await_pre_send(pending, &StreamBudget::default(), Instant::now(), &cancel)
+                .await
+                .expect_err("cancellation must stop the authority wait");
+        assert_eq!(error.proof, DispatchProof::NotSent);
+        assert_eq!(error.kind, ProviderFailureKind::Cancelled);
+    }
+
+    #[test]
+    fn receipt_times_are_monotonic_even_if_wall_time_moves() {
+        let started = aex_wire::types::Timestamp::from_unix_millis(1_000).expect("timestamp");
+        let completed = super::elapsed_timestamp(
+            started,
+            Instant::now()
+                .checked_sub(Duration::from_millis(5))
+                .expect("five milliseconds fit within Instant's range"),
+        )
+        .expect("elapsed timestamp");
+        assert!(completed >= started);
     }
 }
