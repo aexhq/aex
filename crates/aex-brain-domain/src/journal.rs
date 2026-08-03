@@ -191,7 +191,7 @@ pub enum JournalRecord {
         /// Provider-reported usage.
         usage: NormalizedUsage,
         /// Dispatch identity, byte counts, attempts and binding identity.
-        receipt: ProviderReceipt,
+        receipt: Box<ProviderReceipt>,
         /// The effect that produced it.
         effect: EffectId,
     },

@@ -306,7 +306,7 @@ pub fn settle_model_call(draft: &mut Draft, effect: EffectId, outcome: &Provider
     draft.append(JournalRecord::AssistantMessage {
         message: outcome.message.clone(),
         usage: outcome.usage,
-        receipt: outcome.receipt.clone(),
+        receipt: Box::new(outcome.receipt.clone()),
         effect,
     });
     draft.phase(if outcome.message.blocks.iter().any(is_tool_use) {

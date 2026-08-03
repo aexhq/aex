@@ -244,7 +244,7 @@ pub fn assistant(
     JournalRecord::AssistantMessage {
         message,
         usage: TURN_USAGE,
-        receipt,
+        receipt: Box::new(receipt),
         effect,
     }
 }
@@ -263,6 +263,11 @@ pub fn assistant_text(text: &str, effect: EffectId) -> JournalRecord {
 }
 
 /// An assistant turn asking for the named tool calls, in order.
+///
+/// # Panics
+///
+/// Panics when a fixture supplies an invalid tool name. The tool input is a
+/// fixed valid canonical JSON object.
 #[must_use]
 pub fn assistant_tool_use(calls: &[(&str, &str)], effect: EffectId) -> JournalRecord {
     let blocks = calls
