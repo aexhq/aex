@@ -218,9 +218,15 @@ pub fn probe_ttl(observed_at: Timestamp) -> aws_sdk_dynamodb::types::AttributeVa
 #[cfg(test)]
 mod tests {
     use aex_hands_protocol::rpc::Fence;
-    use aex_runtime_control::generation::{GenerationState, Revision};
-    use aex_wire::ids::{GenerationId, OrganizationId, PrefixedId, SessionId, Uuid7};
-    use aex_wire::types::Timestamp;
+    use aex_internal_contracts::SchemaVersion;
+    use aex_runtime_control::generation::{
+        GenerationState, HandsGeneration, ImageIdentifier, ImagePin, ImageVersion, LimitsRevision,
+        NetworkPolicy, Revision, guest_root,
+    };
+    use aex_wire::ids::{
+        ContentHash, GenerationId, OrganizationId, PrefixedId, SessionId, Uuid7, WorkspaceId,
+    };
+    use aex_wire::types::{ComputeSize, Timestamp};
 
     use super::{reschedule, transition};
     use crate::codec::GenerationRow;
@@ -240,17 +246,36 @@ mod tests {
     }
 
     fn row(state: GenerationState) -> GenerationRow {
-        GenerationRow {
-            session: session(),
-            workspace: aex_wire::ids::WorkspaceId::from_uuid7(Uuid7::compose(1, [1; 10])),
-            organization: OrganizationId::from_uuid7(Uuid7::compose(1, [2; 10])),
+        let workspace = WorkspaceId::from_uuid7(Uuid7::compose(1, [1; 10]));
+        let organization = OrganizationId::from_uuid7(Uuid7::compose(1, [2; 10]));
+        let definition = HandsGeneration {
             generation: generation(),
-            size: aex_wire::types::ComputeSize::ALL[0],
+            session: session(),
+            workspace,
+            organization,
+            size: ComputeSize::ALL[0],
+            image: ImagePin {
+                identifier: ImageIdentifier("hands:test".to_owned()),
+                version: ImageVersion("1".to_owned()),
+                artifact_digest: ContentHash::from_bytes([7; 32]),
+                capabilities: Vec::new(),
+            },
+            network: NetworkPolicy::None,
+            protocol_version: SchemaVersion::V1,
+            limits_revision: LimitsRevision(1),
+            root: guest_root(),
+        };
+        GenerationRow {
+            definition,
+            session: session(),
+            workspace,
+            organization,
+            generation: generation(),
+            size: ComputeSize::ALL[0],
             state,
             fence: Fence(3),
             revision: Revision::new(5),
             provider_vm_id: None,
-            image_identifier: None,
             open_operations: 0,
             last_busy_at: now(),
             idle_since: None,

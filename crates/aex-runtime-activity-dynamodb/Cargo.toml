@@ -44,6 +44,7 @@ aws-smithy-types.workspace = true
 blake3.workspace = true
 thiserror.workspace = true
 aex-hands-protocol = { path = "../aex-hands-protocol" }
+aex-internal-contracts = { path = "../aex-internal-contracts" }
 aex-runtime-control = { path = "../aex-runtime-control" }
 aex-usage-domain = { path = "../aex-usage-domain" }
 aex-wire = { path = "../aex-wire" }

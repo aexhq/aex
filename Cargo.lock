@@ -1084,6 +1084,7 @@ name = "aex-runtime-activity-dynamodb"
 version = "0.1.0"
 dependencies = [
  "aex-hands-protocol",
+ "aex-internal-contracts",
  "aex-runtime-control",
  "aex-session-dynamodb",
  "aex-test-harness",

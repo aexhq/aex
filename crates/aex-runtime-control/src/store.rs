@@ -119,6 +119,10 @@ pub fn bind_command(pointer: Option<&GenerationPointer>, named: GenerationId) ->
 /// belong to. Reading them as four calls would let the four disagree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GenerationView {
+    /// The immutable exact-generation tuple required to reconstruct the original
+    /// launch request. Runtime lifecycle fields below may change; this value may
+    /// not. In particular, a launch retry never resolves a newer image catalog.
+    pub definition: crate::generation::HandsGeneration,
     /// The head as stored.
     pub head: GenerationHead,
     /// The session the generation belongs to.

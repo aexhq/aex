@@ -1844,11 +1844,32 @@ mod tests {
     }
 
     fn view(state: GenerationState, open: u32) -> GenerationView {
+        let workspace = WorkspaceId::from_uuid7(Uuid7::compose(3, [3; 10]));
+        let organization = OrganizationId::from_uuid7(Uuid7::compose(2, [2; 10]));
         GenerationView {
+            definition: aex_runtime_control::generation::HandsGeneration {
+                generation: generation(),
+                session: session(),
+                workspace,
+                organization,
+                size: ComputeSize::Gb1,
+                image: aex_runtime_control::generation::ImagePin {
+                    identifier: aex_runtime_control::generation::ImageIdentifier(
+                        "hands:test".to_owned(),
+                    ),
+                    version: aex_runtime_control::generation::ImageVersion("1".to_owned()),
+                    artifact_digest: aex_wire::ids::ContentHash::from_bytes([7; 32]),
+                    capabilities: Vec::new(),
+                },
+                network: aex_runtime_control::generation::NetworkPolicy::None,
+                protocol_version: aex_internal_contracts::SchemaVersion::V1,
+                limits_revision: aex_runtime_control::generation::LimitsRevision(1),
+                root: aex_runtime_control::generation::guest_root(),
+            },
             head: head(state, open),
             session: session(),
-            workspace: WorkspaceId::from_uuid7(Uuid7::compose(3, [3; 10])),
-            organization: OrganizationId::from_uuid7(Uuid7::compose(2, [2; 10])),
+            workspace,
+            organization,
             microvm: Some(microvm()),
             lifetime: Some(Lifetime {
                 launched_at: at(LAUNCHED_AT),

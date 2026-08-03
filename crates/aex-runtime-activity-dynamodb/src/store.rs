@@ -1387,6 +1387,7 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
 
 fn generation_view(row: GenerationRow) -> GenerationView {
     GenerationView {
+        definition: row.definition,
         head: GenerationHead {
             generation: row.generation,
             size: row.size,
