@@ -43,6 +43,7 @@ variables {
     "aex/regional-stream" = { untagged_expire_days = 14 }
   }
 
+  github_role_name         = "aex-dev-release-deploy"
   github_repository        = "example-owner/example-repo"
   github_oidc_provider_arn = "arn:aws:iam::000000000000:oidc-provider/token.actions.githubusercontent.com"
   github_allowed_refs      = ["refs/heads/main"]

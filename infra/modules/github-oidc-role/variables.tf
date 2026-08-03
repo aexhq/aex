@@ -1,3 +1,18 @@
+variable "role_name" {
+  type        = string
+  description = "Exact plane-scoped IAM role name. The caller owns physical naming so two planes in one account cannot collide."
+
+  validation {
+    condition     = can(regex("^aex-[a-z0-9][a-z0-9-]{2,59}$", var.role_name))
+    error_message = "The role name must be an exact 6-63 character lowercase `aex-...` name."
+  }
+
+  validation {
+    condition     = !strcontains(var.role_name, "*")
+    error_message = "The role name must be exact; wildcards are not physical identities."
+  }
+}
+
 variable "repository" {
   type        = string
   description = "The one repository permitted to assume the role, as `owner/name`."
@@ -40,6 +55,22 @@ variable "allowed_refs" {
   validation {
     condition     = alltrue([for r in var.allowed_refs : !strcontains(r, "*")])
     error_message = "A ref pattern is not allowed; name every ref exactly."
+  }
+}
+
+variable "allowed_environments" {
+  type        = list(string)
+  default     = []
+  description = "Exact protected GitHub Environment names. When non-empty, only environment subjects may assume the role; the plain ref subject is deliberately excluded."
+
+  validation {
+    condition     = alltrue([for environment in var.allowed_environments : can(regex("^aex-(dev|prd)$", environment))])
+    error_message = "Every protected environment must be exactly `aex-dev` or `aex-prd`."
+  }
+
+  validation {
+    condition     = alltrue([for environment in var.allowed_environments : !strcontains(environment, "*")])
+    error_message = "An environment pattern is not allowed; name every protected environment exactly."
   }
 }
 

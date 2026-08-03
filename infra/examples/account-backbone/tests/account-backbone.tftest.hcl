@@ -21,6 +21,7 @@ variables {
     { protocol = "https", endpoint = "https://alerts.example.invalid/aex-dev" },
   ]
 
+  github_role_name         = "aex-dev-release-publish"
   github_repository        = "example-owner/example-repo"
   github_oidc_provider_arn = "arn:aws:iam::000000000000:oidc-provider/token.actions.githubusercontent.com"
   github_allowed_refs      = ["refs/heads/main"]

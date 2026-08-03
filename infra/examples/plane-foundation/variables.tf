@@ -39,6 +39,11 @@ variable "repositories" {
   description = "Container repositories to create, keyed by repository name under the `aex/` namespace."
 }
 
+variable "github_role_name" {
+  type        = string
+  description = "Exact plane-scoped name of the GitHub deploy role."
+}
+
 variable "github_repository" {
   type        = string
   description = "The one repository whose workflows may assume the deploy role."

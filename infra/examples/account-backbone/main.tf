@@ -34,6 +34,7 @@ module "ops_topic" {
 module "publish_role" {
   source = "../../modules/github-oidc-role"
 
+  role_name           = var.github_role_name
   repository          = var.github_repository
   oidc_provider_arn   = var.github_oidc_provider_arn
   allowed_refs        = var.github_allowed_refs

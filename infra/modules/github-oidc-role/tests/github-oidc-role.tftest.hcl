@@ -1,6 +1,7 @@
 mock_provider "aws" {}
 
 variables {
+  role_name           = "aex-dev-release-publish"
   repository          = "example-owner/example-repo"
   oidc_provider_arn   = "arn:aws:iam::000000000000:oidc-provider/token.actions.githubusercontent.com"
   allowed_refs        = ["refs/heads/main"]
@@ -162,4 +163,41 @@ run "rejects_a_profile_with_a_wildcard_action" {
   }
 
   expect_failures = [var.permission_profiles]
+}
+
+run "an_environment_bound_role_excludes_the_unapproved_ref_subject" {
+  command = plan
+
+  variables {
+    role_name            = "aex-prd-release-deploy"
+    permissions_profile  = "deploy"
+    allowed_environments = ["aex-prd"]
+  }
+
+  assert {
+    condition = jsondecode(aws_iam_role.this.assume_role_policy).Statement[0].Condition.StringEquals["token.actions.githubusercontent.com:sub"] == [
+      "repo:example-owner/example-repo:environment:aex-prd"
+    ]
+    error_message = "A protected deploy role must require the environment subject and exclude the unapproved ref subject."
+  }
+}
+
+run "rejects_an_unowned_environment" {
+  command = plan
+
+  variables {
+    allowed_environments = ["production"]
+  }
+
+  expect_failures = [var.allowed_environments]
+}
+
+run "rejects_a_role_name_without_a_plane_scope" {
+  command = plan
+
+  variables {
+    role_name = "github-release"
+  }
+
+  expect_failures = [var.role_name]
 }

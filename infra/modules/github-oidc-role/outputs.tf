@@ -4,7 +4,7 @@ output "role_arn" {
 }
 
 output "role_name" {
-  value       = local.role_name
+  value       = var.role_name
   description = "Physical role name."
 }
 

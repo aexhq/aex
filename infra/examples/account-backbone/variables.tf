@@ -54,6 +54,11 @@ variable "ops_subscriptions" {
   description = "Subscriptions on the ops topic."
 }
 
+variable "github_role_name" {
+  type        = string
+  description = "Exact plane-scoped name of the GitHub publish role."
+}
+
 variable "github_repository" {
   type        = string
   description = "The one repository whose workflows may assume the publish role."
