@@ -4332,6 +4332,7 @@
         "SC-SESSION-ADMIT",
         "SC-SESSION-TERMINAL"
       ],
+      "servedArtifact": "regional-session-api",
       "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "Read one run.",
@@ -4372,6 +4373,7 @@
         "SC-SESSION-ADMIT",
         "SC-SESSION-TERMINAL"
       ],
+      "servedArtifact": "regional-session-api",
       "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "List the runs of a session.",

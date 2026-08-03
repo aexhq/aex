@@ -16,7 +16,8 @@ use aex_session_dynamodb::error::StoreError;
 use aex_session_dynamodb::paging::{PageBudget, PagePosition};
 use aex_session_dynamodb::plan::{Participant, TransactionPlan};
 use aex_session_dynamodb::store::{
-    OperationApiStore, OperationAuthority, OperationFilter, OperationStore,
+    OperationApiStore, OperationAuthority, OperationFilter, OperationStore, SessionQueries,
+    SessionReads, SessionScoped,
 };
 use aex_session_dynamodb::transactions::{
     DECISION_ORDER, Foreign, ForeignAction, OperationCancelRequest, OperationStepCancel,
@@ -27,9 +28,202 @@ use aex_wire::types::Timestamp;
 use serde_json::Value;
 
 use support::{
-    captured_body, capturing_client, decision, fanout, operation, scripted_client, tables,
-    workspace,
+    captured_body, capturing_client, decision, fanout, operation, run_id, scripted_client, session,
+    tables, workspace,
 };
+
+#[tokio::test]
+async fn a_canonical_session_point_read_is_strong_and_targets_only_the_head() {
+    let (client, receiver) = capturing_client();
+    let reads = SessionReads::new(client, &tables().session_authority);
+    let _ignored = reads.load_session(workspace(), session()).await;
+
+    let body = captured_body(receiver);
+    assert_eq!(body["ConsistentRead"], true);
+    assert_eq!(body["Key"]["pk"]["S"], format!("SESSION#{}", session()));
+    assert_eq!(body["Key"]["sk"]["S"], "HEAD");
+}
+
+#[tokio::test]
+async fn a_scoped_run_point_read_is_one_atomic_two_item_read() {
+    let (client, receiver) = capturing_client();
+    let reads = SessionReads::new(client, &tables().session_authority);
+    let _ignored = reads.load_run(workspace(), session(), run_id()).await;
+
+    let body = captured_body(receiver);
+    let reads = body["TransactItems"]
+        .as_array()
+        .expect("a transactional point read");
+    assert_eq!(reads.len(), 2);
+    assert_eq!(
+        reads[0]["Get"]["Key"]["pk"]["S"],
+        format!("SESSION#{}", session())
+    );
+    assert_eq!(reads[0]["Get"]["Key"]["sk"]["S"], "HEAD");
+    assert_eq!(
+        reads[1]["Get"]["Key"]["pk"]["S"],
+        format!("SESSION#{}", session())
+    );
+    assert_eq!(
+        reads[1]["Get"]["Key"]["sk"]["S"],
+        format!("RUN#{}", run_id())
+    );
+}
+
+fn dynamo_json_item(item: &aex_session_dynamodb::attr::Item) -> Value {
+    Value::Object(
+        item.iter()
+            .map(|(name, value)| {
+                let value = match value {
+                    aws_sdk_dynamodb::types::AttributeValue::S(value) => {
+                        serde_json::json!({"S": value})
+                    }
+                    aws_sdk_dynamodb::types::AttributeValue::N(value) => {
+                        serde_json::json!({"N": value})
+                    }
+                    aws_sdk_dynamodb::types::AttributeValue::Bool(value) => {
+                        serde_json::json!({"BOOL": value})
+                    }
+                    other => panic!("canonical session fixtures use no {other:?} attribute"),
+                };
+                (name.clone(), value)
+            })
+            .collect(),
+    )
+}
+
+fn scoped_run_response(
+    session: &aex_session_domain::Session,
+    run: &aex_session_domain::Run,
+) -> String {
+    let head = aex_session_dynamodb::authority_codec::encode_session(session)
+        .expect("canonical session row");
+    let run = aex_session_dynamodb::authority_codec::encode_domain_run(
+        run,
+        session.workspace,
+        session.organization,
+    )
+    .expect("canonical run row");
+    serde_json::json!({
+        "Responses": [
+            {"Item": dynamo_json_item(&head)},
+            {"Item": dynamo_json_item(&run)}
+        ]
+    })
+    .to_string()
+}
+
+fn session_head_response(session: &aex_session_domain::Session) -> String {
+    let head = aex_session_dynamodb::authority_codec::encode_session(session)
+        .expect("canonical session row");
+    serde_json::json!({"Item": dynamo_json_item(&head)}).to_string()
+}
+
+fn request_bodies(replay: &aws_smithy_http_client::test_util::StaticReplayClient) -> Vec<Value> {
+    replay
+        .actual_requests()
+        .map(|request| {
+            serde_json::from_slice::<Value>(
+                request
+                    .body()
+                    .bytes()
+                    .expect("the DynamoDB request body is in memory"),
+            )
+            .expect("the request body is JSON")
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn a_session_page_uses_two_parent_reads_only_and_reuses_a_resumed_epoch() {
+    let session = aex_session_domain::testing::session_fixture();
+    let empty_query = serde_json::json!({"Items": []}).to_string();
+
+    let (client, first_replay) = scripted_client(vec![
+        session_head_response(&session),
+        empty_query.clone(),
+        session_head_response(&session),
+    ]);
+    let reads = SessionReads::new(client, &tables().session_authority);
+    let first = reads
+        .page_runs(
+            session.workspace,
+            session.id,
+            None,
+            PageBudget::new(1).expect("a page"),
+            None,
+        )
+        .await
+        .expect("a fenced first page");
+    assert!(matches!(
+        first,
+        SessionScoped::Active(page) if page.deletion_epoch == session.deletion.epoch
+    ));
+    let first_requests = request_bodies(&first_replay);
+    assert_eq!(first_requests.len(), 3, "parent, query, parent");
+    assert_eq!(first_requests[0]["ConsistentRead"], true);
+    assert_eq!(first_requests[1]["ConsistentRead"], true);
+    assert_eq!(first_requests[2]["ConsistentRead"], true);
+
+    let (client, resumed_replay) =
+        scripted_client(vec![empty_query, session_head_response(&session)]);
+    let reads = SessionReads::new(client, &tables().session_authority);
+    let resumed = reads
+        .page_runs(
+            session.workspace,
+            session.id,
+            Some(session.deletion.epoch),
+            PageBudget::new(1).expect("a page"),
+            None,
+        )
+        .await
+        .expect("a fenced resumed page");
+    assert!(matches!(resumed, SessionScoped::Active(_)));
+    let resumed_requests = request_bodies(&resumed_replay);
+    assert_eq!(
+        resumed_requests.len(),
+        2,
+        "the edge's prevalidated parent is the resumed before-read"
+    );
+    assert_eq!(resumed_requests[0]["ConsistentRead"], true);
+    assert_eq!(resumed_requests[1]["ConsistentRead"], true);
+}
+
+#[tokio::test]
+async fn a_scoped_point_read_hides_foreign_tenants_and_refuses_deleted_parents() {
+    let (session, run, _agent, _message) = aex_session_domain::testing::running_session();
+
+    let (client, _replay) = scripted_client(vec![scoped_run_response(&session, &run)]);
+    let reads = SessionReads::new(client, &tables().session_authority);
+    assert!(matches!(
+        reads.load_run(session.workspace, session.id, run.id).await,
+        Ok(SessionScoped::Active(Some(found))) if found == run
+    ));
+
+    let (client, _replay) = scripted_client(vec![scoped_run_response(&session, &run)]);
+    let reads = SessionReads::new(client, &tables().session_authority);
+    let another_workspace = aex_session_domain::testing::id(99);
+    assert_eq!(
+        reads
+            .load_run(another_workspace, session.id, run.id)
+            .await
+            .expect("a hidden foreign row"),
+        SessionScoped::Missing
+    );
+
+    let mut deleted = session.clone();
+    deleted.deletion.state = aex_session_domain::DeletionState::Trashed;
+    deleted.status = aex_session_domain::SessionStatus::Trashed;
+    let (client, _replay) = scripted_client(vec![scoped_run_response(&deleted, &run)]);
+    let reads = SessionReads::new(client, &tables().session_authority);
+    assert_eq!(
+        reads
+            .load_run(deleted.workspace, deleted.id, run.id)
+            .await
+            .expect("a typed deletion fence"),
+        SessionScoped::Deleted
+    );
+}
 
 #[tokio::test]
 async fn an_operation_authority_read_is_strongly_consistent_and_targets_the_exact_key() {

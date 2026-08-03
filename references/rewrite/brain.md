@@ -629,3 +629,26 @@ cargo run -p aex-workspace-check
     134 member(s) and 141 package(s) satisfy every structural and registry rule
 git diff --check                                                        clean
 ```
+
+### 18.1 Canonical session authority at lease claim
+
+Brain lease claim no longer decodes the removed slim `SessionHead` or compares
+the removed `SessionLifecycle` enum. After the conditional agent claim it
+strongly reads and decodes the complete canonical session document, verifies
+the exact claimed session id and checked workspace projection, and derives the
+workspace, organization and deletion epoch from that single authority. Every
+non-live deletion state is terminal to a claim. An absent parent is terminal as
+well: a durable wake or agent row may legitimately outlive a purged session,
+and classifying that stale delivery as corrupt storage would retry or poison it
+indefinitely. A present malformed row remains an undecodable store failure.
+
+This does not make lease acquisition and the session head one transaction. The
+claim's subsequent decision writes and every renewal still condition on the
+session lifecycle, cancellation epoch and deletion epoch, so a deletion race
+cannot authorize work. A claim that discovers a terminal session may leave its
+new agent lease until expiry; removing it would add another conditional write
+to a path that will perform no decision, while it cannot bypass the later
+session guards. Converting claim to one `TransactWriteItems` would remove that
+temporary lease but lose `ReturnValues=ALL_NEW`, forcing another strong agent
+read. The current choice keeps the hot successful claim at two round trips and
+preserves the returned fence/head atomically with the claim update.

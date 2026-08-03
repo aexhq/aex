@@ -58,6 +58,7 @@ aex-wire = { path = "../aex-wire" }
 
 [dev-dependencies]
 aex-brain-test-support = { path = "../aex-brain-test-support" }
+aex-session-domain = { path = "../aex-session-domain" }
 aws-smithy-http-client.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 

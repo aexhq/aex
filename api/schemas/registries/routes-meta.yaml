@@ -185,6 +185,8 @@ servedOperations:
     - secrets_list
     - session_approval_get
     - session_approvals_list
+    - session_run_get
+    - session_runs_list
   regional-stream:
     - observations_events_listen
     - observations_events_stream

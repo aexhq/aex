@@ -14,8 +14,7 @@ use aex_brain_application::ports::{
 use aex_brain_domain::ids::{AgentKey, Fence, OwnerToken, Timestamp};
 use aex_session_dynamodb::attr::{Row, n, s, stamp};
 use aex_session_dynamodb::plan::key as item_key;
-use aex_session_dynamodb::wire_pending::SessionLifecycle;
-use aex_wire::ids::WorkspaceId;
+use aex_wire::ids::{SessionId, WorkspaceId};
 use aws_sdk_dynamodb::operation::update_item::UpdateItemError;
 use aws_sdk_dynamodb::types::ReturnValue;
 
@@ -55,12 +54,25 @@ async fn load_session_authority(
         .send()
         .await
         .map_err(|error| ClaimError::Store(transport("claim session authority", &error)))?;
-    let item = output.item.as_ref().ok_or_else(|| {
-        ClaimError::Store(StoreError::Undecodable {
-            location: "session head".to_owned(),
-            reason: "the session does not exist".to_owned(),
-        })
-    })?;
+    session_authority_from_item(output.item.as_ref(), session)
+}
+
+fn session_authority_from_item(
+    item: Option<&aex_session_dynamodb::attr::Item>,
+    expected_session: SessionId,
+) -> Result<SessionAuthority, ClaimError> {
+    // A durable wake or agent row may outlive the purged session that owned it.
+    // That stale delivery is terminal work, not malformed storage to retry.
+    let Some(item) = item else {
+        return Err(ClaimError::Terminal);
+    };
+    decode_session_authority(item, expected_session)
+}
+
+fn decode_session_authority(
+    item: &aex_session_dynamodb::attr::Item,
+    expected_session: SessionId,
+) -> Result<SessionAuthority, ClaimError> {
     let row = Row::bind(item, aex_session_dynamodb::codec::SESSION_HEAD).map_err(|error| {
         ClaimError::Store(StoreError::Undecodable {
             location: "session head".to_owned(),
@@ -73,25 +85,27 @@ async fn load_session_authority(
             reason: error.to_string(),
         })
     })?;
-    let head = aex_session_dynamodb::codec::decode_head(item, workspace).map_err(|error| {
-        ClaimError::Store(StoreError::Undecodable {
-            location: "session head".to_owned(),
-            reason: error.to_string(),
-        })
-    })?;
-    if head.session != session {
+    let session = aex_session_dynamodb::authority_codec::decode_session(item, workspace).map_err(
+        |error| {
+            ClaimError::Store(StoreError::Undecodable {
+                location: "session head".to_owned(),
+                reason: error.to_string(),
+            })
+        },
+    )?;
+    if session.id != expected_session {
         return Err(ClaimError::Store(StoreError::Undecodable {
             location: "session head".to_owned(),
             reason: "the row session does not match the claimed agent".to_owned(),
         }));
     }
-    if head.lifecycle != SessionLifecycle::Active {
+    if !session.deletion.state.admits_work() {
         return Err(ClaimError::Terminal);
     }
     Ok(SessionAuthority {
-        workspace: head.workspace,
-        organization: head.organization,
-        deletion_epoch: head.deletion_epoch,
+        workspace: session.workspace,
+        organization: session.organization,
+        deletion_epoch: session.deletion.epoch.0,
     })
 }
 
@@ -321,5 +335,90 @@ fn renewal_transaction_error<R>(
             current: Fence(claim.fence.0.saturating_add(1)),
         },
         other => renew_plan_error(&other),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use aex_brain_application::ports::{ClaimError, StoreError};
+    use aex_session_domain::DeletionState;
+    use aex_session_domain::testing::{id, session_fixture};
+    use aex_wire::ids::{SessionId, WorkspaceId};
+
+    use super::{decode_session_authority, session_authority_from_item};
+
+    #[test]
+    fn an_absent_parent_is_a_terminal_stale_claim() {
+        assert_eq!(
+            session_authority_from_item(None, id::<SessionId>(99)),
+            Err(ClaimError::Terminal)
+        );
+    }
+
+    #[test]
+    fn canonical_live_session_supplies_the_claim_authority() {
+        let session = session_fixture();
+        let item = aex_session_dynamodb::authority_codec::encode_session(&session)
+            .expect("canonical session row");
+
+        let authority = decode_session_authority(&item, session.id).expect("live authority");
+
+        assert_eq!(authority.workspace, session.workspace);
+        assert_eq!(authority.organization, session.organization);
+        assert_eq!(authority.deletion_epoch, session.deletion.epoch.0);
+    }
+
+    #[test]
+    fn every_non_live_deletion_state_is_terminal_to_a_claim() {
+        for state in [
+            DeletionState::Trashed,
+            DeletionState::Purging,
+            DeletionState::Purged,
+        ] {
+            let mut session = session_fixture();
+            session.deletion.state = state;
+            let item = aex_session_dynamodb::authority_codec::encode_session(&session)
+                .expect("canonical session row");
+
+            assert_eq!(
+                decode_session_authority(&item, session.id),
+                Err(ClaimError::Terminal),
+                "{state:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_claim_cannot_accept_an_authority_row_for_another_session() {
+        let session = session_fixture();
+        let item = aex_session_dynamodb::authority_codec::encode_session(&session)
+            .expect("canonical session row");
+
+        let error = decode_session_authority(&item, id::<SessionId>(99))
+            .expect_err("session identity mismatch");
+
+        assert!(
+            matches!(error, ClaimError::Store(StoreError::Undecodable { .. })),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn a_claim_refuses_workspace_drift_inside_the_canonical_row() {
+        let session = session_fixture();
+        let mut item = aex_session_dynamodb::authority_codec::encode_session(&session)
+            .expect("canonical session row");
+        item.insert(
+            "workspaceId".to_owned(),
+            aex_session_dynamodb::attr::s(id::<WorkspaceId>(98).to_string()),
+        );
+
+        let error = decode_session_authority(&item, session.id)
+            .expect_err("the checked projection and document disagree");
+
+        assert!(
+            matches!(error, ClaimError::Store(StoreError::Undecodable { .. })),
+            "{error:?}"
+        );
     }
 }

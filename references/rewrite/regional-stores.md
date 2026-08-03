@@ -8,7 +8,7 @@ keywords:
   - handoff
 audience: implementation agents and maintainers
 status: accepted
-last_verified: 2026-08-02
+last_verified: 2026-08-03
 related:
   - references/rewrite/test-architecture.md
   - references/rewrite/contracts.md
@@ -544,3 +544,44 @@ cargo nextest run -p aex-secret-custody-dynamodb \
 cargo check --workspace --all-targets                            clean
 cargo run -p aex-workspace-check                                 133 members / 139 packages clean
 ```
+
+## 16. Canonical session read composition (2026-08-03)
+
+`SessionReads` now exposes the complete canonical session, message and run
+documents rather than the removed slim head/run shapes. A `SessionScoped<T>`
+answer makes parent state explicit: absent and cross-workspace sessions are the
+same `Missing` result, a crossed deletion fence is `Deleted`, and only a live
+parent can return `Active(T)`. This prevents a guessed session id from becoming
+a tenant-existence oracle.
+
+Run and approval point reads use one two-item `TransactGetItems` for the session
+head and child. That gives one serializable snapshot and one network round trip;
+three separate strong reads would cost more latency and could cross a deletion
+transition. Collection reads use the only available query-safe sequence: strong
+head read, bounded ascending base-table query, then strong head reread. The
+second read rejects a deletion transition, including trash followed by restore,
+by comparing the monotone deletion epoch. It does not reject unrelated session
+revision movement. This costs two strongly consistent parent reads (and their
+RCUs) plus the query, adding two DynamoDB round trips to each collection page.
+The bounded protocol is explicit: read parent, query once, read parent again.
+It never loops or returns a short/silent page. A resumed request reuses the
+edge's strong parent read, made before its epoch-bound cursor is decoded, as the
+first fence; it therefore still performs only two parent reads total rather
+than three. If the epoch changed while both parent reads are live, the adapter
+returns a nonretryable internal refusal because the current HTTP routes declare
+no retryable snapshot-conflict result.
+
+Every base-table continuation is checked again below the signed HTTP cursor: it
+must name the exact `SESSION#{sessionId}` partition, the route's sort-key range,
+and no secondary-index keys. This is defense in depth against a future cursor
+composition bug; the HTTP signature remains the sole wire cursor authority.
+
+The read adapter does not make the write composition complete. Canonical
+session/message/run `Put` actions have exact item and aggregate transaction-size
+preflight, but the application plan also contains actions owned by work,
+content, registry, custody and runtime adapters. No production
+`ExternalActionCompiler` composes all of those actions or dispatches every
+after-commit hint yet. Resulting-size safety for `Update` actions must remain an
+owner-side preflight over the item already read; the root compiler cannot infer
+the resulting DynamoDB item without adding a race-prone read. No mutating
+session route should mount until that composition is complete.

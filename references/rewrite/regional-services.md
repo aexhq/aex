@@ -10,7 +10,7 @@ keywords:
   - idempotency
   - composition
 audience: implementation agents and maintainers
-last_verified: 2026-08-02
+last_verified: 2026-08-03
 related:
   - references/rewrite/regional-domains.md
   - references/rewrite/regional-stores.md
@@ -1477,6 +1477,9 @@ members and 143 packages. The regenerated 13-table bundle digest is
 
 ## Session run-read audit continuation (2026-08-02)
 
+> Historical finding, superseded on 2026-08-03 by the canonical run authority
+> row and the mounted lifecycle-fenced run reads documented below.
+
 `session_run_get` and `session_runs_list` remain absent after a focused audit of
 the generated `Run` model, the run key and codec, both session-store read
 surfaces, regional handler composition, the signed cursor layer and the authored
@@ -1523,6 +1526,10 @@ The routes can mount only after the terminal authority durably commits the full
 public run projection (including a completeness fence for telemetry) in the run
 row or another single exact-read authority.
 ## Session message-list audit continuation (2026-08-02)
+
+> Historical representation finding, superseded in part by the canonical
+> message authority row. The current blocker is Open-message traversal and is
+> documented in the 2026-08-03 audit below.
 
 `session_messages_list` remains absent after auditing the generated message/page
 model, both current message records, the session-table codec and keys, content
@@ -1613,3 +1620,46 @@ enabled. A separate compiler-fail doctest runs with only
 through feature unification, that proof turns red. The authored
 `limit_projection` target is registered as unit evidence rather than relying on
 a local command that CI never selects.
+
+## Canonical session route audit (2026-08-03)
+
+The canonical authority codec closes the historical field-loss blockers: a
+session head now carries the full resolved configuration, continuity, lineage
+and metadata; messages carry file and tool parts; runs carry typed terminal
+failure and telemetry state. The read-only production composition now binds
+those documents through `SessionReads`. Existing approval point/list routes
+also go through the session lifecycle fence and return the declared
+`session_deleted` response after trash or purge instead of publishing a child
+resource under a deleted parent.
+
+Run point/list are now mounted in `SERVED` and generated served metadata. Both
+use the canonical run row, exact projection and the lifecycle-fenced read
+adapter; the list cursor is signed over route, principal, region, workspace,
+session, order and the canonical deletion epoch. A resumed page strongly reads
+the parent before decoding the cursor and reuses that read as the query's first
+fence; the final parent read refuses a concurrent trash/restore. Thus an old
+cursor cannot cross into a new live generation without adding a third parent
+read to the hot path.
+
+The other core reads remain deliberately absent:
+
+- `session_get`'s generated handler returns only `200 WithETag<Session>`, while
+  its contract text and server-side `SessionReadResult` require deleting and
+  tombstone outcomes. That union is not wired into generated dispatch.
+- `session_messages_list` has no wire state for an Open message. Publishing a
+  mutable partial assistant message as if it were a complete message is not an
+  exact projection. Filtering Open rows while advancing the DynamoDB cursor is
+  also incorrect: if a skipped row seals before continuation, it can be
+  permanently omitted from the traversal. A future cursor must also bind the
+  canonical deletion epoch, as the run and approval continuations do now.
+- `sessions_list` must define one ordered cursor across active, trashed and
+  purging index partitions (and the `deleting` status filter). Querying one
+  lifecycle partition or using a DynamoDB filter would not implement that
+  collection.
+
+Mutation routes remain blocked independently of read representation. Stop must
+fence and settle more than 100 agents in bounded durable batches and commit a
+final run/head barrier; terminal commit must include usage closure and spend
+reservation release; trash/restore/purge need their durable continuation
+workers and absorbing fences. None is mounted and `routes-meta.yaml` is
+unchanged for mutations.

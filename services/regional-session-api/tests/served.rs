@@ -31,15 +31,16 @@ use aex_secret_domain::custody::CustodyRevision;
 use aex_secret_domain::plaintext::SecretPlaintext;
 use aex_secret_domain::revocation::RevocationEpoch;
 use aex_secret_domain::secret::{SecretName, SecretRevision, SecretState, SourceGeneration};
+use aex_session_domain::{Message, Run, Session};
 use aex_session_dynamodb::error::StoreError;
 use aex_session_dynamodb::paging::{PageBudget, PagePosition};
 use aex_session_dynamodb::plan::{Participant, TransactionPlan};
 use aex_session_dynamodb::replay::Receipt;
 use aex_session_dynamodb::store::{OperationApiStore, OperationCancelOutcome, OperationFilter};
-use aex_session_dynamodb::store::{PositionPage, SessionQueries};
+use aex_session_dynamodb::store::{PositionPage, SessionPage, SessionQueries, SessionScoped};
 use aex_session_dynamodb::transactions::operation_cancel_owned;
 use aex_session_dynamodb::wire_pending::{
-    Approval, ApprovalBinding, ApprovalStatus, SessionHead, StoredOperation,
+    Approval, ApprovalBinding, ApprovalStatus, StoredOperation,
 };
 use aex_wire::CanonicalJson;
 use aex_wire::error::{ErrorCode, WireError};
@@ -310,17 +311,79 @@ impl OperationApiStore for FakeOperations {
 #[derive(Debug, Default)]
 struct FakeSessions {
     approvals: Vec<Approval>,
+    runs: Vec<Run>,
     next: Option<PagePosition>,
+    deleted: bool,
+    deletion_epoch: u64,
 }
 
 #[async_trait::async_trait]
 impl SessionQueries for FakeSessions {
-    async fn read_head(
+    async fn load_session(
+        &self,
+        workspace: WorkspaceId,
+        session: SessionId,
+    ) -> Result<SessionScoped<Session>, StoreError> {
+        if self.deleted {
+            return Ok(SessionScoped::Deleted);
+        }
+        let mut parent = aex_session_domain::testing::session_fixture();
+        parent.id = session;
+        parent.workspace = workspace;
+        parent.deletion.session = session;
+        parent.deletion.epoch = aex_session_domain::DeletionEpoch(self.deletion_epoch);
+        Ok(SessionScoped::Active(parent))
+    }
+
+    async fn page_messages(
         &self,
         _workspace: WorkspaceId,
         _session: SessionId,
-    ) -> Result<Option<SessionHead>, StoreError> {
-        Ok(None)
+        _expected_deletion_epoch: Option<aex_session_domain::DeletionEpoch>,
+        _budget: PageBudget,
+        _after: Option<&PagePosition>,
+    ) -> Result<SessionScoped<SessionPage<Message>>, StoreError> {
+        Ok(SessionScoped::Missing)
+    }
+
+    async fn load_run(
+        &self,
+        _workspace: WorkspaceId,
+        session: SessionId,
+        run: RunId,
+    ) -> Result<SessionScoped<Option<Run>>, StoreError> {
+        if self.deleted {
+            return Ok(SessionScoped::Deleted);
+        }
+        Ok(SessionScoped::Active(
+            self.runs
+                .iter()
+                .find(|stored| stored.session == session && stored.id == run)
+                .cloned(),
+        ))
+    }
+
+    async fn page_runs(
+        &self,
+        _workspace: WorkspaceId,
+        session: SessionId,
+        _expected_deletion_epoch: Option<aex_session_domain::DeletionEpoch>,
+        _budget: PageBudget,
+        _after: Option<&PagePosition>,
+    ) -> Result<SessionScoped<SessionPage<Run>>, StoreError> {
+        if self.deleted {
+            return Ok(SessionScoped::Deleted);
+        }
+        Ok(SessionScoped::Active(SessionPage {
+            items: self
+                .runs
+                .iter()
+                .filter(|stored| stored.session == session)
+                .cloned()
+                .collect(),
+            next: self.next.clone(),
+            deletion_epoch: aex_session_domain::DeletionEpoch(self.deletion_epoch),
+        }))
     }
 
     async fn load_approval(
@@ -328,26 +391,34 @@ impl SessionQueries for FakeSessions {
         workspace: WorkspaceId,
         session: SessionId,
         approval: ApprovalId,
-    ) -> Result<Option<Approval>, StoreError> {
-        Ok(self
-            .approvals
-            .iter()
-            .find(|row| {
-                row.workspace == workspace
-                    && row.binding.session == session
-                    && row.approval == approval
-            })
-            .cloned())
+    ) -> Result<SessionScoped<Option<Approval>>, StoreError> {
+        if self.deleted {
+            return Ok(SessionScoped::Deleted);
+        }
+        Ok(SessionScoped::Active(
+            self.approvals
+                .iter()
+                .find(|row| {
+                    row.workspace == workspace
+                        && row.binding.session == session
+                        && row.approval == approval
+                })
+                .cloned(),
+        ))
     }
 
     async fn page_approvals(
         &self,
         workspace: WorkspaceId,
         session: SessionId,
+        _expected_deletion_epoch: Option<aex_session_domain::DeletionEpoch>,
         _budget: PageBudget,
         _after: Option<&PagePosition>,
-    ) -> Result<PositionPage<Approval>, StoreError> {
-        Ok(PositionPage {
+    ) -> Result<SessionScoped<SessionPage<Approval>>, StoreError> {
+        if self.deleted {
+            return Ok(SessionScoped::Deleted);
+        }
+        Ok(SessionScoped::Active(SessionPage {
             items: self
                 .approvals
                 .iter()
@@ -355,7 +426,8 @@ impl SessionQueries for FakeSessions {
                 .cloned()
                 .collect(),
             next: self.next.clone(),
-        })
+            deletion_epoch: aex_session_domain::DeletionEpoch(self.deletion_epoch),
+        }))
     }
 }
 
@@ -937,7 +1009,7 @@ fn the_served_set_exactly_matches_the_generated_actual_mount_authority() {
         })
         .collect();
     assert_eq!(Routes::served(), generated);
-    assert_eq!(generated.len(), 15);
+    assert_eq!(generated.len(), 17);
 
     let session_export = registry["routes"]
         .as_array()
@@ -1336,7 +1408,10 @@ async fn approval_get_projects_the_complete_bound_call_and_decision() {
         Arc::new(FakeRegistry::default()),
         Arc::new(FakeSessions {
             approvals: vec![row],
+            runs: Vec::new(),
             next: None,
+            deleted: false,
+            deletion_epoch: 0,
         }),
     );
     assert!(mounted.contains(&RouteId::SessionApprovalGet));
@@ -1373,7 +1448,10 @@ async fn approval_list_publishes_expired_and_binds_continuation_to_the_session()
         Arc::new(FakeRegistry::default()),
         Arc::new(FakeSessions {
             approvals: vec![row],
+            runs: Vec::new(),
             next: Some(next),
+            deleted: false,
+            deletion_epoch: 0,
         }),
     );
     assert!(mounted.contains(&RouteId::SessionApprovalsList));
@@ -1384,6 +1462,26 @@ async fn approval_list_publishes_expired_and_binds_continuation_to_the_session()
     assert!(body["items"][0].get("decision").is_none());
     let cursor = body["nextCursor"].as_str().expect("a continuation");
 
+    let ((restored_router, _), _) = build_with_sessions(
+        Arc::new(FakeCustody::default()),
+        Arc::new(FakeRegistry::default()),
+        Arc::new(FakeSessions {
+            approvals: vec![stored_approval(ApprovalStatus::Expired)],
+            runs: Vec::new(),
+            next: None,
+            deleted: false,
+            // Trash and restore each advance the canonical deletion epoch.
+            deletion_epoch: 2,
+        }),
+    );
+    let (status, _, body) = get(
+        &restored_router,
+        &format!("/api/sessions/{session}/approvals?cursor={cursor}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["code"], "invalid_cursor");
+
     let other_session = sample::<SessionId>(30);
     let (status, _, body) = get(
         &router,
@@ -1391,6 +1489,36 @@ async fn approval_list_publishes_expired_and_binds_continuation_to_the_session()
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+}
+
+#[tokio::test]
+async fn approval_reads_refuse_a_session_that_crossed_its_deletion_fence() {
+    let row = stored_approval(ApprovalStatus::Pending);
+    let session = row.binding.session;
+    let approval = row.approval;
+    let ((router, _), _) = build_with_sessions(
+        Arc::new(FakeCustody::default()),
+        Arc::new(FakeRegistry::default()),
+        Arc::new(FakeSessions {
+            approvals: vec![row],
+            runs: Vec::new(),
+            next: None,
+            deleted: true,
+            deletion_epoch: 1,
+        }),
+    );
+
+    for path in [
+        format!("/api/sessions/{session}/approvals/{approval}"),
+        format!("/api/sessions/{session}/approvals"),
+    ] {
+        let (status, _, body) = get(&router, &path).await;
+        assert_eq!(status, StatusCode::GONE, "{body}");
+        assert_eq!(
+            body["error"]["code"].as_str(),
+            Some(ErrorCode::SessionDeleted.as_str())
+        );
+    }
 }
 
 /// Resolving only the approval row would acknowledge before the durable Brain
@@ -1407,7 +1535,10 @@ async fn approval_response_is_absent_without_one_atomic_handoff_authority() {
         Arc::new(FakeRegistry::default()),
         Arc::new(FakeSessions {
             approvals: vec![row],
+            runs: Vec::new(),
             next: None,
+            deleted: false,
+            deletion_epoch: 0,
         }),
     );
 
@@ -1843,35 +1974,95 @@ const REGISTRY_POINTS: &[(RouteId, &str)] = &[
     (RouteId::RegistryToolsGet, "/api/workspace/tools/search"),
 ];
 
-/// Run reads whose public projection is wider than the durable run row.
-const RUN_READS: &[(RouteId, &str)] = &[
-    (
-        RouteId::SessionRunGet,
-        "/api/sessions/01jxt21q00e40r2081040g2081/runs/01jxt21q00e40r2081040g2082",
-    ),
-    (
-        RouteId::SessionRunsList,
-        "/api/sessions/01jxt21q00e40r2081040g2081/runs?limit=1",
-    ),
-];
-
-/// A stored run is not yet the complete public run resource.
-///
-/// In particular, the terminal transaction stores only a result digest and
-/// never records the output-message identities, typed public error, or the
-/// telemetry completeness/gap projection. Driving both paths through the real
-/// router prevents a partial stored row from becoming a structurally valid but
-/// incomplete customer response.
 #[tokio::test]
-async fn run_reads_stay_absent_until_the_terminal_projection_is_complete() {
-    for (id, path) in RUN_READS {
-        let (router, mounted) = router(FakeCustody::default());
-        assert!(!mounted.contains(id), "{id} has no complete run projection");
+async fn canonical_run_point_and_list_reads_are_complete_and_reachable() {
+    let (session, run, _agent, _message) = aex_session_domain::testing::running_session();
+    let next = PagePosition {
+        pk: format!("SESSION#{}", session.id),
+        sk: format!("RUN#{}", run.id),
+        index_pk: None,
+        index_sk: None,
+    };
+    let ((router, mounted), _) = build_with_sessions(
+        Arc::new(FakeCustody::default()),
+        Arc::new(FakeRegistry::default()),
+        Arc::new(FakeSessions {
+            approvals: Vec::new(),
+            runs: vec![run.clone()],
+            next: Some(next),
+            deleted: false,
+            deletion_epoch: 0,
+        }),
+    );
+    assert!(mounted.contains(&RouteId::SessionRunGet));
+    assert!(mounted.contains(&RouteId::SessionRunsList));
 
-        let (status, etag, body) = get(&router, path).await;
-        assert_eq!(status, StatusCode::NOT_FOUND, "{id}");
-        assert!(etag.is_none(), "{id} must not tag a partial run");
-        assert_eq!(body, serde_json::Value::Null, "{id}");
+    let (status, etag, point_body) = get(
+        &router,
+        &format!("/api/sessions/{}/runs/{}", session.id, run.id),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{point_body}");
+    assert!(etag.is_none());
+    let point: models::Run = serde_json::from_value(point_body.clone()).expect("strict wire run");
+    assert_eq!(point.id, run.id);
+    assert_eq!(point.session_id, session.id);
+    assert_eq!(point.max_spend_cents.get(), run.max_spend_cents.get());
+    assert_eq!(point.status, models::RunStatus::Running);
+    assert_eq!(point.telemetry_complete, None);
+
+    let (status, etag, page_body) = get(
+        &router,
+        &format!("/api/sessions/{}/runs?limit=1", session.id),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page_body}");
+    assert!(etag.is_none());
+    let page: models::RunPage = serde_json::from_value(page_body).expect("strict wire run page");
+    assert_eq!(page.items, vec![point]);
+    let cursor = page.next_cursor.expect("a bounded continuation");
+
+    let ((restored_router, _), _) = build_with_sessions(
+        Arc::new(FakeCustody::default()),
+        Arc::new(FakeRegistry::default()),
+        Arc::new(FakeSessions {
+            approvals: Vec::new(),
+            runs: vec![run.clone()],
+            next: None,
+            deleted: false,
+            deletion_epoch: 2,
+        }),
+    );
+    let (status, _, body) = get(
+        &restored_router,
+        &format!(
+            "/api/sessions/{}/runs?cursor={}",
+            session.id,
+            cursor.as_str()
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["code"], "invalid_cursor");
+
+    let ((deleted_router, _), _) = build_with_sessions(
+        Arc::new(FakeCustody::default()),
+        Arc::new(FakeRegistry::default()),
+        Arc::new(FakeSessions {
+            approvals: Vec::new(),
+            runs: vec![run.clone()],
+            next: None,
+            deleted: true,
+            deletion_epoch: 3,
+        }),
+    );
+    for path in [
+        format!("/api/sessions/{}/runs/{}", session.id, run.id),
+        format!("/api/sessions/{}/runs", session.id),
+    ] {
+        let (status, _, body) = get(&deleted_router, &path).await;
+        assert_eq!(status, StatusCode::GONE, "{body}");
+        assert_eq!(body["error"]["code"], "session_deleted");
     }
 }
 
