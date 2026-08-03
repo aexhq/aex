@@ -383,7 +383,7 @@ pub fn guard(placement: &WorkspacePlacement) -> crate::wire_pending::PlacementGu
 mod tests {
     use aex_wire::ids::{ApiKeyId, PrefixedId, Uuid7, WorkspaceId};
     use aex_wire::limits::LimitId;
-    use aex_wire::models::{LimitScalarValue, LimitSource, LimitValue};
+    use aex_wire::models::{LimitMapValue, LimitScalarValue, LimitSource, LimitValue};
     use aex_wire::types::DecimalU128;
 
     use super::{
@@ -479,8 +479,14 @@ mod tests {
         let decoded = decode_profile(&profile, workspace(1)).expect("profile");
         assert_eq!(decoded.name, "Production");
 
-        let value = LimitValue::Scalar(LimitScalarValue {
-            value: DecimalU128::new(100),
+        let value = LimitValue::Map(LimitMapValue {
+            values: std::collections::BTreeMap::from([
+                ("items".to_owned(), DecimalU128::new(100)),
+                (
+                    "serialized_bytes".to_owned(),
+                    DecimalU128::new(8 * 1_024 * 1_024),
+                ),
+            ]),
         });
         let limit = ItemBuilder::new(WORKSPACE_LIMIT)
             .set("pk", s(format!("LIMIT#WS#{}", workspace(1))))
@@ -508,8 +514,8 @@ mod tests {
 
     #[test]
     fn a_limit_value_with_the_wrong_registered_shape_is_corrupt() {
-        let value = aex_wire::models::LimitValue::Map(aex_wire::models::LimitMapValue {
-            values: std::collections::BTreeMap::new(),
+        let value = LimitValue::Scalar(LimitScalarValue {
+            value: DecimalU128::new(100),
         });
         let limit = ItemBuilder::new(WORKSPACE_LIMIT)
             .set("pk", s(format!("LIMIT#WS#{}", workspace(1))))
@@ -556,7 +562,7 @@ mod tests {
             .set("pk", s(format!("LIMIT#WS#{}", workspace(1))))
             .set("sk", s("LIMIT#query.page"))
             .set("workspaceId", s(workspace(1).to_string()))
-            .set("limitId", s(LimitId::RequestBodyBytes.as_str()))
+            .set("limitId", s(LimitId::ApiJsonBody.as_str()))
             .set(
                 "effectiveValue",
                 s(serde_json::to_string(&value).expect("json")),

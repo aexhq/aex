@@ -232,8 +232,14 @@ mod tests {
         LimitWrite {
             workspace: WorkspaceId::from_uuid7(Uuid7::compose(1, [1; 10])),
             id: LimitId::QueryPage,
-            effective_value: LimitValue::Scalar(LimitScalarValue {
-                value: DecimalU128::new(1_000),
+            effective_value: LimitValue::Map(LimitMapValue {
+                values: std::collections::BTreeMap::from([
+                    ("items".to_owned(), DecimalU128::new(1_000)),
+                    (
+                        "serialized_bytes".to_owned(),
+                        DecimalU128::new(8 * 1_024 * 1_024),
+                    ),
+                ]),
             }),
             source: LimitSource::Default,
             revision: 3,
@@ -297,8 +303,14 @@ mod tests {
         assert!(classify_limit_replay(Some(&projected), &write).is_ok());
 
         let mut conflicting = projected.clone();
-        conflicting.effective_value = LimitValue::Scalar(LimitScalarValue {
-            value: DecimalU128::new(999),
+        conflicting.effective_value = LimitValue::Map(LimitMapValue {
+            values: std::collections::BTreeMap::from([
+                ("items".to_owned(), DecimalU128::new(999)),
+                (
+                    "serialized_bytes".to_owned(),
+                    DecimalU128::new(8 * 1_024 * 1_024),
+                ),
+            ]),
         });
         assert!(matches!(
             classify_limit_replay(Some(&conflicting), &write),

@@ -10,7 +10,7 @@ use aex_session_dynamodb::capacity_limit_projection_write::{
 };
 use aex_wire::ids::{PrefixedId as _, Uuid7, WorkspaceId};
 use aex_wire::limits::LimitId;
-use aex_wire::models::{LimitScalarValue, LimitSource, LimitValue};
+use aex_wire::models::{LimitMapValue, LimitSource, LimitValue};
 use aex_wire::types::{DecimalU128, Timestamp};
 use aws_sdk_dynamodb::Client;
 use aws_sdk_dynamodb::config::{BehaviorVersion, Credentials, Region};
@@ -64,8 +64,14 @@ fn write() -> LimitWrite {
     LimitWrite {
         workspace: WorkspaceId::from_uuid7(Uuid7::compose(1, [1; 10])),
         id: LimitId::QueryPage,
-        effective_value: LimitValue::Scalar(LimitScalarValue {
-            value: DecimalU128::new(1_000),
+        effective_value: LimitValue::Map(LimitMapValue {
+            values: std::collections::BTreeMap::from([
+                ("items".to_owned(), DecimalU128::new(1_000)),
+                (
+                    "serialized_bytes".to_owned(),
+                    DecimalU128::new(8 * 1_024 * 1_024),
+                ),
+            ]),
         }),
         source: LimitSource::Default,
         revision: 3,
@@ -255,7 +261,7 @@ async fn a_resolution_read_fails_closed_on_stored_identity_corruption() {
         Answer {
             status: 200,
             code: None,
-            body: durable_item(&write, LimitId::RequestBodyBytes),
+            body: durable_item(&write, LimitId::ApiJsonBody),
         },
     ]);
     let error = CapacityLimitProjectionWriter::new(client, "projection")
