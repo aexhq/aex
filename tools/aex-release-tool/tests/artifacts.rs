@@ -28,14 +28,6 @@ fn every_shipped_unit_has_a_recipe() {
     let units = shipped_units();
     assert!(!units.units.is_empty());
     for unit in &units.units {
-        if unit.kind == "rootfs" {
-            let err = plan(unit).expect_err("rootfs must refuse until it can emit ext4 bytes");
-            assert!(
-                err.rules()
-                    .contains(&"artifact-rootfs-output-unimplemented")
-            );
-            continue;
-        }
         let recipe = plan(unit).unwrap_or_else(|err| panic!("`{}`: {err}", unit.id));
         assert!(!recipe.argv.is_empty());
         assert_eq!(recipe.target, unit.target);
@@ -45,8 +37,7 @@ fn every_shipped_unit_has_a_recipe() {
 
 #[test]
 fn recipes_are_byte_stable_across_runs() {
-    let mut units = shipped_units();
-    units.units.retain(|unit| unit.kind != "rootfs");
+    let units = shipped_units();
     let first = aex_release_tool::artifact::recipes(&units).unwrap();
     let second = aex_release_tool::artifact::recipes(&units).unwrap();
     assert_eq!(
@@ -83,8 +74,64 @@ fn recipes_name_the_real_build_output_instead_of_guessing_from_the_unit_id() {
     );
     assert_eq!(
         recipe("hands-agent").input,
-        "target/x86_64-unknown-linux-musl/release/hands-agent"
+        "target/aarch64-unknown-linux-musl/release/hands-agent"
     );
+    assert_eq!(
+        recipe("hands-image-4gb-browser").input,
+        "target/microvm/hands-image-4gb-browser"
+    );
+}
+
+#[test]
+fn the_eight_microvm_recipes_are_variant_specific_service_zips() {
+    let units = shipped_units();
+    let images: Vec<_> = units
+        .units
+        .iter()
+        .filter(|unit| unit.kind == "microvm-image")
+        .collect();
+    assert_eq!(images.len(), 8);
+    for unit in images {
+        let recipe = plan(unit).expect("MicroVM recipe");
+        let shape = unit.microvm.as_ref().expect("declared shape");
+        assert_eq!(recipe.form, "microvm-zip");
+        assert!(
+            recipe
+                .argv
+                .windows(2)
+                .any(|pair| pair == ["--variant", &shape.variant])
+        );
+        assert!(
+            recipe
+                .base_image
+                .as_deref()
+                .is_some_and(|image| image.contains("@sha256:"))
+        );
+    }
+}
+
+#[test]
+fn a_microvm_context_zip_is_byte_stable_and_names_the_service_inputs() {
+    let temp = tempfile::tempdir().unwrap();
+    let context = temp.path().join("context");
+    std::fs::create_dir(&context).unwrap();
+    std::fs::write(
+        context.join("Dockerfile"),
+        b"FROM example.invalid@sha256:1\n",
+    )
+    .unwrap();
+    std::fs::write(context.join("hands-agent"), b"ELF fixture").unwrap();
+    std::fs::write(
+        context.join("agent.cdx.json"),
+        b"{\"bomFormat\":\"CycloneDX\"}\n",
+    )
+    .unwrap();
+    let first = package(Form::MicrovmZip, &context, 0, "bootstrap").unwrap();
+    let second = package(Form::MicrovmZip, &context, 0, "bootstrap").unwrap();
+    assert_eq!(first, second);
+    for name in [b"Dockerfile".as_slice(), b"hands-agent", b"agent.cdx.json"] {
+        assert!(first.windows(name.len()).any(|window| window == name));
+    }
 }
 
 #[test]

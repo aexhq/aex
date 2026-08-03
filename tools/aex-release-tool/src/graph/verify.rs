@@ -120,7 +120,6 @@ pub fn build(inputs: &GraphInputs) -> Result<BuiltGraph> {
             unowned.push(file.clone());
         }
     }
-
     let live_targets = inputs
         .cargo
         .iter()
@@ -251,6 +250,43 @@ pub fn verify(inputs: &GraphInputs) -> Result<BuiltGraph> {
                 ),
             ));
         }
+    }
+
+    let expected_microvms: BTreeSet<(String, u32, bool)> = [
+        ("512mb", 512, false),
+        ("1gb", 1_024, false),
+        ("2gb", 2_048, false),
+        ("2gb-browser", 2_048, true),
+        ("4gb", 4_096, false),
+        ("4gb-browser", 4_096, true),
+        ("8gb", 8_192, false),
+        ("8gb-browser", 8_192, true),
+    ]
+    .into_iter()
+    .map(|(variant, memory, browser)| (variant.to_owned(), memory, browser))
+    .collect();
+    let actual_microvms: BTreeSet<(String, u32, bool)> = inputs
+        .units
+        .units
+        .iter()
+        .filter(|unit| unit.kind == "microvm-image")
+        .filter_map(|unit| {
+            unit.microvm.as_ref().map(|shape| {
+                (
+                    shape.variant.clone(),
+                    shape.minimum_memory_mib,
+                    shape.browser,
+                )
+            })
+        })
+        .collect();
+    if cargo_names.contains("hands-image") && actual_microvms != expected_microvms {
+        violations.push(Violation::new(
+            "microvm-variant-set",
+            format!(
+                "MicroVM artifacts must declare exactly the five base and three browser variants; found {actual_microvms:?}"
+            ),
+        ));
     }
 
     // 3. Scenario rows name real nodes and a runnable package target. Merely
@@ -562,6 +598,7 @@ fn verify_resource_shape(unit: &super::inputs::Unit) -> Vec<Violation> {
     let mut violations = Vec::new();
     let wants_lambda = matches!(unit.kind.as_str(), "rust-lambda" | "ts-lambda");
     let wants_fargate = matches!(unit.kind.as_str(), "rust-oci-service" | "rust-oci-task");
+    let wants_microvm = unit.kind == "microvm-image";
     if wants_lambda {
         match unit.lambda {
             None => violations.push(Violation::new(
@@ -639,6 +676,60 @@ fn verify_resource_shape(unit: &super::inputs::Unit) -> Vec<Violation> {
                 ),
             ));
         }
+    }
+    if wants_microvm {
+        match &unit.microvm {
+            None => violations.push(Violation::new(
+                "unit-resource-shape-missing",
+                format!(
+                    "unit `{}` is a MicroVM image and declares no [unit.microvm] shape",
+                    unit.id
+                ),
+            )),
+            Some(shape) => {
+                if unit.id != format!("hands-image-{}", shape.variant) {
+                    violations.push(Violation::new(
+                        "microvm-variant-identity",
+                        format!(
+                            "unit `{}` must be named `hands-image-{}` so its artifact identity cannot be relabelled",
+                            unit.id, shape.variant
+                        ),
+                    ));
+                }
+                if shape.browser != shape.variant.ends_with("-browser") {
+                    violations.push(Violation::new(
+                        "microvm-variant-identity",
+                        format!("unit `{}` has an inconsistent browser capability", unit.id),
+                    ));
+                }
+                if unit.target != "aarch64-unknown-linux-musl" || unit.form != "zip" {
+                    violations.push(Violation::new(
+                        "microvm-artifact-shape",
+                        format!(
+                            "unit `{}` must be an ARM64 musl guest delivered as an AWS service ZIP",
+                            unit.id
+                        ),
+                    ));
+                }
+            }
+        }
+        if unit.lambda.is_some() || unit.fargate.is_some() {
+            violations.push(Violation::new(
+                "unit-resource-shape-conflict",
+                format!(
+                    "unit `{}` is a MicroVM image and declares a runtime compute shape",
+                    unit.id
+                ),
+            ));
+        }
+    } else if unit.microvm.is_some() {
+        violations.push(Violation::new(
+            "unit-resource-shape-conflict",
+            format!(
+                "unit `{}` is not a MicroVM image but declares [unit.microvm]",
+                unit.id
+            ),
+        ));
     }
     // Health paths are one convention workspace-wide.
     for (field, value) in [

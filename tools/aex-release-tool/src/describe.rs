@@ -349,9 +349,8 @@ fn build_envelope(
 
 fn media_type_of(form: &str) -> &'static str {
     match form {
-        "lambda-zip" => "application/zip",
+        "lambda-zip" | "microvm-zip" => "application/zip",
         "oci" => "application/vnd.oci.image.index.v1+json",
-        "rootfs" => "application/octet-stream",
         _ => "application/gzip",
     }
 }

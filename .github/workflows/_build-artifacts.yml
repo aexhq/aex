@@ -46,7 +46,7 @@ jobs:
         uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
         with:
           toolchain: "1.97.1"
-          targets: aarch64-unknown-linux-gnu
+          targets: aarch64-unknown-linux-gnu,aarch64-unknown-linux-musl
 
       - name: Cargo cache
         uses: Swatinem/rust-cache@bc2d2e71bd35c5549942babaa51a89c586b981d1  # v2.8.1
@@ -103,7 +103,7 @@ jobs:
             --out "artifact.bin"
 
       - name: Software bill of materials
-        run: cargo cyclonedx --locked --format json --spec-version 1.6
+        run: cargo cyclonedx --format json --spec-version 1.5
 
       - name: Advisory and licence policy
         run: cargo run --locked --release -p aex-release-tool -- policy terraform --quiet

@@ -92,6 +92,18 @@ pub struct FargateShape {
     pub port: u16,
 }
 
+/// One AWS Lambda `MicroVM` image variant.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MicrovmShape {
+    /// Stable variant token used by the image builder and plane binding.
+    pub variant: String,
+    /// Minimum guest memory accepted by this image.
+    pub minimum_memory_mib: u32,
+    /// Whether the optional browser package layer is present.
+    pub browser: bool,
+}
+
 /// One deployable's release registration.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -148,6 +160,9 @@ pub struct Unit {
     /// Fargate task shape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fargate: Option<FargateShape>,
+    /// Lambda `MicroVM` image shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub microvm: Option<MicrovmShape>,
 }
 
 /// `release/units.toml`.

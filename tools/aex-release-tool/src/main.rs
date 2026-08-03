@@ -817,7 +817,7 @@ fn run_artifact(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()>
                 None => match artifact::plan(found)?.form.as_str() {
                     "lambda-zip" => Form::LambdaZip,
                     "oci" => Form::Oci,
-                    "rootfs" => Form::Rootfs,
+                    "microvm-zip" => Form::MicrovmZip,
                     "build-output" => Form::BuildOutput,
                     _ => Form::Tarball,
                 },

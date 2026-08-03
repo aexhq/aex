@@ -53,10 +53,12 @@ required_receipts = ["unit", "lint", "sbom", "license", "vulnerability"]
 signature = "none"
 signature_rationale = "the archive is deployed by digest to a project the binding names"
 
-[kind.rootfs]
-required_receipts = ["unit", "sbom", "license", "vulnerability", "determinism"]
-signature = "sigstore-cosign"
-signature_rationale = "the guest image is the isolation boundary; its identity must be verifiable by the host that boots it"
+[kind."microvm-image"]
+required_receipts = [
+  "unit", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity", "determinism",
+]
+signature = "none"
+signature_rationale = "the service ZIP is content-addressed in versioned S3, covered by build provenance, and the resulting Lambda MicroVM image is bound by immutable ARN plus version"
 
 [kind."contract-bundle"]
 required_receipts = ["contract", "conformance", "determinism"]

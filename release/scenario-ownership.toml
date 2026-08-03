@@ -234,4 +234,14 @@ observes = ["artifact:brain-mux", "artifact:regional-session-api"]
 [[scenario]]
 id = "SC-HANDS-HOSTILE"
 owner = "hands"
-observes = ["artifact:hands-agent", "artifact:hands-image"]
+observes = [
+  "artifact:hands-agent",
+  "artifact:hands-image-512mb",
+  "artifact:hands-image-1gb",
+  "artifact:hands-image-2gb",
+  "artifact:hands-image-2gb-browser",
+  "artifact:hands-image-4gb",
+  "artifact:hands-image-4gb-browser",
+  "artifact:hands-image-8gb",
+  "artifact:hands-image-8gb-browser",
+]

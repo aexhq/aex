@@ -810,7 +810,7 @@ kind = "rust-binary"
 plane = "runtime"
 package = "hands-agent"
 bin = "hands-agent"
-target = "x86_64-unknown-linux-musl"
+target = "aarch64-unknown-linux-musl"
 profile = "release"
 form = "tar.gz"
 config_env_namespace = "AEX_HANDS_AGENT_"
@@ -820,15 +820,169 @@ alarm_spec = "hands-agent"
 live_suite = "aex-live-hands-agent"
 
 [[unit]]
-id = "hands-image"
-kind = "rootfs"
+id = "hands-image-512mb"
+kind = "microvm-image"
 plane = "runtime"
 package = "hands-image"
-target = "x86_64-unknown-linux-musl"
+target = "aarch64-unknown-linux-musl"
 profile = "release"
-form = "ext4"
+form = "zip"
+base_image = "public.ecr.aws/lambda/microvms:al2023-minimal@sha256:05cb9b38d841e7ff1b693dc9e894909612f340bf99ec97d426e8000a5bbe96c3"
 config_env_namespace = "AEX_HANDS_IMAGE_"
 config_schema_version = 1
-required_receipts = ["unit", "sbom", "license", "vulnerability", "determinism"]
+required_receipts = ["unit", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity", "determinism"]
 alarm_spec = "hands-image"
 live_suite = "aex-live-hands-image"
+extra_inputs = ["cargo:hands-agent"]
+
+[unit.microvm]
+variant = "512mb"
+minimum_memory_mib = 512
+browser = false
+
+[[unit]]
+id = "hands-image-1gb"
+kind = "microvm-image"
+plane = "runtime"
+package = "hands-image"
+target = "aarch64-unknown-linux-musl"
+profile = "release"
+form = "zip"
+base_image = "public.ecr.aws/lambda/microvms:al2023-minimal@sha256:05cb9b38d841e7ff1b693dc9e894909612f340bf99ec97d426e8000a5bbe96c3"
+config_env_namespace = "AEX_HANDS_IMAGE_"
+config_schema_version = 1
+required_receipts = ["unit", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity", "determinism"]
+alarm_spec = "hands-image"
+live_suite = "aex-live-hands-image"
+extra_inputs = ["cargo:hands-agent"]
+
+[unit.microvm]
+variant = "1gb"
+minimum_memory_mib = 1024
+browser = false
+
+[[unit]]
+id = "hands-image-2gb"
+kind = "microvm-image"
+plane = "runtime"
+package = "hands-image"
+target = "aarch64-unknown-linux-musl"
+profile = "release"
+form = "zip"
+base_image = "public.ecr.aws/lambda/microvms:al2023-minimal@sha256:05cb9b38d841e7ff1b693dc9e894909612f340bf99ec97d426e8000a5bbe96c3"
+config_env_namespace = "AEX_HANDS_IMAGE_"
+config_schema_version = 1
+required_receipts = ["unit", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity", "determinism"]
+alarm_spec = "hands-image"
+live_suite = "aex-live-hands-image"
+extra_inputs = ["cargo:hands-agent"]
+
+[unit.microvm]
+variant = "2gb"
+minimum_memory_mib = 2048
+browser = false
+
+[[unit]]
+id = "hands-image-2gb-browser"
+kind = "microvm-image"
+plane = "runtime"
+package = "hands-image"
+target = "aarch64-unknown-linux-musl"
+profile = "release"
+form = "zip"
+base_image = "public.ecr.aws/lambda/microvms:al2023-minimal@sha256:05cb9b38d841e7ff1b693dc9e894909612f340bf99ec97d426e8000a5bbe96c3"
+config_env_namespace = "AEX_HANDS_IMAGE_"
+config_schema_version = 1
+required_receipts = ["unit", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity", "determinism"]
+alarm_spec = "hands-image"
+live_suite = "aex-live-hands-image"
+extra_inputs = ["cargo:hands-agent"]
+
+[unit.microvm]
+variant = "2gb-browser"
+minimum_memory_mib = 2048
+browser = true
+
+[[unit]]
+id = "hands-image-4gb"
+kind = "microvm-image"
+plane = "runtime"
+package = "hands-image"
+target = "aarch64-unknown-linux-musl"
+profile = "release"
+form = "zip"
+base_image = "public.ecr.aws/lambda/microvms:al2023-minimal@sha256:05cb9b38d841e7ff1b693dc9e894909612f340bf99ec97d426e8000a5bbe96c3"
+config_env_namespace = "AEX_HANDS_IMAGE_"
+config_schema_version = 1
+required_receipts = ["unit", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity", "determinism"]
+alarm_spec = "hands-image"
+live_suite = "aex-live-hands-image"
+extra_inputs = ["cargo:hands-agent"]
+
+[unit.microvm]
+variant = "4gb"
+minimum_memory_mib = 4096
+browser = false
+
+[[unit]]
+id = "hands-image-4gb-browser"
+kind = "microvm-image"
+plane = "runtime"
+package = "hands-image"
+target = "aarch64-unknown-linux-musl"
+profile = "release"
+form = "zip"
+base_image = "public.ecr.aws/lambda/microvms:al2023-minimal@sha256:05cb9b38d841e7ff1b693dc9e894909612f340bf99ec97d426e8000a5bbe96c3"
+config_env_namespace = "AEX_HANDS_IMAGE_"
+config_schema_version = 1
+required_receipts = ["unit", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity", "determinism"]
+alarm_spec = "hands-image"
+live_suite = "aex-live-hands-image"
+extra_inputs = ["cargo:hands-agent"]
+
+[unit.microvm]
+variant = "4gb-browser"
+minimum_memory_mib = 4096
+browser = true
+
+[[unit]]
+id = "hands-image-8gb"
+kind = "microvm-image"
+plane = "runtime"
+package = "hands-image"
+target = "aarch64-unknown-linux-musl"
+profile = "release"
+form = "zip"
+base_image = "public.ecr.aws/lambda/microvms:al2023-minimal@sha256:05cb9b38d841e7ff1b693dc9e894909612f340bf99ec97d426e8000a5bbe96c3"
+config_env_namespace = "AEX_HANDS_IMAGE_"
+config_schema_version = 1
+required_receipts = ["unit", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity", "determinism"]
+alarm_spec = "hands-image"
+live_suite = "aex-live-hands-image"
+extra_inputs = ["cargo:hands-agent"]
+
+[unit.microvm]
+variant = "8gb"
+minimum_memory_mib = 8192
+browser = false
+
+[[unit]]
+id = "hands-image-8gb-browser"
+kind = "microvm-image"
+plane = "runtime"
+package = "hands-image"
+target = "aarch64-unknown-linux-musl"
+profile = "release"
+form = "zip"
+base_image = "public.ecr.aws/lambda/microvms:al2023-minimal@sha256:05cb9b38d841e7ff1b693dc9e894909612f340bf99ec97d426e8000a5bbe96c3"
+config_env_namespace = "AEX_HANDS_IMAGE_"
+config_schema_version = 1
+required_receipts = ["unit", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity", "determinism"]
+alarm_spec = "hands-image"
+live_suite = "aex-live-hands-image"
+extra_inputs = ["cargo:hands-agent"]
+
+[unit.microvm]
+variant = "8gb-browser"
+minimum_memory_mib = 8192
+browser = true

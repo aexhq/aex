@@ -228,7 +228,20 @@ pub const DEFAULT_ORDER: &[(&str, &[&str])] = &[
     // embeds the agent binary: publishing them together would let an image whose
     // rootfs holds the previous agent reach a plane as if it held the new one.
     ("runtime-agent", &["hands-agent"]),
-    ("runtime", &["brain-mux", "hands-image"]),
+    (
+        "runtime",
+        &[
+            "brain-mux",
+            "hands-image-512mb",
+            "hands-image-1gb",
+            "hands-image-2gb",
+            "hands-image-2gb-browser",
+            "hands-image-4gb",
+            "hands-image-4gb-browser",
+            "hands-image-8gb",
+            "hands-image-8gb-browser",
+        ],
+    ),
     ("web", &["dashboard", "site"]),
 ];
 
@@ -839,7 +852,7 @@ mod tests {
                 .unwrap_or_else(|| panic!("`{unit}` belongs to no stage"))
         };
         assert!(
-            position("hands-agent") < position("hands-image"),
+            position("hands-agent") < position("hands-image-512mb"),
             "the image embeds the agent, so publishing them in one stage would let an \
              image carrying the previous agent reach a plane as if it carried the new one"
         );

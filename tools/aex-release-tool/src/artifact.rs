@@ -26,8 +26,8 @@ pub enum Form {
     LambdaZip,
     /// An OCI image layout.
     Oci,
-    /// A guest root filesystem image.
-    Rootfs,
+    /// An AWS Lambda `MicroVM` image service ZIP.
+    MicrovmZip,
     /// A `.tar.gz` of a file set.
     Tarball,
     /// A `.tar.gz` of a build output tree.
@@ -66,16 +66,36 @@ pub struct BuildPlan {
     pub digest: String,
 }
 
-/// Derive the build plan for one unit.
-///
-/// This function is pure. It reads no file, spawns no process and creates no
-/// directory, which is what makes `artifact plan` safe to run in an
-/// unprivileged job.
-///
-/// # Errors
-/// Returns [`Exit::Usage`] for a unit kind with no recipe.
-pub fn plan(unit: &Unit) -> Result<BuildPlan> {
-    let package = unit.package.clone();
+fn microvm_plan(unit: &Unit) -> Result<(Vec<String>, &'static str, String)> {
+    let shape = unit.microvm.as_ref().ok_or_else(|| {
+        ToolError::single(
+            Exit::Usage,
+            "artifact-microvm-shape-missing",
+            format!("unit `{}` declares no MicroVM variant", unit.id),
+        )
+    })?;
+    let output = format!("target/microvm/{}", unit.id);
+    Ok((
+        vec![
+            "cargo".to_owned(),
+            "run".to_owned(),
+            "--locked".to_owned(),
+            "--release".to_owned(),
+            "--package".to_owned(),
+            "hands-image".to_owned(),
+            "--".to_owned(),
+            "artifact".to_owned(),
+            "--variant".to_owned(),
+            shape.variant.clone(),
+            "--out".to_owned(),
+            output.clone(),
+        ],
+        "microvm-zip",
+        output,
+    ))
+}
+
+fn rust_plan(unit: &Unit) -> Result<Option<(Vec<String>, &'static str, String)>> {
     let binary = || {
         unit.bin.clone().ok_or_else(|| {
             ToolError::single(
@@ -88,18 +108,11 @@ pub fn plan(unit: &Unit) -> Result<BuildPlan> {
             )
         })
     };
-    let rust_target = unit
-        .target
-        .strip_suffix(".2.34")
-        .unwrap_or(&unit.target)
-        .to_owned();
-    let (argv, form, input) = match unit.kind.as_str() {
-        // `cargo lambda build` drives `cargo zigbuild`, so the `bootstrap`
-        // rename is native and the glibc floor is explicit rather than
-        // whatever a container image happened to ship.
+    let rust_target = unit.target.strip_suffix(".2.34").unwrap_or(&unit.target);
+    let planned = match unit.kind.as_str() {
         "rust-lambda" => {
             let binary = binary()?;
-            (
+            Some((
                 vec![
                     "cargo".to_owned(),
                     "lambda".to_owned(),
@@ -107,87 +120,86 @@ pub fn plan(unit: &Unit) -> Result<BuildPlan> {
                     "--profile".to_owned(),
                     unit.profile.clone(),
                     "--package".to_owned(),
-                    package,
+                    unit.package.clone(),
                     "--target".to_owned(),
                     unit.target.clone(),
                 ],
                 "lambda-zip",
                 format!("target/lambda/{binary}/bootstrap"),
-            )
+            ))
         }
-        "rust-oci-service" | "rust-oci-task" => {
+        kind @ ("rust-oci-service" | "rust-oci-task" | "rust-binary") => {
             let binary = binary()?;
-            (
+            Some((
                 vec![
                     "cargo".to_owned(),
                     "zigbuild".to_owned(),
                     "--release".to_owned(),
                     "--package".to_owned(),
-                    package,
+                    unit.package.clone(),
                     "--target".to_owned(),
                     unit.target.clone(),
                 ],
-                "oci",
+                if kind == "rust-binary" {
+                    "tarball"
+                } else {
+                    "oci"
+                },
                 format!("target/{rust_target}/release/{binary}"),
-            )
+            ))
         }
-        "rust-binary" => {
-            let binary = binary()?;
-            (
+        _ => None,
+    };
+    Ok(planned)
+}
+
+/// Derive the build plan for one unit.
+///
+/// This function is pure. It reads no file, spawns no process and creates no
+/// directory, which is what makes `artifact plan` safe to run in an
+/// unprivileged job.
+///
+/// # Errors
+/// Returns [`Exit::Usage`] for a unit kind with no recipe.
+pub fn plan(unit: &Unit) -> Result<BuildPlan> {
+    let (argv, form, input) = if let Some(planned) = rust_plan(unit)? {
+        planned
+    } else {
+        match unit.kind.as_str() {
+            // `cargo lambda build` drives `cargo zigbuild`, so the `bootstrap`
+            // rename is native and the glibc floor is explicit rather than
+            // whatever a container image happened to ship.
+            // The entry is the module that exports the Lambda handler symbol, which
+            // is `handler.ts` in both edges. The output directory is the package's
+            // own, so two edges built in one job cannot overwrite each other. There
+            // is no minify flag: `bun build` does not minify unless asked, and
+            // `--minify=false` is a parse error rather than a no-op — writing the
+            // default down is what made this recipe unrunnable.
+            "ts-lambda" => (
                 vec![
-                    "cargo".to_owned(),
-                    "zigbuild".to_owned(),
-                    "--release".to_owned(),
-                    "--package".to_owned(),
-                    package,
-                    "--target".to_owned(),
-                    unit.target.clone(),
+                    "bun".to_owned(),
+                    "build".to_owned(),
+                    "--target=node".to_owned(),
+                    "--outdir".to_owned(),
+                    format!("services/{}/dist", unit.id),
+                    format!("services/{}/src/handler.ts", unit.id),
                 ],
-                "tarball",
-                format!("target/{rust_target}/release/{binary}"),
-            )
-        }
-        // The entry is the module that exports the Lambda handler symbol, which
-        // is `handler.ts` in both edges. The output directory is the package's
-        // own, so two edges built in one job cannot overwrite each other. There
-        // is no minify flag: `bun build` does not minify unless asked, and
-        // `--minify=false` is a parse error rather than a no-op — writing the
-        // default down is what made this recipe unrunnable.
-        "ts-lambda" => (
-            vec![
-                "bun".to_owned(),
-                "build".to_owned(),
-                "--target=node".to_owned(),
-                "--outdir".to_owned(),
+                "lambda-zip",
+                format!("services/{}/dist/handler.js", unit.id),
+            ),
+            "build-output" => (
+                vec!["bun".to_owned(), "run".to_owned(), "build".to_owned()],
+                "build-output",
                 format!("services/{}/dist", unit.id),
-                format!("services/{}/src/handler.ts", unit.id),
-            ],
-            "lambda-zip",
-            format!("services/{}/dist/handler.js", unit.id),
-        ),
-        "build-output" => (
-            vec!["bun".to_owned(), "run".to_owned(), "build".to_owned()],
-            "build-output",
-            format!("services/{}/dist", unit.id),
-        ),
-        "rootfs" => {
-            return Err(ToolError::single(
-                Exit::Usage,
-                "artifact-rootfs-output-unimplemented",
-                format!(
-                    "unit `{}` declares an ext4 artifact, but the Hands image CLI only builds a \
-                     Docker image and emits no ext4 bytes; implement a deterministic exporter or \
-                     change the clean-cut artifact contract before publication",
-                    unit.id
-                ),
-            ));
-        }
-        other => {
-            return Err(ToolError::single(
-                Exit::Usage,
-                "artifact-recipe-unknown",
-                format!("unit `{}` has kind `{other}`, which has no recipe", unit.id),
-            ));
+            ),
+            "microvm-image" => microvm_plan(unit)?,
+            other => {
+                return Err(ToolError::single(
+                    Exit::Usage,
+                    "artifact-recipe-unknown",
+                    format!("unit `{}` has kind `{other}`, which has no recipe", unit.id),
+                ));
+            }
         }
     };
     let env = BTreeMap::from([
@@ -250,6 +262,20 @@ pub fn package(
                 std::fs::read(input).map_err(|err| io(&input.display().to_string(), &err))?;
             pack::write_zip(&[pack::Entry::executable(entrypoint, data)])
         }
+        Form::MicrovmZip => {
+            if !input.is_dir() {
+                return Err(ToolError::single(
+                    Exit::Usage,
+                    "microvm-context-not-directory",
+                    format!(
+                        "`{}` is not a MicroVM service context directory",
+                        input.display()
+                    ),
+                ));
+            }
+            let entries = collect_tree(input)?;
+            pack::write_zip(&entries)
+        }
         Form::Tarball | Form::BuildOutput => {
             let entries = if input.is_dir() {
                 collect_tree(input)?
@@ -265,12 +291,12 @@ pub fn package(
             };
             pack::write_tar_gz(&entries, source_date_epoch)
         }
-        Form::Oci | Form::Rootfs => Err(ToolError::single(
+        Form::Oci => Err(ToolError::single(
             Exit::Usage,
             "artifact-form-requires-registry",
             "an OCI image is assembled over a digest-pinned base whose blobs come from a \
-             registry, and a rootfs comes from the Hands image build; neither can be \
-             produced offline. Use `artifact plan` to print the exact build invocation.",
+             registry and cannot be produced offline. Use `artifact plan` to print the exact \
+             build invocation.",
         )),
     }
 }
@@ -1037,10 +1063,11 @@ pub fn publish_destination(envelope: &ArtifactEnvelope) -> Result<PublishDestina
             "ecr",
             format!("{}@{}", envelope.unit.id, envelope.output.digest),
         ),
-        "rust-binary" | "rootfs" | "build-output" => (
+        "rust-binary" | "build-output" => (
             "s3",
             format!("{}/{}/{bare}", envelope.unit.kind, envelope.unit.id),
         ),
+        "microvm-image" => ("s3", format!("microvm/{}/{bare}.zip", envelope.unit.id)),
         "npm-package" => ("npm", envelope.unit.id.clone()),
         other => {
             return Err(ToolError::single(
@@ -1069,6 +1096,7 @@ id = "regional-session-api"
 kind = "{kind}"
 plane = "regional"
 package = "regional-session-api"
+bin = "regional-session-api"
 target = "aarch64-unknown-linux-gnu.2.34"
 profile = "release-lambda"
 form = "zip"
@@ -1127,14 +1155,12 @@ alarm_spec = "regional-session-api"
     }
 
     #[test]
-    fn oci_and_rootfs_packaging_refuse_rather_than_produce_a_partial_image() {
+    fn oci_packaging_refuses_rather_than_produce_a_partial_image() {
         let temp = tempfile::tempdir().unwrap();
         let input = temp.path().join("bin");
         std::fs::write(&input, b"x").unwrap();
-        for form in [Form::Oci, Form::Rootfs] {
-            let err = package(form, &input, 0, "bootstrap").unwrap_err();
-            assert_eq!(err.rules(), vec!["artifact-form-requires-registry"]);
-        }
+        let err = package(Form::Oci, &input, 0, "bootstrap").unwrap_err();
+        assert_eq!(err.rules(), vec!["artifact-form-requires-registry"]);
     }
 
     #[test]
