@@ -313,6 +313,12 @@ fn route_registry_document(operation: &OperationIr) -> Value {
             "servingArtifact".to_owned(),
             json!(operation.serving_artifact),
         );
+    if let Some(served_artifact) = &operation.served_artifact {
+        document
+            .as_object_mut()
+            .expect("route documents are objects")
+            .insert("servedArtifact".to_owned(), json!(served_artifact));
+    }
     document
 }
 
@@ -993,6 +999,7 @@ mod scenario_identity_tests {
             .scenarios
             .push("SC-SELECTION-PROBE".to_owned());
         changed.planes[0].operations[0].serving_artifact = "selection-probe".to_owned();
+        changed.planes[0].operations[0].served_artifact = Some("selection-probe".to_owned());
 
         let original_bundle = bundle_document(&original);
         let changed_bundle = bundle_document(&changed);

@@ -103,6 +103,15 @@ jobs:
     with:
       lane: pr
 
+  scenarios:
+    name: Scenarios
+    needs: route
+    if: needs.route.outputs.has_scenario == 'true'
+    uses: ./.github/workflows/_scenario-lane.yml
+    with:
+      matrix: ${{ needs.route.outputs.scenario_matrix }}
+      lane: pr
+
   terraform:
     name: Terraform
     needs: route
@@ -125,9 +134,9 @@ jobs:
 
   checks:
     name: Checks
-    needs: [route, gates, rust, node, terraform, artifacts]
+    needs: [route, gates, rust, node, scenarios, terraform, artifacts]
     if: always()
     uses: ./.github/workflows/_receipts.yml
     with:
       lane: pr
-      declared_jobs: '["route","gates","rust","node","terraform","artifacts"]'
+      declared_jobs: '["route","gates","rust","node","scenarios","terraform","artifacts"]'

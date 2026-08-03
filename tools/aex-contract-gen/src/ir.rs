@@ -310,8 +310,16 @@ pub struct OperationIr {
     pub plane: String,
     /// Owning fragment stem.
     pub fragment: String,
-    /// Release artifact that serves this operation.
+    /// Release artifact planned to serve this operation.
+    ///
+    /// This is ownership and selection metadata, not evidence that the route
+    /// is mounted by a runnable composition.
     pub serving_artifact: String,
+    /// Release artifact that actually mounts this operation today.
+    ///
+    /// Absence is an intentional delivery gap. This is route-registry
+    /// metadata, not part of the public wire bundle.
+    pub served_artifact: Option<String>,
     /// Release scenarios that exercise this operation.
     ///
     /// This is route-registry metadata, not part of the public wire bundle.

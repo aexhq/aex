@@ -239,6 +239,7 @@ async fn readyz(State(state): State<Arc<AppState>>) -> Response {
 #[cfg(test)]
 mod tests {
     use aex_regional_http::router::RouteOwner;
+    use aex_wire::routes::RouteId;
 
     use super::connection_class;
     use crate::ConnectionClass;
@@ -258,5 +259,24 @@ mod tests {
                 assert_eq!(class, ConnectionClass::Observation, "{operation}");
             }
         }
+    }
+
+    #[test]
+    fn mounted_routes_match_the_generated_actual_mount_authority() {
+        let registry: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../api/generated/registries/routes.json"
+        ))
+        .expect("generated route registry");
+        let generated: Vec<RouteId> = registry["routes"]
+            .as_array()
+            .expect("route rows")
+            .iter()
+            .filter(|route| route["servedArtifact"] == "regional-stream")
+            .map(|route| {
+                RouteId::parse(route["operationId"].as_str().expect("operation id"))
+                    .expect("generated operation id")
+            })
+            .collect();
+        assert_eq!(RouteOwner::Stream.routes(), generated);
     }
 }

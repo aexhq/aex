@@ -28,10 +28,22 @@ pathParams:
   name: { type: resource_name, doc: "The registered resource or secret name." }
   traceId: { type: trace_id, doc: "A W3C 32-hex trace identifier." }
 
-# Delivery/test selection defaults. Most fragments are mounted by one release
-# unit and exercised by one scenario family. The per-operation table below is
-# authoritative for the split fragments and the long-lived NDJSON transport;
-# the generator resolves both layers into one final runtime/delivery owner.
+# Closed delivery vocabulary. Planned ownership and actual mount claims below
+# must name an artifact on the operation's own API plane.
+servingArtifacts:
+  central-control-api: central
+  central-identity-api: central
+  finance-api: central
+  regional-observation-api: regional
+  regional-otlp: regional
+  regional-secret-api: regional
+  regional-session-api: regional
+  regional-stream: regional
+
+# Planned delivery/test selection defaults. Most fragments are intended for one
+# release unit and one scenario family. The per-operation table below is
+# authoritative for split fragments and the long-lived NDJSON transport. These
+# declarations assign work; only `servedOperations` proves an actual mount.
 scenarioOwners:
   central.api-keys: { servingArtifact: central-control-api, scenarios: [SC-CONTROL-WORKSPACE] }
   central.auth: { servingArtifact: central-identity-api, scenarios: [SC-IDENTITY-ACCOUNT] }
@@ -88,3 +100,113 @@ operationOwners:
   session_observations_telemetry_stream: { servingArtifact: regional-stream, scenarios: [SC-SESSION-STREAM] }
   session_observations_traces_listen: { servingArtifact: regional-stream, scenarios: [SC-SESSION-STREAM] }
   session_observations_traces_stream: { servingArtifact: regional-stream, scenarios: [SC-SESSION-STREAM] }
+
+# Actual public mount authority. `scenarioOwners` and `operationOwners` plan
+# where a route belongs; this table says which complete handlers are mounted
+# today. Absence is deliberate and makes `graph verify` report
+# `aex-route-unserved`. Never add a route here to make the graph green: its
+# production composition must consume or assert this generated projection.
+servedOperations:
+  central-control-api:
+    - api_key_create
+    - api_key_revoke
+    - api_keys_list
+    - central_operation_cancel
+    - central_operation_get
+    - central_operations_list
+    - dashboard_bootstrap_get
+    - invitation_create
+    - memberships_list
+    - organization_create
+    - organization_get
+    - organizations_list
+    - workspace_create
+    - workspace_delete
+    - workspace_get
+    - workspaces_list
+  central-identity-api:
+    - device_authorization_create
+    - device_token_create
+  finance-api:
+    - billing_auto_topup_policy_get
+    - billing_auto_topup_policy_put
+    - billing_balance_get
+    - billing_portal_session_create
+    - billing_statement_download_create
+    - billing_statement_get
+    - billing_statements_list
+    - billing_top_up_checkout_create
+  regional-observation-api:
+    - observations_events_query
+    - observations_logs_query
+    - observations_metrics_aggregate
+    - observations_metrics_query
+    - observations_spans_query
+    - observations_telemetry_query
+    - observations_traces_query
+    - session_observations_events_query
+    - session_observations_logs_query
+    - session_observations_metrics_aggregate
+    - session_observations_metrics_query
+    - session_observations_spans_query
+    - session_observations_telemetry_query
+    - session_observations_trace_get
+    - session_observations_traces_query
+    - session_telemetry_export_download_create
+    - session_telemetry_export_get
+    - session_telemetry_export_revoke
+    - session_telemetry_gap_get
+    - session_telemetry_gaps_query
+    - telemetry_export_download_create
+    - telemetry_export_get
+    - telemetry_export_revoke
+    - telemetry_gap_get
+    - telemetry_gaps_query
+  regional-otlp:
+    - otlp_logs_ingest
+    - otlp_metrics_ingest
+    - otlp_traces_ingest
+  regional-secret-api:
+    - secret_delete
+    - secret_revoke
+  regional-session-api:
+    - provider_credential_get
+    - provider_credential_revoke
+    - provider_credentials_list
+    - regional_operation_cancel
+    - regional_operation_get
+    - regional_operations_list
+    - registry_files_list
+    - registry_instructions_list
+    - registry_mcp_servers_list
+    - registry_skills_list
+    - registry_tools_list
+    - secret_get
+    - secrets_list
+    - session_approval_get
+    - session_approvals_list
+  regional-stream:
+    - observations_events_listen
+    - observations_events_stream
+    - observations_logs_listen
+    - observations_logs_stream
+    - observations_metrics_listen
+    - observations_metrics_stream
+    - observations_spans_listen
+    - observations_spans_stream
+    - observations_telemetry_listen
+    - observations_telemetry_stream
+    - observations_traces_listen
+    - observations_traces_stream
+    - session_observations_events_listen
+    - session_observations_events_stream
+    - session_observations_logs_listen
+    - session_observations_logs_stream
+    - session_observations_metrics_listen
+    - session_observations_metrics_stream
+    - session_observations_spans_listen
+    - session_observations_spans_stream
+    - session_observations_telemetry_listen
+    - session_observations_telemetry_stream
+    - session_observations_traces_listen
+    - session_observations_traces_stream

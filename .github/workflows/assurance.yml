@@ -90,6 +90,15 @@ jobs:
       lane: assurance
       cache_mode: restore
 
+  full-scenarios:
+    name: Full scenarios
+    needs: [suite, route]
+    if: needs.suite.outputs.name == 'full-graph' && needs.route.outputs.has_scenario == 'true'
+    uses: ./.github/workflows/_scenario-lane.yml
+    with:
+      matrix: ${{ needs.route.outputs.scenario_matrix }}
+      lane: assurance
+
   supply-chain:
     name: Supply chain
     needs: suite

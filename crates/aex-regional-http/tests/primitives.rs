@@ -542,7 +542,7 @@ fn edge_precedence_is_the_complete_wire_table() {
 }
 
 #[test]
-fn every_generated_regional_route_has_exactly_one_owner() {
+fn every_generated_regional_route_has_exactly_one_planned_owner() {
     use aex_regional_http::router::{RouteOwner, route_owner};
 
     for id in RouteId::ALL {
@@ -551,7 +551,7 @@ fn every_generated_regional_route_has_exactly_one_owner() {
             assert_eq!(
                 owner.deployable(),
                 route(*id).serving_artifact,
-                "runtime and generated delivery ownership disagree for {id}"
+                "planned runtime and generated delivery ownership disagree for {id}"
             );
         } else {
             assert_eq!(route_owner(*id), None, "{id}");

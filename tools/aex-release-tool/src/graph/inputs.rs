@@ -186,6 +186,14 @@ pub struct Scenario {
     pub owner: String,
     /// Nodes this scenario exercises without importing them.
     pub observes: Vec<String>,
+    /// Workspace package that contains the runnable scenario target. This is a
+    /// namespaced graph node such as `cargo:aex-live-demo-api` or
+    /// `npm:@aexhq/user-tests`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package: Option<String>,
+    /// Exact test target declared by the package's `aex.targets` metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
     /// Whether this scenario may provision in `prd`, and under which rule.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prd: Option<PrdProvisioning>,

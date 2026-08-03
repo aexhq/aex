@@ -253,9 +253,10 @@ pub fn verify(inputs: &GraphInputs) -> Result<BuiltGraph> {
         }
     }
 
-    // 3. Scenario rows name real nodes. Graph construction already rejects an
-    //    unknown edge target, so this rule reports the case the graph could not
-    //    have been built for at all.
+    // 3. Scenario rows name real nodes and a runnable package target. Merely
+    //    observing an artifact is selection metadata, not executable evidence.
+    let (runnable_scenarios, scenario_violations) = verify_scenario_claims(inputs);
+    violations.extend(scenario_violations);
     for scenario in &inputs.scenarios.scenarios {
         if scenario.observes.is_empty() {
             violations.push(Violation::new(
@@ -322,7 +323,7 @@ pub fn verify(inputs: &GraphInputs) -> Result<BuiltGraph> {
     violations.extend(verify_migration_coverage(inputs));
 
     // 7. Every public route has a scenario or contract owner.
-    violations.extend(verify_route_coverage(inputs, &built));
+    violations.extend(verify_route_coverage(inputs, &built, &runnable_scenarios));
 
     if violations.is_empty() {
         Ok(built)
@@ -331,6 +332,84 @@ pub fn verify(inputs: &GraphInputs) -> Result<BuiltGraph> {
         violations.dedup();
         Err(ToolError::many(Exit::GraphVerification, violations))
     }
+}
+
+fn verify_scenario_claims(inputs: &GraphInputs) -> (BTreeSet<String>, Vec<Violation>) {
+    let packages: BTreeMap<String, (&str, Option<&crate::meta::AexMeta>)> = inputs
+        .cargo
+        .iter()
+        .map(|package| {
+            (
+                NodeId::cargo(&package.name).to_string(),
+                (package.dir.as_str(), package.meta.as_ref()),
+            )
+        })
+        .chain(inputs.npm.iter().map(|package| {
+            (
+                NodeId::npm(&package.name).to_string(),
+                (package.dir.as_str(), package.meta.as_ref()),
+            )
+        }))
+        .collect();
+    let mut runnable = BTreeSet::new();
+    let mut violations = Vec::new();
+    for scenario in &inputs.scenarios.scenarios {
+        let (Some(package), Some(target)) = (&scenario.package, &scenario.target) else {
+            violations.push(Violation::new(
+                "scenario-runnable-missing",
+                format!(
+                    "scenario `{}` declares observations but no runnable `package` and `target`",
+                    scenario.id
+                ),
+            ));
+            continue;
+        };
+        let Some((dir, meta)) = packages.get(package) else {
+            violations.push(Violation::new(
+                "scenario-package-unknown",
+                format!(
+                    "scenario `{}` names package `{package}`, which is not a Cargo or npm graph node",
+                    scenario.id
+                ),
+            ));
+            continue;
+        };
+        let Some(meta) = meta else {
+            violations.push(Violation::new(
+                "scenario-package-disagreement",
+                format!(
+                    "scenario `{}` names `{dir}`, which has no aex metadata claim",
+                    scenario.id
+                ),
+            ));
+            continue;
+        };
+        let mut sound = true;
+        if !meta.scenarios.contains(&scenario.id) {
+            sound = false;
+            violations.push(Violation::new(
+                "scenario-package-disagreement",
+                format!(
+                    "scenario `{}` names `{dir}`, but that package does not claim it in `aex.scenarios`",
+                    scenario.id
+                ),
+            ));
+        }
+        if !meta.targets.contains_key(target) {
+            sound = false;
+            violations.push(Violation::new(
+                "scenario-target-unknown",
+                format!(
+                    "scenario `{}` names target `{target}` in `{dir}`, but `aex.targets` does not declare it",
+                    scenario.id
+                ),
+            ));
+        }
+        if sound {
+            runnable.insert(scenario.id.clone());
+        }
+    }
+    (runnable, violations)
 }
 
 /// OD-36, mechanically: a scenario may be marked `prd`-eligible only if every
@@ -659,14 +738,19 @@ fn verify_migration_coverage(inputs: &GraphInputs) -> Vec<Violation> {
     violations
 }
 
-fn verify_route_coverage(inputs: &GraphInputs, built: &BuiltGraph) -> Vec<Violation> {
+fn verify_route_coverage(
+    inputs: &GraphInputs,
+    built: &BuiltGraph,
+    runnable_scenarios: &BTreeSet<String>,
+) -> Vec<Violation> {
     let mut violations = Vec::new();
     let routes = inputs.root.join("api/generated/registries/routes.json");
     let bundle = inputs.root.join("api/generated/bundle.json");
-    if !routes.is_file() && !bundle.is_file() {
-        // A reusable delivery-graph fixture or repository with no public API
-        // has no route surface to cover. Once either generated authority
-        // exists, both are mandatory and cross-checked below.
+    if !has_authored_route_surface(&inputs.root) && !routes.is_file() && !bundle.is_file() {
+        // A reusable delivery-graph fixture or repository with no authored API
+        // has no route surface to cover. Authored OpenAPI is the sentinel;
+        // generated outputs are deliberately not trusted to announce their own
+        // absence.
         return violations;
     }
     violations.extend(verify_generated_contract_freshness(inputs));
@@ -685,7 +769,7 @@ fn verify_route_coverage(inputs: &GraphInputs, built: &BuiltGraph) -> Vec<Violat
     }
     let Some(registry_operations) = verify_route_entries(
         &document,
-        &RouteCoverageContext::new(inputs, built),
+        &RouteCoverageContext::new(inputs, built, runnable_scenarios),
         &mut violations,
     ) else {
         return violations;
@@ -702,10 +786,12 @@ fn verify_route_coverage(inputs: &GraphInputs, built: &BuiltGraph) -> Vec<Violat
 }
 
 fn verify_generated_contract_freshness(inputs: &GraphInputs) -> Vec<Violation> {
-    if !inputs
-        .root
-        .join("api/schemas/registries/routes-meta.yaml")
-        .is_file()
+    if !has_authored_route_surface(&inputs.root)
+        && !inputs
+            .root
+            .join("api/generated/registries/routes.json")
+            .is_file()
+        && !inputs.root.join("api/generated/bundle.json").is_file()
     {
         return Vec::new();
     }
@@ -723,6 +809,23 @@ fn verify_generated_contract_freshness(inputs: &GraphInputs) -> Vec<Violation> {
             format!("generated contract freshness could not be verified: {error}"),
         )],
     }
+}
+
+fn has_authored_route_surface(root: &std::path::Path) -> bool {
+    let openapi = root.join("api/openapi");
+    let authored_openapi = walkdir::WalkDir::new(&openapi)
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+        .any(|entry| {
+            entry.file_type().is_file()
+                && entry.path().extension().is_some_and(|extension| {
+                    extension.eq_ignore_ascii_case("yaml") || extension.eq_ignore_ascii_case("yml")
+                })
+        });
+    authored_openapi
+        || root
+            .join("api/schemas/registries/routes-meta.yaml")
+            .is_file()
 }
 
 fn read_strict_route_registry(
@@ -745,11 +848,16 @@ fn read_strict_route_registry(
 
 struct RouteCoverageContext<'a> {
     scenarios: BTreeMap<&'a str, &'a super::inputs::Scenario>,
-    artifacts: BTreeSet<&'a str>,
+    runnable_scenarios: &'a BTreeSet<String>,
+    artifacts: BTreeMap<&'a str, &'a str>,
 }
 
 impl<'a> RouteCoverageContext<'a> {
-    fn new(inputs: &'a GraphInputs, built: &'a BuiltGraph) -> Self {
+    fn new(
+        inputs: &'a GraphInputs,
+        built: &'a BuiltGraph,
+        runnable_scenarios: &'a BTreeSet<String>,
+    ) -> Self {
         Self {
             scenarios: inputs
                 .scenarios
@@ -757,12 +865,19 @@ impl<'a> RouteCoverageContext<'a> {
                 .iter()
                 .map(|scenario| (scenario.id.as_str(), scenario))
                 .collect(),
-            artifacts: built
-                .graph
-                .nodes()
+            runnable_scenarios,
+            artifacts: inputs
+                .units
+                .units
                 .iter()
-                .filter(|node| node.kind == NodeKind::Artifact)
-                .map(|node| node.id.local())
+                .map(|unit| (unit.id.as_str(), unit.plane.as_str()))
+                .filter(|(artifact, _)| {
+                    built
+                        .graph
+                        .nodes()
+                        .iter()
+                        .any(|node| node.kind == NodeKind::Artifact && node.id.local() == *artifact)
+                })
                 .collect(),
         }
     }
@@ -805,31 +920,110 @@ fn verify_route_entry(
             format!("operationId `{operation}` appears more than once"),
         ));
     }
-    let Some(serving_artifact) = entry
+    let plane = entry
+        .get("plane")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let Some(planned_artifact) = entry
         .get("servingArtifact")
         .and_then(serde_json::Value::as_str)
     else {
         violations.push(Violation::new(
-            "aex-route-unserved",
-            format!("operationId `{operation}` has no serving artifact"),
+            "aex-route-owner-invalid",
+            format!("operationId `{operation}` has no planned serving artifact"),
         ));
         return violations;
     };
-    if !context.artifacts.contains(serving_artifact) {
+    violations.extend(verify_route_artifact(
+        operation,
+        "planned",
+        planned_artifact,
+        plane,
+        context,
+    ));
+    let Some(served_artifact) = entry
+        .get("servedArtifact")
+        .and_then(serde_json::Value::as_str)
+    else {
         violations.push(Violation::new(
             "aex-route-unserved",
             format!(
-                "operationId `{operation}` names unknown serving artifact `{serving_artifact}`"
+                "operationId `{operation}` is planned for `{planned_artifact}` but is not actually mounted"
+            ),
+        ));
+        return violations;
+    };
+    violations.extend(verify_route_artifact(
+        operation,
+        "actual",
+        served_artifact,
+        plane,
+        context,
+    ));
+    if served_artifact != planned_artifact {
+        violations.push(Violation::new(
+            "aex-route-owner-disagreement",
+            format!(
+                "operationId `{operation}` is planned for `{planned_artifact}` but claims it is served by `{served_artifact}`"
             ),
         ));
     }
     violations.extend(verify_route_scenarios(
         entry,
         operation,
-        serving_artifact,
+        served_artifact,
         context,
     ));
     violations
+}
+
+fn verify_route_artifact(
+    operation: &str,
+    claim: &str,
+    artifact: &str,
+    plane: &str,
+    context: &RouteCoverageContext<'_>,
+) -> Vec<Violation> {
+    let valid = !artifact.is_empty()
+        && artifact
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        && artifact
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_lowercase)
+        && artifact
+            .as_bytes()
+            .last()
+            .is_some_and(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+        && !artifact.contains("--");
+    if !valid {
+        return vec![Violation::new(
+            "aex-route-owner-invalid",
+            format!(
+                "operationId `{operation}` has malformed {claim} serving artifact `{artifact}`"
+            ),
+        )];
+    }
+    match context.artifacts.get(artifact) {
+        None => vec![Violation::new(
+            if claim == "actual" {
+                "aex-route-unserved"
+            } else {
+                "aex-route-owner-invalid"
+            },
+            format!(
+                "operationId `{operation}` names unknown {claim} serving artifact `{artifact}`"
+            ),
+        )],
+        Some(artifact_plane) if *artifact_plane != plane => vec![Violation::new(
+            "aex-route-owner-cross-plane",
+            format!(
+                "operationId `{operation}` is on `{plane}` but {claim} serving artifact `{artifact}` is on `{artifact_plane}`"
+            ),
+        )],
+        Some(_) => Vec::new(),
+    }
 }
 
 fn verify_route_scenarios(
@@ -894,6 +1088,14 @@ fn verify_route_scenario(
             ),
         )];
     };
+    if !context.runnable_scenarios.contains(owner) {
+        return vec![Violation::new(
+            "aex-route-uncovered",
+            format!(
+                "operationId `{operation}` names scenario `{owner}`, but it has no verified runnable package target"
+            ),
+        )];
+    }
     let observed = format!("artifact:{serving_artifact}");
     if scenario.observes.contains(&observed) {
         return Vec::new();

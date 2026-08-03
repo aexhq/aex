@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{Exit, Result, ToolError};
 
 use super::NodeKind;
+use super::inputs::ScenarioOwnership;
 use super::select::Selection;
 
 /// Which slice of the selection to emit.
@@ -39,6 +40,12 @@ pub struct MatrixEntry {
     /// Node identity within its authority: the Cargo package name, the npm
     /// package name, the module directory, the unit id.
     pub name: String,
+    /// Runnable package node for a scenario entry.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub package: Option<String>,
+    /// Exact package target for a scenario entry.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
     /// Zero-based shard index.
     pub partition: usize,
     /// Total shard count.
@@ -79,12 +86,15 @@ pub const OUTPUT_KEYS: &[&str] = &[
 /// packing then balances the shards. Without it every node weighs the same.
 ///
 /// # Errors
-/// Returns [`Exit::Usage`] when `partitions` is zero.
+/// Returns [`Exit::Usage`] when `partitions` is zero, or
+/// [`Exit::GraphVerification`] when a selected scenario has no exact runnable
+/// package/target claim.
 pub fn build(
     selection: &Selection,
     kind: MatrixKind,
     partitions: usize,
     durations: &BTreeMap<String, u64>,
+    scenarios: &ScenarioOwnership,
 ) -> Result<MatrixOutput> {
     if partitions == 0 {
         return Err(ToolError::single(
@@ -128,13 +138,37 @@ pub fn build(
     };
 
     let shards = partition(&candidates, partitions, durations);
+    let scenario_claims: BTreeMap<&str, (&str, &str)> = scenarios
+        .scenarios
+        .iter()
+        .filter_map(|scenario| {
+            Some((
+                scenario.id.as_str(),
+                (scenario.package.as_deref()?, scenario.target.as_deref()?),
+            ))
+        })
+        .collect();
     let mut include = Vec::new();
     let used = shards.len();
     for (index, shard) in shards.iter().enumerate() {
         for (id, name) in shard {
+            let (package, target) = if kind == MatrixKind::Scenario {
+                let Some((package, target)) = scenario_claims.get(name.as_str()) else {
+                    return Err(ToolError::single(
+                        Exit::GraphVerification,
+                        "scenario-runnable-missing",
+                        format!("selected scenario `{name}` has no runnable package/target claim"),
+                    ));
+                };
+                (Some((*package).to_owned()), Some((*target).to_owned()))
+            } else {
+                (None, None)
+            };
             include.push(MatrixEntry {
                 id: id.clone(),
                 name: name.clone(),
+                package,
+                target,
                 partition: index,
                 partitions: used,
             });
@@ -233,6 +267,7 @@ mod tests {
 
     use super::{MatrixKind, OUTPUT_KEYS, build, degraded, partition, to_github_output};
     use crate::graph::NodeId;
+    use crate::graph::inputs::ScenarioOwnership;
     use crate::graph::select::{Lane, Mode, Selected, Selection, SelectionReason};
 
     fn selection(ids: &[NodeId]) -> Selection {
@@ -258,6 +293,13 @@ mod tests {
         }
     }
 
+    fn no_scenarios() -> ScenarioOwnership {
+        ScenarioOwnership {
+            schema: "aex.scenario-ownership.v1".to_owned(),
+            scenarios: Vec::new(),
+        }
+    }
+
     #[test]
     fn healthy_and_degraded_paths_emit_the_same_output_keys() {
         let healthy = to_github_output(
@@ -266,6 +308,7 @@ mod tests {
                 MatrixKind::Test,
                 1,
                 &BTreeMap::new(),
+                &no_scenarios(),
             )
             .unwrap(),
         )
@@ -295,8 +338,22 @@ mod tests {
             NodeId::cargo("aex-wire"),
             NodeId::cargo("aex-live-brain-mux"),
         ]);
-        let unit = build(&selection, MatrixKind::Test, 4, &BTreeMap::new()).unwrap();
-        let live = build(&selection, MatrixKind::Live, 4, &BTreeMap::new()).unwrap();
+        let unit = build(
+            &selection,
+            MatrixKind::Test,
+            4,
+            &BTreeMap::new(),
+            &no_scenarios(),
+        )
+        .unwrap();
+        let live = build(
+            &selection,
+            MatrixKind::Live,
+            4,
+            &BTreeMap::new(),
+            &no_scenarios(),
+        )
+        .unwrap();
         assert_eq!(
             unit.include
                 .iter()
@@ -311,6 +368,60 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["aex-live-brain-mux"]
         );
+    }
+
+    #[test]
+    fn scenario_matrix_carries_the_verified_package_and_target_claim() {
+        let mut selected = selection(&[]);
+        selected.scenarios.push(Selected {
+            id: NodeId::scenario("SC-DEMO"),
+            reason: SelectionReason::RouterChanged,
+        });
+        let registry: ScenarioOwnership = toml::from_str(
+            r#"
+schema = "aex.scenario-ownership.v1"
+[[scenario]]
+id = "SC-DEMO"
+owner = "delivery"
+observes = ["artifact:demo-api"]
+package = "cargo:aex-live-demo-api"
+target = "live"
+"#,
+        )
+        .expect("scenario registry");
+        let output = build(
+            &selected,
+            MatrixKind::Scenario,
+            1,
+            &BTreeMap::new(),
+            &registry,
+        )
+        .expect("scenario matrix");
+        assert_eq!(output.include.len(), 1);
+        assert_eq!(output.include[0].name, "SC-DEMO");
+        assert_eq!(
+            output.include[0].package.as_deref(),
+            Some("cargo:aex-live-demo-api")
+        );
+        assert_eq!(output.include[0].target.as_deref(), Some("live"));
+    }
+
+    #[test]
+    fn selected_scenario_without_a_claim_cannot_emit_a_green_matrix() {
+        let mut selected = selection(&[]);
+        selected.scenarios.push(Selected {
+            id: NodeId::scenario("SC-GHOST"),
+            reason: SelectionReason::RouterChanged,
+        });
+        let err = build(
+            &selected,
+            MatrixKind::Scenario,
+            1,
+            &BTreeMap::new(),
+            &no_scenarios(),
+        )
+        .unwrap_err();
+        assert_eq!(err.rules(), vec!["scenario-runnable-missing"]);
     }
 
     #[test]
@@ -347,7 +458,14 @@ mod tests {
 
     #[test]
     fn an_empty_selection_yields_no_shards_and_says_so() {
-        let output = build(&selection(&[]), MatrixKind::Test, 4, &BTreeMap::new()).unwrap();
+        let output = build(
+            &selection(&[]),
+            MatrixKind::Test,
+            4,
+            &BTreeMap::new(),
+            &no_scenarios(),
+        )
+        .unwrap();
         assert!(!output.has_entries);
         assert_eq!(output.count, 0);
         assert!(!output.routing_failed, "empty is not the same as broken");
@@ -355,7 +473,14 @@ mod tests {
 
     #[test]
     fn zero_partitions_is_a_usage_error() {
-        let err = build(&selection(&[]), MatrixKind::Test, 0, &BTreeMap::new()).unwrap_err();
+        let err = build(
+            &selection(&[]),
+            MatrixKind::Test,
+            0,
+            &BTreeMap::new(),
+            &no_scenarios(),
+        )
+        .unwrap_err();
         assert_eq!(err.exit.code(), 2);
     }
 }

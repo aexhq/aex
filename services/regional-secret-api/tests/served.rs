@@ -323,6 +323,29 @@ fn the_served_set_is_a_subset_of_the_owned_set() {
 }
 
 #[test]
+fn the_served_set_matches_the_generated_actual_mount_authority() {
+    let registry: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../api/generated/registries/routes.json"
+    ))
+    .expect("generated route registry");
+    let generated: Vec<RouteId> = registry["routes"]
+        .as_array()
+        .expect("route rows")
+        .iter()
+        .filter(|route| route["servedArtifact"] == "regional-secret-api")
+        .map(|route| {
+            RouteId::parse(route["operationId"].as_str().expect("operation id"))
+                .expect("generated operation id")
+        })
+        .collect();
+    assert_eq!(Routes::served(), generated);
+    assert_eq!(
+        generated,
+        vec![RouteId::SecretDelete, RouteId::SecretRevoke]
+    );
+}
+
+#[test]
 fn the_metadata_half_of_each_split_fragment_is_unreachable_here() {
     let served = Routes::served();
     for group in [RouteGroup::Secrets, RouteGroup::ProviderCredentials] {

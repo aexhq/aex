@@ -323,6 +323,7 @@ dependencies = [
  "sha2 0.11.0",
  "similar-asserts",
  "thiserror",
+ "walkdir",
 ]
 
 [[package]]

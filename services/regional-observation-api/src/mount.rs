@@ -471,6 +471,25 @@ mod tests {
     }
 
     #[test]
+    fn served_routes_match_the_generated_actual_mount_authority() {
+        let registry: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../api/generated/registries/routes.json"
+        ))
+        .expect("generated route registry");
+        let generated: Vec<RouteId> = registry["routes"]
+            .as_array()
+            .expect("route rows")
+            .iter()
+            .filter(|route| route["servedArtifact"] == "regional-observation-api")
+            .map(|route| {
+                RouteId::parse(route["operationId"].as_str().expect("operation id"))
+                    .expect("generated operation id")
+            })
+            .collect();
+        assert_eq!(served_routes(), generated);
+    }
+
+    #[test]
     fn no_route_outside_the_two_groups_is_claimed() {
         for id in RouteId::ALL {
             let owned = owned_routes().contains(id);

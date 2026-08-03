@@ -920,6 +920,37 @@ fn workspace_limit_reads_are_owned_but_remain_explicitly_unmounted() {
     }
 }
 
+#[test]
+fn the_served_set_exactly_matches_the_generated_actual_mount_authority() {
+    let registry: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../api/generated/registries/routes.json"
+    ))
+    .expect("generated route registry");
+    let generated: Vec<RouteId> = registry["routes"]
+        .as_array()
+        .expect("route rows")
+        .iter()
+        .filter(|route| route["servedArtifact"] == "regional-session-api")
+        .map(|route| {
+            RouteId::parse(route["operationId"].as_str().expect("operation id"))
+                .expect("generated operation id")
+        })
+        .collect();
+    assert_eq!(Routes::served(), generated);
+    assert_eq!(generated.len(), 15);
+
+    let session_export = registry["routes"]
+        .as_array()
+        .expect("route rows")
+        .iter()
+        .find(|route| route["operationId"] == "session_telemetry_export_create")
+        .expect("session telemetry export route");
+    assert!(
+        session_export.get("servedArtifact").is_none(),
+        "session telemetry export admission is owned but not mounted"
+    );
+}
+
 #[tokio::test]
 async fn the_router_answers_exactly_the_served_set() {
     let (_, mounted) = router(FakeCustody::default());

@@ -764,7 +764,13 @@ fn run_graph(cli: &Cli, root: &Path, command: &GraphCommand) -> Result<()> {
                 Some(path) => read_json(path)?,
                 None => BTreeMap::new(),
             };
-            let output = matrix::build(&selection, *kind, *partitions, &durations)?;
+            let output = matrix::build(
+                &selection,
+                *kind,
+                *partitions,
+                &durations,
+                &inputs.scenarios,
+            )?;
             if let Some(path) = github_output {
                 append_text(path, &matrix::to_github_output(&output)?)?;
             }

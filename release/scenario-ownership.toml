@@ -4,8 +4,12 @@
 # cannot be: a scenario exercises a deployable through its public surface
 # without importing it, so no dependency edge exists to derive.
 #
-# A deployable observed by no scenario fails `graph verify`. "Nobody has said
-# what this service is for" is a gap worth blocking on.
+# A deployable observed by no scenario fails `graph verify`. Observation alone
+# is not runnable evidence: each scenario must also declare `package` as a
+# namespaced Cargo/npm graph node and `target` as an exact `aex.targets` key,
+# and that package must claim the scenario in `aex.scenarios`. The existing rows
+# intentionally omit those claims until their real targets land, so the graph
+# stays red rather than manufacturing scenario receipts.
 #
 # --- provisioning in `prd` (OD-35 / OD-36) -----------------------------------
 #

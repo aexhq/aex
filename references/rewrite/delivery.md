@@ -9,7 +9,7 @@ keywords:
   - evidence
 audience: implementation agents and maintainers
 status: accepted
-last_verified: 2026-08-01
+last_verified: 2026-08-03
 related:
   - references/rewrite/README.md
   - references/rewrite/test-architecture.md
@@ -87,11 +87,11 @@ so there is no conflict to record.
 
 ### `.github/workflows/`
 
-The old `ci.yml` and `live-user-tests.yml` are deleted, not aliased. Eleven
-files: four lane classes (`pr`, `main`, `assurance`, `release`) and seven
+The old `ci.yml` and `live-user-tests.yml` are deleted, not aliased. Twelve
+files: four lane classes (`pr`, `main`, `assurance`, `release`) and eight
 reusable workflows (`_route`, `_rust-lane`, `_node-lane`, `_terraform-lane`,
-`_build-artifacts`, `_receipts`, `_release-engine`). `.github/dependabot.yml`
-gains cargo and terraform ecosystems.
+`_scenario-lane`, `_build-artifacts`, `_receipts`, `_release-engine`).
+`.github/dependabot.yml` gains cargo and terraform ecosystems.
 
 ### `infra/`
 
@@ -114,10 +114,13 @@ terraform fmt -check -recursive infra/                        clean
 terraform init -backend=false && validate && test             29/29 directories pass
 ```
 
-`graph verify` against the real repository exits `10` with 148 violations. 146
-are `aex-route-uncovered`, one for every route the contract registry declares
-and no scenario observes, which is accurate: the routes are genuinely unmounted.
-The other two are named in §3. That is the designed state, not a regression.
+The 2026-08-02 count of 148 graph violations is superseded by the actual-mount
+and runnable-scenario correction below. The current authorities deliberately
+imply 176 delivery violations while no scenario has an executable claim: 20
+`scenario-runnable-missing`, 51 `aex-route-unserved`, and 105
+`aex-route-uncovered` scenario references across the 95 actually served routes.
+Malformed, cross-plane, and planned/actual owner disagreements are all zero.
+That red state names missing work; it is not a release receipt.
 
 ## 3. What every stream owes me
 
@@ -163,17 +166,31 @@ edges and the path map routes their directories to their real npm nodes.
    `operationId`. When that file exists, `graph verify` requires every public
    route to name a declared scenario.
 
-   **Closed 2026-08-02.** `routes-meta.yaml` now carries fragment defaults plus
-   explicit per-operation exceptions for split fragments and NDJSON. The
-   contract generator resolves one final `servingArtifact` and emits it into
-   both the delivery registry and the generated runtime `RouteDescriptor`;
-   `aex-regional-http` consumes that generated field rather than maintaining a
-   second routing policy. `graph verify` first runs the generator's in-memory
-   freshness check, rejects duplicate JSON members at every depth, proves the
-   registry and bundle operation sets are identical, and then proves every
-   route's canonical scenario observes its actual serving artifact. Delivery
-   ownership remains outside `bundle.json`, so changing it cannot mint a new
-   public wire identity.
+   **Corrected 2026-08-03.** `routes-meta.yaml` now distinguishes planned
+   ownership from actual service. `scenarioOwners` plus `operationOwners`
+   resolve `servingArtifact`, the immutable unit responsible for closing the
+   route; `servedOperations` resolves the optional `servedArtifact`, which is
+   emitted only when a runnable production composition really mounts the
+   operation. The first value drives ownership and selection and is not mount
+   proof. `graph verify` reports `aex-route-unserved` for every route with no
+   actual mount, rejects malformed and cross-plane owners, and checks service
+   mount sets against the generated actual projection. The account read remains
+   planned for `central-identity-api` but unserved; the identity process mounts
+   only Auth. Session telemetry export admission is likewise honestly absent,
+   and `regional-session-api` currently serves exactly 15 operations.
+
+   Scenario selection is also executable now: an `observes` edge is necessary
+   but insufficient. Every scenario must name a namespaced Cargo/npm `package`
+   and exact `target`, and the package must claim both in its AEX metadata. The
+   route workflow emits and downstream lanes consume a scenario matrix carrying
+   those exact claims. Existing scenario rows intentionally have no invented
+   runnable claims, so the graph remains red until real targets land.
+
+   Freshness starts from authored OpenAPI/route metadata rather than optional
+   generated sentinels. Deleting both `bundle.json` and `routes.json`, or
+   deleting `routes-meta.yaml` while outputs remain, is therefore a failure.
+   Both planned and actual delivery metadata remain outside `bundle.json`, so
+   neither can mint a new public wire identity.
 4. **`migrations/central/*.sql`** with an `-- aex-migration: tx= destructive= phase=`
    header on every file, `grants.toml` for privileges, and `bundle.lock.json`
    produced by `aex-release-tool migration bundle`. A `GRANT` inside a

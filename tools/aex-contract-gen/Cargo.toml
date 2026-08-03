@@ -46,3 +46,4 @@ thiserror.workspace = true
 [dev-dependencies]
 aex-wire = { path = "../../crates/aex-wire" }
 similar-asserts.workspace = true
+walkdir.workspace = true

@@ -50,10 +50,24 @@ jobs:
     with:
       lane: main
 
+  scenarios:
+    name: Scenarios
+    needs: route
+    if: needs.route.outputs.has_scenario == 'true'
+    uses: ./.github/workflows/_scenario-lane.yml
+    with:
+      matrix: ${{ needs.route.outputs.scenario_matrix }}
+      lane: main
+
   build:
     name: Build and publish
-    needs: [route, verify]
-    if: needs.route.outputs.has_artifact == 'true'
+    needs: [route, verify, scenarios]
+    if: >-
+      always() &&
+      needs.route.result == 'success' &&
+      (needs.verify.result == 'success' || needs.verify.result == 'skipped') &&
+      (needs.scenarios.result == 'success' || needs.scenarios.result == 'skipped') &&
+      needs.route.outputs.has_artifact == 'true'
     uses: ./.github/workflows/_build-artifacts.yml
     with:
       matrix: ${{ needs.route.outputs.artifact_matrix }}
@@ -86,9 +100,9 @@ jobs:
 
   receipts:
     name: Checks
-    needs: [route, verify, node, build, manifest]
+    needs: [route, verify, node, scenarios, build, manifest]
     if: always()
     uses: ./.github/workflows/_receipts.yml
     with:
       lane: main
-      declared_jobs: '["route","verify","node","build","manifest"]'
+      declared_jobs: '["route","verify","node","scenarios","build","manifest"]'
