@@ -1761,39 +1761,12 @@ fn run_evidence(cli: &Cli, command: &EvidenceCommand) -> Result<()> {
             file,
             uri,
             out,
-        } => {
-            let loaded: Receipt = read_json(receipt)?;
-            let attached = evidence::attach(loaded, kind, file, uri)?;
-            write_canonical(out.as_deref().unwrap_or(receipt.as_path()), &attached)?;
-            emit(
-                cli,
-                &serde_json::json!({
-                    "receiptId": attached.receipt_id,
-                    "receiptDigest": attached.receipt_digest,
-                    "attachments": attached.attachments,
-                }),
-            )
-        }
+        } => run_evidence_attach(cli, receipt, kind, file, uri, out.as_ref()),
         EvidenceCommand::BindArtifact {
             receipt,
             envelope,
             out,
-        } => {
-            let loaded: Receipt = read_json(receipt)?;
-            let original_receipt_digest = loaded.receipt_digest.clone();
-            let envelope: ArtifactEnvelope = read_json(envelope)?;
-            let bound = evidence::bind_artifact(loaded, &envelope)?;
-            write_canonical(out.as_deref().unwrap_or(receipt.as_path()), &bound)?;
-            emit(
-                cli,
-                &serde_json::json!({
-                    "receiptId": bound.receipt_id,
-                    "originalReceiptDigest": original_receipt_digest,
-                    "receiptDigest": bound.receipt_digest,
-                    "artifactSubjectDigest": bound.subject.artifact_subject_digest,
-                }),
-            )
-        }
+        } => run_evidence_bind_artifact(cli, receipt, envelope, out.as_ref()),
         EvidenceCommand::Verify { receipt } => {
             let receipt: Receipt = read_json(receipt)?;
             receipt.verify()?;
@@ -1833,6 +1806,49 @@ fn run_evidence(cli: &Cli, command: &EvidenceCommand) -> Result<()> {
             emit(cli, &lane)
         }
     }
+}
+
+fn run_evidence_bind_artifact(
+    cli: &Cli,
+    receipt: &Path,
+    envelope: &Path,
+    out: Option<&PathBuf>,
+) -> Result<()> {
+    let loaded: Receipt = read_json(receipt)?;
+    let original_receipt_digest = loaded.receipt_digest.clone();
+    let envelope: ArtifactEnvelope = read_json(envelope)?;
+    let bound = evidence::bind_artifact(loaded, &envelope)?;
+    write_canonical(out.map_or(receipt, PathBuf::as_path), &bound)?;
+    emit(
+        cli,
+        &serde_json::json!({
+            "receiptId": bound.receipt_id,
+            "originalReceiptDigest": original_receipt_digest,
+            "receiptDigest": bound.receipt_digest,
+            "artifactSubjectDigest": bound.subject.artifact_subject_digest,
+        }),
+    )
+}
+
+fn run_evidence_attach(
+    cli: &Cli,
+    receipt: &Path,
+    kind: &str,
+    file: &Path,
+    uri: &str,
+    out: Option<&PathBuf>,
+) -> Result<()> {
+    let loaded: Receipt = read_json(receipt)?;
+    let attached = evidence::attach(loaded, kind, file, uri)?;
+    write_canonical(out.map_or(receipt, PathBuf::as_path), &attached)?;
+    emit(
+        cli,
+        &serde_json::json!({
+            "receiptId": attached.receipt_id,
+            "receiptDigest": attached.receipt_digest,
+            "attachments": attached.attachments,
+        }),
+    )
 }
 
 fn run_verification(cli: &Cli, command: &VerificationCommand) -> Result<()> {

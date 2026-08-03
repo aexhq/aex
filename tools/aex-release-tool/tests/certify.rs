@@ -52,7 +52,7 @@ fn receipt(class: &str, unit: &str, artifact_subject_digest: &str) -> Receipt {
 }
 
 struct Fixture {
-    _temp: tempfile::TempDir,
+    temp: tempfile::TempDir,
     unit: Unit,
     draft: aex_release_tool::artifact::ArtifactEnvelope,
     claims: CertificationClaims,
@@ -185,7 +185,7 @@ impl Fixture {
             .map(|class| receipt(class, &unit.id, &draft.artifact_subject_digest))
             .collect();
         Self {
-            _temp: temp,
+            temp,
             unit,
             draft,
             claims,
@@ -267,7 +267,7 @@ fn certification_recomputes_and_refuses_a_tampered_draft_subject() {
 fn cli_binds_preexisting_receipts_before_certification_inserts_their_refs() {
     let mut fixture = Fixture::new();
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let draft_path = fixture._temp.path().join("draft-envelope.json");
+    let draft_path = fixture.temp.path().join("draft-envelope.json");
     std::fs::write(&draft_path, canon::to_file_bytes(&fixture.draft).unwrap()).unwrap();
 
     let mut bound_receipts = Vec::new();
@@ -276,8 +276,8 @@ fn cli_binds_preexisting_receipts_before_certification_inserts_their_refs() {
         unbound.subject.artifact_subject_digest = None;
         let unbound = unbound.seal().unwrap();
         let original_digest = unbound.receipt_digest.clone();
-        let receipt_path = fixture._temp.path().join(format!("receipt-{index}.json"));
-        let bound_path = fixture._temp.path().join(format!("bound-{index}.json"));
+        let receipt_path = fixture.temp.path().join(format!("receipt-{index}.json"));
+        let bound_path = fixture.temp.path().join(format!("bound-{index}.json"));
         std::fs::write(&receipt_path, canon::to_file_bytes(&unbound).unwrap()).unwrap();
 
         let output = std::process::Command::new(env!("CARGO_BIN_EXE_aex-release-tool"))
