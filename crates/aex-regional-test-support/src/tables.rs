@@ -642,7 +642,7 @@ mod tests {
     }
 
     /// Attribute names that carry a record body, a prompt or a receipt.
-    const BODY_SHAPED: [&str; 10] = [
+    const BODY_SHAPED: [&str; 11] = [
         "bodyInline",
         "bodyDigest",
         "contentInline",
@@ -653,6 +653,7 @@ mod tests {
         "resolvedConfig",
         "resultInline",
         "enc",
+        "authorityDocument",
     ];
 
     #[test]
