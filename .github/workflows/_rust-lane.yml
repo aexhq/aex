@@ -218,7 +218,7 @@ jobs:
           RECEIPT_DIR: target/aex-evidence/${{ matrix.name }}
         run: |
           set -euo pipefail
-          cargo test --locked --doc -p "${{ matrix.name }}" 2>&1 \
+          cargo test --locked --color never --doc -p "${{ matrix.name }}" 2>&1 \
             | tee "$RECEIPT_DIR/doctest.log"
 
       - name: Prove the no-skip inventory

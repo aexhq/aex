@@ -49,6 +49,7 @@ describe("workflow evidence producers", () => {
     expect(workflowStep(job, "Record the declared test inventory").run).toContain(
       "cargo nextest list"
     );
+    expect(workflowStep(job, "Doctests").run).toContain("--color never");
     expect(workflowStep(job, "Prove the no-skip inventory").run).toContain(
       "aex-workspace-check -- flake scan"
     );
