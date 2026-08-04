@@ -275,6 +275,27 @@ jobs:
               --toolchain "$RELEASE_DIR/oci-toolchain.json"
           done
 
+      - name: Bind the pinned AWS RDS CA bundle for central schema admin
+        if: ${{ matrix.name == 'central-schema-admin' && startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
+        run: |
+          set -euo pipefail
+          ca="$RUNNER_TEMP/aex-rds-global-bundle.pem"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$ca" \
+            https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
+          echo "e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3  $ca" \
+            | sha256sum --check --strict
+          ca_digest="sha256:e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3"
+          for attempt in 1 2; do
+            context="$RELEASE_DIR/context-$attempt"
+            install -m 0644 "$ca" "$context/aws-rds-global-bundle.pem"
+            sed -i '/^COPY --chmod=0555 artifact/i LABEL dev.aex.rds-ca-bundle-sha256="sha256:e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3"' "$context/Dockerfile"
+            sed -i '/^COPY --chmod=0555 artifact/i COPY aws-rds-global-bundle.pem /usr/local/share/aex/aws-rds-global-bundle.pem' "$context/Dockerfile"
+            jq --arg digest "$ca_digest" '.labels["dev.aex.rds-ca-bundle-sha256"] = $digest' \
+              "$RELEASE_DIR/binding-$attempt.json" > "$RELEASE_DIR/binding-$attempt.tmp.json"
+            mv "$RELEASE_DIR/binding-$attempt.tmp.json" "$RELEASE_DIR/binding-$attempt.json"
+          done
+
       - name: Build and inspect two independent OCI layouts
         if: ${{ startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
         run: |

@@ -132,6 +132,15 @@ describe("public main-push publication", () => {
     expect(source).toContain('if [ "$total" -ne 39 ]');
     expect(source).toContain('if [ "$oci_count" -ne 5 ]');
     expect(source).toContain("push-by-digest=true");
+    const rdsBundle = buildJob.steps.find(
+      (step: { readonly name?: string }) =>
+        step.name === "Bind the pinned AWS RDS CA bundle for central schema admin"
+    );
+    expect(rdsBundle?.if).toContain("matrix.name == 'central-schema-admin'");
+    expect(rdsBundle?.run).toContain("https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem");
+    expect(rdsBundle?.run).toContain("e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3");
+    expect(rdsBundle?.run).toContain("/usr/local/share/aex/aws-rds-global-bundle.pem");
+    expect(rdsBundle?.run).toContain("dev.aex.rds-ca-bundle-sha256");
     expect(source).toContain("subject-digest: ${{ steps.publish_oci.outputs.digest }}");
     expect(source).not.toContain("gh release edit \"$tag\"");
     expect(source).not.toContain("aws-actions/configure-aws-credentials");
