@@ -91,8 +91,11 @@ describe("public main-push publication", () => {
     expect(rustCrossToolchain?.run).toContain("02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239");
     expect(rustCrossToolchain?.run).toContain("cargo-zigbuild/releases/download/v0.22.3");
     expect(rustCrossToolchain?.run).toContain("6a014d41ba41ca4b69ca4c4819b9f78a41b0197b5d486904e31c1244e3686190");
+    expect(rustCrossToolchain?.run).toContain('echo "$tool_root/zig" >> "$GITHUB_PATH"');
     expect(rustCrossToolchain?.run).toContain('echo "$tool_root/bin" >> "$GITHUB_PATH"');
-    expect(ociToolchain?.run).toContain('--zig-binary "$tool_root/bin/zig"');
+    expect(rustCrossToolchain?.run).toContain('"$tool_root/zig/zig" version');
+    expect(rustCrossToolchain?.run).not.toContain('install -m 0755 "$tool_root/zig/zig" "$tool_root/bin/zig"');
+    expect(ociToolchain?.run).toContain('--zig-binary "$tool_root/zig/zig"');
     expect(ociToolchain?.run).toContain('--cargo-zigbuild-binary "$tool_root/bin/cargo-zigbuild"');
     expect(source).toContain("artifact module-bundle");
     expect(source.match(/actions\/attest@59d89421af93a897026c735860bf21b6eb4f7b26/g)).toHaveLength(5);

@@ -192,10 +192,9 @@ jobs:
           echo "02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239  $zig_archive" \
             | sha256sum --check --strict
           tar -xJf "$zig_archive" --strip-components=1 -C "$tool_root/zig"
-          install -m 0755 "$tool_root/zig/zig" "$tool_root/bin/zig"
-          echo "2858dc89dbbfdd08cceda1b841e7fd0a793a1a67b49f150bc3d0d1de44ed7f51  $tool_root/bin/zig" \
+          echo "2858dc89dbbfdd08cceda1b841e7fd0a793a1a67b49f150bc3d0d1de44ed7f51  $tool_root/zig/zig" \
             | sha256sum --check --strict
-          [[ "$("$tool_root/bin/zig" version)" == "0.15.2" ]]
+          [[ "$("$tool_root/zig/zig" version)" == "0.15.2" ]]
 
           cargo_zigbuild_archive="$tool_root/cargo-zigbuild-x86_64-unknown-linux-gnu.tar.xz"
           curl --fail --location --proto '=https' --tlsv1.2 \
@@ -210,6 +209,10 @@ jobs:
           echo "c3a62288419645c4172ba8bda7f6af6ef24df8a2cc264a401e4c4373e22649cf  $tool_root/bin/cargo-zigbuild" \
             | sha256sum --check --strict
           [[ "$("$tool_root/bin/cargo-zigbuild" --version)" == "cargo-zigbuild 0.22.3" ]]
+          # Zig resolves its lib directory relative to its executable. Put the
+          # preserved extracted installation on PATH; copying only the binary to
+          # bin/ makes `zig cc` unable to find that adjacent toolchain tree.
+          echo "$tool_root/zig" >> "$GITHUB_PATH"
           echo "$tool_root/bin" >> "$GITHUB_PATH"
 
       - name: Record and verify the pinned OCI producer toolchain
@@ -233,7 +236,7 @@ jobs:
           cargo run --locked --release -p aex-release-tool -- \
             artifact oci-toolchain \
             --buildx-binary "$buildx_binary" \
-            --zig-binary "$tool_root/bin/zig" \
+            --zig-binary "$tool_root/zig/zig" \
             --cargo-zigbuild-binary "$tool_root/bin/cargo-zigbuild" \
             --out "$RELEASE_DIR/oci-toolchain.json"
 
