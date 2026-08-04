@@ -71,14 +71,6 @@ jobs:
           npm install --no-audit --no-fund "$RUNNER_TEMP"/pack/*.tgz
           node --input-type=module -e "import('@aexhq/sdk').then(m => { if (!m) process.exit(1); })"
 
-      - name: Upload the JUnit report
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
-        with:
-          name: junit-${{ inputs.lane }}-node
-          path: reports/junit.xml
-          if-no-files-found: error
-
   unit:
     name: ${{ matrix.name }}
     runs-on: ubuntu-latest

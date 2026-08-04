@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync, readdirSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "bun:test";
+import { listPublishableModules } from "../cicd/public-modules.js";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -69,14 +70,24 @@ describe("repository hygiene", () => {
     expect(ignore).toMatch(/^\.aex-generated-dist\.lock\.breaker\/$/m);
   });
 
-  it("does not ship dangling sourcemap comments for inlined SDK contracts", () => {
-    const dir = resolve(repoRoot, "packages/sdk/dist/_contracts");
-    expect(statSync(dir).isDirectory()).toBe(true);
+  it("keeps every published JavaScript sourcemap reference resolvable", () => {
+    const dangling: string[] = [];
 
-    const dangling = listFiles(dir)
-      .filter((file) => file.endsWith(".js"))
-      .filter((file) => readFileSync(file, "utf8").includes("sourceMappingURL="))
-      .map((file) => file.slice(repoRoot.length + 1).replace(/\\/g, "/"));
+    for (const module of listPublishableModules(repoRoot)) {
+      const dir = resolve(module.dir, "dist");
+      expect(statSync(dir).isDirectory()).toBe(true);
+
+      for (const file of listFiles(dir).filter((candidate) => candidate.endsWith(".js"))) {
+        const source = readFileSync(file, "utf8");
+        for (const match of source.matchAll(/sourceMappingURL=([^\s]+)/g)) {
+          const reference = match[1];
+          if (reference === undefined || reference.startsWith("data:")) continue;
+          if (!existsSync(resolve(dirname(file), reference))) {
+            dangling.push(file.slice(repoRoot.length + 1).replace(/\\/g, "/"));
+          }
+        }
+      }
+    }
 
     expect(dangling).toEqual([]);
   });

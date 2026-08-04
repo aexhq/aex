@@ -6,6 +6,7 @@ import {
   stepIndex,
   workflowJob,
   workflowStep,
+  workflowSteps,
   workflowTriggers
 } from "./workflow-test-helpers.js";
 
@@ -98,6 +99,7 @@ describe("workflow evidence producers", () => {
   test("the Node lane derives and verifies Stripe unit receipts from two real Bun reports", () => {
     const source = readRepoFile(".github/workflows/_node-lane.yml");
     const workflow = readWorkflow(".github/workflows/_node-lane.yml");
+    const aggregateJob = workflowJob(workflow, "node");
     const job = workflowJob(workflow, "unit");
     const workflowCall = workflowTriggers(workflow).workflow_call as {
       readonly inputs: Readonly<Record<string, { readonly required?: boolean }>>;
@@ -106,6 +108,9 @@ describe("workflow evidence producers", () => {
     expect(workflowCall.inputs.matrix?.required).toBeTrue();
     expect(workflowCall.inputs.job_name?.required).toBeTrue();
     expect(workflowCall.inputs.selection_mode?.required).toBeTrue();
+    expect(
+      workflowSteps(aggregateJob).some((step) => step.with?.path === "reports/junit.xml")
+    ).toBeFalse();
     expect(job.strategy?.["fail-fast"]).toBeFalse();
     expect(stepIndex(job, "Record the declared test inventory")).toBeLessThan(
       stepIndex(job, "Test the selected package")

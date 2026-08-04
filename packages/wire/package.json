@@ -22,11 +22,21 @@
     }
   },
   "license": "Apache-2.0",
+  "keywords": [
+    "aex",
+    "wire",
+    "contracts",
+    "typescript",
+    "validation"
+  ],
   "homepage": "https://aex.dev",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aexhq/aex.git",
     "directory": "packages/wire"
+  },
+  "bugs": {
+    "url": "https://github.com/aexhq/aex/issues"
   },
   "publishConfig": {
     "access": "public",
