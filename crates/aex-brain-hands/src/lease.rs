@@ -167,6 +167,24 @@ impl<T> EndpointLeaseCache<T> {
         self.entries.remove(&generation);
     }
 
+    /// Drops a lease only when it is still the cache's current token generation.
+    ///
+    /// A request can fail after a refresh has already installed a successor. In
+    /// that case the old request must not evict the successor's credential.
+    pub(crate) fn invalidate_lease(&mut self, lease: &LeaseHandle<T>) -> bool {
+        let matches = self
+            .entries
+            .get(&lease.identity.generation)
+            .is_some_and(|entry| {
+                entry.handle.identity == lease.identity
+                    && entry.handle.token_generation == lease.token_generation
+            });
+        if matches {
+            self.entries.remove(&lease.identity.generation);
+        }
+        matches
+    }
+
     fn evict_lru(&mut self) {
         let oldest = self
             .entries
@@ -279,6 +297,43 @@ mod tests {
             cache.observe_guest(&fresh, 1, [1; 8]),
             GuestObservation::Recorded
         );
+    }
+
+    #[test]
+    fn a_lifecycle_fence_change_invalidates_the_old_lease_without_touching_the_successor() {
+        let mut cache = cache(2);
+        let old_identity = identity(1, 7, "vm-a");
+        let old = cache.insert(old_identity.clone(), at(1_800_000), "old");
+        let successor_identity = identity(1, 8, "vm-a");
+        let successor = cache.insert(successor_identity.clone(), at(3_600_000), "successor");
+
+        assert!(!cache.invalidate_lease(&old));
+        assert_eq!(
+            cache
+                .get(&successor_identity, at(0))
+                .map(|lease| lease.value),
+            Some("successor")
+        );
+        assert!(!cache.invalidate_lease(&old));
+        assert_eq!(
+            cache
+                .get(&successor_identity, at(0))
+                .map(|lease| lease.value),
+            Some("successor")
+        );
+        assert_eq!(
+            cache.observe_guest(&successor, 1, [1; 8]),
+            GuestObservation::Recorded
+        );
+    }
+
+    #[test]
+    fn terminal_lifecycle_transition_drops_the_generation_lease() {
+        let mut cache = cache(1);
+        let exact = identity(1, 7, "vm-a");
+        cache.insert(exact.clone(), at(1_800_000), "lease");
+        cache.invalidate(exact.generation);
+        assert!(cache.get(&exact, at(0)).is_none());
     }
 
     #[test]

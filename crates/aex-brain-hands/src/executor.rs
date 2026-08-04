@@ -718,7 +718,11 @@ mod tests {
             .cancel(&operation, Fence(11))
             .await
             .expect("cancelled");
-        assert_eq!(hands.cancels.lock().expect("cancels")[0].0, generation());
+        {
+            let cancels = hands.cancels.lock().expect("cancels");
+            assert_eq!(cancels[0].0, generation());
+            assert_eq!(cancels[0].2, Fence(11));
+        }
 
         let malformed = DetachedOperationId("hands.v1:wrong".to_owned());
         assert!(executor.query(&malformed).await.is_err());

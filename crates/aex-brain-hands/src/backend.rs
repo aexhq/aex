@@ -1,8 +1,8 @@
 //! Concrete Brain-to-Hands composition.
 //!
-//! Durable generation state remains in `runtime-activity`; the only process-local
-//! state here is a weak per-generation single-flight lock. Provider idempotency on
-//! `aexgen-{generation}` is the final launch-collapse layer, so losing this map on
+//! Durable generation state remains in `runtime-activity`; process-local state is limited to
+//! bounded generation-partitioned endpoint/token leases and weak single-flight locks. Provider
+//! idempotency on `aexgen-{generation}` is the final launch-collapse layer, so losing these maps on
 //! restart can add latency but cannot create a second `MicroVM`.
 
 use core::time::Duration;
@@ -574,19 +574,50 @@ impl ProductionHandsBackend {
         lease: &LeaseHandle<AuthenticatedGuestEndpoint>,
         reply: &GuestReply<T>,
     ) -> Result<(), HandsError> {
+        if reply.fence != lease.value.fence {
+            self.leases.lock().await.invalidate_lease(lease);
+            return Err(response_error(
+                ProviderFailureKind::ProtocolViolation,
+                "the Hands response advanced beyond the cached lifecycle fence",
+            ));
+        }
         match self
             .leases
             .lock()
             .await
             .observe_guest(lease, reply.guest_revision, reply.agent_build)
         {
-            GuestObservation::Recorded
-            | GuestObservation::Unchanged
-            | GuestObservation::StaleLease => Ok(()),
+            GuestObservation::Recorded | GuestObservation::Unchanged => Ok(()),
+            GuestObservation::StaleLease => Err(response_error(
+                ProviderFailureKind::ProtocolViolation,
+                "the Hands response arrived on a superseded endpoint lease",
+            )),
             GuestObservation::Invalidated => Err(response_error(
                 ProviderFailureKind::ProtocolViolation,
                 "the Hands guest incarnation or build changed during a cached endpoint lease",
             )),
+        }
+    }
+
+    async fn call_guest<Request, Response>(
+        &self,
+        lease: &LeaseHandle<AuthenticatedGuestEndpoint>,
+        verb: Verb,
+        request: &Request,
+        timeout: Duration,
+    ) -> Result<GuestReply<Response>, HandsError>
+    where
+        Request: serde::Serialize + ?Sized,
+        Response: serde::de::DeserializeOwned,
+    {
+        match self.guest.call(&lease.value, verb, request, timeout).await {
+            Ok(reply) => Ok(reply),
+            Err(error) => {
+                if should_invalidate_lease(&error) {
+                    self.leases.lock().await.invalidate_lease(lease);
+                }
+                Err(error)
+            }
         }
     }
 
@@ -746,8 +777,7 @@ impl crate::HandsBackend for ProductionHandsBackend {
             };
             let timeout = Duration::from_millis(u64::from(start.bounds.timeout_ms));
             let reply = match self
-                .guest
-                .call(&endpoint.value, Verb::Start, &call, timeout)
+                .call_guest(&endpoint, Verb::Start, &call, timeout)
                 .await
             {
                 Ok(reply) => reply,
@@ -820,9 +850,8 @@ impl crate::HandsBackend for ProductionHandsBackend {
             let wire = wire_operation(operation)?;
             let (view, endpoint) = self.endpoint_for(generation).await?;
             let reply = self
-                .guest
-                .call::<_, StatusResponse>(
-                    &endpoint.value,
+                .call_guest::<_, StatusResponse>(
+                    &endpoint,
                     Verb::Status,
                     &StatusRequest {
                         binding: binding(&view),
@@ -851,9 +880,8 @@ impl crate::HandsBackend for ProductionHandsBackend {
             let wire = wire_operation(operation)?;
             let (view, endpoint) = self.endpoint_for(generation).await?;
             let reply = self
-                .guest
-                .call::<_, CancelResponse>(
-                    &endpoint.value,
+                .call_guest::<_, CancelResponse>(
+                    &endpoint,
                     Verb::Cancel,
                     &CancelRequest {
                         binding: binding(&view),
@@ -864,6 +892,7 @@ impl crate::HandsBackend for ProductionHandsBackend {
                 )
                 .await?;
             self.observe_guest(&endpoint, &reply).await?;
+            let terminal = matches!(&reply.payload, CancelResponse::AlreadyTerminal { .. });
             let unknown = matches!(&reply.payload, CancelResponse::Unknown { .. });
             let outcome = match reply.payload {
                 CancelResponse::Cancelling { operation: found }
@@ -873,7 +902,7 @@ impl crate::HandsBackend for ProductionHandsBackend {
                 | CancelResponse::Unknown { operation: found } => require_operation(wire, found),
             };
             outcome?;
-            if unknown {
+            if unknown || terminal {
                 self.settle_operation(generation, wire).await?;
             }
             Ok(())
@@ -902,9 +931,8 @@ impl crate::HandsBackend for ProductionHandsBackend {
                 let offset = assembly.as_ref().map_or(0, ResultAssembly::next_offset);
                 let remaining = maximum.saturating_sub(offset);
                 let reply = self
-                    .guest
-                    .call::<_, ResultResponse>(
-                        &endpoint.value,
+                    .call_guest::<_, ResultResponse>(
+                        &endpoint,
                         Verb::Result,
                         &ResultRequest {
                             binding: binding(&view),
@@ -1312,6 +1340,15 @@ fn response_error(kind: ProviderFailureKind, message: &str) -> HandsError {
     )
 }
 
+fn should_invalidate_lease(error: &HandsError) -> bool {
+    matches!(
+        error,
+        HandsError::Transport { proof, detail, .. }
+            if !matches!(proof, DispatchProof::NotSent)
+                || detail.kind == ProviderFailureKind::Authentication
+    )
+}
+
 fn transport(
     stage: DispatchStage,
     proof: DispatchProof,
@@ -1327,7 +1364,9 @@ fn transport(
 
 #[cfg(test)]
 mod tests {
-    use super::{launch_request, wire_operation, wire_session};
+    use super::{launch_request, should_invalidate_lease, wire_operation, wire_session};
+    use aex_brain_application::ports::{HandsError, ProviderFailureKind, RedactedDetail};
+    use aex_brain_domain::effect::{DispatchProof, DispatchStage};
     use aex_brain_domain::ids::{
         HandsOperationId as BrainOperationId, SessionId as BrainSessionId,
     };
@@ -1392,5 +1431,38 @@ mod tests {
             operation
         );
         assert!(wire_operation(&BrainOperationId("operation-1".to_owned())).is_err());
+    }
+
+    #[test]
+    fn ambiguous_or_authentication_guest_failures_evict_only_the_current_lease() {
+        let ambiguous = HandsError::Transport {
+            stage: DispatchStage::Dispatched,
+            proof: DispatchProof::PossiblySent,
+            detail: RedactedDetail::internal(
+                ProviderFailureKind::Transport,
+                "bounded test failure",
+            ),
+        };
+        assert!(should_invalidate_lease(&ambiguous));
+
+        let rejected_token = HandsError::Transport {
+            stage: DispatchStage::PreDispatch,
+            proof: DispatchProof::NotSent,
+            detail: RedactedDetail::internal(
+                ProviderFailureKind::Authentication,
+                "bounded test failure",
+            ),
+        };
+        assert!(should_invalidate_lease(&rejected_token));
+
+        let invalid_request = HandsError::Transport {
+            stage: DispatchStage::PreDispatch,
+            proof: DispatchProof::NotSent,
+            detail: RedactedDetail::internal(
+                ProviderFailureKind::InvalidRequest,
+                "bounded test failure",
+            ),
+        };
+        assert!(!should_invalidate_lease(&invalid_request));
     }
 }
