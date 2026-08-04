@@ -156,7 +156,8 @@ jobs:
       lane: main
       publish: true
       bootstrap_oci_visibility: ${{ vars.AEX_GHCR_VISIBILITY_BOOTSTRAP == 'requested-v1' }}
-    secrets: inherit
+    secrets:
+      AEX_GHCR_VISIBILITY_BOOTSTRAP: ${{ secrets.AEX_GHCR_VISIBILITY_BOOTSTRAP }}
 
   manifest:
     name: Manifest
