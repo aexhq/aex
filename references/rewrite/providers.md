@@ -10,7 +10,7 @@ keywords:
   - credentials
 audience: implementation agents and maintainers
 status: accepted
-last_verified: 2026-08-03
+last_verified: 2026-08-04
 related:
   - references/rewrite/contracts.md
   - references/rewrite/test-architecture.md
@@ -170,6 +170,47 @@ diff. `ReceiptBuilder::build` refuses a receipt missing any probe run;
 | Brain content hydration | Canonical requests carry inline user turns. A configured system reference or placed user block fails before dispatch because the application has no content-hydration port yet. |
 | `trybuild` type-level leak test | The workspace has no `trybuild` dependency. The same property is asserted by construction — `ProviderApiKey` implements none of `Clone`, `Debug`, `Display`, `Serialize`, `Deref`, and `WireRequest` has no field that can hold one — plus runtime cases over `Debug` output, error bodies and receipts. Adding `trybuild` is a workspace-manifest change and belongs to whoever owns that decision. |
 | `miri` over the `credential` module | Not run: the module contains no `unsafe` and the crate forbids it, so `miri` would add build time without a proposition to test. |
+
+### Closing the production catalog authority
+
+The four `AEX_MODEL_CATALOG_*` Actions variables are bindings to already-earned
+release evidence, not a way to create catalog authority. They must remain
+unset until all of the following exist together:
+
+1. A dedicated AWS KMS `ECC_NIST_P256` / `SIGN_VERIFY` publisher key and a
+   reviewed signing role. Only its uncompressed SEC1 public key enters the
+   canonical `aex.model-catalog-trust-roots.v1` document; the private key and
+   signing permission never enter public CI.
+2. A complete live conformance receipt for at least one `(provider, model)`
+   pair, bound to the exact adapter-source digest. The 23-probe harness must
+   earn every capability that pair declares before the entry can become
+   `Active`; a provider model-list result cannot promote it.
+3. A deterministic publisher that emits the JCS catalog document, signs
+   `aex-model-catalog/v1\n || document`, and assembles the closed
+   `aex.model-catalog-collection.v1` chain with the exact admission pin and all
+   still-live session pins. The repository currently has the verifier and
+   conformance harness, but no production publisher or signed collection.
+4. The exact collection bytes at a normalized workspace-relative path before
+   `artifact plan` runs. The current workflow performs no catalog download, so
+   this means a reviewed tracked release input unless the workflow first gains
+   a separate immutable, digest-verified acquisition step.
+
+Only then may publication configure
+`AEX_MODEL_CATALOG_TRUST_ROOTS_JSON`, its SHA-256,
+`AEX_MODEL_CATALOG_COLLECTION_FILE`, and its SHA-256 as repository variables.
+`AEX_TOOL_CATALOG_SHA256` is derived from the checked-out source by the
+workflow. The release tool revalidates canonical roots, both digests, the
+workspace-relative path, and the built-in tool-catalog digest before compiling
+`brain-mux`; startup then verifies the complete signed collection and requires
+at least one serviceable `Active` model.
+
+The 2026-08-04 protected publication failure is therefore an external
+authority blocker, not missing boilerplate configuration. The public
+repository has no configured values, the workspace plane environments carry
+none, the hosted composition declares the same readiness blocker, and the live
+AWS workload/state regions contain no catalog-signing KMS key. Deriving values
+from the existing encryption keys, test fixtures, or staged launch entries
+would manufacture a trust root and must remain impossible.
 
 ---
 
