@@ -106,7 +106,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
@@ -114,7 +114,7 @@ jobs:
           toolchain: "1.97.1"
 
       - name: Install the auditors
-        uses: taiki-e/install-action@2cdf2d81f4edfc3b41d5ddf56083c70b48ac2475  # v2.62.35
+        uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed  # v2.85.6
         with:
           tool: cargo-deny@0.20.2,cargo-audit@0.22.2
 
@@ -144,7 +144,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Declare what this suite still owes
         run: |
@@ -163,7 +163,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Rebuild every published artifact with no cache
         run: |
