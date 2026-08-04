@@ -9,11 +9,13 @@ const workflowPaths = readdirSync(workflowDirectory)
   .sort();
 
 describe("GitHub-hosted runner policy", () => {
-  it("pins every job directly to ubuntu-latest", () => {
+  it("pins every executable job directly to ubuntu-latest", () => {
     for (const path of workflowPaths) {
       const workflow = readWorkflow(path);
       for (const [jobId, job] of Object.entries(workflow.jobs)) {
-        expect(job["runs-on"], `${path} job ${jobId}`).toBe("ubuntu-latest");
+        const reusable = typeof job.uses === "string";
+        const expectedRunner = reusable ? undefined : "ubuntu-latest";
+        expect(job["runs-on"], `${path} job ${jobId}`).toBe(expectedRunner);
       }
     }
   });

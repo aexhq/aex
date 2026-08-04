@@ -1,4 +1,8 @@
 import { expect, test } from "bun:test";
+import { resolve } from "node:path";
+
+const repoRoot = resolve(import.meta.dir, "..", "..");
+const releaseFile = (name: string): string => resolve(repoRoot, "release", name);
 
 type UnitRow = {
   id: string;
@@ -18,10 +22,10 @@ type Producer = {
 const semanticClasses = new Set(["contract", "property", "integration", "conformance"]);
 
 test("semantic receipt producers exactly cover required semantic evidence", async () => {
-  const units = Bun.TOML.parse(await Bun.file("release/units.toml").text()) as {
+  const units = Bun.TOML.parse(await Bun.file(releaseFile("units.toml")).text()) as {
     unit: UnitRow[];
   };
-  const registry = await Bun.file("release/semantic-receipts.json").json() as {
+  const registry = await Bun.file(releaseFile("semantic-receipts.json")).json() as {
     schema: string;
     producers: Producer[];
   };
@@ -52,10 +56,10 @@ test("semantic receipt producers exactly cover required semantic evidence", asyn
 });
 
 test("filtered Rust semantic producers name real test binaries", async () => {
-  const registry = await Bun.file("release/semantic-receipts.json").json() as {
+  const registry = await Bun.file(releaseFile("semantic-receipts.json")).json() as {
     producers: Producer[];
   };
-  const tests = await Bun.file("release/test-registry.json").json() as {
+  const tests = await Bun.file(releaseFile("test-registry.json")).json() as {
     packages: Record<string, { name: string; kind: string }>;
   };
   const packagePaths = new Map(
@@ -66,9 +70,11 @@ test("filtered Rust semantic producers name real test binaries", async () => {
   for (const producer of registry.producers.filter((row) => row.filterset !== "all()")) {
     const packagePath = packagePaths.get(producer.package);
     expect(packagePath, `missing registry path for ${producer.package}`).toBeDefined();
-    const manifest = await Bun.file(`${packagePath}/Cargo.toml`).text();
+    if (packagePath === undefined) throw new Error(`missing registry path for ${producer.package}`);
+    const manifest = await Bun.file(resolve(repoRoot, packagePath, "Cargo.toml")).text();
     const binaries = [...producer.filterset.matchAll(/binary\(([^)]+)\)/gu)]
-      .map((match) => match[1]);
+      .map((match) => match[1])
+      .filter((binary): binary is string => binary !== undefined);
     expect(binaries.length).toBeGreaterThan(0);
     for (const binary of binaries) {
       expect(manifest).toContain(`name = "${binary}"`);

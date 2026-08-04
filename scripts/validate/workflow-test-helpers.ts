@@ -24,7 +24,7 @@ export interface WorkflowJob {
   readonly strategy?: {
     readonly "fail-fast"?: boolean;
     readonly "max-parallel"?: number;
-    readonly matrix?: Readonly<Record<string, unknown>>;
+    readonly matrix?: Readonly<Record<string, unknown>> | string;
   };
   readonly [key: string]: unknown;
 }

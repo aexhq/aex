@@ -1,3 +1,5 @@
+import { describe, expect, test } from "bun:test";
+
 import {
   readRepoFile,
   readWorkflow,
@@ -245,10 +247,15 @@ describe("workflow evidence producers", () => {
     for (const { path, resultJobs, receiptJobs } of cases) {
       const checks = workflowJob(readWorkflow(path), path.endsWith("pr.yml") ? "checks" : "receipts");
       const inputs = checks.with as Readonly<Record<string, string>>;
-      const results = JSON.parse(inputs.required_job_results) as Readonly<
+      const requiredJobResults = inputs.required_job_results;
+      const receiptJobsInput = inputs.receipt_jobs;
+      if (requiredJobResults === undefined || receiptJobsInput === undefined) {
+        throw new Error(`${path}: final checks must declare job results and receipt producers`);
+      }
+      const results = JSON.parse(requiredJobResults) as Readonly<
         Record<string, { readonly result: string; readonly allowSkipped: boolean }>
       >;
-      const producers = JSON.parse(inputs.receipt_jobs) as Readonly<
+      const producers = JSON.parse(receiptJobsInput) as Readonly<
         Record<string, { readonly job: string; readonly selected: string }>
       >;
 
