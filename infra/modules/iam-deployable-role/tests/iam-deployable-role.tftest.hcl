@@ -1,9 +1,9 @@
 mock_provider "aws" {}
 
 variables {
-  deployable = "regional-session-api"
-  plane      = "dev"
-  region     = "eu-west-1"
+  deployable          = "regional-session-api"
+  plane               = "dev"
+  region              = "eu-west-1"
   boundary_policy_arn = "arn:aws:iam::000000000000:policy/aex-dev-application-boundary"
 
   assume_principal = {
