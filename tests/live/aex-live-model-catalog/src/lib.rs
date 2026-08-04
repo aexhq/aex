@@ -17,7 +17,8 @@
 //! diff — compiled, unit-tested, and ready for the change that adds the target.
 //!
 //! The prerequisite path is the part that can be proved without a key, and it
-//! is: [`ProviderKeys::require`] goes through `aex_test_harness::env::require`,
+//! is: [`ProviderKeys::require`] goes through
+//! `aex_test_harness::env::require_first`,
 //! so an absent key **panics with the variable's name**. There is no branch
 //! that can return early and report green.
 
@@ -34,7 +35,7 @@ use aex_wire::provider::ProviderId;
 use aex_wire::types::Timestamp;
 use aex_wire::{ContentHash, Uuid7};
 
-/// The environment variable carrying a provider's live key.
+/// The canonical environment variable carrying a provider's live key.
 ///
 /// One per provider, named after the provider's own wire spelling so a reader
 /// can never wire the wrong key to the wrong adapter.
@@ -47,6 +48,23 @@ pub const fn key_variable(provider: ProviderId) -> &'static str {
         ProviderId::Zai => "AEX_LIVE_PROVIDER_KEY_ZAI",
         ProviderId::Moonshotai => "AEX_LIVE_PROVIDER_KEY_MOONSHOTAI",
         ProviderId::Google => "AEX_LIVE_PROVIDER_KEY_GOOGLE",
+    }
+}
+
+/// Accepted live-key variables in precedence order.
+///
+/// The provider-qualified AEX name is always authoritative. Anthropic and
+/// `DeepSeek` additionally accept the legacy names documented by this
+/// workspace. No alias is guessed for the other providers.
+#[must_use]
+pub const fn key_variables(provider: ProviderId) -> &'static [&'static str] {
+    match provider {
+        ProviderId::Openai => &["AEX_LIVE_PROVIDER_KEY_OPENAI"],
+        ProviderId::Anthropic => &["AEX_LIVE_PROVIDER_KEY_ANTHROPIC", "ANTHROPIC_API_KEY"],
+        ProviderId::Deepseek => &["AEX_LIVE_PROVIDER_KEY_DEEPSEEK", "DEEPSEEK_API_KEY"],
+        ProviderId::Zai => &["AEX_LIVE_PROVIDER_KEY_ZAI"],
+        ProviderId::Moonshotai => &["AEX_LIVE_PROVIDER_KEY_MOONSHOTAI"],
+        ProviderId::Google => &["AEX_LIVE_PROVIDER_KEY_GOOGLE"],
     }
 }
 
@@ -64,7 +82,7 @@ impl ProviderKeys {
     /// skip.
     #[must_use]
     pub fn require(provider: ProviderId) -> String {
-        aex_test_harness::env::require(key_variable(provider))
+        aex_test_harness::env::require_first(key_variables(provider))
     }
 }
 
@@ -369,8 +387,8 @@ mod tests {
     use aex_wire::{ContentHash, Uuid7};
 
     use super::{
-        ProbeRun, ProviderKeys, ReceiptBuilder, ReceiptError, StagingChange, earns_active,
-        key_variable, plan, stage, staging_state,
+        ProbeRun, ReceiptBuilder, ReceiptError, StagingChange, earns_active, key_variable,
+        key_variables, plan, stage, staging_state,
     };
 
     fn builder() -> ReceiptBuilder {
@@ -393,11 +411,15 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "AEX_LIVE_PROVIDER_KEY_ANTHROPIC")]
+    #[should_panic(expected = "`AEX_LIVE_PROVIDER_KEY_ANTHROPIC`, `ANTHROPIC_API_KEY` are absent")]
     fn an_absent_provider_key_fails_loudly_rather_than_skipping() {
         // The whole prerequisite contract in one case: there is no branch that
         // can observe an absent key and report green.
-        let _ = ProviderKeys::require(ProviderId::Anthropic);
+        let _ = aex_test_harness::env::classify_first(
+            key_variables(ProviderId::Anthropic)
+                .iter()
+                .map(|name| (*name, Err(std::env::VarError::NotPresent))),
+        );
     }
 
     #[test]
@@ -405,6 +427,7 @@ mod tests {
         let mut seen = Vec::new();
         for provider in ProviderId::ALL {
             let variable = key_variable(*provider);
+            assert_eq!(key_variables(*provider)[0], variable);
             assert!(
                 variable.starts_with("AEX_LIVE_PROVIDER_KEY_"),
                 "{variable} is not in the reserved namespace"
@@ -413,6 +436,38 @@ mod tests {
             seen.push(variable);
         }
         assert_eq!(seen.len(), 6);
+    }
+
+    #[test]
+    fn only_documented_legacy_provider_key_names_are_accepted() {
+        assert_eq!(
+            key_variables(ProviderId::Anthropic),
+            &["AEX_LIVE_PROVIDER_KEY_ANTHROPIC", "ANTHROPIC_API_KEY"]
+        );
+        assert_eq!(
+            key_variables(ProviderId::Deepseek),
+            &["AEX_LIVE_PROVIDER_KEY_DEEPSEEK", "DEEPSEEK_API_KEY"]
+        );
+        for provider in [
+            ProviderId::Openai,
+            ProviderId::Zai,
+            ProviderId::Moonshotai,
+            ProviderId::Google,
+        ] {
+            assert_eq!(key_variables(provider), &[key_variable(provider)]);
+        }
+    }
+
+    #[test]
+    fn a_documented_legacy_name_can_satisfy_the_live_key_prerequisite() {
+        let value =
+            aex_test_harness::env::classify_first(key_variables(ProviderId::Deepseek).iter().map(
+                |name| match *name {
+                    "DEEPSEEK_API_KEY" => (*name, Ok("present".to_owned())),
+                    _ => (*name, Err(std::env::VarError::NotPresent)),
+                },
+            ));
+        assert_eq!(value, "present");
     }
 
     #[test]

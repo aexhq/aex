@@ -29,6 +29,22 @@ pub fn require(name: &str) -> String {
     classify(name, std::env::var(name))
 }
 
+/// Reads the first present environment variable from an ordered list.
+///
+/// This supports bounded compatibility aliases without allowing a live test to
+/// self-skip. The first name is authoritative: a present-but-empty or
+/// non-Unicode value fails instead of falling through to a lower-priority
+/// alias. When every name is absent, the panic names every accepted variable.
+///
+/// # Panics
+///
+/// Panics when `names` is empty, when the first present value is empty or not
+/// valid Unicode, or when every named variable is absent.
+#[must_use]
+pub fn require_first(names: &[&str]) -> String {
+    classify_first(names.iter().map(|name| (*name, std::env::var(name))))
+}
+
 /// The pure half of [`require`], so every failure message is provable without
 /// mutating the process environment - which edition 2024 makes `unsafe` and the
 /// workspace forbids outright.
@@ -52,9 +68,40 @@ pub fn classify(name: &str, value: Result<String, VarError>) -> String {
     }
 }
 
+/// The pure half of [`require_first`].
+///
+/// Results must be supplied in precedence order. Only `NotPresent` advances to
+/// the next name; every other result is authoritative.
+///
+/// # Panics
+///
+/// Panics under the same conditions as [`require_first`].
+#[must_use]
+pub fn classify_first<'a, I>(values: I) -> String
+where
+    I: IntoIterator<Item = (&'a str, Result<String, VarError>)>,
+{
+    let mut absent = Vec::new();
+    for (name, value) in values {
+        match value {
+            Err(VarError::NotPresent) => absent.push(name),
+            other => return classify(name, other),
+        }
+    }
+
+    assert!(
+        !absent.is_empty(),
+        "at least one required environment variable name must be supplied"
+    );
+    panic!(
+        "required environment variables `{}` are absent; a live prerequisite is a failure, never a skip",
+        absent.join("`, `")
+    );
+}
+
 #[cfg(test)]
 mod tests {
-    use super::classify;
+    use super::{classify, classify_first};
     use std::env::VarError;
 
     #[test]
@@ -89,5 +136,51 @@ mod tests {
     #[test]
     fn the_real_reader_returns_a_value_that_cargo_always_sets() {
         assert!(!super::require("CARGO_PKG_NAME").is_empty());
+    }
+
+    #[test]
+    fn the_first_present_variable_wins() {
+        assert_eq!(
+            classify_first([
+                ("AEX_PRIMARY", Ok("primary".to_owned())),
+                ("AEX_LEGACY", Ok("legacy".to_owned())),
+            ]),
+            "primary"
+        );
+    }
+
+    #[test]
+    fn an_absent_primary_falls_back_to_a_present_alias() {
+        assert_eq!(
+            classify_first([
+                ("AEX_PRIMARY", Err(VarError::NotPresent)),
+                ("AEX_LEGACY", Ok("legacy".to_owned())),
+            ]),
+            "legacy"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "`AEX_PRIMARY` is set but empty")]
+    fn an_empty_primary_does_not_fall_through_to_an_alias() {
+        let _ = classify_first([
+            ("AEX_PRIMARY", Ok(" ".to_owned())),
+            ("AEX_LEGACY", Ok("legacy".to_owned())),
+        ]);
+    }
+
+    #[test]
+    #[should_panic(expected = "`AEX_PRIMARY`, `AEX_LEGACY` are absent")]
+    fn all_absent_candidates_fail_with_every_accepted_name() {
+        let _ = classify_first([
+            ("AEX_PRIMARY", Err(VarError::NotPresent)),
+            ("AEX_LEGACY", Err(VarError::NotPresent)),
+        ]);
+    }
+
+    #[test]
+    #[should_panic(expected = "at least one required environment variable name")]
+    fn an_empty_candidate_list_is_a_configuration_error() {
+        let _ = classify_first(std::iter::empty::<(&str, Result<String, VarError>)>());
     }
 }
