@@ -181,6 +181,7 @@ dependencies = [
  "blake3",
  "bytes",
  "futures",
+ "http 1.5.0",
  "serde",
  "serde_json",
  "thiserror",
