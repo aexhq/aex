@@ -153,6 +153,31 @@ fn resolved_placement_is_content_addressed_and_closed() {
     tampered["artifacts"]["brain-mux"]["sizeBytes"] = Value::from(8_u64);
     let error = parse_resolved_placement(&canon::to_string(&tampered).unwrap()).unwrap_err();
     assert_eq!(error.rules(), vec!["placement-digest-mismatch"]);
+
+    let mut with_image: Value =
+        serde_json::from_str(&fixture("resolved-placement.valid.json")).unwrap();
+    with_image["artifacts"]["central-identity-api"]["microvmImage"] = serde_json::json!({
+        "imageArn": "arn:aws:lambda:eu-west-1:000000000000:microvm-image:aex-dev-aaaaaaaa",
+        "imageVersion": "7"
+    });
+    let with_image = with_self_digest(&canon::to_string(&with_image).unwrap(), "placementDigest");
+    let placement = parse_resolved_placement(&with_image).unwrap();
+    let image = placement.artifacts["central-identity-api"]
+        .microvm_image
+        .as_ref()
+        .expect("the provider pair is preserved");
+    assert_eq!(image.image_version, "7");
+
+    let mut invalid: Value = serde_json::from_str(&with_image).unwrap();
+    invalid["artifacts"]["central-identity-api"]["microvmImage"]["imageArn"] =
+        Value::String("arn:aws:lambda:eu-west-1:000000000000:function:not-an-image".to_owned());
+    let invalid = with_self_digest(&canon::to_string(&invalid).unwrap(), "placementDigest");
+    assert!(
+        parse_resolved_placement(&invalid)
+            .unwrap_err()
+            .rules()
+            .contains(&"placement-microvm-image-arn-invalid")
+    );
 }
 
 #[test]

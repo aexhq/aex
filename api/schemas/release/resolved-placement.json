@@ -22,6 +22,18 @@
         "properties": {
           "artifactDigest": { "$ref": "#/$defs/sha256" },
           "sizeBytes": { "type": "integer", "minimum": 1 },
+          "microvmImage": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["imageArn", "imageVersion"],
+            "properties": {
+              "imageArn": {
+                "type": "string",
+                "pattern": "^arn:aws[a-z-]*:lambda:[a-z0-9-]+:[0-9]{12}:microvm-image:[A-Za-z0-9_-]{1,64}$"
+              },
+              "imageVersion": { "type": "string", "minLength": 1, "maxLength": 2048 }
+            }
+          },
           "destination": {
             "oneOf": [
               {

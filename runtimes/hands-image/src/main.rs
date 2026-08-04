@@ -7,9 +7,9 @@
 //! # What this binary does, and what it does not
 //!
 //! It writes a build context and can run a **local** container build. It publishes
-//! nothing: no registry push, no `CreateMicrovmImage`, no credential. The publish
-//! inputs are printed so a release job can use them, and the image-mutation IAM
-//! actions live in a separate release role no runtime deployable holds.
+//! nothing: no registry push, no `CreateMicrovmImage`, no credential. A typed,
+//! plane-neutral registration descriptor is packaged for the private release lane;
+//! image-mutation IAM actions live in a separate role no runtime deployable holds.
 
 mod build;
 mod image;
@@ -138,6 +138,9 @@ enum RunError {
     /// The shipped dependency inventory could not be generated.
     #[error("the agent SBOM could not be generated: {0}")]
     Sbom(String),
+    /// The fixed registration descriptor could not be encoded.
+    #[error("the MicroVM image registration descriptor could not be encoded: {0}")]
+    Registration(String),
 }
 
 /// Wraps an I/O error with the path that produced it.
@@ -175,6 +178,10 @@ fn write_context_bytes(
     std::fs::copy(agent, out.join("hands-agent")).map_err(io_at(agent))?;
     let sbom_path = out.join("agent.cdx.json");
     std::fs::write(&sbom_path, agent_sbom).map_err(io_at(&sbom_path))?;
+    let registration_path = out.join(build::REGISTRATION_DESCRIPTOR_FILENAME);
+    let registration = serde_json::to_vec(&build::registration_descriptor(variant))
+        .map_err(|error| RunError::Registration(error.to_string()))?;
+    std::fs::write(&registration_path, registration).map_err(io_at(&registration_path))?;
     Ok(dockerfile)
 }
 
@@ -274,17 +281,15 @@ fn run(cli: &Cli) -> Result<(), RunError> {
         }
         Command::Publish { variant, region } => {
             let variant = Variant::parse(variant).map_err(RunError::Variant)?;
-            let memory = image::variants()
-                .into_iter()
-                .find(|published| {
-                    published.size == variant.size
-                        && published.capabilities.contains(&image::Capability::Browser)
-                            == variant.browser
-                })
-                .map_or(1_024, |published| published.minimum_memory_mib);
-            for input in build::create_image_inputs(&variant, region, memory) {
-                println!("{input}");
-            }
+            let mut registration = build::registration_descriptor(&variant);
+            registration.base_image_arn_template = registration
+                .base_image_arn_template
+                .replace("{region}", region);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&registration)
+                    .map_err(|error| RunError::Registration(error.to_string()))?
+            );
             Ok(())
         }
         Command::Validate { lock, observed } => validate(lock, observed),
@@ -384,6 +389,14 @@ mod tests {
         assert!(generated.contains("chromium-headless"));
         assert!(context.join("hands-agent").is_file());
         assert!(context.join("agent.cdx.json").is_file());
+        let registration =
+            std::fs::read_to_string(context.join(crate::build::REGISTRATION_DESCRIPTOR_FILENAME))
+                .expect("the registration descriptor reads back");
+        let registration: crate::build::MicrovmImageRegistration =
+            serde_json::from_str(&registration).expect("the registration descriptor decodes");
+        assert_eq!(registration.variant, "2gb-browser");
+        assert_eq!(registration.resources[0].minimum_memory_in_mi_b, 2_048);
+        assert!(registration.browser);
         assert!(generated.contains("image.lock.json"));
         assert!(generated.contains("rpm-nevra.txt"));
     }

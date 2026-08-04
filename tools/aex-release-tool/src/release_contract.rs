@@ -185,8 +185,21 @@ pub struct ArtifactPlacement {
     pub artifact_digest: String,
     /// Public content size.
     pub size_bytes: u64,
+    /// Exact provider image ARN/version pair, when this artifact is a MicroVM image.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub microvm_image: Option<MicrovmImagePlacement>,
     /// Exact hosted destination and readback identity.
     pub destination: PlacementDestination,
+}
+
+/// One immutable Lambda MicroVM image identity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MicrovmImagePlacement {
+    /// Image resource ARN. Versions are separate provider values, not ARNs.
+    pub image_arn: String,
+    /// Exact immutable image version returned by the provider.
+    pub image_version: String,
 }
 
 /// Supported exact hosted destinations.
@@ -618,6 +631,33 @@ fn validate_placements(
                 "placement-artifact-size-invalid",
                 format!("artifact `{unit}` has zero size"),
             ));
+        }
+        if let Some(image) = &artifact.microvm_image {
+            let arn_parts = image.image_arn.split(':').collect::<Vec<_>>();
+            if arn_parts.len() != 7
+                || !arn_parts[0].starts_with("arn")
+                || arn_parts[2] != "lambda"
+                || arn_parts[3].is_empty()
+                || arn_parts[4].len() != 12
+                || !arn_parts[4].bytes().all(|byte| byte.is_ascii_digit())
+                || arn_parts[5] != "microvm-image"
+                || arn_parts[6].is_empty()
+                || arn_parts[6].len() > 64
+                || !arn_parts[6]
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+            {
+                violations.push(Violation::new(
+                    "placement-microvm-image-arn-invalid",
+                    format!("artifact `{unit}` has an invalid Lambda MicroVM image ARN"),
+                ));
+            }
+            if image.image_version.is_empty() || image.image_version.len() > 2_048 {
+                violations.push(Violation::new(
+                    "placement-microvm-image-version-invalid",
+                    format!("artifact `{unit}` has an invalid Lambda MicroVM image version"),
+                ));
+            }
         }
         match &artifact.destination {
             PlacementDestination::S3 {
