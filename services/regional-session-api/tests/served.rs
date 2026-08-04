@@ -1100,6 +1100,18 @@ async fn session_point_and_list_reads_are_absent_until_the_head_is_complete() {
     }
 }
 
+/// A create response is not earned by an immutable head alone. The same
+/// provider transaction must also establish the root agent, sealed registry
+/// selection and root pin, first custody authority, exact logical Hands
+/// generation and current pointer, replayable response receipt, and native
+/// creation event. Until the application plan and adapter can name every one of
+/// those participants, the public route must remain absent rather than expose a
+/// session that cannot execute or replay correctly.
+#[test]
+fn session_create_is_absent_until_the_complete_atomic_authority_is_composed() {
+    assert!(!Routes::served().contains(&RouteId::SessionCreate));
+}
+
 /// The stored message body is an opaque inline blob or content digest, while
 /// the published message is an ordered typed-part vector. The domain also has
 /// tool-call/result parts that the wire cannot represent, and the wire has a

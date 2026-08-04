@@ -47,7 +47,7 @@ The interrupted stream's `wire_pending` and `canonical` stand-in modules are
 
    | Function | Exact blocker outside `aex-session-app`'s implementable assembly |
    | --- | --- |
-   | `create_session` | No accepted application command or domain planner binds the generated create request's resolved configuration, initial registry root, first custody row, root-agent budget and idempotency receipt into one replayable projection. |
+   | `create_session` | No accepted application command or domain planner binds the generated create request's resolved configuration, sealed registry manifest/root pin, first custody authority, root-agent budget, exact logical Hands generation/current pointer, replayable response receipt and native creation event into one transaction. `SessionTransaction::validate` now refuses every `CreateSession` plan until that closed vocabulary exists, so the already-supported session-head encoder cannot be mistaken for a complete create path. |
    | `persist_workspace` | `ContentRoot` does not retain a root-page identity from which `ContentReader::load_page` can materialize the durable `TreeView`; `Write` also has no tree-page or persist-receipt write. The public `rootHash: ContentHash` and the domain's BLAKE3 root bytes additionally lack a specified conversion. |
    | `clone_session` | A first admission can mint the target, but an exact operation replay cannot recover that target session from the specified `OperationResult`; no accepted internal result/projection seam records it. Inventing a target-id payload would be a new wire contract. |
    | `discard_workspace` | No domain planner or transaction `Hint` carries the runtime generation-termination intent/receipt. Clearing `Session::generation` alone would acknowledge discard before the runtime authority accepts termination. |
@@ -57,6 +57,65 @@ The interrupted stream's `wire_pending` and `canonical` stand-in modules are
    No `wire_pending` module or callable stub was added for these six gaps. The
    functions remain absent and unreachable until their named owner contracts
    land; this is the exact blocked marker, not a fallback implementation.
+
+### Session-create authority closure (2026-08-04)
+
+Fresh composition tracing found that `aex-session-dynamodb` could compile a
+`TransactionIntent::CreateSession` containing only `PutSessionHead`. That
+provider request was individually well formed but architecturally incomplete:
+the resulting public resource would have no root agent, registry snapshot,
+credential custody, runtime generation, exact replay response or creation
+event. The production route remained unmounted, so no live partial session was
+created, but the compiler test incorrectly made the unsafe future wiring look
+supported.
+
+The bounded correction in this pass is fail-closed:
+
+- `SessionTransaction::validate` rejects `CreateSession` with
+  `IncompleteCreateAuthority` before any provider request is constructed;
+- the DynamoDB compiler proves that a head-only create reaches no
+  `TransactWriteItems` action; and
+- the regional API has a direct route-registration regression proving
+  `session_create` stays absent until the complete authority is composed.
+
+The complete implementation is not a one-handler change. Four ownership seams
+still need explicit types before it can be made atomic:
+
+1. a sealed registry-selection manifest whose exact content revisions/digests
+   are retained by one session-owned root pin without one write per selected
+   file;
+2. a create-time runtime allocation containing the immutable image pin,
+   protocol and effective-limits revision, plus both the generation head and
+   `SESSIONGEN/.../CURRENT` pointer;
+3. a native `session.created` event envelope (the currently shared outbox type
+   is terminal-run-only); and
+4. one replay receipt shape that stores the canonical response bytes and expiry.
+   The application-domain receipt stores only a response digest, while the
+   regional adapter's canonical receipt stores the replayable body, scope,
+   hashed key and explicit expiry.
+
+Configuration resolution is a fifth composition input, not an authority-row
+type: the route must fail closed unless it can validate the signed model catalog,
+the exact provider-credential binding/revision, the selected image variant and
+the complete effective-limit revision. These values may be read before the
+transaction, but the transaction must pin the immutable results rather than
+re-read mutable defaults later.
+
+Architecture trade-offs are narrow and real:
+
+- **Correctness and concurrency:** one transaction prevents a visible session
+  head from racing ahead of any execution authority. The generation id and its
+  current pointer are allocated together, so no Brain activation can observe an
+  invented or missing generation.
+- **Performance and scalability:** H-LAZY remains unchanged; create performs no
+  MicroVM/provider call. A sealed registry root keeps transaction actions
+  bounded even when a request selects many resources, and every mutable key is
+  session-scoped rather than a global counter.
+- **Reliability:** keeping the route unavailable reduces current feature
+  availability, but a partial session would be permanently unreplayable and
+  require repair logic. Prelaunch clean-cut semantics favor the explicit outage
+  until the atomic authority exists.
+
 2. **Property rows 11–14** (idempotency) are satisfied against
    `aex_wire::canonical::intent_digest` rather than a local hash, because the
    contract crate now owns the canonicalizer and the cross-language corpus.

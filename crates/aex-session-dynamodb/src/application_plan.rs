@@ -715,7 +715,7 @@ mod tests {
     }
 
     #[test]
-    fn create_session_is_one_immutable_canonical_put() {
+    fn a_partial_session_create_is_rejected_before_request_construction() {
         let (session, _run, _agent, _message) = running_session();
         let input = SessionTransaction {
             intent: TransactionIntent::CreateSession,
@@ -723,7 +723,7 @@ mod tests {
             writes: vec![Write::PutSessionHead(Box::new(session.clone()))],
             after_commit: Vec::new(),
         };
-        let compiled = compile_application_transaction(
+        let error = compile_application_transaction(
             &RegionalTables::composed("dev", "eu-west-1"),
             &input,
             SessionBinding {
@@ -732,15 +732,10 @@ mod tests {
                 session: session.id,
             },
             &RefuseExternal,
-        )
-        .expect("compiles");
-        assert_eq!(compiled.transaction.len(), 1);
-        let put = compiled.transaction.actions()[0]
-            .put()
-            .expect("canonical session put");
+        );
         assert!(
-            put.condition_expression()
-                .is_some_and(|expression| expression.contains(crate::plan::IMMUTABLE))
+            matches!(error, Err(StoreError::Invalid { ref detail }) if detail == "session creation authority is incomplete"),
+            "{error:?}"
         );
     }
 }

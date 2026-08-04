@@ -613,6 +613,15 @@ pub struct PlanShape {
 /// Why a plan is not submittable.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PlanError {
+    /// A create plan omitted authorities that must be born atomically with the
+    /// session head.
+    ///
+    /// The current closed write vocabulary cannot yet express the sealed
+    /// registry manifest, native creation event, or exact Hands generation and
+    /// current pointer. Refusing the intent here prevents an adapter from
+    /// treating the already-supported head write as a complete session create.
+    #[error("session creation authority is incomplete")]
+    IncompleteCreateAuthority,
     /// The plan carries too many actions.
     #[error("plan carries {actions} actions, above the maximum of {max}")]
     TooManyActions {
@@ -650,6 +659,9 @@ impl SessionTransaction {
     ///
     /// Returns [`PlanError`] for an over-large plan or a duplicate write target.
     pub fn validate(&self) -> Result<PlanShape, PlanError> {
+        if self.intent == TransactionIntent::CreateSession {
+            return Err(PlanError::IncompleteCreateAuthority);
+        }
         let mut action_targets = BTreeSet::new();
         action_targets.extend(self.conditions.iter().map(Condition::target));
         action_targets.extend(self.writes.iter().map(Write::target));
@@ -712,7 +724,7 @@ mod tests {
 
     fn plan(conditions: Vec<Condition>, writes: Vec<Write>) -> SessionTransaction {
         SessionTransaction {
-            intent: TransactionIntent::CreateSession,
+            intent: TransactionIntent::AdmitMessage,
             conditions,
             writes,
             after_commit: Vec::new(),
@@ -763,6 +775,22 @@ mod tests {
         let ids = value.condition_ids();
         assert_eq!(ids.len(), 2);
         assert_eq!(ids, value.condition_ids());
+    }
+
+    #[test]
+    fn session_create_fails_closed_until_every_authority_participant_is_expressible() {
+        let session = aex_session_domain::testing::session_fixture();
+        let value = SessionTransaction {
+            intent: TransactionIntent::CreateSession,
+            conditions: Vec::new(),
+            writes: vec![Write::PutSessionHead(Box::new(session))],
+            after_commit: Vec::new(),
+        };
+        assert_eq!(
+            value.validate(),
+            Err(PlanError::IncompleteCreateAuthority),
+            "a head-only transaction would orphan the session from its root agent, registry, custody, runtime generation, replay receipt and event"
+        );
     }
 
     #[test]
