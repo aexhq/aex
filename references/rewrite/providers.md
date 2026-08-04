@@ -28,6 +28,98 @@ Six providers, no gateway, no `OpenRouter`, no arbitrary base URL, no
 cross-provider fallback, no model-name inference. `anthropic` is canonical and
 `anthrophic` is a decode error, not a synonym.
 
+### Owner amendment: two customer-owned gateway authorities
+
+On 2026-08-04 the owner expanded the target to the six native providers plus
+OpenRouter and Vercel AI Gateway, while retaining customer-owned credentials
+only. The implementation described below is still the six-provider state: the
+two gateway paths have not been added to `ProviderId`, the catalog, the router,
+the live matrix or release evidence, and no public support claim has been made.
+This is an architecture slice, not a release-variable substitution.
+
+The target wire spellings are `openrouter` and `vercel_ai_gateway`. They must be
+new `ProviderId` members, not aliases of `openai` and not arbitrary transport
+base URLs. `ProviderId` identifies the authority whose credential AEX resolves,
+whose endpoint it calls, whose quota and bill the customer reconciles, and whose
+failure/receipt namespace it records. For these paths that authority is the
+gateway even when the gateway later chooses an upstream host for the exact
+model. Treating either path as `openai` would bind the wrong credential and make
+the durable receipt false.
+
+Internally, each gateway needs its own fixed `EndpointPin`, `Dialect` member and
+`ProviderAdapter` over the existing bounded HTTP/SSE transport. Both gateways
+publish OpenAI-compatible surfaces, but compatibility is not protocol identity:
+paths, routing controls, stream metadata, usage fields, error bodies and request
+ids can differ. Common encoding/decoding primitives may be extracted only where
+goldens prove the bytes and state transitions are the same; neither adapter may
+delegate identity, error classification or receipts to `OpenAiAdapter`. The
+official gateway surfaces and routing behavior are documented by
+[OpenRouter provider routing](https://openrouter.ai/docs/guides/routing/provider-selection)
+and [Vercel AI Gateway](https://vercel.com/docs/ai-gateway).
+
+BYOK here means AEX stores only the customer's OpenRouter key or Vercel AI
+Gateway key in the same encrypted, revisioned provider-credential authority used
+for native keys. AEX does not provision a shared or managed gateway key. If the
+customer configures upstream BYOK inside their gateway account, that remains
+between the customer and the gateway. Initial AEX support must not put upstream
+provider credentials into a request body: the current one-binding session pin
+and credential-hidden `WireRequest` make that leakage impossible. Request-scoped
+multi-key gateway BYOK would require a separate custody and revocation design,
+not another environment variable.
+
+The gateway contract should admit one exact gateway-native model slug and no
+model fallback list. Same-model upstream routing is part of the gateway path the
+customer selected and preserves the gateway's reliability value, but the
+adapter must normalize any actual model/upstream route metadata the gateway
+publishes into a bounded receipt. It must never copy an unbounded vendor metadata
+object into the journal. AEX still performs no automatic retry after an
+ambiguous send; gateway-internal routing produces at most the one result returned
+for that one durable effect.
+
+The smallest correctness-preserving implementation is one complete vertical
+slice:
+
+1. Add both `ProviderId` members in `api/schemas/provider/provider.yaml` and
+   regenerate every Rust, TypeScript, JSON Schema and OpenAPI binding.
+2. Add the two closed origins and two gateway dialects to
+   `aex-model-catalog`; keep every gateway model `Staged` until its own receipt
+   passes.
+3. Add two adapters, include both in the build-source digest, make the router's
+   match total, and preserve the existing origin/workspace/binding/catalog pool
+   isolation and send proof.
+4. Extend `ProviderReceipt` with a bounded optional normalized gateway route
+   record so the requested gateway/model and the reported actual route are not
+   conflated. Add request, stream, tool, usage, error, redaction, cancellation
+   and ambiguous-drop goldens for each adapter.
+5. Extend provider seams and the live key registry with
+   `AEX_LIVE_PROVIDER_KEY_OPENROUTER` and
+   `AEX_LIVE_PROVIDER_KEY_VERCEL_AI_GATEWAY`, then run the same 23-probe matrix
+   for every gateway model proposed for `Active`.
+6. Update public provider documentation only after at least one exact pair has
+   a real signed conformance receipt and the runtime composition is ready.
+
+Adding only enum members or placeholder adapters is deliberately excluded. It
+would make SDKs accept a provider the runtime cannot serve, widen strongly
+consistent credential fan-out, and make `ProviderId::ALL` claim live coverage
+without a usable dialect. The compile-time exhaustiveness is useful—it exposed
+the catalog fixture, router and live-key registry as immediate change sites in a
+local spike—but it is not proof that a gateway protocol works.
+
+The trade-offs are specific. A gateway adds one selected network intermediary
+and its latency/outage domain, but offers same-model upstream routing and quota
+aggregation. Dedicated adapters and normalized route receipts cost more source
+and conformance work, but preserve credential affinity, billing reconciliation
+and protocol-drift detection. The hot path gains no new process or sidecar: it
+continues to use the mux's shared bounded clients, with pools separated by the
+gateway origin and customer credential generation. Gateway quotas and noisy
+neighbors remain isolated by the existing provider/workspace scheduler only
+when each gateway is represented by its own provider identity. The existing
+admin-only lookup by credential id widens from six to eight sequential strongly
+consistent point reads because its key omits the provider; runtime dispatch
+already carries the provider and remains one point read. A locator/key-shape
+clean cut is a separate optimization if that admin path becomes material, not a
+reason to alias gateway identities.
+
 ---
 
 ## 1. Implemented
