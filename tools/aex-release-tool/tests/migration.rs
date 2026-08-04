@@ -107,6 +107,20 @@ fn a_bundle_is_byte_stable_across_builds() {
 }
 
 #[test]
+fn crlf_checkout_has_the_same_bundle_authority_as_canonical_lf() {
+    let lf = fixture(&[("20260801000100_baseline.sql", BODY)]);
+    let crlf_body = BODY.replace('\n', "\r\n");
+    let crlf = fixture(&[("20260801000100_baseline.sql", &crlf_body)]);
+
+    let crlf_bundle = build_bundle(&crlf).expect("CRLF checkout bundle");
+    let lf_bundle = build_bundle(&lf).expect("LF checkout bundle");
+    assert_eq!(
+        aex_release_tool::canon::to_file_bytes(&crlf_bundle).expect("canonical CRLF bundle"),
+        aex_release_tool::canon::to_file_bytes(&lf_bundle).expect("canonical LF bundle")
+    );
+}
+
+#[test]
 fn every_declared_failure_mode_reports_its_own_rule() {
     let cases: &[(&str, &str, &str)] = &[
         (
