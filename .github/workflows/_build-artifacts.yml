@@ -179,7 +179,7 @@ jobs:
           driver-opts: image=moby/buildkit:v0.30.0@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f
 
       - name: Install and verify the pinned Rust cross-linker toolchain
-        if: ${{ steps.recipe.outputs.kind == 'rust-lambda' || steps.recipe.outputs.kind == 'microvm-image' || startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
+        if: ${{ steps.recipe.outputs.kind == 'rust-lambda' || steps.recipe.outputs.kind == 'microvm-image' || steps.recipe.outputs.kind == 'rust-binary' || startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
         run: |
           set -euo pipefail
           tool_root="$RUNNER_TEMP/aex-rust-cross-tools"
@@ -359,10 +359,10 @@ jobs:
           jq -n \
             --arg producer "aex-release-tool $(cargo run --locked --release -p aex-release-tool -- --version | awk '{print $2}')" \
             "${determinism_check[@]}" \
-            '{schema:"aex.check-report.v1",producer:$producer,checks:[
+            '{schema:"aex.check-report.v1",producer:$producer,checks:([
               {id:"independent-packages-byte-identical",status:"passed"},
               {id:"authoritative-build-input-packaged",status:"passed"}
-            ] + (if $deterministic then [{id:"authoritative-build-rerun-byte-identical",status:"passed"}] else [] end)}' \
+            ] + (if $deterministic then [{id:"authoritative-build-rerun-byte-identical",status:"passed"}] else [] end))}' \
             > "$RELEASE_DIR/package-integrity-report.json"
 
       - name: Describe the locally earned artifact identity

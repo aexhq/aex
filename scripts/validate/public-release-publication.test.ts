@@ -70,6 +70,9 @@ describe("public main-push publication", () => {
       (step: { readonly name?: string }) =>
         step.name === "Record and verify the pinned OCI producer toolchain"
     );
+    const packageStep = buildJob.steps.find(
+      (step: { readonly name?: string }) => step.name === "Package"
+    );
 
     expect(job.permissions).toEqual({
       contents: "write",
@@ -86,6 +89,7 @@ describe("public main-push publication", () => {
     expect(packagers?.with.fallback).toBe("none");
     expect(rustCrossToolchain?.if).toContain("steps.recipe.outputs.kind == 'rust-lambda'");
     expect(rustCrossToolchain?.if).toContain("steps.recipe.outputs.kind == 'microvm-image'");
+    expect(rustCrossToolchain?.if).toContain("steps.recipe.outputs.kind == 'rust-binary'");
     expect(rustCrossToolchain?.if).toContain("startsWith(steps.recipe.outputs.kind, 'rust-oci-')");
     expect(rustCrossToolchain?.run).toContain("zig-x86_64-linux-0.15.2.tar.xz");
     expect(rustCrossToolchain?.run).toContain("02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239");
@@ -97,6 +101,8 @@ describe("public main-push publication", () => {
     expect(rustCrossToolchain?.run).not.toContain('install -m 0755 "$tool_root/zig/zig" "$tool_root/bin/zig"');
     expect(ociToolchain?.run).toContain('--zig-binary "$tool_root/zig/zig"');
     expect(ociToolchain?.run).toContain('--cargo-zigbuild-binary "$tool_root/bin/cargo-zigbuild"');
+    expect(packageStep?.run).toContain('checks:([');
+    expect(packageStep?.run).toContain('] + (if $deterministic then');
     expect(source).toContain("artifact module-bundle");
     expect(source.match(/actions\/attest@59d89421af93a897026c735860bf21b6eb4f7b26/g)).toHaveLength(5);
     expect(source).not.toContain("actions/attest-build-provenance@");
