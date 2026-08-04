@@ -31,6 +31,7 @@ executable sources.
 | Package and path ownership | [`repo.md`](repo.md) |
 | Development, testing, and release routing | [`develop.md`](develop.md) |
 | One-time public GHCR namespace bootstrap | [`ghcr-visibility-bootstrap.md`](ghcr-visibility-bootstrap.md) |
+| Model-catalog authority bootstrap and publication | [`model-catalog-authority.md`](model-catalog-authority.md) |
 | Contributor and review procedure | [`contributing.md`](contributing.md) |
 | Durable-doc and generated-artifact placement | [`repository-hygiene.md`](repository-hygiene.md) |
 | Public v1 architecture and repository boundary | [`architecture.md`](architecture.md) |

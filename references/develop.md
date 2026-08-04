@@ -15,6 +15,7 @@ related:
   - references/repo.md
   - references/contributing.md
   - references/ghcr-visibility-bootstrap.md
+  - references/model-catalog-authority.md
 ---
 
 # Public repository development
@@ -48,6 +49,13 @@ The sole manual publication setup is the one-time, fail-closed
 [`GHCR public namespace bootstrap`](ghcr-visibility-bootstrap.md). It creates
 only digest-addressed package content; normal publication never changes package
 visibility.
+
+The signed model-catalog is a separate protected authority. Public main reads
+the four exact `AEX_MODEL_CATALOG_*` repository variables documented in
+[`model-catalog-authority.md`](model-catalog-authority.md); their absence or a
+partial binding intentionally leaves the `brain-mux` publication gate failing.
+Do not populate them with fixtures, an application KMS key, or a moving asset
+URL.
 
 ## Main-push artifact evidence
 

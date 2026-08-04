@@ -150,12 +150,52 @@ jobs:
           digest=$(jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))' <<<"$identity")
           echo "AEX_TOOL_CATALOG_SHA256=$digest" >> "$GITHUB_ENV"
 
+      - name: Acquire the exact signed model-catalog collection
+        if: ${{ matrix.name == 'brain-mux' }}
+        env:
+          AEX_MODEL_CATALOG_COLLECTION_URI: ${{ vars.AEX_MODEL_CATALOG_COLLECTION_URI }}
+          AEX_MODEL_CATALOG_COLLECTION_SHA256: ${{ vars.AEX_MODEL_CATALOG_COLLECTION_SHA256 }}
+        run: |
+          set -euo pipefail
+          uri="${AEX_MODEL_CATALOG_COLLECTION_URI:-}"
+          digest="${AEX_MODEL_CATALOG_COLLECTION_SHA256:-}"
+          if [[ -z "$uri" && -z "$digest" ]]; then
+            exit 0
+          fi
+          [[ -n "$uri" && -n "$digest" ]] || {
+            echo "model-catalog collection URI and digest must be supplied together" >&2
+            exit 21
+          }
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo "model-catalog collection digest is not a lowercase sha256 identity" >&2
+            exit 21
+          }
+          expected_prefix="https://github.com/${GITHUB_REPOSITORY}/releases/download/"
+          [[ "$uri" == "$expected_prefix"* ]] || {
+            echo "model-catalog collection URI must be an immutable release asset in this repository" >&2
+            exit 21
+          }
+          [[ "$uri" != *'?'* && "$uri" != *'#'* && "$uri" != *'..'* ]] || {
+            echo "model-catalog collection URI must not carry a query, fragment, or parent path" >&2
+            exit 21
+          }
+          collection_file=".tmp/model-catalog/collection.json"
+          mkdir -p "$(dirname "$collection_file")"
+          curl --fail --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            --max-time 60 --max-filesize 67108864 \
+            --output "$collection_file" "$uri"
+          actual="sha256:$(sha256sum "$collection_file" | cut -d' ' -f1)"
+          [[ "$actual" == "$digest" ]] || {
+            echo "downloaded model-catalog collection digest does not match its release binding" >&2
+            exit 21
+          }
+          echo "AEX_MODEL_CATALOG_COLLECTION_FILE=$collection_file" >> "$GITHUB_ENV"
+
       - name: Print the recipe
         id: recipe
         env:
           AEX_MODEL_CATALOG_TRUST_ROOTS_JSON: ${{ vars.AEX_MODEL_CATALOG_TRUST_ROOTS_JSON }}
           AEX_MODEL_CATALOG_TRUST_ROOTS_SHA256: ${{ vars.AEX_MODEL_CATALOG_TRUST_ROOTS_SHA256 }}
-          AEX_MODEL_CATALOG_COLLECTION_FILE: ${{ vars.AEX_MODEL_CATALOG_COLLECTION_FILE }}
           AEX_MODEL_CATALOG_COLLECTION_SHA256: ${{ vars.AEX_MODEL_CATALOG_COLLECTION_SHA256 }}
         run: |
           set -euo pipefail

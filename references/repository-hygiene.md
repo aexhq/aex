@@ -39,6 +39,12 @@ Do not create or unpack root-level `.release-diagnostics/`,
 `release-diagnostics/`. Their ignore rules are defensive protection for
 legacy tooling and accidental downloads, not approved storage.
 
+The protected main artifact lane uses the deterministic CI-only path
+.tmp/model-catalog/collection.json for a downloaded, digest-bound release
+asset. It is not a durable catalog source, is never uploaded as raw scratch,
+and is discarded with the ephemeral runner; the collection's immutable release
+asset URI and SHA-256 are the only retained identities.
+
 ## Curated evidence
 
 Promote evidence to `references/` only when it will remain useful after the
