@@ -76,8 +76,8 @@ assert this.
 
 ### `crates/aex-observation-store-aws`
 
-- `expressions` — the slim 25-field dense index projection (`attrS`/`attrN`/
-  `attrB` deliberately absent), the seven indexes and their key attributes, and a
+- `expressions` — the bounded 18-field dense index projection (`attrS`/`attrN`/
+  `attrB` and internal admission/accounting fields deliberately absent), the seven indexes and their key attributes, and a
   placeholder-only `ExpressionBuilder`. Nothing customer-supplied ever reaches an
   expression string.
 - `segments` — the per-`(scope, signal, bucket)` directory that structurally

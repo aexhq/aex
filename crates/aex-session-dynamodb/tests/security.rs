@@ -47,38 +47,21 @@ fn the_projection_module_contains_no_write_operation_at_all() {
 }
 
 #[test]
-fn the_session_index_projects_one_complete_session_document_but_no_message_or_receipt_body() {
+fn the_workspace_index_is_a_keys_only_locator_that_can_never_return_a_body() {
     let definition = table_definition();
-    let projected: Vec<&str> = definition["globalSecondaryIndexes"][0]["projection"]["attributes"]
+    let index = &definition["globalSecondaryIndexes"][0];
+    let projected: Vec<&str> = index["projection"]["attributes"]
         .as_array()
         .expect("an exhaustive attribute list")
         .iter()
         .map(|value| value.as_str().expect("an attribute name"))
         .collect();
-    for forbidden in [
-        "contentInline",
-        "contentDigest",
-        "bodyInline",
-        "bodyDigest",
-        "responseInline",
-        "responseDigest",
-        "intentHash",
-    ] {
-        assert!(
-            !projected.contains(&forbidden),
-            "the workspace index projects `{forbidden}`, so a list query would read it"
-        );
-    }
-    for required in [
-        "authoritySchemaVersion",
-        "authorityDocument",
-        "resolvedConfigDigest",
-    ] {
-        assert!(
-            projected.contains(&required),
-            "a complete session page requires `{required}` without N+1 hydration"
-        );
-    }
+    assert_eq!(index["projection"]["type"].as_str(), Some("KEYS_ONLY"));
+    assert!(
+        projected.is_empty(),
+        "a workspace index row is only an ordered locator; the authority row is hydrated before use"
+    );
+    assert_eq!(index["projectsRecordBody"].as_bool(), Some(false));
 }
 
 #[test]
@@ -88,9 +71,9 @@ fn no_index_on_this_table_projects_all() {
         .as_array()
         .expect("an index list")
     {
-        assert_eq!(
+        assert_ne!(
             index["projection"]["type"].as_str(),
-            Some("INCLUDE"),
+            Some("ALL"),
             "`ALL` lets a list query start returning a prompt the moment somebody adds an \
              attribute"
         );

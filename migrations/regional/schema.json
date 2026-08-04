@@ -121,6 +121,7 @@
               },
               "attributes": {
                 "type": "array",
+                "maxItems": 20,
                 "uniqueItems": true,
                 "items": { "type": "string", "minLength": 1 }
               }

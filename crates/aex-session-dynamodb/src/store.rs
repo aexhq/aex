@@ -378,24 +378,18 @@ fn malformed_operation(attribute: &'static str, reason: &str) -> StoreError {
 
 fn projected_operation_id(item: &Item, workspace: WorkspaceId) -> Result<OperationId, StoreError> {
     let row = Row::bind_projected(item, codec::OPERATION);
-    row.owned_by("workspaceId", &workspace.to_string())?;
-    let operation = row.id::<OperationId>("operationId")?;
-    let kind = OperationKind::parse(row.string("kind")?).ok_or_else(|| {
-        malformed_operation("kind", "outside the closed operation-kind vocabulary")
-    })?;
-    if !kind.is_public() {
-        return Err(malformed_operation(
-            "kind",
-            "an internal operation entered the sparse public index",
-        ));
-    }
-    OperationStatus::parse(row.string("status")?).ok_or_else(|| {
-        malformed_operation("status", "outside the closed operation-status vocabulary")
-    })?;
-    let created_at = row.timestamp("createdAt")?;
-    let _session = row.opt_id::<SessionId>("sessionId")?;
+    let base_pk = row.string(crate::attr::PK)?;
+    let operation = base_pk
+        .strip_prefix("OP#")
+        .and_then(|value| value.parse::<OperationId>().ok())
+        .ok_or_else(|| {
+            malformed_operation(
+                "operationId",
+                "the KEYS_ONLY projection carries no valid operation base key",
+            )
+        })?;
     let expected = keys::operation(operation);
-    if row.string(crate::attr::PK)? != expected.pk || row.string(crate::attr::SK)? != expected.sk {
+    if base_pk != expected.pk || row.string(crate::attr::SK)? != expected.sk {
         return Err(malformed_operation(
             "operationId",
             "the projected base key does not match the operation identity",
@@ -403,8 +397,27 @@ fn projected_operation_id(item: &Item, workspace: WorkspaceId) -> Result<Operati
     }
     if row.string(keys::workspace_index::PK)?
         != keys::workspace_index::operation_partition(workspace)
-        || row.string(keys::workspace_index::SK)?
-            != keys::workspace_index::operation_sort(created_at, operation)
+    {
+        return Err(malformed_operation(
+            keys::workspace_index::PK,
+            "the projected index partition does not match the asserted workspace",
+        ));
+    }
+    let index_sort = row.string(keys::workspace_index::SK)?;
+    let Some((created_at, indexed_operation)) = index_sort.rsplit_once('#') else {
+        return Err(malformed_operation(
+            keys::workspace_index::SK,
+            "the projected index sort key is not a timestamp and operation identity",
+        ));
+    };
+    let created_at = Timestamp::parse(created_at).map_err(|_| {
+        malformed_operation(
+            keys::workspace_index::SK,
+            "the projected index sort key has an invalid creation timestamp",
+        )
+    })?;
+    if indexed_operation != operation.to_string()
+        || index_sort != keys::workspace_index::operation_sort(created_at, operation)
     {
         return Err(malformed_operation(
             keys::workspace_index::SK,

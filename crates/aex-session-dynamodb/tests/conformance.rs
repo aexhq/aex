@@ -318,18 +318,9 @@ fn operation_row(operation: OperationId, created_at: &str) -> Value {
 fn projected_operation_row(operation: OperationId, created_at: &str) -> Value {
     let mut row = operation_row(operation, created_at);
     let object = row.as_object_mut().expect("an item object");
-    for attribute in [
-        "itemType",
-        "intentHash",
-        "scopeKind",
-        "scopeId",
-        "version",
-        "claimsSessionDeletion",
-        "cancelRequested",
-        "resultPresent",
-    ] {
-        object.remove(attribute);
-    }
+    object.retain(|attribute, _| {
+        ["pk", "sk", "wsIndexPk", "wsIndexSk"].contains(&attribute.as_str())
+    });
     row
 }
 

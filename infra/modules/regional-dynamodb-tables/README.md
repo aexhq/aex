@@ -38,7 +38,8 @@ generated bundle stays an artifact with an identity rather than a path.
   authority. A table naming an authority with no key is rejected, so there is no
   path to the AWS-managed key.
 - No global secondary index uses projection type `ALL`, an `INCLUDE` projection
-  names at least one attribute, and a `KEYS_ONLY` projection names none.
+  names between one and 20 attributes, a `KEYS_ONLY` projection names none,
+  and the `INCLUDE` projection count summed across one table is at most 100.
 - The only permitted TTL attribute name is `expiresAtEpochSeconds`.
 - A table that declares `pinned_physical_name` is created under exactly that
   name; every table that does not is created under `name_prefix`. A pinned name
