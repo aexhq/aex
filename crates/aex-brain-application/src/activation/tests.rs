@@ -19,7 +19,9 @@ use super::{
     DispatchControl, DispatchDecision, DispatchLane, Outcome, Ports, Release, RestoreBudget,
     RestoreSource, Stop, WakeLoop,
 };
-use crate::kernel::{ActivationRegistry, DrainGate, PermitKind, PermitSet, WarmCacheShard};
+use crate::kernel::{
+    ActivationRegistry, DrainGate, FoldCache, PermitKind, PermitSet, WarmCacheShard, WarmEntry,
+};
 use crate::ports::{
     BoxFuture, CancelToken, ClaimError, ClockPort as _, CommitError, ConditionFailure,
     DetachedStatus, DispatchTicket, EffectStore as _, FenceGuard, FoldSnapshotStore as _,
@@ -435,6 +437,33 @@ struct DeferredDispatch {
     reason: QueuedReason,
 }
 
+#[derive(Debug)]
+struct DisabledFoldCache;
+
+impl FoldCache for DisabledFoldCache {
+    fn load(
+        &self,
+        _key: &AgentKey,
+        _revision: aex_brain_domain::ids::AgentRevision,
+        _tick: u64,
+    ) -> Option<WarmEntry> {
+        None
+    }
+
+    fn store(
+        &self,
+        _key: AgentKey,
+        _revision: aex_brain_domain::ids::AgentRevision,
+        _state: &aex_brain_domain::fold::FoldState,
+        _bytes: usize,
+        _tick: u64,
+    ) -> bool {
+        false
+    }
+
+    fn remove(&self, _key: &AgentKey, _revision: aex_brain_domain::ids::AgentRevision) {}
+}
+
 impl DispatchControl for DeferredDispatch {
     fn admit(&self, lane: DispatchLane) -> DispatchDecision {
         assert_eq!(lane, self.lane);
@@ -488,6 +517,36 @@ fn exact_revision_fold_cache_skips_replay_without_changing_outcome() {
 
     assert_eq!(outcome, Outcome::Idle);
     assert_eq!(harness.log.count("read_page"), reads);
+}
+
+/// Disabling the derived accelerator changes only latency. The same wake, authority and
+/// provider result produce the same durable records and activation outcome as no cache at all.
+#[test]
+fn disabled_fold_cache_is_semantically_equivalent_to_no_cache() {
+    let uncached = Harness::new(vec![ProviderScript::Produce(Box::new(produced()))]);
+    uncached.wake();
+    let uncached_outcome = uncached.run_next().expect("the uncached activation runs");
+
+    let disabled = Harness::new(vec![ProviderScript::Produce(Box::new(produced()))]);
+    let activation = disabled
+        .activation()
+        .with_fold_cache(Arc::new(DisabledFoldCache));
+    disabled.wake();
+    let delivery = block_on(disabled.queue.receive(1, core::time::Duration::ZERO))
+        .expect("the queue answers")
+        .deliveries
+        .pop()
+        .expect("a delivery is waiting");
+    let disabled_outcome =
+        block_on(activation.run(delivery)).expect("the disabled-cache activation runs");
+
+    assert_eq!(disabled_outcome, uncached_outcome);
+    assert_eq!(disabled.records(), uncached.records());
+    assert_eq!(
+        disabled.log.count("read_page"),
+        uncached.log.count("read_page"),
+        "the disabled cache follows the same authority path"
+    );
 }
 
 /// Dispatch pressure is observed only after durable preparation. The activation writes a

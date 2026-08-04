@@ -404,7 +404,10 @@ pub fn compose(config: &Config) -> Result<compose::Composition, RunError> {
     compose::Composition::build(
         bounds,
         compose::Envelope::candidate_launch(),
-        cache::CachePolicy::default(),
+        // Replay-body bytes are not an exact resident-size measurement for `FoldState`.
+        // Keep the production accelerator off until every retained heap byte can own a
+        // `WarmCacheBytes` reservation; authority always falls back to snapshot + journal.
+        cache::CachePolicy::disabled(),
         scale::ScaleBounds {
             min_tasks: 1,
             max_tasks: 32,
@@ -968,6 +971,7 @@ mod tests {
         emit_due_isolations,
     };
     use aex_brain_application::activation::PollReport;
+    use aex_brain_application::kernel::PermitKind;
     use aex_brain_application::ports::{DueRowIsolation, DueRowIsolationReason};
     use aex_platform_telemetry::{AttributeValue, InMemoryExporter};
     use std::collections::BTreeMap;
@@ -1046,6 +1050,16 @@ mod tests {
         assert_eq!(composition.admission.bounds().target, 48);
         assert_eq!(composition.policy.max_concurrent_drives, 48);
         assert_eq!(composition.shape.worker_threads, 2);
+        assert!(
+            composition.cache.is_disabled(),
+            "production must not retain folds without exact resident-byte permits"
+        );
+        assert_eq!(composition.fold_cache.bytes(), 0);
+        assert_eq!(
+            composition.permits.held(PermitKind::WarmCacheBytes),
+            0,
+            "a disabled cache owns no byte reservation"
+        );
 
         vars.insert(BUDGET_VAR, "49".to_owned());
         let config = read(&vars).expect("capacity is a composition concern");

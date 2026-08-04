@@ -5,7 +5,7 @@
 //! hit still validates the authoritative revision through the conditional claim before the
 //! activation acts on it. Losing the whole cache is always harmless.
 
-use super::sync::Mutex;
+use super::sync::{Arc, Mutex};
 use aex_brain_domain::fold::FoldState;
 use aex_brain_domain::ids::{AgentKey, AgentRevision};
 use std::collections::HashMap;
@@ -51,12 +51,35 @@ pub struct WarmEntry {
 
 /// One shard of the warm fold cache.
 ///
-/// Sharded by agent hash so lock contention is bounded rather than global.
+/// One independently budgeted cache shard. A caller may create multiple shards, but every
+/// shard keeps the expensive [`FoldState`] clone outside its map lock so an unrelated key is
+/// never serialized behind a large cache hit.
 #[derive(Debug)]
 pub struct WarmCacheShard {
-    entries: Mutex<HashMap<AgentKey, WarmEntry>>,
+    entries: Mutex<HashMap<AgentKey, CachedWarmEntry>>,
     budget_bytes: usize,
     entry_cap_bytes: usize,
+}
+
+/// The internal representation shares the immutable state long enough to move its deep clone
+/// outside the shard lock. Recency remains map-owned and is still updated atomically with lookup.
+#[derive(Debug)]
+struct CachedWarmEntry {
+    revision: AgentRevision,
+    state: Arc<FoldState>,
+    bytes: usize,
+    last_used: u64,
+}
+
+impl From<WarmEntry> for CachedWarmEntry {
+    fn from(entry: WarmEntry) -> Self {
+        Self {
+            revision: entry.revision,
+            state: Arc::new(entry.state),
+            bytes: entry.bytes,
+            last_used: entry.last_used,
+        }
+    }
 }
 
 impl WarmCacheShard {
@@ -84,7 +107,8 @@ impl WarmCacheShard {
     ///
     /// Panics if the internal lock was poisoned.
     pub fn insert(&self, key: AgentKey, entry: WarmEntry) -> bool {
-        if entry.bytes > self.entry_cap_bytes {
+        if entry.bytes == 0 || entry.bytes > self.entry_cap_bytes || entry.bytes > self.budget_bytes
+        {
             return false;
         }
         let mut entries = self.entries.lock().expect("the cache lock is not poisoned");
@@ -93,7 +117,7 @@ impl WarmCacheShard {
         {
             return false;
         }
-        entries.insert(key, entry);
+        entries.insert(key, entry.into());
         Self::evict_to_budget(&mut entries, self.budget_bytes);
         true
     }
@@ -125,13 +149,72 @@ impl WarmCacheShard {
         revision: AgentRevision,
         tick: u64,
     ) -> Option<WarmEntry> {
+        self.get_entry_with_max_idle(key, revision, tick, u64::MAX)
+    }
+
+    /// The complete exact-revision entry when it has been idle for less than
+    /// `max_idle_ticks`; an expired exact entry is removed before returning a miss.
+    ///
+    /// `tick` and `max_idle_ticks` must use the same monotonic unit. The mux uses
+    /// milliseconds. A different revision remains a miss without deletion because a
+    /// concurrent activation may still be entitled to that exact entry.
+    ///
+    /// The map lock protects only lookup and recency. The potentially multi-megabyte state
+    /// clone happens after it is released.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal lock was poisoned.
+    pub fn get_entry_with_max_idle(
+        &self,
+        key: &AgentKey,
+        revision: AgentRevision,
+        tick: u64,
+        max_idle_ticks: u64,
+    ) -> Option<WarmEntry> {
+        let cached = {
+            let mut entries = self.entries.lock().expect("the cache lock is not poisoned");
+            let expired = entries.get(key).is_some_and(|entry| {
+                max_idle_ticks != u64::MAX
+                    && entry.revision == revision
+                    && tick.saturating_sub(entry.last_used) >= max_idle_ticks
+            });
+            if expired {
+                entries.remove(key);
+                return None;
+            }
+            let entry = entries.get_mut(key)?;
+            if entry.revision != revision {
+                return None;
+            }
+            entry.last_used = tick;
+            (
+                entry.revision,
+                Arc::clone(&entry.state),
+                entry.bytes,
+                entry.last_used,
+            )
+        };
+        Some(WarmEntry {
+            revision: cached.0,
+            state: (*cached.1).clone(),
+            bytes: cached.2,
+            last_used: cached.3,
+        })
+    }
+
+    /// Removes every entry idle for at least `max_idle_ticks` and returns the canonical
+    /// bytes released. This is called by cache stores so entries for inactive agents do not
+    /// wait for a key-specific lookup to expire.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal lock was poisoned.
+    pub fn evict_idle(&self, tick: u64, max_idle_ticks: u64) -> usize {
         let mut entries = self.entries.lock().expect("the cache lock is not poisoned");
-        let entry = entries.get_mut(key)?;
-        if entry.revision != revision {
-            return None;
-        }
-        entry.last_used = tick;
-        Some(entry.clone())
+        let before = Self::total_bytes(&entries);
+        entries.retain(|_, entry| tick.saturating_sub(entry.last_used) < max_idle_ticks);
+        before.saturating_sub(Self::total_bytes(&entries))
     }
 
     /// Drops the entry for `key` when the committed revision has moved past it.
@@ -187,12 +270,8 @@ impl WarmCacheShard {
     /// Panics if the internal lock was poisoned.
     #[must_use]
     pub fn bytes(&self) -> usize {
-        self.entries
-            .lock()
-            .expect("the cache lock is not poisoned")
-            .values()
-            .map(|entry| entry.bytes)
-            .sum()
+        let entries = self.entries.lock().expect("the cache lock is not poisoned");
+        Self::total_bytes(&entries)
     }
 
     /// How many entries the shard holds.
@@ -218,8 +297,8 @@ impl WarmCacheShard {
         self.len() == 0
     }
 
-    fn evict_to_budget(entries: &mut HashMap<AgentKey, WarmEntry>, budget: usize) {
-        let mut total: usize = entries.values().map(|entry| entry.bytes).sum();
+    fn evict_to_budget(entries: &mut HashMap<AgentKey, CachedWarmEntry>, budget: usize) {
+        let mut total = Self::total_bytes(entries);
         while total > budget {
             let Some(victim) = entries
                 .iter()
@@ -234,6 +313,12 @@ impl WarmCacheShard {
                 break;
             }
         }
+    }
+
+    fn total_bytes(entries: &HashMap<AgentKey, CachedWarmEntry>) -> usize {
+        entries
+            .values()
+            .fold(0_usize, |total, entry| total.saturating_add(entry.bytes))
     }
 }
 
@@ -250,7 +335,7 @@ impl FoldCache for WarmCacheShard {
         bytes: usize,
         tick: u64,
     ) -> bool {
-        if bytes > self.entry_cap_bytes {
+        if bytes == 0 || bytes > self.entry_cap_bytes || bytes > self.budget_bytes {
             return false;
         }
         self.insert(
