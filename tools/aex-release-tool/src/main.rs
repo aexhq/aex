@@ -2006,6 +2006,7 @@ fn run_manifest(cli: &Cli, root: &Path, command: &ManifestCommand) -> Result<()>
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn run_evidence(cli: &Cli, command: &EvidenceCommand) -> Result<()> {
     match command {
         EvidenceCommand::New {
