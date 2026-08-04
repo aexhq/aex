@@ -33,6 +33,9 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 
     let mut config = prost_build::Config::new();
+    config.protoc_executable(
+        protoc_bin_vendored::protoc_bin_path().expect("the vendored protoc supports this target"),
+    );
     // Bytes rather than `Vec<u8>` for the identifier fields the decoder reads on
     // every record; the rest stay owned so a decoded batch is `'static`.
     config.bytes([
