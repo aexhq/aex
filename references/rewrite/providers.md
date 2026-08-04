@@ -242,9 +242,14 @@ is stored in `brain-mux`.
 ### `tests/live/aex-live-model-catalog`
 
 The probe registry (derived from `ProbeId::ALL`, never hand-listed), the
-per-provider key resolution, `ReceiptBuilder`, `earns_active` and the staging
-diff. `ReceiptBuilder::build` refuses a receipt missing any probe run;
-`stage` only ever emits `Staged`.
+per-provider key resolution, the provider-profile/capability ceiling, the
+P-01–P-23 matrix slots, `ReceiptBuilder`, `earns_active` and the staging diff.
+The profile requires an exact caller-supplied model slug for every authority;
+it never infers one from a model list. `ReceiptBuilder::build` refuses a
+receipt missing any probe run; `stage` only ever emits `Staged`. The matrix
+currently terminates at `PendingProbeExecutor`, which fails the first required
+probe. A provider-specific runner still has to perform bounded real calls and
+record observed facts before any receipt can be assembled.
 
 ---
 
@@ -255,7 +260,7 @@ diff. `ReceiptBuilder::build` refuses a receipt missing any probe run;
 | `anthropic.rs` pins an offline P-256 public key and signature in its test module | `openai.rs` was migrated to `fixture::qualified`; `anthropic.rs` still loads a signed fixture document, which breaks loudly (`"re-sign it if the document shape changed"`) if `document.rs` or `fixture::entry` moves. Migrating it is a mechanical follow-up now that `fixture::qualified` exists. |
 | Z.AI's path is recorded two ways in plan 08 §5.4 | The row gives the base as `https://api.z.ai/api/paas/v4` and the path as `POST /paas/v4/chat/completions`, which cannot both be right. The adapter follows the explicit path, producing `https://api.z.ai/paas/v4/chat/completions`. Probe P-01 settles it before any Z.AI pair can go `Active`; until then every Z.AI entry is `Staged`, so nothing dispatches. |
 | `decode`, `finish` and `classify_http` are not handed the `QualifiedModel` | Each adapter therefore compiles its own stop-token and error tables rather than reading `entry.stop_reason_map` / `entry.error_map`. For these eight dialects both are provider-invariant, and `anthropic.rs` asserts the compiled table and the catalog's copy agree. But it means the catalog's copies are documentation for the decode path rather than its source of truth. Widening the trait to take the model would make them authoritative. |
-| The 23 probes need a real customer key per provider | The `[[test]]` targets stay undeclared and the manifest keeps `not_applicable.targets` naming OD-07. The harness is compiled and unit-tested; adding the target is one change. Every provider has one authoritative `AEX_LIVE_PROVIDER_KEY_*` name. Anthropic and DeepSeek additionally accept only their documented legacy `ANTHROPIC_API_KEY` and `DEEPSEEK_API_KEY` aliases, after the authoritative name; the other six providers accept no guessed alias. Missing or empty inputs fail loudly, with tests pinning the complete accepted-name list. |
+| The 23 probes need a real customer key per provider | The `[[test]]` targets stay undeclared and the manifest keeps `not_applicable.targets` naming OD-07. The harness now exposes one explicit profile and matrix slot per provider/probe, but `PendingProbeExecutor` fails closed until a protected runner performs the calls. Every provider has one authoritative `AEX_LIVE_PROVIDER_KEY_*` name. Anthropic and DeepSeek additionally accept only their documented legacy `ANTHROPIC_API_KEY` and `DEEPSEEK_API_KEY` aliases, after the authoritative name; the other six providers accept no guessed alias. Missing or empty inputs fail loudly, with tests pinning the complete accepted-name list. |
 | No `(provider, model)` pair can ship `Active` | Every launch entry is `Staged` with an `unearned()` receipt — a positive record that the evidence has not been earned, not an absence. |
 | Provider credential registration | The existing `pcr_` row is a reference to one workspace-secret generation. Exact provider-qualified reads, mutable binding/secret revalidation, and KMS reveal are composed through `aex-brain-provider-custody`; registration remains unmounted because the request has no decided workspace-secret name/collision contract and the active wrapped branch key is not exposed by a port. There is **no** plaintext-from-environment path — not disabled, absent. |
 | `resolve_unknown` | Returns `UnknownResolution::NoDurableOperation` for all eight. Implemented, not stubbed: no authority in this set documents a result lookup for a completed streaming generation under AEX's fixed dialects. Anthropic is stateless; OpenAI's `GET /v1/responses/{id}` requires `store: true`, which AEX disables; Gemini Interactions is not the launch dialect. |

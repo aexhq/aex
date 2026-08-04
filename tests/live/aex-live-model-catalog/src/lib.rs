@@ -36,6 +36,7 @@ use aex_wire::provider::ProviderId;
 use aex_wire::types::Timestamp;
 use aex_wire::{ContentHash, Uuid7};
 
+pub mod executor;
 pub mod publisher;
 
 /// The canonical environment variable carrying a provider's live key.
