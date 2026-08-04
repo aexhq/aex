@@ -3,6 +3,10 @@
 A Fargate task definition for a job that runs once: the central schema admin,
 the observation export task, the regional secret key admin.
 
+The caller supplies the release-manifest `stop_timeout` explicitly. It is
+materialized as ECS `stopTimeout` (1..120 seconds), so a migration cannot be
+silently assigned the platform default.
+
 This module contains **no `aws_ecs_service`**. That is the whole point of it
 being a separate module from `ecs-service`. A service would restart a migration
 runner that had already decided the schema was up to date, and an exit code

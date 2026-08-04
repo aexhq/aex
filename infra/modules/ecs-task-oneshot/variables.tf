@@ -38,6 +38,16 @@ variable "memory" {
   }
 }
 
+variable "stop_timeout" {
+  type        = number
+  description = "ECS container stop timeout in seconds. The release manifest is the authority; ECS permits 1..120 seconds."
+
+  validation {
+    condition     = var.stop_timeout >= 1 && var.stop_timeout <= 120
+    error_message = "The one-shot container stop timeout must be between 1 and 120 seconds."
+  }
+}
+
 variable "role_arn" {
   type        = string
   description = "Task role the container runs as."
