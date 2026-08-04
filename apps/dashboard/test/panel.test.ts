@@ -4,9 +4,9 @@ import {
   centsToUsd,
   classifyFailure,
   parseRetryAfter,
-  ratedThrough,
   readCoverage,
   readFailure,
+  usageThrough,
   type ObservationCoverage,
 } from "../src/ui/panel";
 
@@ -87,18 +87,22 @@ describe("coverage", () => {
   });
 });
 
-describe("usage honesty", () => {
-  test("the rated frontier is the earliest across every category", () => {
+describe("usage coverage honesty", () => {
+  test("the shared service frontier is the earliest across every category", () => {
     expect(
-      ratedThrough([
+      usageThrough([
         { category: "compute", region: "eu-west-1", serviceThrough: "2026-01-02T00:00:00.000Z" },
         { category: "storage", region: "eu-west-1", serviceThrough: "2026-01-01T00:00:00.000Z" },
       ]),
     ).toBe("2026-01-01T00:00:00.000Z");
   });
 
-  test("no frontier means no instant the numbers are complete through", () => {
-    expect(ratedThrough([])).toBeNull();
+  test("an empty or partial frontier set cannot claim a shared coverage instant", () => {
+    expect(usageThrough([])).toBeNull();
+    expect(usageThrough([
+      { category: "compute", region: "eu-west-1", serviceThrough: "2026-01-02T00:00:00.000Z" },
+      { category: "storage", region: "eu-west-1" },
+    ])).toBeNull();
   });
 
   test("cents are rendered as money and a malformed amount is never rendered as zero", () => {

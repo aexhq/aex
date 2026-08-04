@@ -149,18 +149,19 @@ export function readCoverage(coverage: ObservationCoverage): CoverageVerdict {
 export interface UsageFrontier {
   readonly category: string;
   readonly region: string;
-  readonly serviceThrough: string;
+  readonly serviceThrough?: string;
 }
 
 /**
- * The instant rated usage is actually complete through: the earliest frontier
- * across every category in the answer. Anything after it has been metered but not
- * yet priced, so the usage view clamps its window to this and says why. Returning
- * `null` means the authority reported no frontier and no total may be shown.
+ * The shared observation instant for every usage category in the answer.
+ * Returning `null` means at least one category has not admitted a fact yet, so
+ * the dashboard cannot claim a complete cross-category coverage instant.
  */
-export function ratedThrough(frontiers: readonly UsageFrontier[]): string | null {
+export function usageThrough(frontiers: readonly UsageFrontier[]): string | null {
+  if (frontiers.length === 0) return null;
   let earliest: string | null = null;
   for (const frontier of frontiers) {
+    if (frontier.serviceThrough === undefined) return null;
     if (earliest === null || frontier.serviceThrough < earliest) earliest = frontier.serviceThrough;
   }
   return earliest;
