@@ -1,8 +1,8 @@
-//! OpenRouter's customer-key chat-completions authority.
+//! `OpenRouter`'s customer-key chat-completions authority.
 //!
 //! The endpoint and dialect are compiled. The adapter never accepts an
 //! arbitrary base URL or an upstream provider credential; the shared transport
-//! attaches only the customer's OpenRouter key as a sensitive bearer header.
+//! attaches only the customer's `OpenRouter` key as a sensitive bearer header.
 
 use core::time::Duration;
 
@@ -34,7 +34,7 @@ const AUTHORITY: GatewayChatAuthority = GatewayChatAuthority {
     path: "/api/v1/chat/completions",
 };
 
-/// Stateless OpenRouter adapter.
+/// Stateless `OpenRouter` adapter.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct OpenRouterAdapter;
 
@@ -145,7 +145,6 @@ fn classify(status: u16, code: Option<&str>) -> ProviderFailureKind {
             402 => ProviderFailureKind::Quota,
             404 => ProviderFailureKind::ModelNotFound,
             429 => ProviderFailureKind::RateLimited,
-            502 => ProviderFailureKind::ServerError,
             503 => ProviderFailureKind::Overloaded,
             504 => ProviderFailureKind::Timeout,
             _ => ProviderFailureKind::ServerError,

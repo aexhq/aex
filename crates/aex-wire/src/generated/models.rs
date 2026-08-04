@@ -2056,9 +2056,9 @@ pub enum ProviderId {
     Moonshotai,
     /// Google.
     Google,
-    /// OpenRouter, authenticated with the customer's OpenRouter key.
+    /// `OpenRouter`, authenticated with the customer's `OpenRouter` key.
     Openrouter,
-    /// Vercel AI Gateway, authenticated with the customer's AI Gateway key.
+    /// `Vercel AI Gateway`, authenticated with the customer's `AI Gateway` key.
     VercelAiGateway,
 }
 

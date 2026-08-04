@@ -14,8 +14,8 @@ schemas:
       - { value: zai, doc: "The Z.ai API." }
       - { value: moonshotai, doc: "The Moonshot AI API." }
       - { value: google, doc: "Google." }
-      - { value: openrouter, doc: "OpenRouter, authenticated with the customer's OpenRouter key." }
-      - { value: vercel_ai_gateway, doc: "Vercel AI Gateway, authenticated with the customer's AI Gateway key." }
+      - { value: openrouter, doc: "`OpenRouter`, authenticated with the customer's `OpenRouter` key." }
+      - { value: vercel_ai_gateway, doc: "`Vercel AI Gateway`, authenticated with the customer's `AI Gateway` key." }
 
   ModelSelection:
     doc: An explicit provider and model pair; a model-only override is rejected.

@@ -150,9 +150,9 @@ pub enum Dialect {
     MoonshotChat,
     /// Gemini `streamGenerateContent`.
     GeminiGenerateContent,
-    /// OpenRouter's OpenAI-compatible chat-completions surface.
+    /// `OpenRouter`'s OpenAI-compatible chat-completions surface.
     OpenRouterChat,
-    /// Vercel AI Gateway's OpenAI-compatible chat-completions surface.
+    /// `Vercel AI Gateway`'s OpenAI-compatible chat-completions surface.
     VercelAiGatewayChat,
     /// Reserved and unimplemented. Adding a dialect arm is a code release
     /// (D-19); an entry declaring this dialect fails load.
