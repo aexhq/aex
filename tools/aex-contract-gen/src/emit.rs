@@ -319,6 +319,12 @@ fn route_registry_document(operation: &OperationIr) -> Value {
             .expect("route documents are objects")
             .insert("servedArtifact".to_owned(), json!(served_artifact));
     }
+    if let Some(reason) = &operation.deferred_reason {
+        document
+            .as_object_mut()
+            .expect("route documents are objects")
+            .insert("deferredReason".to_owned(), json!(reason));
+    }
     document
 }
 

@@ -101,11 +101,67 @@ operationOwners:
   session_observations_traces_listen: { servingArtifact: regional-stream, scenarios: [SC-SESSION-STREAM] }
   session_observations_traces_stream: { servingArtifact: regional-stream, scenarios: [SC-SESSION-STREAM] }
 
+# Explicit architecture debt. Every entry names one exact operation whose
+# production handler is intentionally absent and why. The generator rejects an
+# unknown operation, an empty reason, or overlap with `servedOperations`.
+# Deferral is not mount evidence and is emitted only into the delivery registry.
+deferredOperations:
+  account_get: "The central identity composition does not yet mount an authoritative account operational-state read."
+  provider_credential_register: "First-seal custody and the atomic credential-binding replay transaction are incomplete."
+  registry_files_delete: "Registry mutation and content-lifecycle composition is incomplete."
+  registry_files_download_create: "No composed content grant and presigning authority exists yet."
+  registry_files_get: "The registry pointer composition has no plaintext content hydration path."
+  registry_files_put: "Registry mutation and sealed-content composition is incomplete."
+  registry_instructions_delete: "Registry mutation and content-lifecycle composition is incomplete."
+  registry_instructions_get: "The registry pointer composition has no plaintext content hydration path."
+  registry_instructions_put: "Registry mutation and sealed-content composition is incomplete."
+  registry_mcp_servers_delete: "Registry mutation and content-lifecycle composition is incomplete."
+  registry_mcp_servers_get: "The registry pointer composition has no plaintext content hydration path."
+  registry_mcp_servers_put: "Registry mutation and sealed-content composition is incomplete."
+  registry_skills_delete: "Registry mutation and content-lifecycle composition is incomplete."
+  registry_skills_get: "The registry pointer composition has no plaintext content hydration path."
+  registry_skills_put: "Registry mutation and sealed-content composition is incomplete."
+  registry_tools_delete: "Registry mutation and content-lifecycle composition is incomplete."
+  registry_tools_get: "The registry pointer composition has no plaintext content hydration path."
+  registry_tools_put: "Registry mutation and sealed-content composition is incomplete."
+  secret_put: "First-seal custody and durable idempotent replay are incomplete."
+  session_approval_respond: "The atomic bound-call approval writer is not composed into the regional service."
+  session_clone: "The complete session authority and command transaction are not implemented."
+  session_create: "The complete session authority and create use case are not implemented."
+  session_credential_rebind: "The credential-rebind authority and durable command transaction are not implemented."
+  session_files_live_download_create: "The session root, content decryption, and presigning composition is incomplete."
+  session_files_live_list: "The session root and plaintext content projection are incomplete."
+  session_files_live_stat: "The session root and plaintext content projection are incomplete."
+  session_files_persisted_download_create: "The persisted root, content decryption, and presigning composition is incomplete."
+  session_files_persisted_list: "The persisted root and plaintext content projection are incomplete."
+  session_files_persisted_stat: "The persisted root and plaintext content projection are incomplete."
+  session_get: "The stored session head cannot yet produce the complete public session resource."
+  session_message_send: "The wire and domain message vocabularies and durable command path are not reconciled."
+  session_messages_list: "The wire and domain message vocabularies and exact paged read authority are incomplete."
+  session_persist: "The paged persist operation and commit latch are incomplete."
+  session_purge: "The paged purge operation and commit latch are incomplete."
+  session_restore: "The complete session restore authority and command transaction are not implemented."
+  session_stop: "The complete session stop authority and command transaction are not implemented."
+  session_telemetry_export_create: "The durable session export-admission composition is incomplete."
+  session_trash: "The complete session trash authority and command transaction are not implemented."
+  session_workspace_discard: "The workspace-discard operation and commit latch are incomplete."
+  sessions_list: "The sparse session head cannot yet produce the complete public collection item."
+  telemetry_export_create: "The durable workspace export-admission composition is incomplete."
+  upload_abort: "The staged-upload authority and durable abort transaction are incomplete."
+  upload_complete: "The staged-upload authority and durable completion transaction are incomplete."
+  upload_create: "The staged-upload authority and multipart presigning composition are incomplete."
+  upload_parts_grant: "The multipart grant and presigning composition is incomplete."
+  usage_query: "The store lacks the exact multi-category, arbitrary-range query planner and continuation contract."
+  workspace_current_get: "The signed and projected facts do not supply the complete account operational state."
+  workspace_limit_get: "No authoritative regional capacity default and override producer exists yet."
+  workspace_limits_list: "No authoritative regional capacity default and override producer exists yet."
+
 # Actual public mount authority. `scenarioOwners` and `operationOwners` plan
 # where a route belongs; this table says which complete handlers are mounted
-# today. Absence is deliberate and makes `graph verify` report
-# `aex-route-unserved`. Never add a route here to make the graph green: its
-# production composition must consume or assert this generated projection.
+# today. An absent route must have an exact `deferredOperations` entry or
+# `graph verify` reports `aex-route-unserved`. Never add a route here to make
+# the graph green: its production composition must consume or assert this
+# generated projection, and served+deferred is rejected.
 servedOperations:
   central-control-api:
     - api_key_create

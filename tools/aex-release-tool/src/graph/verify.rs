@@ -27,6 +27,20 @@ pub struct BuiltGraph {
     pub live_targets: BTreeSet<String>,
     /// Repository paths matching no `path-map.toml` rule.
     pub unowned: Vec<String>,
+    /// Explicit architecture work that is not yet runnable or mounted.
+    pub deferred: Vec<DeferredWork>,
+}
+
+/// One explicit, non-evidentiary delivery deferral.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeferredWork {
+    /// `route` or `scenario`.
+    pub kind: &'static str,
+    /// Exact `operationId` or scenario id.
+    pub id: String,
+    /// Architectural reason authored at the source boundary.
+    pub reason: String,
 }
 
 /// The machine-readable summary `graph build --json` prints.
@@ -42,6 +56,8 @@ pub struct GraphSummary {
     pub live_targets: Vec<String>,
     /// Unowned repository paths.
     pub unowned: Vec<String>,
+    /// Explicit architecture work excluded from runnable release matrices.
+    pub deferred: Vec<DeferredWork>,
 }
 
 /// Build the merged graph from loaded inputs.
@@ -144,7 +160,41 @@ pub fn build(inputs: &GraphInputs) -> Result<BuiltGraph> {
         graph,
         live_targets,
         unowned,
+        deferred: collect_deferred_work(inputs),
     })
+}
+
+fn collect_deferred_work(inputs: &GraphInputs) -> Vec<DeferredWork> {
+    let mut deferred = inputs
+        .scenarios
+        .scenarios
+        .iter()
+        .filter_map(|scenario| {
+            let reason = scenario.deferred.as_deref()?.trim();
+            (!reason.is_empty()).then(|| DeferredWork {
+                kind: "scenario",
+                id: scenario.id.clone(),
+                reason: reason.to_owned(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let routes = inputs.root.join("api/generated/registries/routes.json");
+    if let Ok(text) = std::fs::read_to_string(routes)
+        && let Ok(document) = strict_json(&text)
+        && let Some(entries) = document.get("routes").and_then(serde_json::Value::as_array)
+    {
+        deferred.extend(entries.iter().filter_map(|entry| {
+            let id = entry.get("operationId")?.as_str()?;
+            let reason = entry.get("deferredReason")?.as_str()?.trim();
+            (!reason.is_empty()).then(|| DeferredWork {
+                kind: "route",
+                id: id.to_owned(),
+                reason: reason.to_owned(),
+            })
+        }));
+    }
+    deferred.sort();
+    deferred
 }
 
 /// Run every fail-closed verification rule.
@@ -291,7 +341,7 @@ pub fn verify(inputs: &GraphInputs) -> Result<BuiltGraph> {
 
     // 3. Scenario rows name real nodes and a runnable package target. Merely
     //    observing an artifact is selection metadata, not executable evidence.
-    let (runnable_scenarios, scenario_violations) = verify_scenario_claims(inputs);
+    let (scenario_claims, scenario_violations) = verify_scenario_claims(inputs);
     violations.extend(scenario_violations);
     for scenario in &inputs.scenarios.scenarios {
         if scenario.observes.is_empty() {
@@ -359,7 +409,7 @@ pub fn verify(inputs: &GraphInputs) -> Result<BuiltGraph> {
     violations.extend(verify_migration_coverage(inputs));
 
     // 7. Every public route has a scenario or contract owner.
-    violations.extend(verify_route_coverage(inputs, &built, &runnable_scenarios));
+    violations.extend(verify_route_coverage(inputs, &built, &scenario_claims));
 
     if violations.is_empty() {
         Ok(built)
@@ -370,7 +420,13 @@ pub fn verify(inputs: &GraphInputs) -> Result<BuiltGraph> {
     }
 }
 
-fn verify_scenario_claims(inputs: &GraphInputs) -> (BTreeSet<String>, Vec<Violation>) {
+#[derive(Debug, Default)]
+struct ScenarioClaims {
+    runnable: BTreeSet<String>,
+    deferred: BTreeSet<String>,
+}
+
+fn verify_scenario_claims(inputs: &GraphInputs) -> (ScenarioClaims, Vec<Violation>) {
     let packages: BTreeMap<String, (&str, Option<&crate::meta::AexMeta>)> = inputs
         .cargo
         .iter()
@@ -387,18 +443,42 @@ fn verify_scenario_claims(inputs: &GraphInputs) -> (BTreeSet<String>, Vec<Violat
             )
         }))
         .collect();
-    let mut runnable = BTreeSet::new();
+    let mut claims = ScenarioClaims::default();
     let mut violations = Vec::new();
     for scenario in &inputs.scenarios.scenarios {
-        let (Some(package), Some(target)) = (&scenario.package, &scenario.target) else {
-            violations.push(Violation::new(
-                "scenario-runnable-missing",
-                format!(
-                    "scenario `{}` declares observations but no runnable `package` and `target`",
-                    scenario.id
-                ),
-            ));
-            continue;
+        let (package, target) = match (&scenario.package, &scenario.target, &scenario.deferred) {
+            (Some(package), Some(target), None) => (package, target),
+            (None, None, Some(reason)) if !reason.trim().is_empty() => {
+                claims.deferred.insert(scenario.id.clone());
+                continue;
+            }
+            (None, None, Some(_)) => {
+                violations.push(Violation::new(
+                    "scenario-deferral-invalid",
+                    format!("scenario `{}` has an empty deferral reason", scenario.id),
+                ));
+                continue;
+            }
+            (Some(_), Some(_), Some(_)) => {
+                violations.push(Violation::new(
+                    "scenario-claim-conflict",
+                    format!(
+                        "scenario `{}` cannot be both runnable and explicitly deferred",
+                        scenario.id
+                    ),
+                ));
+                continue;
+            }
+            _ => {
+                violations.push(Violation::new(
+                    "scenario-runnable-missing",
+                    format!(
+                        "scenario `{}` must declare both runnable `package` and `target`, or a non-empty `deferred` reason",
+                        scenario.id
+                    ),
+                ));
+                continue;
+            }
         };
         let Some((dir, meta)) = packages.get(package) else {
             violations.push(Violation::new(
@@ -442,10 +522,10 @@ fn verify_scenario_claims(inputs: &GraphInputs) -> (BTreeSet<String>, Vec<Violat
             ));
         }
         if sound {
-            runnable.insert(scenario.id.clone());
+            claims.runnable.insert(scenario.id.clone());
         }
     }
-    (runnable, violations)
+    (claims, violations)
 }
 
 /// OD-36, mechanically: a scenario may be marked `prd`-eligible only if every
@@ -832,7 +912,7 @@ fn verify_migration_coverage(inputs: &GraphInputs) -> Vec<Violation> {
 fn verify_route_coverage(
     inputs: &GraphInputs,
     built: &BuiltGraph,
-    runnable_scenarios: &BTreeSet<String>,
+    scenario_claims: &ScenarioClaims,
 ) -> Vec<Violation> {
     let mut violations = Vec::new();
     let routes = inputs.root.join("api/generated/registries/routes.json");
@@ -860,7 +940,7 @@ fn verify_route_coverage(
     }
     let Some(registry_operations) = verify_route_entries(
         &document,
-        &RouteCoverageContext::new(inputs, built, runnable_scenarios),
+        &RouteCoverageContext::new(inputs, built, scenario_claims),
         &mut violations,
     ) else {
         return violations;
@@ -940,6 +1020,7 @@ fn read_strict_route_registry(
 struct RouteCoverageContext<'a> {
     scenarios: BTreeMap<&'a str, &'a super::inputs::Scenario>,
     runnable_scenarios: &'a BTreeSet<String>,
+    deferred_scenarios: &'a BTreeSet<String>,
     artifacts: BTreeMap<&'a str, &'a str>,
 }
 
@@ -947,7 +1028,7 @@ impl<'a> RouteCoverageContext<'a> {
     fn new(
         inputs: &'a GraphInputs,
         built: &'a BuiltGraph,
-        runnable_scenarios: &'a BTreeSet<String>,
+        scenario_claims: &'a ScenarioClaims,
     ) -> Self {
         Self {
             scenarios: inputs
@@ -956,7 +1037,8 @@ impl<'a> RouteCoverageContext<'a> {
                 .iter()
                 .map(|scenario| (scenario.id.as_str(), scenario))
                 .collect(),
-            runnable_scenarios,
+            runnable_scenarios: &scenario_claims.runnable,
+            deferred_scenarios: &scenario_claims.deferred,
             artifacts: inputs
                 .units
                 .units
@@ -1036,14 +1118,29 @@ fn verify_route_entry(
         .get("servedArtifact")
         .and_then(serde_json::Value::as_str)
     else {
-        violations.push(Violation::new(
-            "aex-route-unserved",
-            format!(
-                "operationId `{operation}` is planned for `{planned_artifact}` but is not actually mounted"
-            ),
-        ));
+        match entry.get("deferredReason") {
+            Some(serde_json::Value::String(reason)) if !reason.trim().is_empty() => {}
+            Some(_) => violations.push(Violation::new(
+                "aex-route-deferral-invalid",
+                format!(
+                    "operationId `{operation}` is not mounted and has no non-empty string `deferredReason`"
+                ),
+            )),
+            None => violations.push(Violation::new(
+                "aex-route-unserved",
+                format!(
+                    "operationId `{operation}` is planned for `{planned_artifact}` but is neither actually mounted nor explicitly deferred"
+                ),
+            )),
+        }
         return violations;
     };
+    if entry.get("deferredReason").is_some() {
+        violations.push(Violation::new(
+            "aex-route-state-conflict",
+            format!("operationId `{operation}` cannot be both served and explicitly deferred"),
+        ));
+    }
     violations.extend(verify_route_artifact(
         operation,
         "actual",
@@ -1179,7 +1276,7 @@ fn verify_route_scenario(
             ),
         )];
     };
-    if !context.runnable_scenarios.contains(owner) {
+    if !context.runnable_scenarios.contains(owner) && !context.deferred_scenarios.contains(owner) {
         return vec![Violation::new(
             "aex-route-uncovered",
             format!(
@@ -1389,5 +1486,6 @@ pub fn summarize(built: &BuiltGraph) -> GraphSummary {
         edges: built.graph.forward().len(),
         live_targets: built.live_targets.iter().cloned().collect(),
         unowned: built.unowned.clone(),
+        deferred: built.deferred.clone(),
     }
 }

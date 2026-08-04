@@ -173,17 +173,20 @@ terraform fmt -check -recursive infra/                        clean
 terraform init -backend=false && validate && test             29/29 directories pass
 ```
 
-The 2026-08-02 count of 148 graph violations is superseded by the actual-mount
-and runnable-scenario correction below. The current authorities deliberately
-imply 176 delivery violations while no scenario has an executable claim: 20
-`scenario-runnable-missing`, 51 `aex-route-unserved`, and 105
-`aex-route-uncovered` scenario references across the 95 actually served routes.
-Malformed, cross-plane, and planned/actual owner disagreements are all zero.
-That red state names missing work; it is not a release receipt.
+The 2026-08-02 count of 148 graph violations and the later raw-gap count are
+superseded by the explicit-deferral correction below. The current authorities
+carry 49 exact unmounted-route deferrals and 20 exact non-runnable-scenario
+deferrals. `graph verify` is green because every incomplete state is explicit,
+non-empty, mutually exclusive with a served/runnable claim, and included in its
+machine summary. This is structural accounting, not a release receipt:
+deferred scenarios are absent from execution matrices, and artifact
+certification plus environment admission still require real evidence.
 
 ## 3. What every stream owes me
 
-`graph verify` is the gate. It is red today and names exactly who owes what.
+`graph verify` is the structural gate. It rejects every implicit or
+contradictory gap and reports explicit prelaunch debt in its summary. Artifact
+certification and environment admission remain the evidence gates.
 
 ### 3.1 `[package.metadata.aex]` — landed
 
@@ -231,19 +234,22 @@ edges and the path map routes their directories to their real npm nodes.
    route; `servedOperations` resolves the optional `servedArtifact`, which is
    emitted only when a runnable production composition really mounts the
    operation. The first value drives ownership and selection and is not mount
-   proof. `graph verify` reports `aex-route-unserved` for every route with no
-   actual mount, rejects malformed and cross-plane owners, and checks service
-   mount sets against the generated actual projection. The account read remains
-   planned for `central-identity-api` but unserved; the identity process mounts
-   only Auth. Session telemetry export admission is likewise honestly absent,
-   and `regional-session-api` currently serves exactly 15 operations.
+   proof. An unmounted route must instead have an exact non-empty
+   `deferredOperations` reason; absence of both is `aex-route-unserved`, and a
+   served+deferred conflict also fails. The verifier rejects malformed and
+   cross-plane owners and checks service mount sets against the generated actual
+   projection. The account read remains planned for `central-identity-api` but
+   explicitly deferred. Session telemetry export admission is likewise honestly
+   deferred, and `regional-session-api` currently serves exactly 17 operations.
 
    Scenario selection is also executable now: an `observes` edge is necessary
    but insufficient. Every scenario must name a namespaced Cargo/npm `package`
    and exact `target`, and the package must claim both in its AEX metadata. The
    route workflow emits and downstream lanes consume a scenario matrix carrying
-   those exact claims. Existing scenario rows intentionally have no invented
-   runnable claims, so the graph remains red until real targets land.
+   those exact claims. Existing scenario rows have no invented runnable claims;
+   they carry non-empty `deferred` reasons, remain visible in the graph summary,
+   and are excluded from the scenario matrix until real targets land. Missing,
+   partial, or runnable+deferred claims still fail verification.
 
    Freshness starts from authored OpenAPI/route metadata rather than optional
    generated sentinels. Deleting both `bundle.json` and `routes.json`, or

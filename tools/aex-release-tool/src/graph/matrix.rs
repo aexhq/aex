@@ -113,7 +113,11 @@ pub fn build(
             "--partitions must be at least 1",
         ));
     }
-    let candidates = candidates(selection, kind, units);
+    let candidates = if kind == MatrixKind::Scenario {
+        scenario_candidates(selection, scenarios)?
+    } else {
+        candidates(selection, kind, units)
+    };
 
     let shards = partition(&candidates, partitions, durations);
     let scenario_claims: BTreeMap<&str, (&str, &str)> = scenarios
@@ -236,6 +240,44 @@ fn candidates(selection: &Selection, kind: MatrixKind, units: &Units) -> Vec<(St
             .map(|selected| (selected.id.to_string(), selected.id.local().to_owned()))
             .collect(),
     }
+}
+
+fn scenario_candidates(
+    selection: &Selection,
+    scenarios: &ScenarioOwnership,
+) -> Result<Vec<(String, String)>> {
+    let registry: BTreeMap<&str, &super::inputs::Scenario> = scenarios
+        .scenarios
+        .iter()
+        .map(|scenario| (scenario.id.as_str(), scenario))
+        .collect();
+    let mut candidates = Vec::new();
+    for selected in &selection.scenarios {
+        let name = selected.id.local();
+        let Some(scenario) = registry.get(name) else {
+            return Err(ToolError::single(
+                Exit::GraphVerification,
+                "scenario-runnable-missing",
+                format!("selected scenario `{name}` is absent from the scenario registry"),
+            ));
+        };
+        match (&scenario.package, &scenario.target, &scenario.deferred) {
+            (Some(_), Some(_), None) => {
+                candidates.push((selected.id.to_string(), name.to_owned()));
+            }
+            (None, None, Some(reason)) if !reason.trim().is_empty() => {}
+            _ => {
+                return Err(ToolError::single(
+                    Exit::GraphVerification,
+                    "scenario-runnable-missing",
+                    format!(
+                        "selected scenario `{name}` has neither a sound runnable claim nor an explicit deferral"
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(candidates)
 }
 
 /// The emission produced when routing itself failed.
@@ -592,6 +634,40 @@ target = "live"
         )
         .unwrap_err();
         assert_eq!(err.rules(), vec!["scenario-runnable-missing"]);
+    }
+
+    #[test]
+    fn explicitly_deferred_scenario_is_excluded_from_the_matrix() {
+        let mut selected = selection(&[]);
+        selected.scenarios.push(Selected {
+            id: NodeId::scenario("SC-DEFERRED"),
+            reason: SelectionReason::RouterChanged,
+        });
+        let registry: ScenarioOwnership = toml::from_str(
+            r#"
+schema = "aex.scenario-ownership.v1"
+[[scenario]]
+id = "SC-DEFERRED"
+owner = "delivery"
+observes = ["artifact:demo-api"]
+deferred = "the production composition does not yet expose this surface"
+"#,
+        )
+        .expect("scenario registry");
+        let output = build(
+            &selected,
+            MatrixKind::Scenario,
+            1,
+            &BTreeMap::new(),
+            &registry,
+            &no_units(),
+            &[],
+        )
+        .expect("deferred scenario matrix");
+        assert!(!output.routing_failed);
+        assert!(!output.has_entries);
+        assert_eq!(output.count, 0);
+        assert!(output.include.is_empty());
     }
 
     #[test]

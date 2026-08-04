@@ -7,9 +7,12 @@
 # A deployable observed by no scenario fails `graph verify`. Observation alone
 # is not runnable evidence: each scenario must also declare `package` as a
 # namespaced Cargo/npm graph node and `target` as an exact `aex.targets` key,
-# and that package must claim the scenario in `aex.scenarios`. The existing rows
-# intentionally omit those claims until their real targets land, so the graph
-# stays red rather than manufacturing scenario receipts.
+# and that package must claim the scenario in `aex.scenarios`. A scenario whose
+# production composition is not runnable instead carries an exact non-empty
+# `deferred` reason. Deferral is architecture debt, never evidence: it is shown
+# in the graph summary and omitted from the runnable scenario matrix. An
+# implicit gap, a partial package/target pair, or runnable+deferred conflict is
+# still a graph failure.
 #
 # --- provisioning in `prd` (OD-35 / OD-36) -----------------------------------
 #
@@ -40,6 +43,7 @@ schema = "aex.scenario-ownership.v1"
 [[scenario]]
 id = "SC-IDENTITY-ACCOUNT"
 owner = "central-identity"
+deferred = "No executable live target yet proves the complete account identity and operational-state flow."
 observes = ["artifact:central-identity-api"]
 
 [scenario.prd]
@@ -52,11 +56,13 @@ provisions = [
 [[scenario]]
 id = "SC-AUTHZ-ASSERTION"
 owner = "central-identity"
+deferred = "No executable live target yet proves assertion issuance, verification, and revocation together."
 observes = ["artifact:central-authz"]
 
 [[scenario]]
 id = "SC-CONTROL-WORKSPACE"
 owner = "central-identity"
+deferred = "The multi-deployable workspace provisioning scenario has no executable live target yet."
 observes = [
   "artifact:central-control-api",
   "artifact:central-control-worker",
@@ -74,6 +80,7 @@ provisions = [
 [[scenario]]
 id = "SC-SCHEMA-MIGRATE"
 owner = "central-finance"
+deferred = "The central schema administrator companion has no executable migration-rehearsal target yet."
 observes = ["artifact:central-schema-admin"]
 
 # --- money --------------------------------------------------------------------
@@ -81,11 +88,13 @@ observes = ["artifact:central-schema-admin"]
 [[scenario]]
 id = "SC-FINANCE-INVOICE"
 owner = "central-finance"
+deferred = "The invoice and settlement composition has no executable live target yet."
 observes = ["artifact:finance-api", "artifact:finance-settlement-worker"]
 
 [[scenario]]
 id = "SC-FINANCE-PAYMENT"
 owner = "central-finance"
+deferred = "The end-to-end Stripe command, webhook, and ingest path has no executable live target yet."
 # Both ends of one payment: the webhook edge is where a Stripe event enters and
 # `finance-ingest` is where it becomes a finance transition, and the command edge
 # is where an admitted effect leaves. A scenario that watched only the middle
@@ -110,11 +119,13 @@ provisions = [
 [[scenario]]
 id = "SC-FINANCE-RECONCILE"
 owner = "central-finance"
+deferred = "The finance and provider-cost reconciliation pair has no executable live target yet."
 observes = ["artifact:finance-reconcile", "artifact:provider-cost-reconciler"]
 
 [[scenario]]
 id = "SC-USAGE-SETTLE"
 owner = "observations-usage"
+deferred = "The receipt, storage, compute, transfer, and query settlement chain has no executable live target yet."
 observes = [
   "artifact:usage-receipt-dispatcher",
   "artifact:usage-storage-worker",
@@ -128,11 +139,13 @@ observes = [
 [[scenario]]
 id = "SC-SESSION-ADMIT"
 owner = "regional-services"
+deferred = "Session admission is not mounted by the production composition and has no executable live target yet."
 observes = ["artifact:regional-session-api"]
 
 [[scenario]]
 id = "SC-SESSION-TERMINAL"
 owner = "regional-services"
+deferred = "The complete session terminal-operation lifecycle has no executable live target yet."
 observes = ["artifact:regional-session-api", "artifact:session-operation-worker"]
 
 [scenario.prd]
@@ -151,11 +164,13 @@ provisions = [
 [[scenario]]
 id = "SC-SESSION-STREAM"
 owner = "regional-services"
+deferred = "The regional streaming transport has no executable scenario target yet."
 observes = ["artifact:regional-stream"]
 
 [[scenario]]
 id = "SC-SECRET-CUSTODY"
 owner = "regional-stores"
+deferred = "The first-seal, key-administration, and custody lifecycle has no executable live target yet."
 observes = [
   "artifact:regional-secret-api",
   "artifact:regional-secret-key-admin",
@@ -175,6 +190,7 @@ provisions = [
 [[scenario]]
 id = "SC-CONTENT-LIFECYCLE"
 owner = "regional-stores"
+deferred = "The complete upload, persisted-content, and garbage-collection lifecycle has no executable live target yet."
 observes = ["artifact:content-lifecycle-worker", "artifact:regional-session-api"]
 
 [scenario.prd]
@@ -191,6 +207,7 @@ provisions = [
 [[scenario]]
 id = "SC-RUNTIME-CONTROL"
 owner = "hands"
+deferred = "The runtime-control production lifecycle has no executable live target yet."
 observes = ["artifact:runtime-control-worker"]
 
 # --- observation ----------------------------------------------------------------
@@ -198,6 +215,7 @@ observes = ["artifact:runtime-control-worker"]
 [[scenario]]
 id = "SC-OBSERVATION-ADMIT"
 owner = "observations-usage"
+deferred = "The production OTLP admission path has no executable live target yet."
 observes = ["artifact:regional-otlp"]
 
 [scenario.prd]
@@ -212,11 +230,13 @@ provisions = [
 [[scenario]]
 id = "SC-OBSERVATION-QUERY"
 owner = "observations-usage"
+deferred = "The regional observation query surface has no executable live target yet."
 observes = ["artifact:regional-observation-api"]
 
 [[scenario]]
 id = "SC-OBSERVATION-EXPORT"
 owner = "observations-usage"
+deferred = "The export admission, launcher, and task chain has no executable live target yet."
 observes = [
   "artifact:regional-observation-api",
   "artifact:observation-export-launcher",
@@ -226,6 +246,7 @@ observes = [
 [[scenario]]
 id = "SC-OBSERVATION-GAP"
 owner = "observations-usage"
+deferred = "The gap detection, reconciliation, and query lifecycle has no executable live target yet."
 observes = ["artifact:observation-reconciler", "artifact:regional-observation-api"]
 
 # --- runtime ---------------------------------------------------------------------
@@ -233,11 +254,13 @@ observes = ["artifact:observation-reconciler", "artifact:regional-observation-ap
 [[scenario]]
 id = "SC-BRAIN-TURN"
 owner = "brain-core"
+deferred = "No executable live target yet proves a complete Brain turn across mux and session authority."
 observes = ["artifact:brain-mux", "artifact:regional-session-api"]
 
 [[scenario]]
 id = "SC-HANDS-HOSTILE"
 owner = "hands"
+deferred = "The hostile-workload matrix across Hands agent and all image variants has no executable target yet."
 observes = [
   "artifact:hands-agent",
   "artifact:hands-image-512mb",

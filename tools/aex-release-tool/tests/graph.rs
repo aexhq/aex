@@ -180,6 +180,54 @@ fn observing_an_artifact_without_a_runnable_claim_is_not_scenario_coverage() {
 }
 
 #[test]
+fn an_explicit_scenario_deferral_is_valid_but_not_runnable_evidence() {
+    let scenarios = SOUND_SCENARIOS
+        .replace("package = \"cargo:aex-live-demo-api\"\n", "")
+        .replace("target = \"smoke\"\n", "")
+        .replace(
+            "observes = [\"artifact:demo-api\"]\n",
+            "observes = [\"artifact:demo-api\"]\ndeferred = \"live target waits for the production composition\"\n",
+        );
+    let root = Fixture::new()
+        .add_crate(
+            CratePlan::new("demo-api", "services/demo-api")
+                .meta(deployable_meta("demo-api", "aex-live-demo-api")),
+        )
+        .add_crate(
+            CratePlan::new("aex-live-demo-api", "tests/live/aex-live-demo-api")
+                .meta(live_meta("demo-api")),
+        )
+        .units(SOUND_UNITS)
+        .scenarios(&scenarios)
+        .build();
+    let built = verify_fixture(&root).expect("explicit deferral is structurally valid");
+    assert_eq!(built.deferred.len(), 1);
+    assert_eq!(built.deferred[0].id, "SC-DEMO");
+}
+
+#[test]
+fn a_scenario_cannot_claim_runnable_evidence_and_a_deferral() {
+    let scenarios = SOUND_SCENARIOS.replace(
+        "target = \"smoke\"\n",
+        "target = \"smoke\"\ndeferred = \"not actually runnable\"\n",
+    );
+    let root = Fixture::new()
+        .add_crate(
+            CratePlan::new("demo-api", "services/demo-api")
+                .meta(deployable_meta("demo-api", "aex-live-demo-api")),
+        )
+        .add_crate(
+            CratePlan::new("aex-live-demo-api", "tests/live/aex-live-demo-api")
+                .meta(live_meta("demo-api")),
+        )
+        .units(SOUND_UNITS)
+        .scenarios(&scenarios)
+        .build();
+    let err = verify_fixture(&root).expect_err("conflicting scenario state must fail");
+    assert!(err.rules().contains(&"scenario-claim-conflict"));
+}
+
+#[test]
 fn a_scenario_package_must_claim_the_scenario_and_the_exact_target() {
     let root = Fixture::new()
         .add_crate(
@@ -594,6 +642,52 @@ fn planned_ownership_is_not_proof_that_a_route_is_mounted() {
     );
     let err = verify_fixture(&root).unwrap_err();
     assert!(err.rules().contains(&"aex-route-unserved"));
+}
+
+#[test]
+fn an_unmounted_route_requires_an_explicit_non_empty_deferral() {
+    let root = common::sound_fixture();
+    classify_generated_api(&root);
+    write(
+        &root,
+        "api/generated/bundle.json",
+        r#"{"planes":{"regional":{"operations":[{"operationId":"demo_get"}]}}}"#,
+    );
+    write(
+        &root,
+        "api/generated/registries/routes.json",
+        r#"{"schema":"aex.route-registry.v1","routes":[{"operationId":"demo_get","plane":"regional","servingArtifact":"demo-api","deferredReason":"production handler is not composed","scenarios":["SC-DEMO"]}]}"#,
+    );
+    let err = verify_fixture(&root).expect_err("synthetic outputs have no authored source");
+    assert!(err.rules().contains(&"generated-contract-unverifiable"));
+    assert!(!err.rules().contains(&"aex-route-unserved"));
+    assert!(!err.rules().contains(&"aex-route-deferral-invalid"));
+
+    write(
+        &root,
+        "api/generated/registries/routes.json",
+        r#"{"schema":"aex.route-registry.v1","routes":[{"operationId":"demo_get","plane":"regional","servingArtifact":"demo-api","deferredReason":"","scenarios":["SC-DEMO"]}]}"#,
+    );
+    let err = verify_fixture(&root).expect_err("empty deferral must fail");
+    assert!(err.rules().contains(&"aex-route-deferral-invalid"));
+}
+
+#[test]
+fn a_route_cannot_be_both_served_and_deferred() {
+    let root = common::sound_fixture();
+    classify_generated_api(&root);
+    write(
+        &root,
+        "api/generated/bundle.json",
+        r#"{"planes":{"regional":{"operations":[{"operationId":"demo_get"}]}}}"#,
+    );
+    write(
+        &root,
+        "api/generated/registries/routes.json",
+        r#"{"schema":"aex.route-registry.v1","routes":[{"operationId":"demo_get","plane":"regional","servingArtifact":"demo-api","servedArtifact":"demo-api","deferredReason":"contradiction","scenarios":["SC-DEMO"]}]}"#,
+    );
+    let err = verify_fixture(&root).expect_err("conflicting route state must fail");
+    assert!(err.rules().contains(&"aex-route-state-conflict"));
 }
 
 #[test]

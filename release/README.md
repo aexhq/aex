@@ -7,6 +7,16 @@ Production promotes a complete immutable composition manifest; a one-service
 release creates a new complete manifest whose only artifact change is that
 service's digest.
 
+The delivery graph distinguishes invalid omissions from explicit prelaunch
+architecture debt. `routes-meta.yaml` gives every unmounted operation a
+non-empty `deferredOperations` reason, and `scenario-ownership.toml` gives every
+scenario without an executable package/target a non-empty `deferred` reason.
+Those states are mutually exclusive with real mount/runnable claims, appear in
+the graph summary, and are excluded from scenario execution matrices. They are
+not receipts and cannot satisfy artifact certification, environment admission,
+or promotion readiness; they let structural graph verification prove that no
+gap is accidental while the later evidence gates remain fail-closed.
+
 `semantic-receipts.json` is the reviewed producer registry for artifact
 semantic evidence. It maps every `contract`, `property`, `conformance`, and
 `integration` requirement in `units.toml` to the real package test selection
