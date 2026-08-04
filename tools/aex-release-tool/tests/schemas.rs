@@ -132,6 +132,21 @@ fn every_valid_fixture_is_accepted_by_both_authorities() {
 }
 
 #[test]
+fn verification_statement_schema_requires_every_release_receipt_class() {
+    for missing in ["smoke", "e2e", "user"] {
+        let mut statement = valid_statement();
+        statement["receipts"]
+            .as_array_mut()
+            .expect("statement receipt array")
+            .retain(|receipt| receipt["class"] != missing);
+        assert!(
+            !schema_accepts(SchemaName::VerificationStatement, &statement),
+            "the verification statement schema accepted no `{missing}` receipt"
+        );
+    }
+}
+
+#[test]
 fn an_unknown_member_is_rejected_by_both_authorities() {
     for (name, schema, mut document, serde_accepts) in corpus() {
         document["surpriseKey"] = json!("value");

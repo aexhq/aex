@@ -24,6 +24,12 @@ not receipts and cannot satisfy artifact certification, environment admission,
 or promotion readiness; they let structural graph verification prove that no
 gap is accidental while the later evidence gates remain fail-closed.
 
+Release routing is stricter than structural PR/main routing. Running
+`graph verify --release` refuses to emit a release selection when every cross-service
+scenario is deferred. A dev verification statement likewise requires passing
+`smoke`, `e2e`, and `user` receipts for the exact release before it can become
+production promotion evidence.
+
 `semantic-receipts.json` is the reviewed producer registry for artifact
 semantic evidence. It maps every `contract`, `property`, `conformance`, and
 `integration` requirement in `units.toml` to the real package test selection

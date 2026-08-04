@@ -258,12 +258,26 @@ pub fn valid_statement() -> Value {
             "actualVersionOrAlias": "live",
             "readbackAt": "2026-08-01T01:00:00Z"
         }],
-        "receipts": [{
-            "class": "smoke",
-            "receiptDigest": digest(0x31),
-            "conclusion": "passed",
-            "collectedAt": "2026-08-01T01:00:00Z"
-        }],
+        "receipts": [
+            {
+                "class": "smoke",
+                "receiptDigest": digest(0x31),
+                "conclusion": "passed",
+                "collectedAt": "2026-08-01T01:00:00Z"
+            },
+            {
+                "class": "e2e",
+                "receiptDigest": digest(0x32),
+                "conclusion": "passed",
+                "collectedAt": "2026-08-01T01:00:00Z"
+            },
+            {
+                "class": "user",
+                "receiptDigest": digest(0x33),
+                "conclusion": "passed",
+                "collectedAt": "2026-08-01T01:00:00Z"
+            }
+        ],
         "startedAt": "2026-08-01T00:30:00Z",
         "completedAt": "2026-08-01T01:00:00Z",
         "conclusion": "passed",

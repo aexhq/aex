@@ -420,6 +420,42 @@ pub fn verify(inputs: &GraphInputs) -> Result<BuiltGraph> {
     }
 }
 
+/// Verify the graph is structurally sound and has executable cross-service
+/// evidence for a release candidate.
+///
+/// Explicit scenario deferrals are valid architecture records, but they are
+/// not runnable evidence. Ordinary PR and main routing may continue to expose
+/// those records while the product is prelaunch; a release route may not turn
+/// an all-deferred registry into a green empty matrix.
+///
+/// # Errors
+/// Returns [`Exit::GraphVerification`] when normal graph verification fails or
+/// when the verified graph contains no runnable scenario.
+pub fn verify_release_candidate(inputs: &GraphInputs) -> Result<BuiltGraph> {
+    let built = verify(inputs)?;
+    let declared = built
+        .graph
+        .nodes()
+        .iter()
+        .filter(|node| node.kind == NodeKind::Scenario)
+        .count();
+    let deferred = built
+        .deferred
+        .iter()
+        .filter(|entry| entry.kind == "scenario")
+        .count();
+    if declared == deferred {
+        return Err(ToolError::single(
+            Exit::GraphVerification,
+            "release-runnable-scenario-missing",
+            format!(
+                "release routing declares {declared} cross-service scenario(s), but all {deferred} are explicitly deferred; at least one verified package/target claim must be runnable"
+            ),
+        ));
+    }
+    Ok(built)
+}
+
 #[derive(Debug, Default)]
 struct ScenarioClaims {
     runnable: BTreeSet<String>,

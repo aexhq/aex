@@ -100,7 +100,15 @@ jobs:
         run: cargo build --locked --release -p aex-release-tool
 
       - name: Verify the delivery graph
-        run: ./target/release/aex-release-tool graph verify
+        env:
+          ROUTING_LANE: ${{ inputs.lane }}
+        run: |
+          set -euo pipefail
+          if [[ "$ROUTING_LANE" == "release" ]]; then
+            ./target/release/aex-release-tool graph verify --release
+          else
+            ./target/release/aex-release-tool graph verify
+          fi
 
       - name: Select
         run: |

@@ -120,7 +120,11 @@ enum GraphCommand {
         out: Option<PathBuf>,
     },
     /// Run every fail-closed verification rule.
-    Verify,
+    Verify {
+        /// Also require executable cross-service evidence for a release route.
+        #[arg(long)]
+        release: bool,
+    },
     /// Decide what runs.
     Select {
         /// Base commit of the diff.
@@ -1089,8 +1093,12 @@ fn run_graph(cli: &Cli, root: &Path, command: &GraphCommand) -> Result<()> {
                 emit(cli, &summary)
             }
         }
-        GraphCommand::Verify => {
-            let built = verify::verify(&inputs)?;
+        GraphCommand::Verify { release } => {
+            let built = if *release {
+                verify::verify_release_candidate(&inputs)?
+            } else {
+                verify::verify(&inputs)?
+            };
             emit(cli, &verify::summarize(&built))
         }
         GraphCommand::Select {

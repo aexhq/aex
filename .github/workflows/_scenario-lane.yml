@@ -56,7 +56,7 @@ jobs:
           set -euo pipefail
           case "$SCENARIO_PACKAGE" in
             cargo:*)
-              cargo nextest run --locked --profile ci \
+              cargo nextest run --locked --profile live \
                 -p "${SCENARIO_PACKAGE#cargo:}" \
                 --test "$SCENARIO_TARGET" --no-tests=fail
               ;;

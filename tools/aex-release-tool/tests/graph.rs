@@ -203,6 +203,20 @@ fn an_explicit_scenario_deferral_is_valid_but_not_runnable_evidence() {
     let built = verify_fixture(&root).expect("explicit deferral is structurally valid");
     assert_eq!(built.deferred.len(), 1);
     assert_eq!(built.deferred[0].id, "SC-DEMO");
+
+    let inputs = GraphInputs::load(&root).unwrap();
+    let err = verify::verify_release_candidate(&inputs)
+        .expect_err("a release cannot promote an all-deferred scenario registry");
+    assert_eq!(err.exit.code(), 10);
+    assert!(err.rules().contains(&"release-runnable-scenario-missing"));
+}
+
+#[test]
+fn a_release_candidate_with_a_runnable_scenario_verifies() {
+    let root = common::sound_fixture();
+    let inputs = GraphInputs::load(&root).unwrap();
+    verify::verify_release_candidate(&inputs)
+        .expect("the runnable package and target are release evidence");
 }
 
 #[test]

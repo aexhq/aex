@@ -54,6 +54,32 @@
     },
     "receipts": {
       "type": "array",
+      "allOf": [
+        {
+          "contains": {
+            "required": ["class"],
+            "properties": {
+              "class": { "const": "smoke" }
+            }
+          }
+        },
+        {
+          "contains": {
+            "required": ["class"],
+            "properties": {
+              "class": { "const": "e2e" }
+            }
+          }
+        },
+        {
+          "contains": {
+            "required": ["class"],
+            "properties": {
+              "class": { "const": "user" }
+            }
+          }
+        }
+      ],
       "items": {
         "type": "object",
         "additionalProperties": false,

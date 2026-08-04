@@ -46,7 +46,18 @@ describe("registered scenario reliability", () => {
     expect(job.strategy?.["fail-fast"]).toBe(false);
     expect(job.strategy?.matrix).toBe("${{ fromJSON(inputs.matrix) }}");
     expect(step.run).toContain('run "test:$SCENARIO_TARGET"');
+    expect(step.run).toContain("cargo nextest run --locked --profile live");
+    expect(step.run).not.toContain("--profile ci");
     expect(step.run).not.toMatch(/--shard(?:\s|$)/);
     expect(step.run).not.toMatch(RETRY_FLAG);
+  });
+
+  it("makes release routing reject an empty runnable scenario matrix", () => {
+    const job = workflowJob(readWorkflow(".github/workflows/_route.yml"), "route");
+    const step = workflowStepRunning(job, /ROUTING_LANE/);
+
+    expect(step.env?.ROUTING_LANE).toBe("${{ inputs.lane }}");
+    expect(step.run).toContain('[[ "$ROUTING_LANE" == "release" ]]');
+    expect(step.run).toContain("graph verify --release");
   });
 });

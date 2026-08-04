@@ -9,7 +9,7 @@ use aex_release_tool::admit::{AdmissionInputs, OperationalReadiness, Plane, admi
 use aex_release_tool::artifact::ArtifactEnvelope;
 use aex_release_tool::evidence::{FreshnessPolicy, Receipt, bind_artifact};
 use aex_release_tool::manifest::CompositionManifest;
-use aex_release_tool::verification::VerificationStatement;
+use aex_release_tool::verification::{Deployed, VerificationStatement, new_statement};
 use common::docs::{
     BUILDER, digest, valid_envelope, valid_manifest, valid_receipt, valid_statement,
 };
@@ -32,6 +32,7 @@ fn envelopes() -> BTreeMap<String, ArtifactEnvelope> {
 fn receipts(classes: &[&str]) -> Vec<Receipt> {
     let envelope: ArtifactEnvelope = serde_json::from_value(valid_envelope()).unwrap();
     let artifact_subject_digest = envelope.seal().unwrap().artifact_subject_digest;
+    let release_id = manifest().release_id;
     classes
         .iter()
         .map(|class| {
@@ -46,6 +47,9 @@ fn receipts(classes: &[&str]) -> Vec<Receipt> {
                 },
                 "unitIds": [UNIT]
             });
+            if matches!(*class, "smoke" | "e2e" | "user") {
+                value["subject"]["releaseId"] = serde_json::json!(release_id);
+            }
             if *class == "arch-qualification" {
                 value["architectureQualification"] = serde_json::json!({
                     "artifactDigest": digest(5),
@@ -361,6 +365,90 @@ fn rule_seven_a_statement_for_another_release_fails() {
     let err = case.run().unwrap_err();
     assert_eq!(err.exit.code(), 43);
     assert!(err.rules().contains(&"statement-release-mismatch"));
+}
+
+#[test]
+fn rule_seven_a_statement_missing_cross_service_or_user_evidence_fails() {
+    for missing in ["e2e", "user"] {
+        let mut case = Case::prd();
+        case.statement
+            .as_mut()
+            .expect("production fixture statement")
+            .receipts
+            .retain(|receipt| receipt.class != missing);
+        case.statement = Some(case.statement.take().unwrap().seal().unwrap());
+
+        let err = case.run().expect_err("promotion evidence must be complete");
+        assert_eq!(err.exit.code(), 43);
+        assert!(err.rules().contains(&"statement-receipt-missing"));
+        assert!(
+            err.violations
+                .iter()
+                .any(|violation| violation.detail.contains(missing))
+        );
+    }
+}
+
+#[test]
+fn verification_construction_refuses_missing_cross_service_and_user_receipts() {
+    let manifest = manifest();
+    let deployed = vec![Deployed {
+        unit: UNIT.to_owned(),
+        expected_digest: digest(5),
+        actual_digest: digest(5),
+        actual_version_or_alias: "live".to_owned(),
+        actual_task_definition: None,
+        readback_at: "2026-08-01T01:00:00Z".to_owned(),
+    }];
+    let err = new_statement(
+        &manifest,
+        "dev",
+        &digest(0x42),
+        &common::docs::sha1(),
+        vec!["eu-west-1".to_owned()],
+        deployed.clone(),
+        &receipts(&["smoke"]),
+        7,
+        "2026-08-01T01:00:00Z",
+    )
+    .expect_err("statement construction must not hide absent release evidence");
+
+    assert_eq!(err.exit.code(), 43);
+    assert_eq!(
+        err.rules(),
+        ["statement-receipt-missing", "statement-receipt-missing"]
+    );
+    assert!(
+        err.violations
+            .iter()
+            .any(|violation| violation.detail.contains("e2e"))
+    );
+    assert!(
+        err.violations
+            .iter()
+            .any(|violation| violation.detail.contains("user"))
+    );
+
+    let mut complete = receipts(&["smoke", "e2e", "user"]);
+    let e2e = complete
+        .iter_mut()
+        .find(|receipt| receipt.class == "e2e")
+        .expect("e2e fixture receipt");
+    e2e.subject.release_id = Some(digest(0xee));
+    *e2e = e2e.clone().seal().unwrap();
+    let err = new_statement(
+        &manifest,
+        "dev",
+        &digest(0x42),
+        &common::docs::sha1(),
+        vec!["eu-west-1".to_owned()],
+        deployed,
+        &complete,
+        7,
+        "2026-08-01T01:00:00Z",
+    )
+    .expect_err("another release's e2e receipt must not qualify");
+    assert!(err.rules().contains(&"statement-receipt-release-mismatch"));
 }
 
 #[test]
