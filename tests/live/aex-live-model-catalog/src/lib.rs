@@ -7,14 +7,15 @@
 //! least privileged test identity, and is selected only by the live lane. A test here must
 //! fail on a missing prerequisite; it must never self-skip.
 //!
-//! # Why the `[[test]]` targets are not declared yet
+//! # Why the live `[[test]]` targets are not declared yet
 //!
 //! Every probe in [`plan`] needs a real customer-owned key for its provider,
 //! and `00-orchestrator-conventions.md` OD-07 puts nothing credentialed in this
 //! run. The manifest therefore keeps `not_applicable.targets` with that exact
-//! structural reason. What lands here now is the **harness**: the probe
-//! registry, the prerequisite resolution, the receipt builder and the staging
-//! diff — compiled, unit-tested, and ready for the change that adds the target.
+//! structural reason. This package carries the provider-independent harness
+//! and a protected publisher executable, but no command can claim a probe ran:
+//! the provider-specific P-01–P-23 executors still require real customer-owned
+//! test keys and observed evidence.
 //!
 //! The prerequisite path is the part that can be proved without a key, and it
 //! is: [`ProviderKeys::require`] goes through
@@ -34,6 +35,8 @@ use aex_model_catalog::receipt::{
 use aex_wire::provider::ProviderId;
 use aex_wire::types::Timestamp;
 use aex_wire::{ContentHash, Uuid7};
+
+pub mod publisher;
 
 /// The canonical environment variable carrying a provider's live key.
 ///

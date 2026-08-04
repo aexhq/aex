@@ -696,9 +696,19 @@ version = "0.1.0"
 name = "aex-live-model-catalog"
 version = "0.1.0"
 dependencies = [
+ "aex-brain-provider-gateway",
  "aex-model-catalog",
  "aex-test-harness",
  "aex-wire",
+ "aws-lc-rs",
+ "base64 0.23.0",
+ "bytes",
+ "clap",
+ "hex",
+ "p256 0.14.0",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
  "thiserror",
 ]
 

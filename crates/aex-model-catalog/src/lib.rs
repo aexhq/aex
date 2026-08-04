@@ -30,6 +30,7 @@
 
 pub mod canonical;
 pub mod catalog;
+pub mod collection;
 pub mod document;
 pub mod failure;
 pub mod fixture;
@@ -40,6 +41,10 @@ pub mod signature;
 pub mod wire_pending;
 
 pub use catalog::{Catalog, CatalogHead, CatalogLoadError};
+pub use collection::{
+    CATALOG_COLLECTION_SCHEMA, CatalogArtifact, CatalogCollection, CatalogCollectionError,
+    VerifiedCatalogCollection,
+};
 pub use failure::{ProviderFailureClass, ProviderFailureKind, RedactedDetail};
 pub use primitives::{
     Blake3Digest, BoundError, BoundedString, ModelSlug, ProviderRequestId, ToolCallId, ToolName,

@@ -26,8 +26,24 @@ scenarios = []
 [package.metadata.aex.not_applicable]
 targets = "awaiting the providers stream; live evidence cannot be earned before deployment (OD-07)"
 
+[[bin]]
+name = "aex-model-catalog-publisher"
+path = "src/main.rs"
+
 [dependencies]
+aex-brain-provider-gateway = { path = "../../../crates/aex-brain-provider-gateway" }
 aex-model-catalog = { path = "../../../crates/aex-model-catalog" }
 aex-test-harness = { path = "../../support/aex-test-harness" }
 aex-wire = { path = "../../../crates/aex-wire" }
+base64.workspace = true
+bytes.workspace = true
+clap.workspace = true
+hex.workspace = true
+p256.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+aws-lc-rs.workspace = true

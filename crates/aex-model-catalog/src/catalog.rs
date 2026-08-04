@@ -231,6 +231,30 @@ pub enum CatalogLoadError {
 }
 
 impl Catalog {
+    /// Validates canonical document bytes before a protected signer is invoked.
+    ///
+    /// This is a preflight, not catalog authority: it verifies no signature and
+    /// cannot construct a [`Catalog`] or [`QualifiedModel`]. The signed envelope
+    /// must still pass [`Catalog::load`] before publication or use.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same document, chain, time, adapter and conformance failures
+    /// as [`Catalog::load`], excluding signature failures.
+    pub fn preflight_document(
+        document: &[u8],
+        now: Timestamp,
+        active: Option<&CatalogHead>,
+        adapter: AdapterSourceDigest,
+    ) -> Result<CatalogHead, CatalogLoadError> {
+        let (document, digest) = validate_document(document, now, active, adapter)?;
+        Ok(CatalogHead {
+            publisher: document.publisher,
+            sequence: document.sequence,
+            digest,
+        })
+    }
+
     /// Verifies, parses and admits a catalog envelope.
     ///
     /// # Errors
@@ -245,27 +269,7 @@ impl Catalog {
         adapter: AdapterSourceDigest,
     ) -> Result<Self, CatalogLoadError> {
         let signed_by = verify(envelope, keys)?;
-
-        let document = parse_canonical(&envelope.document)?;
-        if document.schema_version != SCHEMA_VERSION {
-            return Err(CatalogLoadError::SchemaVersion {
-                found: document.schema_version,
-            });
-        }
-
-        let digest = CatalogDigest(Blake3Digest::of(&envelope.document));
-
-        check_time_gates(&document, now)?;
-        check_activation(&document, digest, active)?;
-        check_ordering(&document)?;
-
-        if document.required_adapter_source != adapter {
-            return Err(CatalogLoadError::AdapterMismatch {
-                required: document.required_adapter_source,
-                running: adapter,
-            });
-        }
-        check_receipt_gate(&document, adapter)?;
+        let (document, digest) = validate_document(&envelope.document, now, active, adapter)?;
 
         let entries = document.entries.iter().cloned().map(Arc::new).collect();
         Ok(Self {
@@ -444,6 +448,32 @@ impl Catalog {
             CatalogError::UnknownProvider { provider }
         }
     }
+}
+
+fn validate_document(
+    bytes: &[u8],
+    now: Timestamp,
+    active: Option<&CatalogHead>,
+    adapter: AdapterSourceDigest,
+) -> Result<(CatalogDocument, CatalogDigest), CatalogLoadError> {
+    let document = parse_canonical(bytes)?;
+    if document.schema_version != SCHEMA_VERSION {
+        return Err(CatalogLoadError::SchemaVersion {
+            found: document.schema_version,
+        });
+    }
+    let digest = CatalogDigest(Blake3Digest::of(bytes));
+    check_time_gates(&document, now)?;
+    check_activation(&document, digest, active)?;
+    check_ordering(&document)?;
+    if document.required_adapter_source != adapter {
+        return Err(CatalogLoadError::AdapterMismatch {
+            required: document.required_adapter_source,
+            running: adapter,
+        });
+    }
+    check_receipt_gate(&document, adapter)?;
+    Ok((document, digest))
 }
 
 /// Parses the document bytes and proves they are their own canonical rendering.

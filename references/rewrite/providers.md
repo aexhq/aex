@@ -260,7 +260,7 @@ diff. `ReceiptBuilder::build` refuses a receipt missing any probe run;
 | Provider credential registration | The existing `pcr_` row is a reference to one workspace-secret generation. Exact provider-qualified reads, mutable binding/secret revalidation, and KMS reveal are composed through `aex-brain-provider-custody`; registration remains unmounted because the request has no decided workspace-secret name/collision contract and the active wrapped branch key is not exposed by a port. There is **no** plaintext-from-environment path — not disabled, absent. |
 | `resolve_unknown` | Returns `UnknownResolution::NoDurableOperation` for all eight. Implemented, not stubbed: no authority in this set documents a result lookup for a completed streaming generation under AEX's fixed dialects. Anthropic is stateless; OpenAI's `GET /v1/responses/{id}` requires `store: true`, which AEX disables; Gemini Interactions is not the launch dialect. |
 | Brain session credential pin | Complete for runtime: `ResolvedAgentConfig` journals a required four-scalar `SessionCredentialPin`, `ProviderPort` requires it, and `DispatchTicket` carries workspace plus organization authority. Revision and generation are non-zero at construction and serde boundaries; epoch zero remains the valid initial epoch. Missing prelaunch pins fail decode; mismatched scope, revision, generation, provider, context digest, binding state, or revocation epoch fails before the next provider send. Session-create admission still has to mint the pin from an explicit credential selection. |
-| Real production catalog release inputs | `brain-mux` now composes a verified immutable collection when its exact canonical trust-root set and signed collection are build-bound with independent SHA-256 digests. The release plan records those values using a stable workspace-relative collection path; runtime environment is never consulted. Ordinary local builds carry an exact blocker and stay unready. Protected publication invokes the required-input preflight before compilation. This repository still has no real publisher set or signed collection, and the launch catalog has no `Active` entry, so publication/readiness correctly remain blocked rather than inventing authority. |
+| Real production catalog release inputs | `brain-mux` now composes a verified immutable collection when its exact canonical trust-root set and signed collection are build-bound with independent SHA-256 digests. The collection schema and verifier live in `aex-model-catalog`, so protected publication and runtime execute one authority. `aex-model-catalog-publisher` validates canonical document bytes and the build-stamped adapter digest, emits the KMS-compatible SHA-256 `DIGEST` request, records only the closed `ECDSA_SHA_256` response, and emits a canonical genesis collection only after the runtime verifier finds a currently serviceable `Active` pair. Ordinary local builds carry an exact blocker and stay unready. This repository still has no real publisher key/trust root, complete live receipt, provider-specific probe executor, or signed collection, so publication/readiness correctly remain blocked rather than inventing authority. |
 | Brain content hydration | Canonical requests carry inline user turns. A configured system reference or placed user block fails before dispatch because the application has no content-hydration port yet. |
 | `trybuild` type-level leak test | The workspace has no `trybuild` dependency. The same property is asserted by construction — `ProviderApiKey` implements none of `Clone`, `Debug`, `Display`, `Serialize`, `Deref`, and `WireRequest` has no field that can hold one — plus runtime cases over `Debug` output, error bodies and receipts. Adding `trybuild` is a workspace-manifest change and belongs to whoever owns that decision. |
 | `miri` over the `credential` module | Not run: the module contains no `unsafe` and the crate forbids it, so `miri` would add build time without a proposition to test. |
@@ -279,11 +279,13 @@ unset until all of the following exist together:
    pair, bound to the exact adapter-source digest. The 23-probe harness must
    earn every capability that pair declares before the entry can become
    `Active`; a provider model-list result cannot promote it.
-3. A deterministic publisher that emits the JCS catalog document, signs
-   `aex-model-catalog/v1\n || document`, and assembles the closed
-   `aex.model-catalog-collection.v1` chain with the exact admission pin and all
-   still-live session pins. The repository currently has the verifier and
-   conformance harness, but no production publisher or signed collection.
+3. The protected publisher executable prepares the SHA-256 digest of
+   `aex-model-catalog/v1\n || document` for KMS `MessageType=DIGEST`, binds the
+   closed KMS response, and assembles a canonical genesis
+   `aex.model-catalog-collection.v1` only after shared runtime verification.
+   The current executable deliberately handles the first production revision;
+   chain extension must additionally consume exact still-live session pins.
+   No real signing invocation or signed collection exists yet.
 4. The exact collection bytes at a normalized workspace-relative path before
    `artifact plan` runs. The current workflow performs no catalog download, so
    this means a reviewed tracked release input unless the workflow first gains
