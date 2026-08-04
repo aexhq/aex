@@ -1,0 +1,66 @@
+{
+  "name": "@aexhq/wire",
+  "version": "0.50.0",
+  "description": "Generated TypeScript models and validators for the AEX v1 wire contract.",
+  "aex": {
+    "owner": "contracts",
+    "role": "client",
+    "artifact": "npm_package",
+    "layers": ["unit", "user"],
+    "concerns": ["contract", "compatibility", "property", "security"],
+    "seams": ["npm.registry.publish"],
+    "security_tier": "public_edge",
+    "risk": ["generated_code"],
+    "scenarios": [],
+    "targets": {
+      "canonical_agreement": "unit",
+      "validation": "unit",
+      "packed_user": "user"
+    },
+    "not_applicable": {
+      "live_suite": "generated wire package; it has no deployed endpoint"
+    }
+  },
+  "license": "Apache-2.0",
+  "homepage": "https://aex.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aexhq/aex.git",
+    "directory": "packages/wire"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "README.md", "LICENSE", "NOTICE"],
+  "scripts": {
+    "build": "bun ../../scripts/with-generated-dist-lock.mjs bun run build:unlocked",
+    "build:unlocked": "bun ./scripts/clean-dist.mjs && tsc -p tsconfig.build.json && bun ../../scripts/cicd/check-generated-dist-closure.mjs dist",
+    "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "bun run test:unit",
+    "test:unit": "bun test --isolate test",
+    "prepack": "bun run build",
+    "pack:dry-run": "bun pm pack --dry-run --ignore-scripts"
+  },
+  "dependencies": {
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.14"
+  },
+  "engines": {
+    "node": ">=22.0.0",
+    "bun": ">=1.3.14"
+  }
+}

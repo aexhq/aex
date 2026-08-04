@@ -83,6 +83,10 @@ pub fn emit_all(ir: &ContractIr) -> GeneratedTree {
         crate::emit_client::rust_client(ir, &digest),
     );
     tree.insert(
+        "packages/wire/src/generated/models.ts",
+        crate::typescript::typescript_wire(ir, &digest),
+    );
+    tree.insert(
         "conformance/routes/bindings.jsonl",
         route_binding_corpus(ir),
     );

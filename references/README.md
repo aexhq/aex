@@ -34,6 +34,7 @@ executable sources.
 | Contributor and review procedure | [`contributing.md`](contributing.md) |
 | Durable-doc and generated-artifact placement | [`repository-hygiene.md`](repository-hygiene.md) |
 | Public v1 architecture and repository boundary | [`architecture.md`](architecture.md) |
+| Generated TypeScript wire binding and consumer migration boundary | [`typescript-wire-binding.md`](typescript-wire-binding.md) |
 | Rust-native rewrite implementation handoffs — what each stream landed, deferred and owes | [`rewrite/README.md`](rewrite/README.md) |
 | Vocabulary the source uses without defining | [`glossary.md`](glossary.md) |
 

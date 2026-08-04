@@ -1,0 +1,20 @@
+aex
+Copyright 2026 aex contributors
+
+This product includes software developed by the aex project
+(https://github.com/aexhq/aex).
+
+Licensed under the Apache License, Version 2.0. The full text is in LICENSE.
+
+--------------------------------------------------------------------------------
+Third-party software redistributed in published artifacts
+--------------------------------------------------------------------------------
+
+None. The one published npm package, `@aexhq/sdk`, declares no production
+dependency and bundles no third-party code, so there is no upstream attribution
+to reproduce here.
+
+`scripts/validate/package-metadata.test.ts` asserts that every production
+dependency of every publishable package in this repository appears above. Adding
+a runtime dependency to a published package without recording it here fails that
+gate.

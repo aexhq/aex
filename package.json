@@ -13,9 +13,9 @@
     "services/stripe-webhook-edge"
   ],
   "scripts": {
-    "build": "bun run --filter @aexhq/sdk build && bun run --filter @aexhq/site build && bun run --filter @aexhq/dashboard build",
+    "build": "bun run --filter @aexhq/wire build && bun run --filter @aexhq/sdk build && bun run --filter @aexhq/site build && bun run --filter @aexhq/dashboard build",
     "lint": "bun run brand:check && bun run --workspaces --if-present --parallel lint && bun run lint:tests",
-    "typecheck": "bun run --filter @aexhq/sdk typecheck && bun run --filter @aexhq/dashboard typecheck && bun run --filter @aexhq/site typecheck && bun run --filter @aexhq/user-tests typecheck && tsc --noEmit -p tsconfig.scripts.json",
+    "typecheck": "bun run --filter @aexhq/wire typecheck && bun run --filter @aexhq/sdk typecheck && bun run --filter @aexhq/dashboard typecheck && bun run --filter @aexhq/site typecheck && bun run --filter @aexhq/user-tests typecheck && tsc --noEmit -p tsconfig.scripts.json",
     "hooks:install": "git config core.hooksPath .githooks",
     "lint:tests": "eslint --max-warnings=0 && bun scripts/verify-eslint-rules.mjs",
     "lint:tests:verify": "bun scripts/verify-eslint-rules.mjs",

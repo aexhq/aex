@@ -67,6 +67,16 @@
         "@types/bun": "1.3.14",
       },
     },
+    "packages/wire": {
+      "name": "@aexhq/wire",
+      "version": "0.50.0",
+      "dependencies": {
+        "zod": "4.4.3",
+      },
+      "devDependencies": {
+        "@types/bun": "1.3.14",
+      },
+    },
     "services/stripe-command-edge": {
       "name": "@aexhq/stripe-command-edge",
       "version": "0.1.0",
@@ -110,6 +120,8 @@
     "@aexhq/stripe-webhook-edge": ["@aexhq/stripe-webhook-edge@workspace:services/stripe-webhook-edge"],
 
     "@aexhq/user-tests": ["@aexhq/user-tests@workspace:apps/user-tests"],
+
+    "@aexhq/wire": ["@aexhq/wire@workspace:packages/wire"],
 
     "@aws-sdk/client-lambda": ["@aws-sdk/client-lambda@3.1101.0", "", { "dependencies": { "@aws-sdk/core": "^3.977.4", "@aws-sdk/credential-provider-node": "^3.972.76", "@aws-sdk/types": "^3.974.2", "@smithy/core": "^3.31.1", "@smithy/fetch-http-handler": "^5.6.13", "@smithy/node-http-handler": "^4.9.13", "@smithy/types": "^4.16.1", "tslib": "^2.6.2" } }, "sha512-OiMqyOfqWBMqh0Ov33uICt5ZXT/PQLUEDGXg9M+MinndyIEuJRuSONrmxUShQn6xjcjohCugpUSTjTrMUAt1UQ=="],
 
