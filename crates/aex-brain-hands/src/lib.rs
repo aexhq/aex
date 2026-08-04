@@ -18,6 +18,7 @@ pub mod adapter;
 pub mod backend;
 pub mod executor;
 pub mod guest;
+mod lease;
 pub mod operation;
 pub mod port;
 
