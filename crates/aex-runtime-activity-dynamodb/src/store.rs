@@ -495,11 +495,7 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
                     transaction_token(
                         "operation-admit",
                         plan.generation,
-                        &format!(
-                            "{}:{}",
-                            plan.operation.0,
-                            plan.expected_revision.value()
-                        ),
+                        &format!("{}:{}", plan.operation.0, plan.expected_revision.value()),
                     ),
                 )
                 .await;
@@ -586,11 +582,7 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
                     transaction_token(
                         "operation-settle",
                         plan.generation,
-                        &format!(
-                            "{}:{}",
-                            plan.operation.0,
-                            plan.expected_revision.value()
-                        ),
+                        &format!("{}:{}", plan.operation.0, plan.expected_revision.value()),
                     ),
                 )
                 .await;
