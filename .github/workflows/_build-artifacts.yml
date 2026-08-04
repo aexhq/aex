@@ -986,7 +986,7 @@ jobs:
               signature_asset="signature-$unit-$signature_digest.sigstore.json"
               cp "$signature_bundle" "dist/aux-assets/$signature_asset"
               signature=$(jq -cn --arg keyId \
-                "https://github.com/$GITHUB_REPOSITORY/.github/workflows/main.yml@refs/heads/main" \
+                "https://github.com/$GITHUB_REPOSITORY/.github/workflows/_build-artifacts.yml@refs/heads/main" \
                 '{present:true,kind:"sigstore-cosign",keyId:$keyId}')
               signature_args=(--signature-bundle "$signature_bundle")
             fi

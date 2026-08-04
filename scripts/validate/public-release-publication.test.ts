@@ -113,6 +113,12 @@ describe("public main-push publication", () => {
     expect(handsAgentSignature?.run).not.toContain(
       ".github/workflows/main.yml@refs/heads/main"
     );
+    expect(source).toMatch(
+      /signature=\$\(jq -cn --arg keyId\s+\\\s+"https:\/\/github\.com\/\$GITHUB_REPOSITORY\/\.github\/workflows\/_build-artifacts\.yml@refs\/heads\/main"/
+    );
+    expect(source).not.toMatch(
+      /signature=\$\(jq -cn --arg keyId\s+\\\s+"[^"]*\/\.github\/workflows\/main\.yml@refs\/heads\/main"/
+    );
     expect(source).toContain("artifact module-bundle");
     expect(source.match(/actions\/attest@59d89421af93a897026c735860bf21b6eb4f7b26/g)).toHaveLength(5);
     expect(source).not.toContain("actions/attest-build-provenance@");
