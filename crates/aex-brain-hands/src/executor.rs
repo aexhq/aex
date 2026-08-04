@@ -598,6 +598,7 @@ mod tests {
                 executor: ExecutorRoute::Hands,
                 class: EffectClass::NonReplayable,
                 timeout_ms: 60_000,
+                concurrency_weight: 1,
                 manifest_digest: ContentHash::of(b"manifest"),
             },
             input: aex_wire::CanonicalJson::from_value(&serde_json::json!({

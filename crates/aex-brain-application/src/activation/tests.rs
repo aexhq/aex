@@ -27,8 +27,8 @@ use crate::ports::{
     DetachedStatus, DispatchTicket, EffectStore as _, FenceGuard, FoldSnapshotStore as _,
     JournalCursor, JournalPage, LeaseStore as _, PreviewSink, ProviderDispatchError,
     ProviderFailureKind, ProviderOutcome, ProviderPort, RedactedDetail, ReleaseDisposition,
-    SnapshotDiagnostic, SnapshotPublishOutcome, StoreError, StreamBudget, ToolDispatchError,
-    ToolAdvertisement, ToolOutcome, ToolResultBody, ToolRoute, UnknownResolution, WakeQueue as _,
+    SnapshotDiagnostic, SnapshotPublishOutcome, StoreError, StreamBudget, ToolAdvertisement,
+    ToolDispatchError, ToolOutcome, ToolResultBody, ToolRoute, UnknownResolution, WakeQueue as _,
 };
 use aex_brain_domain::budget::DimensionVector;
 use aex_brain_domain::child::QueuedReason;
@@ -134,7 +134,7 @@ fn capability() -> QualifiedModel {
     let mut entry = fixture::entry(
         ProviderId::Deepseek,
         "deepseek-chat",
-        CapabilitySet::default(),
+        CapabilitySet::from_slice(&[Capability::Tools]),
     );
     entry.limits.context_window_tokens = 64_000;
     entry.limits.max_output_tokens = 4_096;
@@ -277,6 +277,7 @@ fn detached_route() -> ToolRoute {
         executor: ExecutorRoute::ManagedWeb,
         class: EffectClass::DurableDetached,
         timeout_ms: 60_000,
+        concurrency_weight: 1,
         manifest_digest: ContentHash::of(b"tool manifest"),
     }
 }
@@ -467,7 +468,7 @@ impl FoldCache for DisabledFoldCache {
 }
 
 impl DispatchControl for DeferredDispatch {
-    fn admit(&self, lane: DispatchLane) -> DispatchDecision {
+    fn admit(&self, lane: DispatchLane, _weight: u16) -> DispatchDecision {
         assert_eq!(lane, self.lane);
         DispatchDecision::Deferred(self.reason)
     }

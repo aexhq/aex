@@ -17,7 +17,8 @@ use aex_brain_application::ports::{
     BoxFuture, CancelToken, DispatchTicket, FenceGuard, HandsAccepted, HandsEndpoint, HandsError,
     HandsOperationStart, HandsOperationStatus, HandsPort, PreparedToolCall, ProviderDispatchError,
     ProviderFailureKind, ProviderOutcome, ProviderPort, RedactedDetail, ResultBounds, StreamBudget,
-    ToolDispatchError, ToolOutcome, ToolPort, ToolRoute, ToolRoutingError, UnknownResolution,
+    ToolAdvertisement, ToolDispatchError, ToolOutcome, ToolPort, ToolRoute, ToolRoutingError,
+    UnknownResolution,
 };
 use aex_brain_domain::effect::{
     DetachedOperationRef, DispatchEvidence, DispatchProof, DispatchStage, DurableEffect,
@@ -127,6 +128,21 @@ impl ProviderPort for RecordingProvider {
 struct StubTools;
 
 impl ToolPort for StubTools {
+    fn advertise(&self, _pin: &CatalogPin) -> Result<ToolAdvertisement, ToolRoutingError> {
+        Ok(ToolAdvertisement {
+            definitions: vec![aex_model_catalog::canonical::CanonicalToolDef {
+                name: ToolName::parse("read_file").expect("tool name"),
+                description: BoundedString::new("Read a file.").expect("description"),
+                input_schema: CanonicalJson::parse(
+                    r#"{"type":"object","additionalProperties":true}"#,
+                )
+                .expect("schema"),
+                strict: false,
+            }],
+            parallel_safe: false,
+        })
+    }
+
     fn route(&self, _pin: &CatalogPin, name: &ToolName) -> Result<ToolRoute, ToolRoutingError> {
         if name.as_str() == "read_file" {
             Ok(ToolRoute {
@@ -134,6 +150,7 @@ impl ToolPort for StubTools {
                 executor: ExecutorRoute::ManagedWeb,
                 class: EffectClass::IdempotentManaged,
                 timeout_ms: 30_000,
+                concurrency_weight: 1,
                 manifest_digest: ContentHash::of(b"manifest"),
             })
         } else {

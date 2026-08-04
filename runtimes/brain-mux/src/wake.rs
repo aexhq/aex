@@ -55,7 +55,12 @@ use aex_model_catalog::{ProviderFailureKind, QualifiedModel};
 use aex_wire::ids::GenerationId;
 use std::sync::Arc;
 
+use aex_brain_tool_catalog::readiness::{
+    BuiltinSelection, CapabilitySet as ToolCapabilitySet, ExecutorRegistry, ReadinessInput,
+    ResolvedSecretNames, advertise,
+};
 use aex_brain_tool_catalog::router::{CompositeToolRouter, ToolExecutor};
+use aex_brain_tool_catalog::wire_pending::ExecutorRoute as CatalogExecutorRoute;
 use aex_runtime_control::store::{OpenEffectCounter, PageBudget, RuntimeActivityStore};
 use aex_runtime_control::usage::UsageFactSink;
 use aex_runtime_control_aws::worker::{Pace, RuntimeControl, RuntimePorts, RuntimeSettings};
@@ -178,8 +183,8 @@ impl MuxDispatch {
 }
 
 impl DispatchControl for MuxDispatch {
-    fn admit(&self, lane: DispatchLane) -> DispatchDecision {
-        let (kind, units, reason) = match lane {
+    fn admit(&self, lane: DispatchLane, weight: u16) -> DispatchDecision {
+        let (kind, base_units, reason) = match lane {
             DispatchLane::Provider => (
                 PermitKind::ProviderStream,
                 self.provider_streams,
@@ -199,6 +204,7 @@ impl DispatchControl for MuxDispatch {
                 QueuedReason::HandsPermits,
             ),
         };
+        let units = base_units.saturating_mul(u64::from(weight));
         match self.permits.acquire(kind, units) {
             Ok(permit) => DispatchDecision::Admitted(Some(permit)),
             Err(_) => DispatchDecision::Deferred(reason),
@@ -706,10 +712,11 @@ impl core::fmt::Debug for ProductionPeers {
     }
 }
 
-/// Concrete executors for every coarse tool route.
+/// Concrete executors available to the tool catalog.
 ///
 /// The options exist only so startup diagnostics and tests can name every absent authority.
-/// [`ProductionToolExecutors::compose`] never substitutes a refusal executor.
+/// [`ProductionToolExecutors::compose`] never substitutes a refusal executor or advertises a
+/// row that the exact linked executor does not implement.
 #[derive(Default)]
 pub struct ProductionToolExecutors {
     /// Control, park, and subagent scheduling tools.
@@ -750,39 +757,67 @@ impl ProductionToolExecutors {
     ///
     /// # Errors
     ///
-    /// Returns [`ToolCompositionError::Unbound`] before constructing a router when any
-    /// route is absent, or [`ToolCompositionError::InvalidCatalog`] when the compiled tool
-    /// manifest cannot be installed exactly.
+    /// Returns [`ToolCompositionError::InvalidCatalog`] when the executable subset cannot be
+    /// hydrated exactly. Missing optional authorities produce a smaller immutable surface.
     pub fn compose(
         self,
         pins: impl IntoIterator<Item = CatalogPin>,
     ) -> Result<Arc<dyn ToolPort>, ToolCompositionError> {
-        let missing = self.missing();
-        if !missing.is_empty() {
-            return Err(ToolCompositionError::Unbound { missing });
-        }
-        let (Some(brain_inline), Some(managed_web), Some(mcp), Some(hands)) =
-            (self.brain_inline, self.managed_web, self.mcp, self.hands)
-        else {
-            unreachable!("the missing set is derived from exactly these four executors");
-        };
         let mut router = CompositeToolRouter::new();
-        for (route, executor) in [
-            (ExecutorRoute::BrainInline, brain_inline),
-            (ExecutorRoute::ManagedWeb, managed_web),
-            (ExecutorRoute::Mcp, mcp),
-            (ExecutorRoute::Hands, hands),
-        ] {
-            router.register_executor(route, executor).map_err(|error| {
-                ToolCompositionError::InvalidCatalog {
+        let linked = [
+            (ExecutorRoute::BrainInline, self.brain_inline),
+            (ExecutorRoute::ManagedWeb, self.managed_web),
+            (ExecutorRoute::Mcp, self.mcp),
+            (ExecutorRoute::Hands, self.hands),
+        ]
+        .into_iter()
+        .filter_map(|(route, executor)| executor.map(|executor| (route, executor)))
+        .collect::<Vec<_>>();
+        for (route, executor) in &linked {
+            router
+                .register_executor(*route, Arc::clone(executor))
+                .map_err(|error| ToolCompositionError::InvalidCatalog {
                     reason: error.to_string(),
-                }
-            })?;
+                })?;
         }
         let entries = aex_brain_tool_catalog::catalog::builtin_entries().map_err(|error| {
             ToolCompositionError::InvalidCatalog {
                 reason: error.to_string(),
             }
+        })?;
+        let executable = entries
+            .iter()
+            .filter(|entry| {
+                let route = coarse_tool_route(entry.descriptor.route);
+                let Ok(name) =
+                    aex_brain_domain::ids::ToolName::parse(entry.descriptor.name.as_str())
+                else {
+                    return false;
+                };
+                linked.iter().any(|(linked_route, executor)| {
+                    *linked_route == route && executor.supports(&name)
+                })
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let executor_routes = executable
+            .iter()
+            .map(|entry| entry.descriptor.route)
+            .collect::<std::collections::BTreeSet<_>>();
+        let executor_registry = ExecutorRegistry::new(executor_routes);
+        let capabilities = ToolCapabilitySet::default();
+        let secrets = ResolvedSecretNames::default();
+        let selection = BuiltinSelection::Default;
+        let advertised = advertise(ReadinessInput {
+            entries: &executable,
+            executors: &executor_registry,
+            capabilities: &capabilities,
+            secrets: &secrets,
+            selection: &selection,
+            approval_required: &[],
+        })
+        .map_err(|error| ToolCompositionError::InvalidCatalog {
+            reason: error.to_string(),
         })?;
         let manifest = aex_brain_domain::ids::ContentHash::of(
             &aex_brain_tool_catalog::catalog::builtin_catalog_bytes().map_err(|error| {
@@ -794,7 +829,7 @@ impl ProductionToolExecutors {
         let mut installed = 0_usize;
         for pin in pins {
             router
-                .install_catalog(pin, manifest, &entries)
+                .install_catalog(pin, manifest, &entries, &advertised)
                 .map_err(|error| ToolCompositionError::InvalidCatalog {
                     reason: error.to_string(),
                 })?;
@@ -812,18 +847,26 @@ impl ProductionToolExecutors {
 /// Why the production tool router could not be composed.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ToolCompositionError {
-    /// Concrete executors are missing.
-    #[error("no production adapter is bound for: {}", .missing.join(", "))]
-    Unbound {
-        /// Every missing authority, in stable route order.
-        missing: Vec<&'static str>,
-    },
     /// The immutable catalog could not be installed.
     #[error("the production tool catalog could not be installed: {reason}")]
     InvalidCatalog {
         /// Exact build failure.
         reason: String,
     },
+}
+
+const fn coarse_tool_route(route: CatalogExecutorRoute) -> ExecutorRoute {
+    match route {
+        CatalogExecutorRoute::Control
+        | CatalogExecutorRoute::Park
+        | CatalogExecutorRoute::SubagentScheduler => ExecutorRoute::BrainInline,
+        CatalogExecutorRoute::ManagedWeb => ExecutorRoute::ManagedWeb,
+        CatalogExecutorRoute::Mcp => ExecutorRoute::Mcp,
+        CatalogExecutorRoute::HandsFilesystem
+        | CatalogExecutorRoute::HandsDevelopment
+        | CatalogExecutorRoute::HandsBrowser
+        | CatalogExecutorRoute::RegisteredCustom => ExecutorRoute::Hands,
+    }
 }
 
 /// Real snapshot adapter settings.
@@ -1207,10 +1250,9 @@ pub fn wake_loop(
 #[cfg(test)]
 mod tests {
     use super::{
-        AbsentCatalog, AbsentProvider, BRAIN_INLINE_EXECUTOR_ABSENT, Bindings, CATALOG_ABSENT,
-        CATALOG_NO_ACTIVE_MODELS, HANDS_TOOL_EXECUTOR_ABSENT, MANAGED_WEB_EXECUTOR_ABSENT,
-        MCP_EXECUTOR_ABSENT, MuxAdmission, MuxDispatch, PROVIDER_ABSENT, ProcessIds,
-        ProductionToolExecutors, STORE_UNBOUND, SystemClock, ToolCompositionError, UnboundStore,
+        AbsentCatalog, AbsentProvider, Bindings, CATALOG_ABSENT, CATALOG_NO_ACTIVE_MODELS,
+        MuxAdmission, MuxDispatch, PROVIDER_ABSENT, ProcessIds, ProductionToolExecutors,
+        STORE_UNBOUND, SystemClock, UnboundStore,
     };
     use crate::admission::{ActivationResources, Admission, AdmissionBounds};
     use aex_brain_application::activation::{
@@ -1394,11 +1436,12 @@ mod tests {
             mcp: None,
             hands: None,
         }
-        .compose([pin, CatalogPin(aex_model_catalog::Blake3Digest::of(b"older"))])
+        .compose([
+            pin,
+            CatalogPin(aex_model_catalog::Blake3Digest::of(b"older")),
+        ])
         .expect("the exact supported subset composes");
-        let advertised = tools
-            .advertise(&pin)
-            .expect("the retained pin is hydrated");
+        let advertised = tools.advertise(&pin).expect("the retained pin is hydrated");
         assert_eq!(
             advertised
                 .definitions
@@ -1439,7 +1482,10 @@ mod tests {
         assert!(!names.contains(&"web_search"), "no resolved tenant secret");
         assert!(!names.iter().any(|name| name.starts_with("mcp__")));
         assert!(!names.contains(&"read_file"), "Hands claims no typed tool");
-        assert!(!advertised.parallel_safe, "managed network work is not parallel-safe");
+        assert!(
+            !advertised.parallel_safe,
+            "managed network work is not parallel-safe"
+        );
     }
 
     #[test]

@@ -31,6 +31,7 @@ live_suite = "pure domain crate; Area 9's registry declares no independent live 
 [dependencies]
 aex-brain-domain = { path = "../aex-brain-domain" }
 aex-brain-application = { path = "../aex-brain-application" }
+aex-model-catalog = { path = "../aex-model-catalog" }
 aex-wire = { path = "../aex-wire" }
 p256.workspace = true
 jsonschema.workspace = true
@@ -41,7 +42,6 @@ thiserror.workspace = true
 time.workspace = true
 
 [dev-dependencies]
-aex-model-catalog = { path = "../aex-model-catalog" }
 insta.workspace = true
 
 [[test]]

@@ -295,8 +295,8 @@ pub enum DispatchLane {
 /// durable typed continuation while the effect remains `prepared`; activation never waits
 /// locally with a lease and never crosses the pre-send fence without a permit.
 pub trait DispatchControl: core::fmt::Debug + Send + Sync + 'static {
-    /// Tries to acquire the exact lane immediately.
-    fn admit(&self, lane: DispatchLane) -> DispatchDecision;
+    /// Tries to acquire the exact weighted lane immediately.
+    fn admit(&self, lane: DispatchLane, weight: u16) -> DispatchDecision;
 }
 
 /// What phase-specific dispatch admission decided.
@@ -411,6 +411,14 @@ pub enum ActivationError {
     /// commit to the same canonical outcome.
     #[error("provider outcome proof, usage and receipt do not match")]
     InvalidProviderOutcome,
+    /// A truthful tool surface exceeded the selected model's declaration bound.
+    #[error("tool surface has {advertised} definitions; selected model permits {max}")]
+    ToolLimitExceeded {
+        /// Provider-visible definitions in the immutable advertisement.
+        advertised: usize,
+        /// Maximum declarations accepted by the selected model.
+        max: u16,
+    },
     /// A system instruction reference reached activation without content hydration.
     #[error("system instruction content was not hydrated before provider request construction")]
     UnhydratedSystem,

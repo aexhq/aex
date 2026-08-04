@@ -208,6 +208,7 @@ mod tests {
                 executor: ExecutorRoute::BrainInline,
                 class: EffectClass::Pure,
                 timeout_ms: 50,
+                concurrency_weight: 0,
                 manifest_digest: ContentHash::of(b"tool catalog"),
             },
             input,

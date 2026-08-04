@@ -23,9 +23,9 @@ use crate::ports::{
     JournalPage, JournalStore, LeaseStore, MAX_DUE_ROW_ISOLATIONS, MalformedWakeDelivery,
     MalformedWakeReason, PreparedToolCall, PreviewSink, ProviderDispatchError, ProviderOutcome,
     ProviderPort, ReadBudget, RedactedDetail, ReleaseDisposition, ResultBounds, SessionAuthority,
-    SnapshotPublishOutcome, SteadyInstant, StoreError, StreamBudget, ToolDispatchError,
-    ToolOutcome, ToolPort, ToolRoute, ToolRoutingError, WakeBatch, WakeDelivery, WakeOrigin,
-    WakeQueue, WakeState,
+    SnapshotPublishOutcome, SteadyInstant, StoreError, StreamBudget, ToolAdvertisement,
+    ToolDispatchError, ToolOutcome, ToolPort, ToolRoute, ToolRoutingError, WakeBatch, WakeDelivery,
+    WakeOrigin, WakeQueue, WakeState,
 };
 use aex_brain_domain::budget::BudgetNode;
 use aex_brain_domain::commit::{DecisionCommit, EffectWrite};
@@ -374,6 +374,7 @@ impl ProviderPort for ScriptedProvider {
 #[derive(Debug, Default)]
 pub struct ScriptedTools {
     routes: Mutex<BTreeMap<String, ToolRoute>>,
+    advertisement: ToolAdvertisement,
     invocations: Mutex<VecDeque<Result<ToolOutcome, ToolDispatchError>>>,
     queries: Mutex<VecDeque<Result<DetachedStatus, ToolDispatchError>>>,
     invoked: Mutex<Vec<String>>,
@@ -388,6 +389,21 @@ impl ScriptedTools {
         routes: impl IntoIterator<Item = ToolRoute>,
         script: impl IntoIterator<Item = Result<ToolOutcome, ToolDispatchError>>,
     ) -> Self {
+        let routes = routes.into_iter().collect::<Vec<_>>();
+        let mut definitions = routes
+            .iter()
+            .map(|route| aex_model_catalog::canonical::CanonicalToolDef {
+                name: route.name.clone(),
+                description: aex_model_catalog::BoundedString::new("activation fixture tool")
+                    .expect("bounded fixture description"),
+                input_schema: aex_wire::CanonicalJson::parse(
+                    r#"{"type":"object","additionalProperties":true}"#,
+                )
+                .expect("canonical fixture schema"),
+                strict: false,
+            })
+            .collect::<Vec<_>>();
+        definitions.sort_by(|left, right| left.name.cmp(&right.name));
         Self {
             routes: Mutex::new(
                 routes
@@ -395,6 +411,10 @@ impl ScriptedTools {
                     .map(|route| (route.name.as_str().to_owned(), route))
                     .collect(),
             ),
+            advertisement: ToolAdvertisement {
+                definitions,
+                parallel_safe: false,
+            },
             invocations: Mutex::new(script.into_iter().collect()),
             queries: Mutex::new(VecDeque::new()),
             invoked: Mutex::new(Vec::new()),
@@ -431,6 +451,10 @@ impl ScriptedTools {
 }
 
 impl ToolPort for ScriptedTools {
+    fn advertise(&self, _pin: &CatalogPin) -> Result<ToolAdvertisement, ToolRoutingError> {
+        Ok(self.advertisement.clone())
+    }
+
     fn route(&self, pin: &CatalogPin, name: &ToolName) -> Result<ToolRoute, ToolRoutingError> {
         self.routes
             .lock()

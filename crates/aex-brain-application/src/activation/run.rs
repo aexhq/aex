@@ -26,7 +26,8 @@ use crate::ports::{
     BoxFuture, CancelToken, Claim, ClaimError, CommitError, ConditionFailure, ControlStateView,
     DecisionContext, DetachedStatus, DueRowIsolation, DueScanCursor, FenceGuard,
     MAX_DUE_ROW_ISOLATIONS, NullPreviewSink, PreparedToolCall, ReleaseDisposition,
-    SessionAuthority, StoreError, StreamBudget, ToolOutcome, WakeDelivery, WakeOrigin, WakeState,
+    SessionAuthority, StoreError, StreamBudget, ToolAdvertisement, ToolOutcome, ToolRoutingError,
+    WakeDelivery, WakeOrigin, WakeState,
 };
 use aex_brain_domain::canonical::canonicalize_value;
 use aex_brain_domain::child::QueuedReason;
@@ -48,13 +49,57 @@ use aex_brain_domain::wire_pending::{
     CanonicalMessage, CanonicalModelRequest, ContentBlockRef, DurableOperationSupport,
     ResolvedAgentConfig, Role,
 };
-use aex_model_catalog::BoundedString;
-use aex_model_catalog::canonical::{CorrelationId, ReasoningRequest, ToolChoice, ToolResultPart};
+use aex_model_catalog::canonical::{
+    CanonicalToolDef, CorrelationId, ReasoningRequest, ToolChoice, ToolResultPart,
+};
+use aex_model_catalog::document::Capability;
+use aex_model_catalog::{BoundedString, QualifiedModel};
 use futures::stream::{self, StreamExt as _};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
+
+/// Provider request fields derived only from the qualified model and immutable tool surface.
+pub(super) struct ModelToolFields {
+    pub(super) tools: Vec<CanonicalToolDef>,
+    pub(super) choice: ToolChoice,
+    pub(super) parallel: bool,
+}
+
+/// Qualifies one immutable advertisement against the selected model without truncation.
+pub(super) fn model_tool_fields(
+    model: &QualifiedModel,
+    advertised: ToolAdvertisement,
+) -> Result<ModelToolFields, ActivationError> {
+    if !model.capabilities().has(Capability::Tools) {
+        return Ok(ModelToolFields {
+            tools: Vec::new(),
+            choice: ToolChoice::None,
+            parallel: false,
+        });
+    }
+    let advertised_count = advertised.definitions.len();
+    if advertised_count > usize::from(model.limits().max_tools) {
+        return Err(ActivationError::ToolLimitExceeded {
+            advertised: advertised_count,
+            max: model.limits().max_tools,
+        });
+    }
+    let choice = if advertised.definitions.is_empty() {
+        ToolChoice::None
+    } else {
+        ToolChoice::Auto
+    };
+    let parallel = !advertised.definitions.is_empty()
+        && advertised.parallel_safe
+        && model.capabilities().has(Capability::ParallelTools);
+    Ok(ModelToolFields {
+        tools: advertised.definitions,
+        choice,
+        parallel,
+    })
+}
 
 /// One activation: everything from claiming an agent to acking its wake.
 #[derive(Debug, Clone)]
@@ -1140,10 +1185,10 @@ impl Session<'_> {
         );
     }
 
-    fn dispatch_admission(&self, lane: DispatchLane) -> DispatchDecision {
+    fn dispatch_admission(&self, lane: DispatchLane, weight: u16) -> DispatchDecision {
         self.dispatch.map_or_else(
             || DispatchDecision::Admitted(None),
-            |control| control.admit(lane),
+            |control| control.admit(lane, weight),
         )
     }
 
@@ -1334,13 +1379,17 @@ impl Session<'_> {
             });
         }
         let max_output_tokens = capability.limits().max_output_tokens;
+        let tool_fields = model_tool_fields(
+            &capability,
+            self.ports.tools.advertise(&config.catalog_pin)?,
+        )?;
         let mut request = CanonicalModelRequest {
             selection: capability,
             system: Vec::new(),
             messages,
-            tools: Vec::new(),
-            tool_choice: ToolChoice::None,
-            parallel_tools: false,
+            tools: tool_fields.tools,
+            tool_choice: tool_fields.choice,
+            parallel_tools: tool_fields.parallel,
             max_output_tokens,
             temperature_milli: None,
             top_p_milli: None,
@@ -1389,7 +1438,7 @@ impl Session<'_> {
             return Ok(Step::Stop(Stop::HandedBack));
         }
 
-        let _dispatch_permits = match self.dispatch_admission(DispatchLane::Provider) {
+        let _dispatch_permits = match self.dispatch_admission(DispatchLane::Provider, 1) {
             DispatchDecision::Admitted(permits) => permits,
             DispatchDecision::Deferred(reason) => {
                 // The effect is still prepared: no pre-send ticket exists and no byte may
@@ -1564,7 +1613,13 @@ impl Session<'_> {
             ExecutorRoute::BrainInline => None,
         };
         let _dispatch_permits = if let Some(lane) = dispatch_lane {
-            match self.dispatch_admission(lane) {
+            if route.concurrency_weight == 0 {
+                return Err(ToolRoutingError::InvalidConcurrencyWeight {
+                    name: route.name.as_str().to_owned(),
+                }
+                .into());
+            }
+            match self.dispatch_admission(lane, route.concurrency_weight) {
                 DispatchDecision::Admitted(permits) => permits,
                 DispatchDecision::Deferred(reason) => {
                     self.hand_back_for(reason).await?;

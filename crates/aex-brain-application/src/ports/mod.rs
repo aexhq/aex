@@ -56,6 +56,6 @@ pub use store::{
     WakeBatch, WakeDelivery, WakeOrigin, WakeQueue, WakeState,
 };
 pub use tool::{
-    ControlStateView, DetachedStatus, PreparedToolCall, ToolDispatchError, ToolOutcome, ToolPort,
-    ToolResultBody, ToolRoute, ToolRoutingError,
+    ControlStateView, DetachedStatus, PreparedToolCall, ToolAdvertisement, ToolDispatchError,
+    ToolOutcome, ToolPort, ToolResultBody, ToolRoute, ToolRoutingError,
 };

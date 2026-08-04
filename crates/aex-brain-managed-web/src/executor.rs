@@ -527,6 +527,7 @@ mod tests {
                 executor: ExecutorRoute::ManagedWeb,
                 class: EffectClass::NonReplayable,
                 timeout_ms: 30_000,
+                concurrency_weight: 4,
                 manifest_digest: ContentHash::of(b"manifest"),
             },
             input: aex_wire::CanonicalJson::from_value(input).expect("canonical input"),
