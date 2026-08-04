@@ -290,7 +290,7 @@ base64 = "0.23.0"
 hex = "0.4.3"
 # num-bigint stays on 0.4 so it is the same crate version num-rational 0.4 uses;
 # 0.5 exists but would split the graph and break exact rational interop.
-num-bigint = { version = "0.4.8", features = ["serde"] }
+num-bigint = { version = "0.5.1", features = ["serde"] }
 num-rational = { version = "0.4.2", default-features = false, features = ["std", "num-bigint", "serde"] }
 num-traits = "0.2.19"
 rand = { version = "0.10.2", features = ["std", "std_rng", "thread_rng"] }
