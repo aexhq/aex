@@ -43,7 +43,7 @@
     "semver": "7.8.5",
     "typescript": "5.8.3",
     "typescript-eslint": "8.36.0",
-    "undici": "7.25.0",
+    "undici": "7.29.0",
     "yaml": "2.9.0",
     "zod": "4.4.3"
   },
@@ -52,7 +52,7 @@
   },
   "overrides": {
     "aex": "file:./packages/sdk",
-    "next": "16.2.6",
+    "next": "16.2.11",
     "fflate": "0.8.3"
   },
   "trustedDependencies": [
