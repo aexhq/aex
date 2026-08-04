@@ -632,10 +632,46 @@ on.
 | Route(s) | Blocker |
 | --- | --- |
 | `secret_put`, `provider_credential_register` | KMS `ReEncrypt` closes context-changing rewrap only; it requires an existing source ciphertext and does not expose the active branch-key ciphertext that a first seal needs. `SecretCrypto::seal` still takes that ciphertext, while `aex_secret_keystore_dynamodb::ActiveBranchKey` publishes `version`, `create_time`, `kms_arn` and `hierarchy_version` but not `BranchKeyRecord::enc`. `secret_put` also declares `Idempotency-Key`, but `expressions::set` has only generation, metadata and lineage participants and writes no durable receipt, so replay/collision and an ambiguous transaction outcome cannot be resolved honestly. `provider_credential_register` has no register expression or atomic secret-generation + metadata + `pcr_` binding + receipt transaction. Its generated request carries a human label and plaintext but no workspace-secret identity, while OD-23 requires the `pcr_` row to reference one; no accepted record decides the minted secret name, label/name uniqueness, or collision behavior, and the generated route declares no collision error. A retry must also replay the original minted `pcr_` id, which requires the missing receipt transaction. Both routes therefore remain unserved. |
-| the 15 `sessions` routes | `aex-session-dynamodb`'s stored `SessionHead` cannot decode into `aex_session_domain::Session`: it holds no `initial_root`, `persisted_root`, `persist_revision`, `last_persisted_at`, `generation`, `work_admission`, `mutation_guard` or `lineage`, so `aex_session_app::ports::SessionReader` has nothing to build a snapshot from, and **no adapter implements any `aex-session-app` port** — a grep for `SessionReader` outside `aex-session-app` finds nothing. `session_get` and `sessions_list` are blocked twice over: the head stores only a `resolvedConfigDigest`, while `Session.resolvedConfig` and `SessionListItem.{model, provider}` need the resolved configuration itself. `session_create` is blocked a third time — `aex-session-app` declares `create_session` as an unwritten use case. |
+| `session_create` | The canonical session document is now complete, but creation authority is still absent. `aex-session-app` has no `create_session` use case; no production adapter implements its `SessionReader`, registry, content, custody, limits or commit ports; and the generated handler returns `not_served`. More importantly, `SessionTransaction` has no runtime-activity table family or write. The runtime adapter can create a generation head and a `SESSIONGEN#{session}/CURRENT` pointer only through separate hidden methods, so no caller can atomically land the session head, root agent, immutable `HandsGeneration`, current-generation pointer, sealed registry/root pin, custody binding, idempotency receipt and created event required by session creation. The internal outbox contract currently carries terminal run events only, so the `session.created` event shape is also missing. |
+| the remaining `sessions` routes | The canonical session codec now round-trips the complete domain session and checked list projections, superseding the earlier incomplete-head blocker. The application boundary is still unwired: no production adapter implements an `aex-session-app` port or its `AuthorityCommitter`, and the finite API handlers remain explicitly unserved until their complete read/command paths exist. |
 | `session_message_send`, `session_messages_list` | **Contract gap.** `aex_wire::models::MessagePart` is `Text` or `File`; `aex_session_domain::MessagePart` is `Text`, `ToolCall` or `ToolResult`. The two vocabularies intersect only at `Text`, so neither direction is total: a wire `File` part has no domain arm and a domain tool part has no wire arm. No adapter work can close this. |
 | the 21 `registry`, 6 `files`, 4 `uploads`, 3 `approvals`, 3 `operations`, 1 `usage` and 3 `workspace` routes | Their adapters exist but no projection was written for them in this pass. They are mechanically the same shape as the four served here — read the row, project, tag, page — and are unblocked. |
 | `provider_credential_revoke` | Servable: the expression, the store method and the projection all exist. It is left unmounted only because the directory cannot be populated until `provider_credential_register` lands, so nothing would exercise it end to end. |
+
+### Session-create and Hands-generation closure
+
+This is a release-blocking product path, not a provider-registration detail.
+Publishing eight immutable Hands images makes them available; it does not give a
+session a generation. The accepted H-LAZY boundary requires session creation to
+allocate and persist the logical generation while making **no** provider call.
+The first Hands operation materializes that already-pinned generation later.
+
+The smallest correct implementation is one owned slice:
+
+1. `aex-session-app::create_session` resolves the request, selects one exact
+   image ARN/version/artifact digest from the deployment's immutable eight-entry
+   catalog, mints the session/root-agent/generation identities once, and returns
+   one closed transaction plan.
+2. The plan vocabulary gains typed runtime-generation and current-pointer
+   writes. `aex-runtime-activity-dynamodb` publishes builders for the initial
+   `requested`, fence-zero, revision-zero rows rather than exposing a second
+   independent commit.
+3. The production session adapters implement the existing application ports and
+   compile the session, runtime, registry/content, custody, receipt and created
+   event participants into one DynamoDB transaction. The receipt identity and
+   deterministic `ClientRequestToken` make an ambiguous retry return the same
+   minted identities.
+4. `regional-session-api` mounts `session_create` only after the transaction and
+   its replay/conflict path pass through the real router and adapter tests.
+
+The alternatives are materially worse. Allocating the generation in a second
+transaction leaves either a session that can never launch Hands or an orphan
+generation after a crash. Allocating it on the first tool call moves catalog
+selection onto a high-concurrency latency path and lets a mutable catalog change
+which image a retry means. A runtime database catalog adds a network read and a
+new availability dependency to every allocation. Selecting from the immutable
+deployment catalog in process is O(1), and the single bounded transaction gives
+one concurrency winner without a compensating repair workflow.
 
 ### The listener is still health-only
 
