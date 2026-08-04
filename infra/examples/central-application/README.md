@@ -15,6 +15,11 @@ written down as names. A schedule in this root can therefore only ever point at
 an alias or a revisioned task definition this root actually created; there is no
 spelling of a mutable target that would still plan.
 
+The schema admin input includes an explicit `stop_timeout`. The example passes
+that release-pinned value directly into the one-shot task definition so ECS
+shutdown behavior is part of the deployed release identity rather than an
+implicit platform default.
+
 ## Sanitized values
 
 Every value is a variable with no default. No account id, ARN or domain appears

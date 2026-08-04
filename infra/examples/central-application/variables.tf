@@ -78,6 +78,7 @@ variable "schema_admin" {
     image              = string
     cpu                = number
     memory             = number
+    stop_timeout       = number
     log_group_name     = string
     secret_env         = map(string)
     execution_role_arn = string

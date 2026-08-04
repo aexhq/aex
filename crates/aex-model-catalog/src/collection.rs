@@ -305,6 +305,12 @@ impl VerifiedCatalogCollection {
     }
 
     /// Verified newest head, including publisher and sequence.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the collection's verified admission pin is absent from
+    /// its retained catalogs. Construction establishes that invariant, and
+    /// the collection exposes no operation that can remove a retained catalog.
     #[must_use]
     pub fn head(&self) -> CatalogHead {
         self.catalogs
