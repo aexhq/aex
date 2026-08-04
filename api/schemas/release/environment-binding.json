@@ -2,13 +2,12 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.aex.dev/release/v1/environment-binding.json",
   "title": "aex.environment-binding.v1",
-  "description": "The public shape of a private environment binding. The private repository supplies the values; this schema is what makes them reviewable. Plaintext secrets are structurally impossible: every secret field is a reference type, so a binding carrying a credential is invalid rather than merely discouraged.",
+  "description": "The public shape of a private environment binding. The private repository supplies the values; this schema is what makes them reviewable. The containing source commit is external provenance and is deliberately not sealed into this content-addressed document. Plaintext secrets are structurally impossible: every secret field is a reference type, so a binding carrying a credential is invalid rather than merely discouraged.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "schema",
     "bindingDigest",
-    "bindingRef",
     "plane",
     "regions",
     "desiredReleaseId",
@@ -25,7 +24,6 @@
       "description": "sha256 over RFC 8785 canonical bytes with bindingDigest removed.",
       "$ref": "#/$defs/sha256"
     },
-    "bindingRef": { "$ref": "#/$defs/sha1" },
     "plane": { "enum": ["dev", "prd"] },
     "regions": {
       "description": "Unique AWS regions in ascending lexical order.",
@@ -147,7 +145,6 @@
     }
   },
   "$defs": {
-    "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
-    "sha1": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+    "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
   }
 }

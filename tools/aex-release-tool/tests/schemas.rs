@@ -291,7 +291,6 @@ fn the_binding_schema_has_no_field_a_secret_value_can_occupy() {
     let binding = json!({
         "schema": "aex.environment-binding.v1",
         "bindingDigest": digest(0x51),
-        "bindingRef": sha1(),
         "plane": "dev",
         "regions": ["eu-west-1"],
         "desiredReleaseId": digest(0x11),

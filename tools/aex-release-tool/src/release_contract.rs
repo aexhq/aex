@@ -29,8 +29,6 @@ pub struct EnvironmentBinding {
     pub schema: String,
     /// Self digest over canonical bytes with this field removed.
     pub binding_digest: String,
-    /// Exact private repository commit.
-    pub binding_ref: String,
     /// Hosted plane.
     pub plane: String,
     /// Enabled regions.
@@ -456,7 +454,6 @@ pub fn parse_environment_binding(text: &str) -> Result<EnvironmentBinding> {
         "binding-digest-mismatch",
         &mut violations,
     )?;
-    validate_sha1("binding-ref-invalid", &binding.binding_ref, &mut violations);
     validate_sha256(
         "release-id-invalid",
         &binding.desired_release_id,

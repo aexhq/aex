@@ -40,6 +40,28 @@ fn environment_binding_accepts_references_and_rejects_tampering() {
     let binding = parse_environment_binding(&valid).unwrap();
     assert_eq!(binding.plane, "dev");
     assert_eq!(binding.secrets.len(), 1);
+    assert!(
+        serde_json::to_value(&binding)
+            .unwrap()
+            .get("bindingRef")
+            .is_none(),
+        "the sealed binding must not claim custody of its containing Git commit"
+    );
+
+    let mut self_referential: Value = serde_json::from_str(&valid).unwrap();
+    self_referential["bindingRef"] =
+        Value::String("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned());
+    let self_referential = with_self_digest(
+        &canon::to_string(&self_referential).unwrap(),
+        "bindingDigest",
+    );
+    assert!(
+        parse_environment_binding(&self_referential)
+            .unwrap_err()
+            .rules()
+            .contains(&"environment-binding-invalid"),
+        "external source custody must not be sealed into the binding document"
+    );
 
     let mut tampered: Value = serde_json::from_str(&valid).unwrap();
     tampered["plane"] = Value::String("prd".to_owned());
