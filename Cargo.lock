@@ -103,12 +103,16 @@ dependencies = [
  "aex-brain-managed-web",
  "aex-brain-tool-catalog",
  "aex-wire",
+ "async-trait",
  "base64 0.23.0",
  "proptest",
+ "reqwest",
  "rmcp",
  "serde",
  "serde_json",
  "thiserror",
+ "tokio",
+ "url",
 ]
 
 [[package]]
@@ -177,7 +181,6 @@ dependencies = [
  "blake3",
  "bytes",
  "futures",
- "http 1.5.0",
  "serde",
  "serde_json",
  "thiserror",

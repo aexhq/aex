@@ -14,6 +14,7 @@
 //! - server hosting: this crate is the client side
 
 pub mod client;
+pub mod pool;
 pub mod recovery;
 
 #[cfg(test)]
