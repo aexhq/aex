@@ -203,6 +203,46 @@
         }
       }
     },
+    "architectureQualification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifactDigest",
+        "target",
+        "hostIdentity",
+        "executorIdentity",
+        "executorKind",
+        "bootstrapResult",
+        "dependencyLoaderResult",
+        "observedAt",
+        "expiresAt",
+        "workloadSmokes"
+      ],
+      "properties": {
+        "artifactDigest": { "$ref": "#/$defs/sha256" },
+        "target": { "const": "aarch64" },
+        "hostIdentity": { "type": "string", "minLength": 1 },
+        "executorIdentity": { "type": "string", "minLength": 1 },
+        "executorKind": { "enum": ["native", "emulated"] },
+        "bootstrapResult": { "enum": ["passed", "failed"] },
+        "dependencyLoaderResult": { "enum": ["passed", "failed"] },
+        "observedAt": { "type": "string", "format": "date-time" },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "workloadSmokes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "result"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "result": { "enum": ["passed", "failed"] }
+            }
+          }
+        }
+      }
+    },
     "data": {
       "type": "object",
       "additionalProperties": false,
@@ -220,6 +260,13 @@
     "completedAt": { "type": "string", "format": "date-time" },
     "conclusion": { "enum": ["passed", "failed", "infrastructure_failed", "incomplete"] }
   },
+  "allOf": [
+    {
+      "if": { "properties": { "class": { "const": "arch-qualification" } }, "required": ["class"] },
+      "then": { "required": ["architectureQualification"] },
+      "else": { "not": { "required": ["architectureQualification"] } }
+    }
+  ],
   "$defs": {
     "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
     "sha1": { "type": "string", "pattern": "^[0-9a-f]{40}$" }

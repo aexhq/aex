@@ -223,6 +223,32 @@ fn the_receipt_schema_forbids_an_observed_secret_canary() {
 }
 
 #[test]
+fn architecture_receipts_require_the_exact_arm_execution_shape() {
+    let mut receipt = valid_receipt();
+    receipt["class"] = json!("arch-qualification");
+    assert!(
+        !schema_accepts(SchemaName::EvidenceReceipt, &receipt),
+        "naming the class without exact execution evidence must fail closed"
+    );
+    receipt["architectureQualification"] = json!({
+        "artifactDigest": digest(0x32),
+        "target": "aarch64",
+        "hostIdentity": "github-hosted-ubuntu-arm64",
+        "executorIdentity": "native-linux-arm64",
+        "executorKind": "native",
+        "bootstrapResult": "passed",
+        "dependencyLoaderResult": "passed",
+        "observedAt": "2026-08-01T00:00:00Z",
+        "expiresAt": "2026-08-08T00:00:00Z",
+        "workloadSmokes": [{ "id": "bootstrap-start", "result": "passed" }]
+    });
+    assert!(schema_accepts(SchemaName::EvidenceReceipt, &receipt));
+
+    receipt["architectureQualification"]["target"] = json!("x86_64");
+    assert!(!schema_accepts(SchemaName::EvidenceReceipt, &receipt));
+}
+
+#[test]
 fn the_envelope_schema_forbids_a_mutable_location_and_a_dirty_tree() {
     let mut envelope = valid_envelope();
     envelope["output"]["location"]["immutable"] = json!(false);

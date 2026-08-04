@@ -159,6 +159,42 @@ pub struct Attachment {
     pub size_bytes: u64,
 }
 
+/// One workload smoke recorded by architecture qualification.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ArchitectureSmoke {
+    /// Stable smoke identifier.
+    pub id: String,
+    /// Derived smoke result; only `passed` qualifies.
+    pub result: String,
+}
+
+/// Execution evidence for exact ARM artifact bytes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ArchitectureQualification {
+    /// Exact packaged artifact or OCI manifest digest that executed.
+    pub artifact_digest: String,
+    /// Release target identity. Strict v1 permits only `aarch64`.
+    pub target: String,
+    /// Physical host or VM identity.
+    pub host_identity: String,
+    /// Executor identity, including its pinned version or image digest.
+    pub executor_identity: String,
+    /// Whether execution used a native host or faithful emulation.
+    pub executor_kind: String,
+    /// Bootstrap or process-start result.
+    pub bootstrap_result: String,
+    /// Dynamic-loader and dependency result.
+    pub dependency_loader_result: String,
+    /// When the execution observation was made.
+    pub observed_at: String,
+    /// Hard expiry for this qualification.
+    pub expires_at: String,
+    /// Workload-specific smoke results.
+    pub workload_smokes: Vec<ArchitectureSmoke>,
+}
+
 /// Test-data hygiene.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -264,6 +300,9 @@ pub struct Receipt {
     /// Hashed attachments.
     #[serde(default)]
     pub attachments: Vec<Attachment>,
+    /// Exact-byte ARM execution evidence, present only for `arch-qualification`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub architecture_qualification: Option<ArchitectureQualification>,
     /// Data hygiene.
     pub data: DataBlock,
     /// When it started.
@@ -427,6 +466,79 @@ impl Receipt {
                 ),
             ));
         }
+        match (&*self.class, &self.architecture_qualification) {
+            ("arch-qualification", None) => violations.push(Violation::new(
+                "arch-qualification-missing",
+                format!(
+                    "receipt `{}` names arch-qualification without exact-byte execution evidence",
+                    self.receipt_id
+                ),
+            )),
+            ("arch-qualification", Some(qualification)) => {
+                if qualification.target != "aarch64" {
+                    violations.push(Violation::new(
+                        "arch-qualification-target",
+                        format!(
+                            "receipt `{}` qualifies target `{}`, not clean-cut `aarch64`",
+                            self.receipt_id, qualification.target
+                        ),
+                    ));
+                }
+                if !matches!(qualification.executor_kind.as_str(), "native" | "emulated") {
+                    violations.push(Violation::new(
+                        "arch-qualification-executor",
+                        format!(
+                            "receipt `{}` has unsupported executor kind `{}`",
+                            self.receipt_id, qualification.executor_kind
+                        ),
+                    ));
+                }
+                if qualification.bootstrap_result != "passed"
+                    || qualification.dependency_loader_result != "passed"
+                    || qualification.workload_smokes.is_empty()
+                    || qualification
+                        .workload_smokes
+                        .iter()
+                        .any(|smoke| smoke.result != "passed")
+                {
+                    violations.push(Violation::new(
+                        "arch-qualification-workload",
+                        format!(
+                            "receipt `{}` did not pass bootstrap, loader and every declared workload smoke",
+                            self.receipt_id
+                        ),
+                    ));
+                }
+                let observed = time::OffsetDateTime::parse(
+                    &qualification.observed_at,
+                    &time::format_description::well_known::Rfc3339,
+                );
+                let expires = time::OffsetDateTime::parse(
+                    &qualification.expires_at,
+                    &time::format_description::well_known::Rfc3339,
+                );
+                if observed.is_err()
+                    || expires.is_err()
+                    || expires.is_ok_and(|expiry| observed.is_ok_and(|start| expiry <= start))
+                {
+                    violations.push(Violation::new(
+                        "arch-qualification-expiry",
+                        format!(
+                            "receipt `{}` has an invalid or non-increasing ARM qualification window",
+                            self.receipt_id
+                        ),
+                    ));
+                }
+            }
+            (_, Some(_)) => violations.push(Violation::new(
+                "arch-qualification-class",
+                format!(
+                    "receipt `{}` carries ARM qualification evidence under class `{}`",
+                    self.receipt_id, self.class
+                ),
+            )),
+            (_, None) => {}
+        }
         if violations.is_empty() {
             Ok(())
         } else {
@@ -511,6 +623,9 @@ pub struct RunContext {
     /// What it is about.
     #[serde(default)]
     pub subject: Subject,
+    /// Exact-byte ARM execution evidence, present only for `arch-qualification`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub architecture_qualification: Option<ArchitectureQualification>,
     /// How it selected.
     pub selection: SelectionBlock,
     /// Data hygiene.
@@ -561,6 +676,7 @@ pub fn new_receipt(context: RunContext, junit: &JunitSummary) -> Result<Receipt>
         source: context.source,
         inputs: context.inputs,
         subject: context.subject,
+        architecture_qualification: context.architecture_qualification,
         selection: context.selection,
         inventory,
         failures: Vec::new(),
@@ -674,6 +790,7 @@ pub fn new_command_receipt(context: RunContext, summary: CargoCommandSummary) ->
         source: context.source,
         inputs: context.inputs,
         subject: context.subject,
+        architecture_qualification: context.architecture_qualification,
         selection: context.selection,
         inventory: Inventory {
             declared: 1,
@@ -778,6 +895,7 @@ pub fn new_check_receipt(context: RunContext, report: &CheckReport) -> Result<Re
         source: context.source,
         inputs: context.inputs,
         subject: context.subject,
+        architecture_qualification: context.architecture_qualification,
         selection: context.selection,
         inventory: Inventory {
             declared: context.declared,
@@ -976,6 +1094,31 @@ pub fn check_freshness(
                     receipt.receipt_id,
                     receipt.class,
                     age.whole_hours()
+                ),
+            ));
+        }
+    }
+    if let Some(qualification) = &receipt.architecture_qualification {
+        let expires = time::OffsetDateTime::parse(
+            &qualification.expires_at,
+            &time::format_description::well_known::Rfc3339,
+        )
+        .map_err(|err| {
+            ToolError::single(
+                Exit::EvidenceStale,
+                "arch-qualification-expiry-unparseable",
+                format!(
+                    "receipt `{}` has expiresAt `{}`: {err}",
+                    receipt.receipt_id, qualification.expires_at
+                ),
+            )
+        })?;
+        if now > expires {
+            violations.push(Violation::new(
+                "evidence-stale",
+                format!(
+                    "receipt `{}` ARM qualification expired at {}",
+                    receipt.receipt_id, qualification.expires_at
                 ),
             ));
         }
@@ -1215,6 +1358,7 @@ mod tests {
             },
             failures: Vec::new(),
             attachments: Vec::new(),
+            architecture_qualification: None,
             data: DataBlock {
                 budget_micro_usd: None,
                 spent_micro_usd: None,
@@ -1235,6 +1379,38 @@ mod tests {
         sealed.verify().unwrap();
         let again = sealed.clone().seal().unwrap();
         assert_eq!(sealed.receipt_digest, again.receipt_digest);
+    }
+
+    #[test]
+    fn architecture_qualification_requires_exact_arm_execution_evidence() {
+        let mut qualified = receipt("arch-qualification");
+        let missing = qualified.verify().unwrap_err();
+        assert!(missing.rules().contains(&"arch-qualification-missing"));
+
+        qualified.architecture_qualification = Some(super::ArchitectureQualification {
+            artifact_digest: format!("sha256:{}", "b".repeat(64)),
+            target: "aarch64".to_owned(),
+            host_identity: "github-hosted-ubuntu-arm64".to_owned(),
+            executor_identity: "native-linux-arm64".to_owned(),
+            executor_kind: "native".to_owned(),
+            bootstrap_result: "passed".to_owned(),
+            dependency_loader_result: "passed".to_owned(),
+            observed_at: "2026-08-01T00:00:00Z".to_owned(),
+            expires_at: "2026-08-08T00:00:00Z".to_owned(),
+            workload_smokes: vec![super::ArchitectureSmoke {
+                id: "bootstrap-start".to_owned(),
+                result: "passed".to_owned(),
+            }],
+        });
+        qualified.verify().unwrap();
+
+        qualified
+            .architecture_qualification
+            .as_mut()
+            .unwrap()
+            .target = "x86_64".to_owned();
+        let wrong_target = qualified.verify().unwrap_err();
+        assert!(wrong_target.rules().contains(&"arch-qualification-target"));
     }
 
     #[test]
@@ -1514,6 +1690,7 @@ mod tests {
             source: template.source,
             inputs: super::Inputs::default(),
             subject: super::Subject::default(),
+            architecture_qualification: None,
             selection: template.selection,
             data: template.data,
             started_at: "2026-08-01T00:00:00Z".to_owned(),
