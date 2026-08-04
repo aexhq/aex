@@ -344,11 +344,11 @@ fn build_edge(
 async fn wait_for_termination() {
     #[cfg(unix)]
     {
-        let mut terminate =
-            match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-                Ok(signal) => signal,
-                Err(_) => return std::future::pending().await,
-            };
+        let Ok(mut terminate) =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        else {
+            return std::future::pending().await;
+        };
         tokio::select! {
             _ = terminate.recv() => {}
             _ = tokio::signal::ctrl_c() => {}
