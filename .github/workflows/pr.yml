@@ -147,6 +147,9 @@ jobs:
     with:
       lane: pr
       receipt_jobs: >-
-        {"rust":"${{ needs.route.outputs.has_test }}","node":"${{ needs.route.outputs.has_node }}","terraform":"${{ needs.route.outputs.has_terraform }}"}
+        {"rust":{"job":"rust","selected":"${{ needs.route.outputs.has_test }}"},"node":{"job":"node","selected":"${{ needs.route.outputs.has_node }}"},"terraform":{"job":"terraform","selected":"${{ needs.route.outputs.has_terraform }}"}}
+      rust_matrix: ${{ needs.route.outputs.test_matrix }}
+      node_matrix: ${{ needs.route.outputs.node_matrix }}
+      terraform_matrix: ${{ needs.route.outputs.terraform_matrix }}
       required_job_results: >-
         {"route":{"result":"${{ needs.route.result }}","allowSkipped":false},"gates":{"result":"${{ needs.gates.result }}","allowSkipped":false},"rust":{"result":"${{ needs.rust.result }}","allowSkipped":true},"node":{"result":"${{ needs.node.result }}","allowSkipped":false},"scenarios":{"result":"${{ needs.scenarios.result }}","allowSkipped":true},"terraform":{"result":"${{ needs.terraform.result }}","allowSkipped":true},"artifacts":{"result":"${{ needs.artifacts.result }}","allowSkipped":true}}

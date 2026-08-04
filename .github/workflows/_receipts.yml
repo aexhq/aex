@@ -15,7 +15,19 @@ on:
         type: string
         required: true
       receipt_jobs:
-        description: JSON object mapping receipt-producing job names to true when selected.
+        description: JSON object mapping producer kinds to caller job ids and selection state.
+        type: string
+        required: true
+      rust_matrix:
+        description: Exact routed Rust package matrix, as canonical JSON.
+        type: string
+        required: true
+      node_matrix:
+        description: Exact routed Node package matrix, as canonical JSON.
+        type: string
+        required: true
+      terraform_matrix:
+        description: Exact routed Terraform matrix, as canonical JSON.
         type: string
         required: true
       required_job_results:
@@ -67,27 +79,78 @@ jobs:
       - name: Declare the expected receipt job set
         id: expected
         env:
+          NODE_MATRIX: ${{ inputs.node_matrix }}
           RECEIPT_JOBS: ${{ inputs.receipt_jobs }}
           RECEIPT_LANE: ${{ inputs.lane }}
+          RUST_MATRIX: ${{ inputs.rust_matrix }}
+          TERRAFORM_MATRIX: ${{ inputs.terraform_matrix }}
         run: |
           set -euo pipefail
           jq -e '
-            type == "object" and
+            type == "object" and (keys == ["node", "rust", "terraform"]) and
             all(to_entries[];
-              (.key | type == "string" and length > 0) and
-              (.value == "true" or .value == "false")
+              (.value | type == "object") and
+              (.value | keys) == ["job", "selected"] and
+              (.value.job | type == "string" and length > 0) and
+              (.value.selected == "true" or .value.selected == "false")
             )
           ' <<<"$RECEIPT_JOBS" >/dev/null
-          jq -cn --arg lane "$RECEIPT_LANE" --argjson selected "$RECEIPT_JOBS" '
+
+          jq -en --argjson rust "$RUST_MATRIX" --argjson node "$NODE_MATRIX" \
+            --argjson terraform "$TERRAFORM_MATRIX" '
+            def valid_matrix:
+              type == "object" and (keys == ["include"]) and
+              (.include | type == "array") and
+              all(.include[];
+                (.id | type == "string" and length > 0) and
+                (.name | type == "string" and length > 0) and
+                (.partition | type == "number" and . >= 0) and
+                (.partitions | type == "number" and . > 0) and
+                (.partition < .partitions)
+              );
+            ($rust | valid_matrix) and ($node | valid_matrix) and
+            ($terraform | valid_matrix)
+          ' >/dev/null
+
+          jq -en --argjson jobs "$RECEIPT_JOBS" --argjson rust "$RUST_MATRIX" \
+            --argjson node "$NODE_MATRIX" --argjson terraform "$TERRAFORM_MATRIX" '
+            (($jobs.rust.selected == "true") == (($rust.include | length) > 0)) and
+            (($jobs.node.selected == "true") == (($node.include | length) > 0)) and
+            (($jobs.terraform.selected == "true") == (($terraform.include | length) > 0))
+          ' >/dev/null
+
+          jq -cn --arg lane "$RECEIPT_LANE" --argjson jobs "$RECEIPT_JOBS" \
+            --argjson rust "$RUST_MATRIX" --argjson node "$NODE_MATRIX" \
+            --argjson terraform "$TERRAFORM_MATRIX" \
+            --slurpfile semantic release/semantic-receipts.json '
+            def partition($entry):
+              {index: $entry.partition, total: $entry.partitions};
+            def producer($job; $package; $partition; $class):
+              {jobName: $job, package: $package, partition: $partition, class: $class};
             {
-              schema: "aex.declared-jobs.v1",
+              schema: "aex.declared-producers.v1",
               lane: $lane,
-              jobs: [
-                $selected | to_entries[] | select(.value == "true") | .key
-              ] | sort
+              producers: [
+                ($rust.include[] as $entry |
+                  producer($jobs.rust.job; $entry.name; partition($entry); "unit"),
+                  producer($jobs.rust.job; $entry.name; partition($entry); "lint"),
+                  ($semantic[0].producers[] as $semantic_producer |
+                    select($semantic_producer.package == $entry.name) |
+                    producer($jobs.rust.job; $entry.name; null; $semantic_producer.class))
+                ),
+                ($node.include[] as $entry |
+                  producer($jobs.node.job; $entry.name; partition($entry); "unit"),
+                  producer($jobs.node.job; $entry.name; partition($entry); "lint"),
+                  ($semantic[0].producers[] as $semantic_producer |
+                    select($semantic_producer.package == $entry.name) |
+                    producer($jobs.node.job; $entry.name; null; $semantic_producer.class))
+                ),
+                ($terraform.include[] as $entry |
+                  producer($jobs.terraform.job; $entry.id; partition($entry); "unit"))
+              ] | sort_by([.jobName, .package, (.partition.index // -1), .class])
             }
-          ' > declared-jobs.json
-          if [ "$(jq '.jobs | length' declared-jobs.json)" -gt 0 ]; then
+          ' > declared-producers.json
+          if [ "$(jq '.producers | length' declared-producers.json)" -gt 0 ]; then
             echo "has_receipts=true" >> "$GITHUB_OUTPUT"
           else
             echo "has_receipts=false" >> "$GITHUB_OUTPUT"
@@ -99,19 +162,23 @@ jobs:
         with:
           pattern: receipt-*
           path: receipts
-          merge-multiple: true
+          merge-multiple: false
 
       - name: Aggregate
         run: |
           set -euo pipefail
-          shopt -s nullglob
-          receipts=(receipts/*.json)
+          receipts=()
+          if [ -d receipts ]; then
+            mapfile -d '' receipts < <(
+              find receipts -type f -name '*.json' -print0 | sort -z
+            )
+          fi
           args=()
           for receipt in "${receipts[@]}"; do
             args+=(--receipt "$receipt")
           done
           cargo run --locked --release -p aex-release-tool -- \
-            evidence aggregate "${args[@]}" --expect declared-jobs.json \
+            evidence aggregate "${args[@]}" --expect declared-producers.json \
             --out lane-receipt.json
 
       - name: Upload the lane receipt

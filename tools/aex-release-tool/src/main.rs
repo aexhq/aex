@@ -16,7 +16,7 @@ use aex_release_tool::artifact::{self, ArtifactEnvelope, Form};
 use aex_release_tool::canon;
 use aex_release_tool::describe;
 use aex_release_tool::error::{Exit, Result, ToolError, Violation, io, usage};
-use aex_release_tool::evidence::{self, DeclaredJobs, FreshnessPolicy, Receipt};
+use aex_release_tool::evidence::{self, DeclaredProducers, FreshnessPolicy, Receipt};
 use aex_release_tool::graph::inputs::GraphInputs;
 use aex_release_tool::graph::matrix::{self, MatrixKind};
 use aex_release_tool::graph::select::{self, Lane, Mode};
@@ -2111,7 +2111,7 @@ fn run_evidence(cli: &Cli, command: &EvidenceCommand) -> Result<()> {
                 .iter()
                 .map(|path| read_json(path))
                 .collect::<Result<_>>()?;
-            let declared: DeclaredJobs = read_json(expect)?;
+            let declared: DeclaredProducers = read_json(expect)?;
             let lane = evidence::aggregate(&receipts, &declared)?;
             if let Some(path) = out {
                 write_canonical(path, &lane)?;

@@ -248,14 +248,20 @@ describe("workflow evidence producers", () => {
       const results = JSON.parse(inputs.required_job_results) as Readonly<
         Record<string, { readonly result: string; readonly allowSkipped: boolean }>
       >;
-      const producers = JSON.parse(inputs.receipt_jobs) as Readonly<Record<string, string>>;
+      const producers = JSON.parse(inputs.receipt_jobs) as Readonly<
+        Record<string, { readonly job: string; readonly selected: string }>
+      >;
 
       expect(Object.keys(results)).toEqual([...resultJobs]);
-      expect(Object.keys(producers)).toEqual([...receiptJobs]);
+      expect(Object.keys(producers)).toEqual(["rust", "node", "terraform"]);
       expect(inputs).not.toHaveProperty("declared_jobs");
       for (const job of receiptJobs) {
-        expect(producers[job]).toContain("needs.route.outputs.has_");
+        const producer = Object.values(producers).find((candidate) => candidate.job === job);
+        expect(producer?.selected).toContain("needs.route.outputs.has_");
       }
+      expect(inputs.rust_matrix).toBe("${{ needs.route.outputs.test_matrix }}");
+      expect(inputs.node_matrix).toBe("${{ needs.route.outputs.node_matrix }}");
+      expect(inputs.terraform_matrix).toBe("${{ needs.route.outputs.terraform_matrix }}");
     }
   });
 
@@ -268,6 +274,9 @@ describe("workflow evidence producers", () => {
     };
 
     expect(workflowCall.inputs.receipt_jobs?.required).toBeTrue();
+    expect(workflowCall.inputs.rust_matrix?.required).toBeTrue();
+    expect(workflowCall.inputs.node_matrix?.required).toBeTrue();
+    expect(workflowCall.inputs.terraform_matrix?.required).toBeTrue();
     expect(workflowCall.inputs.required_job_results?.required).toBeTrue();
     expect(stepIndex(job, "Require every workflow job to pass")).toBeLessThan(
       stepIndex(job, "Declare the expected receipt job set")
@@ -288,8 +297,23 @@ describe("workflow evidence producers", () => {
       '> required-job-results.json'
     );
     expect(workflowStep(job, "Declare the expected receipt job set").run).toContain(
-      'select(.value == "true")'
+      'schema: "aex.declared-producers.v1"'
     );
+    expect(workflowStep(job, "Declare the expected receipt job set").run).toContain(
+      "release/semantic-receipts.json"
+    );
+    expect(workflowStep(job, "Declare the expected receipt job set").run).toContain(
+      'partition($entry); "lint")'
+    );
+    expect(workflowStep(job, "Declare the expected receipt job set").run).toContain(
+      "{index: $entry.partition, total: $entry.partitions}"
+    );
+    const download = workflowStep(job, "Download every receipt");
+    expect(download.with?.["merge-multiple"]).toBeFalse();
+    expect(workflowStep(job, "Aggregate").run).toContain(
+      "find receipts -type f -name '*.json' -print0"
+    );
+    expect(workflowStep(job, "Aggregate").run).not.toContain("receipts/*.json");
     expect(source).toContain("if: steps.expected.outputs.has_receipts == 'true'");
     expect(source).toContain("required-job-results.json");
     expect(source).not.toContain("no receipt was collected at all");

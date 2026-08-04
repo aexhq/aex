@@ -9,7 +9,7 @@
 //! equal `declared`. A skipped test is a deleted test that still reports as
 //! coverage; a flaky pass is a failure that happened to be scheduled well.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -79,7 +79,7 @@ pub struct Subject {
 }
 
 /// One partition of a sharded run.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Partition {
     /// Zero-based index.
@@ -987,16 +987,31 @@ pub fn check_freshness(
     }
 }
 
-/// The jobs a lane declared it would run.
+/// One exact receipt producer selected by the router.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProducerInstance {
+    /// Caller job id recorded in the receipt.
+    pub job_name: String,
+    /// Exact package or Terraform node selected by the matrix.
+    pub package: String,
+    /// Exact matrix shard, absent only for unsharded semantic receipts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub partition: Option<Partition>,
+    /// Evidence class produced by this instance.
+    pub class: String,
+}
+
+/// The exact receipt producers a lane declared it would run.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct DeclaredJobs {
+pub struct DeclaredProducers {
     /// Schema discriminator.
     pub schema: String,
     /// Lane name.
     pub lane: String,
-    /// Job names.
-    pub jobs: Vec<String>,
+    /// Exact job/package/partition/class instances.
+    pub producers: Vec<ProducerInstance>,
 }
 
 /// The aggregate verdict of a lane.
@@ -1006,46 +1021,46 @@ pub struct LaneReceipt {
     pub schema: &'static str,
     /// Lane name.
     pub lane: String,
-    /// Declared jobs.
-    pub declared: Vec<String>,
-    /// Jobs that produced a receipt.
-    pub collected: Vec<String>,
+    /// Declared producer instances.
+    pub declared: Vec<ProducerInstance>,
+    /// Producer instances that emitted a receipt.
+    pub collected: Vec<ProducerInstance>,
+    /// Unique receipt identities included in this aggregate.
+    pub receipt_ids: Vec<String>,
     /// Overall verdict.
     pub conclusion: String,
 }
 
-/// Compare declared jobs against collected receipts.
+/// Compare declared producer instances against collected receipts.
 ///
 /// # Errors
 /// Returns [`Exit::EvidenceMissing`] when a declared job produced no receipt,
 /// and [`Exit::EvidenceUnsound`] when any receipt is unsound or not passing.
-pub fn aggregate(receipts: &[Receipt], declared: &DeclaredJobs) -> Result<LaneReceipt> {
-    let mut collected: Vec<String> = receipts
-        .iter()
-        .map(|receipt| receipt.source.job_name.clone())
-        .collect();
-    collected.sort();
-    collected.dedup();
-    let mut missing = Vec::new();
-    for job in &declared.jobs {
-        if !collected.contains(job) {
-            missing.push(Violation::new(
-                "lane-receipt-missing",
+pub fn aggregate(receipts: &[Receipt], declared: &DeclaredProducers) -> Result<LaneReceipt> {
+    let (expected, mut unsound) = declared_instances(declared);
+    let mut collected = BTreeSet::new();
+    let mut receipt_ids = BTreeSet::new();
+    for receipt in receipts {
+        if !receipt_ids.insert(receipt.receipt_id.clone()) {
+            unsound.push(Violation::new(
+                "lane-receipt-id-duplicate",
                 format!(
-                    "lane `{}` declared job `{job}` and collected no receipt for it; a \
-                     required job that emitted nothing is not a pass",
-                    declared.lane
+                    "receipt id `{}` was collected more than once",
+                    receipt.receipt_id
                 ),
             ));
         }
-    }
-    if !missing.is_empty() {
-        return Err(ToolError::many(Exit::EvidenceMissing, missing));
-    }
-    let mut unsound = Vec::new();
-    for receipt in receipts {
         if let Err(err) = receipt.verify() {
             unsound.extend(err.violations);
+        }
+        if receipt.lane != declared.lane {
+            unsound.push(Violation::new(
+                "lane-receipt-lane",
+                format!(
+                    "receipt `{}` belongs to lane `{}`, not `{}`",
+                    receipt.receipt_id, receipt.lane, declared.lane
+                ),
+            ));
         }
         if !receipt.is_passing() {
             unsound.push(Violation::new(
@@ -1056,24 +1071,112 @@ pub fn aggregate(receipts: &[Receipt], declared: &DeclaredJobs) -> Result<LaneRe
                 ),
             ));
         }
+        let producer = match producer_instance(receipt) {
+            Ok(producer) => producer,
+            Err(violation) => {
+                unsound.push(violation);
+                continue;
+            }
+        };
+        if !collected.insert(producer.clone()) {
+            unsound.push(Violation::new(
+                "lane-receipt-producer-duplicate",
+                format!(
+                    "producer {producer:?} emitted more than one receipt; artifact namespaces \
+                     may not overwrite or duplicate evidence"
+                ),
+            ));
+        }
+        if !expected.contains(&producer) {
+            unsound.push(Violation::new(
+                "lane-receipt-producer-unexpected",
+                format!(
+                    "receipt `{}` came from undeclared producer {producer:?}",
+                    receipt.receipt_id
+                ),
+            ));
+        }
     }
     if !unsound.is_empty() {
         return Err(ToolError::many(Exit::EvidenceUnsound, unsound));
     }
+
+    let missing: Vec<Violation> = expected
+        .difference(&collected)
+        .map(|producer| {
+            Violation::new(
+                "lane-receipt-missing",
+                format!(
+                    "lane `{}` declared producer {producer:?} and collected no receipt for it; \
+                     a required matrix instance that emitted nothing is not a pass",
+                    declared.lane
+                ),
+            )
+        })
+        .collect();
+    if !missing.is_empty() {
+        return Err(ToolError::many(Exit::EvidenceMissing, missing));
+    }
+
     Ok(LaneReceipt {
         schema: "aex.lane-receipt.v1",
         lane: declared.lane.clone(),
-        declared: declared.jobs.clone(),
-        collected,
+        declared: expected.into_iter().collect(),
+        collected: collected.into_iter().collect(),
+        receipt_ids: receipt_ids.into_iter().collect(),
         conclusion: "passed".to_owned(),
+    })
+}
+
+fn declared_instances(
+    declared: &DeclaredProducers,
+) -> (BTreeSet<ProducerInstance>, Vec<Violation>) {
+    let mut violations = Vec::new();
+    if declared.schema != "aex.declared-producers.v1" {
+        violations.push(Violation::new(
+            "lane-producer-schema",
+            format!("unknown producer declaration schema `{}`", declared.schema),
+        ));
+    }
+    let mut expected = BTreeSet::new();
+    for producer in &declared.producers {
+        if !expected.insert(producer.clone()) {
+            violations.push(Violation::new(
+                "lane-producer-declaration-duplicate",
+                format!(
+                    "lane `{}` declares producer {producer:?} twice",
+                    declared.lane
+                ),
+            ));
+        }
+    }
+    (expected, violations)
+}
+
+fn producer_instance(receipt: &Receipt) -> std::result::Result<ProducerInstance, Violation> {
+    if receipt.selection.packages.len() != 1 {
+        return Err(Violation::new(
+            "lane-receipt-producer-identity",
+            format!(
+                "receipt `{}` names {} packages; exact producer identity requires one",
+                receipt.receipt_id,
+                receipt.selection.packages.len()
+            ),
+        ));
+    }
+    Ok(ProducerInstance {
+        job_name: receipt.source.job_name.clone(),
+        package: receipt.selection.packages[0].clone(),
+        partition: receipt.selection.partition,
+        class: receipt.class.clone(),
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        DataBlock, DeclaredJobs, Inventory, JunitSummary, Receipt, SelectionBlock, Source,
-        aggregate, parse_junit,
+        DataBlock, DeclaredProducers, Inventory, JunitSummary, ProducerInstance, Receipt,
+        SelectionBlock, Source, aggregate, parse_junit,
     };
 
     pub(super) fn receipt(class: &str) -> Receipt {
@@ -1501,10 +1604,13 @@ mod tests {
 
     #[test]
     fn aggregation_fails_when_a_declared_job_produced_no_receipt() {
-        let declared = DeclaredJobs {
-            schema: "aex.declared-jobs.v1".to_owned(),
+        let declared = DeclaredProducers {
+            schema: "aex.declared-producers.v1".to_owned(),
             lane: "pr".to_owned(),
-            jobs: vec!["rust".to_owned(), "terraform".to_owned()],
+            producers: vec![
+                producer("rust", "aex-wire", None, "unit"),
+                producer("terraform", "tf:regional", Some((0, 1)), "unit"),
+            ],
         };
         let err = aggregate(&[receipt("unit")], &declared).unwrap_err();
         assert_eq!(err.exit.code(), 40);
@@ -1513,10 +1619,10 @@ mod tests {
 
     #[test]
     fn aggregation_accepts_no_receipts_when_no_producer_was_selected() {
-        let declared = DeclaredJobs {
-            schema: "aex.declared-jobs.v1".to_owned(),
+        let declared = DeclaredProducers {
+            schema: "aex.declared-producers.v1".to_owned(),
             lane: "pr".to_owned(),
-            jobs: Vec::new(),
+            producers: Vec::new(),
         };
 
         let lane = aggregate(&[], &declared).unwrap();
@@ -1528,16 +1634,86 @@ mod tests {
 
     #[test]
     fn aggregation_fails_when_a_collected_receipt_did_not_pass() {
-        let declared = DeclaredJobs {
-            schema: "aex.declared-jobs.v1".to_owned(),
+        let declared = DeclaredProducers {
+            schema: "aex.declared-producers.v1".to_owned(),
             lane: "pr".to_owned(),
-            jobs: vec!["rust".to_owned()],
+            producers: vec![producer("rust", "aex-wire", None, "unit")],
         };
         let mut receipt = receipt("unit");
         receipt.conclusion = "infrastructure_failed".to_owned();
         let err = aggregate(&[receipt], &declared).unwrap_err();
         assert_eq!(err.exit.code(), 41);
         assert!(err.rules().contains(&"lane-receipt-not-passed"));
+    }
+
+    fn producer(
+        job_name: &str,
+        package: &str,
+        partition: Option<(usize, usize)>,
+        class: &str,
+    ) -> ProducerInstance {
+        ProducerInstance {
+            job_name: job_name.to_owned(),
+            package: package.to_owned(),
+            partition: partition.map(|(index, total)| super::Partition { index, total }),
+            class: class.to_owned(),
+        }
+    }
+
+    #[test]
+    fn aggregation_requires_every_declared_matrix_instance() {
+        let declared = DeclaredProducers {
+            schema: "aex.declared-producers.v1".to_owned(),
+            lane: "pr".to_owned(),
+            producers: vec![
+                producer("rust", "aex-wire", Some((0, 2)), "unit"),
+                producer("rust", "aex-sdk", Some((1, 2)), "unit"),
+            ],
+        };
+        let mut first = receipt("unit");
+        first.selection.partition = Some(super::Partition { index: 0, total: 2 });
+
+        let err = aggregate(&[first], &declared).unwrap_err();
+
+        assert_eq!(err.exit.code(), 40);
+        assert!(err.rules().contains(&"lane-receipt-missing"));
+    }
+
+    #[test]
+    fn aggregation_rejects_duplicate_producer_instances() {
+        let declared = DeclaredProducers {
+            schema: "aex.declared-producers.v1".to_owned(),
+            lane: "pr".to_owned(),
+            producers: vec![producer("rust", "aex-wire", None, "unit")],
+        };
+        let first = receipt("unit");
+        let mut second = first.clone();
+        second.receipt_id = "rc_unit_second".to_owned();
+
+        let err = aggregate(&[first, second], &declared).unwrap_err();
+
+        assert_eq!(err.exit.code(), 41);
+        assert!(err.rules().contains(&"lane-receipt-producer-duplicate"));
+    }
+
+    #[test]
+    fn aggregation_rejects_duplicate_receipt_ids_across_producers() {
+        let declared = DeclaredProducers {
+            schema: "aex.declared-producers.v1".to_owned(),
+            lane: "pr".to_owned(),
+            producers: vec![
+                producer("rust", "aex-wire", None, "unit"),
+                producer("rust", "aex-wire", None, "lint"),
+            ],
+        };
+        let first = receipt("unit");
+        let mut second = receipt("lint");
+        second.receipt_id.clone_from(&first.receipt_id);
+
+        let err = aggregate(&[first, second], &declared).unwrap_err();
+
+        assert_eq!(err.exit.code(), 41);
+        assert!(err.rules().contains(&"lane-receipt-id-duplicate"));
     }
 }
 

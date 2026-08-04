@@ -10,7 +10,9 @@ use std::collections::BTreeMap;
 
 use aex_release_tool::admit::{AdmissionInputs, OperationalReadiness, Plane, admit};
 use aex_release_tool::artifact::ArtifactEnvelope;
-use aex_release_tool::evidence::{DeclaredJobs, FreshnessPolicy, Receipt, aggregate};
+use aex_release_tool::evidence::{
+    DeclaredProducers, FreshnessPolicy, ProducerInstance, Receipt, aggregate,
+};
 use aex_release_tool::graph::inputs::GraphInputs;
 use aex_release_tool::graph::select::{Lane, Mode, select};
 use aex_release_tool::graph::verify;
@@ -336,10 +338,15 @@ fn missing_scenario_owner_exits_10() {
 /// green skipped required job.
 #[test]
 fn empty_matrix_silent_pass_exits_40() {
-    let declared = DeclaredJobs {
-        schema: "aex.declared-jobs.v1".to_owned(),
+    let declared = DeclaredProducers {
+        schema: "aex.declared-producers.v1".to_owned(),
         lane: "pr".to_owned(),
-        jobs: vec!["route".to_owned(), "rust".to_owned()],
+        producers: vec![ProducerInstance {
+            job_name: "rust".to_owned(),
+            package: "aex-wire".to_owned(),
+            partition: None,
+            class: "unit".to_owned(),
+        }],
     };
     let err = aggregate(&[], &declared).unwrap_err();
     assert_eq!(err.exit.code(), 40, "{err}");
