@@ -1,4 +1,4 @@
-//! Bounded direct-provider router over the six admitted BYOK dialects.
+//! Bounded router over six direct BYOK providers and two fixed BYOK gateways.
 
 use std::future::Future;
 use std::sync::Arc;
@@ -30,12 +30,14 @@ use crate::error::{ProviderFailure, RateLimitFeedback, RateLimitSource};
 use crate::google::GoogleAdapter;
 use crate::moonshotai::MoonshotAdapter;
 use crate::openai::OpenAiAdapter;
+use crate::openrouter::OpenRouterAdapter;
 use crate::pool::{ClientPool, IsolationKey, PoolError};
 use crate::sse::{SseDecoder, SseError};
 use crate::transport::{ExecuteError, SendState, execute};
+use crate::vercel_ai_gateway::VercelAiGatewayAdapter;
 use crate::zai::ZaiAdapter;
 
-/// A direct-provider router with no gateway, arbitrary endpoint or fallback.
+/// A provider router with no arbitrary endpoint or AEX-owned fallback.
 pub struct ProviderRouter {
     directory: Arc<dyn ProviderCredentialDirectory>,
     decryptor: Arc<dyn ProviderCredentialDecryptor>,
@@ -511,6 +513,7 @@ impl ProviderRouter {
                 generation: binding.generation.0,
             },
             provider_request_id: assembled.provider_request_id.or(provider_request_id),
+            gateway_route: assembled.gateway_route,
             http_status,
             attempts,
             started_at: started,
@@ -575,6 +578,8 @@ fn adapter(provider: ProviderId) -> &'static dyn ProviderAdapter {
         ProviderId::Zai => &ZaiAdapter,
         ProviderId::Moonshotai => &MoonshotAdapter,
         ProviderId::Google => &GoogleAdapter,
+        ProviderId::Openrouter => &OpenRouterAdapter,
+        ProviderId::VercelAiGateway => &VercelAiGatewayAdapter,
     }
 }
 
@@ -1174,7 +1179,7 @@ mod tests {
     }
 
     #[test]
-    fn all_six_providers_have_one_direct_adapter() {
+    fn all_eight_authorities_have_one_identity_preserving_adapter() {
         for provider in aex_wire::provider::ProviderId::ALL.iter().copied() {
             assert_eq!(super::adapter(provider).provider(), provider);
         }

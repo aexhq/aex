@@ -48,6 +48,8 @@ pub const fn key_variable(provider: ProviderId) -> &'static str {
         ProviderId::Zai => "AEX_LIVE_PROVIDER_KEY_ZAI",
         ProviderId::Moonshotai => "AEX_LIVE_PROVIDER_KEY_MOONSHOTAI",
         ProviderId::Google => "AEX_LIVE_PROVIDER_KEY_GOOGLE",
+        ProviderId::Openrouter => "AEX_LIVE_PROVIDER_KEY_OPENROUTER",
+        ProviderId::VercelAiGateway => "AEX_LIVE_PROVIDER_KEY_VERCEL_AI_GATEWAY",
     }
 }
 
@@ -65,6 +67,8 @@ pub const fn key_variables(provider: ProviderId) -> &'static [&'static str] {
         ProviderId::Zai => &["AEX_LIVE_PROVIDER_KEY_ZAI"],
         ProviderId::Moonshotai => &["AEX_LIVE_PROVIDER_KEY_MOONSHOTAI"],
         ProviderId::Google => &["AEX_LIVE_PROVIDER_KEY_GOOGLE"],
+        ProviderId::Openrouter => &["AEX_LIVE_PROVIDER_KEY_OPENROUTER"],
+        ProviderId::VercelAiGateway => &["AEX_LIVE_PROVIDER_KEY_VERCEL_AI_GATEWAY"],
     }
 }
 
@@ -435,7 +439,7 @@ mod tests {
             assert!(!seen.contains(&variable), "{variable} is shared");
             seen.push(variable);
         }
-        assert_eq!(seen.len(), 6);
+        assert_eq!(seen.len(), 8);
     }
 
     #[test]
@@ -453,6 +457,8 @@ mod tests {
             ProviderId::Zai,
             ProviderId::Moonshotai,
             ProviderId::Google,
+            ProviderId::Openrouter,
+            ProviderId::VercelAiGateway,
         ] {
             assert_eq!(key_variables(provider), &[key_variable(provider)]);
         }
@@ -478,7 +484,7 @@ mod tests {
             assert_eq!(row.probe, probe);
             assert!(!row.proves.is_empty(), "{probe:?} states nothing");
         }
-        assert_eq!(plan::providers().len(), 6);
+        assert_eq!(plan::providers().len(), 8);
     }
 
     #[test]

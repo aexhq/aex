@@ -95,6 +95,16 @@ fn launch_document() -> CatalogDocument {
         fixture::entry(ProviderId::Zai, "glm-5.2", CapabilitySet::EMPTY),
         fixture::entry(ProviderId::Moonshotai, "kimi-k3", CapabilitySet::EMPTY),
         fixture::entry(ProviderId::Google, "gemini-3-pro", CapabilitySet::EMPTY),
+        fixture::entry(
+            ProviderId::Openrouter,
+            "fixture/openrouter-model",
+            CapabilitySet::EMPTY,
+        ),
+        fixture::entry(
+            ProviderId::VercelAiGateway,
+            "fixture/vercel-model",
+            CapabilitySet::EMPTY,
+        ),
     ];
     fixture::document(PUBLISHER, 1, entries, now(), adapter())
 }
@@ -125,7 +135,7 @@ fn selection(provider: ProviderId, model: &str) -> ModelSelection {
 fn mc1_a_launch_document_loads_and_admits_nothing() {
     let publisher = Publisher::new();
     let catalog = load(&publisher, &launch_document()).expect("the launch document loads");
-    assert_eq!(catalog.len(), 6);
+    assert_eq!(catalog.len(), 8);
     assert_eq!(
         catalog.active_len(),
         0,

@@ -6,8 +6,8 @@
 
 use aex_model_catalog::QualifiedModel;
 use aex_model_catalog::canonical::{
-    CanonicalBlock, CanonicalModelRequest, NormalizedUsage, StopReason, StructuredOutputRequest,
-    ToolChoice,
+    CanonicalBlock, CanonicalModelRequest, GatewayRoute, NormalizedUsage, StopReason,
+    StructuredOutputRequest, ToolChoice,
 };
 use aex_model_catalog::document::Capability;
 use aex_model_catalog::primitives::{ProviderRequestId, ToolCallId, ToolName};
@@ -199,6 +199,8 @@ pub struct SealedResponse {
     pub usage: NormalizedUsage,
     /// The provider's own request id, where it published one.
     pub provider_request_id: Option<ProviderRequestId>,
+    /// Bounded gateway route metadata, absent for direct providers.
+    pub gateway_route: Option<GatewayRoute>,
 }
 
 /// A read-only view of response headers, so an adapter cannot mutate them.
@@ -352,7 +354,7 @@ pub trait ProviderAdapter: Send + Sync + 'static {
 /// Every dialect accumulates the same shapes — ordered blocks, per-index
 /// tool-argument fragments, a usage tally, a finish token — so the state lives
 /// here and each adapter drives it. That is what lets the block-assembly and
-/// budget rules be written once rather than six times.
+/// budget rules be written once rather than eight times.
 #[derive(Debug, Default)]
 pub struct DialectState {
     /// Blocks completed so far, in arrival order.
@@ -371,6 +373,8 @@ pub struct DialectState {
     pub usage: NormalizedUsage,
     /// The provider's own request id, where the body carries it.
     pub request_id: Option<ProviderRequestId>,
+    /// Bounded gateway route metadata accumulated from response frames.
+    pub gateway_route: Option<GatewayRoute>,
     /// Whether a terminal frame has been decoded.
     pub terminal: bool,
     /// Whether any dialect frame has been decoded, which is what proves the

@@ -395,12 +395,11 @@ mod tests {
     }
 
     #[test]
-    fn the_launch_exclusions_are_not_reachable_from_any_pin() {
+    fn arbitrary_and_non_launch_origins_are_not_reachable_from_any_pin() {
         let origins: Vec<&str> = EndpointPin::ALL.iter().map(|pin| pin.origin()).collect();
         for excluded in [
             "api.moonshot.cn",
             "platform.kimi.ai",
-            "openrouter.ai",
             "coding/paas",
             "api/anthropic",
             "aiplatform.googleapis.com",

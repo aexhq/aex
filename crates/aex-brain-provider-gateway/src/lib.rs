@@ -1,9 +1,11 @@
-//! `aex-brain-provider-gateway` owns the direct `BYOK` provider transport and dialect
-//! adapter: six provider modules over one shared bounded `HTTP`/`SSE` core.
+//! `aex-brain-provider-gateway` owns customer-key provider transport and dialect
+//! adapters: six direct providers plus two fixed gateway authorities over one
+//! shared bounded `HTTP`/`SSE` core.
 //!
 //! # Invariants
 //!
-//! - there is no gateway, no arbitrary base `URL` and no cross-provider fallback
+//! - there is no arbitrary base `URL`; gateway routing is selected explicitly
+//!   by provider identity and remains internal to that customer-owned gateway
 //! - a stream is bounded in frame size, total bytes and wall time before it is consumed
 //! - an ambiguous disconnect is reported as ambiguous, never normalized into success or
 //!   failure
@@ -28,11 +30,13 @@ pub mod error;
 pub mod google;
 pub mod moonshotai;
 pub mod openai;
+pub mod openrouter;
 pub mod pool;
 pub mod redact;
 pub mod router;
 pub mod sse;
 pub mod transport;
+pub mod vercel_ai_gateway;
 pub mod wire_pending;
 pub mod zai;
 

@@ -165,7 +165,7 @@ pub enum AnnotationKind {
 // ---------------------------------------------------------------------------
 
 /// Message roles. Tool results are [`CanonicalBlock::ToolResult`] blocks on a
-/// user turn, which is what every one of the six dialects actually models.
+/// user turn, which is what every one of the eight dialects actually models.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
@@ -952,6 +952,20 @@ pub struct CredentialBindingRef {
     pub generation: u64,
 }
 
+/// Bounded routing metadata reported by a customer-selected gateway.
+///
+/// The outer receipt remains authoritative for the requested gateway and model.
+/// This record captures only what the gateway reported about the route it
+/// actually used; vendor metadata objects are never copied into the journal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GatewayRoute {
+    /// The model identifier reported in the gateway response, when present.
+    pub reported_model: Option<ModelSlug>,
+    /// The upstream provider label reported by the gateway, when present.
+    pub reported_provider: Option<BoundedString<64>>,
+}
+
 /// The durable evidence one dispatch produced.
 ///
 /// `request_bytes` and `response_bytes` are the input to
@@ -974,6 +988,8 @@ pub struct ProviderReceipt {
     pub credential: CredentialBindingRef,
     /// The provider's own request id, where it publishes one.
     pub provider_request_id: Option<ProviderRequestId>,
+    /// Bounded actual-route metadata for a gateway dispatch, otherwise absent.
+    pub gateway_route: Option<GatewayRoute>,
     /// The final HTTP status.
     pub http_status: u16,
     /// How many attempts the in-call retry policy used.

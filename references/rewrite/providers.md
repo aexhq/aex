@@ -24,18 +24,20 @@ Four packages: `crates/aex-model-catalog` (pure), `crates/aex-brain-provider-gat
 (the transport/dialects), `crates/aex-brain-provider-custody` (regional binding and
 KMS custody), and `tests/live/aex-live-model-catalog` (the conformance harness).
 
-Six providers, no gateway, no `OpenRouter`, no arbitrary base URL, no
-cross-provider fallback, no model-name inference. `anthropic` is canonical and
-`anthrophic` is a decode error, not a synonym.
+Eight customer-owned provider authorities: six native providers, OpenRouter and
+Vercel AI Gateway. There is no arbitrary base URL, AEX-owned provider key,
+AEX-selected cross-provider fallback, or model-name inference. `anthropic` is
+canonical and `anthrophic` is a decode error, not a synonym.
 
 ### Owner amendment: two customer-owned gateway authorities
 
 On 2026-08-04 the owner expanded the target to the six native providers plus
 OpenRouter and Vercel AI Gateway, while retaining customer-owned credentials
-only. The implementation described below is still the six-provider state: the
-two gateway paths have not been added to `ProviderId`, the catalog, the router,
-the live matrix or release evidence, and no public support claim has been made.
-This is an architecture slice, not a release-variable substitution.
+only. The code slice now exists end to end: generated public bindings, fixed
+catalog dialect/origin identities, two gateway-owned adapters, the total router,
+bounded route receipts, source-build identity and the live-key registry. No
+gateway model is `Active`: exact model entries still require signed P-01–P-23
+evidence earned with customer-supplied test keys before the runtime admits them.
 
 The target wire spellings are `openrouter` and `vercel_ai_gateway`. They must be
 new `ProviderId` members, not aliases of `openai` and not arbitrary transport
@@ -46,9 +48,9 @@ gateway even when the gateway later chooses an upstream host for the exact
 model. Treating either path as `openai` would bind the wrong credential and make
 the durable receipt false.
 
-Internally, each gateway needs its own fixed `EndpointPin`, `Dialect` member and
-`ProviderAdapter` over the existing bounded HTTP/SSE transport. Both gateways
-publish OpenAI-compatible surfaces, but compatibility is not protocol identity:
+Internally, each gateway has its own fixed `EndpointPin`, chat-completions
+`Dialect` member and `ProviderAdapter` over the existing bounded HTTP/SSE
+transport. Both gateways publish OpenAI-compatible surfaces, but compatibility is not protocol identity:
 paths, routing controls, stream metadata, usage fields, error bodies and request
 ids can differ. Common encoding/decoding primitives may be extracted only where
 goldens prove the bytes and state transitions are the same; neither adapter may
@@ -76,34 +78,33 @@ object into the journal. AEX still performs no automatic retry after an
 ambiguous send; gateway-internal routing produces at most the one result returned
 for that one durable effect.
 
-The smallest correctness-preserving implementation is one complete vertical
-slice:
+The implemented correctness-preserving vertical slice is:
 
-1. Add both `ProviderId` members in `api/schemas/provider/provider.yaml` and
-   regenerate every Rust, TypeScript, JSON Schema and OpenAPI binding.
-2. Add the two closed origins and two gateway dialects to
-   `aex-model-catalog`; keep every gateway model `Staged` until its own receipt
-   passes.
-3. Add two adapters, include both in the build-source digest, make the router's
-   match total, and preserve the existing origin/workspace/binding/catalog pool
-   isolation and send proof.
-4. Extend `ProviderReceipt` with a bounded optional normalized gateway route
-   record so the requested gateway/model and the reported actual route are not
-   conflated. Add request, stream, tool, usage, error, redaction, cancellation
-   and ambiguous-drop goldens for each adapter.
-5. Extend provider seams and the live key registry with
+1. Both `ProviderId` members are authored in
+   `api/schemas/provider/provider.yaml`; the Rust, TypeScript, JSON Schema and
+   OpenAPI bindings are generated from it.
+2. `aex-model-catalog` owns the two closed origins and two distinct gateway
+   chat dialects. Fixture and future published entries remain `Staged` until
+   their exact receipts pass.
+3. Two adapters share only bounded OpenAI-compatible chat encoding/decoding;
+   each owns its provider identity, fixed path, request-id headers and error
+   classification. Both are part of the source-build digest and the router's
+   match is total.
+4. `ProviderReceipt.gateway_route` stores only a bounded reported model and
+   upstream-provider label. The requested gateway/model remain the outer
+   receipt identity, and an unbounded vendor metadata object never enters the
+   journal.
+5. Provider seams and the live key registry include
    `AEX_LIVE_PROVIDER_KEY_OPENROUTER` and
-   `AEX_LIVE_PROVIDER_KEY_VERCEL_AI_GATEWAY`, then run the same 23-probe matrix
+   `AEX_LIVE_PROVIDER_KEY_VERCEL_AI_GATEWAY`; the same 23-probe matrix must run
    for every gateway model proposed for `Active`.
-6. Update public provider documentation only after at least one exact pair has
+6. Public user documentation remains gated until at least one exact pair has
    a real signed conformance receipt and the runtime composition is ready.
 
-Adding only enum members or placeholder adapters is deliberately excluded. It
-would make SDKs accept a provider the runtime cannot serve, widen strongly
-consistent credential fan-out, and make `ProviderId::ALL` claim live coverage
-without a usable dialect. The compile-time exhaustiveness is useful—it exposed
-the catalog fixture, router and live-key registry as immediate change sites in a
-local spike—but it is not proof that a gateway protocol works.
+The adapters are usable only through a catalog-qualified pair and keep staged
+pairs inadmissible, so widening the enum does not fabricate live model support.
+Compile-time exhaustiveness covers the catalog fixture, router and live-key
+registry, but remains distinct from the external conformance evidence.
 
 The trade-offs are specific. A gateway adds one selected network intermediary
 and its latency/outage domain, but offers same-model upstream routing and quota
@@ -166,10 +167,11 @@ The launch document ships every `(provider, model)` pair `Staged`, so a fresh
 | `pool` | `IsolationKey`, `ClientPool`, `PooledClient` |
 | `credential` | binding model, the two consumed ports, `DenyAllCredentialDirectory`, `ProviderApiKey`, `CredentialCache` |
 | `adapter` | the `ProviderAdapter` trait, `DialectState`, `RequestBuildError`, `FrameOutcome`, `FrameDecodeError` |
-| `openai` `anthropic` `deepseek` `zai` `moonshotai` `google` | the six dialect adapters |
-| `build_identity` | one compile-time source-tree identity for the complete six-adapter build; runtime environment variables cannot relabel it |
+| `openai` `anthropic` `deepseek` `zai` `moonshotai` `google` | the six native dialect adapters |
+| `openrouter` `vercel_ai_gateway` | fixed-origin gateway adapters with distinct identity/error/receipt handling over the bounded chat core |
+| `build_identity` | one compile-time source-tree identity for the complete eight-adapter build; runtime environment variables cannot relabel it |
 | `catalog_port` | bounded signed-collection loading into an immutable content-addressed revision cache, with explicit still-live session-pin coverage |
-| `router` | the total six-provider route, credential affinity/revocation, isolated pool, in-call retry, bounded stream, durable response-start evidence, sealing and receipt |
+| `router` | the total eight-authority route, credential affinity/revocation, isolated pool, in-call retry, bounded stream, durable response-start evidence, sealing and receipt |
 
 Three properties are structural rather than conventional:
 
@@ -221,7 +223,7 @@ Three properties are structural rather than conventional:
   head together; it is not an any-valid relaxation.
 - **The adapter identity is source-derived for every build.** The gateway build
   script hashes the complete recursively sorted Rust source tree with explicit
-  path/content length framing and asserts all six provider modules are in
+  path/content length framing and asserts all eight provider modules are in
   scope. Runtime environment cannot relabel it, and the catalog receipt must
   name that exact digest.
 
@@ -252,11 +254,11 @@ diff. `ReceiptBuilder::build` refuses a receipt missing any probe run;
 | --- | --- |
 | `anthropic.rs` pins an offline P-256 public key and signature in its test module | `openai.rs` was migrated to `fixture::qualified`; `anthropic.rs` still loads a signed fixture document, which breaks loudly (`"re-sign it if the document shape changed"`) if `document.rs` or `fixture::entry` moves. Migrating it is a mechanical follow-up now that `fixture::qualified` exists. |
 | Z.AI's path is recorded two ways in plan 08 §5.4 | The row gives the base as `https://api.z.ai/api/paas/v4` and the path as `POST /paas/v4/chat/completions`, which cannot both be right. The adapter follows the explicit path, producing `https://api.z.ai/paas/v4/chat/completions`. Probe P-01 settles it before any Z.AI pair can go `Active`; until then every Z.AI entry is `Staged`, so nothing dispatches. |
-| `decode`, `finish` and `classify_http` are not handed the `QualifiedModel` | Each adapter therefore compiles its own stop-token and error tables rather than reading `entry.stop_reason_map` / `entry.error_map`. For these six dialects both are provider-invariant, and `anthropic.rs` asserts the compiled table and the catalog's copy agree. But it means the catalog's copies are documentation for the decode path rather than its source of truth. Widening the trait to take the model would make them authoritative. |
-| The 23 probes need a real customer key per provider | The `[[test]]` targets stay undeclared and the manifest keeps `not_applicable.targets` naming OD-07. The harness is compiled and unit-tested; adding the target is one change. Every provider has one authoritative `AEX_LIVE_PROVIDER_KEY_*` name. Anthropic and DeepSeek additionally accept only their documented legacy `ANTHROPIC_API_KEY` and `DEEPSEEK_API_KEY` aliases, after the authoritative name; the other four providers accept no guessed alias. Missing or empty inputs fail loudly, with tests pinning the complete accepted-name list. |
+| `decode`, `finish` and `classify_http` are not handed the `QualifiedModel` | Each adapter therefore compiles its own stop-token and error tables rather than reading `entry.stop_reason_map` / `entry.error_map`. For these eight dialects both are provider-invariant, and `anthropic.rs` asserts the compiled table and the catalog's copy agree. But it means the catalog's copies are documentation for the decode path rather than its source of truth. Widening the trait to take the model would make them authoritative. |
+| The 23 probes need a real customer key per provider | The `[[test]]` targets stay undeclared and the manifest keeps `not_applicable.targets` naming OD-07. The harness is compiled and unit-tested; adding the target is one change. `ProviderKeys::require` panics with the variable name, proved by a `#[should_panic]` case. |
 | No `(provider, model)` pair can ship `Active` | Every launch entry is `Staged` with an `unearned()` receipt — a positive record that the evidence has not been earned, not an absence. |
 | Provider credential registration | The existing `pcr_` row is a reference to one workspace-secret generation. Exact provider-qualified reads, mutable binding/secret revalidation, and KMS reveal are composed through `aex-brain-provider-custody`; registration remains unmounted because the request has no decided workspace-secret name/collision contract and the active wrapped branch key is not exposed by a port. There is **no** plaintext-from-environment path — not disabled, absent. |
-| `resolve_unknown` | Returns `UnknownResolution::NoDurableOperation` for all six. Implemented, not stubbed: no provider in this set documents a result lookup for a completed streaming generation. Anthropic is stateless; OpenAI's `GET /v1/responses/{id}` requires `store: true`, which AEX disables; Gemini Interactions is not the launch dialect. |
+| `resolve_unknown` | Returns `UnknownResolution::NoDurableOperation` for all eight. Implemented, not stubbed: no authority in this set documents a result lookup for a completed streaming generation under AEX's fixed dialects. Anthropic is stateless; OpenAI's `GET /v1/responses/{id}` requires `store: true`, which AEX disables; Gemini Interactions is not the launch dialect. |
 | Brain session credential pin | Complete for runtime: `ResolvedAgentConfig` journals a required four-scalar `SessionCredentialPin`, `ProviderPort` requires it, and `DispatchTicket` carries workspace plus organization authority. Revision and generation are non-zero at construction and serde boundaries; epoch zero remains the valid initial epoch. Missing prelaunch pins fail decode; mismatched scope, revision, generation, provider, context digest, binding state, or revocation epoch fails before the next provider send. Session-create admission still has to mint the pin from an explicit credential selection. |
 | Real production catalog release inputs | `brain-mux` now composes a verified immutable collection when its exact canonical trust-root set and signed collection are build-bound with independent SHA-256 digests. The release plan records those values using a stable workspace-relative collection path; runtime environment is never consulted. Ordinary local builds carry an exact blocker and stay unready. Protected publication invokes the required-input preflight before compilation. This repository still has no real publisher set or signed collection, and the launch catalog has no `Active` entry, so publication/readiness correctly remain blocked rather than inventing authority. |
 | Brain content hydration | Canonical requests carry inline user turns. A configured system reference or placed user block fails before dispatch because the application has no content-hydration port yet. |

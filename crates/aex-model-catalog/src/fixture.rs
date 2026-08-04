@@ -106,6 +106,10 @@ pub const fn dialect_for(provider: ProviderId) -> (Dialect, EndpointPin) {
         ProviderId::Zai => (Dialect::ZaiChat, EndpointPin::ZaiPaasV4),
         ProviderId::Moonshotai => (Dialect::MoonshotChat, EndpointPin::MoonshotIntlV1),
         ProviderId::Google => (Dialect::GeminiGenerateContent, EndpointPin::GeminiV1Beta),
+        ProviderId::Openrouter => (Dialect::OpenRouterChat, EndpointPin::OpenRouterApiV1),
+        ProviderId::VercelAiGateway => {
+            (Dialect::VercelAiGatewayChat, EndpointPin::VercelAiGatewayV1)
+        }
     }
 }
 

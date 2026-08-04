@@ -1,11 +1,11 @@
-# The six direct BYOK providers.
+# The eight customer-owned BYOK provider authorities.
 #
 # The order below is the Rust discriminant order. `anthropic` has no alias: the
 # common misspelling `anthrophic` is a mandatory invalid conformance case.
 module: provider
 schemas:
   ProviderId:
-    doc: The six direct BYOK providers. There is no gateway and no arbitrary base URL.
+    doc: The eight customer-owned BYOK authorities. Gateway authorities use fixed endpoints; arbitrary base URLs are not accepted.
     type: enum
     values:
       - { value: openai, doc: "The `OpenAI` API." }
@@ -14,6 +14,8 @@ schemas:
       - { value: zai, doc: "The Z.ai API." }
       - { value: moonshotai, doc: "The Moonshot AI API." }
       - { value: google, doc: "Google." }
+      - { value: openrouter, doc: "OpenRouter, authenticated with the customer's OpenRouter key." }
+      - { value: vercel_ai_gateway, doc: "Vercel AI Gateway, authenticated with the customer's AI Gateway key." }
 
   ModelSelection:
     doc: An explicit provider and model pair; a model-only override is rejected.

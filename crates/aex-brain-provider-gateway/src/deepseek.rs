@@ -1117,6 +1117,7 @@ impl ProviderAdapter for DeepSeekAdapter {
             stop_reason,
             usage,
             provider_request_id: None,
+            gateway_route: None,
         })
     }
 

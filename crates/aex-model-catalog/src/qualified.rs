@@ -106,7 +106,7 @@ impl QualifiedModel {
         self.entry.state
     }
 
-    /// Whether the provider offers a durable result lookup. `None` for all six
+    /// Whether the provider offers a durable result lookup. `None` for all eight
     /// at launch.
     #[must_use]
     pub fn durable_operation(&self) -> DurableOperationSupport {

@@ -9267,7 +9267,9 @@
         "deepseek",
         "zai",
         "moonshotai",
-        "google"
+        "google",
+        "openrouter",
+        "vercel_ai_gateway"
       ],
       "type": "string"
     },

@@ -4,12 +4,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const DOMAIN: &[u8] = b"aex-provider-adapter-source/v1\0";
-const REQUIRED_ADAPTERS: [&str; 6] = [
+const REQUIRED_ADAPTERS: [&str; 8] = [
     "src/anthropic.rs",
     "src/deepseek.rs",
     "src/google.rs",
     "src/moonshotai.rs",
     "src/openai.rs",
+    "src/openrouter.rs",
+    "src/vercel_ai_gateway.rs",
     "src/zai.rs",
 ];
 

@@ -109,7 +109,7 @@ pub struct ModelEntry {
     pub error_map: ErrorClassMap,
     /// The in-call retry policy, restricted by D-20.
     pub retry_policy: PreDispatchRetryPolicy,
-    /// Whether the provider offers a durable result lookup. `None` for all six
+    /// Whether the provider offers a durable result lookup. `None` for all eight
     /// at launch.
     pub durable_operation: DurableOperationSupport,
     /// The provider-published account concurrency, carried as a hint.
@@ -150,6 +150,10 @@ pub enum Dialect {
     MoonshotChat,
     /// Gemini `streamGenerateContent`.
     GeminiGenerateContent,
+    /// OpenRouter's OpenAI-compatible chat-completions surface.
+    OpenRouterChat,
+    /// Vercel AI Gateway's OpenAI-compatible chat-completions surface.
+    VercelAiGatewayChat,
     /// Reserved and unimplemented. Adding a dialect arm is a code release
     /// (D-19); an entry declaring this dialect fails load.
     GeminiInteractions,
@@ -166,6 +170,8 @@ impl Dialect {
             Self::ZaiChat => ProviderId::Zai,
             Self::MoonshotChat => ProviderId::Moonshotai,
             Self::GeminiGenerateContent | Self::GeminiInteractions => ProviderId::Google,
+            Self::OpenRouterChat => ProviderId::Openrouter,
+            Self::VercelAiGatewayChat => ProviderId::VercelAiGateway,
         }
     }
 
@@ -196,17 +202,23 @@ pub enum EndpointPin {
     MoonshotIntlV1,
     /// `https://generativelanguage.googleapis.com`.
     GeminiV1Beta,
+    /// `https://openrouter.ai`.
+    OpenRouterApiV1,
+    /// `https://ai-gateway.vercel.sh`.
+    VercelAiGatewayV1,
 }
 
 impl EndpointPin {
     /// Every pinned origin, for exhaustive tests.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 8] = [
         Self::OpenAiApi,
         Self::AnthropicApi,
         Self::DeepSeekApi,
         Self::ZaiPaasV4,
         Self::MoonshotIntlV1,
         Self::GeminiV1Beta,
+        Self::OpenRouterApiV1,
+        Self::VercelAiGatewayV1,
     ];
 
     /// The compiled origin.
@@ -219,6 +231,8 @@ impl EndpointPin {
             Self::ZaiPaasV4 => "https://api.z.ai",
             Self::MoonshotIntlV1 => "https://api.moonshot.ai",
             Self::GeminiV1Beta => "https://generativelanguage.googleapis.com",
+            Self::OpenRouterApiV1 => "https://openrouter.ai",
+            Self::VercelAiGatewayV1 => "https://ai-gateway.vercel.sh",
         }
     }
 
@@ -232,6 +246,8 @@ impl EndpointPin {
             Self::ZaiPaasV4 => ProviderId::Zai,
             Self::MoonshotIntlV1 => ProviderId::Moonshotai,
             Self::GeminiV1Beta => ProviderId::Google,
+            Self::OpenRouterApiV1 => ProviderId::Openrouter,
+            Self::VercelAiGatewayV1 => ProviderId::VercelAiGateway,
         }
     }
 }
@@ -876,7 +892,7 @@ impl PreDispatchRetryPolicy {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum DurableOperationSupport {
-    /// None. This is the launch answer for all six providers: Anthropic is
+    /// None. This is the launch answer for all eight authorities: Anthropic is
     /// stateless, `OpenAI`'s `GET /v1/responses/{id}` requires `store: true`
     /// which AEX deliberately disables, and Gemini Interactions is not the
     /// launch dialect (D-19).

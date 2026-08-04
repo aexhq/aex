@@ -1051,6 +1051,7 @@ fn seal_state(state: DialectState) -> Result<SealedResponse, FrameDecodeError> {
         stop_reason,
         usage,
         provider_request_id: request_id,
+        gateway_route: None,
     })
 }
 

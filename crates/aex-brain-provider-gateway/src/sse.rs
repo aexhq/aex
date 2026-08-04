@@ -1,15 +1,16 @@
 //! The incremental, bounded server-sent-event decoder (plan 08 §3.4).
 //!
-//! All six providers stream `text/event-stream`. The decoder is fed arbitrary
+//! All eight authorities stream `text/event-stream`. The decoder is fed arbitrary
 //! byte chunks — a TCP segment can split a frame, a field, or a single UTF-8
 //! scalar — and yields whole events or a typed error. It never allocates past
 //! `max_frame_bytes`, so an unterminated frame from a hostile peer is a
 //! rejection rather than a heap exhaustion.
 //!
 //! Deliberately absent: any interpretation of `data: [DONE]`. That sentinel is
-//! present on `deepseek`, `zai` and `moonshotai` and absent on `openai`,
-//! `anthropic` and `google`, so it is a **dialect** fact, surfaced as an
-//! ordinary event and interpreted by the adapter.
+//! present on `deepseek`, `zai`, `moonshotai`, `openrouter`, and
+//! `vercel_ai_gateway`, and absent on `openai`, `anthropic`, and `google`, so
+//! it is a **dialect** fact, surfaced as an ordinary event and interpreted by
+//! the adapter.
 
 /// The line terminator the SSE grammar joins and strips.
 const NEWLINE: u8 = 0x0a;
@@ -39,7 +40,7 @@ impl SseEvent<'_> {
         })
     }
 
-    /// Whether the payload is the `[DONE]` sentinel three of the six dialects
+    /// Whether the payload is the `[DONE]` sentinel five of the eight dialects
     /// send.
     #[must_use]
     pub fn is_done_sentinel(&self) -> bool {
@@ -523,7 +524,7 @@ mod tests {
 
     #[test]
     fn the_done_sentinel_is_an_ordinary_event() {
-        // Three of the six dialects send it and three do not, so the decoder
+        // Five of the eight dialects send it and three do not, so the decoder
         // surfaces it rather than interpreting it.
         let events = decode_all(&[b"data: [DONE]\n\n"], 1024).expect("sentinel");
         assert_eq!(events.len(), 1);

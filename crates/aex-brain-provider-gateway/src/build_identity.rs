@@ -1,4 +1,4 @@
-//! Build-stamped identity of the complete six-adapter source tree.
+//! Build-stamped identity of the complete eight-adapter source tree.
 //!
 //! The crate build script hashes every Rust source below this crate's `src/`
 //! with path and length framing, then injects the result into the compiled

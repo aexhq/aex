@@ -16,7 +16,7 @@
 //!   only `message_start` moves the effect to `response_started`, because that
 //!   is a durable write which must mean "the provider is generating".
 //! - **No `[DONE]`.** This dialect terminates on `message_stop`. The sentinel
-//!   three of the six dialects send is rejected here as a frame this dialect
+//!   five of the eight dialects send is rejected here as a frame this dialect
 //!   does not produce.
 //! - **Round-trip material is mandatory.** Anthropic rejects a replayed
 //!   `thinking` block whose `signature` is missing, so the entry declares
@@ -502,6 +502,7 @@ impl ProviderAdapter for AnthropicAdapter {
             stop_reason,
             usage,
             provider_request_id: state.request_id,
+            gateway_route: None,
         })
     }
 

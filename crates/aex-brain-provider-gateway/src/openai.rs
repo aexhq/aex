@@ -412,6 +412,7 @@ impl ProviderAdapter for OpenAiAdapter {
             stop_reason,
             usage: state.usage,
             provider_request_id: state.request_id,
+            gateway_route: state.gateway_route,
         })
     }
 
