@@ -7,17 +7,18 @@ mock_provider "aws" {
 }
 
 variables {
-  plane                      = "dev"
-  region                     = "eu-west-1"
-  vpc_id                     = "vpc-0123456789abcdef0"
-  private_subnet_ids         = ["subnet-0123456789abcdef0", "subnet-0123456789abcdef1"]
-  public_subnet_ids          = ["subnet-0123456789abcdef2", "subnet-0123456789abcdef3"]
-  service_security_group_ids = ["sg-0123456789abcdef0"]
-  alb_security_group_ids     = ["sg-0123456789abcdef1"]
-  kms_key_arn                = "arn:aws:kms:eu-west-1:000000000000:key/00000000-0000-4000-8000-000000000000"
-  session_journal_stream_arn = "arn:aws:dynamodb:eu-west-1:000000000000:table/aex-dev-euw1-session-journal/stream/2026-08-01T00:00:00.000"
-  artifact_bucket            = "aex-infra-artifacts-dev-0a1b2c3d"
-  cluster_name               = "aex-dev-euw1"
+  plane                           = "dev"
+  region                          = "eu-west-1"
+  permissions_boundary_policy_arn = "arn:aws:iam::000000000000:policy/aex-dev-application-boundary"
+  vpc_id                          = "vpc-0123456789abcdef0"
+  private_subnet_ids              = ["subnet-0123456789abcdef0", "subnet-0123456789abcdef1"]
+  public_subnet_ids               = ["subnet-0123456789abcdef2", "subnet-0123456789abcdef3"]
+  service_security_group_ids      = ["sg-0123456789abcdef0"]
+  alb_security_group_ids          = ["sg-0123456789abcdef1"]
+  kms_key_arn                     = "arn:aws:kms:eu-west-1:000000000000:key/00000000-0000-4000-8000-000000000000"
+  session_journal_stream_arn      = "arn:aws:dynamodb:eu-west-1:000000000000:table/aex-dev-euw1-session-journal/stream/2026-08-01T00:00:00.000"
+  artifact_bucket                 = "aex-infra-artifacts-dev-0a1b2c3d"
+  cluster_name                    = "aex-dev-euw1"
 
   session_api = {
     function_name           = "aex-dev-regional-session-api"

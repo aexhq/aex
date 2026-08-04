@@ -7,13 +7,14 @@ mock_provider "aws" {
 }
 
 variables {
-  plane               = "dev"
-  region              = "eu-west-1"
-  subnet_ids          = ["subnet-0123456789abcdef0", "subnet-0123456789abcdef1"]
-  security_group_ids  = ["sg-0123456789abcdef0"]
-  kms_key_arn         = "arn:aws:kms:eu-west-1:000000000000:key/00000000-0000-4000-8000-000000000000"
-  artifact_bucket     = "aex-infra-artifacts-dev-0a1b2c3d"
-  schedule_group_name = "aex-dev-central"
+  plane                           = "dev"
+  region                          = "eu-west-1"
+  permissions_boundary_policy_arn = "arn:aws:iam::000000000000:policy/aex-dev-application-boundary"
+  subnet_ids                      = ["subnet-0123456789abcdef0", "subnet-0123456789abcdef1"]
+  security_group_ids              = ["sg-0123456789abcdef0"]
+  kms_key_arn                     = "arn:aws:kms:eu-west-1:000000000000:key/00000000-0000-4000-8000-000000000000"
+  artifact_bucket                 = "aex-infra-artifacts-dev-0a1b2c3d"
+  schedule_group_name             = "aex-dev-central"
 
   finance_api = {
     function_name           = "aex-dev-finance-api"

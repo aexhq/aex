@@ -7,17 +7,18 @@ mock_provider "aws" {
 }
 
 variables {
-  plane                       = "prd"
-  region                      = "eu-west-1"
-  account_id                  = "000000000000"
-  name_prefix                 = "aex-prd-euw1-"
-  bucket_suffix               = "0a1b2c3d"
-  content_bucket_purpose      = "content"
-  content_lifecycle_role_arn  = "arn:aws:iam::000000000000:role/aex-prd-content-lifecycle"
-  artifact_retention_days     = 90
-  ops_topic_name              = "aex-prd-ops"
-  table_definitions_digest    = "blake3:1111111111111111111111111111111111111111111111111111111111111111"
-  expected_definitions_digest = "blake3:1111111111111111111111111111111111111111111111111111111111111111"
+  plane                           = "prd"
+  region                          = "eu-west-1"
+  account_id                      = "000000000000"
+  permissions_boundary_policy_arn = "arn:aws:iam::000000000000:policy/aex-dev-application-boundary"
+  name_prefix                     = "aex-prd-euw1-"
+  bucket_suffix                   = "0a1b2c3d"
+  content_bucket_purpose          = "content"
+  content_lifecycle_role_arn      = "arn:aws:iam::000000000000:role/aex-prd-content-lifecycle"
+  artifact_retention_days         = 90
+  ops_topic_name                  = "aex-prd-ops"
+  table_definitions_digest        = "blake3:1111111111111111111111111111111111111111111111111111111111111111"
+  expected_definitions_digest     = "blake3:1111111111111111111111111111111111111111111111111111111111111111"
 
   vpc = {
     name               = "aex-prd-euw1"
