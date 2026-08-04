@@ -69,3 +69,32 @@ test("unknown licenses and high vulnerabilities fail instead of becoming receipt
     }
   })).toThrow("1 high vulnerabilities");
 });
+
+test("license exceptions apply only to the declared crate version", () => {
+  const base = {
+    draft: { artifactSubjectDigest: hex("c"), unit: { id: "central-control-api" } },
+    denyPolicy: {
+      licenses: {
+        allow: ["Apache-2.0"],
+        exceptions: [{ crate: "webpki-roots@1.0.9", allow: ["CDLA-Permissive-2.0"] }]
+      }
+    },
+    denyPolicyBytes: "policy",
+    syftVersion: "1.50.0",
+    grypeVersion: "0.116.1",
+    scannedAt: "2026-08-04T00:00:00Z",
+    grype: { matches: [], descriptor: { db: { built: "today" } } }
+  };
+  const component = (version: string) => ({
+    bomFormat: "CycloneDX",
+    specVersion: "1.6",
+    components: [
+      { name: "webpki-roots", version, licenses: [{ license: { id: "CDLA-Permissive-2.0" } }] }
+    ]
+  });
+
+  expect(() => inspectSupplyChain({ ...base, rawSbom: component("1.0.9") })).not.toThrow();
+  expect(() => inspectSupplyChain({ ...base, rawSbom: component("1.0.10") })).toThrow(
+    "license policy denied"
+  );
+});

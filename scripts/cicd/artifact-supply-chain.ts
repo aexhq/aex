@@ -33,6 +33,7 @@ type DenyPolicy = {
   readonly licenses?: {
     readonly allow?: readonly string[];
     readonly clarify?: readonly { readonly crate?: string; readonly expression?: string }[];
+    readonly exceptions?: readonly { readonly crate?: string; readonly allow?: readonly string[] }[];
   };
 };
 
@@ -58,6 +59,18 @@ const expressionAllowed = (
     .replaceAll(")", "")
     .split(/\s+(?:AND|OR)\s+/u)
     .every((part) => allowed.has(part.trim()));
+};
+
+const exactPackageKey = (value: string): string => {
+  const separator = value.lastIndexOf("@");
+  if (separator <= 0 || separator === value.length - 1) {
+    throw new Error(`license exception ${value} must pin an exact crate version`);
+  }
+  const version = value.slice(separator + 1);
+  if (/[<>=*^~,\s]/u.test(version)) {
+    throw new Error(`license exception ${value} must pin an exact crate version`);
+  }
+  return value;
 };
 
 export type SupplyChainOutputs = {
@@ -106,12 +119,27 @@ export const inspectSupplyChain = (inputs: {
       string(entry.expression, "clarified expression")
     ])
   );
+  const exceptions = new Map<string, Set<string>>();
+  for (const entry of inputs.denyPolicy.licenses?.exceptions ?? []) {
+    const key = exactPackageKey(string(entry.crate, "license exception crate"));
+    const licenses = new Set(
+      (entry.allow ?? []).map((license) => string(license, `license exception ${key}`))
+    );
+    if (licenses.size === 0) throw new Error(`license exception ${key} has no allow list`);
+    exceptions.set(key, licenses);
+  }
   const inventory = components.map((component) => {
     const name = string(component.name, "component name");
     const version = typeof component.version === "string" ? component.version : null;
     const licenses = licensesOf(component);
+    const componentAllowed = new Set(allowed);
+    if (version !== null) {
+      for (const license of exceptions.get(`${name}@${version}`) ?? []) {
+        componentAllowed.add(license);
+      }
+    }
     const denied = licenses.filter(
-      (expression) => !expressionAllowed(name, expression, allowed, clarified)
+      (expression) => !expressionAllowed(name, expression, componentAllowed, clarified)
     );
     return { name, version, licenses, denied };
   });
