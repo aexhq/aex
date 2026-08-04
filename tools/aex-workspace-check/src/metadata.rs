@@ -66,6 +66,9 @@ pub struct TargetMeta {
     /// Target kinds, such as `lib`, `bin`, `test` or `example`.
     #[serde(default)]
     pub kind: Vec<String>,
+    /// Features Cargo requires before this target exists in the selected graph.
+    #[serde(default, rename = "required-features")]
+    pub required_features: Vec<String>,
 }
 
 /// One package as `cargo metadata` reports it.

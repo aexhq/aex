@@ -101,6 +101,9 @@ enum FlakeAction {
         /// The lane's filter expression, when it passed one.
         #[arg(long)]
         filter: Option<String>,
+        /// Exclude targets Cargo cannot build without explicitly selected features.
+        #[arg(long)]
+        default_features_only: bool,
         /// The receipt this run is a diagnostic rerun of.
         #[arg(long)]
         rerun_of: Option<String>,
@@ -265,6 +268,7 @@ fn run_flake(action: &FlakeAction) -> ExitCode {
         packages,
         nextest_config,
         filter,
+        default_features_only,
         rerun_of,
         first_failure,
     } = action;
@@ -320,7 +324,7 @@ fn run_flake(action: &FlakeAction) -> ExitCode {
             .cloned()
             .collect()
     };
-    let mut declared_targets = collected.declared_targets();
+    let mut declared_targets = collected.declared_targets(!default_features_only);
     if !packages.is_empty() {
         declared_targets.retain(|name, _| packages.contains(name));
     }
@@ -333,7 +337,7 @@ fn run_flake(action: &FlakeAction) -> ExitCode {
         env_retries: std::env::var("NEXTEST_RETRIES").ok(),
         filter: filter.clone(),
         declared_targets,
-        doctest_crates: aex_workspace_check::collect::doctest_crates(&selected),
+        doctest_crates: aex_workspace_check::collect::doctest_crates(&selected, &metadata),
         doctests,
         source: collected.scan.clone(),
         rerun,

@@ -51,8 +51,15 @@ describe("workflow evidence producers", () => {
       "cargo nextest list"
     );
     expect(workflowStep(job, "Doctests").run).toContain("--color never");
+    expect(workflowStep(job, "Doctests").run).toContain("cargo metadata --locked --no-deps");
+    expect(workflowStep(job, "Doctests").run).toContain('[[ "$package_count" == "1" ]]');
+    expect(workflowStep(job, "Doctests").run).toContain('[[ "$has_library" == "true" ]]');
+    expect(workflowStep(job, "Doctests").run).toContain("has no library target");
     expect(workflowStep(job, "Prove the no-skip inventory").run).toContain(
       "aex-workspace-check -- flake scan"
+    );
+    expect(workflowStep(job, "Prove the no-skip inventory").run).toContain(
+      "--default-features-only"
     );
     expect(workflowStep(job, "Build and verify the unit receipt").run).toContain(
       "aex-release-tool -- evidence new"

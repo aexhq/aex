@@ -216,10 +216,26 @@ jobs:
         env:
           CARGO_INCREMENTAL: "0"
           RECEIPT_DIR: target/aex-evidence/${{ matrix.name }}
+          SELECTED_PACKAGE: ${{ matrix.name }}
         run: |
           set -euo pipefail
-          cargo test --locked --color never --doc -p "${{ matrix.name }}" 2>&1 \
-            | tee "$RECEIPT_DIR/doctest.log"
+          metadata=$(cargo metadata --locked --no-deps --format-version 1)
+          package_count=$(jq --arg package "$SELECTED_PACKAGE" \
+            '[.packages[] | select(.name == $package)] | length' <<<"$metadata")
+          [[ "$package_count" == "1" ]]
+          has_library=$(jq -r --arg package "$SELECTED_PACKAGE" \
+            '[.packages[] | select(.name == $package).targets[] | select(.kind | index("lib"))] | length > 0' \
+            <<<"$metadata")
+          if [[ "$has_library" == "true" ]]; then
+            cargo test --locked --color never --doc -p "$SELECTED_PACKAGE" 2>&1 \
+              | tee "$RECEIPT_DIR/doctest.log"
+          elif [[ "$has_library" == "false" ]]; then
+            printf '%s\n' "$SELECTED_PACKAGE has no library target; doctests are not applicable" \
+              > "$RECEIPT_DIR/doctest.log"
+          else
+            echo "invalid library-target verdict for $SELECTED_PACKAGE: $has_library" >&2
+            exit 2
+          fi
 
       - name: Prove the no-skip inventory
         env:
@@ -231,6 +247,7 @@ jobs:
             --junit "target/nextest/${{ inputs.profile }}/junit.xml" \
             --doctest "$RECEIPT_DIR/doctest.log" \
             --profile "${{ inputs.profile }}" \
+            --default-features-only \
             --package "${{ matrix.name }}" \
             > "$RECEIPT_DIR/inventory.json"
 

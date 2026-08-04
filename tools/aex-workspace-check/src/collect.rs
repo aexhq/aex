@@ -83,6 +83,8 @@ pub struct Collected {
     pub authorities: Authorities,
     /// What the tree scan found.
     pub scan: SourceScan,
+    /// Cargo targets present without arming optional feature-gated lanes.
+    default_test_targets: BTreeMap<String, BTreeSet<String>>,
 }
 
 impl Collected {
@@ -106,15 +108,20 @@ impl Collected {
     /// Package name to the test target names its manifest declares, for the
     /// flake scanner's empty-target rule.
     #[must_use]
-    pub fn declared_targets(&self) -> BTreeMap<String, Vec<String>> {
+    pub fn declared_targets(&self, include_feature_gated: bool) -> BTreeMap<String, Vec<String>> {
         self.packages
             .iter()
             .filter_map(|package| {
                 let meta = package.raw_meta.as_ref()?;
                 let targets = meta.get("targets")?.as_object()?;
+                let enabled = self.default_test_targets.get(&package.name)?;
                 Some((
                     package.name.clone(),
-                    targets.keys().cloned().collect::<Vec<String>>(),
+                    targets
+                        .keys()
+                        .filter(|target| include_feature_gated || enabled.contains(target.as_str()))
+                        .cloned()
+                        .collect::<Vec<String>>(),
                 ))
             })
             .filter(|(_, targets): &(String, Vec<String>)| !targets.is_empty())
@@ -130,6 +137,7 @@ impl Collected {
 /// parsed. A document that cannot be read is never treated as absent, because
 /// "absent" and "unreadable" have different fixes.
 pub fn collect(root: &Path, metadata: &WorkspaceMetadata) -> Result<Collected, CollectError> {
+    let default_test_targets = default_test_targets(metadata);
     let mut packages = cargo_packages(metadata);
     packages.extend(npm_packages(root)?);
     packages.sort_by(|left, right| left.path.cmp(&right.path));
@@ -138,8 +146,31 @@ pub fn collect(root: &Path, metadata: &WorkspaceMetadata) -> Result<Collected, C
         workloads: workloads(root)?,
         authorities: authorities(root)?,
         scan: scan_tree(root, &packages)?,
+        default_test_targets,
         packages,
     })
+}
+
+fn default_test_targets(metadata: &WorkspaceMetadata) -> BTreeMap<String, BTreeSet<String>> {
+    metadata
+        .members()
+        .into_iter()
+        .map(|package| {
+            let targets = package
+                .targets
+                .iter()
+                .filter(|target| {
+                    target.required_features.is_empty()
+                        && target
+                            .kind
+                            .iter()
+                            .any(|kind| kind == "test" || kind == "bench")
+                })
+                .map(|target| target.name.clone())
+                .collect();
+            (package.name.clone(), targets)
+        })
+        .collect()
 }
 
 fn cargo_packages(metadata: &WorkspaceMetadata) -> Vec<PackageRow> {
@@ -441,7 +472,12 @@ fn display(path: &Path) -> String {
 /// The library target names of every package that declares layer `unit`, for
 /// the doctest rule.
 #[must_use]
-pub fn doctest_crates(packages: &[PackageRow]) -> BTreeSet<String> {
+pub fn doctest_crates(packages: &[PackageRow], metadata: &WorkspaceMetadata) -> BTreeSet<String> {
+    let library_targets: BTreeMap<&str, &str> = metadata
+        .members()
+        .into_iter()
+        .filter_map(|package| Some((package.name.as_str(), package.library()?.name.as_str())))
+        .collect();
     packages
         .iter()
         .filter(|package| package.kind == PackageKind::Cargo)
@@ -453,7 +489,8 @@ pub fn doctest_crates(packages: &[PackageRow]) -> BTreeSet<String> {
                 .and_then(serde_json::Value::as_array)
                 .is_some_and(|layers| layers.iter().any(|layer| layer.as_str() == Some("unit")))
         })
-        .map(|package| package.name.replace('-', "_"))
+        .filter_map(|package| library_targets.get(package.name.as_str()).copied())
+        .map(ToOwned::to_owned)
         .collect()
 }
 
@@ -466,7 +503,41 @@ pub fn source_hits(scan: &SourceScan) -> (Vec<SourceHit>, Vec<SourceHit>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{QUARANTINE_DIRECTORIES, QUARANTINE_FILES, image_needles};
+    use super::{
+        Authorities, Collected, QUARANTINE_DIRECTORIES, QUARANTINE_FILES, cargo_packages,
+        default_test_targets, doctest_crates, image_needles,
+    };
+    use crate::flake::SourceScan;
+    use crate::metadata::WorkspaceMetadata;
+
+    const TARGET_FIXTURE: &str = r#"{
+      "workspace_root": "C:/w",
+      "workspace_members": ["aex-foo", "brain-mux"],
+      "packages": [
+        {
+          "id": "aex-foo",
+          "name": "aex-foo",
+          "manifest_path": "C:/w/crates/aex-foo/Cargo.toml",
+          "targets": [
+            { "name": "aex_foo", "kind": ["lib"] },
+            { "name": "properties", "kind": ["test"] },
+            { "name": "integration", "kind": ["test"],
+              "required-features": ["integration-engines"] }
+          ],
+          "metadata": { "aex": {
+            "layers": ["unit", "integration"],
+            "targets": { "properties": "unit", "integration": "integration" }
+          }}
+        },
+        {
+          "id": "brain-mux",
+          "name": "brain-mux",
+          "manifest_path": "C:/w/runtimes/brain-mux/Cargo.toml",
+          "targets": [{ "name": "brain-mux", "kind": ["bin"] }],
+          "metadata": { "aex": { "layers": ["unit"] } }
+        }
+      ]
+    }"#;
 
     /// Expected needles are assembled rather than written whole, so this file
     /// is not reported by the scan it defines.
@@ -499,5 +570,43 @@ mod tests {
                 .any(|name| name.starts_with("expected-failures."))
         );
         assert!(QUARANTINE_DIRECTORIES.contains(&"non-gating"));
+    }
+
+    #[test]
+    fn the_unit_lane_excludes_only_targets_that_require_features() {
+        let metadata = WorkspaceMetadata::parse(TARGET_FIXTURE).expect("the fixture parses");
+        let packages = cargo_packages(&metadata);
+        let collected = Collected {
+            default_test_targets: default_test_targets(&metadata),
+            packages,
+            workloads: Vec::new(),
+            authorities: Authorities::default(),
+            scan: SourceScan::default(),
+        };
+
+        assert_eq!(
+            collected.declared_targets(false),
+            std::collections::BTreeMap::from([(
+                "aex-foo".to_owned(),
+                vec!["properties".to_owned()]
+            )])
+        );
+        assert_eq!(
+            collected.declared_targets(true),
+            std::collections::BTreeMap::from([(
+                "aex-foo".to_owned(),
+                vec!["integration".to_owned(), "properties".to_owned()]
+            )])
+        );
+    }
+
+    #[test]
+    fn only_real_library_targets_require_doctest_results() {
+        let metadata = WorkspaceMetadata::parse(TARGET_FIXTURE).expect("the fixture parses");
+        let packages = cargo_packages(&metadata);
+        assert_eq!(
+            doctest_crates(&packages, &metadata),
+            std::collections::BTreeSet::from(["aex_foo".to_owned()])
+        );
     }
 }
