@@ -329,7 +329,7 @@ fn a_revocation_cannot_be_compiled_from_an_already_revoked_binding() {
 #[tokio::test]
 async fn a_credential_point_read_costs_one_read_per_provider_and_never_scans() {
     // The sort key is `CRED#{provider}#{credential}`, so an identity alone names
-    // a suffix. `ProviderId` is closed at six, so the read is a bounded fan of
+    // a suffix. `ProviderId` is closed at eight, so the read is a bounded fan of
     // strongly consistent point reads — never a Scan, and never an unbounded
     // Query over a directory that has no ceiling of its own.
     let providers = aex_wire::models::ProviderId::ALL.len();

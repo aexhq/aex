@@ -154,7 +154,7 @@ fn a_set_plan_refuses_a_revision_jump_and_mismatched_generation_identity() {
 /// a decode failure rather than a value a projection has to guess at.
 #[test]
 fn a_credential_row_outside_the_closed_vocabularies_is_refused() {
-    for (attribute, corrupt) in [("provider", "openrouter"), ("state", "active")] {
+    for (attribute, corrupt) in [("provider", "anthrophic"), ("state", "active")] {
         let mut row = encode_provider_credential(&provider_credential()).expect("encodes");
         row.insert(
             attribute.to_owned(),

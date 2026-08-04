@@ -48,7 +48,7 @@ pub const CREDENTIAL_STATES: &[&str] = &["ready", "revoked"];
 
 /// Every BYOK provider, as the generated `ProviderId` spells them.
 ///
-/// Derived from the generated enum rather than written out, so a seventh
+/// Derived from the generated enum rather than written out, so a ninth
 /// provider cannot be admitted here without appearing in the contract first.
 #[must_use]
 pub fn providers() -> Vec<&'static str> {
