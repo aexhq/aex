@@ -576,7 +576,7 @@ impl ProductionHandsBackend {
     ) -> Result<(), HandsError> {
         if reply.fence != lease.value.fence {
             self.leases.lock().await.invalidate_lease(lease);
-            return Err(response_error(
+            return Err(dispatched(
                 ProviderFailureKind::ProtocolViolation,
                 "the Hands response advanced beyond the cached lifecycle fence",
             ));
@@ -588,11 +588,11 @@ impl ProductionHandsBackend {
             .observe_guest(lease, reply.guest_revision, reply.agent_build)
         {
             GuestObservation::Recorded | GuestObservation::Unchanged => Ok(()),
-            GuestObservation::StaleLease => Err(response_error(
+            GuestObservation::StaleLease => Err(dispatched(
                 ProviderFailureKind::ProtocolViolation,
                 "the Hands response arrived on a superseded endpoint lease",
             )),
-            GuestObservation::Invalidated => Err(response_error(
+            GuestObservation::Invalidated => Err(dispatched(
                 ProviderFailureKind::ProtocolViolation,
                 "the Hands guest incarnation or build changed during a cached endpoint lease",
             )),
