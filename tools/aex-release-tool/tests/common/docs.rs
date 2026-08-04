@@ -159,6 +159,11 @@ pub fn valid_manifest() -> Value {
                     "triple": "aarch64-unknown-linux-gnu.2.34"
                 },
                 "configSchemaVersion": 1,
+                "lambda": {
+                    "memoryMiB": 1024,
+                    "timeoutS": 30,
+                    "reservedConcurrency": 8
+                },
                 "adjacent": {
                     "storageCompatible": true,
                     "protocolCompatible": true,

@@ -745,6 +745,15 @@ fn verify_resource_shape(unit: &super::inputs::Unit) -> Vec<Violation> {
                         format!("unit `{}` is a service and declares no port", unit.id),
                     ));
                 }
+                if unit.kind == "rust-oci-task" && (shape.desired_count != 0 || shape.port != 0) {
+                    violations.push(Violation::new(
+                        "unit-resource-shape-conflict",
+                        format!(
+                            "unit `{}` is a one-shot task and must declare desired_count = 0 and port = 0",
+                            unit.id
+                        ),
+                    ));
+                }
             }
         }
         if unit.lambda.is_some() {

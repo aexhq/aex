@@ -654,7 +654,7 @@ live_suite = "aex-live-regional-secret-key-admin"
 [unit.fargate]
 cpu = 512
 memory_mb = 1024
-desired_count = 1
+desired_count = 0
 stop_timeout_s = 60
 port = 0
 

@@ -264,6 +264,17 @@ fn public_location_schemas_reject_wrong_hosts_tags_and_mutable_oci_refs() {
 
     let mut manifest = valid_manifest();
     manifest["units"]["regional-session-api"]["kind"] = json!("rust-oci-service");
+    manifest["units"]["regional-session-api"]
+        .as_object_mut()
+        .unwrap()
+        .remove("lambda");
+    manifest["units"]["regional-session-api"]["fargate"] = json!({
+        "cpu": 256,
+        "memoryMiB": 512,
+        "desiredCount": 1,
+        "stopTimeoutS": 30,
+        "port": 8080
+    });
     manifest["units"]["regional-session-api"]["location"] = json!({
         "kind": "oci",
         "uri": format!("oci://ghcr.io/aexhq/aex-units/regional-session-api@{digest}"),
@@ -274,6 +285,49 @@ fn public_location_schemas_reject_wrong_hosts_tags_and_mutable_oci_refs() {
         "oci://ghcr.io/aexhq/aex-units/regional-session-api:main@{digest}"
     ));
     assert!(!schema_accepts(SchemaName::CompositionManifest, &manifest));
+}
+
+#[test]
+fn manifest_unit_shapes_are_closed_and_kind_specific() {
+    let valid = valid_manifest();
+    assert!(schema_accepts(SchemaName::CompositionManifest, &valid));
+
+    let mut missing = valid.clone();
+    missing["units"]["regional-session-api"]
+        .as_object_mut()
+        .unwrap()
+        .remove("lambda");
+    assert!(!schema_accepts(SchemaName::CompositionManifest, &missing));
+
+    let mut extra = valid.clone();
+    extra["units"]["regional-session-api"]["lambda"]["invented"] = json!(1);
+    assert!(!schema_accepts(SchemaName::CompositionManifest, &extra));
+
+    let mut microvm = valid;
+    let unit = &mut microvm["units"]["regional-session-api"];
+    unit["kind"] = json!("microvm-image");
+    unit.as_object_mut().unwrap().remove("lambda");
+    unit["microvm"] = json!({
+        "variant": "2gb-browser",
+        "minimumMemoryMiB": 2048,
+        "browser": true
+    });
+    assert!(schema_accepts(SchemaName::CompositionManifest, &microvm));
+
+    let mut oneshot = valid_manifest();
+    let unit = &mut oneshot["units"]["regional-session-api"];
+    unit["kind"] = json!("rust-oci-task");
+    unit.as_object_mut().unwrap().remove("lambda");
+    unit["fargate"] = json!({
+        "cpu": 512,
+        "memoryMiB": 1024,
+        "desiredCount": 0,
+        "stopTimeoutS": 60,
+        "port": 0
+    });
+    assert!(schema_accepts(SchemaName::CompositionManifest, &oneshot));
+    oneshot["units"]["regional-session-api"]["fargate"]["desiredCount"] = json!(1);
+    assert!(!schema_accepts(SchemaName::CompositionManifest, &oneshot));
 }
 
 #[test]

@@ -7,6 +7,13 @@ Production promotes a complete immutable composition manifest; a one-service
 release creates a new complete manifest whose only artifact change is that
 service's digest.
 
+Each manifest unit also carries the exact applicable `lambda`, `fargate`, or
+`microvm` shape copied from its `units.toml` row. The shape is part of the
+canonical `releaseId`; changing deployable resources therefore creates a new
+composition even when artifact bytes do not change. Shape kind and presence are
+validated before publication. MicroVM shapes are plane-neutral image
+capabilities, not hosted image identifiers.
+
 The delivery graph distinguishes invalid omissions from explicit prelaunch
 architecture debt. `routes-meta.yaml` gives every unmounted operation a
 non-empty `deferredOperations` reason, and `scenario-ownership.toml` gives every

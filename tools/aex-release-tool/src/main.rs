@@ -1793,7 +1793,7 @@ fn run_manifest_new(
     if !holes.is_empty() {
         return Err(ToolError::many(Exit::CompositionIncompatible, holes));
     }
-    let manifest = aex_release_tool::manifest::new_manifest(inputs, &described)?;
+    let manifest = aex_release_tool::manifest::new_manifest(inputs, &described, &registry)?;
     write_canonical(out, &manifest)?;
     emit(
         cli,
@@ -1841,7 +1841,7 @@ fn run_manifest_handoff(
         ));
     }
     let inputs: aex_release_tool::manifest::CompositionInputs = read_json(composition)?;
-    let manifest = aex_release_tool::manifest::new_handoff_manifest(inputs, &store)?;
+    let manifest = aex_release_tool::manifest::new_handoff_manifest(inputs, &store, &registry)?;
     let manifest_digest = canon::digest_bytes(&canon::to_file_bytes(&manifest)?);
     let store_digest = canon::digest_bytes(&canon::to_file_bytes(&store)?);
 
