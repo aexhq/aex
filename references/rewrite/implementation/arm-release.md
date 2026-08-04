@@ -1,3 +1,18 @@
+---
+title: ARM64 release and qualification plan
+description: Test-first plan for ARM64 artifact execution receipts, readiness, load qualification, and rollback.
+keywords:
+  - arm64
+  - release
+  - qualification
+  - ci
+audience: implementation agents and maintainers
+status: proposed
+related:
+  - references/rewrite/README.md
+  - references/rewrite/architecture-performance-v1.md
+---
+
 # ARM64 release and qualification plan
 
 ARM64 is the only v1 runtime architecture. x86 artifacts, fallback images, and

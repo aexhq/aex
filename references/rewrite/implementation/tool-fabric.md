@@ -1,3 +1,18 @@
+---
+title: Tool fabric implementation plan
+description: Test-first implementation plan for typed Brain-control, network, MCP, Hands, and detached tool execution.
+keywords:
+  - tools
+  - mcp
+  - hands
+  - performance
+audience: implementation agents and maintainers
+status: proposed
+related:
+  - references/rewrite/README.md
+  - references/rewrite/architecture-performance-v1.md
+---
+
 # Tool fabric implementation plan
 
 Source design: `architecture-performance-v1.md`. This plan is implementation

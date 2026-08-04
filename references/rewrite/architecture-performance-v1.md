@@ -1,3 +1,19 @@
+---
+title: Performance-first architecture v1
+description: ARM64-only performance, correctness, scalability, and reliability architecture for the Rust-native rewrite.
+keywords:
+  - architecture
+  - performance
+  - arm64
+  - brain
+  - tools
+audience: implementation agents and maintainers
+status: accepted
+related:
+  - references/rewrite/README.md
+  - references/rewrite/brain.md
+---
+
 # Performance-first architecture v1
 
 Status: accepted for implementation planning (prelaunch, ARM64-only clean cut)

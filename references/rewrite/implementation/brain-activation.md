@@ -1,6 +1,11 @@
 ---
 title: Brain activation implementation plan
 description: Test-first plan for the performance-first Brain activation path and ARM64 launch qualification.
+keywords:
+  - brain
+  - activation
+  - cache
+  - performance
 audience: implementation agents and maintainers
 status: proposed
 related:
@@ -25,7 +30,7 @@ DynamoDB journal, lease/fence, effect, and receipt records remain decisive.
 | `crates/aex-brain-provider-gateway/`, `crates/aex-brain-provider-custody/` | Pre-send permit and credential-generation fence, connection reuse, ambiguous provider outcomes, and credential/pool invalidation. |
 | `crates/aex-brain-mcp/`, `crates/aex-brain-managed-web/` | Revision-keyed pools, per-effect network checks, bounded concurrency, deterministic result commit ordering, and unknown non-task mutations. |
 | `crates/aex-brain-hands/` | Durable materialization park/resume and generation/fence/revision/token-keyed guest lease cache; no shell fast path outside Hands. |
-| `services/brain-mux/` | Wake intake, affinity routing, task drain, health, metrics, and composition of the owners above. It contains no durable transition policy. |
+| `runtimes/brain-mux/` | Wake intake, affinity routing, task drain, health, metrics, and composition of the owners above. It contains no durable transition policy. |
 | `services/regional-session-api/`, `services/regional-stream/` | Direct wake hints and bounded asynchronous preview consumption; neither becomes Brain authority. |
 | `crates/aex-brain-test-support/`, `tests/` | Deterministic authorities/faults and cross-crate recovery, ambiguity, pressure, load, and task-loss scenarios. |
 | `infra/`, `release/` | ARM64-only task/artifact declarations, one-task launch defaults, architecture qualification receipts, and post-apply architecture checks. |
