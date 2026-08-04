@@ -47,6 +47,7 @@ describe("public main-push publication", () => {
     const source = read(".github/workflows/_build-artifacts.yml");
     const workflow = Bun.YAML.parse(source) as { readonly on: any; readonly jobs: Record<string, any> };
     const job = workflow.jobs.public_release_inputs;
+    const buildJob = workflow.jobs.build;
     const certification = job.steps.find(
       (step: { readonly name?: string }) =>
         step.name === "Produce artifact-bound supply-chain evidence and certify every unit"
@@ -57,6 +58,17 @@ describe("public main-push publication", () => {
     const blobReadback = job.steps.find(
       (step: { readonly name?: string }) =>
         step.name === "Read back and verify every published unit and auxiliary asset"
+    );
+    const packagers = buildJob.steps.find(
+      (step: { readonly name?: string }) => step.name === "Install the cross-compiler and packagers"
+    );
+    const rustCrossToolchain = buildJob.steps.find(
+      (step: { readonly name?: string }) =>
+        step.name === "Install and verify the pinned Rust cross-linker toolchain"
+    );
+    const ociToolchain = buildJob.steps.find(
+      (step: { readonly name?: string }) =>
+        step.name === "Record and verify the pinned OCI producer toolchain"
     );
 
     expect(job.permissions).toEqual({
@@ -70,6 +82,18 @@ describe("public main-push publication", () => {
     expect(source).toContain("x86_64-unknown-linux-musl");
     expect(source).toContain("CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: rust-lld");
     expect(source).toContain("link-self-contained=yes");
+    expect(packagers?.with.tool).toBe("cargo-lambda@1.8.6,cargo-auditable@0.7.1");
+    expect(packagers?.with.fallback).toBe("none");
+    expect(rustCrossToolchain?.if).toContain("steps.recipe.outputs.kind == 'rust-lambda'");
+    expect(rustCrossToolchain?.if).toContain("steps.recipe.outputs.kind == 'microvm-image'");
+    expect(rustCrossToolchain?.if).toContain("startsWith(steps.recipe.outputs.kind, 'rust-oci-')");
+    expect(rustCrossToolchain?.run).toContain("zig-x86_64-linux-0.15.2.tar.xz");
+    expect(rustCrossToolchain?.run).toContain("02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239");
+    expect(rustCrossToolchain?.run).toContain("cargo-zigbuild/releases/download/v0.22.3");
+    expect(rustCrossToolchain?.run).toContain("6a014d41ba41ca4b69ca4c4819b9f78a41b0197b5d486904e31c1244e3686190");
+    expect(rustCrossToolchain?.run).toContain('echo "$tool_root/bin" >> "$GITHUB_PATH"');
+    expect(ociToolchain?.run).toContain('--zig-binary "$tool_root/bin/zig"');
+    expect(ociToolchain?.run).toContain('--cargo-zigbuild-binary "$tool_root/bin/cargo-zigbuild"');
     expect(source).toContain("artifact module-bundle");
     expect(source.match(/actions\/attest@59d89421af93a897026c735860bf21b6eb4f7b26/g)).toHaveLength(5);
     expect(source).not.toContain("actions/attest-build-provenance@");

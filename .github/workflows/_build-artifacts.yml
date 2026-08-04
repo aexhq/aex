@@ -130,7 +130,8 @@ jobs:
       - name: Install the cross-compiler and packagers
         uses: taiki-e/install-action@2cdf2d81f4edfc3b41d5ddf56083c70b48ac2475  # v2.62.35
         with:
-          tool: cargo-lambda,cargo-auditable
+          tool: cargo-lambda@1.8.6,cargo-auditable@0.7.1
+          fallback: none
 
       - name: Verify clean source before planning and building
         run: |
@@ -177,13 +178,11 @@ jobs:
           version: v0.34.1
           driver-opts: image=moby/buildkit:v0.30.0@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f
 
-      - name: Install and verify the pinned OCI producer toolchain
-        if: ${{ startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
-        env:
-          BUILDX_NODES: ${{ steps.buildx.outputs.nodes }}
+      - name: Install and verify the pinned Rust cross-linker toolchain
+        if: ${{ steps.recipe.outputs.kind == 'rust-lambda' || steps.recipe.outputs.kind == 'microvm-image' || startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
         run: |
           set -euo pipefail
-          tool_root="$RUNNER_TEMP/aex-oci-tools"
+          tool_root="$RUNNER_TEMP/aex-rust-cross-tools"
           mkdir -p "$tool_root/bin" "$tool_root/zig" "$tool_root/cargo-zigbuild"
 
           zig_archive="$tool_root/zig-x86_64-linux-0.15.2.tar.xz"
@@ -211,6 +210,15 @@ jobs:
           echo "c3a62288419645c4172ba8bda7f6af6ef24df8a2cc264a401e4c4373e22649cf  $tool_root/bin/cargo-zigbuild" \
             | sha256sum --check --strict
           [[ "$("$tool_root/bin/cargo-zigbuild" --version)" == "cargo-zigbuild 0.22.3" ]]
+          echo "$tool_root/bin" >> "$GITHUB_PATH"
+
+      - name: Record and verify the pinned OCI producer toolchain
+        if: ${{ startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
+        env:
+          BUILDX_NODES: ${{ steps.buildx.outputs.nodes }}
+        run: |
+          set -euo pipefail
+          tool_root="$RUNNER_TEMP/aex-rust-cross-tools"
 
           buildx_binary="${DOCKER_CONFIG:-$HOME/.docker}/cli-plugins/docker-buildx"
           test -x "$buildx_binary"
@@ -222,7 +230,6 @@ jobs:
           buildkit_container="buildx_buildkit_${buildkit_node}"
           [[ "$(docker inspect --format '{{.Config.Image}}' "$buildkit_container")" == \
             "moby/buildkit:v0.30.0@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f" ]]
-          echo "$tool_root/bin" >> "$GITHUB_PATH"
           cargo run --locked --release -p aex-release-tool -- \
             artifact oci-toolchain \
             --buildx-binary "$buildx_binary" \
