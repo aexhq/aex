@@ -1,6 +1,6 @@
 # Aex
 
-High performance, scalable, distributed agent runtime.
+High performant, scalable distributed agent runtime
 
 [![npm version](https://img.shields.io/npm/v/@aexhq/sdk.svg)](https://www.npmjs.com/package/@aexhq/sdk)
 
