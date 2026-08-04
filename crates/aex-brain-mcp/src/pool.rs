@@ -127,7 +127,6 @@ impl PooledClient {
     ///
     /// Callers add request-scoped secret headers; the pooled client never owns
     /// plaintext credentials or ambient default headers.
-    #[must_use]
     pub fn post(&self) -> reqwest::RequestBuilder {
         self.client.post(self.target.clone())
     }
@@ -145,6 +144,7 @@ impl core::fmt::Debug for ConnectionPool {
         formatter
             .debug_struct("ConnectionPool")
             .field("max_entries", &self.max_entries)
+            .field("sequence", &self.sequence.load(Ordering::Relaxed))
             .field("entries", &self.len())
             .finish()
     }
@@ -162,6 +162,10 @@ impl ConnectionPool {
     }
 
     /// Number of currently retained accelerators.
+    ///
+    /// # Panics
+    ///
+    /// Panics if another thread poisoned the pool mutex.
     #[must_use]
     pub fn len(&self) -> usize {
         self.entries.lock().expect("MCP pool mutex poisoned").len()
@@ -228,6 +232,12 @@ impl ConnectionPool {
 
 /// Production entry point: screen DNS on every request, then reuse only the
 /// exact matching client.
+///
+/// # Errors
+///
+/// Returns [`PoolError::Egress`] when the endpoint or complete DNS answer fails
+/// the shared SSRF policy, or [`PoolError::ClientBuild`] when the address-pinned
+/// HTTP client cannot be constructed.
 pub async fn screened_client(
     pool: &ConnectionPool,
     resolver: &dyn DnsResolver,
@@ -317,6 +327,7 @@ mod tests {
     #[tokio::test]
     async fn exact_identity_reuses_one_warm_connection_pool() {
         let pool = ConnectionPool::new(NonZeroUsize::new(8).expect("positive"));
+        assert!(format!("{pool:?}").contains("sequence: 0"));
         let resolver = resolver([public(34), public(34)]);
         let first = screened_client(
             &pool,
@@ -395,7 +406,7 @@ mod tests {
         let pool = ConnectionPool::new(NonZeroUsize::new(8).expect("positive"));
         let resolver = resolver([vec![
             IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34)),
-            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
         ]]);
         let error = screened_client(
             &pool,
