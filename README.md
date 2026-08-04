@@ -4,6 +4,11 @@ The public TypeScript contracts, SDK, and CLI for explicit aex v1 sessions.
 
 [![npm version](https://img.shields.io/npm/v/@aexhq/sdk.svg)](https://www.npmjs.com/package/@aexhq/sdk)
 
+> **Development status:** AEX is in active prelaunch development. Not all
+> documented capabilities are deployed or verified, and the SDK, CLI, APIs,
+> and hosted service are not guaranteed to work. Expect breaking changes and
+> interruptions; do not rely on AEX for production workloads yet.
+
 ## Start
 
 ```bash
