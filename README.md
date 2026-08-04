@@ -12,12 +12,13 @@ High performance, scalable, distributed agent runtime.
 ## Features
 - Supported models: 6 native models, vercel ai gateway and openrouter
 - Zero token markup with byok
-- Automatic suspend & resume, pay only for storage on idle between turns
-- Subagents scale horizontally, easily over hundreds, support recursive spawn
-- Tools: built-in bash, todo, web_fetch/web_search, custom tools & files etc
-- Fast milliseconds start-up via firecracker microvm
+- Automatic suspend & resume
+- Storage cost only between turns
+- Subagents scale horizontally, spawn recursively
+- Rich built-in tools, bash, todo, web, custom tools & files
+- Fast milliseconds hand start-up
 - Skills & MCP Server support
-- Full observability, Open Telemetry & AG-UI compatible across span, logs, traces, and events
+- Full observability, Open Telemetry & AG-UI compatible
 
 ## Start
 
