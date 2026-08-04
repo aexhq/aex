@@ -122,32 +122,15 @@ pub struct PreparedToolCall {
 /// The read-only control state a tool may see.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ControlStateView {
-    /// The agent's todo list, in order.
-    pub todos: Vec<TodoEntry>,
+    /// Canonical arguments of the last successful `todo_write`, when present.
+    ///
+    /// The executor reads this fold projection rather than reaching back into
+    /// the activation or a second storage authority.
+    pub todo_state: Option<CanonicalJson>,
     /// How many assistant turns have committed.
     pub assistant_turns: u32,
     /// Lineage depth, root at zero.
     pub depth: u16,
-}
-
-/// One todo entry.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TodoEntry {
-    /// What the entry says.
-    pub text: String,
-    /// Where it stands.
-    pub state: TodoState,
-}
-
-/// Where a todo entry stands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TodoState {
-    /// Not started.
-    Pending,
-    /// Being worked on.
-    InProgress,
-    /// Done.
-    Completed,
 }
 
 /// What an invocation produced.

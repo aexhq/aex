@@ -13,6 +13,7 @@ pub mod compose;
 pub mod control;
 pub mod drain;
 pub mod health;
+pub mod inline_tools;
 pub mod measure;
 pub mod release_catalog;
 pub mod runtime;
@@ -550,11 +551,11 @@ fn resolve_production_ports(
         reason: format!("production Hands binding failed: {error}"),
     })?;
 
-    // BrainInline and MCP do not yet have safe production implementations. Their absence is
-    // a startup error, never a refusal executor installed behind a ready task. Managed web
-    // and Hands are bound to their real authorities even while those remaining routes block.
+    // The earned pure control subset is real, but catalog composition still
+    // refuses startup until every active BrainInline row and MCP authority has
+    // exact executor coverage. A partial executor can never make the task ready.
     let tools = wake::ProductionToolExecutors {
-        brain_inline: None,
+        brain_inline: Some(std::sync::Arc::new(inline_tools::BrainControlExecutor)),
         managed_web: Some(std::sync::Arc::clone(&credentials.managed_web)),
         mcp: None,
         hands: Some(std::sync::Arc::clone(&hands.executor)),

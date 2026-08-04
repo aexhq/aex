@@ -50,9 +50,9 @@ aex-secret-aws = { path = "../../crates/aex-secret-aws" }
 aex-secret-custody-dynamodb = { path = "../../crates/aex-secret-custody-dynamodb" }
 aex-secret-domain = { path = "../../crates/aex-secret-domain" }
 aex-session-dynamodb = { path = "../../crates/aex-session-dynamodb", features = ["session-authority"] }
-# The composed `ToolPort`. It is linked with no executor registered, because nothing
-# implements `ToolExecutor` yet; the router then refuses by its own typed error
-# rather than by one invented in this composition.
+# The composed `ToolPort`. Production binds only executors with exact per-tool
+# coverage; catalog installation refuses any active row without an earned
+# implementation.
 aex-brain-tool-catalog = { path = "../../crates/aex-brain-tool-catalog" }
 aws-config.workspace = true
 aws-sdk-dynamodb.workspace = true
@@ -61,6 +61,7 @@ aws-sdk-lambdamicrovms.workspace = true
 aws-sdk-s3.workspace = true
 aws-sdk-sqs.workspace = true
 futures.workspace = true
+serde_json.workspace = true
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
 # The METER-02 probe library. A11-MUX imports `ActivationMeter`, `MemoryBudget`,

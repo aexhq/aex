@@ -1593,7 +1593,7 @@ impl Session<'_> {
             max_result_bytes: self.policy.context.tool_result_bytes,
             hands_generation: config.hands_generation,
             control: ControlStateView {
-                todos: Vec::new(),
+                todo_state: self.state.todo_state.clone(),
                 assistant_turns: self.state.assistant_turns,
                 depth: self.state.budget.depth,
             },

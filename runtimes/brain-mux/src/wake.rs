@@ -1237,6 +1237,10 @@ mod tests {
     struct NeverExecutor;
 
     impl aex_brain_tool_catalog::router::ToolExecutor for NeverExecutor {
+        fn supports(&self, _tool: &ToolName) -> bool {
+            true
+        }
+
         fn invoke<'a>(
             &'a self,
             _ticket: &'a DispatchTicket,
@@ -1423,6 +1427,23 @@ mod tests {
             tools.route(&pin, &name).expect("route is installed").name,
             name
         );
+    }
+
+    #[test]
+    fn a_partial_inline_executor_cannot_make_the_production_catalog_ready() {
+        let other = Arc::new(NeverExecutor);
+        let outcome = ProductionToolExecutors {
+            brain_inline: Some(Arc::new(crate::inline_tools::BrainControlExecutor)),
+            managed_web: Some(Arc::clone(&other) as Arc<_>),
+            mcp: Some(Arc::clone(&other) as Arc<_>),
+            hands: Some(other),
+        }
+        .compose([CatalogPin(aex_model_catalog::Blake3Digest::of(b"catalog"))]);
+        let Err(ToolCompositionError::InvalidCatalog { reason }) = outcome else {
+            panic!("active park and subagent rows must keep readiness closed")
+        };
+        assert!(reason.contains("has no implementation"));
+        assert!(reason.contains("BrainInline"));
     }
 
     #[test]

@@ -182,6 +182,10 @@ impl core::fmt::Debug for ManagedWebExecutor {
 }
 
 impl ToolExecutor for ManagedWebExecutor {
+    fn supports(&self, tool: &aex_brain_domain::ids::ToolName) -> bool {
+        matches!(tool.as_str(), "web_fetch" | "web_search")
+    }
+
     fn invoke<'a>(
         &'a self,
         ticket: &'a DispatchTicket,

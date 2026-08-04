@@ -74,6 +74,14 @@ impl core::fmt::Debug for HandsToolExecutor {
 }
 
 impl ToolExecutor for HandsToolExecutor {
+    fn supports(&self, _tool: &aex_brain_domain::ids::ToolName) -> bool {
+        // The current bridge encodes `RegisteredTool`, which the ARM64 guest
+        // deliberately refuses until its manifest resolver maps a catalog row
+        // to a typed guest operation. Claiming coverage here would advertise
+        // shell/filesystem tools that can only return capability_unavailable.
+        false
+    }
+
     fn invoke<'a>(
         &'a self,
         ticket: &'a DispatchTicket,

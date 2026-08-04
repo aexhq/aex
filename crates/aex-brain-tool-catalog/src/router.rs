@@ -19,6 +19,13 @@ use crate::wire_pending::ExecutorRoute;
 
 /// One executor linked into the mux composition.
 pub trait ToolExecutor: Send + Sync + 'static {
+    /// Whether this executor implements the exact installed tool.
+    ///
+    /// Composition checks this for every active catalog row before the router
+    /// can be published. A coarse route object is not readiness evidence for
+    /// tools it would only reject after a durable dispatch-started commit.
+    fn supports(&self, tool: &DomainToolName) -> bool;
+
     /// Invokes one already-routed call.
     fn invoke<'a>(
         &'a self,
@@ -114,6 +121,16 @@ impl CompositeToolRouter {
                 timeout_ms: entry.descriptor.bounds.timeout_ms,
                 manifest_digest: digest,
             };
+            if matches!(&entry.state, EntryState::Active)
+                && !self.executors[executor_slot(route.executor)]
+                    .as_ref()
+                    .is_some_and(|executor| executor.supports(&name))
+            {
+                return Err(RouterBuildError::UnsupportedTool {
+                    name: name.as_str().to_owned(),
+                    route: route.executor,
+                });
+            }
             if candidates
                 .insert(
                     name.clone(),
@@ -295,6 +312,14 @@ pub enum RouterBuildError {
     /// A signed manifest carried a name outside the shared resource-name grammar.
     #[error("catalog contains a tool name outside the shared resource-name grammar")]
     InvalidToolName,
+    /// An active row has no executor that implements its exact behavior.
+    #[error("active tool `{name}` has no implementation on {route:?}")]
+    UnsupportedTool {
+        /// Tool that would otherwise be advertised.
+        name: String,
+        /// Coarse route whose executor lacks the tool.
+        route: DomainExecutorRoute,
+    },
 }
 
 #[cfg(test)]
@@ -340,6 +365,10 @@ mod tests {
     }
 
     impl ToolExecutor for RecordingExecutor {
+        fn supports(&self, _tool: &ToolName) -> bool {
+            true
+        }
+
         fn invoke<'a>(
             &'a self,
             _ticket: &'a DispatchTicket,
@@ -402,6 +431,16 @@ mod tests {
         let digest = ContentHash([7; 32]);
         let pin = CatalogPin(Blake3Digest::of(b"model catalog"));
         let mut router = CompositeToolRouter::new();
+        for route in [
+            ExecutorRoute::BrainInline,
+            ExecutorRoute::ManagedWeb,
+            ExecutorRoute::Mcp,
+            ExecutorRoute::Hands,
+        ] {
+            router
+                .register_executor(route, Arc::new(RecordingExecutor::new(route)))
+                .expect("one executor per route");
+        }
         let entries = builtin_entries().expect("built-in fixture");
         router
             .install_catalog(pin, digest, &entries)
@@ -416,6 +455,66 @@ mod tests {
                 &ToolName::parse("web_fetch").expect("tool name")
             ),
             Err(ToolRoutingError::UnknownPin { .. })
+        ));
+    }
+
+    #[test]
+    fn active_rows_require_exact_executor_coverage_before_install() {
+        #[derive(Debug)]
+        struct MissingTodoWrite;
+
+        impl ToolExecutor for MissingTodoWrite {
+            fn supports(&self, tool: &ToolName) -> bool {
+                tool.as_str() != "todo_write"
+            }
+
+            fn invoke<'a>(
+                &'a self,
+                _ticket: &'a DispatchTicket,
+                _call: &'a PreparedToolCall,
+                _cancel: &'a CancelToken,
+            ) -> BoxFuture<'a, Result<ToolOutcome, ToolDispatchError>> {
+                unreachable!("composition test")
+            }
+
+            fn query<'a>(
+                &'a self,
+                _operation: &'a DetachedOperationId,
+            ) -> BoxFuture<'a, Result<DetachedStatus, ToolDispatchError>> {
+                unreachable!("composition test")
+            }
+
+            fn cancel<'a>(
+                &'a self,
+                _operation: &'a DetachedOperationId,
+                _fence: Fence,
+            ) -> BoxFuture<'a, Result<(), ToolDispatchError>> {
+                unreachable!("composition test")
+            }
+        }
+
+        let mut router = CompositeToolRouter::new();
+        router
+            .register_executor(ExecutorRoute::BrainInline, Arc::new(MissingTodoWrite))
+            .expect("inline executor");
+        for route in [
+            ExecutorRoute::ManagedWeb,
+            ExecutorRoute::Mcp,
+            ExecutorRoute::Hands,
+        ] {
+            router
+                .register_executor(route, Arc::new(RecordingExecutor::new(route)))
+                .expect("one executor per route");
+        }
+        let entries = builtin_entries().expect("built-in fixture");
+        assert!(matches!(
+            router.install_catalog(
+                CatalogPin(Blake3Digest::of(b"model catalog")),
+                ContentHash::of(b"tool catalog"),
+                &entries,
+            ),
+            Err(super::RouterBuildError::UnsupportedTool { name, route })
+                if name == "todo_write" && route == ExecutorRoute::BrainInline
         ));
     }
 
