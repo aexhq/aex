@@ -910,14 +910,12 @@ async fn sample_reactor_delay(composition: std::sync::Arc<compose::Composition>)
 async fn wait_for_shutdown() {
     #[cfg(unix)]
     {
-        let mut terminate =
-            match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-                Ok(signal) => signal,
-                Err(_) => {
-                    let _ = tokio::signal::ctrl_c().await;
-                    return;
-                }
-            };
+        let Ok(mut terminate) =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        else {
+            let _ = tokio::signal::ctrl_c().await;
+            return;
+        };
         tokio::select! {
             _ = terminate.recv() => {}
             _ = tokio::signal::ctrl_c() => {}
