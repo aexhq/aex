@@ -10,7 +10,7 @@
 //! Its byte budget is separate from accepted work's. Evicting an admitted activation's
 //! context to keep a cache entry would turn an optimization into a failure.
 
-use aex_brain_application::kernel::{WarmCacheShard, WarmEntry};
+use aex_brain_application::kernel::{FoldCache, WarmCacheShard, WarmEntry};
 use aex_brain_domain::ids::{AgentKey, AgentRevision};
 
 /// The default idle retention of a warm entry.
@@ -130,6 +130,70 @@ impl CachePolicy {
             Band::Reserved => core::time::Duration::from_secs(self.ttl.as_secs() / 4),
             Band::Critical => core::time::Duration::ZERO,
         }
+    }
+}
+
+/// The process-local cache bound into activation.
+///
+/// Policy remains a mux concern while the application sees only the synchronous
+/// [`FoldCache`] capability. This keeps TTL and memory sizing out of the durable engine.
+#[derive(Debug)]
+pub struct ConfiguredFoldCache {
+    shard: WarmCacheShard,
+    policy: CachePolicy,
+}
+
+impl ConfiguredFoldCache {
+    /// Builds the one process-local shard under the configured byte ceilings.
+    #[must_use]
+    pub fn new(policy: CachePolicy) -> Self {
+        Self {
+            shard: WarmCacheShard::new(policy.budget_bytes, policy.entry_cap_bytes),
+            policy,
+        }
+    }
+
+    /// Exact cached canonical bytes.
+    #[must_use]
+    pub fn bytes(&self) -> usize {
+        self.shard.bytes()
+    }
+}
+
+impl FoldCache for ConfiguredFoldCache {
+    fn load(&self, key: &AgentKey, revision: AgentRevision, tick: u64) -> Option<WarmEntry> {
+        if self.policy.is_disabled() {
+            return None;
+        }
+        self.shard.get_entry(key, revision, tick)
+    }
+
+    fn store(
+        &self,
+        key: AgentKey,
+        revision: AgentRevision,
+        state: &aex_brain_domain::fold::FoldState,
+        bytes: usize,
+        tick: u64,
+    ) -> bool {
+        if self.policy.is_disabled() || bytes > self.policy.entry_cap_bytes {
+            return false;
+        }
+        store(
+            &self.shard,
+            &self.policy,
+            key,
+            WarmEntry {
+                revision,
+                state: state.clone(),
+                bytes,
+                last_used: tick,
+            },
+        )
+    }
+
+    fn remove(&self, key: &AgentKey, revision: AgentRevision) {
+        self.shard.remove(key, revision);
     }
 }
 

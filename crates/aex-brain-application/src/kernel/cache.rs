@@ -10,6 +10,32 @@ use aex_brain_domain::fold::FoldState;
 use aex_brain_domain::ids::{AgentKey, AgentRevision};
 use std::collections::HashMap;
 
+/// Process-local fold acceleration used by an activation after its durable claim.
+///
+/// Implementations are deliberately synchronous: a cache lookup must never become another
+/// authority or a network dependency. Every hit is checked against the exact revision and
+/// claimed journal tail before use, and a miss always falls back to the authoritative store.
+pub trait FoldCache: core::fmt::Debug + Send + Sync + 'static {
+    /// Loads one exact revision, updating its recency tick.
+    fn load(&self, key: &AgentKey, revision: AgentRevision, tick: u64) -> Option<WarmEntry>;
+
+    /// Stores a fold that has already proved the claimed authoritative tail.
+    ///
+    /// The state is borrowed so a disabled or oversized cache can refuse before cloning a
+    /// potentially large context.
+    fn store(
+        &self,
+        key: AgentKey,
+        revision: AgentRevision,
+        state: &FoldState,
+        bytes: usize,
+        tick: u64,
+    ) -> bool;
+
+    /// Removes an exact entry that failed the redundant claimed-tail check.
+    fn remove(&self, key: &AgentKey, revision: AgentRevision);
+}
+
 /// A cached fold plus its accounting.
 #[derive(Debug, Clone)]
 pub struct WarmEntry {
@@ -81,13 +107,31 @@ impl WarmCacheShard {
     ///
     /// Panics if the internal lock was poisoned.
     pub fn get(&self, key: &AgentKey, revision: AgentRevision, tick: u64) -> Option<FoldState> {
+        self.get_entry(key, revision, tick).map(|entry| entry.state)
+    }
+
+    /// The complete entry for `key` at exactly `revision`, if it is present.
+    ///
+    /// This is used by activation so retained-byte accounting survives a cache hit. The
+    /// returned fold is still a clone: cache eviction can therefore never invalidate an
+    /// admitted activation's state.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal lock was poisoned.
+    pub fn get_entry(
+        &self,
+        key: &AgentKey,
+        revision: AgentRevision,
+        tick: u64,
+    ) -> Option<WarmEntry> {
         let mut entries = self.entries.lock().expect("the cache lock is not poisoned");
         let entry = entries.get_mut(key)?;
         if entry.revision != revision {
             return None;
         }
         entry.last_used = tick;
-        Some(entry.state.clone())
+        Some(entry.clone())
     }
 
     /// Drops the entry for `key` when the committed revision has moved past it.
@@ -100,6 +144,25 @@ impl WarmCacheShard {
         if entries
             .get(key)
             .is_some_and(|entry| entry.revision < committed)
+        {
+            entries.remove(key);
+        }
+    }
+
+    /// Removes `key` only when the stored revision is exactly `revision`.
+    ///
+    /// A redundant tail check can reject a damaged process-local entry. Removing only the
+    /// observed revision prevents that cleanup from deleting a newer fold concurrently
+    /// installed after this activation looked.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal lock was poisoned.
+    pub fn remove(&self, key: &AgentKey, revision: AgentRevision) {
+        let mut entries = self.entries.lock().expect("the cache lock is not poisoned");
+        if entries
+            .get(key)
+            .is_some_and(|entry| entry.revision == revision)
         {
             entries.remove(key);
         }
@@ -171,5 +234,37 @@ impl WarmCacheShard {
                 break;
             }
         }
+    }
+}
+
+impl FoldCache for WarmCacheShard {
+    fn load(&self, key: &AgentKey, revision: AgentRevision, tick: u64) -> Option<WarmEntry> {
+        self.get_entry(key, revision, tick)
+    }
+
+    fn store(
+        &self,
+        key: AgentKey,
+        revision: AgentRevision,
+        state: &FoldState,
+        bytes: usize,
+        tick: u64,
+    ) -> bool {
+        if bytes > self.entry_cap_bytes {
+            return false;
+        }
+        self.insert(
+            key,
+            WarmEntry {
+                revision,
+                state: state.clone(),
+                bytes,
+                last_used: tick,
+            },
+        )
+    }
+
+    fn remove(&self, key: &AgentKey, revision: AgentRevision) {
+        WarmCacheShard::remove(self, key, revision);
     }
 }

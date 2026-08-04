@@ -18,10 +18,10 @@ use super::decide::{
     provider_call_reservation,
 };
 use super::{
-    ActivationError, ActivationPolicy, AdmissionControl, AdmissionDecision, Outcome, Ports,
-    Release, Stop,
+    ActivationError, ActivationPolicy, AdmissionControl, AdmissionDecision, DispatchControl,
+    DispatchDecision, DispatchLane, Outcome, Ports, Release, Stop,
 };
-use crate::kernel::{ActivationRegistry, DrainGate, RenewalOutcome, RenewalState};
+use crate::kernel::{ActivationRegistry, DrainGate, FoldCache, RenewalOutcome, RenewalState};
 use crate::ports::{
     BoxFuture, CancelToken, Claim, ClaimError, CommitError, ConditionFailure, ControlStateView,
     DecisionContext, DetachedStatus, DueRowIsolation, DueScanCursor, FenceGuard,
@@ -63,6 +63,8 @@ pub struct Activation {
     policy: ActivationPolicy,
     registry: Arc<ActivationRegistry>,
     drain: Arc<DrainGate>,
+    fold_cache: Option<Arc<dyn FoldCache>>,
+    dispatch: Option<Arc<dyn DispatchControl>>,
 }
 
 impl Activation {
@@ -79,7 +81,23 @@ impl Activation {
             policy,
             registry,
             drain,
+            fold_cache: None,
+            dispatch: None,
         }
+    }
+
+    /// Installs a process-local exact-revision fold cache.
+    #[must_use]
+    pub fn with_fold_cache(mut self, fold_cache: Arc<dyn FoldCache>) -> Self {
+        self.fold_cache = Some(fold_cache);
+        self
+    }
+
+    /// Installs non-blocking phase-specific dispatch admission.
+    #[must_use]
+    pub fn with_dispatch_control(mut self, dispatch: Arc<dyn DispatchControl>) -> Self {
+        self.dispatch = Some(dispatch);
+        self
     }
 
     /// The ports this activation drives.
@@ -101,6 +119,10 @@ impl Activation {
     /// Every [`ActivationError`] leaves the durable wake in place: the delivery is released
     /// rather than acked, and the lease is given up so a surviving task claims at once. A
     /// refusal therefore costs a redelivery, never a lost unit of work.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "claim, supervision, source retirement, cache publication, lease release and acknowledgement are one crash-ordered sequence"
+    )]
     pub async fn run(&self, delivery: WakeDelivery) -> Result<Outcome, ActivationError> {
         let Some(_admitted) = self.drain.try_admit() else {
             // Drain has started. Releasing rather than abandoning is the difference between
@@ -175,6 +197,9 @@ impl Activation {
             steps: 0,
             attempts: 1,
             resume: None,
+            fold_cache: self.fold_cache.as_deref(),
+            dispatch: self.dispatch.as_deref(),
+            retained_bytes: 0,
         };
 
         let cancel = session.guard.cancel().clone();
@@ -187,13 +212,17 @@ impl Activation {
             } else {
                 session.drive().await
             };
-            match outcome {
+            let outcome = match outcome {
                 Ok(outcome) => self
                     .retire_source(&mut session, &delivery.wake)
                     .await
                     .map(|()| outcome),
                 Err(error) => Err(error),
+            };
+            if outcome.is_ok() {
+                session.publish_fold_cache();
             }
+            outcome
         };
         let outcome = self.supervise(&claim_state, &delivery, cancel, work).await;
         let disposition = match &outcome {
@@ -812,6 +841,9 @@ struct Session<'a> {
     steps: u32,
     attempts: u16,
     resume: Option<Box<DurableEffect>>,
+    fold_cache: Option<&'a dyn FoldCache>,
+    dispatch: Option<&'a dyn DispatchControl>,
+    retained_bytes: usize,
 }
 
 impl Session<'_> {
@@ -820,8 +852,21 @@ impl Session<'_> {
     }
 
     async fn drive(&mut self) -> Result<Outcome, ActivationError> {
-        self.reload().await?;
-        if let Some(stop) = self.recover_open().await? {
+        // Restore and open-effect recovery are independent authoritative reads after the
+        // claim. Polling them together removes one store round trip from the cold path while
+        // preserving the order that matters: neither result reaches planning until both
+        // completed and the fold proved the claimed tail.
+        let restore = self.load_fold();
+        let open = async {
+            self.ports
+                .effects
+                .load_open(&self.key)
+                .await
+                .map_err(ActivationError::from)
+        };
+        let (restored, open) = futures::try_join!(restore, open)?;
+        self.install_fold(restored);
+        if let Some(stop) = self.recover_open(open).await? {
             return Ok(Outcome::Progressed {
                 steps: self.steps,
                 stop,
@@ -866,6 +911,12 @@ impl Session<'_> {
     /// complete restore must also equal the `(sequence, hash)` tail returned with the claim;
     /// neither an early EOF nor a same-sequence fork may reach recovery or planning.
     async fn reload(&mut self) -> Result<(), ActivationError> {
+        let restored = self.load_fold().await?;
+        self.install_fold(restored);
+        Ok(())
+    }
+
+    async fn load_fold(&self) -> Result<super::restore::RestoredFold, ActivationError> {
         let (claimed_seq, claimed_hash, workspace) = {
             let claim = self
                 .claim
@@ -877,6 +928,28 @@ impl Session<'_> {
                 claim.authority.workspace,
             )
         };
+        let revision = self
+            .claim
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .head
+            .revision;
+        if let Some(cache) = self.fold_cache {
+            let tick = self.ports.clock.steady().0;
+            if let Some(entry) = cache.load(&self.key, revision, tick) {
+                let folded_hash = entry.state.hashes.last().copied();
+                if entry.state.tail == claimed_seq && folded_hash == claimed_hash {
+                    return Ok(super::restore::RestoredFold {
+                        state: entry.state,
+                        source: super::restore::RestoreSource::WarmCache,
+                        retained_bytes: entry.bytes,
+                    });
+                }
+                // Exact revision plus a different tail can only be damaged process-local
+                // state. Remove just what was observed and rebuild from authority.
+                cache.remove(&self.key, revision);
+            }
+        }
         let restored = super::restore::restore(
             self.ports.journal.as_ref(),
             self.ports.snapshots.as_ref(),
@@ -889,8 +962,25 @@ impl Session<'_> {
             self.policy.max_snapshot_bytes,
         )
         .await?;
+        Ok(restored)
+    }
+
+    fn install_fold(&mut self, restored: super::restore::RestoredFold) {
         self.state = restored.state;
-        Ok(())
+        self.retained_bytes = restored.retained_bytes;
+    }
+
+    fn publish_fold_cache(&self) {
+        let Some(cache) = self.fold_cache else {
+            return;
+        };
+        cache.store(
+            self.key,
+            self.guard.revision(),
+            &self.state,
+            self.retained_bytes,
+            self.ports.clock.steady().0,
+        );
     }
 
     /// Classifies whatever the previous owner left open.
@@ -898,8 +988,10 @@ impl Session<'_> {
     /// Runs **before** the planner, because the planner has no dispatch evidence. A
     /// dispatched non-replayable effect settles `OutcomeUnknown` here; nothing downstream
     /// ever gets the chance to treat it as retryable.
-    async fn recover_open(&mut self) -> Result<Option<Stop>, ActivationError> {
-        let open = self.ports.effects.load_open(&self.key).await?;
+    async fn recover_open(
+        &mut self,
+        open: Vec<DurableEffect>,
+    ) -> Result<Option<Stop>, ActivationError> {
         let Some(effect) = open.into_iter().find(|effect| !effect.state.is_settled()) else {
             return Ok(None);
         };
@@ -1025,21 +1117,34 @@ impl Session<'_> {
     /// The wake rides inside the decision, which is the only place one may be created. A
     /// hand-back that merely stopped would leave the work durable and unscheduled.
     async fn hand_back(&mut self) -> Result<(), ActivationError> {
+        self.hand_back_for(QueuedReason::RegionalCapacity).await
+    }
+
+    async fn hand_back_for(&mut self, reason: QueuedReason) -> Result<(), ActivationError> {
         let mut draft = self.draft(phase_tag(&self.state.phase));
-        self.wake_continuation(&mut draft);
+        self.wake_continuation_for(&mut draft, reason);
         self.commit(draft).await
     }
 
     fn wake_continuation(&self, draft: &mut Draft) {
+        self.wake_continuation_for(draft, QueuedReason::RegionalCapacity);
+    }
+
+    fn wake_continuation_for(&self, draft: &mut Draft, reason: QueuedReason) {
         draft.wake(
             self.ports.ids.wake_id(),
-            ParkReason::AwaitingCapacity {
-                reason: QueuedReason::RegionalCapacity,
-            },
+            ParkReason::AwaitingCapacity { reason },
             self.ports.clock.now(),
             self.authority.workspace.to_string(),
             self.policy.shard_for(self.agent()),
         );
+    }
+
+    fn dispatch_admission(&self, lane: DispatchLane) -> DispatchDecision {
+        self.dispatch.map_or_else(
+            || DispatchDecision::Admitted(None),
+            |control| control.admit(lane),
+        )
     }
 
     fn cancellation_requested(&self) -> bool {
@@ -1093,6 +1198,9 @@ impl Session<'_> {
             Ok(receipt) => {
                 let mut seq = first_seq;
                 for record in records {
+                    self.retained_bytes = self
+                        .retained_bytes
+                        .saturating_add(record.canonical_bytes()?.len());
                     let entry = JournalEntry::seal(seq, recorded_at, record)?;
                     apply(&mut self.state, &entry)?;
                     seq = seq.next();
@@ -1281,6 +1389,17 @@ impl Session<'_> {
             return Ok(Step::Stop(Stop::HandedBack));
         }
 
+        let _dispatch_permits = match self.dispatch_admission(DispatchLane::Provider) {
+            DispatchDecision::Admitted(permits) => permits,
+            DispatchDecision::Deferred(reason) => {
+                // The effect is still prepared: no pre-send ticket exists and no byte may
+                // have left. Persist the exact pressure reason and release the claim rather
+                // than waiting locally under its lease.
+                self.hand_back_for(reason).await?;
+                return Ok(Step::Stop(Stop::HandedBack));
+            }
+        };
+
         // The durable pre-send write. Nothing below this line may run without the ticket it
         // mints, which is why `dispatch` accepts nothing else.
         let ticket = self
@@ -1438,6 +1557,23 @@ impl Session<'_> {
             self.hand_back().await?;
             return Ok(Step::Stop(Stop::HandedBack));
         }
+
+        let dispatch_lane = match route.executor {
+            ExecutorRoute::Hands => Some(DispatchLane::Hands),
+            ExecutorRoute::ManagedWeb | ExecutorRoute::Mcp => Some(DispatchLane::Network),
+            ExecutorRoute::BrainInline => None,
+        };
+        let _dispatch_permits = if let Some(lane) = dispatch_lane {
+            match self.dispatch_admission(lane) {
+                DispatchDecision::Admitted(permits) => permits,
+                DispatchDecision::Deferred(reason) => {
+                    self.hand_back_for(reason).await?;
+                    return Ok(Step::Stop(Stop::HandedBack));
+                }
+            }
+        } else {
+            None
+        };
 
         let ticket = self
             .ports

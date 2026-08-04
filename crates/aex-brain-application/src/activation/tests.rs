@@ -15,10 +15,11 @@ use super::memory::{
     ProviderScript, Recorder, ScriptedProvider, ScriptedTools, fixture_authority, wake_for,
 };
 use super::{
-    Activation, ActivationError, ActivationPolicy, AdmissionControl, AdmissionDecision, Outcome,
-    Ports, Release, RestoreBudget, RestoreSource, Stop, WakeLoop,
+    Activation, ActivationError, ActivationPolicy, AdmissionControl, AdmissionDecision,
+    DispatchControl, DispatchDecision, DispatchLane, Outcome, Ports, Release, RestoreBudget,
+    RestoreSource, Stop, WakeLoop,
 };
-use crate::kernel::{ActivationRegistry, DrainGate, PermitKind, PermitSet};
+use crate::kernel::{ActivationRegistry, DrainGate, PermitKind, PermitSet, WarmCacheShard};
 use crate::ports::{
     BoxFuture, CancelToken, ClaimError, ClockPort as _, CommitError, ConditionFailure,
     DetachedStatus, DispatchTicket, EffectStore as _, FenceGuard, FoldSnapshotStore as _,
@@ -28,6 +29,7 @@ use crate::ports::{
     ToolOutcome, ToolResultBody, ToolRoute, UnknownResolution, WakeQueue as _,
 };
 use aex_brain_domain::budget::DimensionVector;
+use aex_brain_domain::child::QueuedReason;
 use aex_brain_domain::effect::{
     DetachedOperationRef, DispatchProof, DispatchStage, DurableEffect, EffectClass, EffectKind,
     EffectState,
@@ -71,6 +73,17 @@ fn block_on<F: core::future::Future>(future: F) -> F::Output {
         core::task::Poll::Ready(value) => value,
         core::task::Poll::Pending => panic!("an activation fixture must not need a runtime"),
     }
+}
+
+fn poll_until_ready<F: core::future::Future>(future: F) -> F::Output {
+    let mut future = Box::pin(future);
+    let mut context = core::task::Context::from_waker(core::task::Waker::noop());
+    for _ in 0..64 {
+        if let core::task::Poll::Ready(value) = future.as_mut().poll(&mut context) {
+            return value;
+        }
+    }
+    panic!("the instrumented activation did not complete after bounded cooperative polls");
 }
 
 const START: i64 = 1_767_225_600_000;
@@ -414,6 +427,109 @@ impl Harness {
             .map(|entry| entry.record.kind_name())
             .collect()
     }
+}
+
+#[derive(Debug)]
+struct DeferredDispatch {
+    lane: DispatchLane,
+    reason: QueuedReason,
+}
+
+impl DispatchControl for DeferredDispatch {
+    fn admit(&self, lane: DispatchLane) -> DispatchDecision {
+        assert_eq!(lane, self.lane);
+        DispatchDecision::Deferred(self.reason)
+    }
+}
+
+/// The two independent post-claim reads must both be polled before either fixture can
+/// complete. A sequential implementation deadlocks inside the bounded poll loop.
+#[test]
+fn restore_and_open_effect_reads_overlap_after_claim() {
+    let harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced()))]);
+    harness.store.require_restore_effect_overlap();
+    harness.wake();
+    let delivery = block_on(harness.queue.receive(1, core::time::Duration::ZERO))
+        .expect("the queue answers")
+        .deliveries
+        .pop()
+        .expect("a delivery is waiting");
+
+    poll_until_ready(harness.activation().run(delivery)).expect("the activation runs");
+    assert!(harness.store.restore_effect_overlap_observed());
+}
+
+/// A cache hit is usable only at the exact claimed revision and still proves the claimed
+/// tail/hash. The second terminal delivery therefore performs no journal page read.
+#[test]
+fn exact_revision_fold_cache_skips_replay_without_changing_outcome() {
+    let harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced()))]);
+    let cache = Arc::new(WarmCacheShard::new(64 * 1_024 * 1_024, 16 * 1_024 * 1_024));
+    let activation = harness
+        .activation()
+        .with_fold_cache(Arc::clone(&cache) as Arc<_>);
+    harness.wake();
+    let first = block_on(harness.queue.receive(1, core::time::Duration::ZERO))
+        .expect("the queue answers")
+        .deliveries
+        .pop()
+        .expect("a delivery is waiting");
+    block_on(activation.run(first)).expect("the first activation populates the cache");
+    let reads = harness.log.count("read_page");
+    assert_eq!(cache.len(), 1);
+
+    harness.queue.project(wake_for(key(), "wrk-cache-hit"));
+    let second = block_on(harness.queue.receive(1, core::time::Duration::ZERO))
+        .expect("the queue answers")
+        .deliveries
+        .pop()
+        .expect("a second delivery is waiting");
+    let outcome = block_on(activation.run(second)).expect("the cached activation runs");
+
+    assert_eq!(outcome, Outcome::Idle);
+    assert_eq!(harness.log.count("read_page"), reads);
+}
+
+/// Dispatch pressure is observed only after durable preparation. The activation writes a
+/// typed continuation, never mints a pre-send ticket, and returns ownership immediately.
+#[test]
+fn provider_capacity_deferral_is_durable_and_never_crosses_pre_send() {
+    let harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced()))]);
+    let activation = harness
+        .activation()
+        .with_dispatch_control(Arc::new(DeferredDispatch {
+            lane: DispatchLane::Provider,
+            reason: QueuedReason::ProviderPermits,
+        }));
+    harness.wake();
+    let delivery = block_on(harness.queue.receive(1, core::time::Duration::ZERO))
+        .expect("the queue answers")
+        .deliveries
+        .pop()
+        .expect("a delivery is waiting");
+
+    let outcome = block_on(activation.run(delivery)).expect("capacity deferral is progress");
+    assert_eq!(
+        outcome,
+        Outcome::Progressed {
+            steps: 2,
+            stop: Stop::HandedBack,
+        }
+    );
+    assert_eq!(harness.log.count("mark_dispatch_started"), 0);
+    assert!(harness.provider.requests().is_empty());
+
+    let continuation = block_on(harness.queue.receive(1, core::time::Duration::ZERO))
+        .expect("the queue answers")
+        .deliveries
+        .pop()
+        .expect("the capacity continuation is projected");
+    assert_eq!(
+        continuation.wake.reason,
+        ParkReason::AwaitingCapacity {
+            reason: QueuedReason::ProviderPermits,
+        }
+    );
 }
 
 /// The whole vertical: one wake, one claim, one fold, one model call, one settlement, one

@@ -43,7 +43,7 @@ use aex_brain_domain::wire_pending::{CanonicalModelRequest, DurableOperationSupp
 use aex_model_catalog::{CatalogError as ModelCatalogError, QualifiedModel};
 use aex_wire::ids::{ContentHash as BodyDigest, GenerationId, PrefixedId, Uuid7};
 use std::collections::{BTreeMap, VecDeque};
-use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
@@ -630,6 +630,7 @@ pub struct MemoryStore {
     clock: Arc<FixedClock>,
     queue: Arc<MemoryQueue>,
     log: Arc<Recorder>,
+    restore_effect_overlap: AtomicU8,
 }
 
 impl MemoryStore {
@@ -649,7 +650,40 @@ impl MemoryStore {
             clock,
             queue,
             log,
+            restore_effect_overlap: AtomicU8::new(0),
         }
+    }
+
+    /// Makes journal hydration and open-effect loading rendezvous on their first poll.
+    ///
+    /// This is opt-in test instrumentation. Without concurrent polling neither future can
+    /// complete, so the activation regression test proves overlap rather than merely call
+    /// order.
+    pub fn require_restore_effect_overlap(&self) {
+        self.restore_effect_overlap
+            .store(0b1000_0000, Ordering::SeqCst);
+    }
+
+    /// Whether both independent reads reached the rendezvous.
+    #[must_use]
+    pub fn restore_effect_overlap_observed(&self) -> bool {
+        self.restore_effect_overlap.load(Ordering::SeqCst) & 0b11 == 0b11
+    }
+
+    async fn rendezvous_restore_effect(&self, bit: u8) {
+        if self.restore_effect_overlap.load(Ordering::SeqCst) & 0b1000_0000 == 0 {
+            return;
+        }
+        core::future::poll_fn(|context| {
+            let observed = self.restore_effect_overlap.fetch_or(bit, Ordering::SeqCst) | bit;
+            if observed & 0b11 == 0b11 {
+                core::task::Poll::Ready(())
+            } else {
+                context.waker().wake_by_ref();
+                core::task::Poll::Pending
+            }
+        })
+        .await;
     }
 
     /// Creates an agent whose journal is `entries`.
@@ -960,6 +994,7 @@ impl JournalStore for MemoryStore {
     ) -> BoxFuture<'a, Result<JournalPage, StoreError>> {
         Box::pin(async move {
             self.log.note("read_page");
+            self.rendezvous_restore_effect(0b01).await;
             if let Some(fault) = self.read_faults.lock().expect("not poisoned").pop_front() {
                 return Err(fault);
             }
@@ -1455,6 +1490,7 @@ impl EffectStore for MemoryStore {
     ) -> BoxFuture<'a, Result<Vec<DurableEffect>, StoreError>> {
         Box::pin(async move {
             self.log.note("load_open");
+            self.rendezvous_restore_effect(0b10).await;
             Ok(self
                 .agents
                 .lock()

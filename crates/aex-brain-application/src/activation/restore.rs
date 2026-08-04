@@ -16,6 +16,8 @@ use aex_wire::ids::WorkspaceId;
 /// How a fold was reconstructed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RestoreSource {
+    /// An exact-revision process-local fold passed the claimed-tail check.
+    WarmCache,
     /// No usable snapshot existed and the bounded journal fit from sequence zero.
     JournalFromZero,
     /// A verified immutable snapshot seeded a bounded suffix replay.
@@ -43,6 +45,12 @@ pub struct RestoredFold {
     pub state: FoldState,
     /// Which path produced it and any typed fallback diagnostic.
     pub source: RestoreSource,
+    /// Canonical authoritative bytes retained to derive this fold.
+    ///
+    /// This is the cache accounting input, not a claim about allocator RSS. Activation
+    /// admission separately reserves the measured peak resident restore bound before any
+    /// body is hydrated.
+    pub retained_bytes: usize,
 }
 
 /// Restores one claimed agent without treating a projection as authority.
@@ -200,6 +208,7 @@ pub async fn restore(
             suffix_entries,
             suffix_bytes,
         },
+        retained_bytes: snapshot_bytes.saturating_add(suffix_bytes),
     })
 }
 
@@ -224,13 +233,14 @@ async fn fallback(
     )
     .await
     {
-        Ok((state, _, _)) => Ok(RestoredFold {
+        Ok((state, _, retained_bytes)) => Ok(RestoredFold {
             state,
             source: if matches!(diagnostic, SnapshotDiagnostic::Missing) {
                 RestoreSource::JournalFromZero
             } else {
                 RestoreSource::JournalFallback { diagnostic }
             },
+            retained_bytes,
         }),
         Err(fallback) if matches!(diagnostic, SnapshotDiagnostic::Missing) => Err(fallback),
         Err(fallback) => Err(ActivationError::SnapshotFallbackFailed {

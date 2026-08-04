@@ -24,9 +24,12 @@
 
 use crate::admission::{Admission, AdmissionOutcome};
 use aex_brain_application::activation::{
-    Activation, ActivationPolicy, AdmissionControl, AdmissionDecision, Ports, WakeLoop,
+    Activation, ActivationPolicy, AdmissionControl, AdmissionDecision, DispatchControl,
+    DispatchDecision, DispatchLane, Ports, WakeLoop,
 };
-use aex_brain_application::kernel::{ActivationRegistry, DrainGate};
+use aex_brain_application::kernel::{
+    ActivationRegistry, DrainGate, FoldCache, PermitKind, PermitSet,
+};
 use aex_brain_application::ports::{
     AgentHead, BoxFuture, CancelToken, CatalogDigest, CatalogError, CatalogPort, Claim, ClaimError,
     ClockPort, CommitError, CommitReceipt, DecisionContext, DispatchTicket, EffectStore,
@@ -36,6 +39,7 @@ use aex_brain_application::ports::{
     ReleaseDisposition, ResultBounds, SessionAuthority, SnapshotPublishOutcome, SteadyInstant,
     StoreError, StreamBudget, ToolPort, UnknownResolution,
 };
+use aex_brain_domain::child::QueuedReason;
 use aex_brain_domain::commit::DecisionCommit;
 use aex_brain_domain::effect::{
     DispatchEvidence, DispatchProof, DispatchStage, DurableEffect, EffectKind,
@@ -146,6 +150,58 @@ impl AdmissionControl for MuxAdmission {
             AdmissionOutcome::Shed(_) => AdmissionDecision::Shed {
                 retry_after: core::time::Duration::from_millis(500),
             },
+        }
+    }
+}
+
+/// Phase-specific local dispatch permits over the process resource set.
+#[derive(Debug)]
+pub struct MuxDispatch {
+    permits: Arc<PermitSet>,
+    provider_streams: u64,
+    hands_rpcs: u64,
+}
+
+impl MuxDispatch {
+    /// Builds the non-blocking dispatch gate.
+    #[must_use]
+    pub const fn new(
+        permits: Arc<PermitSet>,
+        resources: crate::admission::ActivationResources,
+    ) -> Self {
+        Self {
+            permits,
+            provider_streams: resources.provider_streams,
+            hands_rpcs: resources.hands_rpcs,
+        }
+    }
+}
+
+impl DispatchControl for MuxDispatch {
+    fn admit(&self, lane: DispatchLane) -> DispatchDecision {
+        let (kind, units, reason) = match lane {
+            DispatchLane::Provider => (
+                PermitKind::ProviderStream,
+                self.provider_streams,
+                QueuedReason::ProviderPermits,
+            ),
+            // Managed web and MCP currently share the bounded outbound-I/O pool. This is a
+            // physical ceiling only; the durable tool route remains exact and a dedicated
+            // network lane can replace it without changing activation semantics.
+            DispatchLane::Network => (
+                PermitKind::ProviderStream,
+                self.provider_streams,
+                QueuedReason::RegionalCapacity,
+            ),
+            DispatchLane::Hands => (
+                PermitKind::HandsRpc,
+                self.hands_rpcs,
+                QueuedReason::HandsPermits,
+            ),
+        };
+        match self.permits.acquire(kind, units) {
+            Ok(permit) => DispatchDecision::Admitted(Some(permit)),
+            Err(_) => DispatchDecision::Deferred(reason),
         }
     }
 }
@@ -1109,6 +1165,24 @@ pub fn production_ports(
     }
 }
 
+/// Process-local acceleration resources bound into activation.
+#[derive(Debug)]
+pub struct ActivationAccelerators {
+    permits: Arc<PermitSet>,
+    fold_cache: Arc<dyn FoldCache>,
+}
+
+impl ActivationAccelerators {
+    /// Groups resources that can change latency but never durable authority.
+    #[must_use]
+    pub const fn new(permits: Arc<PermitSet>, fold_cache: Arc<dyn FoldCache>) -> Self {
+        Self {
+            permits,
+            fold_cache,
+        }
+    }
+}
+
 /// Builds the loop one task runs.
 #[must_use]
 pub fn wake_loop(
@@ -1117,12 +1191,17 @@ pub fn wake_loop(
     registry: Arc<ActivationRegistry>,
     drain: Arc<DrainGate>,
     admission: Arc<Admission>,
+    accelerators: ActivationAccelerators,
     bindings: Bindings,
 ) -> WakeLoop {
-    WakeLoop::new(
-        Activation::new(ports, policy, registry, drain),
-        Arc::new(MuxAdmission::new(admission, bindings)),
-    )
+    let dispatch_resources = admission.resources();
+    let activation = Activation::new(ports, policy, registry, drain)
+        .with_fold_cache(accelerators.fold_cache)
+        .with_dispatch_control(Arc::new(MuxDispatch::new(
+            accelerators.permits,
+            dispatch_resources,
+        )));
+    WakeLoop::new(activation, Arc::new(MuxAdmission::new(admission, bindings)))
 }
 
 #[cfg(test)]
@@ -1130,11 +1209,13 @@ mod tests {
     use super::{
         AbsentCatalog, AbsentProvider, BRAIN_INLINE_EXECUTOR_ABSENT, Bindings, CATALOG_ABSENT,
         CATALOG_NO_ACTIVE_MODELS, HANDS_TOOL_EXECUTOR_ABSENT, MANAGED_WEB_EXECUTOR_ABSENT,
-        MCP_EXECUTOR_ABSENT, MuxAdmission, PROVIDER_ABSENT, ProcessIds, ProductionToolExecutors,
-        STORE_UNBOUND, SystemClock, ToolCompositionError, UnboundStore,
+        MCP_EXECUTOR_ABSENT, MuxAdmission, MuxDispatch, PROVIDER_ABSENT, ProcessIds,
+        ProductionToolExecutors, STORE_UNBOUND, SystemClock, ToolCompositionError, UnboundStore,
     };
     use crate::admission::{ActivationResources, Admission, AdmissionBounds};
-    use aex_brain_application::activation::{AdmissionControl, AdmissionDecision};
+    use aex_brain_application::activation::{
+        AdmissionControl, AdmissionDecision, DispatchControl, DispatchDecision, DispatchLane,
+    };
     use aex_brain_application::kernel::{DrainGate, PermitKind, PermitSet};
     use aex_brain_application::ports::{
         BoxFuture, CancelToken, CatalogPort, ClockPort, DetachedStatus, DispatchTicket, IdPort,
@@ -1188,6 +1269,33 @@ mod tests {
             provider_streams: 1,
             hands_rpcs: 1,
         }
+    }
+
+    #[test]
+    fn phase_dispatch_permits_are_nonblocking_typed_and_raii_released() {
+        let permits = Arc::new(PermitSet::new(BTreeMap::from([
+            (PermitKind::ProviderStream, 1_u64),
+            (PermitKind::HandsRpc, 1_u64),
+        ])));
+        let dispatch = MuxDispatch::new(Arc::clone(&permits), activation_resources(1));
+
+        let DispatchDecision::Admitted(provider) = dispatch.admit(DispatchLane::Provider) else {
+            panic!("the provider lane has one slot");
+        };
+        assert!(matches!(
+            dispatch.admit(DispatchLane::Provider),
+            DispatchDecision::Deferred(aex_brain_domain::child::QueuedReason::ProviderPermits)
+        ));
+        assert_eq!(permits.held(PermitKind::HandsRpc), 0);
+        drop(provider);
+        assert_eq!(permits.held(PermitKind::ProviderStream), 0);
+
+        let DispatchDecision::Admitted(hands) = dispatch.admit(DispatchLane::Hands) else {
+            panic!("the Hands lane has one slot");
+        };
+        assert_eq!(permits.held(PermitKind::HandsRpc), 1);
+        drop(hands);
+        assert_eq!(permits.held(PermitKind::HandsRpc), 0);
     }
 
     fn block_on<F: core::future::Future>(future: F) -> F::Output {
@@ -1461,8 +1569,8 @@ mod tests {
         };
         assert_eq!(permits.held(PermitKind::ContextBytes), 512);
         assert_eq!(permits.held(PermitKind::StreamBufferBytes), 1);
-        assert_eq!(permits.held(PermitKind::ProviderStream), 1);
-        assert_eq!(permits.held(PermitKind::HandsRpc), 1);
+        assert_eq!(permits.held(PermitKind::ProviderStream), 0);
+        assert_eq!(permits.held(PermitKind::HandsRpc), 0);
         drop(held);
         assert_eq!(permits.held(PermitKind::ContextBytes), 0);
         assert_eq!(permits.held(PermitKind::Activation), 0);

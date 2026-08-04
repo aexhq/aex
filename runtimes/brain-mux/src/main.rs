@@ -616,6 +616,10 @@ async fn pump(
         std::sync::Arc::clone(&composition.registry),
         std::sync::Arc::clone(&composition.drain),
         std::sync::Arc::clone(&composition.admission),
+        wake::ActivationAccelerators::new(
+            std::sync::Arc::clone(&composition.permits),
+            std::sync::Arc::clone(&composition.fold_cache) as std::sync::Arc<_>,
+        ),
         ports.bindings,
     );
     run_wake_scheduler(

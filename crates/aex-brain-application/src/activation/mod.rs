@@ -43,6 +43,7 @@ use crate::ports::{
     HandsError, HandsPort, IdPort, JournalStore, LeaseStore, ProviderPort, ReadBudget,
     SnapshotDiagnostic, StoreError, ToolPort, ToolRoutingError, WakeQueue,
 };
+use aex_brain_domain::child::QueuedReason;
 use aex_brain_domain::context::ContextPolicy;
 use aex_brain_domain::fold::FoldError;
 use aex_brain_domain::ids::WorkShard;
@@ -275,6 +276,39 @@ pub enum AdmissionDecision {
         /// How long before the delivery becomes visible again.
         retry_after: core::time::Duration,
     },
+}
+
+/// The bounded local resource needed immediately before an external dispatch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DispatchLane {
+    /// A model-provider stream.
+    Provider,
+    /// Managed web or MCP network I/O.
+    Network,
+    /// An authenticated Hands guest RPC.
+    Hands,
+}
+
+/// Non-blocking phase-specific dispatch admission.
+///
+/// The implementation may hold only process-local permits. A refusal is converted into a
+/// durable typed continuation while the effect remains `prepared`; activation never waits
+/// locally with a lease and never crosses the pre-send fence without a permit.
+pub trait DispatchControl: core::fmt::Debug + Send + Sync + 'static {
+    /// Tries to acquire the exact lane immediately.
+    fn admit(&self, lane: DispatchLane) -> DispatchDecision;
+}
+
+/// What phase-specific dispatch admission decided.
+#[derive(Debug)]
+pub enum DispatchDecision {
+    /// Dispatch may proceed while these RAII reservations remain alive.
+    ///
+    /// `None` is used by the application default when no process-local dispatch gate is
+    /// installed; a configured gate returns exactly one reservation without allocating.
+    Admitted(Option<crate::kernel::Reservation>),
+    /// Dispatch must hand back through a durable typed continuation.
+    Deferred(QueuedReason),
 }
 
 /// Why an activation gave the delivery back instead of acking it.
