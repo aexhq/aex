@@ -434,7 +434,7 @@ jobs:
         if: ${{ inputs.publish && matrix.name == 'hands-agent' }}
         run: |
           set -euo pipefail
-          identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/main.yml@refs/heads/main"
+          identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/_build-artifacts.yml@refs/heads/main"
           cosign sign-blob --yes \
             --bundle "$RELEASE_DIR/signature.sigstore.json" \
             "$RELEASE_DIR/artifact.bin"

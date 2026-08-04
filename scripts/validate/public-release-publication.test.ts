@@ -73,6 +73,10 @@ describe("public main-push publication", () => {
     const packageStep = buildJob.steps.find(
       (step: { readonly name?: string }) => step.name === "Package"
     );
+    const handsAgentSignature = buildJob.steps.find(
+      (step: { readonly name?: string }) =>
+        step.name === "Sign and verify the exact hands-agent bytes"
+    );
 
     expect(job.permissions).toEqual({
       contents: "write",
@@ -103,6 +107,12 @@ describe("public main-push publication", () => {
     expect(ociToolchain?.run).toContain('--cargo-zigbuild-binary "$tool_root/bin/cargo-zigbuild"');
     expect(packageStep?.run).toContain('checks:([');
     expect(packageStep?.run).toContain('] + (if $deterministic then');
+    expect(handsAgentSignature?.run).toContain(
+      'identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/_build-artifacts.yml@refs/heads/main"'
+    );
+    expect(handsAgentSignature?.run).not.toContain(
+      ".github/workflows/main.yml@refs/heads/main"
+    );
     expect(source).toContain("artifact module-bundle");
     expect(source.match(/actions\/attest@59d89421af93a897026c735860bf21b6eb4f7b26/g)).toHaveLength(5);
     expect(source).not.toContain("actions/attest-build-provenance@");
