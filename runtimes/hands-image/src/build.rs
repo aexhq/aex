@@ -164,7 +164,7 @@ impl Variant {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CpuConfiguration {
-    /// AWS Lambda MicroVM architecture token.
+    /// AWS Lambda `MicroVM` architecture token.
     pub architecture: String,
 }
 
@@ -219,9 +219,11 @@ pub struct ImageHooks {
     /// The only port on which the guest serves provider hooks.
     pub port: u16,
     /// Guest lifecycle hooks.
-    pub microvm_hooks: MicrovmHooks,
+    #[serde(rename = "microvmHooks")]
+    pub microvm: MicrovmHooks,
     /// Image-build hooks.
-    pub microvm_image_hooks: MicrovmImageHooks,
+    #[serde(rename = "microvmImageHooks")]
+    pub image: MicrovmImageHooks,
 }
 
 /// Plane-neutral `CreateMicrovmImage` configuration authenticated by the ZIP digest.
@@ -269,7 +271,7 @@ pub fn registration_descriptor(variant: &Variant) -> MicrovmImageRegistration {
         additional_os_capabilities: vec![OS_CAPABILITIES.to_owned()],
         hooks: ImageHooks {
             port: HOOK_PORT,
-            microvm_hooks: MicrovmHooks {
+            microvm: MicrovmHooks {
                 run: enabled.clone(),
                 run_timeout_in_seconds: 60,
                 resume: enabled.clone(),
@@ -279,7 +281,7 @@ pub fn registration_descriptor(variant: &Variant) -> MicrovmImageRegistration {
                 terminate: enabled.clone(),
                 terminate_timeout_in_seconds: 60,
             },
-            microvm_image_hooks: MicrovmImageHooks {
+            image: MicrovmImageHooks {
                 ready: enabled.clone(),
                 ready_timeout_in_seconds: 300,
                 validate: enabled,
@@ -521,23 +523,11 @@ mod tests {
         assert_eq!(descriptor.cpu_configurations[0].architecture, "ARM_64");
         assert_eq!(descriptor.additional_os_capabilities, ["ALL"]);
         assert_eq!(descriptor.hooks.port, 8_080);
-        assert_eq!(descriptor.hooks.microvm_hooks.run, "ENABLED");
-        assert_eq!(descriptor.hooks.microvm_hooks.run_timeout_in_seconds, 60);
-        assert_eq!(descriptor.hooks.microvm_image_hooks.ready, "ENABLED");
-        assert_eq!(
-            descriptor
-                .hooks
-                .microvm_image_hooks
-                .ready_timeout_in_seconds,
-            300
-        );
-        assert_eq!(
-            descriptor
-                .hooks
-                .microvm_image_hooks
-                .validate_timeout_in_seconds,
-            120
-        );
+        assert_eq!(descriptor.hooks.microvm.run, "ENABLED");
+        assert_eq!(descriptor.hooks.microvm.run_timeout_in_seconds, 60);
+        assert_eq!(descriptor.hooks.image.ready, "ENABLED");
+        assert_eq!(descriptor.hooks.image.ready_timeout_in_seconds, 300);
+        assert_eq!(descriptor.hooks.image.validate_timeout_in_seconds, 120);
         assert!(
             serde_json::to_string(&descriptor)
                 .expect("fixed descriptor serializes")

@@ -185,14 +185,14 @@ pub struct ArtifactPlacement {
     pub artifact_digest: String,
     /// Public content size.
     pub size_bytes: u64,
-    /// Exact provider image ARN/version pair, when this artifact is a MicroVM image.
+    /// Exact provider image ARN/version pair, when this artifact is a `MicroVM` image.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub microvm_image: Option<MicrovmImagePlacement>,
     /// Exact hosted destination and readback identity.
     pub destination: PlacementDestination,
 }
 
-/// One immutable Lambda MicroVM image identity.
+/// One immutable Lambda `MicroVM` image identity.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct MicrovmImagePlacement {
