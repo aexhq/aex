@@ -996,6 +996,18 @@ pub fn bind_artifact(
         ));
     }
     receipt.subject.artifact_subject_digest = Some(artifact_subject_digest);
+    if let Some(qualification) = &receipt.architecture_qualification
+        && qualification.artifact_digest != envelope.output.digest
+    {
+        return Err(ToolError::single(
+            Exit::EvidenceUnsound,
+            "bind-architecture-artifact-mismatch",
+            format!(
+                "receipt `{}` qualifies `{}` but the envelope output is `{}`",
+                receipt.receipt_id, qualification.artifact_digest, envelope.output.digest
+            ),
+        ));
+    }
     let bound = receipt.seal()?;
     bound.verify()?;
     Ok(bound)

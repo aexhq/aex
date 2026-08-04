@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use aex_release_tool::admit::{AdmissionInputs, OperationalReadiness, Plane, admit};
 use aex_release_tool::artifact::ArtifactEnvelope;
-use aex_release_tool::evidence::{FreshnessPolicy, Receipt};
+use aex_release_tool::evidence::{FreshnessPolicy, Receipt, bind_artifact};
 use aex_release_tool::manifest::CompositionManifest;
 use aex_release_tool::verification::VerificationStatement;
 use common::docs::{
@@ -30,6 +30,8 @@ fn envelopes() -> BTreeMap<String, ArtifactEnvelope> {
 }
 
 fn receipts(classes: &[&str]) -> Vec<Receipt> {
+    let envelope: ArtifactEnvelope = serde_json::from_value(valid_envelope()).unwrap();
+    let artifact_subject_digest = envelope.seal().unwrap().artifact_subject_digest;
     classes
         .iter()
         .map(|class| {
@@ -37,9 +39,27 @@ fn receipts(classes: &[&str]) -> Vec<Receipt> {
             value["class"] = serde_json::json!(class);
             value["receiptId"] = serde_json::json!(format!("rc_{class}"));
             value["subject"] = serde_json::json!({
-                "artifactSubjectDigest": digest(1),
+                "artifactSubjectDigest": if *class == "arch-qualification" {
+                    artifact_subject_digest.clone()
+                } else {
+                    digest(1)
+                },
                 "unitIds": [UNIT]
             });
+            if *class == "arch-qualification" {
+                value["architectureQualification"] = serde_json::json!({
+                    "artifactDigest": digest(5),
+                    "target": "aarch64",
+                    "hostIdentity": "arm64-test-host",
+                    "executorIdentity": "arm64-test-executor",
+                    "executorKind": "emulated",
+                    "bootstrapResult": "passed",
+                    "dependencyLoaderResult": "passed",
+                    "observedAt": "2026-08-01T00:00:00Z",
+                    "expiresAt": "2026-08-08T00:00:00Z",
+                    "workloadSmokes": [{"id": "bootstrap-start", "result": "passed"}]
+                });
+            }
             serde_json::from_value::<Receipt>(value)
                 .expect("fixture receipt")
                 .seal()
@@ -103,7 +123,14 @@ impl Case {
         let manifest = manifest();
         Self {
             envelopes: envelopes(),
-            receipts: receipts(&["unit", "lint", "sbom", "license", "vulnerability"]),
+            receipts: receipts(&[
+                "unit",
+                "lint",
+                "sbom",
+                "license",
+                "vulnerability",
+                "arch-qualification",
+            ]),
             statement: None,
             plane: Plane::Dev,
             readiness: OperationalReadiness {
@@ -221,6 +248,49 @@ fn rule_five_a_missing_required_receipt_class_fails() {
     let err = case.run().unwrap_err();
     assert_eq!(err.exit.code(), 40);
     assert!(err.rules().contains(&"admit-receipt-missing"));
+}
+
+#[test]
+fn rule_five_arm_units_require_exact_qualification_bound_to_the_artifact() {
+    let mut case = Case::dev();
+    case.receipts
+        .retain(|receipt| receipt.class != "arch-qualification");
+    let err = case.run().unwrap_err();
+    assert_eq!(err.exit.code(), 40);
+    assert!(err.rules().contains(&"admit-receipt-missing"));
+
+    let mut case = Case::dev();
+    let receipt = case
+        .receipts
+        .iter_mut()
+        .find(|receipt| receipt.class == "arch-qualification")
+        .expect("the complete fixture carries ARM evidence");
+    receipt
+        .architecture_qualification
+        .as_mut()
+        .expect("architecture evidence")
+        .artifact_digest = digest(0x99);
+    *receipt = receipt.clone().seal().unwrap();
+    let err = case.run().unwrap_err();
+    assert_eq!(err.exit.code(), 40);
+    assert!(err.rules().contains(&"admit-receipt-missing"));
+}
+
+#[test]
+fn binding_rejects_architecture_evidence_for_a_different_artifact() {
+    let envelope: ArtifactEnvelope = serde_json::from_value(valid_envelope()).unwrap();
+    let envelope = envelope.seal().unwrap();
+    let mut receipt = receipts(&["arch-qualification"])
+        .pop()
+        .expect("architecture receipt");
+    receipt
+        .architecture_qualification
+        .as_mut()
+        .expect("architecture evidence")
+        .artifact_digest = digest(0x99);
+    let receipt = receipt.seal().unwrap();
+    let err = bind_artifact(receipt, &envelope).unwrap_err();
+    assert!(err.rules().contains(&"bind-architecture-artifact-mismatch"));
 }
 
 #[test]

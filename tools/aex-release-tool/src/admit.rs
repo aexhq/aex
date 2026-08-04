@@ -16,6 +16,38 @@ use crate::evidence::{FreshnessPolicy, Receipt, check_freshness};
 use crate::manifest::CompositionManifest;
 use crate::verification::VerificationStatement;
 
+/// Exact execution evidence required by the ARM64-only v1 runtime.
+const ARCHITECTURE_QUALIFICATION: &str = "arch-qualification";
+
+/// Every deployable runtime kind is ARM64 in the strict-v1 clean cut. The
+/// TypeScript Lambda bundles deliberately record `target = none` because the
+/// bytes are architecture-neutral; Terraform still creates those functions as
+/// ARM64 and they therefore need the same exact execution evidence.
+const ARM_RUNTIME_KINDS: &[&str] = &[
+    "rust-lambda",
+    "ts-lambda",
+    "rust-oci-service",
+    "rust-oci-task",
+    "rust-binary",
+    "microvm-image",
+];
+
+fn requires_architecture_qualification(kind: &str) -> bool {
+    ARM_RUNTIME_KINDS.contains(&kind)
+}
+
+fn required_receipts_for_unit(kind: &str, configured: &[String]) -> Vec<String> {
+    let mut required = configured.to_vec();
+    if requires_architecture_qualification(kind)
+        && !required
+            .iter()
+            .any(|class| class == ARCHITECTURE_QUALIFICATION)
+    {
+        required.push(ARCHITECTURE_QUALIFICATION.to_owned());
+    }
+    required
+}
+
 /// Everything `admit` is given. Nothing is fetched: the caller supplies the
 /// evidence, and admission decides.
 #[derive(Debug)]
@@ -240,18 +272,38 @@ pub fn admit(inputs: &AdmissionInputs<'_>) -> Result<Admission> {
             });
     let mut missing = Vec::new();
     for (id, entry) in &manifest.units {
-        let required = inputs
+        let configured = inputs
             .required_receipts
             .get(&entry.kind)
             .cloned()
             .unwrap_or_default();
+        let required = required_receipts_for_unit(&entry.kind, &configured);
         for class in required {
             let candidates = by_class.get(class.as_str());
             let satisfied = candidates.is_some_and(|receipts| {
                 receipts.iter().any(|receipt| {
-                    receipt.is_passing()
-                        && (receipt.subject.unit_ids.is_empty()
+                    if !receipt.is_passing()
+                        || !(receipt.subject.unit_ids.is_empty()
                             || receipt.subject.unit_ids.iter().any(|unit| unit == id))
+                    {
+                        return false;
+                    }
+                    if class != ARCHITECTURE_QUALIFICATION {
+                        return true;
+                    }
+
+                    // Architecture evidence is stronger than a class marker:
+                    // it must name this unit, the exact packaged artifact and
+                    // the subject identity bound by `evidence bind-artifact`.
+                    let Some(envelope) = inputs.envelopes.get(id) else {
+                        return false;
+                    };
+                    receipt.subject.unit_ids.len() == 1
+                        && receipt.subject.artifact_subject_digest.as_deref()
+                            == Some(envelope.artifact_subject_digest.as_str())
+                        && receipt.architecture_qualification.as_ref().is_some_and(
+                            |qualification| qualification.artifact_digest == entry.artifact_digest,
+                        )
                 })
             });
             if !satisfied {
@@ -367,4 +419,38 @@ pub fn admit(inputs: &AdmissionInputs<'_>) -> Result<Admission> {
         units,
         admitted: true,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        ARCHITECTURE_QUALIFICATION, required_receipts_for_unit, requires_architecture_qualification,
+    };
+
+    #[test]
+    fn every_v1_runtime_kind_requires_exact_arm_execution() {
+        for kind in [
+            "rust-lambda",
+            "ts-lambda",
+            "rust-oci-service",
+            "rust-oci-task",
+            "rust-binary",
+            "microvm-image",
+        ] {
+            assert!(requires_architecture_qualification(kind), "{kind}");
+            assert!(
+                required_receipts_for_unit(kind, &[])
+                    .iter()
+                    .any(|class| class == ARCHITECTURE_QUALIFICATION)
+            );
+        }
+        assert!(!requires_architecture_qualification("catalog"));
+    }
+
+    #[test]
+    fn configured_architecture_requirement_is_not_duplicated() {
+        let configured = vec![ARCHITECTURE_QUALIFICATION.to_owned()];
+        let required = required_receipts_for_unit("rust-lambda", &configured);
+        assert_eq!(required, configured);
+    }
 }

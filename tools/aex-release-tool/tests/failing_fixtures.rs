@@ -65,10 +65,30 @@ fn receipt(class: &str) -> Receipt {
     let mut value = valid_receipt();
     value["class"] = serde_json::json!(class);
     value["receiptId"] = serde_json::json!(format!("rc_{class}"));
+    let artifact_subject_digest = if class == "arch-qualification" {
+        let envelope: ArtifactEnvelope = serde_json::from_value(valid_envelope()).unwrap();
+        envelope.seal().unwrap().artifact_subject_digest
+    } else {
+        digest(1)
+    };
     value["subject"] = serde_json::json!({
-        "artifactSubjectDigest": digest(1),
+        "artifactSubjectDigest": artifact_subject_digest,
         "unitIds": [UNIT]
     });
+    if class == "arch-qualification" {
+        value["architectureQualification"] = serde_json::json!({
+            "artifactDigest": digest(5),
+            "target": "aarch64",
+            "hostIdentity": "arm64-test-host",
+            "executorIdentity": "arm64-test-executor",
+            "executorKind": "emulated",
+            "bootstrapResult": "passed",
+            "dependencyLoaderResult": "passed",
+            "observedAt": "2026-08-01T00:00:00Z",
+            "expiresAt": "2026-08-08T00:00:00Z",
+            "workloadSmokes": [{"id": "bootstrap-start", "result": "passed"}]
+        });
+    }
     serde_json::from_value::<Receipt>(value)
         .unwrap()
         .seal()
@@ -207,6 +227,7 @@ fn unsigned_manifest_exits_43() {
         receipt("sbom"),
         receipt("license"),
         receipt("vulnerability"),
+        receipt("arch-qualification"),
     ];
     let err = run_admit(&receipts, None, Plane::Prd, &manifest()).unwrap_err();
     assert_eq!(err.exit.code(), 43, "{err}");
@@ -390,6 +411,7 @@ fn head_mismatch_exits_32() {
         receipt("sbom"),
         receipt("license"),
         receipt("vulnerability"),
+        receipt("arch-qualification"),
     ];
     let err = run_admit(&receipts, None, Plane::Dev, &manifest).unwrap_err();
     assert_eq!(err.exit.code(), 32, "{err}");
