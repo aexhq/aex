@@ -4,6 +4,10 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
+    // Workspace checks run before the ignored package dist is built.
+    "paths": {
+      "@aexhq/sdk": ["./packages/sdk/src/index.ts"]
+    },
     "strict": true,
     "declaration": true,
     "sourceMap": true,
