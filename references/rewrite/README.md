@@ -8,7 +8,7 @@ keywords:
   - implementation
 audience: implementation agents and maintainers
 status: accepted
-last_verified: 2026-08-01
+last_verified: 2026-08-04
 related:
   - references/README.md
   - references/architecture.md
@@ -35,6 +35,10 @@ decision that deviates from the original plan, with the evidence for it.
 | [`regional-stores.md`](regional-stores.md) | DynamoDB authority adapters, S3 content, KMS secret custody |
 | [`regional-services.md`](regional-services.md) | Regional HTTP composition, finite APIs, stream service, lifecycle workers |
 | [`brain.md`](brain.md) | Journal fold, lease and fence, split-phase effects, subagents, the mux |
+| [`architecture-performance-v1.md`](architecture-performance-v1.md) | ARM64-only, performance-first runtime placement, Brain critical path, tool lanes, scheduling, and release qualification |
+| [`implementation/brain-activation.md`](implementation/brain-activation.md) | Test-first activation/cache/admission implementation slice |
+| [`implementation/tool-fabric.md`](implementation/tool-fabric.md) | Typed Brain-control, provider/web/MCP, Hands, and durable tool-fabric implementation slice |
+| [`implementation/arm-release.md`](implementation/arm-release.md) | ARM64 artifact, readiness, load-receipt, and rollback implementation slice |
 | [`providers.md`](providers.md) | Signed model catalog and the six direct BYOK provider adapters |
 | [`tools-mcp.md`](tools-mcp.md) | Tool catalog, Brain-managed web, MCP adapter |
 | [`hands.md`](hands.md) | Hands protocol, guest agent and tools, trusted control, true idle |
