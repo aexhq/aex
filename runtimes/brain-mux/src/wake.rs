@@ -1278,23 +1278,24 @@ mod tests {
     #[test]
     fn phase_dispatch_permits_are_nonblocking_typed_and_raii_released() {
         let permits = Arc::new(PermitSet::new(BTreeMap::from([
-            (PermitKind::ProviderStream, 1_u64),
+            (PermitKind::ProviderStream, 4_u64),
             (PermitKind::HandsRpc, 1_u64),
         ])));
         let dispatch = MuxDispatch::new(Arc::clone(&permits), activation_resources(1));
 
-        let DispatchDecision::Admitted(provider) = dispatch.admit(DispatchLane::Provider) else {
-            panic!("the provider lane has one slot");
+        let DispatchDecision::Admitted(provider) = dispatch.admit(DispatchLane::Network, 4) else {
+            panic!("the weighted network lane has four slots");
         };
         assert!(matches!(
-            dispatch.admit(DispatchLane::Provider),
-            DispatchDecision::Deferred(aex_brain_domain::child::QueuedReason::ProviderPermits)
+            dispatch.admit(DispatchLane::Network, 1),
+            DispatchDecision::Deferred(aex_brain_domain::child::QueuedReason::RegionalCapacity)
         ));
+        assert_eq!(permits.held(PermitKind::ProviderStream), 4);
         assert_eq!(permits.held(PermitKind::HandsRpc), 0);
         drop(provider);
         assert_eq!(permits.held(PermitKind::ProviderStream), 0);
 
-        let DispatchDecision::Admitted(hands) = dispatch.admit(DispatchLane::Hands) else {
+        let DispatchDecision::Admitted(hands) = dispatch.admit(DispatchLane::Hands, 1) else {
             panic!("the Hands lane has one slot");
         };
         assert_eq!(permits.held(PermitKind::HandsRpc), 1);
@@ -1385,65 +1386,60 @@ mod tests {
     }
 
     #[test]
-    fn missing_tool_authorities_fail_startup_by_exact_name() {
-        let outcome = ProductionToolExecutors {
-            hands: Some(Arc::new(NeverExecutor)),
-            ..ProductionToolExecutors::default()
-        }
-        .compose([CatalogPin(aex_model_catalog::Blake3Digest::of(b"catalog"))]);
-        let Err(error) = outcome else {
-            panic!("three missing production authorities refuse composition");
-        };
-        assert_eq!(
-            error,
-            ToolCompositionError::Unbound {
-                missing: vec![
-                    BRAIN_INLINE_EXECUTOR_ABSENT,
-                    MANAGED_WEB_EXECUTOR_ABSENT,
-                    MCP_EXECUTOR_ABSENT,
-                ]
-            }
-        );
-        assert!(!error.to_string().contains(HANDS_TOOL_EXECUTOR_ABSENT));
-    }
-
-    #[test]
-    fn a_fully_supplied_executor_set_installs_routes_for_the_retained_pin() {
-        let executor = Arc::new(NeverExecutor);
+    fn catalog_hydration_advertises_only_exact_supported_rows_in_durable_order() {
         let pin = CatalogPin(aex_model_catalog::Blake3Digest::of(b"catalog"));
         let tools = ProductionToolExecutors {
-            brain_inline: Some(Arc::clone(&executor) as Arc<_>),
-            managed_web: Some(Arc::clone(&executor) as Arc<_>),
-            mcp: Some(Arc::clone(&executor) as Arc<_>),
-            hands: Some(executor),
+            brain_inline: Some(Arc::new(crate::inline_tools::BrainControlExecutor)),
+            managed_web: None,
+            mcp: None,
+            hands: None,
         }
-        .compose([pin])
-        .expect("all four real route objects compose");
-        let first = aex_brain_tool_catalog::catalog::builtin_entries()
-            .expect("the build-time catalog is valid")
-            .remove(0);
-        let name = ToolName::parse(first.descriptor.name.as_str()).expect("built-in name is valid");
+        .compose([pin, CatalogPin(aex_model_catalog::Blake3Digest::of(b"older"))])
+        .expect("the exact supported subset composes");
+        let advertised = tools
+            .advertise(&pin)
+            .expect("the retained pin is hydrated");
         assert_eq!(
-            tools.route(&pin, &name).expect("route is installed").name,
-            name
+            advertised
+                .definitions
+                .iter()
+                .map(|tool| tool.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["todo_read", "todo_write"]
         );
+        assert!(advertised.parallel_safe);
+        assert!(matches!(
+            tools.route(&pin, &ToolName::parse("wait").expect("name")),
+            Err(aex_brain_application::ports::ToolRoutingError::NotAdmitted { .. })
+        ));
+        assert!(matches!(
+            tools.route(&pin, &ToolName::parse("read_file").expect("name")),
+            Err(aex_brain_application::ports::ToolRoutingError::NotAdmitted { .. })
+        ));
     }
 
     #[test]
-    fn a_partial_inline_executor_cannot_make_the_production_catalog_ready() {
-        let other = Arc::new(NeverExecutor);
-        let outcome = ProductionToolExecutors {
+    fn optional_authority_never_becomes_an_advertised_call_time_fallback() {
+        let pin = CatalogPin(aex_model_catalog::Blake3Digest::of(b"catalog"));
+        let tools = ProductionToolExecutors {
             brain_inline: Some(Arc::new(crate::inline_tools::BrainControlExecutor)),
-            managed_web: Some(Arc::clone(&other) as Arc<_>),
-            mcp: Some(Arc::clone(&other) as Arc<_>),
-            hands: Some(other),
+            managed_web: Some(Arc::new(NeverExecutor)),
+            mcp: None,
+            hands: None,
         }
-        .compose([CatalogPin(aex_model_catalog::Blake3Digest::of(b"catalog"))]);
-        let Err(ToolCompositionError::InvalidCatalog { reason }) = outcome else {
-            panic!("active park and subagent rows must keep readiness closed")
-        };
-        assert!(reason.contains("has no implementation"));
-        assert!(reason.contains("BrainInline"));
+        .compose([pin])
+        .expect("optional authorities are filtered before installation");
+        let advertised = tools.advertise(&pin).expect("advertisement");
+        let names = advertised
+            .definitions
+            .iter()
+            .map(|tool| tool.name.as_str())
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"web_fetch"));
+        assert!(!names.contains(&"web_search"), "no resolved tenant secret");
+        assert!(!names.iter().any(|name| name.starts_with("mcp__")));
+        assert!(!names.contains(&"read_file"), "Hands claims no typed tool");
+        assert!(!advertised.parallel_safe, "managed network work is not parallel-safe");
     }
 
     #[test]

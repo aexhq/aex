@@ -28,7 +28,7 @@ use crate::ports::{
     JournalCursor, JournalPage, LeaseStore as _, PreviewSink, ProviderDispatchError,
     ProviderFailureKind, ProviderOutcome, ProviderPort, RedactedDetail, ReleaseDisposition,
     SnapshotDiagnostic, SnapshotPublishOutcome, StoreError, StreamBudget, ToolDispatchError,
-    ToolOutcome, ToolResultBody, ToolRoute, UnknownResolution, WakeQueue as _,
+    ToolAdvertisement, ToolOutcome, ToolResultBody, ToolRoute, UnknownResolution, WakeQueue as _,
 };
 use aex_brain_domain::budget::DimensionVector;
 use aex_brain_domain::child::QueuedReason;
@@ -49,8 +49,10 @@ use aex_brain_domain::wire_pending::{
     AgentLimits, CanonicalBlock, CanonicalModelRequest, ContentBlockRef, NormalizedUsage,
     ProviderId, ResolvedAgentConfig, Role, StopReason,
 };
-use aex_model_catalog::canonical::{CredentialBindingRef, ProviderReceipt, ReceiptBounds, seal};
-use aex_model_catalog::document::CapabilitySet;
+use aex_model_catalog::canonical::{
+    CanonicalToolDef, CredentialBindingRef, ProviderReceipt, ReceiptBounds, ToolChoice, seal,
+};
+use aex_model_catalog::document::{Capability, CapabilitySet};
 use aex_model_catalog::{BoundedString, QualifiedModel, fixture};
 use aex_wire::CanonicalJson;
 use aex_wire::ids::{
@@ -625,6 +627,9 @@ fn one_wake_drives_a_turn_from_claim_to_ack() {
     assert_eq!(requests.len(), 1);
     assert!(requests[0].hash_is_consistent().expect("canonical request"));
     assert_eq!(requests[0].messages.len(), 1);
+    assert!(requests[0].tools.is_empty());
+    assert_eq!(requests[0].tool_choice, ToolChoice::None);
+    assert!(!requests[0].parallel_tools);
     assert_eq!(requests[0].messages[0].role, Role::User);
     assert!(matches!(
         &requests[0].messages[0].blocks[..],
@@ -632,6 +637,51 @@ fn one_wake_drives_a_turn_from_claim_to_ack() {
     ));
     assert_eq!(harness.queue.acked().len(), 1);
     assert_eq!(harness.queue.depth(), 0, "nothing was left outstanding");
+}
+
+#[test]
+fn model_tool_fields_refuse_truncation_and_enable_only_declared_safe_parallelism() {
+    let definition = CanonicalToolDef {
+        name: aex_wire::ids::ResourceName::parse("todo_read").expect("name"),
+        description: BoundedString::new("Read todo state.").expect("description"),
+        input_schema: CanonicalJson::parse(
+            r#"{"type":"object","additionalProperties":false,"properties":{}}"#,
+        )
+        .expect("schema"),
+        strict: false,
+    };
+    let advertised = ToolAdvertisement {
+        definitions: vec![definition],
+        parallel_safe: true,
+    };
+
+    let mut capable_entry = fixture::entry(
+        ProviderId::Deepseek,
+        "deepseek-chat",
+        CapabilitySet::from_slice(&[Capability::Tools, Capability::ParallelTools]),
+    );
+    capable_entry.limits.max_tools = 1;
+    let capable = fixture::qualified(capable_entry);
+    let fields = super::run::model_tool_fields(&capable, advertised.clone())
+        .expect("one declared tool is within the model limit");
+    assert_eq!(fields.tools.len(), 1);
+    assert_eq!(fields.choice, ToolChoice::Auto);
+    assert!(fields.parallel);
+
+    let mut bounded_entry = fixture::entry(
+        ProviderId::Deepseek,
+        "deepseek-chat",
+        CapabilitySet::from_slice(&[Capability::Tools]),
+    );
+    bounded_entry.limits.max_tools = 0;
+    let bounded = fixture::qualified(bounded_entry);
+    assert!(matches!(
+        super::run::model_tool_fields(&bounded, advertised),
+        Err(ActivationError::ToolLimitExceeded {
+            advertised: 1,
+            max: 0
+        })
+    ));
 }
 
 #[test]
