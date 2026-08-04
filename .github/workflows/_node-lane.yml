@@ -64,7 +64,13 @@ jobs:
       - name: Packed clean install
         run: |
           set -euo pipefail
-          bun pm pack --filter @aexhq/sdk --destination "$RUNNER_TEMP/pack"
+          # `bun pm pack` operates on the current package; it has no
+          # workspace `--filter` option. Pack from the SDK directory so the
+          # private workspace root can never masquerade as the public SDK.
+          (
+            cd packages/sdk
+            bun pm pack --destination "$RUNNER_TEMP/pack"
+          )
           cd "$RUNNER_TEMP"
           mkdir -p consumer && cd consumer
           npm init -y > /dev/null
