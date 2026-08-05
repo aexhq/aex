@@ -22,8 +22,39 @@ permissions:
   contents: read
 
 jobs:
+  nextest:
+    name: Prepare pinned nextest
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
+        with:
+          toolchain: "1.97.1"
+
+      - name: Build, stage, and verify exact nextest
+        run: |
+          set -euo pipefail
+          cargo install --locked --version 0.9.108 cargo-nextest
+          cargo-nextest --version | grep -Eq '^cargo-nextest 0\.9\.108([[:space:]]|$)'
+          mkdir -p "$RUNNER_TEMP/aex-nextest"
+          cp "$(command -v cargo-nextest)" "$RUNNER_TEMP/aex-nextest/cargo-nextest"
+          (cd "$RUNNER_TEMP/aex-nextest" && sha256sum cargo-nextest > cargo-nextest.sha256)
+
+      - name: Upload pinned nextest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: cargo-nextest-${{ inputs.lane }}-scenario-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/aex-nextest/cargo-nextest
+            ${{ runner.temp }}/aex-nextest/cargo-nextest.sha256
+          if-no-files-found: error
+          retention-days: 1
+
   scenario:
     name: ${{ matrix.name }}
+    needs: nextest
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -39,10 +70,20 @@ jobs:
         with:
           toolchain: "1.97.1"
 
-      - name: Install nextest
-        uses: taiki-e/install-action@2cdf2d81f4edfc3b41d5ddf56083c70b48ac2475  # v2.62.35
+      - name: Download pinned nextest
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
         with:
-          tool: cargo-nextest
+          name: cargo-nextest-${{ inputs.lane }}-scenario-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/aex-nextest
+
+      - name: Use pinned nextest
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/aex-nextest"
+          sha256sum --check cargo-nextest.sha256
+          chmod 0755 cargo-nextest
+          ./cargo-nextest --version | grep -Eq '^cargo-nextest 0\.9\.108([[:space:]]|$)'
+          echo "$RUNNER_TEMP/aex-nextest" >> "$GITHUB_PATH"
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
