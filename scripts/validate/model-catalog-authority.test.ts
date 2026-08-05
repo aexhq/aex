@@ -86,4 +86,39 @@ describe("protected model-catalog authority", () => {
     expect(outputs).toContain('output "kms_key_arn"');
     expect(outputs).toContain('output "publisher_role_arn"');
   });
+
+  test("the Terraform signer declares delivery-graph ownership", () => {
+    const metadata = Bun.TOML.parse(
+      read("infra/modules/model-catalog-authority/aex.toml")
+    ) as {
+      readonly aex: {
+        readonly owner: string;
+        readonly role: string;
+        readonly artifact: string;
+        readonly layers: readonly string[];
+        readonly concerns: readonly string[];
+        readonly seams: readonly string[];
+        readonly security_tier: string;
+        readonly risk: readonly string[];
+        readonly scenarios: readonly string[];
+        readonly not_applicable: { readonly live_suite: string };
+      };
+    };
+
+    expect(metadata.aex).toEqual({
+      owner: "delivery",
+      role: "infra_module",
+      artifact: "terraform_module",
+      layers: ["unit", "integration"],
+      concerns: ["security"],
+      seams: [],
+      security_tier: "internal",
+      risk: ["iam"],
+      scenarios: [],
+      not_applicable: {
+        live_suite:
+          "The dedicated signing key and OIDC trust are exercised only by the protected publication workflow; this module has no deployed product endpoint to probe."
+      }
+    });
+  });
 });

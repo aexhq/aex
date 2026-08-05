@@ -11,7 +11,7 @@
     "awaiting_owner": 46,
     "capacity_gates": 19,
     "live_targets": 36,
-    "packages": 147,
+    "packages": 148,
     "seams_claimed": 33,
     "seams_declared": 35,
     "workloads": 8
@@ -2445,6 +2445,43 @@
       "unmapped_targets": [],
       "awaiting_owner": false
     },
+    "packages/wire": {
+      "name": "@aexhq/wire",
+      "kind": "npm",
+      "meta": {
+        "owner": "contracts",
+        "role": "client",
+        "artifact": "npm_package",
+        "layers": [
+          "unit",
+          "user"
+        ],
+        "concerns": [
+          "contract",
+          "compatibility",
+          "property",
+          "security"
+        ],
+        "seams": [
+          "npm.registry.publish"
+        ],
+        "security_tier": "public_edge",
+        "risk": [
+          "generated_code"
+        ],
+        "scenarios": [],
+        "targets": {
+          "canonical_agreement": "unit",
+          "packed_user": "user",
+          "validation": "unit"
+        },
+        "not_applicable": {
+          "live_suite": "generated wire package; it has no deployed endpoint"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": false
+    },
     "runtimes/brain-mux": {
       "name": "brain-mux",
       "kind": "cargo",
@@ -4471,7 +4508,8 @@
         "targets": {
           "canonical_agreement": "unit",
           "determinism": "unit",
-          "surface": "unit"
+          "surface": "unit",
+          "typescript": "unit"
         },
         "not_applicable": {
           "live_suite": "workspace tool; it produces bytes locally and reaches no deployed plane"
