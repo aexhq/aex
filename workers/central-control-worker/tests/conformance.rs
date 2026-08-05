@@ -21,3 +21,15 @@ fn the_composition_admits_before_any_client_is_opened() {
         "the capability check must precede the listener"
     );
 }
+
+#[test]
+fn ses_is_a_delivery_dependency_not_a_cold_start_dependency() {
+    let composition = include_str!("../src/main.rs");
+    let runtime = include_str!("../src/runtime.rs");
+
+    assert!(runtime.contains(".send_email()"));
+    assert!(runtime.contains("release_outbox"));
+    assert!(!composition.contains("get_email_identity"));
+    assert!(!composition.contains("mail_identity"));
+    assert!(!composition.contains("name: \"ses-identity\""));
+}

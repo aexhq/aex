@@ -23,6 +23,13 @@ fn the_capability_declaration_is_a_closed_set() {
 }
 
 #[test]
+fn mail_iam_is_limited_to_actual_delivery() {
+    let source = include_str!("../src/main.rs");
+    assert!(source.contains("\"ses:SendEmail\""));
+    assert!(!source.contains("\"ses:GetEmailIdentity\""));
+}
+
+#[test]
 fn central_control_cannot_link_or_construct_the_capacity_limit_producer() {
     let output = Command::new("cargo")
         .args([
