@@ -99,6 +99,7 @@ variable "stream_service" {
     image              = string
     cpu                = number
     memory             = number
+    desired_count      = number
     stop_timeout       = number
     container_port     = number
     log_group_name     = string

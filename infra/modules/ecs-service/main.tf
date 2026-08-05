@@ -1,3 +1,7 @@
+locals {
+  autoscaling_enabled = length(var.autoscaling_metrics) > 0
+}
+
 resource "aws_ecs_task_definition" "this" {
   family                   = var.task_definition_family
   skip_destroy             = true
@@ -81,6 +85,8 @@ resource "aws_ecs_service" "this" {
 }
 
 resource "aws_appautoscaling_target" "this" {
+  count = local.autoscaling_enabled ? 1 : 0
+
   service_namespace  = "ecs"
   scalable_dimension = "ecs:service:DesiredCount"
   resource_id        = "service/${var.cluster_name}/${var.name}"
@@ -89,13 +95,13 @@ resource "aws_appautoscaling_target" "this" {
 }
 
 resource "aws_appautoscaling_policy" "this" {
-  for_each = { for m in var.autoscaling_metrics : m.name => m }
+  for_each = local.autoscaling_enabled ? { for m in var.autoscaling_metrics : m.name => m } : {}
 
   name               = "${var.name}-${lower(each.key)}"
   policy_type        = "TargetTrackingScaling"
-  service_namespace  = aws_appautoscaling_target.this.service_namespace
-  scalable_dimension = aws_appautoscaling_target.this.scalable_dimension
-  resource_id        = aws_appautoscaling_target.this.resource_id
+  service_namespace  = aws_appautoscaling_target.this[0].service_namespace
+  scalable_dimension = aws_appautoscaling_target.this[0].scalable_dimension
+  resource_id        = aws_appautoscaling_target.this[0].resource_id
 
   target_tracking_scaling_policy_configuration {
     target_value = each.value.target_value
