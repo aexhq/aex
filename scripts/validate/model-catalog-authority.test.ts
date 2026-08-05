@@ -71,6 +71,9 @@ describe("protected model-catalog authority", () => {
     expect(source).toContain('.SigningAlgorithms == ["ECDSA_SHA_256"]');
     expect(source).toContain("aws kms sign --key-id");
     expect(source).toContain("--signing-algorithm ECDSA_SHA_256 --message-type DIGEST");
+    expect(source).toContain("od -An -v -tx1");
+    expect(source).toContain('[[ "sha256:$decoded_digest" == "$request_digest" ]]');
+    expect(source).not.toContain('sha256sum "$PUBLISH_DIR/message.digest"');
     expect(source).toContain('--message "fileb://$PWD/$PUBLISH_DIR/message.digest"');
     expect(source).toContain('aex-model-catalog-publisher" assemble');
     expect(source).toContain("gh release create");

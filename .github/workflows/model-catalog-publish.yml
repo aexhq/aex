@@ -227,7 +227,8 @@ jobs:
             | base64 --decode > "$PUBLISH_DIR/message.digest"
           [[ "$(stat -c '%s' "$PUBLISH_DIR/message.digest")" == "32" ]]
           request_digest=$(jq -er .messageDigestSha256 "$PUBLISH_DIR/signing-request.json")
-          [[ "sha256:$(sha256sum "$PUBLISH_DIR/message.digest" | cut -d' ' -f1)" == "$request_digest" ]]
+          decoded_digest=$(od -An -v -tx1 "$PUBLISH_DIR/message.digest" | tr -d ' \n')
+          [[ "sha256:$decoded_digest" == "$request_digest" ]]
           aws kms sign --key-id "$AEX_MODEL_CATALOG_KMS_KEY_ARN" \
             --signing-algorithm ECDSA_SHA_256 --message-type DIGEST \
             --message "fileb://$PWD/$PUBLISH_DIR/message.digest" \
