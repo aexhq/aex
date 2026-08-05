@@ -977,3 +977,53 @@ async fn health_and_readiness_paths_are_internal_no_store_and_fail_closed() {
     assert_eq!(value["status"], "not_ready");
     assert_eq!(value["unavailable"].as_array().expect("array").len(), 2);
 }
+
+#[tokio::test]
+async fn public_release_health_is_closed_no_store_and_exactly_release_bound() {
+    for (readiness, expected_status, expected_body) in [
+        (
+            aex_regional_http::health::Readiness::ready(format!("sha256:{}", "a".repeat(64))),
+            http::StatusCode::OK,
+            json!({
+                "schema": "aex.release-health.v1",
+                "releaseId": format!("sha256:{}", "a".repeat(64)),
+                "status": "ready"
+            }),
+        ),
+        (
+            aex_regional_http::health::Readiness::not_ready(
+                format!("sha256:{}", "b".repeat(64)),
+                ["authority_reader"],
+            )
+            .expect("not ready"),
+            http::StatusCode::SERVICE_UNAVAILABLE,
+            json!({
+                "schema": "aex.release-health.v1",
+                "releaseId": format!("sha256:{}", "b".repeat(64)),
+                "status": "not_ready"
+            }),
+        ),
+    ] {
+        let response = aex_regional_http::release_health::router(readiness)
+            .oneshot(
+                http::Request::builder()
+                    .uri("/api/release/health")
+                    .body(axum::body::Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), expected_status);
+        assert_eq!(response.headers()["content-type"], "application/json");
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let value: serde_json::Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(value, expected_body);
+        assert_eq!(value.as_object().expect("object").len(), 3);
+    }
+}

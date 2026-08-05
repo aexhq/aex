@@ -73,9 +73,21 @@ pub struct Subject {
     /// Release this receipt is bound to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub release_id: Option<String>,
+    /// Exact private VERIFYING continuation context this receipt was earned for.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deployment_context_digest: Option<String>,
     /// Units covered.
     #[serde(default)]
     pub unit_ids: Vec<String>,
+}
+
+fn valid_sha256_digest(value: &str) -> bool {
+    value.strip_prefix("sha256:").is_some_and(|hex| {
+        hex.len() == 64
+            && hex
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    })
 }
 
 /// One partition of a sharded run.
@@ -358,6 +370,23 @@ impl Receipt {
             violations.push(Violation::new(
                 "receipt-schema",
                 format!("unknown receipt schema `{}`", self.schema),
+            ));
+        }
+        let release_evidence =
+            self.lane == "release" && matches!(self.class.as_str(), "e2e" | "user");
+        if self
+            .subject
+            .deployment_context_digest
+            .as_deref()
+            .is_some_and(|digest| !valid_sha256_digest(digest))
+            || (release_evidence && self.subject.deployment_context_digest.is_none())
+        {
+            violations.push(Violation::new(
+                "release-deployment-context-missing",
+                format!(
+                    "release receipt `{}` is not bound to one exact deployment continuation context",
+                    self.receipt_id
+                ),
             ));
         }
         for (field, value) in [
@@ -1391,6 +1420,31 @@ mod tests {
         sealed.verify().unwrap();
         let again = sealed.clone().seal().unwrap();
         assert_eq!(sealed.receipt_digest, again.receipt_digest);
+    }
+
+    #[test]
+    fn release_e2e_and_user_receipts_require_one_exact_deployment_context() {
+        for class in ["e2e", "user"] {
+            let mut release = receipt(class);
+            release.lane = "release".to_owned();
+            let missing = release.verify().unwrap_err();
+            assert!(
+                missing
+                    .rules()
+                    .contains(&"release-deployment-context-missing")
+            );
+
+            release.subject.deployment_context_digest = Some(format!("sha256:{}", "b".repeat(64)));
+            release.verify().unwrap();
+
+            release.subject.deployment_context_digest = Some("sha256:moving".to_owned());
+            let malformed = release.verify().unwrap_err();
+            assert!(
+                malformed
+                    .rules()
+                    .contains(&"release-deployment-context-missing")
+            );
+        }
     }
 
     #[test]

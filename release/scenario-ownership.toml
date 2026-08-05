@@ -135,7 +135,14 @@ observes = [
   "artifact:regional-session-api",
 ]
 
-# --- session lifecycle ---------------------------------------------------------
+# --- regional admission and session lifecycle ---------------------------------
+
+[[scenario]]
+id = "SC-REGIONAL-ADMISSION"
+owner = "regional-services"
+package = "cargo:aex-live-regional-session-api"
+target = "e2e"
+observes = ["artifact:regional-session-api"]
 
 [[scenario]]
 id = "SC-SESSION-ADMIT"

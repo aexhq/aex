@@ -238,6 +238,24 @@ fn the_receipt_schema_forbids_an_observed_secret_canary() {
 }
 
 #[test]
+fn release_e2e_and_user_receipts_require_a_deployment_context_digest() {
+    for class in ["e2e", "user"] {
+        let mut receipt = valid_receipt();
+        receipt["class"] = json!(class);
+        receipt["layer"] = json!(class);
+        receipt["lane"] = json!("release");
+        receipt["subject"] = json!({ "releaseId": digest(0x11), "unitIds": [] });
+        assert!(
+            !schema_accepts(SchemaName::EvidenceReceipt, &receipt),
+            "a release {class} receipt without its VERIFYING continuation is not evidence"
+        );
+
+        receipt["subject"]["deploymentContextDigest"] = json!(digest(0x12));
+        assert!(schema_accepts(SchemaName::EvidenceReceipt, &receipt));
+    }
+}
+
+#[test]
 fn architecture_receipts_require_the_exact_arm_execution_shape() {
     let mut receipt = valid_receipt();
     receipt["class"] = json!("arch-qualification");

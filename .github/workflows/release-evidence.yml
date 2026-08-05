@@ -1,0 +1,452 @@
+# Manual, release-bound public E2E and user evidence.
+#
+# This workflow never accepts receipts. It acquires the exact public manifest
+# and release tool, executes real suites against protected dev inputs, derives
+# receipts from closed JUnit and hygiene reports, and publishes new immutable
+# receipt bytes only after every fail-closed gate passes.
+
+name: release-evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      public_source_sha:
+        description: Exact 40-character public main commit proved by the manifest.
+        type: string
+        required: true
+      release_tag:
+        description: Exact immutable public main prerelease tag.
+        type: string
+        required: true
+      release_id:
+        description: Exact sha256 composition release identity.
+        type: string
+        required: true
+      deployment_context_digest:
+        description: Exact sha256 digest of the private VERIFYING continuation context this run must satisfy.
+        type: string
+        required: true
+      manifest_uri:
+        description: Exact public composition-manifest release asset URI.
+        type: string
+        required: true
+      manifest_digest:
+        description: Exact sha256 digest of the composition-manifest bytes.
+        type: string
+        required: true
+      manifest_size_bytes:
+        description: Exact positive byte size of the composition manifest.
+        type: string
+        required: true
+      release_tool_uri:
+        description: Exact public release-tool asset URI named by the manifest.
+        type: string
+        required: true
+      release_tool_digest:
+        description: Exact sha256 digest of the release-tool bytes.
+        type: string
+        required: true
+      release_tool_size_bytes:
+        description: Exact positive byte size of the release tool.
+        type: string
+        required: true
+
+permissions: {}
+
+concurrency:
+  group: release-evidence-${{ inputs.release_id }}
+  cancel-in-progress: false
+
+jobs:
+  evidence:
+    name: Exact release E2E and user receipts
+    runs-on: ubuntu-latest
+    environment: aex-release-evidence-dev
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    env:
+      PUBLIC_SOURCE_SHA: ${{ inputs.public_source_sha }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      RELEASE_ID: ${{ inputs.release_id }}
+      DEPLOYMENT_CONTEXT_DIGEST: ${{ inputs.deployment_context_digest }}
+      MANIFEST_URI: ${{ inputs.manifest_uri }}
+      MANIFEST_DIGEST: ${{ inputs.manifest_digest }}
+      MANIFEST_SIZE_BYTES: ${{ inputs.manifest_size_bytes }}
+      RELEASE_TOOL_URI: ${{ inputs.release_tool_uri }}
+      RELEASE_TOOL_DIGEST: ${{ inputs.release_tool_digest }}
+      RELEASE_TOOL_SIZE_BYTES: ${{ inputs.release_tool_size_bytes }}
+      AEX_API_URL: ${{ secrets.AEX_RELEASE_EVIDENCE_API_URL }}
+      AEX_API_KEY: ${{ secrets.AEX_RELEASE_EVIDENCE_API_KEY }}
+      AEX_EXPECTED_API_HOST: ${{ vars.AEX_RELEASE_EVIDENCE_API_HOST }}
+      AEX_RELEASE_EVIDENCE_HEALTH_URL: ${{ format('https://{0}/api/release/health', vars.AEX_RELEASE_EVIDENCE_API_HOST) }}
+      AEX_RELEASE_EVIDENCE_MAXIMUM_BUDGET_MICRO_USD: ${{ vars.AEX_RELEASE_EVIDENCE_MAXIMUM_BUDGET_MICRO_USD }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out the exact public source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          ref: ${{ inputs.public_source_sha }}
+          fetch-depth: 1
+          path: source
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
+        with:
+          toolchain: "1.97.1"
+
+      - name: Install nextest
+        uses: taiki-e/install-action@2cdf2d81f4edfc3b41d5ddf56083c70b48ac2475  # v2.62.35
+        with:
+          tool: cargo-nextest
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
+        with:
+          bun-version: "1.3.14"
+
+      - name: Bind the protected run and create its source archive
+        env:
+          DISPATCH_SHA: ${{ github.sha }}
+          DISPATCH_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          [[ "$DISPATCH_REF" == "refs/tags/$RELEASE_TAG" ]]
+          [[ "$DISPATCH_SHA" == "$PUBLIC_SOURCE_SHA" ]]
+          [[ "$(git rev-parse HEAD)" == "$PUBLIC_SOURCE_SHA" ]]
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          test -n "$AEX_API_URL"
+          test -n "$AEX_API_KEY"
+          test -n "$AEX_RELEASE_EVIDENCE_HEALTH_URL"
+          test -n "$AEX_EXPECTED_API_HOST"
+          [[ "$AEX_RELEASE_EVIDENCE_MAXIMUM_BUDGET_MICRO_USD" == "0" ]]
+          run_root="$GITHUB_WORKSPACE/source/.tmp/release-evidence/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          mkdir -p "$run_root/public-inputs" "$run_root/e2e" "$run_root/user" "$run_root/receipts"
+          echo "RUN_ROOT=$run_root" >> "$GITHUB_ENV"
+          date --utc +'%Y-%m-%dT%H:%M:%SZ' > "$run_root/started-at.txt"
+          git archive --format=tar.gz --output "$run_root/source.tar.gz" "$PUBLIC_SOURCE_SHA"
+          test -s "$run_root/source.tar.gz"
+          source_archive_digest="sha256:$(sha256sum "$run_root/source.tar.gz" | cut -d' ' -f1)"
+          echo "SOURCE_ARCHIVE_DIGEST=$source_archive_digest" >> "$GITHUB_ENV"
+          secret_canary="aex-release-evidence-$(openssl rand -hex 32)"
+          echo "::add-mask::$secret_canary"
+          echo "AEX_RELEASE_EVIDENCE_SECRET_CANARY=$secret_canary" >> "$GITHUB_ENV"
+          secret_canary_digest="sha256:$(printf '%s' "$secret_canary" | sha256sum | cut -d' ' -f1)"
+          echo "SECRET_CANARY_DIGEST=$secret_canary_digest" >> "$GITHUB_ENV"
+
+      - name: Acquire and verify the exact public bytes
+        run: |
+          set -euo pipefail
+          bun scripts/cicd/release-evidence.mjs coordinates \
+            --repository "$GITHUB_REPOSITORY" \
+            --source-sha "$PUBLIC_SOURCE_SHA" \
+            --release-tag "$RELEASE_TAG" \
+            --release-id "$RELEASE_ID" \
+            --deployment-context-digest "$DEPLOYMENT_CONTEXT_DIGEST" \
+            --manifest-uri "$MANIFEST_URI" \
+            --manifest-digest "$MANIFEST_DIGEST" \
+            --manifest-size-bytes "$MANIFEST_SIZE_BYTES" \
+            --release-tool-uri "$RELEASE_TOOL_URI" \
+            --release-tool-digest "$RELEASE_TOOL_DIGEST" \
+            --release-tool-size-bytes "$RELEASE_TOOL_SIZE_BYTES"
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern composition-manifest.json --pattern aex-release-tool \
+            --dir "$RUN_ROOT/public-inputs"
+          manifest="$RUN_ROOT/public-inputs/composition-manifest.json"
+          release_tool="$RUN_ROOT/public-inputs/aex-release-tool"
+          [[ "$(stat -c '%s' "$manifest")" == "$MANIFEST_SIZE_BYTES" ]]
+          [[ "sha256:$(sha256sum "$manifest" | cut -d' ' -f1)" == "$MANIFEST_DIGEST" ]]
+          [[ "$(stat -c '%s' "$release_tool")" == "$RELEASE_TOOL_SIZE_BYTES" ]]
+          [[ "sha256:$(sha256sum "$release_tool" | cut -d' ' -f1)" == "$RELEASE_TOOL_DIGEST" ]]
+          denied_runner_class=self
+          denied_runner_class+="-hosted"
+          gh attestation verify "$manifest" --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/main.yml" \
+            --source-ref refs/heads/main --source-digest "$PUBLIC_SOURCE_SHA" \
+            "--deny-${denied_runner_class}-runners"
+          gh attestation verify "$release_tool" --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/_build-artifacts.yml" \
+            --source-ref refs/heads/main --source-digest "$PUBLIC_SOURCE_SHA" \
+            "--deny-${denied_runner_class}-runners"
+          chmod 0755 "$release_tool"
+          "$release_tool" --root "$GITHUB_WORKSPACE/source" --quiet \
+            manifest validate --file "$manifest" --strict-environment-scan
+          jq -e \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg source "$PUBLIC_SOURCE_SHA" \
+            --arg release "$RELEASE_ID" \
+            --arg tool_uri "$RELEASE_TOOL_URI" \
+            --arg tool_digest "$RELEASE_TOOL_DIGEST" \
+            --argjson tool_size "$RELEASE_TOOL_SIZE_BYTES" \
+            '.source.repository == $repository and .source.commitSha == $source and
+             .releaseId == $release and .releaseTool.uri == $tool_uri and
+             .releaseTool.digest == $tool_digest and .releaseTool.sizeBytes == $tool_size' \
+            "$manifest" >/dev/null
+          echo "RELEASE_TOOL=$release_tool" >> "$GITHUB_ENV"
+          echo "MANIFEST=$manifest" >> "$GITHUB_ENV"
+
+      - name: Require non-empty release scenario and user-journey inventories
+        run: |
+          set -euo pipefail
+          "$RELEASE_TOOL" --root "$GITHUB_WORKSPACE/source" graph verify --release
+          "$RELEASE_TOOL" --root "$GITHUB_WORKSPACE/source" --quiet graph select \
+            --paths release/scenario-ownership.toml --mode full --lane release \
+            --out "$RUN_ROOT/selection.json"
+          "$RELEASE_TOOL" --root "$GITHUB_WORKSPACE/source" --quiet graph matrix \
+            --selection "$RUN_ROOT/selection.json" --kind scenario \
+            --github-output "$RUN_ROOT/scenario.outputs"
+          sed -n 's/^matrix=//p' "$RUN_ROOT/scenario.outputs" > "$RUN_ROOT/scenario-matrix.json"
+          bun scripts/cicd/release-evidence.mjs matrix --file "$RUN_ROOT/scenario-matrix.json"
+          bun test --list-tests apps/user-tests/test/live > "$RUN_ROOT/user/list.txt"
+          bun -e 'import { USER_SCENARIOS } from "./apps/user-tests/scenarios.ts";
+            console.log(JSON.stringify(USER_SCENARIOS.filter((row) => row.suite === "live").map((row) => row.id)))' \
+            > "$RUN_ROOT/user/live-ids.json"
+          bun scripts/cicd/release-evidence.mjs user-inventory \
+            --list "$RUN_ROOT/user/list.txt" --live-ids "$RUN_ROOT/user/live-ids.json" \
+            --out "$RUN_ROOT/user/pre-run-inventory.json"
+
+      - name: Install exact locked dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Verify the exact deployed release before evidence
+        run: |
+          set -euo pipefail
+          bun scripts/cicd/release-evidence.mjs deployment-health \
+            --health-url "$AEX_RELEASE_EVIDENCE_HEALTH_URL" \
+            --expected-host "$AEX_EXPECTED_API_HOST" \
+            --release-id "$RELEASE_ID" \
+            --deployment-context-digest "$DEPLOYMENT_CONTEXT_DIGEST" \
+            --phase before \
+            --out "$RUN_ROOT/deployment-health-before.json"
+
+      - name: Run release-bound E2E and user suites
+        run: |
+          set -euo pipefail
+          bun scripts/cicd/release-evidence.mjs run-e2e \
+            --matrix "$RUN_ROOT/scenario-matrix.json" --output-root "$RUN_ROOT/e2e"
+          bun scripts/cicd/release-evidence.mjs run-user --output-root "$RUN_ROOT/user"
+
+      - name: Verify the exact deployed release after evidence
+        run: |
+          set -euo pipefail
+          bun scripts/cicd/release-evidence.mjs deployment-health \
+            --health-url "$AEX_RELEASE_EVIDENCE_HEALTH_URL" \
+            --expected-host "$AEX_EXPECTED_API_HOST" \
+            --release-id "$RELEASE_ID" \
+            --deployment-context-digest "$DEPLOYMENT_CONTEXT_DIGEST" \
+            --phase after \
+            --out "$RUN_ROOT/deployment-health-after.json"
+          jq -e --arg release "$RELEASE_ID" --arg context "$DEPLOYMENT_CONTEXT_DIGEST" --slurp \
+            'if length == 2 and .[0].phase == "before" and .[1].phase == "after" and
+                all(.[]; .schema == "aex.release-health-observation.v1" and
+                  .releaseId == $release and .deploymentContextDigest == $context)
+             then {schema:"aex.release-evidence-deployment-health.v1",releaseId:$release,
+               deploymentContextDigest:$context,before:.[0],after:.[1]}
+             else error("release-evidence deployment-health observations are not one exact before/after pair")
+             end' \
+            "$RUN_ROOT/deployment-health-before.json" "$RUN_ROOT/deployment-health-after.json" \
+            > "$RUN_ROOT/deployment-health.json"
+
+      - name: Verify inventory, cleanup, spend and secret-canary evidence
+        run: |
+          set -euo pipefail
+          bun scripts/cicd/assert-no-skips.mjs "$RUN_ROOT/e2e/junit.xml"
+          bun scripts/cicd/assert-no-skips.mjs "$RUN_ROOT/user/junit.xml"
+          if grep -rFq -- "$AEX_RELEASE_EVIDENCE_SECRET_CANARY" "$RUN_ROOT/e2e" "$RUN_ROOT/user"; then
+            echo "release-evidence secret canary escaped into suite output" >&2
+            exit 41
+          fi
+          for suite in e2e user; do
+            bun scripts/cicd/release-evidence.mjs validate-hygiene \
+              --file "$RUN_ROOT/$suite/hygiene.json" \
+              --suite "$suite" \
+              --release-id "$RELEASE_ID" \
+              --workflow-run-id "$GITHUB_RUN_ID" \
+              --secret-canary-digest "$SECRET_CANARY_DIGEST" \
+              --maximum-budget-micro-usd "$AEX_RELEASE_EVIDENCE_MAXIMUM_BUDGET_MICRO_USD" \
+              --out "$RUN_ROOT/$suite/receipt-data.json"
+          done
+
+      - name: Build the release-bound receipts
+        run: |
+          set -euo pipefail
+          completed_at=$(date --utc +'%Y-%m-%dT%H:%M:%SZ')
+          cargo_lock="sha256:$(sha256sum Cargo.lock | cut -d' ' -f1)"
+          bun_lock="sha256:$(sha256sum bun.lock | cut -d' ' -f1)"
+          test_sources="sha256:$(git ls-files -z -- apps/user-tests tests release/scenario-ownership.toml \
+            | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)"
+          for suite in e2e user; do
+            declared=$(jq -er '.cases | length | select(. > 0)' "$RUN_ROOT/$suite/inventory.json")
+            if [[ "$suite" == "e2e" ]]; then
+              packages=$(jq -c '[.include[].package] | unique' "$RUN_ROOT/scenario-matrix.json")
+            else
+              packages='["@aexhq/user-tests"]'
+            fi
+            jq -n \
+              --arg receiptId "rc_release-${suite}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+              --arg class "$suite" --arg layer "$suite" --arg lane release \
+              --arg repository "$GITHUB_REPOSITORY" --arg source "$PUBLIC_SOURCE_SHA" \
+              --arg runId "$GITHUB_RUN_ID" --argjson attempt "$GITHUB_RUN_ATTEMPT" \
+              --arg jobName evidence \
+              --arg builderId "https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT" \
+              --arg cargoLock "$cargo_lock" --arg bunLock "$bun_lock" \
+              --arg testSources "$test_sources" --arg sourceArchive "$SOURCE_ARCHIVE_DIGEST" \
+              --arg releaseId "$RELEASE_ID" --arg deploymentContextDigest "$DEPLOYMENT_CONTEXT_DIGEST" \
+              --argjson packages "$packages" \
+              --argjson declared "$declared" --arg startedAt "$(cat "$RUN_ROOT/started-at.txt")" \
+              --arg completedAt "$completed_at" --slurpfile data "$RUN_ROOT/$suite/receipt-data.json" \
+              '{receiptId:$receiptId,class:$class,layer:$layer,lane:$lane,concerns:[$class],declared:$declared,
+                source:{repository:$repository,commitSha:$source,treeClean:true,workflowRunId:$runId,
+                  runAttempt:$attempt,jobName:$jobName,builderId:$builderId},
+                inputs:{cargoLockDigest:$cargoLock,bunLockDigest:$bunLock,testSourceDigest:$testSources,
+                  testArchiveDigest:$sourceArchive},
+                subject:{releaseId:$releaseId,deploymentContextDigest:$deploymentContextDigest,unitIds:[]},
+                selection:{mode:"release",filterset:"all()",packages:$packages},data:$data[0],
+                startedAt:$startedAt,completedAt:$completedAt}' > "$RUN_ROOT/$suite/context.json"
+            receipt="$RUN_ROOT/receipts/${suite}-receipt.json"
+            "$RELEASE_TOOL" --root "$GITHUB_WORKSPACE/source" evidence new \
+              --context "$RUN_ROOT/$suite/context.json" --junit "$RUN_ROOT/$suite/junit.xml" --out "$receipt"
+            "$RELEASE_TOOL" --root "$GITHUB_WORKSPACE/source" evidence attach \
+              --receipt "$receipt" --kind junit --file "$RUN_ROOT/$suite/junit.xml" \
+              --uri "release-evidence://$GITHUB_RUN_ID/$suite/junit.xml"
+            "$RELEASE_TOOL" --root "$GITHUB_WORKSPACE/source" evidence attach \
+              --receipt "$receipt" --kind inventory --file "$RUN_ROOT/$suite/inventory.json" \
+              --uri "release-evidence://$GITHUB_RUN_ID/$suite/inventory.json"
+            "$RELEASE_TOOL" --root "$GITHUB_WORKSPACE/source" evidence attach \
+              --receipt "$receipt" --kind cleanup-ledger --file "$RUN_ROOT/$suite/hygiene.json" \
+              --uri "release-evidence://$GITHUB_RUN_ID/$suite/hygiene.json"
+            "$RELEASE_TOOL" --root "$GITHUB_WORKSPACE/source" evidence attach \
+              --receipt "$receipt" --kind deployment-health --file "$RUN_ROOT/deployment-health.json" \
+              --uri "release-evidence://$GITHUB_RUN_ID/deployment-health.json"
+            "$RELEASE_TOOL" --root "$GITHUB_WORKSPACE/source" evidence verify --receipt "$receipt"
+            "$RELEASE_TOOL" --root "$GITHUB_WORKSPACE/source" evidence require \
+              --receipt "$receipt" --policy release/policy/freshness.toml --release-id "$RELEASE_ID"
+            jq -e --arg release "$RELEASE_ID" --arg context "$DEPLOYMENT_CONTEXT_DIGEST" \
+              --arg source "$PUBLIC_SOURCE_SHA" --arg class "$suite" \
+              '.schema == "aex.evidence-receipt.v1" and .class == $class and
+               .subject.releaseId == $release and .subject.deploymentContextDigest == $context and
+               .source.commitSha == $source and
+               .conclusion == "passed" and .inventory.declared > 0 and
+               .inventory.declared == .inventory.collected and .inventory.skipped == 0 and
+               .inventory.ignored == 0 and .inventory.retried == 0 and .inventory.flaky == 0 and
+               .data.residue == "none" and .data.secretCanaryObserved == false and
+               .data.spentMicroUsd <= .data.budgetMicroUsd' "$receipt" >/dev/null
+          done
+
+      - name: Upload the closed receipt handoff
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: release-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            source/.tmp/release-evidence/${{ github.run_id }}-${{ github.run_attempt }}/source.tar.gz
+            source/.tmp/release-evidence/${{ github.run_id }}-${{ github.run_attempt }}/receipts/e2e-receipt.json
+            source/.tmp/release-evidence/${{ github.run_id }}-${{ github.run_attempt }}/receipts/user-receipt.json
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Attest and publish exact receipt bytes
+    needs: evidence
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    env:
+      PUBLIC_SOURCE_SHA: ${{ inputs.public_source_sha }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      RELEASE_ID: ${{ inputs.release_id }}
+      DEPLOYMENT_CONTEXT_DIGEST: ${{ inputs.deployment_context_digest }}
+      GH_TOKEN: ${{ github.token }}
+      HANDOFF: ${{ github.workspace }}/handoff
+    steps:
+      - name: Download the closed receipt handoff
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: release-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: handoff
+
+      - name: Validate the closed handoff shape
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == "refs/tags/$RELEASE_TAG" ]]
+          [[ "$GITHUB_SHA" == "$PUBLIC_SOURCE_SHA" ]]
+          test -s "$HANDOFF/source.tar.gz"
+          test -s "$HANDOFF/receipts/e2e-receipt.json"
+          test -s "$HANDOFF/receipts/user-receipt.json"
+          [[ "$(find "$HANDOFF" -type f | wc -l)" == "3" ]]
+          for suite in e2e user; do
+            jq -e --arg class "$suite" --arg release "$RELEASE_ID" \
+              --arg context "$DEPLOYMENT_CONTEXT_DIGEST" --arg source "$PUBLIC_SOURCE_SHA" \
+              '.schema == "aex.evidence-receipt.v1" and .class == $class and
+               .subject.releaseId == $release and .subject.deploymentContextDigest == $context and
+               .source.commitSha == $source and
+               .conclusion == "passed"' "$HANDOFF/receipts/${suite}-receipt.json" >/dev/null
+          done
+
+      - name: Attest the exact source archive
+        id: attest_source
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26  # v4.1.0
+        with:
+          subject-path: handoff/source.tar.gz
+
+      - name: Attest the E2E receipt
+        id: attest_e2e
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26  # v4.1.0
+        with:
+          subject-path: handoff/receipts/e2e-receipt.json
+
+      - name: Attest the user receipt
+        id: attest_user
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26  # v4.1.0
+        with:
+          subject-path: handoff/receipts/user-receipt.json
+
+      - name: Publish the immutable evidence handoff
+        shell: bash
+        run: |
+          set -euo pipefail
+          short_release=${RELEASE_ID#sha256:}
+          evidence_tag="evidence-${PUBLIC_SOURCE_SHA}-${short_release:0:16}-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}"
+          if gh release view "$evidence_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "release-evidence tag already exists; evidence identities are never replaced" >&2
+            exit 21
+          fi
+          gh release create "$evidence_tag" --repo "$GITHUB_REPOSITORY" --target "$PUBLIC_SOURCE_SHA" \
+            --title "Release evidence $RELEASE_ID" --notes "Exact release-bound E2E and public user receipts." \
+            --prerelease
+          gh release upload "$evidence_tag" \
+            "$HANDOFF/receipts/e2e-receipt.json" \
+            "$HANDOFF/receipts/user-receipt.json" \
+            "$HANDOFF/source.tar.gz" \
+            --repo "$GITHUB_REPOSITORY"
+          mkdir "$HANDOFF/readback"
+          gh release download "$evidence_tag" --repo "$GITHUB_REPOSITORY" \
+            --pattern e2e-receipt.json --pattern user-receipt.json --pattern source.tar.gz \
+            --dir "$HANDOFF/readback"
+          cmp --silent "$HANDOFF/receipts/e2e-receipt.json" "$HANDOFF/readback/e2e-receipt.json"
+          cmp --silent "$HANDOFF/receipts/user-receipt.json" "$HANDOFF/readback/user-receipt.json"
+          cmp --silent "$HANDOFF/source.tar.gz" "$HANDOFF/readback/source.tar.gz"
+          denied_runner_class=self
+          denied_runner_class+="-hosted"
+          for subject in e2e-receipt.json user-receipt.json source.tar.gz; do
+            gh attestation verify "$HANDOFF/readback/$subject" --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release-evidence.yml" \
+              --source-ref "refs/tags/$RELEASE_TAG" --source-digest "$PUBLIC_SOURCE_SHA" \
+              "--deny-${denied_runner_class}-runners"
+          done
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$evidence_tag"
+          for suite in e2e user; do
+            receipt="$HANDOFF/readback/${suite}-receipt.json"
+            digest="sha256:$(sha256sum "$receipt" | cut -d' ' -f1)"
+            size=$(stat -c '%s' "$receipt")
+            echo "${suite}_receipt_uri=$base/${suite}-receipt.json" >> "$GITHUB_STEP_SUMMARY"
+            echo "${suite}_receipt_digest=$digest" >> "$GITHUB_STEP_SUMMARY"
+            echo "${suite}_receipt_size_bytes=$size" >> "$GITHUB_STEP_SUMMARY"
+          done

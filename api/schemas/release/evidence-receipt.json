@@ -115,6 +115,7 @@
       "properties": {
         "artifactSubjectDigest": { "$ref": "#/$defs/sha256" },
         "releaseId": { "$ref": "#/$defs/sha256" },
+        "deploymentContextDigest": { "$ref": "#/$defs/sha256" },
         "unitIds": { "type": "array", "items": { "type": "string" } }
       }
     },
@@ -194,6 +195,7 @@
               "coverage",
               "first-failure",
               "cleanup-ledger",
+              "deployment-health",
               "nextest-list"
             ]
           },
@@ -265,6 +267,21 @@
       "if": { "properties": { "class": { "const": "arch-qualification" } }, "required": ["class"] },
       "then": { "required": ["architectureQualification"] },
       "else": { "not": { "required": ["architectureQualification"] } }
+    },
+    {
+      "if": {
+        "properties": {
+          "class": { "enum": ["e2e", "user"] },
+          "lane": { "const": "release" }
+        },
+        "required": ["class", "lane"]
+      },
+      "then": {
+        "required": ["subject"],
+        "properties": {
+          "subject": { "required": ["releaseId", "deploymentContextDigest"] }
+        }
+      }
     }
   ],
   "$defs": {
