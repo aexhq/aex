@@ -37,6 +37,7 @@ use aex_wire::provider::ProviderId;
 use aex_wire::types::Timestamp;
 use aex_wire::{ContentHash, Uuid7};
 
+pub mod catalog_source;
 pub mod evidence;
 pub mod executor;
 pub mod publisher;

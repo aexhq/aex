@@ -1,13 +1,12 @@
 ---
-title: Model-catalog authority bootstrap and publication
-description: The checked-in boundary for the protected model-catalog signer, immutable collection acquisition, GitHub bindings, and the external prerequisites that keep publication fail-closed.
+title: Model-catalog authority and publication
+description: Protected signing, immutable publication, atomic last-good consumption, and non-authoritative compatibility monitoring.
 keywords:
   - model catalog
   - KMS
-  - bootstrap
   - publication
   - trust root
-  - conformance
+  - compatibility
 audience: release maintainers
 status: accepted
 related:
@@ -19,205 +18,168 @@ related:
   - .github/workflows/model-catalog-publish.yml
   - infra/modules/model-catalog-authority/README.md
   - release/model-catalog/README.md
-  - tests/live/aex-live-model-catalog/src/main.rs
   - runtimes/brain-mux/build.rs
   - tools/aex-release-tool/src/artifact.rs
 ---
 
-# Model-catalog authority bootstrap and publication
+# Model-catalog authority and publication
 
-This document records the boundary between checked-in automation and the
-owner-controlled authority needed to make `brain-mux` serviceable. A catalog
-entry becomes `Active` only after the provider conformance receipt is earned,
-the canonical document is signed by the dedicated publisher key, and the
-runtime-equivalent verifier accepts the resulting collection. Missing or
-partial inputs are release blockers; this workflow must never turn a staged
-fixture, an application encryption key, or a guessed provider key into trust.
+The signed model catalog is static reviewed compatibility metadata. It records
+the provider-native model identity and the closed capabilities and limits that
+the current adapter/runtime contract knows how to consume. It is not a provider
+health report, availability promise, qualification receipt, or copy of a
+provider model-list response.
 
-## Existing authority surfaces
+Provider reachability can change independently of a release. Neither a failed
+live probe nor a missing provider credential may block ordinary public CI,
+publication of reviewed compatibility metadata, or consumption of the current
+last-good signed collection.
 
-The implementation already has one vocabulary and one verification path:
+## Authority surfaces
 
 - [`aex-model-catalog`](../crates/aex-model-catalog/) owns the document,
-  detached-envelope, collection, receipt, chain, and trust-root schemas.
+  detached-envelope, collection, and trust-root schemas and their verifier.
 - [`aex-model-catalog-publisher`](../tests/live/aex-live-model-catalog/src/main.rs)
-  exposes `prepare`, `record-signature`, and `assemble-genesis`. It prepares
-  `aex-model-catalog/v1\n || document` as a SHA-256 digest for KMS
-  `MessageType=DIGEST`, admits only `ECDSA_SHA_256`, and runtime-verifies the
-  genesis collection before emitting bytes.
-- [`brain-mux` build binding](../runtimes/brain-mux/build.rs) copies the exact
-  trust-root set and collection into the binary. Runtime environment variables
-  cannot relabel or replace them.
-- [`artifact plan`](../tools/aex-release-tool/src/artifact.rs) requires the
-  all-or-none build binding for a published `brain-mux`, validates canonical
-  trust roots and both SHA-256 identities, and refuses a path outside the
-  checkout.
-- [`_build-artifacts.yml`](../.github/workflows/_build-artifacts.yml) now
-  acquires the collection from a same-repository immutable GitHub release
-  asset into .tmp/model-catalog/collection.json. The download is optional
-  for non-publishing builds, but URI and digest are all-or-none and the
-  release tool remains the final canonical/schema/signature gate.
+  generates a canonical document from one reviewed `*.source.json`, validates
+  that source/document pair, prepares only its signing digest, records the KMS
+  signature, and assembles a runtime-verified collection. With a verified
+  predecessor it appends exactly one revision and retains every prior pin.
 - [`model-catalog-publish.yml`](../.github/workflows/model-catalog-publish.yml)
-  is the manual protected genesis publisher. It accepts only a tracked
-  [`release/model-catalog/`](../release/model-catalog/) document at the exact
-  workflow source SHA and caller-supplied SHA-256, validates the document before
-  assuming AWS, derives the public trust root from KMS metadata, signs only the
-  prepared digest, runtime-verifies the collection, and publishes four
-  never-overwritten content-addressed assets.
+  is the protected authority lane. It runs automatically only after a merge to
+  `main` changes one `release/model-catalog/*.source.json`, and can also be
+  dispatched manually with an exact current-main source path and digest.
+- [`_build-artifacts.yml`](../.github/workflows/_build-artifacts.yml) consumes
+  one repository variable, validates its closed canonical shape, materializes
+  the exact trust roots and immutable collection, then exports the existing
+  release-tool environment variables. The release tool and runtime remain the
+  final canonical, signature, chain, and serviceability gates.
 - [`model-catalog-authority`](../infra/modules/model-catalog-authority/) creates
   the dedicated P-256 key and exact OIDC role. The private platform composition
-  instantiates it so the public repository remains the reusable authority owner
-  and the private repository remains the AWS environment owner.
+  owns the AWS environment while this public repository owns the reusable
+  authority contract.
 
-The main-push workflow does not create a key, call KMS, make a provider request,
-or update GitHub configuration. The separate manually dispatched protected
-publisher calls only `DescribeKey`, `GetPublicKey`, and `Sign` on the exact
-provisioned key and creates a new GitHub prerelease. It never calls a model
-provider and never installs repository variables or secrets.
+The ordinary main workflow never calls KMS or a model provider and never
+updates GitHub configuration. A candidate publisher or external monitoring
+failure leaves `AEX_MODEL_CATALOG_BINDING_JSON` unchanged, so subsequent builds
+continue to consume the last independently reviewed binding.
 
-## Required GitHub configuration
+## Atomic build binding
 
-The following names are the contract. The two public release variables are
-read by the main-push artifact workflow; values are non-secret identities, not
-credentials:
+The public artifact workflow reads exactly one non-secret repository variable:
 
 | Scope | Name | Meaning |
 | --- | --- | --- |
-| repository variable | `AEX_MODEL_CATALOG_TRUST_ROOTS_JSON` | Canonical `aex.model-catalog-trust-roots.v1` JSON containing only the KMS public SEC1 key(s) |
-| repository variable | `AEX_MODEL_CATALOG_TRUST_ROOTS_SHA256` | `sha256:` identity of those exact JSON bytes |
-| repository variable | `AEX_MODEL_CATALOG_COLLECTION_URI` | HTTPS URL of the immutable collection asset in `aexhq/aex` |
-| repository variable | `AEX_MODEL_CATALOG_COLLECTION_SHA256` | `sha256:` identity of the downloaded collection bytes |
+| repository variable | `AEX_MODEL_CATALOG_BINDING_JSON` | Canonical compact `aex.model-catalog-build-binding.v1` JSON containing the exact trust-root JSON and digest plus the immutable collection URI and digest |
 
-`AEX_MODEL_CATALOG_COLLECTION_FILE` is deliberately no longer a repository
-variable. The workflow derives the stable workspace-relative path
-.tmp/model-catalog/collection.json after it downloads and verifies the URI;
-a runner-specific path cannot become release identity.
+The value has this closed shape:
 
-A protected signer uses the dedicated GitHub Environment
-`aex-model-catalog-publisher`, with required reviewers, `main` as its only
-deployment branch, and self-review disabled where the repository plan allows
-it. Its non-secret environment variables are:
+```json
+{"collectionSha256":"sha256:<64 lowercase hex>","collectionUri":"https://github.com/aexhq/aex/releases/download/<immutable-tag>/<content-addressed-asset>.json","schema":"aex.model-catalog-build-binding.v1","trustRootsJson":"<canonical aex.model-catalog-trust-roots.v1 JSON>","trustRootsSha256":"sha256:<64 lowercase hex>"}
+```
+
+The build lane rejects an open, non-canonical, oversized, partial, off-repository,
+or digest-inconsistent value before exporting these established internal inputs:
+`AEX_MODEL_CATALOG_TRUST_ROOTS_JSON`,
+`AEX_MODEL_CATALOG_TRUST_ROOTS_SHA256`,
+`AEX_MODEL_CATALOG_COLLECTION_URI`,
+`AEX_MODEL_CATALOG_COLLECTION_SHA256`, and the derived workspace-relative
+`AEX_MODEL_CATALOG_COLLECTION_FILE`. Those are implementation inputs, not
+independently mutable repository variables.
+
+Publication emits the exact canonical build-binding file as an immutable,
+content-addressed release asset. The protected workflow deliberately has no
+credential that can mutate repository variables. Until a dedicated narrowly
+scoped GitHub App credential exists, an owner must independently review the
+published asset and replace `AEX_MODEL_CATALOG_BINDING_JSON` in one operation.
+Never copy its fields into separate variables.
+
+That separate promotion step provides last-good behavior:
+
+1. A source merge or manual dispatch creates a candidate immutable release.
+2. Failure at generation, validation, signing, assembly, publication, or
+   readback does not alter the installed binding.
+3. Ordinary CI continues using the previously installed collection.
+4. Only independent review followed by one atomic variable replacement makes
+   the candidate the new build input.
+
+Absence is allowed for non-publishing builds and for the first sequence-1
+publication. A published `brain-mux` still requires the complete binding.
+
+## Protected publisher configuration
+
+The GitHub Environment `aex-model-catalog-publisher` is restricted to `main`
+and supplies these non-secret values:
 
 | Name | Meaning |
 | --- | --- |
-| `AEX_MODEL_CATALOG_AWS_REGION` | AWS region containing the publisher key; launch architecture currently selects `eu-west-1` |
-| `AEX_MODEL_CATALOG_AWS_ROLE_ARN` | Dedicated GitHub OIDC role ARN |
-| `AEX_MODEL_CATALOG_KMS_KEY_ARN` | Exact asymmetric KMS key ARN used for `GetPublicKey` and `Sign` |
-| `AEX_MODEL_CATALOG_KMS_KEY_ID` | Stable logical `keyId` placed in the trust-root document and detached signature record |
-| `AEX_MODEL_CATALOG_EXPECTED_AWS_ACCOUNT_ID` | Account allow-list passed to the AWS credentials action |
+| `AEX_MODEL_CATALOG_AWS_REGION` | AWS region containing the publisher key; currently `eu-west-1` |
+| `AEX_MODEL_CATALOG_AWS_ROLE_ARN` | Dedicated GitHub OIDC publisher role ARN |
+| `AEX_MODEL_CATALOG_KMS_KEY_ARN` | Exact asymmetric signing-key ARN |
+| `AEX_MODEL_CATALOG_KMS_KEY_ID` | Stable logical `keyId` encoded in roots and signatures |
+| `AEX_MODEL_CATALOG_EXPECTED_AWS_ACCOUNT_ID` | Exact account allow-list for credential acquisition |
 
-The environment secret `AEX_MODEL_CATALOG_PUBLISH_CONFIRMATION` is a second,
-presence-only operator authority for that workflow. Its value must be a
-random non-empty string, must never be printed or copied into an artefact, and
-must not be treated as a signing key. The protected environment review remains
-the human approval boundary.
+`AEX_MODEL_CATALOG_PUBLISH_CONFIRMATION` is a presence-only environment secret
+and second operator authority. It is not key material or artifact data. The
+workflow never creates the Environment or fills missing values.
 
-The workflow never creates the Environment or sets any of these values. Setting
-empty placeholders would only move the failure and is not bootstrap.
+The key must be customer-managed `ECC_NIST_P256`, have
+`KeyUsage=SIGN_VERIFY`, be enabled, non-multi-region, AWS-KMS-origin, and admit
+only `ECDSA_SHA_256`. The role may call `DescribeKey`, `GetPublicKey`, and
+`Sign` on that exact key. No application encryption key, symmetric key,
+long-lived AWS credential, or convention-selected alias is a substitute.
 
-## AWS prerequisite and private composition
+The OIDC trust subject is
+`repo:aexhq/aex:environment:aex-model-catalog-publisher`, with audience
+`sts.amazonaws.com`, repository `aexhq/aex`, ref `refs/heads/main`, and the
+exact workflow name. The public P-256 point is the only key material that may
+leave AWS; the private key never enters GitHub.
 
-The reusable public module and private platform root define one dedicated
-asymmetric KMS key. An owner must apply its exact reviewed plan before the
-protected signer can run:
+## Publication and predecessor rules
 
-1. The key must have `KeySpec=ECC_NIST_P256`, `KeyUsage=SIGN_VERIFY`, and
-   `SigningAlgorithms` containing `ECDSA_SHA_256`. The signer may call only
-   `kms:GetPublicKey`, `kms:Sign`, and (for identity checking)
-   `kms:DescribeKey` on that exact key ARN. No application encryption key,
-   alias selected by convention, or symmetric key is an acceptable substitute.
-2. The key policy must allow the dedicated role these operations and no broad
-   KMS mutation. Key-policy and IAM-policy permissions are both required by
-   AWS KMS; an IAM allow alone is not sufficient when the key policy does not
-   delegate it.
-3. The role trust policy must accept GitHub's OIDC provider with audience
-   `sts.amazonaws.com` and the subject for the protected environment:
-   `repo:aexhq/aex:environment:aex-model-catalog-publisher`. The repository's
-   current OIDC settings use the default, name-based subject and have not
-   opted into immutable subject claims; if that setting changes, the trust
-   policy must be updated to the exact subject GitHub reports before any run.
-4. The workflow passes the expected AWS account to
-   `aws-actions/configure-aws-credentials` and must never accept long-lived
-   access keys. The existing platform release workflows pin that action at
-   `ec61189d14ec14c8efccab744f656cffd0e33f37` (v6.1.0); the publisher uses
-   that reviewed pin.
+Each reviewed compatibility source is immutable. The publisher computes one
+timestamp before generation, validates the generated canonical document before
+OIDC, derives the exact trust root from KMS, signs only the prepared SHA-256
+digest with `MessageType=DIGEST`, and read-backs every uploaded asset before
+making the prerelease non-draft.
 
-The KMS public key is the only key material that may leave AWS. The bootstrap
-must validate the complete `GetPublicKey` metadata and encode the returned
-uncompressed P-256 SEC1 point into the canonical trust-root JSON. The private
-key never enters GitHub, a variable, a secret, a log, or a release asset.
+When `AEX_MODEL_CATALOG_BINDING_JSON` is installed, the publisher validates it
+and downloads its exact collection before any AWS call. The repository-owned
+assembler verifies that predecessor with the current roots, requires the new
+document sequence to equal `head + 1`, requires its predecessor digest to equal
+the old head, appends the new pin, and conservatively retains all prior pins.
+It refuses a 33rd retained revision; the workflow does not invent pruning
+authority. Without an installed predecessor the assembler accepts only
+sequence 1.
 
-## One-time genesis sequence
+A successful run publishes four never-overwritten assets: trust roots, the
+signed collection, the publisher's binding, and the canonical build binding.
+Tags include source SHA, workflow run, and attempt. Existing tags or assets are
+never overwritten.
 
-The one-time owner-controlled sequence is:
+## Monitoring is not publication authority
 
-1. Earn a complete 23-probe conformance receipt for at least one real
-   customer-owned `(provider, model)` pair. A provider model-list response is
-   not evidence and cannot promote an entry.
-2. Produce a canonical `CatalogDocument` whose `required_adapter_source`
-   matches the current tree-wide adapter digest and whose entry is `Active`
-   only because that receipt proves every declared capability. The document
-   must be supplied from a reviewed source identity; no fixture promotion is
-   allowed.
-3. Dispatch `model-catalog-publish.yml` at that exact `main` source SHA with the
-   tracked document path and SHA-256. Protected environment approval is the
-   human signing boundary. The workflow derives the public root, calls KMS
-   `Sign` with `MessageType=DIGEST` and `ECDSA_SHA_256`, and stops on any
-   metadata, digest, signature, adapter, receipt, time-gate, or serviceability
-   mismatch.
-4. The workflow publishes a new immutable GitHub prerelease containing the
-   content-addressed collection, trust roots, publisher binding, and repository
-   binding, then downloads and byte-compares all four before publishing the
-   draft. It never replaces an existing tag or asset.
-5. After independent review of the repository-binding asset, set the four
-   repository variables above together. The workflow deliberately does not do
-   this. The main workflow then downloads the exact asset, checks its SHA-256,
-   and the
-   existing release tool and runtime verifier check its canonical collection and
-   signatures again.
-
-No checked-in step may silently perform step 1 or 2. Until all five steps have
-real evidence, public main publication must continue to fail at
-`model-catalog-build-binding-missing` or its more specific planner rule.
-
-## Steady-state publication is not yet implementable
-
-The current publisher intentionally emits only a genesis collection. A normal
-revision must append to the verified predecessor chain and carry the exact
-sorted set of catalog pins still needed by live sessions. That retention set is
-owned by the deployed platform, not by a public Git checkout. A future
-steady-state workflow therefore needs, as separate reviewed inputs:
-
-- an attested predecessor collection URI and digest;
-- an attested still-live session-pin snapshot, including its source release and
-  freshness bound;
-- a new canonical document with a strictly advancing sequence and predecessor
-  digest; and
-- the same dedicated KMS key (or an explicitly reviewed overlapping rotation)
-  plus the exact trust-root set used to verify every retained artifact.
-
-Until the platform exports that retention authority and the publisher grows a
-chain-extension command that consumes it, no workflow may accept a hand-written
-pin list, drop old revisions to fit the 32-revision bound, or reset the chain by
-reusing `assemble-genesis`. Those shortcuts would make existing sessions
-unreadable or manufacture continuity. This is an external authority blocker,
-not a reason to weaken the public release gate.
+Provider compatibility and availability may be monitored independently, but
+monitor output is never called or consumed by ordinary CI, the publisher, the
+build lane, or runtime startup. A failed, skipped, expired, or unavailable
+provider observation cannot remove a signed entry, replace a build binding,
+fail a main build, or block release consumption. Compatibility changes are made
+only by reviewing a new static source file and passing it through the protected
+publisher.
 
 ## Fail-closed checks
 
-The acquisition step and planner must fail when:
+Publication or build acquisition must fail when its own input is invalid:
 
-- the URI and collection digest are only partially configured;
-- the URI is not an HTTPS release asset in this repository, or carries a
-  query, fragment, or parent-path component;
-- the downloaded bytes do not equal the configured SHA-256 identity;
-- trust roots are missing, non-canonical, unsorted, malformed, or do not
-  contain valid lowercase P-256 SEC1 points;
-- the collection is not canonical JSON, has an invalid chain/signature/receipt,
-  is bound to another adapter digest, or contains no serviceable `Active`
-  model; or
-- a build tries to publish `brain-mux` without all exact inputs.
+- the reviewed source is untracked, dirty, outside
+  `release/model-catalog/*.source.json`, or has the wrong digest;
+- generation and independent source/document validation disagree;
+- an installed binding is non-canonical, open, partial, oversized, points away
+  from this repository's immutable release assets, or has a digest mismatch;
+- a predecessor is omitted for a later sequence, fails verification, has the
+  wrong head, or would require dropping a retained pin;
+- KMS metadata, digest signing, signature recording, assembly, release
+  readback, or immutable-name checks fail; or
+- a published `brain-mux` lacks a complete verified build binding.
 
-The workflow never logs credential values, the KMS public-key response body,
-provider keys, signed URLs, or GitHub secret values. A failed candidate stays
-failed and receives a new immutable identity after a fix-forward.
+Those failures reject only the candidate operation. They never mutate or
+invalidate the installed last-good binding.

@@ -11,7 +11,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::failure::ProviderFailureKind;
 use crate::primitives::{Blake3Digest, BoundedString, ModelSlug};
-use crate::receipt::{ConformanceReceipt, ProbeSuiteRevision};
 
 /// The document schema version this crate understands. There is exactly one.
 pub const SCHEMA_VERSION: u16 = 1;
@@ -31,7 +30,7 @@ pub struct CatalogSequence(pub u64);
 #[serde(transparent)]
 pub struct PublisherId(pub BoundedString<32>);
 
-/// blake3 of the adapter crate source tree that a receipt was earned against.
+/// blake3 of an adapter source tree, used by external qualification evidence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct AdapterSourceDigest(pub Blake3Digest);
@@ -57,14 +56,6 @@ pub struct CatalogDocument {
     pub issued_at: Timestamp,
     /// The document is inactive before this instant.
     pub not_before: Timestamp,
-    /// No **new** session admission after this instant.
-    pub expires_at: Timestamp,
-    /// The document does not load at all after this instant.
-    pub retired_at: Timestamp,
-    /// Which probe suite the embedded receipts were earned against.
-    pub probe_suite_revision: ProbeSuiteRevision,
-    /// Which adapter source tree the embedded receipts were earned against.
-    pub required_adapter_source: AdapterSourceDigest,
     /// Sorted by `(provider, model)`, unique.
     pub entries: Vec<ModelEntry>,
     /// Sorted by `(provider, model)`, unique.
@@ -117,16 +108,13 @@ pub struct ModelEntry {
     /// An opaque pricing-context reference. Values stay synthetic or zero in
     /// public source (OD-09); model tokens are zero-dollar BYOK facts.
     pub pricing_context: Option<PricingContextRef>,
-    /// The live conformance receipt for this exact entry.
-    pub receipt: ConformanceReceipt,
 }
 
 /// Whether an entry is admissible.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EntryState {
-    /// Present, described, and **not** admissible: no live receipt has earned
-    /// it yet. Every entry ships in this state (OD-24).
+    /// Present and described, but not admissible for new runs.
     Staged,
     /// Admissible.
     Active,
@@ -179,6 +167,12 @@ impl Dialect {
     #[must_use]
     pub const fn is_implemented(self) -> bool {
         !matches!(self, Self::GeminiInteractions)
+    }
+
+    /// The exact revision implemented by this binary.
+    #[must_use]
+    pub const fn revision(self) -> DialectRevision {
+        DialectRevision(1)
     }
 }
 
@@ -937,7 +931,7 @@ pub enum DisableReason {
     ProviderIncident,
     /// A security advisory affects the pair.
     SecurityAdvisory,
-    /// Conformance regressed against a passing receipt.
+    /// External conformance monitoring found a regression.
     ConformanceRegression,
     /// The provider withdrew the model.
     Withdrawn,

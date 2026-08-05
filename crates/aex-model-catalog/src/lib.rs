@@ -11,9 +11,10 @@
 //! - a model absent from the catalog is not routable, whatever a request asks for
 //! - an unknown field or unknown enum member anywhere in the document is a load
 //!   failure, never an ignored value
-//! - an `Active` entry without passing conformance evidence cannot be loaded at
-//!   all, so "not admissible until proved" is a document invariant rather than a
-//!   runtime check
+//! - signed `Active` compatibility metadata is admission authority; provider
+//!   availability and live qualification evidence cannot expire a catalog
+//! - conformance receipts remain external assurance evidence bound to an exact
+//!   canonical entry digest, not embedded runtime authority
 //!
 //! # Purity
 //!

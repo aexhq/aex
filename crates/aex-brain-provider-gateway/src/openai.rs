@@ -1891,13 +1891,7 @@ mod tests {
             openai_entry(MODEL_TOOLS_ONLY, tools_only_capabilities()),
             fixture::entry(ProviderId::Anthropic, MODEL_ANTHROPIC, base_capabilities()),
         ];
-        fixture::document(
-            PUBLISHER,
-            1,
-            entries,
-            fixture::at(NOW_MS),
-            fixture::adapter("fixture-adapter"),
-        )
+        fixture::document(PUBLISHER, 1, entries, fixture::at(NOW_MS))
     }
 
     fn pair(provider: ProviderId, model: &str) -> QualifiedModel {
