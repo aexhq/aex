@@ -21,13 +21,17 @@
 # WHAT IS DELIBERATELY MISSING
 #
 # `dashboard`, `site`, `aex-cli`, `@aexhq/sdk`, the model and tool catalogues and
-# the three generated bundles are also artifacts, and are absent here because
-# their packages are not workspace members yet. Adding a member is an
-# architecture decision this stream does not own. The two Stripe TypeScript
-# edges *are* workspace packages — `services/stripe-{command,webhook}-edge`,
-# named explicitly by `aex_workspace_check::collect::NPM_EXPLICIT` rather than by
-# a `workspaces` glob — so they carry rows here and the graph resolves their
-# `package` to an npm node.
+# the three generated bundles are also release artifacts, but this registry
+# models hosted deployment units rather than every customer-facing artifact.
+# The dashboard, site, SDK and CLI are already workspace members. Their
+# immutable publication or archive identities, plus any catalogue or bundle
+# identity not carried by a hosted unit, must be represented by the release
+# artifact graph before release; absence here is not evidence that they do not
+# exist. The two Stripe TypeScript edges *are* hosted workspace packages —
+# `services/stripe-{command,webhook}-edge`, named explicitly by
+# `aex_workspace_check::collect::NPM_EXPLICIT` rather than by a `workspaces`
+# glob — so they carry rows here and the graph resolves their `package` to an
+# npm node.
 
 schema = "aex.units.v1"
 
