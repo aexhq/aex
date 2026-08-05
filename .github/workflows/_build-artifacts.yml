@@ -108,16 +108,16 @@ jobs:
       matrix: ${{ fromJSON(inputs.matrix) }}
     steps:
       - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772  # master
         with:
           toolchain: "1.97.1"
           targets: aarch64-unknown-linux-gnu,aarch64-unknown-linux-musl
 
       - name: Cargo cache
-        uses: Swatinem/rust-cache@bc2d2e71bd35c5549942babaa51a89c586b981d1  # v2.8.1
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1  # v2.8.1
         with:
           save-if: ${{ inputs.lane == 'main' }}
           shared-key: artifacts
@@ -128,7 +128,7 @@ jobs:
           bun-version: "1.3.14"
 
       - name: Install the cross-compiler and packagers
-        uses: taiki-e/install-action@2cdf2d81f4edfc3b41d5ddf56083c70b48ac2475  # v2.62.35
+        uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60  # v2.85.7
         with:
           tool: cargo-lambda@1.8.6,cargo-auditable@0.7.1
           fallback: none
@@ -240,7 +240,7 @@ jobs:
       - name: Set up pinned Buildx and BuildKit
         if: ${{ startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
         id: buildx
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4.0.0
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c  # v4.2.0
         with:
           version: v0.34.1
           driver-opts: image=moby/buildkit:v0.30.0@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f
@@ -483,7 +483,7 @@ jobs:
       - name: Attest the build provenance
         if: ${{ inputs.publish && !startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
         id: attest_unit
-        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26  # v4.1.0
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d  # v4.2.1
         with:
           subject-path: ${{ env.RELEASE_DIR }}/artifact.bin
 
@@ -646,7 +646,7 @@ jobs:
       - name: Attest the immutable OCI digest
         if: ${{ inputs.publish && startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
         id: attest_oci
-        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26  # v4.1.0
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d  # v4.2.1
         with:
           subject-name: ${{ steps.publish_oci.outputs.image_repository }}
           subject-digest: ${{ steps.publish_oci.outputs.digest }}
@@ -711,7 +711,7 @@ jobs:
 
       - name: Upload the packaged bytes
         if: ${{ !startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: artifact-${{ matrix.name }}
           path: |
@@ -723,7 +723,7 @@ jobs:
 
       - name: Upload blob publication evidence
         if: ${{ inputs.publish && !startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: publication-${{ matrix.name }}
           path: |
@@ -733,7 +733,7 @@ jobs:
 
       - name: Upload hands-agent signature evidence
         if: ${{ inputs.publish && matrix.name == 'hands-agent' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: signature-${{ matrix.name }}
           path: ${{ env.RELEASE_DIR }}/signature.sigstore.json
@@ -741,7 +741,7 @@ jobs:
 
       - name: Upload reproducible OCI build evidence
         if: ${{ always() && startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: oci-artifact-${{ matrix.name }}
           path: |
@@ -760,7 +760,7 @@ jobs:
 
       - name: Upload OCI publication evidence
         if: ${{ inputs.publish && startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: publication-${{ matrix.name }}
           path: |
@@ -806,18 +806,18 @@ jobs:
       regional_tables_attestation_url: ${{ steps.attest_regional_tables.outputs['attestation-url'] }}
     steps:
       - name: Checkout exact source
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772  # master
         with:
           toolchain: "1.97.1"
           targets: x86_64-unknown-linux-musl
 
       - name: Cargo cache
-        uses: Swatinem/rust-cache@bc2d2e71bd35c5549942babaa51a89c586b981d1  # v2.8.1
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1  # v2.8.1
         with:
           save-if: true
           shared-key: public-release-inputs
@@ -828,31 +828,31 @@ jobs:
           bun-version: "1.3.14"
 
       - name: Download every packaged blob unit
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
           pattern: artifact-*
           path: packaged-units
 
       - name: Download every reproducible OCI unit identity
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
           pattern: oci-artifact-*
           path: oci-units
 
       - name: Download every publication evidence bundle
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
           pattern: publication-*
           path: publication-units
 
       - name: Download the required hands-agent signature
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
           name: signature-hands-agent
           path: signature-units/hands-agent
 
       - name: Download every same-run validation receipt
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
           pattern: receipt-main-*
           path: validation-receipts
@@ -1025,7 +1025,7 @@ jobs:
           test "$certified_count" -eq "${#drafts[@]}"
 
       - name: Upload the exact certified artifact inventory
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: certified-envelopes
           path: dist/certified
@@ -1111,19 +1111,19 @@ jobs:
 
       - name: Attest raw release tool provenance
         id: attest_release_tool
-        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26  # v4.1.0
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d  # v4.2.1
         with:
           subject-path: dist/aex-release-tool
 
       - name: Attest module bundle provenance
         id: attest_module_bundle
-        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26  # v4.1.0
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d  # v4.2.1
         with:
           subject-path: dist/terraform-modules.tar.gz
 
       - name: Attest regional table bundle provenance
         id: attest_regional_tables
-        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26  # v4.1.0
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d  # v4.2.1
         with:
           subject-path: dist/regional-tables.json
 

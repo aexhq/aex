@@ -46,7 +46,7 @@ jobs:
       contents: read
     steps:
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772  # master
         with:
           toolchain: "1.97.1"
 
@@ -60,7 +60,7 @@ jobs:
           (cd "$RUNNER_TEMP/aex-nextest" && sha256sum cargo-nextest > cargo-nextest.sha256)
 
       - name: Upload pinned nextest
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: cargo-nextest-${{ inputs.lane }}-${{ inputs.job_name }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -80,22 +80,22 @@ jobs:
       matrix: ${{ fromJSON(inputs.matrix) }}
     steps:
       - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772  # master
         with:
           toolchain: "1.97.1"
           components: rustfmt, clippy
 
       - name: Cargo cache
-        uses: Swatinem/rust-cache@bc2d2e71bd35c5549942babaa51a89c586b981d1  # v2.8.1
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1  # v2.8.1
         with:
           save-if: ${{ inputs.cache_mode == 'restore-save' }}
           shared-key: ${{ inputs.lane }}
 
       - name: Download pinned nextest
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
           name: cargo-nextest-${{ inputs.lane }}-${{ inputs.job_name }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/aex-nextest
@@ -463,14 +463,14 @@ jobs:
           done
 
       - name: Upload the unit receipt
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: receipt-${{ inputs.lane }}-rust-${{ matrix.name }}-${{ matrix.partition }}
           path: target/aex-evidence/${{ matrix.name }}/receipt.json
           if-no-files-found: error
 
       - name: Upload the lint receipt
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: receipt-${{ inputs.lane }}-rust-lint-${{ matrix.name }}-${{ matrix.partition }}
           path: target/aex-evidence/${{ matrix.name }}/receipt-lint-${{ matrix.name }}-${{ matrix.partition }}.json
@@ -478,7 +478,7 @@ jobs:
 
       - name: Upload semantic receipts
         if: ${{ hashFiles(format('target/aex-evidence/{0}/receipt-semantic-*.json', matrix.name)) != '' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: receipt-${{ inputs.lane }}-rust-semantic-${{ matrix.name }}-${{ matrix.partition }}
           path: target/aex-evidence/${{ matrix.name }}/receipt-semantic-*.json
@@ -486,7 +486,7 @@ jobs:
 
       - name: Upload the lint evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: lint-${{ inputs.lane }}-${{ matrix.name }}-${{ matrix.partition }}
           path: target/aex-evidence/${{ matrix.name }}/clippy.json
@@ -494,7 +494,7 @@ jobs:
 
       - name: Upload the test evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: junit-${{ inputs.lane }}-${{ matrix.name }}-${{ matrix.partition }}
           path: |
@@ -512,22 +512,22 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772  # master
         with:
           toolchain: "1.97.1"
           components: clippy
 
       - name: Cargo cache
-        uses: Swatinem/rust-cache@bc2d2e71bd35c5549942babaa51a89c586b981d1  # v2.8.1
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1  # v2.8.1
         with:
           save-if: ${{ inputs.cache_mode == 'restore-save' }}
           shared-key: ${{ inputs.lane }}-capacity-limit-projection
 
       - name: Download pinned nextest
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
           name: cargo-nextest-${{ inputs.lane }}-${{ inputs.job_name }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/aex-nextest
@@ -574,7 +574,7 @@ jobs:
 
       - name: Upload the JUnit report
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: junit-${{ inputs.lane }}-aex-session-dynamodb-capacity-limit-projection
           path: target/nextest/${{ inputs.profile }}/junit.xml
