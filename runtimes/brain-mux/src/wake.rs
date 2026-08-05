@@ -1091,10 +1091,7 @@ impl core::fmt::Debug for CredentialBindings {
 
 /// Binds exact regional custody plus KMS reveal into provider and managed-web
 /// authorities without duplicating SDK pools or plaintext caches.
-///
-/// # Errors
-///
-/// The build-stamped adapter identity must be valid before this port can exist.
+#[must_use]
 pub fn credential_bindings(
     aws: &aws_config::SdkConfig,
     store: Arc<aex_brain_store_aws::BrainStore>,
@@ -1103,8 +1100,7 @@ pub fn credential_bindings(
     plane: aex_secret_domain::context::Plane,
     region: aex_wire::types::Region,
     cache_partition: &str,
-) -> Result<CredentialBindings, aex_brain_provider_gateway::build_identity::AdapterBuildIdentityError>
-{
+) -> CredentialBindings {
     let custody = Arc::new(aex_secret_custody_dynamodb::CustodyStore::new(
         aws_sdk_dynamodb::Client::new(aws),
         custody_table.to_owned(),
@@ -1126,7 +1122,7 @@ pub fn credential_bindings(
         Arc::clone(&provider_authority) as Arc<_>,
         provider_authority,
         store,
-    )?;
+    );
     let search_authority: Arc<dyn aex_brain_managed_web::executor::WebSearchCredentialSource> =
         Arc::new(
             aex_brain_managed_web::credential::SessionCredentialAuthority::new(
@@ -1135,10 +1131,10 @@ pub fn credential_bindings(
         );
     let managed_web: Arc<dyn ToolExecutor> =
         Arc::new(aex_brain_managed_web::executor::ManagedWebExecutor::production(search_authority));
-    Ok(CredentialBindings {
+    CredentialBindings {
         provider: Arc::new(router),
         managed_web,
-    })
+    }
 }
 
 /// Fail-closed ports for a task whose production peers are not composed yet.

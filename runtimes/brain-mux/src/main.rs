@@ -515,10 +515,7 @@ fn resolve_production_ports(
         config.secret_plane(),
         config.placement_region(),
         &config.credential_cache_partition(),
-    )
-    .map_err(|error| RunError::Runtime {
-        reason: format!("production provider binding failed: {error}"),
-    })?;
+    );
     let catalog = bind_release_catalog()?;
     let snapshots = wake::snapshot_binding(
         &aws.sdk,

@@ -3,15 +3,17 @@
 //! The protected signer remains external. This module prepares the exact
 //! digest AWS KMS must sign, records its closed response, and assembles bytes
 //! only after the shared runtime verifier accepts the signature, catalog,
-//! conformance receipts, adapter identity and serviceability.
+//! chain and serviceability.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-use aex_model_catalog::collection::{CatalogCollection, VerifiedCatalogCollection};
-use aex_model_catalog::document::{AdapterSourceDigest, CatalogDocument, EntryState};
+use aex_model_catalog::collection::{
+    CatalogArtifact, CatalogCollection, MAX_CATALOG_REVISIONS, VerifiedCatalogCollection,
+};
+use aex_model_catalog::document::{CatalogDocument, CatalogSequence, EntryState};
 use aex_model_catalog::signature::{
     CatalogEnvelope, CatalogSignature, MAX_SIGNATURE_BYTES, P256_PUBLIC_KEY_BYTES, SIGNING_PREFIX,
     SigAlg, SigningKeyId, TrustedKey, TrustedKeys,
@@ -66,8 +68,6 @@ pub struct KmsPublicKeyOutput {
 pub struct SigningRequest {
     /// Schema discriminator.
     pub schema: String,
-    /// Build-stamped adapter identity the receipt and document require.
-    pub adapter_source: AdapterSourceDigest,
     /// Content address of the exact canonical document bytes.
     pub catalog_revision: CatalogRevision,
     /// KMS signing algorithm.
@@ -121,8 +121,6 @@ pub struct PublicationBinding {
     pub schema: String,
     /// Exact admission revision.
     pub catalog_revision: CatalogRevision,
-    /// Build-stamped adapter source identity.
-    pub adapter_source: AdapterSourceDigest,
     /// SHA-256 of canonical trust-root JSON.
     pub trust_roots_sha256: String,
     /// SHA-256 of canonical collection JSON.
@@ -169,11 +167,11 @@ pub enum PublisherError {
         /// Bounded-to-process diagnostic from the parser.
         reason: String,
     },
-    /// The document is structurally invalid or lacks earned evidence.
+    /// The document is structurally invalid.
     #[error("catalog document preflight failed: {0}")]
     Catalog(#[from] aex_model_catalog::CatalogLoadError),
     /// The document has no model that can serve new admission.
-    #[error("catalog document contains no Active model with current conformance evidence")]
+    #[error("catalog document contains no Active model available for new admission")]
     NoActiveModel,
     /// A signing response does not answer the prepared request.
     #[error("signature response does not match the prepared request: {0}")]
@@ -190,6 +188,23 @@ pub enum PublisherError {
     /// Full runtime-equivalent collection verification failed.
     #[error("signed catalog collection failed verification: {0}")]
     Collection(#[from] aex_model_catalog::CatalogCollectionError),
+    /// Genesis is exactly the first item in one publisher chain.
+    #[error("catalog genesis must have sequence 1 and no predecessor")]
+    InvalidGenesis,
+    /// A steady-state release must advance by exactly one.
+    #[error("catalog update sequence must be exactly {expected:?}, found {found:?}")]
+    NonContiguousSequence {
+        /// Sequence required after the verified previous head.
+        expected: CatalogSequence,
+        /// Sequence offered by the new document.
+        found: CatalogSequence,
+    },
+    /// Retain-all cannot silently discard a session-readable revision.
+    #[error("catalog collection already retains the {limit}-revision maximum; refusing to prune")]
+    RetentionLimit {
+        /// Hard collection bound enforced by every consumer.
+        limit: usize,
+    },
 }
 
 /// Converts a closed AWS KMS public-key response into canonical runtime roots.
@@ -242,19 +257,16 @@ pub fn trust_roots_from_kms(
 ///
 /// # Errors
 ///
-/// Refuses noncanonical bytes, adapter drift, invalid receipts, invalid time
-/// gates and documents with no currently usable `Active` model.
+/// Refuses noncanonical bytes, invalid time gates and documents with no
+/// currently usable `Active` model.
 pub fn prepare_signing_request(
     document_bytes: &[u8],
     now: Timestamp,
-    adapter: AdapterSourceDigest,
 ) -> Result<SigningRequest, PublisherError> {
     let document: CatalogDocument = parse_canonical(document_bytes, "catalog document")?;
-    let head = Catalog::preflight_document(document_bytes, now, None, adapter)?;
+    let head = Catalog::preflight_document(document_bytes, now, None)?;
     if !document.entries.iter().any(|entry| {
         entry.state == EntryState::Active
-            && entry.receipt.expires_at > now
-            && now < document.expires_at
             && !document
                 .emergency_disable
                 .iter()
@@ -268,7 +280,6 @@ pub fn prepare_signing_request(
     let digest = Sha256::digest(&message);
     Ok(SigningRequest {
         schema: SIGNING_REQUEST_SCHEMA.to_owned(),
-        adapter_source: adapter,
         catalog_revision: CatalogRevision(head.digest.0),
         signing_algorithm: KMS_SIGNING_ALGORITHM.to_owned(),
         message_type: KMS_MESSAGE_TYPE.to_owned(),
@@ -310,20 +321,22 @@ pub fn record_kms_signature(
     })
 }
 
-/// Assembles and runtime-verifies the first production collection.
+/// Assembles and runtime-verifies a genesis or retain-all chain extension.
 ///
 /// # Errors
 ///
 /// Refuses every mismatch before returning bytes, including a bad signature,
-/// unknown trust root, stale receipt, adapter mismatch or zero serviceable model.
-pub fn assemble_genesis(
+/// unknown trust root, non-contiguous update, retention overflow or zero
+/// serviceable model. When `previous_collection_json` is present, all prior
+/// revision pins are retained; the 33rd revision fails instead of pruning.
+pub fn assemble(
     document_bytes: &[u8],
     record: &SignatureRecord,
     trust_roots_json: &[u8],
     now: Timestamp,
-    adapter: AdapterSourceDigest,
+    previous_collection_json: Option<&[u8]>,
 ) -> Result<Publication, PublisherError> {
-    let request = prepare_signing_request(document_bytes, now, adapter)?;
+    let request = prepare_signing_request(document_bytes, now)?;
     if record.schema != SIGNATURE_RECORD_SCHEMA {
         return Err(PublisherError::SignatureBinding("record schema differs"));
     }
@@ -347,9 +360,46 @@ pub fn assemble_genesis(
             bytes: bytes::Bytes::from(signature),
         }],
     };
-    let collection = CatalogCollection::genesis(envelope);
+    let document: CatalogDocument = parse_canonical(document_bytes, "catalog document")?;
+    let collection = if let Some(previous_bytes) = previous_collection_json {
+        let previous_verified = VerifiedCatalogCollection::load(previous_bytes, &roots, now)?;
+        let previous_head = previous_verified.head();
+        let expected_sequence = CatalogSequence(previous_head.sequence.0.checked_add(1).ok_or(
+            PublisherError::NonContiguousSequence {
+                expected: previous_head.sequence,
+                found: document.sequence,
+            },
+        )?);
+        if document.sequence != expected_sequence {
+            return Err(PublisherError::NonContiguousSequence {
+                expected: expected_sequence,
+                found: document.sequence,
+            });
+        }
+        // The shared preflight independently enforces publisher continuity and
+        // the exact predecessor digest against the already verified head.
+        Catalog::preflight_document(document_bytes, now, Some(&previous_head))?;
+        let mut previous: CatalogCollection =
+            parse_canonical(previous_bytes, "previous catalog collection")?;
+        if previous.artifacts.len() >= MAX_CATALOG_REVISIONS {
+            return Err(PublisherError::RetentionLimit {
+                limit: MAX_CATALOG_REVISIONS,
+            });
+        }
+        previous.live_session_pins = previous.artifacts.iter().map(|row| row.pin).collect();
+        previous.live_session_pins.sort_unstable();
+        let artifact = CatalogArtifact::from_envelope(envelope);
+        previous.admission_pin = artifact.pin;
+        previous.artifacts.push(artifact);
+        previous
+    } else {
+        if document.sequence != CatalogSequence(1) || document.predecessor.is_some() {
+            return Err(PublisherError::InvalidGenesis);
+        }
+        CatalogCollection::genesis(envelope)
+    };
     let collection_bytes = collection.canonical_bytes()?;
-    let verified = VerifiedCatalogCollection::load(&collection_bytes, &roots, now, adapter)?;
+    let verified = VerifiedCatalogCollection::load(&collection_bytes, &roots, now)?;
     if !verified.is_service_capable() {
         return Err(PublisherError::NoActiveModel);
     }
@@ -357,7 +407,6 @@ pub fn assemble_genesis(
         binding: PublicationBinding {
             schema: PUBLICATION_BINDING_SCHEMA.to_owned(),
             catalog_revision: verified.admission_pin(),
-            adapter_source: adapter,
             trust_roots_sha256: sha256_identity(trust_roots_json),
             collection_sha256: sha256_identity(&collection_bytes),
         },
@@ -520,16 +569,16 @@ mod tests {
     use aws_lc_rs::signature::{ECDSA_P256_SHA256_ASN1_SIGNING, EcdsaKeyPair, KeyPair};
     use base64::Engine as _;
 
-    use aex_model_catalog::document::CapabilitySet;
+    use aex_model_catalog::document::{CapabilitySet, CatalogDigest};
     use aex_model_catalog::fixture;
     use aex_wire::provider::ProviderId;
     use sha2::Digest as _;
 
     use super::{
-        BASE64, KMS_P256_SPKI_PREFIX, KMS_SIGNING_ALGORITHM, KmsPublicKeyOutput, KmsSignOutput,
-        PublisherError, SIGNING_PREFIX, SignatureRecord, TRUST_ROOTS_SCHEMA, TrustRoot,
-        TrustRootsDocument, assemble_genesis, canonical_json, prepare_signing_request,
-        record_kms_signature, trust_roots_from_kms,
+        BASE64, CatalogCollection, KMS_P256_SPKI_PREFIX, KMS_SIGNING_ALGORITHM, KmsPublicKeyOutput,
+        KmsSignOutput, MAX_CATALOG_REVISIONS, PublisherError, SIGNING_PREFIX, SignatureRecord,
+        TRUST_ROOTS_SCHEMA, TrustRoot, TrustRootsDocument, assemble, canonical_json,
+        prepare_signing_request, record_kms_signature, trust_roots_from_kms,
     };
 
     const NOW_MS: i64 = 1_800_000_000_000;
@@ -566,29 +615,24 @@ mod tests {
         }
     }
 
-    fn adapter() -> aex_model_catalog::document::AdapterSourceDigest {
-        fixture::adapter("publisher-adapter")
-    }
-
     fn now() -> aex_wire::types::Timestamp {
         fixture::at(NOW_MS)
     }
 
     fn active_document() -> Vec<u8> {
+        active_document_after(1, None)
+    }
+
+    fn active_document_after(sequence: u64, predecessor: Option<CatalogDigest>) -> Vec<u8> {
         let mut entry = fixture::entry(ProviderId::Openai, "gpt-test", CapabilitySet::EMPTY);
-        fixture::promote(&mut entry, adapter(), now());
-        fixture::canonical_bytes(&fixture::document(
-            "catalog-test",
-            1,
-            vec![entry],
-            now(),
-            adapter(),
-        ))
-        .to_vec()
+        fixture::promote(&mut entry);
+        let mut document = fixture::document("catalog-test", sequence, vec![entry], now());
+        document.predecessor = predecessor;
+        fixture::canonical_bytes(&document).to_vec()
     }
 
     fn signature_record(document: &[u8], signer: &Signer) -> SignatureRecord {
-        let request = prepare_signing_request(document, now(), adapter()).expect("request");
+        let request = prepare_signing_request(document, now()).expect("request");
         record_kms_signature(
             &request,
             "catalog-test",
@@ -668,10 +712,9 @@ mod tests {
                 CapabilitySet::EMPTY,
             )],
             now(),
-            adapter(),
         ));
         assert!(matches!(
-            prepare_signing_request(&document, now(), adapter()),
+            prepare_signing_request(&document, now()),
             Err(PublisherError::NoActiveModel)
         ));
     }
@@ -679,7 +722,7 @@ mod tests {
     #[test]
     fn signing_request_is_exact_kms_digest_mode_not_an_unbounded_raw_message() {
         let document = active_document();
-        let request = prepare_signing_request(&document, now(), adapter()).expect("request");
+        let request = prepare_signing_request(&document, now()).expect("request");
         let mut message = Vec::from(SIGNING_PREFIX);
         message.extend_from_slice(&document);
         let expected = sha2::Sha256::digest(message);
@@ -691,7 +734,7 @@ mod tests {
     #[test]
     fn a_foreign_kms_algorithm_never_becomes_a_signature_record() {
         let document = active_document();
-        let request = prepare_signing_request(&document, now(), adapter()).expect("request");
+        let request = prepare_signing_request(&document, now()).expect("request");
         let error = record_kms_signature(
             &request,
             "catalog-test",
@@ -711,12 +754,12 @@ mod tests {
         let document = active_document();
         let signer = Signer::new();
         let roots = signer.roots();
-        let publication = assemble_genesis(
+        let publication = assemble(
             &document,
             &signature_record(&document, &signer),
             &roots,
             now(),
-            adapter(),
+            None,
         )
         .expect("verified publication");
 
@@ -743,8 +786,99 @@ mod tests {
         let mut record = signature_record(&document, &signer);
         record.signature = signer.sign(b"different canonical document");
         assert!(matches!(
-            assemble_genesis(&document, &record, &signer.roots(), now(), adapter()),
+            assemble(&document, &record, &signer.roots(), now(), None),
             Err(PublisherError::Collection(_))
+        ));
+    }
+
+    #[test]
+    fn steady_state_append_retains_every_prior_pin_and_never_prunes_at_the_bound() {
+        let signer = Signer::new();
+        let roots = signer.roots();
+        let mut document = active_document();
+        let mut publication = assemble(
+            &document,
+            &signature_record(&document, &signer),
+            &roots,
+            now(),
+            None,
+        )
+        .expect("genesis");
+
+        for sequence in 2..=u64::try_from(MAX_CATALOG_REVISIONS).expect("small bound") {
+            let predecessor = CatalogDigest(aex_model_catalog::Blake3Digest::of(&document));
+            document = active_document_after(sequence, Some(predecessor));
+            publication = assemble(
+                &document,
+                &signature_record(&document, &signer),
+                &roots,
+                now(),
+                Some(&publication.collection),
+            )
+            .expect("contiguous retain-all extension");
+            let collection: CatalogCollection =
+                serde_json::from_slice(&publication.collection).expect("collection");
+            let sequence = usize::try_from(sequence).expect("small collection bound");
+            assert_eq!(collection.artifacts.len(), sequence);
+            assert_eq!(collection.live_session_pins.len(), sequence - 1);
+            assert_eq!(
+                collection.admission_pin,
+                collection.artifacts.last().expect("head").pin
+            );
+        }
+
+        let predecessor = CatalogDigest(aex_model_catalog::Blake3Digest::of(&document));
+        let overflow = active_document_after(
+            u64::try_from(MAX_CATALOG_REVISIONS).expect("small bound") + 1,
+            Some(predecessor),
+        );
+        assert!(matches!(
+            assemble(
+                &overflow,
+                &signature_record(&overflow, &signer),
+                &roots,
+                now(),
+                Some(&publication.collection),
+            ),
+            Err(PublisherError::RetentionLimit { limit }) if limit == MAX_CATALOG_REVISIONS
+        ));
+    }
+
+    #[test]
+    fn steady_state_requires_exact_next_sequence_and_predecessor() {
+        let signer = Signer::new();
+        let roots = signer.roots();
+        let genesis_document = active_document();
+        let genesis = assemble(
+            &genesis_document,
+            &signature_record(&genesis_document, &signer),
+            &roots,
+            now(),
+            None,
+        )
+        .expect("genesis");
+        let predecessor = CatalogDigest(aex_model_catalog::Blake3Digest::of(&genesis_document));
+        let skipped = active_document_after(3, Some(predecessor));
+        assert!(matches!(
+            assemble(
+                &skipped,
+                &signature_record(&skipped, &signer),
+                &roots,
+                now(),
+                Some(&genesis.collection),
+            ),
+            Err(PublisherError::NonContiguousSequence { .. })
+        ));
+        let broken = active_document_after(2, None);
+        assert!(matches!(
+            assemble(
+                &broken,
+                &signature_record(&broken, &signer),
+                &roots,
+                now(),
+                Some(&genesis.collection),
+            ),
+            Err(PublisherError::Catalog(_))
         ));
     }
 
@@ -753,7 +887,7 @@ mod tests {
         let mut document = active_document();
         document.push(b'\n');
         assert!(matches!(
-            prepare_signing_request(&document, now(), adapter()),
+            prepare_signing_request(&document, now()),
             Err(PublisherError::NonCanonical { .. })
         ));
     }

@@ -13,7 +13,7 @@ use aex_model_catalog::canonical::{
     CorrelationId, CredentialBindingRef, ProviderReceipt,
     RateLimitSource as ReceiptRateLimitSource, ReceiptBounds, ReceiptRateLimit, seal,
 };
-use aex_model_catalog::document::{AdapterSourceDigest, EntryState};
+use aex_model_catalog::document::EntryState;
 use aex_model_catalog::primitives::ProviderRequestId;
 use aex_model_catalog::{BoundedString, ProviderFailureKind, RedactedDetail};
 use aex_wire::provider::ProviderId;
@@ -48,7 +48,6 @@ pub struct ProviderRouter {
     effects: Arc<dyn EffectStore>,
     cache: CredentialCache,
     pool: ClientPool,
-    adapter_source: AdapterSourceDigest,
 }
 
 struct DurableResponseStart<'a> {
@@ -88,32 +87,25 @@ impl core::fmt::Debug for ProviderRouter {
             .debug_struct("ProviderRouter")
             .field("cache", &self.cache)
             .field("pool", &self.pool)
-            .field("adapter_source", &self.adapter_source)
             .finish_non_exhaustive()
     }
 }
 
 impl ProviderRouter {
-    /// Composes the bounded shared core around credential and effect authorities,
-    /// using only the immutable source-tree identity stamped into this build.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`crate::build_identity::AdapterBuildIdentityError`] when the
-    /// binary was not produced by the release builder with a valid adapter stamp.
+    /// Composes the bounded shared core around credential and effect authorities.
+    #[must_use]
     pub fn from_build(
         directory: Arc<dyn ProviderCredentialDirectory>,
         decryptor: Arc<dyn ProviderCredentialDecryptor>,
         effects: Arc<dyn EffectStore>,
-    ) -> Result<Self, crate::build_identity::AdapterBuildIdentityError> {
-        Ok(Self {
+    ) -> Self {
+        Self {
             directory,
             decryptor,
             effects,
             cache: CredentialCache::default(),
             pool: ClientPool::default(),
-            adapter_source: crate::build_identity::adapter_source_digest()?,
-        })
+        }
     }
 
     /// Refuses new pool acquisitions and drops warm clients.
@@ -154,7 +146,7 @@ impl ProviderRouter {
         preview: &dyn PreviewSink,
         cancel: &CancelToken,
     ) -> Result<ProviderOutcome, ProviderDispatchError> {
-        validate_request(ticket, request, self.adapter_source)?;
+        validate_request(ticket, request)?;
         let budget = gateway_budget(ticket, port_budget, request)?;
         let started = wire_timestamp(ticket.issued_at())?;
         let started_steady = Instant::now();
@@ -479,7 +471,6 @@ fn adapter(provider: ProviderId) -> &'static dyn ProviderAdapter {
 fn validate_request(
     ticket: &DispatchTicket,
     request: &aex_model_catalog::canonical::CanonicalModelRequest,
-    adapter_source: AdapterSourceDigest,
 ) -> Result<(), ProviderDispatchError> {
     if request.correlation != CorrelationId::from_effect(ticket.effect().0) {
         return Err(error(
@@ -495,14 +486,6 @@ fn validate_request(
             DispatchProof::NotSent,
             ProviderFailureKind::ModelNotFound,
             "the catalog pair is not active",
-        ));
-    }
-    if request.selection.entry().receipt.adapter_source != adapter_source {
-        return Err(error(
-            DispatchStage::PreDispatch,
-            DispatchProof::NotSent,
-            ProviderFailureKind::InvalidRequest,
-            "the catalog receipt does not match the build-stamped adapter source tree",
         ));
     }
     if !request.hash_is_consistent().unwrap_or(false) {

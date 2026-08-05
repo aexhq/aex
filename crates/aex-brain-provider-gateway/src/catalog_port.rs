@@ -18,9 +18,6 @@ use aex_wire::provider::{ModelSelection, ProviderId};
 /// Why a catalog release collection could not become lookup authority.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CatalogArtifactError {
-    /// The binary carries no valid immutable adapter source-tree identity.
-    #[error(transparent)]
-    BuildIdentity(#[from] crate::build_identity::AdapterBuildIdentityError),
     /// The shared signed-collection authority rejected the bytes.
     #[error(transparent)]
     Collection(#[from] CatalogCollectionError),
@@ -42,15 +39,14 @@ impl VerifiedCatalogPort {
     ///
     /// Returns [`CatalogArtifactError`] before publishing any revision when
     /// aggregate size/count, envelope size/decoding, trust signatures, exact
-    /// content addresses, chain/time gates, adapter source, Active receipts or
-    /// explicit still-live pin coverage does not verify.
+    /// content addresses, chain/time/compatibility gates or explicit
+    /// still-live pin coverage does not verify.
     pub fn load_collection(
         bytes: &[u8],
         keys: &TrustedKeys,
         now: aex_wire::types::Timestamp,
     ) -> Result<Self, CatalogArtifactError> {
-        let adapter = crate::build_identity::adapter_source_digest()?;
-        let inner = VerifiedCatalogCollection::load(bytes, keys, now, adapter)?;
+        let inner = VerifiedCatalogCollection::load(bytes, keys, now)?;
         Ok(Self { inner })
     }
 
@@ -81,7 +77,7 @@ impl VerifiedCatalogPort {
         self.inner.is_empty()
     }
 
-    /// How many active, receipt-admitted entries the cache can route.
+    /// How many signed, active entries the cache can route.
     #[must_use]
     pub fn active_models(&self) -> usize {
         self.inner.active_models()
@@ -237,13 +233,9 @@ mod tests {
         fixture::at(NOW_MS)
     }
 
-    fn adapter() -> aex_model_catalog::document::AdapterSourceDigest {
-        crate::build_identity::adapter_source_digest().expect("build-stamped adapter")
-    }
-
     fn active_entry(model: &str) -> aex_model_catalog::document::ModelEntry {
         let mut entry = fixture::entry(ProviderId::Openai, model, CapabilitySet::EMPTY);
-        fixture::promote(&mut entry, adapter(), now());
+        fixture::promote(&mut entry);
         entry
     }
 
@@ -254,7 +246,7 @@ mod tests {
         } else {
             fixture::entry(ProviderId::Openai, "gpt-old", CapabilitySet::EMPTY)
         };
-        let first_document = fixture::document(PUBLISHER, 1, vec![first_entry], now(), adapter());
+        let first_document = fixture::document(PUBLISHER, 1, vec![first_entry], now());
         let first = publisher.artifact(&first_document);
 
         let second_entry = if active {
@@ -262,8 +254,7 @@ mod tests {
         } else {
             fixture::entry(ProviderId::Openai, "gpt-new", CapabilitySet::EMPTY)
         };
-        let mut second_document =
-            fixture::document(PUBLISHER, 2, vec![second_entry], now(), adapter());
+        let mut second_document = fixture::document(PUBLISHER, 2, vec![second_entry], now());
         second_document.predecessor = Some(CatalogDigest(first.pin.0));
         let second = publisher.artifact(&second_document);
 
@@ -313,21 +304,10 @@ mod tests {
     fn an_overlapping_trust_set_preserves_live_sessions_across_key_rotation() {
         let old = Publisher::named("aex-catalog-2025");
         let new = Publisher::named("aex-catalog-2026");
-        let first_document = fixture::document(
-            PUBLISHER,
-            1,
-            vec![active_entry("gpt-old")],
-            now(),
-            adapter(),
-        );
+        let first_document = fixture::document(PUBLISHER, 1, vec![active_entry("gpt-old")], now());
         let first = old.artifact(&first_document);
-        let mut second_document = fixture::document(
-            PUBLISHER,
-            2,
-            vec![active_entry("gpt-new")],
-            now(),
-            adapter(),
-        );
+        let mut second_document =
+            fixture::document(PUBLISHER, 2, vec![active_entry("gpt-new")], now());
         second_document.predecessor = Some(CatalogDigest(first.pin.0));
         let second = new.artifact(&second_document);
         let old_pin = first.pin;
@@ -444,15 +424,17 @@ mod tests {
     }
 
     #[test]
-    fn an_expired_active_receipt_is_not_counted_as_service_capable() {
+    fn signed_active_metadata_remains_service_capable_without_a_freshness_horizon() {
         let publisher = Publisher::new();
-        let mut entry = active_entry("gpt-stale");
-        entry.receipt.expires_at = now();
-        let document = fixture::document(PUBLISHER, 1, vec![entry], now(), adapter());
+        let entry = active_entry("gpt-stable");
+        let document = fixture::document(PUBLISHER, 1, vec![entry], now());
         let collection = CatalogCollection::genesis(publisher.artifact(&document).envelope);
-        let port = load(&publisher, &collection).expect("signed collection remains readable");
-        assert_eq!(port.active_models(), 0);
-        assert!(!port.is_service_capable());
+        let bytes = collection.canonical_bytes().expect("canonical collection");
+        let far_future = fixture::at(NOW_MS + 10 * 365 * 24 * 60 * 60 * 1000);
+        let port = VerifiedCatalogPort::load_collection(&bytes, &publisher.keys, far_future)
+            .expect("signed metadata does not expire");
+        assert_eq!(port.active_models(), 1);
+        assert!(port.is_service_capable());
     }
 
     #[test]

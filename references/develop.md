@@ -51,17 +51,17 @@ only digest-addressed package content; normal publication never changes package
 visibility.
 
 The signed model-catalog is a separate protected authority. Public main reads
-the four exact `AEX_MODEL_CATALOG_*` repository variables documented in
-[`model-catalog-authority.md`](model-catalog-authority.md); their absence or a
-partial binding intentionally leaves the `brain-mux` publication gate failing.
-Do not populate them with fixtures, an application KMS key, or a moving asset
-URL.
+the one canonical `AEX_MODEL_CATALOG_BINDING_JSON` repository variable
+documented in [`model-catalog-authority.md`](model-catalog-authority.md); its
+absence intentionally leaves the published `brain-mux` gate failing. Do not
+populate it with fixtures, an application KMS key, or a moving asset URL.
 
-Genesis publication is manual through
-[`model-catalog-publish.yml`](../.github/workflows/model-catalog-publish.yml).
-It accepts only exact reviewed metadata under `release/model-catalog/`, uses the
-dedicated protected KMS/OIDC authority, and emits a repository-binding asset for
-independent human installation. It never edits repository variables or secrets.
+[`model-catalog-publish.yml`](../.github/workflows/model-catalog-publish.yml)
+runs when one reviewed `release/model-catalog/*.source.json` changes on `main`
+and also permits exact manual dispatch. It uses the dedicated protected
+KMS/OIDC authority and emits a canonical build-binding asset for independent,
+atomic installation. It never edits repository variables or secrets, and live
+provider monitoring is not a publication input.
 
 ## Main-push artifact evidence
 
