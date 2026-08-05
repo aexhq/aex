@@ -90,7 +90,21 @@ impl ProviderKeys {
     /// skip.
     #[must_use]
     pub fn require(provider: ProviderId) -> String {
-        aex_test_harness::env::require_first(key_variables(provider))
+        Self::require_named(provider).1
+    }
+
+    /// Reads one provider's key and returns the accepted variable that supplied
+    /// it.
+    ///
+    /// The name is safe to retain in qualification metadata; the plaintext is
+    /// not. The authoritative name still wins over a documented legacy alias.
+    ///
+    /// # Panics
+    ///
+    /// Panics under the same conditions as [`Self::require`].
+    #[must_use]
+    pub fn require_named(provider: ProviderId) -> (&'static str, String) {
+        aex_test_harness::env::require_first_named(key_variables(provider))
     }
 }
 

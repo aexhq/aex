@@ -440,20 +440,21 @@ pub fn prepare_with_credential_presence(
 
 /// Builds a matrix from the live harness environment.
 ///
-/// The provider key is read through [`ProviderKeys::require`], which fails
-/// loudly for absent/empty/non-Unicode values. The plaintext is not retained
-/// in the matrix and is never printed; a real executor obtains its credential
-/// through the protected custody path before dispatch.
+/// The provider key is read through [`ProviderKeys::require_named`], which
+/// fails loudly for absent/empty/non-Unicode values and preserves which
+/// accepted variable supplied it. The plaintext is not retained in the matrix
+/// and is never printed; a real executor obtains its credential through the
+/// protected custody path before dispatch.
 ///
 /// # Errors
 ///
 /// Returns [`ReadinessError::MissingCredential`] only if the environment reader
 /// is extended to report a nonstandard failure after the required key check.
-/// Missing, empty and non-Unicode values fail through [`ProviderKeys::require`]
-/// before this function can return.
+/// Missing, empty and non-Unicode values fail through
+/// [`ProviderKeys::require_named`] before this function can return.
 pub fn prepare_from_live_env(target: QualificationTarget) -> Result<ProbeMatrix, ReadinessError> {
-    let _key = ProviderKeys::require(target.provider);
-    prepare_with_credential_presence(target, |_| true)
+    let (credential_variable, _key) = ProviderKeys::require_named(target.provider);
+    prepare_with_credential_presence(target, |name| name == credential_variable)
 }
 
 #[cfg(test)]
