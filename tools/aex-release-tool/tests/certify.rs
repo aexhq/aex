@@ -5,11 +5,13 @@ mod common;
 use std::collections::BTreeMap;
 
 use aex_release_tool::artifact::{
-    Licenses, Location, Provenance, Signature, Toolchain, Vulnerabilities, Workflow, plan,
+    Licenses, Location, Signature, Toolchain, Vulnerabilities, Workflow, plan,
 };
 use aex_release_tool::canon;
 use aex_release_tool::certification::{ExpectedSource, defer, inventory};
-use aex_release_tool::certify::{CertificationClaims, CertificationFiles, certify};
+use aex_release_tool::certify::{
+    CertificationClaims, CertificationFiles, CertificationProvenance, certify,
+};
 use aex_release_tool::describe::{LocalBuild, UnearnedField, describe};
 use aex_release_tool::evidence::{FreshnessPolicy, Receipt};
 use aex_release_tool::graph::inputs::{Unit, Units};
@@ -143,9 +145,8 @@ impl Fixture {
                 unapproved_high: 0,
                 approved_exceptions: Vec::new(),
             },
-            provenance: Provenance {
+            provenance: CertificationProvenance {
                 predicate_type: "https://slsa.dev/provenance/v1".to_owned(),
-                bundle_digest: String::new(),
                 uri: Some("https://github.com/aexhq/aex/attestations/123".to_owned()),
                 builder_id: BUILDER.to_owned(),
                 attested: true,
@@ -266,6 +267,14 @@ impl Fixture {
 }
 
 #[test]
+fn certification_claims_omit_the_file_backed_provenance_digest() {
+    let fixture = Fixture::new();
+    let value = serde_json::to_value(&fixture.claims).unwrap();
+    assert!(value["provenance"].get("bundleDigest").is_none());
+    serde_json::from_value::<CertificationClaims>(value).unwrap();
+}
+
+#[test]
 fn certification_derives_file_identities_and_required_receipt_refs() {
     let fixture = Fixture::new();
     let envelope = fixture.certify().unwrap();
@@ -281,6 +290,10 @@ fn certification_derives_file_identities_and_required_receipt_refs() {
             aex_release_tool::canon::digest_bytes(&std::fs::read(&fixture.licenses).unwrap())
                 .as_str()
         )
+    );
+    assert_eq!(
+        envelope.provenance.bundle_digest,
+        aex_release_tool::canon::digest_bytes(&std::fs::read(&fixture.provenance).unwrap())
     );
     assert_eq!(
         envelope.receipts.len(),

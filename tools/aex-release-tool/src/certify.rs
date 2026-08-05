@@ -39,9 +39,27 @@ pub struct CertificationClaims {
     /// Advisory scanner verdict.
     pub vulnerabilities: Vulnerabilities,
     /// Attestation identity. Bundle digest is recomputed.
-    pub provenance: Provenance,
+    pub provenance: CertificationProvenance,
     /// Detached signature identity where policy requires one.
     pub signature: Signature,
+}
+
+/// Provenance identity claimed by the protected workflow.
+///
+/// The bundle digest is deliberately absent: [`certify`] computes it from the
+/// exact attestation bundle supplied alongside these claims.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CertificationProvenance {
+    /// Predicate type.
+    pub predicate_type: String,
+    /// Attestation URI.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uri: Option<String>,
+    /// Builder identity.
+    pub builder_id: String,
+    /// Whether the attestation verified.
+    pub attested: bool,
 }
 
 /// Files whose bytes back certification claims.
@@ -226,8 +244,13 @@ pub fn certify(
     }
     let mut licenses = claims.licenses;
     licenses.inventory_digest = Some(canon::digest_bytes(&license_bytes));
-    let mut provenance = claims.provenance;
-    provenance.bundle_digest = canon::digest_bytes(&provenance_bytes);
+    let provenance = Provenance {
+        predicate_type: claims.provenance.predicate_type,
+        bundle_digest: canon::digest_bytes(&provenance_bytes),
+        uri: claims.provenance.uri,
+        builder_id: claims.provenance.builder_id,
+        attested: claims.provenance.attested,
+    };
     if provenance.uri.as_deref().is_none_or(str::is_empty) {
         return Err(ToolError::single(
             Exit::ProvenanceMissing,
