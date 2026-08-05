@@ -294,6 +294,38 @@ fn certification_derives_file_identities_and_required_receipt_refs() {
 }
 
 #[test]
+fn certification_counts_the_cyclonedx_metadata_subject_as_a_component() {
+    let mut fixture = Fixture::new();
+    let mut sbom: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&fixture.sbom).unwrap()).unwrap();
+    sbom.as_object_mut().unwrap().remove("components");
+    sbom["metadata"]["component"] = serde_json::json!({
+        "bom-ref": "subject",
+        "type": "file",
+        "name": "artifact.bin",
+        "version": digest(0x61),
+    });
+    std::fs::write(&fixture.sbom, serde_json::to_vec(&sbom).unwrap()).unwrap();
+    let sbom_digest = aex_release_tool::canon::digest_bytes(&std::fs::read(&fixture.sbom).unwrap());
+    fixture.claims.sbom_uri = aex_release_tool::publication::github_release_aux_uri(
+        "aexhq/aex",
+        &sha1(),
+        "123",
+        1,
+        &fixture.unit.id,
+        &sbom_digest,
+        aex_release_tool::publication::AuxiliaryAsset {
+            class: "sbom",
+            extension: "cdx.json",
+        },
+    )
+    .unwrap();
+
+    let envelope = fixture.certify().unwrap();
+    assert_eq!(envelope.sbom.component_count, 1);
+}
+
+#[test]
 fn certification_refuses_a_receipt_for_another_artifact_subject() {
     let mut fixture = Fixture::new();
     fixture.receipts[0].subject.artifact_subject_digest = Some(digest(0x7b));

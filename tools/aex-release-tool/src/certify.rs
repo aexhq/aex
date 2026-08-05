@@ -109,10 +109,27 @@ pub fn certify(
             format!("`{}` is not JSON: {err}", files.sbom.display()),
         )
     })?;
-    let component_count = sbom_value
+    let is_named_component = |value: &serde_json::Value| {
+        value
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|name| !name.is_empty())
+    };
+    let detected_component_count = sbom_value
         .get("components")
         .and_then(serde_json::Value::as_array)
-        .map_or(0, |components| components.len() as u64);
+        .map_or(0, |components| {
+            components
+                .iter()
+                .filter(|component| is_named_component(component))
+                .count() as u64
+        });
+    let subject_component_count = u64::from(
+        sbom_value
+            .pointer("/metadata/component")
+            .is_some_and(is_named_component),
+    );
+    let component_count = detected_component_count + subject_component_count;
     let cyclonedx_16 = sbom_value
         .get("bomFormat")
         .and_then(serde_json::Value::as_str)
