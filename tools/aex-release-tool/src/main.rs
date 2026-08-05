@@ -1164,22 +1164,13 @@ fn run_graph(cli: &Cli, root: &Path, command: &GraphCommand) -> Result<()> {
             shard_durations,
             github_output,
         } => {
-            let selection: select::Selection = read_json(selection)?;
-            let artifact_selection: Option<select::Selection> =
-                artifact_selection.as_deref().map(read_json).transpose()?;
-            let durations: BTreeMap<String, u64> = match shard_durations {
-                Some(path) => read_json(path)?,
-                None => BTreeMap::new(),
-            };
-            let output = matrix::build_with_artifacts(
-                &selection,
-                artifact_selection.as_ref(),
+            let output = build_graph_matrix(
+                &inputs,
+                selection,
+                artifact_selection.as_deref(),
                 *kind,
                 *partitions,
-                &durations,
-                &inputs.scenarios,
-                &inputs.units,
-                &inputs.npm,
+                shard_durations.as_deref(),
             )?;
             if let Some(path) = github_output {
                 append_text(path, &matrix::to_github_output(&output)?)?;
@@ -1187,6 +1178,33 @@ fn run_graph(cli: &Cli, root: &Path, command: &GraphCommand) -> Result<()> {
             emit(cli, &output)
         }
     }
+}
+
+fn build_graph_matrix(
+    inputs: &GraphInputs,
+    selection: &Path,
+    artifact_selection: Option<&Path>,
+    kind: MatrixKind,
+    partitions: usize,
+    shard_durations: Option<&Path>,
+) -> Result<matrix::MatrixOutput> {
+    let selection: select::Selection = read_json(selection)?;
+    let artifact_selection: Option<select::Selection> =
+        artifact_selection.map(read_json).transpose()?;
+    let durations: BTreeMap<String, u64> = match shard_durations {
+        Some(path) => read_json(path)?,
+        None => BTreeMap::new(),
+    };
+    matrix::build_with_artifacts(
+        &selection,
+        artifact_selection.as_ref(),
+        kind,
+        partitions,
+        &durations,
+        &inputs.scenarios,
+        &inputs.units,
+        &inputs.npm,
+    )
 }
 
 fn run_artifact(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()> {
