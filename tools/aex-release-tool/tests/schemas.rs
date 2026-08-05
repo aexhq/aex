@@ -293,6 +293,74 @@ fn the_envelope_schema_forbids_a_mutable_location_and_a_dirty_tree() {
 }
 
 #[test]
+fn deferred_supply_chain_schema_requires_flag_and_exact_sentinels() {
+    let mut deferred = valid_envelope();
+    deferred["supplyChainDeferred"] = json!(true);
+    deferred["sbom"] = json!({
+        "format": "deferred-startup",
+        "digest": "",
+        "uri": "",
+        "componentCount": 0
+    });
+    deferred["licenses"] = json!({
+        "policyDigest": "",
+        "verdict": "deferred-startup",
+        "denials": []
+    });
+    deferred["vulnerabilities"] = json!({
+        "scanner": "deferred-startup",
+        "database": "",
+        "scannedAt": "",
+        "unapprovedCritical": 0,
+        "unapprovedHigh": 0
+    });
+    let schema = schemas::document(SchemaName::ArtifactEnvelope).unwrap();
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    let errors = validator
+        .iter_errors(&deferred)
+        .map(|error| error.to_string())
+        .collect::<Vec<_>>();
+    assert!(errors.is_empty(), "{errors:#?}");
+
+    let mut mixed = deferred.clone();
+    mixed["sbom"] = valid_envelope()["sbom"].clone();
+    assert!(!schema_accepts(SchemaName::ArtifactEnvelope, &mixed));
+
+    let mut strict_with_flag = valid_envelope();
+    strict_with_flag["supplyChainDeferred"] = json!(true);
+    assert!(!schema_accepts(
+        SchemaName::ArtifactEnvelope,
+        &strict_with_flag
+    ));
+
+    let mut false_with_sentinels = deferred.clone();
+    false_with_sentinels["supplyChainDeferred"] = json!(false);
+    assert!(!schema_accepts(
+        SchemaName::ArtifactEnvelope,
+        &false_with_sentinels
+    ));
+
+    let mut absent_with_sentinels = deferred.clone();
+    absent_with_sentinels
+        .as_object_mut()
+        .unwrap()
+        .remove("supplyChainDeferred");
+    assert!(!schema_accepts(
+        SchemaName::ArtifactEnvelope,
+        &absent_with_sentinels
+    ));
+
+    for class in ["deny", "sbom", "license", "vulnerability"] {
+        let mut with_scanner_receipt = deferred.clone();
+        with_scanner_receipt["receipts"][0]["class"] = json!(class);
+        assert!(
+            !schema_accepts(SchemaName::ArtifactEnvelope, &with_scanner_receipt),
+            "deferred envelope accepted `{class}` receipt"
+        );
+    }
+}
+
+#[test]
 fn public_location_schemas_reject_wrong_hosts_tags_and_mutable_oci_refs() {
     let mut envelope = valid_envelope();
     let digest = envelope["output"]["digest"].as_str().unwrap().to_owned();

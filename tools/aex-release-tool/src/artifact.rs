@@ -1590,10 +1590,42 @@ impl ArtifactEnvelope {
             && self.vulnerabilities.unapproved_critical == 0
             && self.vulnerabilities.unapproved_high == 0
             && self.vulnerabilities.approved_exceptions.is_empty();
+        let scanned_supply_chain_shape =
+            matches!(self.sbom.format.as_str(), "spdx-2.3" | "cyclonedx-1.6")
+                && valid_sha256_digest(&self.sbom.digest)
+                && self.sbom.component_count > 0
+                && valid_sha256_digest(&self.licenses.policy_digest)
+                && self.licenses.verdict == "allowed"
+                && self.licenses.denials.is_empty()
+                && self
+                    .licenses
+                    .inventory_digest
+                    .as_deref()
+                    .is_none_or(valid_sha256_digest)
+                && !self.vulnerabilities.scanner.is_empty()
+                && self.vulnerabilities.scanner != "deferred-startup"
+                && !self.vulnerabilities.database.is_empty()
+                && time::OffsetDateTime::parse(
+                    &self.vulnerabilities.scanned_at,
+                    &time::format_description::well_known::Rfc3339,
+                )
+                .is_ok()
+                && self.vulnerabilities.unapproved_critical == 0
+                && self.vulnerabilities.unapproved_high == 0;
         if self.supply_chain_deferred && !deferred_supply_chain_shape {
             structural.push(Violation::new(
                 "envelope-deferred-supply-chain-shape",
                 "a deferred supply chain must carry only the exact startup deferral sentinels",
+            ));
+        } else if !self.supply_chain_deferred && deferred_supply_chain_shape {
+            structural.push(Violation::new(
+                "envelope-deferred-supply-chain-flag",
+                "the startup deferral sentinels require supplyChainDeferred=true",
+            ));
+        } else if !self.supply_chain_deferred && !scanned_supply_chain_shape {
+            structural.push(Violation::new(
+                "envelope-scanned-supply-chain-shape",
+                "a non-deferred supply chain must carry complete scanner-backed evidence",
             ));
         }
         for receipt in &self.receipts {

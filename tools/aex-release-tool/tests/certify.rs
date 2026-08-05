@@ -5,7 +5,7 @@ mod common;
 use std::collections::BTreeMap;
 
 use aex_release_tool::artifact::{
-    Licenses, Location, Signature, Toolchain, Vulnerabilities, Workflow, plan,
+    ArtifactEnvelope, Licenses, Location, Signature, Toolchain, Vulnerabilities, Workflow, plan,
 };
 use aex_release_tool::canon;
 use aex_release_tool::certification::{ExpectedSource, defer, inventory};
@@ -267,6 +267,23 @@ impl Fixture {
     }
 }
 
+fn assert_envelope_rule(
+    envelope: ArtifactEnvelope,
+    artifact: &std::path::Path,
+    expected_rule: &str,
+) {
+    let error = envelope
+        .seal()
+        .unwrap()
+        .verify(Some(artifact), false)
+        .unwrap_err();
+    assert!(
+        error.rules().contains(&expected_rule),
+        "expected `{expected_rule}`, got {:?}",
+        error.rules()
+    );
+}
+
 #[test]
 fn certification_claims_omit_the_file_backed_provenance_digest() {
     let fixture = Fixture::new();
@@ -307,17 +324,53 @@ fn startup_certification_defers_scanners_without_deferring_publication() {
     assert_eq!(envelope.licenses.verdict, "deferred-startup");
     assert_eq!(envelope.vulnerabilities.scanner, "deferred-startup");
     envelope.verify(Some(&fixture.artifact), false).unwrap();
-    let mut contradictory = envelope.clone();
-    contradictory.sbom.format = "cyclonedx-1.6".to_owned();
-    let contradictory = contradictory.seal().unwrap();
-    let error = contradictory
-        .verify(Some(&fixture.artifact), false)
-        .unwrap_err();
-    assert!(
-        error
-            .rules()
-            .contains(&"envelope-deferred-supply-chain-shape")
+    let mut mixed = envelope.clone();
+    mixed.sbom.format = "cyclonedx-1.6".to_owned();
+    assert_envelope_rule(
+        mixed,
+        &fixture.artifact,
+        "envelope-deferred-supply-chain-shape",
     );
+
+    let mut strict_with_flag = fixture.certify().unwrap();
+    strict_with_flag.supply_chain_deferred = true;
+    assert_envelope_rule(
+        strict_with_flag,
+        &fixture.artifact,
+        "envelope-deferred-supply-chain-shape",
+    );
+
+    let mut missing_flag = envelope.clone();
+    missing_flag.supply_chain_deferred = false;
+    assert_envelope_rule(
+        missing_flag,
+        &fixture.artifact,
+        "envelope-deferred-supply-chain-flag",
+    );
+
+    let mut absent_flag = serde_json::to_value(&envelope).unwrap();
+    absent_flag
+        .as_object_mut()
+        .unwrap()
+        .remove("supplyChainDeferred");
+    let absent_flag = serde_json::from_value::<ArtifactEnvelope>(absent_flag).unwrap();
+    assert_envelope_rule(
+        absent_flag,
+        &fixture.artifact,
+        "envelope-deferred-supply-chain-flag",
+    );
+
+    for class in ["deny", "sbom", "license", "vulnerability"] {
+        let mut with_scanner_receipt = envelope.clone();
+        let mut scanner_receipt = with_scanner_receipt.receipts[0].clone();
+        scanner_receipt.class = class.to_owned();
+        with_scanner_receipt.receipts.push(scanner_receipt);
+        assert_envelope_rule(
+            with_scanner_receipt,
+            &fixture.artifact,
+            "envelope-deferred-supply-chain-receipt",
+        );
+    }
 
     let receipts = fixture
         .receipts
