@@ -13,9 +13,10 @@
 //! and `00-orchestrator-conventions.md` OD-07 puts nothing credentialed in this
 //! run. The manifest therefore keeps `not_applicable.targets` with that exact
 //! structural reason. This package carries the provider-independent harness
-//! and a protected publisher executable, but no command can claim a probe ran:
-//! the provider-specific P-01–P-23 executors still require real customer-owned
-//! test keys and observed evidence.
+//! and a protected publisher executable, but no command can claim a probe ran.
+//! The async configured executor can verify typed P-01--P-23 evidence, while
+//! provider-specific programs still require exact owner-supplied catalog,
+//! request, key-custody and fault-harness inputs.
 //!
 //! The prerequisite path is the part that can be proved without a key, and it
 //! is: [`ProviderKeys::require`] goes through
@@ -36,6 +37,7 @@ use aex_wire::provider::ProviderId;
 use aex_wire::types::Timestamp;
 use aex_wire::{ContentHash, Uuid7};
 
+pub mod evidence;
 pub mod executor;
 pub mod publisher;
 

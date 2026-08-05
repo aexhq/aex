@@ -1,18 +1,27 @@
-//! Provider/model qualification scaffolding.
+//! Provider/model qualification executor boundary.
 //!
 //! This module is deliberately a *readiness* boundary, not a live-result
 //! generator. It gives the protected publisher one closed registry of model
 //! candidates, credential names, and declared capabilities, then exposes a
 //! matrix with one slot for every `P-01` through `P-23` probe. The actual
-//! provider calls still belong in a protected live runner. Until that runner
-//! is supplied, [`PendingProbeExecutor`] fails every required probe and no
-//! receipt row can be invented.
+//! provider calls still belong in a protected live runner. [`ConfiguredProbeExecutor`]
+//! supplies the async, config-driven seam without owning a model default,
+//! catalog entry or credential lookup. A protected driver owns those inputs
+//! and can return only typed [`crate::evidence::ProbeEvidence`]; the verifier,
+//! not the driver, decides whether a receipt row passes.
 
+use std::collections::BTreeMap;
+use std::future::Future;
+use std::pin::Pin;
+use std::time::Instant;
+
+use aex_brain_provider_gateway::RedactedDetail;
 use aex_model_catalog::document::{Capability, CapabilitySet};
 use aex_model_catalog::primitives::ModelSlug;
 use aex_model_catalog::receipt::{ProbeId, ProbeOutcome};
 use aex_wire::provider::ProviderId;
 
+use crate::evidence::{ProbeEvidence, verify};
 use crate::{ProbeRun, ProviderKeys, key_variables};
 
 /// Provider authority and capability facts used by the future live matrix.
@@ -235,6 +244,26 @@ pub enum ReadinessError {
         /// Probe with no implementation.
         probe: ProbeId,
     },
+    /// Two programs attempted to own one probe slot.
+    #[error("probe {probe:?} has more than one configured program")]
+    DuplicateProgram {
+        /// Duplicated probe.
+        probe: ProbeId,
+    },
+    /// A program was bound to another exact target.
+    #[error("probe {probe:?} program is bound to a different provider/model target")]
+    ProgramTargetMismatch {
+        /// Mismatched probe.
+        probe: ProbeId,
+    },
+    /// A driver returned typed evidence for another probe.
+    #[error("probe {probe:?} driver returned evidence for {evidence:?}")]
+    EvidenceMismatch {
+        /// Requested probe.
+        probe: ProbeId,
+        /// Evidence variant returned.
+        evidence: ProbeId,
+    },
 }
 
 impl QualificationTarget {
@@ -314,23 +343,40 @@ pub struct ProbeMatrix {
     pub credential_variable: &'static str,
 }
 
+/// What one async executor may return to the matrix.
+///
+/// There is no `Pass` member. Only [`ProbeMatrix::execute`] can turn
+/// [`ProbeEvidence`] into a receipt row through the shared verifier.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProbeExecution {
+    /// Closed provider-independent observations.
+    Evidence(ProbeEvidence),
+    /// A bounded diagnostic already redacted by the provider adapter.
+    Failed(RedactedDetail),
+}
+
+/// Boxed async result returned by a [`ProbeExecutor`].
+pub type ProbeExecutorFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<ProbeExecution, ReadinessError>> + Send + 'a>>;
+
 /// The interface a protected live runner must implement for one probe.
 pub trait ProbeExecutor {
     /// Executes one required probe and returns its observed result.
     ///
-    /// Implementations must perform real bounded provider I/O and return a
-    /// `Pass` only after observing the declared behavior. They must never
-    /// synthesize a pass from fixtures or model-list metadata.
+    /// Implementations must perform real bounded provider I/O and return only
+    /// typed evidence or a provider-adapter-redacted failure. They cannot
+    /// return a receipt verdict: the matrix checks evidence identity and the
+    /// shared verifier alone creates `Pass` or `Fail`.
     ///
     /// # Errors
     ///
     /// Returns [`ReadinessError`] when the provider call cannot produce a
     /// truthful result.
-    fn run_probe(
-        &mut self,
-        target: &QualificationTarget,
+    fn run_probe<'a>(
+        &'a mut self,
+        target: &'a QualificationTarget,
         probe: ProbeId,
-    ) -> Result<ProbeRun, ReadinessError>;
+    ) -> ProbeExecutorFuture<'a>;
 }
 
 /// Placeholder used until provider-specific live HTTP executors land.
@@ -338,13 +384,126 @@ pub trait ProbeExecutor {
 pub struct PendingProbeExecutor;
 
 impl ProbeExecutor for PendingProbeExecutor {
-    fn run_probe(
-        &mut self,
-        _target: &QualificationTarget,
+    fn run_probe<'a>(
+        &'a mut self,
+        _target: &'a QualificationTarget,
         probe: ProbeId,
-    ) -> Result<ProbeRun, ReadinessError> {
-        Err(ReadinessError::ExecutorUnavailable { probe })
+    ) -> ProbeExecutorFuture<'a> {
+        Box::pin(async move { Err(ReadinessError::ExecutorUnavailable { probe }) })
     }
+}
+
+/// One owner-supplied program in the qualification configuration.
+///
+/// The program type is deliberately opaque to this crate. The protected driver
+/// may bind an exact `QualifiedModel`, canonical requests, fault-shim controls
+/// and credential custody, while this public boundary can enforce probe and
+/// target identity without learning or logging any secret.
+pub trait ProbeProgram: Send + Sync {
+    /// Registry probe this program exercises.
+    fn probe(&self) -> ProbeId;
+
+    /// Exact target the owner bound to the program.
+    fn target(&self) -> &QualificationTarget;
+}
+
+/// Boxed async observation returned by a protected [`ProbeDriver`].
+pub type ProbeDriverFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<ProbeEvidence, RedactedDetail>> + Send + 'a>>;
+
+/// Executes owner-supplied programs and reports typed observations.
+///
+/// A driver cannot return `ProbeOutcome::Pass`; it returns `ProbeEvidence`.
+/// Unexpected provider failures use `RedactedDetail`, whose provider adapters
+/// already bound and redact the diagnostic. Raw response bodies and
+/// credentials do not cross this seam.
+pub trait ProbeDriver<P: ProbeProgram>: Send {
+    /// Runs one configured program.
+    fn execute<'a>(&'a mut self, program: &'a P) -> ProbeDriverFuture<'a>;
+}
+
+/// Async executor over an exact target and a closed set of probe programs.
+///
+/// Missing, duplicate, cross-target and wrong-evidence programs all fail
+/// closed. Programs are stored by `ProbeId`, so lookup allocates nothing on the
+/// execution path and each large owner-supplied program is retained once.
+pub struct ConfiguredProbeExecutor<P, D> {
+    target: QualificationTarget,
+    programs: BTreeMap<ProbeId, P>,
+    driver: D,
+}
+
+impl<P, D> ConfiguredProbeExecutor<P, D>
+where
+    P: ProbeProgram,
+    D: ProbeDriver<P>,
+{
+    /// Validates and stores one exact program per configured probe.
+    ///
+    /// The set may be incomplete while owner inputs are assembled, but an
+    /// attempted missing slot fails with [`ReadinessError::ExecutorUnavailable`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReadinessError::DuplicateProgram`] or
+    /// [`ReadinessError::ProgramTargetMismatch`] before any driver can run.
+    pub fn new(
+        target: QualificationTarget,
+        programs: impl IntoIterator<Item = P>,
+        driver: D,
+    ) -> Result<Self, ReadinessError> {
+        let mut configured = BTreeMap::new();
+        for program in programs {
+            let probe = program.probe();
+            if program.target() != &target {
+                return Err(ReadinessError::ProgramTargetMismatch { probe });
+            }
+            if configured.insert(probe, program).is_some() {
+                return Err(ReadinessError::DuplicateProgram { probe });
+            }
+        }
+        Ok(Self {
+            target,
+            programs: configured,
+            driver,
+        })
+    }
+
+    /// Number of explicitly configured programs.
+    #[must_use]
+    pub fn configured_len(&self) -> usize {
+        self.programs.len()
+    }
+}
+
+impl<P, D> ProbeExecutor for ConfiguredProbeExecutor<P, D>
+where
+    P: ProbeProgram,
+    D: ProbeDriver<P>,
+{
+    fn run_probe<'a>(
+        &'a mut self,
+        target: &'a QualificationTarget,
+        probe: ProbeId,
+    ) -> ProbeExecutorFuture<'a> {
+        Box::pin(async move {
+            if target != &self.target {
+                return Err(ReadinessError::ProgramTargetMismatch { probe });
+            }
+            let program = self
+                .programs
+                .get(&probe)
+                .ok_or(ReadinessError::ExecutorUnavailable { probe })?;
+            Ok(match self.driver.execute(program).await {
+                Ok(evidence) => ProbeExecution::Evidence(evidence),
+                Err(detail) => ProbeExecution::Failed(detail),
+            })
+        })
+    }
+}
+
+fn elapsed_ms(started: Instant) -> u32 {
+    u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX)
 }
 
 impl ProbeMatrix {
@@ -357,20 +516,35 @@ impl ProbeMatrix {
     /// Propagates the runner's readiness error, or rejects a malformed runner
     /// result that does not identify the requested probe with a real pass or
     /// fail outcome.
-    pub fn execute(
+    pub async fn execute(
         &self,
         executor: &mut dyn ProbeExecutor,
     ) -> Result<Vec<ProbeRun>, ReadinessError> {
         let mut runs = Vec::with_capacity(self.slots.len());
         for slot in &self.slots {
             if slot.required {
-                let run = executor.run_probe(&self.target, slot.probe)?;
-                if run.probe != slot.probe
-                    || !matches!(&run.outcome, ProbeOutcome::Pass | ProbeOutcome::Fail { .. })
-                {
-                    return Err(ReadinessError::ExecutorUnavailable { probe: slot.probe });
+                let started = Instant::now();
+                match executor.run_probe(&self.target, slot.probe).await? {
+                    ProbeExecution::Evidence(evidence) => {
+                        if evidence.probe() != slot.probe {
+                            return Err(ReadinessError::EvidenceMismatch {
+                                probe: slot.probe,
+                                evidence: evidence.probe(),
+                            });
+                        }
+                        runs.push(verify(&self.target, &evidence, elapsed_ms(started)));
+                    }
+                    ProbeExecution::Failed(detail) => runs.push(ProbeRun {
+                        probe: slot.probe,
+                        outcome: ProbeOutcome::Fail {
+                            // `RedactedDetail` is the provider adapter's
+                            // bounded, credential-safe diagnostic authority.
+                            detail: detail.message,
+                        },
+                        observed: Vec::new(),
+                        duration_ms: elapsed_ms(started),
+                    }),
                 }
-                runs.push(run);
             } else {
                 let Some(capability) = slot.capability else {
                     return Err(ReadinessError::ExecutorUnavailable { probe: slot.probe });
@@ -459,14 +633,20 @@ pub fn prepare_from_live_env(target: QualificationTarget) -> Result<ProbeMatrix,
 
 #[cfg(test)]
 mod tests {
+    use aex_brain_provider_gateway::RedactedDetail;
     use aex_model_catalog::document::{Capability, CapabilitySet};
-    use aex_model_catalog::receipt::{ProbeId, ProbeOutcome};
+    use aex_model_catalog::failure::ProviderFailureKind;
+    use aex_model_catalog::primitives::BoundedString;
+    use aex_model_catalog::receipt::ProbeId;
+    use aex_wire::ContentHash;
     use aex_wire::provider::ProviderId;
 
     use super::{
-        MOONSHOT_CAPABILITIES, PendingProbeExecutor, ProbeExecutor, QualificationTarget,
+        ConfiguredProbeExecutor, MOONSHOT_CAPABILITIES, PendingProbeExecutor, ProbeDriver,
+        ProbeDriverFuture, ProbeExecution, ProbeExecutor, ProbeProgram, QualificationTarget,
         ReadinessError, TEXT_STREAM, prepare_with_credential_presence, profile,
     };
+    use crate::evidence::ProbeEvidence;
 
     #[test]
     fn every_provider_has_explicit_credential_and_profile_metadata() {
@@ -543,8 +723,8 @@ mod tests {
         assert_eq!(matrix.credential_variable, "ANTHROPIC_API_KEY");
     }
 
-    #[test]
-    fn every_probe_gets_a_slot_and_pending_executor_cannot_emit_a_receipt() {
+    #[tokio::test]
+    async fn every_probe_gets_a_slot_and_pending_executor_cannot_emit_a_receipt() {
         let target = QualificationTarget::new(ProviderId::Openai, "provider-model", TEXT_STREAM)
             .expect("candidate");
         let matrix = prepare_with_credential_presence(target, |_| true).expect("key");
@@ -559,6 +739,7 @@ mod tests {
         );
         let error = matrix
             .execute(&mut PendingProbeExecutor)
+            .await
             .expect_err("required P-01 has no implementation");
         assert_eq!(
             error,
@@ -568,33 +749,187 @@ mod tests {
         );
     }
 
-    struct PassFixture;
-    impl ProbeExecutor for PassFixture {
-        fn run_probe(
-            &mut self,
-            _target: &QualificationTarget,
-            probe: ProbeId,
-        ) -> Result<crate::ProbeRun, ReadinessError> {
-            Ok(crate::ProbeRun {
-                probe,
-                outcome: ProbeOutcome::Pass,
-                observed: Vec::new(),
-                duration_ms: 1,
-            })
-        }
-    }
-
     #[test]
-    fn optional_probes_are_explicit_not_applicable_rows() {
+    fn optional_probes_are_explicit_matrix_slots() {
         let target = QualificationTarget::new(ProviderId::Openai, "provider-model", TEXT_STREAM)
             .expect("candidate");
         let matrix = prepare_with_credential_presence(target, |_| true).expect("key");
-        let runs = matrix.execute(&mut PassFixture).expect("fixture runner");
-        assert_eq!(runs.len(), ProbeId::ALL.len());
-        let p03 = runs.iter().find(|run| run.probe == ProbeId::P03).unwrap();
-        assert!(matches!(p03.outcome, ProbeOutcome::NotApplicable { .. }));
-        let p01 = runs.iter().find(|run| run.probe == ProbeId::P01).unwrap();
-        assert!(matches!(p01.outcome, ProbeOutcome::Pass));
+        assert_eq!(matrix.slots.len(), ProbeId::ALL.len());
+        let p03 = matrix
+            .slots
+            .iter()
+            .find(|slot| slot.probe == ProbeId::P03)
+            .expect("P-03 slot");
+        assert!(!p03.required);
+        assert_eq!(p03.capability, Some(Capability::SystemInstruction));
+        assert!(
+            matrix
+                .slots
+                .iter()
+                .find(|slot| slot.probe == ProbeId::P01)
+                .expect("P-01 slot")
+                .required
+        );
+    }
+
+    #[derive(Debug, Clone)]
+    struct Program {
+        probe: ProbeId,
+        target: QualificationTarget,
+    }
+
+    impl ProbeProgram for Program {
+        fn probe(&self) -> ProbeId {
+            self.probe
+        }
+
+        fn target(&self) -> &QualificationTarget {
+            &self.target
+        }
+    }
+
+    struct Driver {
+        result: Option<Result<ProbeEvidence, RedactedDetail>>,
+    }
+
+    impl ProbeDriver<Program> for Driver {
+        fn execute<'a>(&'a mut self, _program: &'a Program) -> ProbeDriverFuture<'a> {
+            let result = self.result.take().expect("one configured execution");
+            Box::pin(async move { result })
+        }
+    }
+
+    fn configured_target() -> QualificationTarget {
+        QualificationTarget::new(ProviderId::Openai, "owner-supplied-model", TEXT_STREAM)
+            .expect("syntactically valid target test input")
+    }
+
+    fn p01(target: &QualificationTarget) -> Program {
+        Program {
+            probe: ProbeId::P01,
+            target: target.clone(),
+        }
+    }
+
+    fn matching_minimal_text() -> ProbeEvidence {
+        let shape = ContentHash::of(b"same canonical response shape");
+        ProbeEvidence::MinimalText {
+            streamed_shape: shape,
+            non_streamed_shape: shape,
+            text_bytes: 2,
+        }
+    }
+
+    #[tokio::test]
+    async fn configured_executor_is_async_and_only_the_verifier_can_pass() {
+        let target = configured_target();
+        let mut executor = ConfiguredProbeExecutor::new(
+            target.clone(),
+            [p01(&target)],
+            Driver {
+                result: Some(Ok(matching_minimal_text())),
+            },
+        )
+        .expect("valid config");
+        assert_eq!(executor.configured_len(), 1);
+        let run = executor
+            .run_probe(&target, ProbeId::P01)
+            .await
+            .expect("typed observation");
+        assert!(matches!(
+            run,
+            ProbeExecution::Evidence(ProbeEvidence::MinimalText { .. })
+        ));
+    }
+
+    #[test]
+    fn duplicate_and_cross_target_programs_fail_before_a_driver_runs() {
+        let target = configured_target();
+        let program = p01(&target);
+        assert!(matches!(
+            ConfiguredProbeExecutor::new(
+                target.clone(),
+                [program.clone(), program],
+                Driver { result: None }
+            ),
+            Err(ReadinessError::DuplicateProgram {
+                probe: ProbeId::P01
+            })
+        ));
+
+        let other = QualificationTarget::new(ProviderId::Openai, "other-model", TEXT_STREAM)
+            .expect("syntactically valid target test input");
+        assert!(matches!(
+            ConfiguredProbeExecutor::new(target, [p01(&other)], Driver { result: None }),
+            Err(ReadinessError::ProgramTargetMismatch {
+                probe: ProbeId::P01
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn missing_or_wrong_evidence_never_becomes_a_receipt_row() {
+        let target = configured_target();
+        let mut missing = ConfiguredProbeExecutor::new(
+            target.clone(),
+            Vec::<Program>::new(),
+            Driver { result: None },
+        )
+        .expect("an incomplete config may be assembled but cannot execute a missing slot");
+        assert_eq!(
+            missing
+                .run_probe(&target, ProbeId::P01)
+                .await
+                .expect_err("missing program"),
+            ReadinessError::ExecutorUnavailable {
+                probe: ProbeId::P01
+            }
+        );
+
+        let mut wrong = ConfiguredProbeExecutor::new(
+            target.clone(),
+            [p01(&target)],
+            Driver {
+                result: Some(Ok(ProbeEvidence::SystemInstruction { honoured: true })),
+            },
+        )
+        .expect("program identity is valid");
+        let matrix = prepare_with_credential_presence(target, |_| true).expect("key");
+        assert_eq!(
+            matrix
+                .execute(&mut wrong)
+                .await
+                .expect_err("wrong evidence variant"),
+            ReadinessError::EvidenceMismatch {
+                probe: ProbeId::P01,
+                evidence: ProbeId::P03,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn typed_driver_failures_preserve_the_redacted_diagnostic() {
+        let target = configured_target();
+        let detail = RedactedDetail::new(
+            ProviderFailureKind::Authentication,
+            BoundedString::truncating("provider rejected [redacted]"),
+        );
+        let mut executor = ConfiguredProbeExecutor::new(
+            target.clone(),
+            [p01(&target)],
+            Driver {
+                result: Some(Err(detail)),
+            },
+        )
+        .expect("valid config");
+        let execution = executor
+            .run_probe(&target, ProbeId::P01)
+            .await
+            .expect("typed driver failure");
+        let ProbeExecution::Failed(detail) = execution else {
+            panic!("a driver failure must not become evidence")
+        };
+        assert_eq!(detail.message.as_str(), "provider rejected [redacted]");
     }
 
     #[test]

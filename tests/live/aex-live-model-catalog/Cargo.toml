@@ -47,3 +47,4 @@ thiserror.workspace = true
 
 [dev-dependencies]
 aws-lc-rs.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }
