@@ -264,6 +264,7 @@ fn validate_unit_and_plan(unit: &Unit, plan: &BuildPlan) -> Result<()> {
                         | crate::artifact::MODEL_CATALOG_TRUST_ROOTS_SHA256_VAR
                         | crate::artifact::MODEL_CATALOG_COLLECTION_FILE_VAR
                         | crate::artifact::MODEL_CATALOG_COLLECTION_SHA256_VAR
+                        | crate::artifact::TOOL_CATALOG_SHA256_VAR
                 ))
     });
     let catalog_values = [
@@ -271,13 +272,14 @@ fn validate_unit_and_plan(unit: &Unit, plan: &BuildPlan) -> Result<()> {
         crate::artifact::MODEL_CATALOG_TRUST_ROOTS_SHA256_VAR,
         crate::artifact::MODEL_CATALOG_COLLECTION_FILE_VAR,
         crate::artifact::MODEL_CATALOG_COLLECTION_SHA256_VAR,
+        crate::artifact::TOOL_CATALOG_SHA256_VAR,
     ]
     .into_iter()
     .filter_map(|key| plan.env.get(key))
     .collect::<Vec<_>>();
     let catalog_binding_is_complete = catalog_values.is_empty()
         || (unit.id == "brain-mux"
-            && catalog_values.len() == 4
+            && catalog_values.len() == 5
             && catalog_values.iter().all(|value| !value.is_empty()));
     if plan.unit != unit.id
         || plan.kind != unit.kind
