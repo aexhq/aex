@@ -294,7 +294,8 @@ unset until all of the following exist together:
 4. The exact collection bytes at the normalized workspace-relative path before
    `artifact plan` runs. The build workflow now downloads only a same-repository
    immutable GitHub release asset and verifies its configured SHA-256 before
-   exposing `.tmp/model-catalog/collection.json` to the release tool.
+   exposing the downloaded workspace-relative collection file to the release
+   tool.
 
 Only then may publication configure
 `AEX_MODEL_CATALOG_TRUST_ROOTS_JSON`, its SHA-256, the immutable collection
