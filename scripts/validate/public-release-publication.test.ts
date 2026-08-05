@@ -174,13 +174,13 @@ describe("public main-push publication", () => {
     expect(blobReadback?.run).toContain('"--deny-${denied_runner_class}-runners"');
   });
 
-  test("catalog acquisition is immutable, bounded, and separate from authority creation", () => {
+  test("catalog acquisition consumes one atomic last-good binding", () => {
     const source = read(".github/workflows/_build-artifacts.yml");
     const workflow = Bun.YAML.parse(source) as { readonly jobs: Record<string, any> };
     const build = workflow.jobs.build;
     const acquire = build.steps.find(
       (step: { readonly name?: string }) =>
-        step.name === "Acquire the exact signed model-catalog collection"
+        step.name === "Acquire the last-good signed model-catalog binding"
     );
     const recipe = build.steps.find(
       (step: { readonly name?: string }) => step.name === "Print the recipe"
@@ -188,9 +188,10 @@ describe("public main-push publication", () => {
 
     expect(acquire?.if).toContain("matrix.name == 'brain-mux'");
     expect(acquire?.env).toEqual({
-      AEX_MODEL_CATALOG_COLLECTION_URI: "${{ vars.AEX_MODEL_CATALOG_COLLECTION_URI }}",
-      AEX_MODEL_CATALOG_COLLECTION_SHA256: "${{ vars.AEX_MODEL_CATALOG_COLLECTION_SHA256 }}"
+      AEX_MODEL_CATALOG_BINDING_JSON: "${{ vars.AEX_MODEL_CATALOG_BINDING_JSON }}"
     });
+    expect(acquire?.run).toContain("aex.model-catalog-build-binding.v1");
+    expect(acquire?.run).toContain('[[ "$binding" == "$canonical_binding" ]]');
     expect(acquire?.run).toContain(
       'expected_prefix="https://github.com/${GITHUB_REPOSITORY}/releases/download/"'
     );
@@ -200,21 +201,26 @@ describe("public main-push publication", () => {
     expect(acquire?.run).toContain("--max-time 60 --max-filesize 67108864");
     expect(acquire?.run).toContain("collection_file=\".tmp/model-catalog/collection.json\"");
     expect(acquire?.run).toContain("sha256sum \"$collection_file\"");
+    expect(acquire?.run).toContain("sha256sum \"$roots_file\"");
+    expect(acquire?.run).toContain("AEX_MODEL_CATALOG_TRUST_ROOTS_JSON=$roots_json");
+    expect(acquire?.run).toContain("AEX_MODEL_CATALOG_TRUST_ROOTS_SHA256=$roots_digest");
+    expect(acquire?.run).toContain("AEX_MODEL_CATALOG_COLLECTION_SHA256=$digest");
     expect(acquire?.run).toContain("AEX_MODEL_CATALOG_COLLECTION_FILE=$collection_file");
-    expect(acquire?.run).toContain("must be supplied together");
+    expect(acquire?.run).toContain("invalid or open shape");
     expect(acquire?.run).toContain("must not carry a query, fragment, or parent path");
     expect(recipe?.env).not.toHaveProperty("AEX_MODEL_CATALOG_COLLECTION_FILE");
     expect(source).not.toContain("vars.AEX_MODEL_CATALOG_COLLECTION_FILE");
+    expect(source).not.toContain("vars.AEX_MODEL_CATALOG_COLLECTION_URI");
+    expect(source).not.toContain("vars.AEX_MODEL_CATALOG_COLLECTION_SHA256");
+    expect(source).not.toContain("vars.AEX_MODEL_CATALOG_TRUST_ROOTS_JSON");
+    expect(source).not.toContain("vars.AEX_MODEL_CATALOG_TRUST_ROOTS_SHA256");
     expect(source).not.toContain("aws-actions/configure-aws-credentials");
   });
 
   test("catalog authority documentation keeps external prerequisites explicit", () => {
     const doc = read("references/model-catalog-authority.md");
     for (const name of [
-      "AEX_MODEL_CATALOG_TRUST_ROOTS_JSON",
-      "AEX_MODEL_CATALOG_TRUST_ROOTS_SHA256",
-      "AEX_MODEL_CATALOG_COLLECTION_URI",
-      "AEX_MODEL_CATALOG_COLLECTION_SHA256",
+      "AEX_MODEL_CATALOG_BINDING_JSON",
       "AEX_MODEL_CATALOG_AWS_ROLE_ARN",
       "AEX_MODEL_CATALOG_KMS_KEY_ARN",
       "AEX_MODEL_CATALOG_PUBLISH_CONFIRMATION",
@@ -222,8 +228,9 @@ describe("public main-push publication", () => {
     ]) {
       expect(doc).toContain(name);
     }
-    expect(doc).toContain("Steady-state publication is not yet implementable");
-    expect(doc).toMatch(/no workflow may accept a hand-written\r?\npin list/);
+    expect(doc).toMatch(/current\r?\nlast-good signed collection/);
+    expect(doc).toContain("replace `AEX_MODEL_CATALOG_BINDING_JSON` in one operation");
+    expect(doc).toContain("scheduled/manual compatibility monitoring");
     expect(doc).toContain("No application encryption key");
   });
 

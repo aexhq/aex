@@ -1,16 +1,9 @@
 //! Loading, activation and qualification (plan 08 §2.4–§2.6).
 //!
-//! [`Catalog::load`] is total and fail-closed. Two of its checks are the reason
-//! this crate exists at all:
-//!
-//! - the **receipt gate** is a document load invariant (D-05), so an `Active`
-//!   entry whose declared capabilities are not all covered by passing probes
-//!   cannot be loaded — it is impossible to forget the runtime check because
-//!   there is no runtime check.
-//! - the **adapter binding** (D-06) refuses the whole document when the running
-//!   adapter source tree is not the one the receipts were earned against, so
-//!   editing an adapter and shipping the old catalog fails at process start
-//!   rather than at the first customer request.
+//! [`Catalog::load`] is total and fail-closed. Signed catalog metadata is the
+//! admission authority: schema, dialect, endpoint and bounded retry-policy
+//! checks all run before an `Active` entry can be selected. Live qualification
+//! evidence is external assurance data and is not a runtime availability gate.
 
 use std::sync::Arc;
 
@@ -19,13 +12,12 @@ use aex_wire::to_jcs_bytes;
 use aex_wire::types::{JsonPointer, Timestamp};
 
 use crate::document::{
-    AdapterSourceDigest, CatalogDigest, CatalogDocument, CatalogSequence, DisableReason,
-    DurableOperationSupport, EntryState, ModelEntry, PreDispatchRetryPolicy, PublisherId,
-    SCHEMA_VERSION,
+    CatalogDigest, CatalogDocument, CatalogSequence, Dialect, DialectRevision, DisableReason,
+    DurableOperationSupport, EndpointPin, EntryState, ModelEntry, PreDispatchRetryPolicy,
+    PublisherId, SCHEMA_VERSION,
 };
 use crate::primitives::{Blake3Digest, BoundedString, ModelSlug};
 use crate::qualified::{CatalogError, QualifiedModel};
-use crate::receipt::ProbeId;
 use crate::signature::{CatalogEnvelope, SignatureError, SigningKeyId, TrustedKeys, verify};
 use crate::wire_pending::CatalogRevision;
 
@@ -121,14 +113,8 @@ pub enum CatalogLoadError {
         /// When it becomes valid.
         not_before: Timestamp,
     },
-    /// `now` is at or after `retired_at`.
-    #[error("the document retired at {retired_at:?}")]
-    Retired {
-        /// When it retired.
-        retired_at: Timestamp,
-    },
-    /// The three time gates are not ordered.
-    #[error("the time gates are not ordered: not_before <= expires_at <= retired_at")]
+    /// The signed issuance and activation instants are not ordered.
+    #[error("the time gates are not ordered: issued_at <= not_before")]
     TimeGatesUnordered,
     /// `entries` is not sorted by `(provider, model)`.
     #[error("entries are unsorted at index {at}")]
@@ -150,55 +136,49 @@ pub enum CatalogLoadError {
         /// The first index out of order.
         at: usize,
     },
-    /// The receipts were earned against a different adapter source tree.
-    #[error("the running adapter {running:?} is not the required {required:?}")]
-    AdapterMismatch {
-        /// What the document requires.
-        required: AdapterSourceDigest,
-        /// What is actually running.
-        running: AdapterSourceDigest,
-    },
-    /// An `Active` entry whose receipt does not pass a required probe.
-    #[error("`{provider}` / `{model}` is Active without a passing {probe:?}")]
-    ActiveWithoutReceipt {
+    /// An entry names a reserved dialect this binary does not implement.
+    #[error("`{provider}` / `{model}` names unimplemented dialect {dialect:?}")]
+    DialectNotImplemented {
         /// The provider half.
         provider: ProviderId,
         /// The model half.
         model: ModelSlug,
-        /// The probe that did not pass.
-        probe: ProbeId,
+        /// The unsupported dialect.
+        dialect: Dialect,
     },
-    /// An `Active` entry declares a capability no probe proved.
-    #[error("`{provider}` / `{model}` declares `{capability}` with no proving probe")]
-    CapabilityWithoutProbe {
+    /// The dialect belongs to a different provider authority.
+    #[error("`{provider}` / `{model}` names dialect {dialect:?} for another provider")]
+    DialectProviderMismatch {
         /// The provider half.
         provider: ProviderId,
         /// The model half.
         model: ModelSlug,
-        /// The capability with no evidence.
-        capability: BoundedString<64>,
+        /// The mismatched dialect.
+        dialect: Dialect,
+    },
+    /// The endpoint belongs to a different provider authority.
+    #[error("`{provider}` / `{model}` names endpoint {endpoint:?} for another provider")]
+    EndpointProviderMismatch {
+        /// The provider half.
+        provider: ProviderId,
+        /// The model half.
+        model: ModelSlug,
+        /// The mismatched endpoint.
+        endpoint: EndpointPin,
+    },
+    /// The entry names a dialect revision this binary does not implement.
+    #[error("`{provider}` / `{model}` names unsupported dialect revision {found:?}")]
+    DialectRevisionUnsupported {
+        /// The provider half.
+        provider: ProviderId,
+        /// The model half.
+        model: ModelSlug,
+        /// The unsupported revision.
+        found: DialectRevision,
     },
     /// A capability bit outside this binary's vocabulary.
     #[error("`{provider}` / `{model}` declares a capability bit this binary does not know")]
     UnknownCapabilityBit {
-        /// The provider half.
-        provider: ProviderId,
-        /// The model half.
-        model: ModelSlug,
-    },
-    /// A receipt is incomplete: it does not carry a result for every probe.
-    #[error("`{provider}` / `{model}` carries no result for {probe:?}")]
-    IncompleteReceipt {
-        /// The provider half.
-        provider: ProviderId,
-        /// The model half.
-        model: ModelSlug,
-        /// The missing probe.
-        probe: ProbeId,
-    },
-    /// An Active receipt was earned for different entry bytes.
-    #[error("`{provider}` / `{model}` carries a receipt for a different catalog entry")]
-    ReceiptEntryMismatch {
         /// The provider half.
         provider: ProviderId,
         /// The model half.
@@ -239,15 +219,14 @@ impl Catalog {
     ///
     /// # Errors
     ///
-    /// Returns the same document, chain, time, adapter and conformance failures
-    /// as [`Catalog::load`], excluding signature failures.
+    /// Returns the same document, chain, time, dialect, endpoint and policy
+    /// failures as [`Catalog::load`], excluding signature failures.
     pub fn preflight_document(
         document: &[u8],
         now: Timestamp,
         active: Option<&CatalogHead>,
-        adapter: AdapterSourceDigest,
     ) -> Result<CatalogHead, CatalogLoadError> {
-        let (document, digest) = validate_document(document, now, active, adapter)?;
+        let (document, digest) = validate_document(document, now, active)?;
         Ok(CatalogHead {
             publisher: document.publisher,
             sequence: document.sequence,
@@ -266,10 +245,9 @@ impl Catalog {
         keys: &TrustedKeys,
         now: Timestamp,
         active: Option<&CatalogHead>,
-        adapter: AdapterSourceDigest,
     ) -> Result<Self, CatalogLoadError> {
         let signed_by = verify(envelope, keys)?;
-        let (document, digest) = validate_document(&envelope.document, now, active, adapter)?;
+        let (document, digest) = validate_document(&envelope.document, now, active)?;
 
         let entries = document.entries.iter().cloned().map(Arc::new).collect();
         Ok(Self {
@@ -332,7 +310,7 @@ impl Catalog {
 
     /// Resolves a pair that a committed history already used.
     ///
-    /// Deliberately **weaker** than [`Catalog::admit`]: it ignores expiry and
+    /// Deliberately **weaker** than [`Catalog::admit`]: it ignores state and
     /// emergency disable so a journal written under this revision stays
     /// readable (D-08, MC-6).
     ///
@@ -360,25 +338,11 @@ impl Catalog {
     /// # Errors
     ///
     /// Returns the typed [`CatalogError`] for an unknown provider, unknown
-    /// model, non-`Active` state, emergency disable, stale receipt, expired
-    /// revision or retired revision. Every arm fails before any reservation.
-    pub fn admit(
-        &self,
-        selection: &ModelSelection,
-        now: Timestamp,
-    ) -> Result<QualifiedModel, CatalogError> {
+    /// model, non-`Active` state or emergency disable. Every arm fails before
+    /// any reservation.
+    pub fn admit(&self, selection: &ModelSelection) -> Result<QualifiedModel, CatalogError> {
         let candidate = self.qualified(selection)?;
 
-        if now >= self.document.retired_at {
-            return Err(CatalogError::CatalogRetired {
-                retired_at: self.document.retired_at,
-            });
-        }
-        if now >= self.document.expires_at {
-            return Err(CatalogError::CatalogExpired {
-                expires_at: self.document.expires_at,
-            });
-        }
         if let Some(reason) = self.disabled(candidate.provider(), candidate.model()) {
             return Err(CatalogError::EmergencyDisabled { reason });
         }
@@ -386,10 +350,6 @@ impl Catalog {
             return Err(CatalogError::UnqualifiedPair {
                 state: candidate.state(),
             });
-        }
-        let expires_at = candidate.entry().receipt.expires_at;
-        if now >= expires_at {
-            return Err(CatalogError::ReceiptExpired { expires_at });
         }
         Ok(candidate)
     }
@@ -431,8 +391,7 @@ impl Catalog {
         self.entries.is_empty()
     }
 
-    /// How many entries are admissible in principle. A launch catalog answers
-    /// zero (OD-24).
+    /// How many entries carry signed `Active` state.
     #[must_use]
     pub fn active_len(&self) -> usize {
         self.entries
@@ -454,7 +413,6 @@ fn validate_document(
     bytes: &[u8],
     now: Timestamp,
     active: Option<&CatalogHead>,
-    adapter: AdapterSourceDigest,
 ) -> Result<(CatalogDocument, CatalogDigest), CatalogLoadError> {
     let document = parse_canonical(bytes)?;
     if document.schema_version != SCHEMA_VERSION {
@@ -466,13 +424,7 @@ fn validate_document(
     check_time_gates(&document, now)?;
     check_activation(&document, digest, active)?;
     check_ordering(&document)?;
-    if document.required_adapter_source != adapter {
-        return Err(CatalogLoadError::AdapterMismatch {
-            required: document.required_adapter_source,
-            running: adapter,
-        });
-    }
-    check_receipt_gate(&document, adapter)?;
+    check_entry_policy(&document)?;
     Ok((document, digest))
 }
 
@@ -528,17 +480,12 @@ fn classify_decode_error(error: &serde_json::Error) -> CatalogLoadError {
 }
 
 fn check_time_gates(document: &CatalogDocument, now: Timestamp) -> Result<(), CatalogLoadError> {
-    if document.not_before > document.expires_at || document.expires_at > document.retired_at {
+    if document.issued_at > document.not_before {
         return Err(CatalogLoadError::TimeGatesUnordered);
     }
     if now < document.not_before {
         return Err(CatalogLoadError::NotYetValid {
             not_before: document.not_before,
-        });
-    }
-    if now >= document.retired_at {
-        return Err(CatalogLoadError::Retired {
-            retired_at: document.retired_at,
         });
     }
     Ok(())
@@ -605,12 +552,37 @@ fn check_ordering(document: &CatalogDocument) -> Result<(), CatalogLoadError> {
     Ok(())
 }
 
-/// The receipt gate as a document load invariant (D-05).
-fn check_receipt_gate(
-    document: &CatalogDocument,
-    adapter: AdapterSourceDigest,
-) -> Result<(), CatalogLoadError> {
+/// Validates the signed compatibility metadata understood by this binary.
+fn check_entry_policy(document: &CatalogDocument) -> Result<(), CatalogLoadError> {
     for entry in &document.entries {
+        if !entry.dialect.is_implemented() {
+            return Err(CatalogLoadError::DialectNotImplemented {
+                provider: entry.provider,
+                model: entry.model.clone(),
+                dialect: entry.dialect,
+            });
+        }
+        if entry.dialect.provider() != entry.provider {
+            return Err(CatalogLoadError::DialectProviderMismatch {
+                provider: entry.provider,
+                model: entry.model.clone(),
+                dialect: entry.dialect,
+            });
+        }
+        if entry.endpoint.provider() != entry.provider {
+            return Err(CatalogLoadError::EndpointProviderMismatch {
+                provider: entry.provider,
+                model: entry.model.clone(),
+                endpoint: entry.endpoint,
+            });
+        }
+        if entry.dialect_revision != entry.dialect.revision() {
+            return Err(CatalogLoadError::DialectRevisionUnsupported {
+                provider: entry.provider,
+                model: entry.model.clone(),
+                found: entry.dialect_revision,
+            });
+        }
         if entry.capabilities.has_unknown_bits() {
             return Err(CatalogLoadError::UnknownCapabilityBit {
                 provider: entry.provider,
@@ -637,93 +609,19 @@ fn check_receipt_gate(
                 status,
             });
         }
-        for probe in ProbeId::ALL {
-            if entry.receipt.result(probe).is_none() {
-                return Err(CatalogLoadError::IncompleteReceipt {
-                    provider: entry.provider,
-                    model: entry.model.clone(),
-                    probe,
-                });
-            }
-        }
-        if entry.state != EntryState::Active {
-            continue;
-        }
-        if entry.receipt.adapter_source != adapter {
-            return Err(CatalogLoadError::AdapterMismatch {
-                required: entry.receipt.adapter_source,
-                running: adapter,
-            });
-        }
-        if entry.receipt.probe_suite_revision != document.probe_suite_revision {
-            return Err(CatalogLoadError::ActiveWithoutReceipt {
-                provider: entry.provider,
-                model: entry.model.clone(),
-                probe: ProbeId::P01,
-            });
-        }
-        for capability in entry.capabilities.declared() {
-            let Some(probe) = ProbeId::proving(capability) else {
-                continue;
-            };
-            let passes = entry
-                .receipt
-                .result(probe)
-                .is_some_and(|result| result.outcome.is_pass());
-            if !passes {
-                return Err(CatalogLoadError::CapabilityWithoutProbe {
-                    provider: entry.provider,
-                    model: entry.model.clone(),
-                    capability: BoundedString::truncating(capability.as_str()),
-                });
-            }
-        }
-        for probe in ProbeId::ALL {
-            if !probe.is_required_for(entry.capabilities) {
-                continue;
-            }
-            let passes = entry
-                .receipt
-                .result(probe)
-                .is_some_and(|result| result.outcome.is_pass());
-            if !passes {
-                return Err(CatalogLoadError::ActiveWithoutReceipt {
-                    provider: entry.provider,
-                    model: entry.model.clone(),
-                    probe,
-                });
-            }
-        }
-        if entry.receipt.catalog_entry_digest != catalog_entry_digest(entry)? {
-            return Err(CatalogLoadError::ReceiptEntryMismatch {
-                provider: entry.provider,
-                model: entry.model.clone(),
-            });
-        }
     }
     Ok(())
 }
 
-/// Hashes the canonical entry projection a conformance receipt proves.
-///
-/// The receipt itself is removed before hashing, preventing the impossible
-/// recursive definition `digest(entry including digest(entry))`.
+/// Hashes the exact canonical compatibility metadata an external qualification
+/// receipt proves.
 ///
 /// # Errors
 ///
 /// Returns [`CatalogLoadError::Malformed`] if the closed entry schema cannot
 /// be rendered into canonical JSON.
 pub fn catalog_entry_digest(entry: &ModelEntry) -> Result<aex_wire::ContentHash, CatalogLoadError> {
-    let mut value = serde_json::to_value(entry).map_err(|error| CatalogLoadError::Malformed {
-        reason: BoundedString::truncating(&error.to_string()),
-    })?;
-    let Some(object) = value.as_object_mut() else {
-        return Err(CatalogLoadError::Malformed {
-            reason: BoundedString::truncating("a model entry did not encode as an object"),
-        });
-    };
-    object.remove("receipt");
-    let bytes = to_jcs_bytes(&value).map_err(|error| CatalogLoadError::Malformed {
+    let bytes = to_jcs_bytes(entry).map_err(|error| CatalogLoadError::Malformed {
         reason: BoundedString::truncating(&error.to_string()),
     })?;
     Ok(aex_wire::ContentHash::of(&bytes))

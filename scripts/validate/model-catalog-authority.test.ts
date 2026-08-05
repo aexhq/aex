@@ -23,25 +23,38 @@ const terraformStatementActions = (source: string, sid: string): readonly string
 };
 
 describe("protected model-catalog authority", () => {
-  test("the manual workflow consumes reviewed metadata and never installs bindings", () => {
+  test("the protected publisher consumes only reviewed static compatibility metadata", () => {
     const source = read(".github/workflows/model-catalog-publish.yml");
     const workflow = Bun.YAML.parse(source) as { readonly on: any; readonly jobs: Record<string, any> };
     const inputs = workflow.on.workflow_dispatch.inputs;
     const job = workflow.jobs.publish;
 
     expect(Object.keys(inputs).sort()).toEqual([
-      "catalog_document_path",
-      "catalog_document_sha256",
+      "catalog_source_path",
+      "catalog_source_sha256",
       "source_sha"
     ]);
-    expect(workflow.on).not.toHaveProperty("push");
+    expect(workflow.on.push).toEqual({
+      branches: ["main"],
+      paths: ["release/model-catalog/*.source.json"]
+    });
     expect(workflow.on).not.toHaveProperty("schedule");
     expect(job.environment).toBe("aex-model-catalog-publisher");
     expect(job.permissions).toEqual({ contents: "write", "id-token": "write" });
-    expect(source).toContain('[[ "$REVIEWED_SOURCE_SHA" == "$GITHUB_SHA" ]]');
     expect(source).toContain("git ls-files --error-unmatch");
-    expect(source).toContain("release/model-catalog/");
+    expect(source).toContain("release/model-catalog/*.source.json");
+    expect(source).toContain("git diff --name-only --no-renames --diff-filter=ACMRT");
+    expect(source).toContain('generate \\\n            --source "$CATALOG_SOURCE_PATH"');
+    expect(source).toContain('validate \\\n            --source "$CATALOG_SOURCE_PATH"');
+    expect(source).toContain('--document "$PUBLISH_DIR/catalog-document.json"');
+    expect(source).toContain('--previous-collection "$PREVIOUS_COLLECTION_PATH"');
+    expect(source).toContain("AEX_MODEL_CATALOG_BINDING_JSON");
     expect(source).toContain('[[ -n "$AEX_MODEL_CATALOG_PUBLISH_CONFIRMATION" ]]');
+    expect(source.indexOf("Resolve and verify reviewed catalog source before any AWS call")).toBeLessThan(
+      source.indexOf("aws-actions/configure-aws-credentials")
+    );
+    expect(source).not.toMatch(/qualification|DEEPSEEK|provider/i);
+    expect(source).not.toContain("gh attestation verify");
     expect(source).not.toContain("gh variable set");
     expect(source).not.toContain("gh secret set");
     expect(source).not.toContain("--clobber");
@@ -59,22 +72,18 @@ describe("protected model-catalog authority", () => {
     expect(source).toContain("aws kms sign --key-id");
     expect(source).toContain("--signing-algorithm ECDSA_SHA_256 --message-type DIGEST");
     expect(source).toContain('--message "fileb://$PWD/$PUBLISH_DIR/message.digest"');
-    expect(source).toContain("assemble-genesis");
+    expect(source).toContain('aex-model-catalog-publisher" assemble');
     expect(source).toContain("gh release create");
     expect(source).toContain("--draft --prerelease");
     expect(source).toContain("gh release download");
     expect(source).toContain("cmp --silent");
     expect(source).toContain("gh release edit");
     expect(source).toContain("model-catalog-collection-${collection_digest#sha256:}.json");
-    expect(source).toContain("aex.model-catalog-repository-bindings.v1");
-    for (const variable of [
-      "AEX_MODEL_CATALOG_TRUST_ROOTS_JSON",
-      "AEX_MODEL_CATALOG_TRUST_ROOTS_SHA256",
-      "AEX_MODEL_CATALOG_COLLECTION_URI",
-      "AEX_MODEL_CATALOG_COLLECTION_SHA256"
-    ]) {
-      expect(source).toContain(variable);
-    }
+    expect(source).toContain("aex.model-catalog-build-binding.v1");
+    expect(source).toContain("model-catalog-build-binding-${build_binding_digest#sha256:}.json");
+    expect(source).toContain("atomically replacing AEX_MODEL_CATALOG_BINDING_JSON");
+    expect(source).not.toContain("AEX_MODEL_CATALOG_TRUST_ROOTS_JSON");
+    expect(source).not.toContain("AEX_MODEL_CATALOG_COLLECTION_URI");
   });
 
   test("the reusable Terraform module creates only one dedicated signer key and role", () => {

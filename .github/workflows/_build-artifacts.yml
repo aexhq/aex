@@ -150,26 +150,41 @@ jobs:
           digest=$(jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))' <<<"$identity")
           echo "AEX_TOOL_CATALOG_SHA256=$digest" >> "$GITHUB_ENV"
 
-      - name: Acquire the exact signed model-catalog collection
+      - name: Acquire the last-good signed model-catalog binding
         if: ${{ matrix.name == 'brain-mux' }}
         env:
-          AEX_MODEL_CATALOG_COLLECTION_URI: ${{ vars.AEX_MODEL_CATALOG_COLLECTION_URI }}
-          AEX_MODEL_CATALOG_COLLECTION_SHA256: ${{ vars.AEX_MODEL_CATALOG_COLLECTION_SHA256 }}
+          AEX_MODEL_CATALOG_BINDING_JSON: ${{ vars.AEX_MODEL_CATALOG_BINDING_JSON }}
         run: |
           set -euo pipefail
-          uri="${AEX_MODEL_CATALOG_COLLECTION_URI:-}"
-          digest="${AEX_MODEL_CATALOG_COLLECTION_SHA256:-}"
-          if [[ -z "$uri" && -z "$digest" ]]; then
+          binding="${AEX_MODEL_CATALOG_BINDING_JSON:-}"
+          if [[ -z "$binding" ]]; then
             exit 0
           fi
-          [[ -n "$uri" && -n "$digest" ]] || {
-            echo "model-catalog collection URI and digest must be supplied together" >&2
+          (( ${#binding} <= 49152 )) || {
+            echo "model-catalog build binding exceeds the repository-variable bound" >&2
             exit 21
           }
-          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
-            echo "model-catalog collection digest is not a lowercase sha256 identity" >&2
+          canonical_binding=$(jq -cS . <<<"$binding")
+          [[ "$binding" == "$canonical_binding" ]] || {
+            echo "model-catalog build binding is not canonical compact JSON" >&2
             exit 21
           }
+          jq -e '
+            type == "object" and
+            keys == ["collectionSha256", "collectionUri", "schema", "trustRootsJson", "trustRootsSha256"] and
+            .schema == "aex.model-catalog-build-binding.v1" and
+            (.collectionUri | type == "string") and
+            (.collectionSha256 | type == "string" and test("^sha256:[0-9a-f]{64}$")) and
+            (.trustRootsJson | type == "string" and length > 0) and
+            (.trustRootsSha256 | type == "string" and test("^sha256:[0-9a-f]{64}$"))
+          ' <<<"$binding" >/dev/null || {
+            echo "model-catalog build binding has an invalid or open shape" >&2
+            exit 21
+          }
+          uri=$(jq -er .collectionUri <<<"$binding")
+          digest=$(jq -er .collectionSha256 <<<"$binding")
+          roots_json=$(jq -er .trustRootsJson <<<"$binding")
+          roots_digest=$(jq -er .trustRootsSha256 <<<"$binding")
           expected_prefix="https://github.com/${GITHUB_REPOSITORY}/releases/download/"
           [[ "$uri" == "$expected_prefix"* ]] || {
             echo "model-catalog collection URI must be an immutable release asset in this repository" >&2
@@ -181,6 +196,16 @@ jobs:
           }
           collection_file=".tmp/model-catalog/collection.json"
           mkdir -p "$(dirname "$collection_file")"
+          roots_file=".tmp/model-catalog/trust-roots.json"
+          printf '%s' "$roots_json" > "$roots_file"
+          [[ "$roots_json" == "$(jq -cS . "$roots_file")" ]] || {
+            echo "model-catalog trust roots are not canonical compact JSON" >&2
+            exit 21
+          }
+          [[ "sha256:$(sha256sum "$roots_file" | cut -d' ' -f1)" == "$roots_digest" ]] || {
+            echo "model-catalog trust-root digest does not match the atomic binding" >&2
+            exit 21
+          }
           curl --fail --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
             --max-time 60 --max-filesize 67108864 \
             --output "$collection_file" "$uri"
@@ -189,14 +214,16 @@ jobs:
             echo "downloaded model-catalog collection digest does not match its release binding" >&2
             exit 21
           }
-          echo "AEX_MODEL_CATALOG_COLLECTION_FILE=$collection_file" >> "$GITHUB_ENV"
+          {
+            echo "AEX_MODEL_CATALOG_TRUST_ROOTS_JSON=$roots_json"
+            echo "AEX_MODEL_CATALOG_TRUST_ROOTS_SHA256=$roots_digest"
+            echo "AEX_MODEL_CATALOG_COLLECTION_URI=$uri"
+            echo "AEX_MODEL_CATALOG_COLLECTION_SHA256=$digest"
+            echo "AEX_MODEL_CATALOG_COLLECTION_FILE=$collection_file"
+          } >> "$GITHUB_ENV"
 
       - name: Print the recipe
         id: recipe
-        env:
-          AEX_MODEL_CATALOG_TRUST_ROOTS_JSON: ${{ vars.AEX_MODEL_CATALOG_TRUST_ROOTS_JSON }}
-          AEX_MODEL_CATALOG_TRUST_ROOTS_SHA256: ${{ vars.AEX_MODEL_CATALOG_TRUST_ROOTS_SHA256 }}
-          AEX_MODEL_CATALOG_COLLECTION_SHA256: ${{ vars.AEX_MODEL_CATALOG_COLLECTION_SHA256 }}
         run: |
           set -euo pipefail
           mkdir -p "$RELEASE_DIR"

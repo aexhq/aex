@@ -1,17 +1,22 @@
-# Reviewed model-catalog metadata
+# Reviewed model-catalog compatibility sources
 
 This directory is the only repository source accepted by the protected
-model-catalog publisher. A publication request names one tracked canonical JSON
-`CatalogDocument` here and its exact SHA-256. The workflow checks both identities
-at the reviewed main commit before it assumes AWS credentials.
+model-catalog publisher. Each immutable `*.source.json` records reviewed static
+compatibility metadata: the provider-native model identity and the closed
+capabilities and limits supported by the current adapter/runtime contract.
 
-No catalog document is checked in yet. The first one must be built from real
-provider-conformance receipts and reviewed exact provider-native model ids. Do
-not copy fixture ids, model-list responses, documentation examples, or guessed
-slugs into this directory. Staged entries cannot make `brain-mux` serviceable,
-and the publisher refuses a document without at least one receipt-backed
-`Active` entry.
+The publisher validates the tracked source identity, uses the repository-owned
+generator to create the canonical signed document, and independently validates
+the source/document pair before obtaining AWS credentials. Provider model-list
+responses, live health observations, qualification artifacts, and guessed
+model slugs are not publication inputs.
 
-Documents are immutable review inputs. A correction or later revision receives
-a new file and source commit; it never rewrites the document named by an
-existing signed collection.
+Merging one changed `*.source.json` to `main` starts the protected publication
+lane; exact manual dispatch remains available. A correction or revision gets a
+new source file and sequence. It never rewrites a source named by an existing
+signed collection.
+
+Publication creates an immutable candidate only. It does not update the
+repository's `AEX_MODEL_CATALOG_BINDING_JSON`; until that one canonical value is
+independently reviewed and atomically replaced, builds keep consuming the
+previous last-good signed collection.

@@ -3,9 +3,10 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use aex_live_model_catalog::catalog_source::{generate_static_catalog, validate_static_catalog};
 use aex_live_model_catalog::publisher::{
-    KmsPublicKeyOutput, KmsSignOutput, SignatureRecord, SigningRequest, assemble_genesis,
-    canonical_json, prepare_signing_request, record_kms_signature, trust_roots_from_kms,
+    KmsPublicKeyOutput, KmsSignOutput, SignatureRecord, SigningRequest, assemble, canonical_json,
+    prepare_signing_request, record_kms_signature, trust_roots_from_kms,
 };
 use aex_wire::types::Timestamp;
 use clap::{Parser, Subcommand};
@@ -20,6 +21,30 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Render and preflight a canonical document from reviewed static source.
+    Generate {
+        /// Exact canonical source envelope checked into the repository.
+        #[arg(long)]
+        source: PathBuf,
+        /// Explicit validation instant in Unix milliseconds.
+        #[arg(long)]
+        now_ms: i64,
+        /// Exact canonical catalog document output.
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Recompute and independently preflight one generated document.
+    Validate {
+        /// Exact canonical source envelope checked into the repository.
+        #[arg(long)]
+        source: PathBuf,
+        /// Exact canonical catalog document to validate.
+        #[arg(long)]
+        document: PathBuf,
+        /// Explicit validation instant in Unix milliseconds.
+        #[arg(long)]
+        now_ms: i64,
+    },
     /// Validate a KMS P-256 public key and emit canonical runtime trust roots.
     TrustRoots {
         /// Closed JSON projection emitted by `aws kms get-public-key`.
@@ -65,8 +90,8 @@ enum Command {
         #[arg(long)]
         out: PathBuf,
     },
-    /// Assemble and fully verify the first signed collection.
-    AssembleGenesis {
+    /// Assemble and verify a genesis or retain-all chain extension.
+    Assemble {
         /// Exact canonical catalog document.
         #[arg(long)]
         document: PathBuf,
@@ -76,6 +101,9 @@ enum Command {
         /// Canonical runtime trust-root JSON.
         #[arg(long)]
         trust_roots: PathBuf,
+        /// Previously published canonical collection; omit only for genesis.
+        #[arg(long)]
+        previous_collection: Option<PathBuf>,
         /// Explicit validation instant in Unix milliseconds.
         #[arg(long)]
         now_ms: i64,
@@ -99,8 +127,25 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
-    let adapter = aex_brain_provider_gateway::build_identity::adapter_source_digest()?;
     match cli.command {
+        Command::Generate {
+            source,
+            now_ms,
+            out,
+        } => {
+            let source = std::fs::read(source)?;
+            let generated = generate_static_catalog(&source, timestamp(now_ms)?)?;
+            std::fs::write(out, generated.canonical_document)?;
+        }
+        Command::Validate {
+            source,
+            document,
+            now_ms,
+        } => {
+            let source = std::fs::read(source)?;
+            let document = std::fs::read(document)?;
+            validate_static_catalog(&source, &document, timestamp(now_ms)?)?;
+        }
         Command::TrustRoots {
             kms_output,
             expected_kms_key_arn,
@@ -117,7 +162,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             out,
         } => {
             let document = std::fs::read(document)?;
-            let request = prepare_signing_request(&document, timestamp(now_ms)?, adapter)?;
+            let request = prepare_signing_request(&document, timestamp(now_ms)?)?;
             std::fs::write(out, canonical_json(&request)?)?;
         }
         Command::RecordSignature {
@@ -132,10 +177,11 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             let record = record_kms_signature(&request, &key_id, &expected_kms_key_arn, kms)?;
             std::fs::write(out, canonical_json(&record)?)?;
         }
-        Command::AssembleGenesis {
+        Command::Assemble {
             document,
             signature,
             trust_roots,
+            previous_collection,
             now_ms,
             out,
             binding_out,
@@ -143,8 +189,14 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             let document = std::fs::read(document)?;
             let signature: SignatureRecord = serde_json::from_slice(&std::fs::read(signature)?)?;
             let roots = std::fs::read(trust_roots)?;
-            let publication =
-                assemble_genesis(&document, &signature, &roots, timestamp(now_ms)?, adapter)?;
+            let previous = previous_collection.map(std::fs::read).transpose()?;
+            let publication = assemble(
+                &document,
+                &signature,
+                &roots,
+                timestamp(now_ms)?,
+                previous.as_deref(),
+            )?;
             std::fs::write(out, publication.collection)?;
             std::fs::write(binding_out, canonical_json(&publication.binding)?)?;
         }

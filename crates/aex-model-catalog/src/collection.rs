@@ -14,7 +14,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::CatalogRevision;
 use crate::catalog::{Catalog, CatalogHead, CatalogLoadError};
-use crate::document::AdapterSourceDigest;
 use crate::signature::{CatalogEnvelope, TrustedKeys};
 
 /// Closed schema discriminator for the release/session-retention contract.
@@ -127,7 +126,7 @@ pub enum CatalogCollectionError {
         /// Maximum accepted bytes.
         limit: usize,
     },
-    /// Signature, canonical-byte, chain, adapter or conformance verification failed.
+    /// Signature, canonical-byte, chain or compatibility verification failed.
     #[error("model catalog artifact {pin:?} failed verification: {source}")]
     Verification {
         /// Artifact being checked.
@@ -176,12 +175,11 @@ impl VerifiedCatalogCollection {
     /// # Errors
     ///
     /// Refuses invalid bounds, schema, signatures, content addresses, chains,
-    /// adapter identity, conformance receipts, or retained-pin coverage.
+    /// catalog compatibility metadata, or retained-pin coverage.
     pub fn load(
         bytes: &[u8],
         keys: &TrustedKeys,
         now: Timestamp,
-        adapter: AdapterSourceDigest,
     ) -> Result<Self, CatalogCollectionError> {
         if bytes.len() > MAX_CATALOG_COLLECTION_BYTES {
             return Err(CatalogCollectionError::CollectionTooLarge {
@@ -194,14 +192,13 @@ impl VerifiedCatalogCollection {
         if collection.canonical_bytes()?.as_slice() != bytes {
             return Err(CatalogCollectionError::NonCanonicalCollection);
         }
-        Self::verify(collection, keys, now, adapter)
+        Self::verify(collection, keys, now)
     }
 
     fn verify(
         collection: CatalogCollection,
         keys: &TrustedKeys,
         now: Timestamp,
-        adapter: AdapterSourceDigest,
     ) -> Result<Self, CatalogCollectionError> {
         if collection.schema != CATALOG_COLLECTION_SCHEMA {
             return Err(CatalogCollectionError::UnsupportedSchema(collection.schema));
@@ -237,10 +234,12 @@ impl VerifiedCatalogCollection {
                     limit: MAX_CATALOG_ENVELOPE_BYTES,
                 });
             }
-            let catalog = Catalog::load(&artifact.envelope, keys, now, head.as_ref(), adapter)
-                .map_err(|source| CatalogCollectionError::Verification {
-                    pin: artifact.pin,
-                    source,
+            let catalog =
+                Catalog::load(&artifact.envelope, keys, now, head.as_ref()).map_err(|source| {
+                    CatalogCollectionError::Verification {
+                        pin: artifact.pin,
+                        source,
+                    }
                 })?;
             let actual = catalog.revision();
             if actual != artifact.pin {
@@ -280,14 +279,11 @@ impl VerifiedCatalogCollection {
             .iter()
             .filter(|entry| {
                 admission
-                    .admit(
-                        &ModelSelection {
-                            credential_id: None,
-                            provider: entry.provider,
-                            model: entry.model.as_str().to_owned(),
-                        },
-                        now,
-                    )
+                    .admit(&ModelSelection {
+                        credential_id: None,
+                        provider: entry.provider,
+                        model: entry.model.as_str().to_owned(),
+                    })
                     .is_ok()
             })
             .count();

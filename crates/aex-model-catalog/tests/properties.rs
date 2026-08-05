@@ -13,15 +13,14 @@ use aex_model_catalog::canonical::{
     CanonicalBlock, CanonicalMessage, NormalizedUsage, ReasoningBlock, ReasoningBody,
     ReasoningToken, Role, StopReason, TextAnnotation, ToolResultPart, UsageCompleteness, seal,
 };
-use aex_model_catalog::catalog::{Catalog, CatalogHead, CatalogLoadError};
+use aex_model_catalog::catalog::{Catalog, CatalogHead, CatalogLoadError, catalog_entry_digest};
 use aex_model_catalog::document::{
-    Capability, CapabilitySet, CatalogDigest, CatalogDocument, DisableReason, EmergencyDisable,
-    EntryState, ModelEntry, ReasoningReplay,
+    CapabilitySet, CatalogDigest, CatalogDocument, Dialect, DialectRevision, DisableReason,
+    EmergencyDisable, EndpointPin, EntryState, ModelEntry, ReasoningReplay,
 };
 use aex_model_catalog::fixture;
 use aex_model_catalog::primitives::{Blake3Digest, BoundedString, ModelSlug, ToolCallId};
 use aex_model_catalog::qualified::{CatalogError, QualifiedModel};
-use aex_model_catalog::receipt::{ProbeId, ProbeOutcome};
 use aex_model_catalog::signature::{
     CatalogEnvelope, CatalogSignature, P256_PUBLIC_KEY_BYTES, SIGNING_PREFIX, SigAlg,
     SignatureError, SigningKeyId, TrustedKey, TrustedKeys, verify,
@@ -78,11 +77,7 @@ impl Publisher {
     }
 }
 
-fn adapter() -> aex_model_catalog::document::AdapterSourceDigest {
-    fixture::adapter("fixture-adapter")
-}
-
-/// The launch document: every pair `Staged`, exactly as OD-24 requires.
+/// A document whose entries are all explicitly staged.
 fn launch_document() -> CatalogDocument {
     let entries = vec![
         fixture::entry(ProviderId::Openai, "gpt-5.2", CapabilitySet::EMPTY),
@@ -106,17 +101,11 @@ fn launch_document() -> CatalogDocument {
             CapabilitySet::EMPTY,
         ),
     ];
-    fixture::document(PUBLISHER, 1, entries, now(), adapter())
+    fixture::document(PUBLISHER, 1, entries, now())
 }
 
 fn load(publisher: &Publisher, document: &CatalogDocument) -> Result<Catalog, CatalogLoadError> {
-    Catalog::load(
-        &publisher.seal(document),
-        &publisher.keys,
-        now(),
-        None,
-        adapter(),
-    )
+    Catalog::load(&publisher.seal(document), &publisher.keys, now(), None)
 }
 
 fn selection(provider: ProviderId, model: &str) -> ModelSelection {
@@ -136,11 +125,7 @@ fn mc1_a_launch_document_loads_and_admits_nothing() {
     let publisher = Publisher::new();
     let catalog = load(&publisher, &launch_document()).expect("the launch document loads");
     assert_eq!(catalog.len(), 8);
-    assert_eq!(
-        catalog.active_len(),
-        0,
-        "a fresh brain-mux admits zero models until a live receipt exists (OD-24)"
-    );
+    assert_eq!(catalog.active_len(), 0, "staged metadata admits no models");
     for provider in ProviderId::ALL {
         assert!(
             catalog
@@ -182,7 +167,7 @@ fn mc1_an_untrusted_key_cannot_publish() {
     let attacker = Publisher::new();
     let document = launch_document();
     let envelope = attacker.seal(&document);
-    let error = Catalog::load(&envelope, &publisher.keys, now(), None, adapter())
+    let error = Catalog::load(&envelope, &publisher.keys, now(), None)
         .expect_err("a foreign key must not admit a catalog");
     // The attacker signed under the same id, so the failure is a bad signature
     // against the compiled key rather than an unknown id: either way, closed.
@@ -208,7 +193,7 @@ fn mc2_a_semantically_equal_non_canonical_encoding_is_rejected() {
     assert_ne!(pretty, canonical.to_vec());
 
     let envelope = publisher.seal_bytes(bytes::Bytes::from(pretty));
-    let error = Catalog::load(&envelope, &publisher.keys, now(), None, adapter())
+    let error = Catalog::load(&envelope, &publisher.keys, now(), None)
         .expect_err("a non-canonical encoding must not load");
     assert!(matches!(error, CatalogLoadError::NotCanonical { .. }));
 }
@@ -249,7 +234,6 @@ fn mc3_a_lower_sequence_is_a_downgrade() {
         &publisher.keys,
         now(),
         Some(&active),
-        adapter(),
     )
     .expect_err("a downgrade must be refused");
     assert!(matches!(error, CatalogLoadError::Downgrade { .. }));
@@ -269,7 +253,6 @@ fn mc3_a_broken_predecessor_chain_is_refused() {
         &publisher.keys,
         now(),
         Some(&active),
-        adapter(),
     )
     .expect_err("a broken chain must be refused");
     assert!(matches!(error, CatalogLoadError::BrokenChain { .. }));
@@ -280,7 +263,6 @@ fn mc3_a_broken_predecessor_chain_is_refused() {
         &publisher.keys,
         now(),
         Some(&active),
-        adapter(),
     )
     .expect("an intact chain advances");
 }
@@ -297,7 +279,6 @@ fn mc3_a_publisher_change_is_never_automatic() {
         &publisher.keys,
         now(),
         Some(&active),
-        adapter(),
     )
     .expect_err("a publisher change must be refused");
     assert!(matches!(error, CatalogLoadError::PublisherChanged { .. }));
@@ -313,7 +294,6 @@ fn mc3_re_offering_the_active_revision_is_idempotent() {
         &publisher.keys,
         now(),
         Some(&active),
-        adapter(),
     )
     .expect("the same revision reloads");
 }
@@ -338,7 +318,6 @@ fn mc4_an_unknown_field_fails_load() {
         &publisher.keys,
         now(),
         None,
-        adapter(),
     )
     .expect_err("an unknown field must fail load");
     assert!(matches!(error, CatalogLoadError::UnknownField { .. }));
@@ -357,7 +336,6 @@ fn mc4_an_unknown_enum_member_fails_load() {
         &publisher.keys,
         now(),
         None,
-        adapter(),
     )
     .expect_err("an unknown enum member must fail load");
     match error {
@@ -397,48 +375,28 @@ fn mc4_a_wrong_schema_version_fails_load() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn mc5_the_three_time_gates_are_exact_to_the_millisecond() {
+fn mc5_not_before_is_exact_to_the_millisecond_and_has_no_expiry_horizon() {
     let publisher = Publisher::new();
     let document = launch_document();
     let envelope = publisher.seal(&document);
     let not_before = document.not_before.unix_millis();
-    let expires_at = document.expires_at.unix_millis();
-    let retired_at = document.retired_at.unix_millis();
 
-    let at_load = |millis: i64| {
-        Catalog::load(
-            &envelope,
-            &publisher.keys,
-            fixture::at(millis),
-            None,
-            adapter(),
-        )
-    };
+    let at_load =
+        |millis: i64| Catalog::load(&envelope, &publisher.keys, fixture::at(millis), None);
 
     assert!(matches!(
         at_load(not_before - 1),
         Err(CatalogLoadError::NotYetValid { .. })
     ));
     at_load(not_before).expect("valid at exactly not_before");
-    at_load(retired_at - 1).expect("valid one millisecond before retirement");
-    assert!(matches!(
-        at_load(retired_at),
-        Err(CatalogLoadError::Retired { .. })
-    ));
-
-    // Past `expires_at` the document still loads and `qualified` still resolves,
-    // but `admit` refuses: a pinned session survives, a new run does not.
-    let catalog = at_load(expires_at + 1).expect("an expired revision still loads");
+    let catalog = at_load(not_before + 10 * 365 * 24 * 60 * 60 * 1000)
+        .expect("signed compatibility metadata has no magic expiry horizon");
     let pin = selection(ProviderId::Openai, "gpt-5.2");
     catalog
         .qualified(&pin)
         .expect("committed history stays readable");
     assert!(matches!(
-        catalog.admit(&pin, fixture::at(expires_at + 1)),
-        Err(CatalogError::CatalogExpired { .. })
-    ));
-    assert!(matches!(
-        catalog.admit(&pin, fixture::at(expires_at - 1)),
+        catalog.admit(&pin),
         Err(CatalogError::UnqualifiedPair {
             state: EntryState::Staged
         }),
@@ -449,7 +407,7 @@ fn mc5_the_three_time_gates_are_exact_to_the_millisecond() {
 fn mc5_unordered_time_gates_fail_load() {
     let publisher = Publisher::new();
     let mut document = launch_document();
-    document.expires_at = fixture::at(NOW_MS - 1);
+    document.issued_at = fixture::at(NOW_MS + 1);
     let error = load(&publisher, &document).expect_err("unordered gates must fail");
     assert_eq!(error, CatalogLoadError::TimeGatesUnordered);
 }
@@ -461,7 +419,7 @@ fn mc5_unordered_time_gates_fail_load() {
 fn active_document() -> CatalogDocument {
     let mut document = launch_document();
     for entry in &mut document.entries {
-        fixture::promote(entry, adapter(), now());
+        fixture::promote(entry);
     }
     document
 }
@@ -480,7 +438,7 @@ fn mc6_a_disabled_pair_blocks_a_new_run_but_not_committed_history() {
 
     let disabled = selection(ProviderId::Openai, "gpt-5.2");
     assert_eq!(
-        catalog.admit(&disabled, now()),
+        catalog.admit(&disabled),
         Err(CatalogError::EmergencyDisabled {
             reason: DisableReason::ProviderIncident
         })
@@ -491,7 +449,7 @@ fn mc6_a_disabled_pair_blocks_a_new_run_but_not_committed_history() {
 
     let healthy = selection(ProviderId::Anthropic, "claude-opus-5");
     catalog
-        .admit(&healthy, now())
+        .admit(&healthy)
         .expect("an unaffected pair still admits");
 }
 
@@ -523,64 +481,27 @@ fn mc6_an_unsorted_disable_list_fails_load() {
 }
 
 // ---------------------------------------------------------------------------
-// MC-7 / MC-8 the receipt gate as a load invariant
+// MC-7 / MC-8 signed state and compiled compatibility metadata
 // ---------------------------------------------------------------------------
 
 #[test]
-fn mc7_an_active_entry_with_a_failing_required_probe_cannot_load() {
+fn mc7_signed_active_metadata_admits_without_live_qualification_evidence() {
     let publisher = Publisher::new();
-    let mut document = active_document();
-    let result = document.entries[0]
-        .receipt
-        .results
-        .iter_mut()
-        .find(|result| result.probe == ProbeId::P15)
-        .expect("P-15 is present");
-    result.outcome = ProbeOutcome::Fail {
-        detail: fixture::bounded("the cancel probe timed out"),
-    };
-    let error = load(&publisher, &document).expect_err("a failing probe blocks Active");
-    assert!(matches!(
-        error,
-        CatalogLoadError::ActiveWithoutReceipt {
-            probe: ProbeId::P15,
-            ..
-        }
-    ));
+    let document = active_document();
+    let catalog = load(&publisher, &document).expect("signed Active metadata loads");
+    catalog
+        .admit(&selection(ProviderId::Openai, "gpt-5.2"))
+        .expect("provider availability is not an admission authority");
 }
 
 #[test]
-fn mc7_a_capability_without_its_proving_probe_cannot_load() {
-    let publisher = Publisher::new();
-    let mut document = active_document();
-    let entry = &mut document.entries[0];
-    entry.capabilities = CapabilitySet::from_slice(&[Capability::Tools]);
-    let result = entry
-        .receipt
-        .results
-        .iter_mut()
-        .find(|result| result.probe == ProbeId::P04)
-        .expect("P-04 is present");
-    result.outcome = ProbeOutcome::NotApplicable {
-        capability: Capability::Tools,
-    };
-    let error = load(&publisher, &document).expect_err("an unproved capability blocks Active");
-    match error {
-        CatalogLoadError::CapabilityWithoutProbe { capability, .. } => {
-            assert_eq!(capability.as_str(), "tools");
-        }
-        other => panic!("expected CapabilityWithoutProbe, got {other:?}"),
-    }
-}
-
-#[test]
-fn mc7_a_staged_entry_never_admits_however_good_its_receipt() {
+fn mc7_a_staged_entry_never_admits() {
     let publisher = Publisher::new();
     let mut document = active_document();
     document.entries[0].state = EntryState::Staged;
     let catalog = load(&publisher, &document).expect("load");
     assert_eq!(
-        catalog.admit(&selection(ProviderId::Openai, "gpt-5.2"), now()),
+        catalog.admit(&selection(ProviderId::Openai, "gpt-5.2")),
         Err(CatalogError::UnqualifiedPair {
             state: EntryState::Staged
         })
@@ -594,7 +515,7 @@ fn mc7_a_deprecated_entry_never_admits() {
     document.entries[0].state = EntryState::Deprecated;
     let catalog = load(&publisher, &document).expect("load");
     assert_eq!(
-        catalog.admit(&selection(ProviderId::Openai, "gpt-5.2"), now()),
+        catalog.admit(&selection(ProviderId::Openai, "gpt-5.2")),
         Err(CatalogError::UnqualifiedPair {
             state: EntryState::Deprecated
         })
@@ -602,64 +523,63 @@ fn mc7_a_deprecated_entry_never_admits() {
 }
 
 #[test]
-fn mc7_a_stale_receipt_refuses_admission() {
-    let publisher = Publisher::new();
-    let document = active_document();
-    let catalog = load(&publisher, &document).expect("load");
-    let expires = catalog.document().entries[0].receipt.expires_at;
-    let pair = selection(
-        catalog.document().entries[0].provider,
-        catalog.document().entries[0].model.as_str(),
-    );
-    catalog
-        .admit(&pair, fixture::at(expires.unix_millis() - 1))
-        .expect("fresh evidence admits");
-    assert_eq!(
-        catalog.admit(&pair, expires),
-        Err(CatalogError::ReceiptExpired {
-            expires_at: expires
-        })
-    );
-}
-
-#[test]
-fn mc8_a_changed_adapter_digest_invalidates_every_receipt_at_load() {
-    let publisher = Publisher::new();
-    let document = active_document();
-    let error = Catalog::load(
-        &publisher.seal(&document),
-        &publisher.keys,
-        now(),
-        None,
-        fixture::adapter("an-edited-adapter"),
-    )
-    .expect_err("an edited adapter must refuse the whole document");
-    assert!(matches!(error, CatalogLoadError::AdapterMismatch { .. }));
-}
-
-#[test]
-fn mc8_a_receipt_for_different_entry_bytes_cannot_load() {
+fn mc8_an_unimplemented_dialect_fails_load() {
     let publisher = Publisher::new();
     let mut document = active_document();
-    document.entries[0].limits.max_output_tokens = document.entries[0]
-        .limits
-        .max_output_tokens
-        .saturating_sub(1);
-    let error = load(&publisher, &document)
-        .expect_err("a receipt cannot admit policy bytes it did not prove");
+    document.entries[0].dialect = Dialect::GeminiInteractions;
+    let error = load(&publisher, &document).expect_err("reserved dialect must fail");
     assert!(matches!(
         error,
-        CatalogLoadError::ReceiptEntryMismatch { .. }
+        CatalogLoadError::DialectNotImplemented { .. }
     ));
 }
 
 #[test]
-fn mc8_an_incomplete_receipt_cannot_load_even_when_staged() {
+fn mc8_a_dialect_for_another_provider_fails_load() {
     let publisher = Publisher::new();
-    let mut document = launch_document();
-    document.entries[0].receipt.results.pop();
-    let error = load(&publisher, &document).expect_err("an incomplete receipt must fail load");
-    assert!(matches!(error, CatalogLoadError::IncompleteReceipt { .. }));
+    let mut document = active_document();
+    document.entries[0].dialect = Dialect::AnthropicMessages;
+    let error = load(&publisher, &document).expect_err("mismatched dialect must fail");
+    assert!(matches!(
+        error,
+        CatalogLoadError::DialectProviderMismatch { .. }
+    ));
+}
+
+#[test]
+fn mc8_an_endpoint_for_another_provider_fails_load() {
+    let publisher = Publisher::new();
+    let mut document = active_document();
+    document.entries[0].endpoint = EndpointPin::AnthropicApi;
+    let error = load(&publisher, &document).expect_err("mismatched endpoint must fail");
+    assert!(matches!(
+        error,
+        CatalogLoadError::EndpointProviderMismatch { .. }
+    ));
+}
+
+#[test]
+fn mc8_an_unsupported_dialect_revision_fails_load() {
+    let publisher = Publisher::new();
+    let mut document = active_document();
+    document.entries[0].dialect_revision = DialectRevision(2);
+    let error = load(&publisher, &document).expect_err("unsupported revision must fail");
+    assert!(matches!(
+        error,
+        CatalogLoadError::DialectRevisionUnsupported {
+            found: DialectRevision(2),
+            ..
+        }
+    ));
+}
+
+#[test]
+fn mc8_external_assurance_identity_changes_with_compatibility_metadata() {
+    let mut entry = fixture::entry(ProviderId::Openai, "gpt-5.2", CapabilitySet::EMPTY);
+    let before = catalog_entry_digest(&entry).expect("entry digest");
+    entry.limits.max_output_tokens -= 1;
+    let after = catalog_entry_digest(&entry).expect("entry digest");
+    assert_ne!(before, after);
 }
 
 #[test]
@@ -725,7 +645,7 @@ fn mc10_a_three_hundred_entry_document_loads_and_looks_up_by_binary_search() {
             CapabilitySet::EMPTY,
         ));
     }
-    let document = fixture::document(PUBLISHER, 1, entries, now(), adapter());
+    let document = fixture::document(PUBLISHER, 1, entries, now());
     let catalog = load(&publisher, &document).expect("a 300-entry document loads");
     assert_eq!(catalog.len(), 300);
 
@@ -776,7 +696,7 @@ fn s18_every_catalog_failure_carries_its_wire_code() {
     staged.entries[0].state = EntryState::Staged;
     let catalog = load(&publisher, &staged).expect("load");
     let unqualified = catalog
-        .admit(&selection(ProviderId::Openai, "gpt-5.2"), now())
+        .admit(&selection(ProviderId::Openai, "gpt-5.2"))
         .expect_err("a staged pair never admits");
     assert_eq!(
         unqualified.error_code(),
@@ -807,7 +727,6 @@ fn the_anthropic_spelling_has_no_alias() {
 fn qualified(publisher: &Publisher, replay: ReasoningReplay) -> QualifiedModel {
     let mut document = active_document();
     document.entries[0].reasoning.replay = replay;
-    fixture::bind_receipt(&mut document.entries[0]);
     let catalog = load(publisher, &document).expect("load");
     let entry = &catalog.document().entries[0];
     catalog

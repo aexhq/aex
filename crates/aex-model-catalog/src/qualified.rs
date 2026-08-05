@@ -8,7 +8,6 @@ use std::sync::Arc;
 
 use aex_wire::ErrorCode;
 use aex_wire::provider::ProviderId;
-use aex_wire::types::Timestamp;
 
 use crate::document::{
     CapabilitySet, Dialect, DialectRevision, DisableReason, DurableOperationSupport, EndpointPin,
@@ -76,7 +75,7 @@ impl QualifiedModel {
         self.entry.dialect
     }
 
-    /// The dialect revision the receipt was earned against.
+    /// The exact dialect revision implemented by the running binary.
     #[must_use]
     pub fn dialect_revision(&self) -> DialectRevision {
         self.entry.dialect_revision
@@ -156,24 +155,6 @@ pub enum CatalogError {
         /// Why it was disabled.
         reason: DisableReason,
     },
-    /// The pair's conformance receipt has gone stale.
-    #[error("the conformance receipt expired at {expires_at:?}")]
-    ReceiptExpired {
-        /// When the receipt went stale.
-        expires_at: Timestamp,
-    },
-    /// The catalog revision admits no new sessions.
-    #[error("the catalog revision expired at {expires_at:?}")]
-    CatalogExpired {
-        /// When the revision stopped admitting.
-        expires_at: Timestamp,
-    },
-    /// The catalog revision is past its retirement and cannot serve a new run.
-    #[error("the catalog revision retired at {retired_at:?}")]
-    CatalogRetired {
-        /// When the revision retired.
-        retired_at: Timestamp,
-    },
 }
 
 impl CatalogError {
@@ -183,11 +164,9 @@ impl CatalogError {
         match self {
             Self::UnknownProvider { .. } => ErrorCode::UnknownProvider,
             Self::UnknownModel { .. } => ErrorCode::UnknownModel,
-            Self::UnqualifiedPair { .. }
-            | Self::EmergencyDisabled { .. }
-            | Self::ReceiptExpired { .. }
-            | Self::CatalogExpired { .. }
-            | Self::CatalogRetired { .. } => ErrorCode::UnqualifiedProviderModel,
+            Self::UnqualifiedPair { .. } | Self::EmergencyDisabled { .. } => {
+                ErrorCode::UnqualifiedProviderModel
+            }
         }
     }
 }
