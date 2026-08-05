@@ -40,7 +40,7 @@ describe("public delivery ownership", () => {
     };
     const options = dispatch.inputs?.suite?.options ?? [];
 
-    expect(options).toEqual(["full-graph", "supply-chain", "deep-risk", "cold-rebuild"]);
+    expect(options).toEqual(["full-graph", "deep-risk", "cold-rebuild"]);
     expect(workflow.jobs).not.toHaveProperty("plane");
   });
 });

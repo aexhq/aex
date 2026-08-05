@@ -254,11 +254,12 @@ impl Fixture {
             self.claims.clone(),
             CertificationFiles {
                 artifact: Some(&self.artifact),
-                sbom: &self.sbom,
-                license_inventory: &self.licenses,
-                vulnerability_verdict: &self.vulnerabilities,
+                sbom: Some(&self.sbom),
+                license_inventory: Some(&self.licenses),
+                vulnerability_verdict: Some(&self.vulnerabilities),
                 provenance_bundle: &self.provenance,
                 signature_bundle: None,
+                defer_supply_chain: false,
             },
             &self.receipts,
             &freshness(),
@@ -272,6 +273,76 @@ fn certification_claims_omit_the_file_backed_provenance_digest() {
     let value = serde_json::to_value(&fixture.claims).unwrap();
     assert!(value["provenance"].get("bundleDigest").is_none());
     serde_json::from_value::<CertificationClaims>(value).unwrap();
+}
+
+#[test]
+fn startup_certification_defers_scanners_without_deferring_publication() {
+    let fixture = Fixture::new();
+    let mut claims = serde_json::to_value(&fixture.claims).unwrap();
+    let object = claims.as_object_mut().unwrap();
+    for field in ["sbomFormat", "sbomUri", "licenses", "vulnerabilities"] {
+        object.remove(field);
+    }
+    let claims = serde_json::from_value::<CertificationClaims>(claims).unwrap();
+    let envelope = certify(
+        fixture.draft.clone(),
+        &fixture.unit,
+        claims.clone(),
+        CertificationFiles {
+            artifact: Some(&fixture.artifact),
+            sbom: None,
+            license_inventory: None,
+            vulnerability_verdict: None,
+            provenance_bundle: &fixture.provenance,
+            signature_bundle: None,
+            defer_supply_chain: true,
+        },
+        &fixture.receipts,
+        &freshness(),
+    )
+    .unwrap();
+
+    assert!(envelope.supply_chain_deferred);
+    assert_eq!(envelope.sbom.format, "deferred-startup");
+    assert_eq!(envelope.licenses.verdict, "deferred-startup");
+    assert_eq!(envelope.vulnerabilities.scanner, "deferred-startup");
+    envelope.verify(Some(&fixture.artifact), false).unwrap();
+    let mut contradictory = envelope.clone();
+    contradictory.sbom.format = "cyclonedx-1.6".to_owned();
+    let contradictory = contradictory.seal().unwrap();
+    let error = contradictory
+        .verify(Some(&fixture.artifact), false)
+        .unwrap_err();
+    assert!(
+        error
+            .rules()
+            .contains(&"envelope-deferred-supply-chain-shape")
+    );
+
+    let receipts = fixture
+        .receipts
+        .iter()
+        .filter(|receipt| receipt.class != "unit")
+        .cloned()
+        .collect::<Vec<_>>();
+    let error = certify(
+        fixture.draft,
+        &fixture.unit,
+        claims,
+        CertificationFiles {
+            artifact: Some(&fixture.artifact),
+            sbom: None,
+            license_inventory: None,
+            vulnerability_verdict: None,
+            provenance_bundle: &fixture.provenance,
+            signature_bundle: None,
+            defer_supply_chain: true,
+        },
+        &receipts,
+        &freshness(),
+    )
+    .unwrap_err();
+    assert!(error.rules().contains(&"certify-receipt-missing"));
 }
 
 #[test]
@@ -529,7 +600,7 @@ fn a_deferral_binds_exact_available_receipts_and_names_every_missing_class() {
             .collect::<Vec<_>>(),
         vec!["lint", "unit"]
     );
-    assert!(deferral.missing_receipts.contains(&"sbom".to_owned()));
+    assert!(!deferral.missing_receipts.contains(&"sbom".to_owned()));
     assert!(deferral.missing_receipts.contains(&"contract".to_owned()));
     assert!(!deferral.missing_receipts.contains(&"unit".to_owned()));
 }

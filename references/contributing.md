@@ -67,7 +67,7 @@ declared it would run against the receipts it actually produced.
 | --- | --- |
 | [`pr`](../.github/workflows/pr.yml) | Pull request and merge queue. Repository gates plus the routed Rust, TypeScript, Terraform, and artifact lanes. No cloud, registry, publish, or signing credential reaches it. |
 | [`main`](../.github/workflows/main.yml) | Protected `main` build and publication. Mints immutable bytes and a composition manifest; applies nothing to any plane. |
-| [`assurance`](../.github/workflows/assurance.yml) | Scheduled full-graph, supply-chain, deep-risk, and cold-rebuild suites. It has no hosted-plane input or credentials. |
+| [`assurance`](../.github/workflows/assurance.yml) | Scheduled full-graph, deep-risk, and cold-rebuild suites. It has no hosted-plane input or credentials. |
 
 Publication is not deployment. `main` produces artifacts and a manifest;
 the private `aexhq/platform` repository is the sole manual hosted-release

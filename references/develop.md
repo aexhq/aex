@@ -66,15 +66,15 @@ provider monitoring is not a publication input.
 
 ## Main-push artifact evidence
 
-Pull requests build and package candidates without publishing. The protected
-main workflow additionally preserves exact GitHub provenance, runs the pinned
-artifact scanners, publishes content-addressed unit/SBOM/signature assets, and
-certifies all 39 deployable rows before composition. `release/units.toml`
-declares the required receipt classes and `release/semantic-receipts.json`
-declares the real package selections for semantic classes. These registries
-must stay exhaustive together. A missing producer, missing receipt, empty SBOM,
-license denial, high/critical advisory, package mismatch, or provenance failure
-is a failed main push, not a certification deferral.
+Pull requests build and package affected candidates without publishing. The
+protected main workflow preserves exact GitHub provenance, publishes
+content-addressed unit/signature assets, and certifies all 39 deployable rows
+before composition. `release/units.toml` declares the required build/test
+receipt classes and `release/semantic-receipts.json` declares the real package
+selections for semantic classes. Missing producers, build/test receipts,
+package identity, provenance, signatures, or model-catalog bindings remain
+publication failures. Supply-chain scanners and their derived receipt classes
+are explicitly deferred during startup; see [`backlog.md`](backlog.md).
 
 ## Live user tests
 

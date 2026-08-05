@@ -52,7 +52,7 @@ describe("public main-push publication", () => {
     const buildJob = workflow.jobs.build;
     const certification = job.steps.find(
       (step: { readonly name?: string }) =>
-        step.name === "Produce artifact-bound supply-chain evidence and certify every unit"
+        step.name === "Certify exact build and publication identities"
     );
     const certifiedUpload = job.steps.find(
       (step: { readonly name?: string }) => step.name === "Upload the exact certified artifact inventory"
@@ -160,8 +160,13 @@ describe("public main-push publication", () => {
     expect(source).toContain("Download every same-run validation receipt");
     expect(source).toContain("find validation-receipts -type f -name '*.json' -print0");
     expect(source).not.toContain("merge-multiple: true");
-    expect(certification?.run).toContain("syft scan");
-    expect(certification?.run).toContain("grype");
+    expect(source).not.toContain("cargo deny");
+    expect(source).not.toContain("cargo audit");
+    expect(source).not.toContain("bun audit");
+    expect(source).not.toContain("syft scan");
+    expect(source).not.toContain("grype");
+    expect(source).not.toContain("--pattern 'sbom-*'");
+    expect(certification?.run).toContain("--defer-supply-chain");
     expect(certification?.run).toContain("evidence new-check");
     expect(certification?.run).toContain("evidence bind-artifact");
     expect(certification?.run).toContain("artifact certify");

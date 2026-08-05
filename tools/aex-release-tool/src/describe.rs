@@ -418,6 +418,7 @@ fn build_envelope(
             unapproved_high: 0,
             approved_exceptions: Vec::new(),
         },
+        supply_chain_deferred: false,
         provenance: Provenance {
             predicate_type: "https://slsa.dev/provenance/v1".to_owned(),
             bundle_digest: String::new(),

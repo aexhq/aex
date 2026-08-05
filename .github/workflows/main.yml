@@ -60,14 +60,6 @@ jobs:
           save-if: false
           shared-key: gates
 
-      - name: Install exact cargo-deny
-        run: |
-          set -euo pipefail
-          if ! cargo-deny --version 2>/dev/null | grep -Fxq 'cargo-deny 0.20.2'; then
-            cargo install --locked --force cargo-deny@0.20.2
-          fi
-          cargo-deny --version | grep -Fx 'cargo-deny 0.20.2'
-
       - name: Format
         run: cargo fmt --all -- --check
 
@@ -85,9 +77,6 @@ jobs:
 
       - name: Terraform packages no code
         run: cargo run --locked --release -p aex-release-tool -- policy terraform
-
-      - name: Supply chain
-        run: cargo deny --all-features check
 
       - name: Secret scan
         run: bash scripts/cicd/scan-secrets.sh

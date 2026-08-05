@@ -440,13 +440,16 @@ enum ArtifactCommand {
         file: Option<PathBuf>,
         /// `CycloneDX` JSON SBOM.
         #[arg(long)]
-        sbom: PathBuf,
+        sbom: Option<PathBuf>,
         /// Complete licence inventory from the passing scan.
         #[arg(long)]
-        license_inventory: PathBuf,
+        license_inventory: Option<PathBuf>,
         /// Complete vulnerability verdict from the passing artifact scan.
         #[arg(long)]
-        vulnerability_verdict: PathBuf,
+        vulnerability_verdict: Option<PathBuf>,
+        /// Defer scanner-derived supply-chain evidence outside the startup release path.
+        #[arg(long)]
+        defer_supply_chain: bool,
         /// Official GitHub attestation bundle.
         #[arg(long)]
         provenance_bundle: PathBuf,
@@ -1501,6 +1504,7 @@ fn run_artifact_certify(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Re
         sbom,
         license_inventory,
         vulnerability_verdict,
+        defer_supply_chain,
         provenance_bundle,
         signature_bundle,
         receipts,
@@ -1528,11 +1532,12 @@ fn run_artifact_certify(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Re
         claims,
         aex_release_tool::certify::CertificationFiles {
             artifact: file.as_deref(),
-            sbom,
-            license_inventory,
-            vulnerability_verdict,
+            sbom: sbom.as_deref(),
+            license_inventory: license_inventory.as_deref(),
+            vulnerability_verdict: vulnerability_verdict.as_deref(),
             provenance_bundle,
             signature_bundle: signature_bundle.as_deref(),
+            defer_supply_chain: *defer_supply_chain,
         },
         &receipts,
         &freshness,
@@ -2296,15 +2301,9 @@ fn run_admit(cli: &Cli, root: &Path, args: &AdmitArgs) -> Result<()> {
 fn required_receipts_by_kind(manifest: &CompositionManifest) -> BTreeMap<String, Vec<String>> {
     let mut required: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for entry in manifest.units.values() {
-        required.entry(entry.kind.clone()).or_insert_with(|| {
-            vec![
-                "unit".to_owned(),
-                "lint".to_owned(),
-                "sbom".to_owned(),
-                "license".to_owned(),
-                "vulnerability".to_owned(),
-            ]
-        });
+        required
+            .entry(entry.kind.clone())
+            .or_insert_with(|| vec!["unit".to_owned(), "lint".to_owned()]);
     }
     required
 }
