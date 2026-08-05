@@ -5,12 +5,13 @@ use aex_internal_contracts::assertion::{
     AssertionAudience, AssertionError, AssertionRefusal, AssertionResponse, CredentialDigest,
     IssuedAssertion, MAX_ASSERTION_TEXT_LEN, ResolveSessionForWorkspace, ResolveWorkspaceKey,
 };
+use aex_internal_contracts::control::{RegionalControlEnvelope, RegionalControlRequest};
 use aex_internal_contracts::journal::JournalEntryKind;
 use aex_internal_contracts::money::{MICROUSD_PER_CENT, Microusd, MicrousdDelta, MoneyError};
 use aex_internal_contracts::outbox::{OutboxEvent, RunStatus, SessionRevision, UsageClosureId};
 use aex_internal_contracts::usage::{AuthorityKind, FactAuthority, FactId, Meter, ServiceTime};
 use aex_wire::Uuid7;
-use aex_wire::ids::{PrefixedId, RunId, SessionId, UserId};
+use aex_wire::ids::{OrganizationId, PrefixedId, RunId, SessionId, UserId, WorkspaceId};
 use aex_wire::types::{Cents, DecimalU128, Region, Timestamp};
 use base64::Engine as _;
 
@@ -27,6 +28,25 @@ fn timestamp(millis: i64) -> Timestamp {
 /// second constructor here would be a second definition of the artifact.
 fn encoded_envelope() -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([7_u8; 323])
+}
+
+#[test]
+fn the_regional_control_payload_round_trips_at_the_contract_boundary() {
+    let request = RegionalControlEnvelope {
+        schema_version: SchemaVersion::V1,
+        request_id: Uuid7::compose(1, [3; 10]),
+        payload: RegionalControlRequest::ProvisionWorkspace {
+            workspace: WorkspaceId::from_uuid7(Uuid7::compose(1, [1; 10])),
+            organization: OrganizationId::from_uuid7(Uuid7::compose(1, [2; 10])),
+            region: Region::EuWest1,
+            fence: 7,
+            intent_hash: "ab".repeat(32),
+        },
+    };
+    let bytes = serde_json::to_vec(&request).expect("request encodes");
+    let decoded: RegionalControlEnvelope<RegionalControlRequest> =
+        serde_json::from_slice(&bytes).expect("request decodes");
+    assert_eq!(decoded, request);
 }
 
 #[test]

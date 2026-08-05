@@ -739,11 +739,6 @@ version = "0.1.0"
 [[package]]
 name = "aex-live-regional-control"
 version = "0.1.0"
-dependencies = [
- "aex-internal-contracts",
- "aex-wire",
- "serde_json",
-]
 
 [[package]]
 name = "aex-live-regional-observation-api"

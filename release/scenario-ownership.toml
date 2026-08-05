@@ -6,7 +6,8 @@
 #
 # A deployable observed by no scenario fails `graph verify`. Observation alone
 # is not runnable evidence: each scenario must also declare `package` as a
-# namespaced Cargo/npm graph node and `target` as an exact `aex.targets` key,
+# namespaced Cargo/npm graph node and `target` as an exact `aex.targets` key
+# mapped to the `e2e` layer,
 # and that package must claim the scenario in `aex.scenarios`. A scenario whose
 # production composition is not runnable instead carries an exact non-empty
 # `deferred` reason. Deferral is architecture debt, never evidence: it is shown

@@ -190,6 +190,13 @@
   },
   {
     "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-regional-control",
+    "owner": "regional-services",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "regional-services owns this live companion; live evidence requires the private regional deployment composition"
+  },
+  {
+    "reason_class": "awaiting_owner",
     "subject": "tests/live/aex-live-regional-observation-api",
     "owner": "observations-usage",
     "blocking_rule": "aex-empty-unit",

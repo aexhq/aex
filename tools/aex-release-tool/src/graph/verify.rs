@@ -547,21 +547,38 @@ fn verify_scenario_claims(inputs: &GraphInputs) -> (ScenarioClaims, Vec<Violatio
                 ),
             ));
         }
-        if !meta.targets.contains_key(target) {
+        if let Some(violation) = verify_scenario_target(&scenario.id, target, dir, meta) {
             sound = false;
-            violations.push(Violation::new(
-                "scenario-target-unknown",
-                format!(
-                    "scenario `{}` names target `{target}` in `{dir}`, but `aex.targets` does not declare it",
-                    scenario.id
-                ),
-            ));
+            violations.push(violation);
         }
         if sound {
             claims.runnable.insert(scenario.id.clone());
         }
     }
     (claims, violations)
+}
+
+fn verify_scenario_target(
+    scenario: &str,
+    target: &str,
+    dir: &str,
+    meta: &crate::meta::AexMeta,
+) -> Option<Violation> {
+    match meta.targets.get(target).map(String::as_str) {
+        None => Some(Violation::new(
+            "scenario-target-unknown",
+            format!(
+                "scenario `{scenario}` names target `{target}` in `{dir}`, but `aex.targets` does not declare it"
+            ),
+        )),
+        Some("e2e") => None,
+        Some(layer) => Some(Violation::new(
+            "scenario-target-not-e2e",
+            format!(
+                "scenario `{scenario}` names target `{target}` in `{dir}`, but that target is layer `{layer}`; a runnable cross-service scenario requires `e2e` evidence"
+            ),
+        )),
+    }
 }
 
 /// OD-36, mechanically: a scenario may be marked `prd`-eligible only if every

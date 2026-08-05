@@ -1,8 +1,8 @@
 # Runnable release scenarios selected by the delivery graph.
 #
 # Every matrix row carries an exact package and target claim already checked
-# against that package's aex metadata. `--no-tests=fail` prevents a stale Cargo
-# target from becoming a green no-op; npm's missing script exits non-zero.
+# against that package's `e2e` metadata. `--no-tests=fail` prevents a stale
+# Cargo target from becoming a green no-op; npm's missing script exits non-zero.
 
 name: scenario-lane
 
