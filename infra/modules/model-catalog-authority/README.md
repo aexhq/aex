@@ -10,6 +10,10 @@ The trust policy admits only `aexhq/aex` on `refs/heads/main` through the
 publish` workflow claim. The key policy separately grants the same finite use
 operations and keeps administration with exact owner-supplied principals. The
 module deliberately has no default account, administrator, or logical key id.
+The administrator policy includes the read-only rotation-status operation
+because the Terraform AWS provider reads it after create and on every refresh
+of an AWS-origin key. AWS reports rotation disabled for this asymmetric key;
+that read permission does not let an administrator enable or disable rotation.
 
 The private platform repository owns the single environment composition root
 that instantiates this public module. The KMS key ARN, publisher role ARN, and

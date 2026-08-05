@@ -71,6 +71,7 @@ data "aws_iam_policy_document" "key" {
       "kms:DisableKey",
       "kms:EnableKey",
       "kms:GetKeyPolicy",
+      "kms:GetKeyRotationStatus",
       "kms:ListGrants",
       "kms:ListKeyPolicies",
       "kms:ListResourceTags",

@@ -5,6 +5,23 @@ import { resolve } from "node:path";
 const root = resolve(import.meta.dir, "../..");
 const read = (path: string): string => readFileSync(resolve(root, path), "utf8");
 
+const terraformStatementActions = (source: string, sid: string): readonly string[] => {
+  const sidMatch = new RegExp(`sid\\s*=\\s*"${sid}"`).exec(source);
+  if (sidMatch?.index === undefined) {
+    throw new Error(`Terraform statement ${sid} is missing`);
+  }
+  const nextStatement = source.indexOf("\n  statement {", sidMatch.index);
+  const statement = source.slice(
+    sidMatch.index,
+    nextStatement === -1 ? source.length : nextStatement
+  );
+  const actions = /actions\s*=\s*\[([\s\S]*?)\]/.exec(statement)?.[1];
+  if (actions === undefined) {
+    throw new Error(`Terraform statement ${sid} has no action list`);
+  }
+  return Array.from(actions.matchAll(/"(kms:[^"]+)"/g), (match) => match[1]);
+};
+
 describe("protected model-catalog authority", () => {
   test("the manual workflow consumes reviewed metadata and never installs bindings", () => {
     const source = read(".github/workflows/model-catalog-publish.yml");
@@ -70,6 +87,40 @@ describe("protected model-catalog authority", () => {
     expect(main).toContain('values   = ["ECDSA_SHA_256"]');
     expect(main).toContain('actions   = ["kms:DescribeKey", "kms:GetPublicKey"]');
     expect(main).toContain('actions   = ["kms:Sign"]');
+    expect(terraformStatementActions(main, "AdministerByExactOwnerPrincipals")).toEqual([
+      "kms:CancelKeyDeletion",
+      "kms:CreateAlias",
+      "kms:DeleteAlias",
+      "kms:DescribeKey",
+      "kms:DisableKey",
+      "kms:EnableKey",
+      "kms:GetKeyPolicy",
+      "kms:GetKeyRotationStatus",
+      "kms:ListGrants",
+      "kms:ListKeyPolicies",
+      "kms:ListResourceTags",
+      "kms:PutKeyPolicy",
+      "kms:RevokeGrant",
+      "kms:ScheduleKeyDeletion",
+      "kms:TagResource",
+      "kms:UntagResource",
+      "kms:UpdateAlias",
+      "kms:UpdateKeyDescription"
+    ]);
+    expect(terraformStatementActions(main, "InspectByExactPublisher")).toEqual([
+      "kms:DescribeKey",
+      "kms:GetPublicKey"
+    ]);
+    expect(terraformStatementActions(main, "SignEcdsaSha256ByExactPublisher")).toEqual([
+      "kms:Sign"
+    ]);
+    expect(terraformStatementActions(main, "InspectExactCatalogKey")).toEqual([
+      "kms:DescribeKey",
+      "kms:GetPublicKey"
+    ]);
+    expect(terraformStatementActions(main, "SignExactCatalogKeyWithEcdsaSha256")).toEqual([
+      "kms:Sign"
+    ]);
     expect(main).toContain('variable = "token.actions.githubusercontent.com:sub"');
     expect(main).toContain('values   = ["repo:${var.repository}:environment:${var.environment}"]');
     expect(main).toContain('variable = "token.actions.githubusercontent.com:repository"');
