@@ -35,7 +35,7 @@ use crate::openrouter::OpenRouterAdapter;
 use crate::pool::{ClientPool, IsolationKey, PoolError};
 use crate::stream::{
     ResponseStartSink, ResponseStartSinkError, StreamConsumeError, StreamFailure,
-    consume_provider_stream,
+    StreamProtocolError, consume_provider_stream,
 };
 use crate::transport::{ExecuteError, SendState, execute};
 use crate::vercel_ai_gateway::VercelAiGatewayAdapter;
@@ -935,6 +935,20 @@ fn stream_consume_error(failure: StreamConsumeError) -> ProviderDispatchError {
             let ProviderFailure { detail, rate_limit } = *failure;
             (rate_limit.retry_after, detail)
         }
+        StreamFailure::Protocol(StreamProtocolError::Frame(_)) => (
+            None,
+            RedactedDetail::new(
+                kind,
+                BoundedString::truncating("provider frame violated the admitted dialect"),
+            ),
+        ),
+        StreamFailure::Protocol(StreamProtocolError::Sse(_)) => (
+            None,
+            RedactedDetail::new(
+                kind,
+                BoundedString::truncating("provider SSE framing violated the admitted protocol"),
+            ),
+        ),
         failure => (
             None,
             RedactedDetail::new(kind, BoundedString::truncating(&failure.to_string())),
