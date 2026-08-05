@@ -57,6 +57,12 @@ partial binding intentionally leaves the `brain-mux` publication gate failing.
 Do not populate them with fixtures, an application KMS key, or a moving asset
 URL.
 
+Genesis publication is manual through
+[`model-catalog-publish.yml`](../.github/workflows/model-catalog-publish.yml).
+It accepts only exact reviewed metadata under `release/model-catalog/`, uses the
+dedicated protected KMS/OIDC authority, and emits a repository-binding asset for
+independent human installation. It never edits repository variables or secrets.
+
 ## Main-push artifact evidence
 
 Pull requests build and package candidates without publishing. The protected

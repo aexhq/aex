@@ -16,6 +16,9 @@ related:
   - references/repository-hygiene.md
   - references/ghcr-visibility-bootstrap.md
   - .github/workflows/_build-artifacts.yml
+  - .github/workflows/model-catalog-publish.yml
+  - infra/modules/model-catalog-authority/README.md
+  - release/model-catalog/README.md
   - tests/live/aex-live-model-catalog/src/main.rs
   - runtimes/brain-mux/build.rs
   - tools/aex-release-tool/src/artifact.rs
@@ -54,11 +57,23 @@ The implementation already has one vocabulary and one verification path:
   asset into .tmp/model-catalog/collection.json. The download is optional
   for non-publishing builds, but URI and digest are all-or-none and the
   release tool remains the final canonical/schema/signature gate.
+- [`model-catalog-publish.yml`](../.github/workflows/model-catalog-publish.yml)
+  is the manual protected genesis publisher. It accepts only a tracked
+  [`release/model-catalog/`](../release/model-catalog/) document at the exact
+  workflow source SHA and caller-supplied SHA-256, validates the document before
+  assuming AWS, derives the public trust root from KMS metadata, signs only the
+  prepared digest, runtime-verifies the collection, and publishes four
+  never-overwritten content-addressed assets.
+- [`model-catalog-authority`](../infra/modules/model-catalog-authority/) creates
+  the dedicated P-256 key and exact OIDC role. The private platform composition
+  instantiates it so the public repository remains the reusable authority owner
+  and the private repository remains the AWS environment owner.
 
-The checked-in workflow does not create a key, call KMS, make a provider
-request, or update GitHub configuration. It only transports a collection that
-an owner has already published and binds its exact bytes to the existing
-planner.
+The main-push workflow does not create a key, call KMS, make a provider request,
+or update GitHub configuration. The separate manually dispatched protected
+publisher calls only `DescribeKey`, `GetPublicKey`, and `Sign` on the exact
+provisioned key and creates a new GitHub prerelease. It never calls a model
+provider and never installs repository variables or secrets.
 
 ## Required GitHub configuration
 
@@ -78,7 +93,7 @@ variable. The workflow derives the stable workspace-relative path
 .tmp/model-catalog/collection.json after it downloads and verifies the URI;
 a runner-specific path cannot become release identity.
 
-A future protected signer should use the dedicated GitHub Environment
+A protected signer uses the dedicated GitHub Environment
 `aex-model-catalog-publisher`, with required reviewers, `main` as its only
 deployment branch, and self-review disabled where the repository plan allows
 it. Its non-secret environment variables are:
@@ -92,19 +107,19 @@ it. Its non-secret environment variables are:
 | `AEX_MODEL_CATALOG_EXPECTED_AWS_ACCOUNT_ID` | Account allow-list passed to the AWS credentials action |
 
 The environment secret `AEX_MODEL_CATALOG_PUBLISH_CONFIRMATION` is a second,
-presence-only operator authority for that future workflow. Its value must be a
+presence-only operator authority for that workflow. Its value must be a
 random non-empty string, must never be printed or copied into an artefact, and
 must not be treated as a signing key. The protected environment review remains
 the human approval boundary.
 
-The current repository has none of these catalog variables, environment, or
-secret. Setting empty placeholders would only move the failure and is not
-bootstrap.
+The workflow never creates the Environment or sets any of these values. Setting
+empty placeholders would only move the failure and is not bootstrap.
 
-## AWS prerequisite, owned outside this repository
+## AWS prerequisite and private composition
 
-An owner must provision and independently review one dedicated asymmetric KMS
-key before the protected signer can run:
+The reusable public module and private platform root define one dedicated
+asymmetric KMS key. An owner must apply its exact reviewed plan before the
+protected signer can run:
 
 1. The key must have `KeySpec=ECC_NIST_P256`, `KeyUsage=SIGN_VERIFY`, and
    `SigningAlgorithms` containing `ECDSA_SHA_256`. The signer may call only
@@ -121,11 +136,11 @@ key before the protected signer can run:
    current OIDC settings use the default, name-based subject and have not
    opted into immutable subject claims; if that setting changes, the trust
    policy must be updated to the exact subject GitHub reports before any run.
-4. The workflow must pass the expected AWS account to
+4. The workflow passes the expected AWS account to
    `aws-actions/configure-aws-credentials` and must never accept long-lived
    access keys. The existing platform release workflows pin that action at
-   `ec61189d14ec14c8efccab744f656cffd0e33f37` (v6.1.0); a future signer must
-   use the same reviewed pin or a separately reviewed replacement.
+   `ec61189d14ec14c8efccab744f656cffd0e33f37` (v6.1.0); the publisher uses
+   that reviewed pin.
 
 The KMS public key is the only key material that may leave AWS. The bootstrap
 must validate the complete `GetPublicKey` metadata and encode the returned
@@ -144,17 +159,20 @@ The one-time owner-controlled sequence is:
    only because that receipt proves every declared capability. The document
    must be supplied from a reviewed source identity; no fixture promotion is
    allowed.
-3. From the protected environment, read the exact KMS public key, prepare the
-   publisher's digest request, call KMS `Sign` with `MessageType=DIGEST` and
-   `SigningAlgorithm=ECDSA_SHA_256`, record the closed response, and run
-   `assemble-genesis` with the canonical trust roots. The command must stop on
-   any metadata, digest, signature, adapter, receipt, time-gate, or
-   serviceability mismatch.
-4. Publish the collection as a new immutable GitHub release asset. Never
-   replace an existing tag or asset, and retain the publication binding as
-   non-secret evidence.
-5. After independent review, set the four repository variables above. The
-   main workflow then downloads the exact asset, checks its SHA-256, and the
+3. Dispatch `model-catalog-publish.yml` at that exact `main` source SHA with the
+   tracked document path and SHA-256. Protected environment approval is the
+   human signing boundary. The workflow derives the public root, calls KMS
+   `Sign` with `MessageType=DIGEST` and `ECDSA_SHA_256`, and stops on any
+   metadata, digest, signature, adapter, receipt, time-gate, or serviceability
+   mismatch.
+4. The workflow publishes a new immutable GitHub prerelease containing the
+   content-addressed collection, trust roots, publisher binding, and repository
+   binding, then downloads and byte-compares all four before publishing the
+   draft. It never replaces an existing tag or asset.
+5. After independent review of the repository-binding asset, set the four
+   repository variables above together. The workflow deliberately does not do
+   this. The main workflow then downloads the exact asset, checks its SHA-256,
+   and the
    existing release tool and runtime verifier check its canonical collection and
    signatures again.
 

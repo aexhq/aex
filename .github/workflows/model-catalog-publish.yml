@@ -1,0 +1,271 @@
+name: model catalog publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact reviewed public main commit containing the catalog document.
+        type: string
+        required: true
+      catalog_document_path:
+        description: Tracked release/model-catalog JSON document to sign.
+        type: string
+        required: true
+      catalog_document_sha256:
+        description: Exact lowercase sha256 identity of the reviewed document bytes.
+        type: string
+        required: true
+
+concurrency:
+  group: model-catalog-publisher
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  publish:
+    name: sign and publish exact model-catalog genesis
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: aex-model-catalog-publisher
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      AWS_PAGER: ""
+      AEX_MODEL_CATALOG_AWS_REGION: ${{ vars.AEX_MODEL_CATALOG_AWS_REGION }}
+      AEX_MODEL_CATALOG_AWS_ROLE_ARN: ${{ vars.AEX_MODEL_CATALOG_AWS_ROLE_ARN }}
+      AEX_MODEL_CATALOG_KMS_KEY_ARN: ${{ vars.AEX_MODEL_CATALOG_KMS_KEY_ARN }}
+      AEX_MODEL_CATALOG_KMS_KEY_ID: ${{ vars.AEX_MODEL_CATALOG_KMS_KEY_ID }}
+      AEX_MODEL_CATALOG_EXPECTED_AWS_ACCOUNT_ID: ${{ vars.AEX_MODEL_CATALOG_EXPECTED_AWS_ACCOUNT_ID }}
+      AEX_MODEL_CATALOG_PUBLISH_CONFIRMATION: ${{ secrets.AEX_MODEL_CATALOG_PUBLISH_CONFIRMATION }}
+      CATALOG_DOCUMENT_PATH: ${{ inputs.catalog_document_path }}
+      CATALOG_DOCUMENT_SHA256: ${{ inputs.catalog_document_sha256 }}
+      REVIEWED_SOURCE_SHA: ${{ inputs.source_sha }}
+      PUBLISH_DIR: .tmp/model-catalog/publish
+    steps:
+      - name: Refuse an unpinned or unapproved request
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REPOSITORY" == "aexhq/aex" ]]
+          [[ "$GITHUB_REF" == "refs/heads/main" ]]
+          [[ "$REVIEWED_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$REVIEWED_SOURCE_SHA" == "$GITHUB_SHA" ]]
+          [[ "$CATALOG_DOCUMENT_SHA256" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$CATALOG_DOCUMENT_PATH" =~ ^release/model-catalog/[A-Za-z0-9._/-]+\.json$ ]]
+          [[ "$CATALOG_DOCUMENT_PATH" != *'..'* ]]
+          [[ -n "$AEX_MODEL_CATALOG_PUBLISH_CONFIRMATION" ]]
+          [[ "$AEX_MODEL_CATALOG_AWS_REGION" =~ ^[a-z]{2}-[a-z]+-[0-9]$ ]]
+          [[ "$AEX_MODEL_CATALOG_AWS_ROLE_ARN" =~ ^arn:aws[a-z-]*:iam::[0-9]{12}:role/aex-model-catalog-publisher$ ]]
+          [[ "$AEX_MODEL_CATALOG_KMS_KEY_ARN" =~ ^arn:aws[a-z-]*:kms:${AEX_MODEL_CATALOG_AWS_REGION}:[0-9]{12}:key/[0-9a-f-]+$ ]]
+          [[ "$AEX_MODEL_CATALOG_KMS_KEY_ID" =~ ^[A-Za-z0-9_-]{1,64}$ ]]
+          [[ "$AEX_MODEL_CATALOG_EXPECTED_AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]]
+          [[ "$AEX_MODEL_CATALOG_AWS_ROLE_ARN" == *"::${AEX_MODEL_CATALOG_EXPECTED_AWS_ACCOUNT_ID}:"* ]]
+          [[ "$AEX_MODEL_CATALOG_KMS_KEY_ARN" == *":${AEX_MODEL_CATALOG_EXPECTED_AWS_ACCOUNT_ID}:"* ]]
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+
+      - name: Verify reviewed repository metadata before any AWS call
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$REVIEWED_SOURCE_SHA" ]]
+          git ls-files --error-unmatch -- "$CATALOG_DOCUMENT_PATH" >/dev/null
+          resolved=$(realpath "$CATALOG_DOCUMENT_PATH")
+          expected_prefix=$(realpath release/model-catalog)/
+          [[ "$resolved" == "$expected_prefix"* ]]
+          actual="sha256:$(sha256sum "$CATALOG_DOCUMENT_PATH" | cut -d' ' -f1)"
+          [[ "$actual" == "$CATALOG_DOCUMENT_SHA256" ]]
+          git diff --exit-code -- "$CATALOG_DOCUMENT_PATH"
+          mkdir -p "$PUBLISH_DIR"
+
+      - name: Install the pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
+
+      - name: Build and preflight the repository-owned publisher
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -p aex-live-model-catalog \
+            --bin aex-model-catalog-publisher
+          install -m 0500 target/release/aex-model-catalog-publisher \
+            "$PUBLISH_DIR/aex-model-catalog-publisher"
+          validation_now_ms=$(date --utc +%s%3N)
+          [[ "$validation_now_ms" =~ ^[0-9]{13}$ ]]
+          echo "AEX_MODEL_CATALOG_VALIDATION_NOW_MS=$validation_now_ms" >> "$GITHUB_ENV"
+          "$PUBLISH_DIR/aex-model-catalog-publisher" prepare \
+            --document "$CATALOG_DOCUMENT_PATH" \
+            --now-ms "$validation_now_ms" \
+            --out "$PUBLISH_DIR/signing-request.json"
+
+      - uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          role-to-assume: ${{ vars.AEX_MODEL_CATALOG_AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AEX_MODEL_CATALOG_AWS_REGION }}
+          role-session-name: aex-catalog-${{ github.run_id }}-${{ github.run_attempt }}
+          allowed-account-ids: ${{ vars.AEX_MODEL_CATALOG_EXPECTED_AWS_ACCOUNT_ID }}
+          mask-aws-account-id: true
+
+      - name: Derive the exact P-256 trust root from KMS
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws kms describe-key --key-id "$AEX_MODEL_CATALOG_KMS_KEY_ARN" \
+            --output json \
+            --query '{Arn:KeyMetadata.Arn,KeySpec:KeyMetadata.KeySpec,KeyUsage:KeyMetadata.KeyUsage,KeyState:KeyMetadata.KeyState,KeyManager:KeyMetadata.KeyManager,Origin:KeyMetadata.Origin,MultiRegion:KeyMetadata.MultiRegion,SigningAlgorithms:KeyMetadata.SigningAlgorithms}' \
+            > "$PUBLISH_DIR/kms-description.json"
+          jq -e --arg arn "$AEX_MODEL_CATALOG_KMS_KEY_ARN" \
+            '.Arn == $arn and .KeySpec == "ECC_NIST_P256" and
+             .KeyUsage == "SIGN_VERIFY" and .KeyState == "Enabled" and
+             .KeyManager == "CUSTOMER" and .Origin == "AWS_KMS" and
+             .MultiRegion == false and .SigningAlgorithms == ["ECDSA_SHA_256"]' \
+            "$PUBLISH_DIR/kms-description.json" >/dev/null
+          aws kms get-public-key --key-id "$AEX_MODEL_CATALOG_KMS_KEY_ARN" \
+            --output json \
+            --query '{KeyId:KeyId,KeySpec:KeySpec,KeyUsage:KeyUsage,SigningAlgorithms:SigningAlgorithms,PublicKey:PublicKey}' \
+            > "$PUBLISH_DIR/kms-public-key.json"
+          "$PUBLISH_DIR/aex-model-catalog-publisher" trust-roots \
+            --kms-output "$PUBLISH_DIR/kms-public-key.json" \
+            --expected-kms-key-arn "$AEX_MODEL_CATALOG_KMS_KEY_ARN" \
+            --key-id "$AEX_MODEL_CATALOG_KMS_KEY_ID" \
+            --out "$PUBLISH_DIR/trust-roots.json"
+          rm "$PUBLISH_DIR/kms-description.json" "$PUBLISH_DIR/kms-public-key.json"
+
+      - name: Sign only the prepared digest and runtime-verify genesis
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -er '.schema == "aex.model-catalog-signing-request.v1" and
+                  .signingAlgorithm == "ECDSA_SHA_256" and .messageType == "DIGEST"' \
+            "$PUBLISH_DIR/signing-request.json" >/dev/null
+          jq -er .messageDigestBase64 "$PUBLISH_DIR/signing-request.json" \
+            | base64 --decode > "$PUBLISH_DIR/message.digest"
+          [[ "$(stat -c '%s' "$PUBLISH_DIR/message.digest")" == "32" ]]
+          request_digest=$(jq -er .messageDigestSha256 "$PUBLISH_DIR/signing-request.json")
+          [[ "sha256:$(sha256sum "$PUBLISH_DIR/message.digest" | cut -d' ' -f1)" == "$request_digest" ]]
+          aws kms sign --key-id "$AEX_MODEL_CATALOG_KMS_KEY_ARN" \
+            --signing-algorithm ECDSA_SHA_256 --message-type DIGEST \
+            --message "fileb://$PWD/$PUBLISH_DIR/message.digest" \
+            --output json \
+            --query '{KeyId:KeyId,Signature:Signature,SigningAlgorithm:SigningAlgorithm}' \
+            > "$PUBLISH_DIR/kms-signature.json"
+          "$PUBLISH_DIR/aex-model-catalog-publisher" record-signature \
+            --request "$PUBLISH_DIR/signing-request.json" \
+            --key-id "$AEX_MODEL_CATALOG_KMS_KEY_ID" \
+            --expected-kms-key-arn "$AEX_MODEL_CATALOG_KMS_KEY_ARN" \
+            --kms-output "$PUBLISH_DIR/kms-signature.json" \
+            --out "$PUBLISH_DIR/signature-record.json"
+          "$PUBLISH_DIR/aex-model-catalog-publisher" assemble-genesis \
+            --document "$CATALOG_DOCUMENT_PATH" \
+            --signature "$PUBLISH_DIR/signature-record.json" \
+            --trust-roots "$PUBLISH_DIR/trust-roots.json" \
+            --now-ms "$AEX_MODEL_CATALOG_VALIDATION_NOW_MS" \
+            --out "$PUBLISH_DIR/collection.json" \
+            --binding-out "$PUBLISH_DIR/publication-binding.json"
+          rm "$PUBLISH_DIR/message.digest" "$PUBLISH_DIR/kms-signature.json" \
+            "$PUBLISH_DIR/signature-record.json"
+
+      - name: Publish and read back a never-overwritten release binding
+        id: publish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          roots_digest=$(jq -er '.trustRootsSha256 | select(test("^sha256:[0-9a-f]{64}$"))' \
+            "$PUBLISH_DIR/publication-binding.json")
+          collection_digest=$(jq -er '.collectionSha256 | select(test("^sha256:[0-9a-f]{64}$"))' \
+            "$PUBLISH_DIR/publication-binding.json")
+          [[ "$roots_digest" == "sha256:$(sha256sum "$PUBLISH_DIR/trust-roots.json" | cut -d' ' -f1)" ]]
+          [[ "$collection_digest" == "sha256:$(sha256sum "$PUBLISH_DIR/collection.json" | cut -d' ' -f1)" ]]
+
+          roots_asset="model-catalog-trust-roots-${roots_digest#sha256:}.json"
+          collection_asset="model-catalog-collection-${collection_digest#sha256:}.json"
+          publication_digest="sha256:$(sha256sum "$PUBLISH_DIR/publication-binding.json" | cut -d' ' -f1)"
+          publication_asset="model-catalog-publication-binding-${publication_digest#sha256:}.json"
+          cp "$PUBLISH_DIR/trust-roots.json" "$PUBLISH_DIR/$roots_asset"
+          cp "$PUBLISH_DIR/collection.json" "$PUBLISH_DIR/$collection_asset"
+          cp "$PUBLISH_DIR/publication-binding.json" "$PUBLISH_DIR/$publication_asset"
+
+          tag="model-catalog-${GITHUB_SHA}-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "release $tag already exists; catalog identities are never replaced" >&2
+            exit 21
+          fi
+          if git ls-remote --exit-code --tags \
+            "https://github.com/${GITHUB_REPOSITORY}.git" "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "tag $tag already exists; catalog identities are never reused" >&2
+            exit 21
+          fi
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag"
+          jq -cn \
+            --arg repository "$GITHUB_REPOSITORY" --arg sourceSha "$GITHUB_SHA" \
+            --arg documentPath "$CATALOG_DOCUMENT_PATH" --arg documentSha256 "$CATALOG_DOCUMENT_SHA256" \
+            --arg tag "$tag" --arg collectionUri "$base/$collection_asset" \
+            --arg collectionSha256 "$collection_digest" --arg trustRootsSha256 "$roots_digest" \
+            --arg publicationBindingUri "$base/$publication_asset" \
+            --rawfile trustRootsJson "$PUBLISH_DIR/trust-roots.json" \
+            '{schema:"aex.model-catalog-repository-bindings.v1",
+              source:{repository:$repository,sha:$sourceSha,documentPath:$documentPath,documentSha256:$documentSha256},
+              release:{tag:$tag,collectionUri:$collectionUri,collectionSha256:$collectionSha256,
+                publicationBindingUri:$publicationBindingUri},
+              variables:{AEX_MODEL_CATALOG_TRUST_ROOTS_JSON:$trustRootsJson,
+                AEX_MODEL_CATALOG_TRUST_ROOTS_SHA256:$trustRootsSha256,
+                AEX_MODEL_CATALOG_COLLECTION_URI:$collectionUri,
+                AEX_MODEL_CATALOG_COLLECTION_SHA256:$collectionSha256}}' \
+            > "$PUBLISH_DIR/repository-bindings.json"
+          bindings_digest="sha256:$(sha256sum "$PUBLISH_DIR/repository-bindings.json" | cut -d' ' -f1)"
+          bindings_asset="model-catalog-repository-bindings-${bindings_digest#sha256:}.json"
+          mv "$PUBLISH_DIR/repository-bindings.json" "$PUBLISH_DIR/$bindings_asset"
+
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "$tag" --notes "Protected signed model catalog from $GITHUB_SHA." \
+            --draft --prerelease
+          gh release upload "$tag" \
+            "$PUBLISH_DIR/$roots_asset" "$PUBLISH_DIR/$collection_asset" \
+            "$PUBLISH_DIR/$publication_asset" "$PUBLISH_DIR/$bindings_asset" \
+            --repo "$GITHUB_REPOSITORY"
+          observed=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" \
+            --json isDraft,isPrerelease,assets)
+          [[ "$(jq -r .isDraft <<<"$observed")" == "true" ]]
+          [[ "$(jq -r .isPrerelease <<<"$observed")" == "true" ]]
+          [[ "$(jq '.assets | length' <<<"$observed")" == "4" ]]
+
+          mkdir "$PUBLISH_DIR/readback"
+          for asset in "$roots_asset" "$collection_asset" "$publication_asset" "$bindings_asset"; do
+            gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
+              --pattern "$asset" --dir "$PUBLISH_DIR/readback"
+            cmp --silent "$PUBLISH_DIR/$asset" "$PUBLISH_DIR/readback/$asset"
+          done
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
+          [[ "$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)" == "false" ]]
+          echo "release_tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "bindings_uri=$base/$bindings_asset" >> "$GITHUB_OUTPUT"
+          echo "collection_uri=$base/$collection_asset" >> "$GITHUB_OUTPUT"
+          echo "collection_sha256=$collection_digest" >> "$GITHUB_OUTPUT"
+
+      - name: Record the human installation handoff
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.publish.outputs.release_tag }}
+          BINDINGS_URI: ${{ steps.publish.outputs.bindings_uri }}
+          COLLECTION_URI: ${{ steps.publish.outputs.collection_uri }}
+          COLLECTION_SHA256: ${{ steps.publish.outputs.collection_sha256 }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### Signed model-catalog publication"
+            echo "- source: $GITHUB_SHA"
+            echo "- release: $RELEASE_TAG"
+            echo "- collection: $COLLECTION_URI"
+            echo "- collection digest: $COLLECTION_SHA256"
+            echo "- reviewed repository-variable handoff: $BINDINGS_URI"
+            echo ""
+            echo "This workflow does not install repository variables. Review the binding asset independently before setting all four values together."
+          } >> "$GITHUB_STEP_SUMMARY"

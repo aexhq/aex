@@ -221,7 +221,7 @@ describe("public main-push publication", () => {
       expect(doc).toContain(name);
     }
     expect(doc).toContain("Steady-state publication is not yet implementable");
-    expect(doc).toContain("no workflow may accept a hand-written\npin list");
+    expect(doc).toMatch(/no workflow may accept a hand-written\r?\npin list/);
     expect(doc).toContain("No application encryption key");
   });
 

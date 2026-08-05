@@ -32,8 +32,33 @@ pub const TRUST_ROOTS_SCHEMA: &str = "aex.model-catalog-trust-roots.v1";
 pub const KMS_SIGNING_ALGORITHM: &str = "ECDSA_SHA_256";
 /// KMS receives a precomputed digest, avoiding its 4 KiB raw-message bound.
 pub const KMS_MESSAGE_TYPE: &str = "DIGEST";
+const KMS_P256_SPKI_PREFIX: &[u8] = &[
+    0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x08, 0x2a,
+    0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00,
+];
 const MAX_TRUST_ROOTS: usize = 8;
 const MAX_TRUST_ROOTS_BYTES: usize = 8 * 1024;
+
+/// Closed projection of `aws kms get-public-key` used to derive trust roots.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KmsPublicKeyOutput {
+    /// Exact KMS key ARN returned by the service.
+    #[serde(rename = "KeyId")]
+    pub key_id: String,
+    /// Must be `ECC_NIST_P256`.
+    #[serde(rename = "KeySpec")]
+    pub key_spec: String,
+    /// Must be `SIGN_VERIFY`.
+    #[serde(rename = "KeyUsage")]
+    pub key_usage: String,
+    /// Must contain only `ECDSA_SHA_256` for this P-256 authority.
+    #[serde(rename = "SigningAlgorithms")]
+    pub signing_algorithms: Vec<String>,
+    /// DER `SubjectPublicKeyInfo` returned by AWS CLI as base64.
+    #[serde(rename = "PublicKey")]
+    pub public_key: String,
+}
 
 /// Exact request a protected signer consumes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -159,9 +184,58 @@ pub enum PublisherError {
     /// The trust-root document is invalid.
     #[error("publisher trust roots are invalid: {0}")]
     TrustRoots(String),
+    /// AWS KMS returned a public-key identity or shape outside this protocol.
+    #[error("KMS public key is invalid: {0}")]
+    KmsPublicKey(&'static str),
     /// Full runtime-equivalent collection verification failed.
     #[error("signed catalog collection failed verification: {0}")]
     Collection(#[from] aex_model_catalog::CatalogCollectionError),
+}
+
+/// Converts a closed AWS KMS public-key response into canonical runtime roots.
+///
+/// # Errors
+///
+/// Refuses a different key, non-P-256/signing metadata, any additional signing
+/// algorithm, malformed SPKI bytes, or a point that is not on P-256.
+pub fn trust_roots_from_kms(
+    output: &KmsPublicKeyOutput,
+    expected_key_arn: &str,
+    logical_key_id: &str,
+) -> Result<Vec<u8>, PublisherError> {
+    validate_key_id(logical_key_id)?;
+    if output.key_id != expected_key_arn {
+        return Err(PublisherError::KmsPublicKey("key ARN differs"));
+    }
+    if output.key_spec != "ECC_NIST_P256" {
+        return Err(PublisherError::KmsPublicKey("key spec differs"));
+    }
+    if output.key_usage != "SIGN_VERIFY" {
+        return Err(PublisherError::KmsPublicKey("key usage differs"));
+    }
+    if output.signing_algorithms.as_slice() != [KMS_SIGNING_ALGORITHM] {
+        return Err(PublisherError::KmsPublicKey("signing algorithms differ"));
+    }
+    let spki = BASE64
+        .decode(&output.public_key)
+        .map_err(|_| PublisherError::KmsPublicKey("public key is not base64"))?;
+    if spki.len() != KMS_P256_SPKI_PREFIX.len() + P256_PUBLIC_KEY_BYTES
+        || !spki.starts_with(KMS_P256_SPKI_PREFIX)
+    {
+        return Err(PublisherError::KmsPublicKey(
+            "public key is not an exact P-256 SubjectPublicKeyInfo",
+        ));
+    }
+    let sec1 = &spki[KMS_P256_SPKI_PREFIX.len()..];
+    p256::ecdsa::VerifyingKey::from_sec1_bytes(sec1)
+        .map_err(|_| PublisherError::KmsPublicKey("SEC1 point is not P-256"))?;
+    canonical_json(&TrustRootsDocument {
+        keys: vec![TrustRoot {
+            key_id: logical_key_id.to_owned(),
+            sec1: hex::encode(sec1),
+        }],
+        schema: TRUST_ROOTS_SCHEMA.to_owned(),
+    })
 }
 
 /// Validates exact canonical document bytes and emits the KMS digest request.
@@ -211,6 +285,7 @@ pub fn prepare_signing_request(
 pub fn record_kms_signature(
     request: &SigningRequest,
     logical_key_id: &str,
+    expected_provider_key_id: &str,
     output: KmsSignOutput,
 ) -> Result<SignatureRecord, PublisherError> {
     validate_request(request)?;
@@ -218,8 +293,8 @@ pub fn record_kms_signature(
     if output.signing_algorithm != KMS_SIGNING_ALGORITHM {
         return Err(PublisherError::SignatureBinding("KMS algorithm differs"));
     }
-    if output.provider_key_id.trim().is_empty() {
-        return Err(PublisherError::SignatureBinding("KMS key id is empty"));
+    if output.provider_key_id != expected_provider_key_id {
+        return Err(PublisherError::SignatureBinding("KMS key id differs"));
     }
     let signature = decode_signature(&output.signature)?;
     if signature.is_empty() {
@@ -451,9 +526,10 @@ mod tests {
     use sha2::Digest as _;
 
     use super::{
-        BASE64, KMS_SIGNING_ALGORITHM, KmsSignOutput, PublisherError, SIGNING_PREFIX,
-        SignatureRecord, TrustRoot, TrustRootsDocument, assemble_genesis, canonical_json,
-        prepare_signing_request, record_kms_signature,
+        BASE64, KMS_P256_SPKI_PREFIX, KMS_SIGNING_ALGORITHM, KmsPublicKeyOutput, KmsSignOutput,
+        PublisherError, SIGNING_PREFIX, SignatureRecord, TRUST_ROOTS_SCHEMA, TrustRoot,
+        TrustRootsDocument, assemble_genesis, canonical_json, prepare_signing_request,
+        record_kms_signature, trust_roots_from_kms,
     };
 
     const NOW_MS: i64 = 1_800_000_000_000;
@@ -516,6 +592,7 @@ mod tests {
         record_kms_signature(
             &request,
             "catalog-test",
+            "arn:aws:kms:eu-west-1:000000000000:key/test",
             KmsSignOutput {
                 provider_key_id: "arn:aws:kms:eu-west-1:000000000000:key/test".to_owned(),
                 signature: signer.sign(document),
@@ -523,6 +600,61 @@ mod tests {
             },
         )
         .expect("signature record")
+    }
+
+    fn kms_public_key(signer: &Signer) -> KmsPublicKeyOutput {
+        let mut spki = Vec::from(KMS_P256_SPKI_PREFIX);
+        spki.extend_from_slice(signer.pair.public_key().as_ref());
+        KmsPublicKeyOutput {
+            key_id: "arn:aws:kms:eu-west-1:000000000000:key/test".to_owned(),
+            key_spec: "ECC_NIST_P256".to_owned(),
+            key_usage: "SIGN_VERIFY".to_owned(),
+            signing_algorithms: vec![KMS_SIGNING_ALGORITHM.to_owned()],
+            public_key: BASE64.encode(spki),
+        }
+    }
+
+    #[test]
+    fn exact_kms_p256_spki_becomes_canonical_runtime_roots() {
+        let signer = Signer::new();
+        let roots = trust_roots_from_kms(
+            &kms_public_key(&signer),
+            "arn:aws:kms:eu-west-1:000000000000:key/test",
+            "catalog-2026-01",
+        )
+        .expect("trust roots");
+        let parsed: serde_json::Value = serde_json::from_slice(&roots).expect("roots JSON");
+        assert_eq!(parsed["schema"], TRUST_ROOTS_SCHEMA);
+        assert_eq!(parsed["keys"][0]["keyId"], "catalog-2026-01");
+        assert_eq!(
+            parsed["keys"][0]["sec1"],
+            hex::encode(signer.pair.public_key().as_ref())
+        );
+        assert_eq!(roots, aex_wire::to_jcs_bytes(&parsed).expect("canonical"));
+    }
+
+    #[test]
+    fn kms_metadata_or_key_identity_drift_never_becomes_a_trust_root() {
+        let signer = Signer::new();
+        let mut output = kms_public_key(&signer);
+        output.signing_algorithms.push("ECDSA_SHA_384".to_owned());
+        assert!(matches!(
+            trust_roots_from_kms(
+                &output,
+                "arn:aws:kms:eu-west-1:000000000000:key/test",
+                "catalog-2026-01"
+            ),
+            Err(PublisherError::KmsPublicKey(_))
+        ));
+        let output = kms_public_key(&signer);
+        assert!(matches!(
+            trust_roots_from_kms(
+                &output,
+                "arn:aws:kms:eu-west-1:000000000000:key/other",
+                "catalog-2026-01"
+            ),
+            Err(PublisherError::KmsPublicKey(_))
+        ));
     }
 
     #[test]
@@ -563,6 +695,7 @@ mod tests {
         let error = record_kms_signature(
             &request,
             "catalog-test",
+            "arn:aws:kms:eu-west-1:000000000000:key/test",
             KmsSignOutput {
                 provider_key_id: "key/test".to_owned(),
                 signature: BASE64.encode([1_u8; 64]),
