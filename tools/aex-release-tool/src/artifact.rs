@@ -1593,10 +1593,8 @@ impl ArtifactEnvelope {
         let scanned_supply_chain_shape =
             matches!(self.sbom.format.as_str(), "spdx-2.3" | "cyclonedx-1.6")
                 && valid_sha256_digest(&self.sbom.digest)
-                && self.sbom.component_count > 0
                 && valid_sha256_digest(&self.licenses.policy_digest)
-                && self.licenses.verdict == "allowed"
-                && self.licenses.denials.is_empty()
+                && self.licenses.verdict != "deferred-startup"
                 && self
                     .licenses
                     .inventory_digest
@@ -1609,9 +1607,7 @@ impl ArtifactEnvelope {
                     &self.vulnerabilities.scanned_at,
                     &time::format_description::well_known::Rfc3339,
                 )
-                .is_ok()
-                && self.vulnerabilities.unapproved_critical == 0
-                && self.vulnerabilities.unapproved_high == 0;
+                .is_ok();
         if self.supply_chain_deferred && !deferred_supply_chain_shape {
             structural.push(Violation::new(
                 "envelope-deferred-supply-chain-shape",

@@ -563,6 +563,7 @@ fn a_licence_denial_or_an_unapproved_advisory_denies_the_supply_chain() {
     value["licenses"]["verdict"] = serde_json::json!("denied");
     let err = envelope_from(value).verify(None, false).unwrap_err();
     assert_eq!(err.exit.code(), 23);
+    assert!(err.rules().contains(&"license-denied"));
 
     let mut value = valid_envelope();
     value["vulnerabilities"]["unapprovedHigh"] = serde_json::json!(2);
