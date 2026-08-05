@@ -16,6 +16,7 @@ related:
   - references/contributing.md
   - references/ghcr-visibility-bootstrap.md
   - references/model-catalog-authority.md
+  - references/release-evidence.md
 ---
 
 # Public repository development
@@ -86,6 +87,13 @@ are no runtime-kind or capability matrices.
 `apps/user-tests/artifacts.ts` resolves what a run exercises. Selection accepts
 either an exact paired SDK/CLI version or a paired tarball/archive, never a
 mixture.
+
+Hosted E2E and user receipts are earned only by the exact-coordinate workflow
+and fail-closed evidence gates documented in
+[`release-evidence.md`](release-evidence.md). They bind the private
+`VERIFYING` continuation and prove the exact deployed release ready both before
+and after the suites. An ordinary live preflight or a registry-only test is not
+a release receipt.
 
 Add a scenario by adding its row. Before making it a `live` row, check whether it
 needs a remote plane at all: behavior that can be proved against the packed SDK

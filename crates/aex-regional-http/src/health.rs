@@ -54,8 +54,12 @@ impl Readiness {
         })
     }
 
-    const fn is_ready(&self) -> bool {
+    pub(crate) const fn is_ready(&self) -> bool {
         self.unavailable.is_empty()
+    }
+
+    pub(crate) fn release_digest(&self) -> &str {
+        &self.release_digest
     }
 }
 

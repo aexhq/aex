@@ -12,6 +12,7 @@ related:
   - references/rules.md
   - references/repo.md
   - references/develop.md
+  - references/release-evidence.md
   - references/contributing.md
   - references/repository-hygiene.md
   - references/architecture.md
@@ -32,6 +33,7 @@ executable sources.
 | Development, testing, and release routing | [`develop.md`](develop.md) |
 | One-time public GHCR namespace bootstrap | [`ghcr-visibility-bootstrap.md`](ghcr-visibility-bootstrap.md) |
 | Model-catalog authority bootstrap and publication | [`model-catalog-authority.md`](model-catalog-authority.md) |
+| Release-bound E2E and public user receipt producer | [`release-evidence.md`](release-evidence.md) |
 | Contributor and review procedure | [`contributing.md`](contributing.md) |
 | Durable-doc and generated-artifact placement | [`repository-hygiene.md`](repository-hygiene.md) |
 | Public v1 architecture and repository boundary | [`architecture.md`](architecture.md) |

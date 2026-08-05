@@ -39,14 +39,19 @@ describe("registered scenario reliability", () => {
     expect(source).not.toMatch(/\.filter\([^;\n]*\|\|\s*true\b/);
   });
 
-  it("runs each graph-selected scenario target in its own matrix job", () => {
+  it("statically validates each graph-selected target before post-deploy execution", () => {
     const job = workflowJob(readWorkflow(".github/workflows/_scenario-lane.yml"), "scenario");
     const step = workflowStepRunning(job, /SCENARIO_TARGET/);
 
     expect(job.strategy?.["fail-fast"]).toBe(false);
     expect(job.strategy?.matrix).toBe("${{ fromJSON(inputs.matrix) }}");
-    expect(step.run).toContain('run "test:$SCENARIO_TARGET"');
-    expect(step.run).toContain("cargo nextest run --locked --profile live");
+    expect(step.run).toContain('scripts?.[process.env.SCRIPT_NAME]');
+    expect(step.run).toContain("cargo nextest list --locked --profile live");
+    expect(step.run).toContain("--features live");
+    expect(step.run).toContain("--ignore-default-filter");
+    expect(step.run).toContain('."test-count" > 0');
+    expect(step.run).not.toContain("cargo nextest run");
+    expect(step.run).not.toContain("bun --filter");
     expect(step.run).not.toContain("--profile ci");
     expect(step.run).not.toMatch(/--shard(?:\s|$)/);
     expect(step.run).not.toMatch(RETRY_FLAG);
