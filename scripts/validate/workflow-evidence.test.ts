@@ -91,7 +91,7 @@ describe("workflow evidence producers", () => {
   test("every Rust caller supplies its aggregate job id and routing mode", () => {
     const cases = [
       [".github/workflows/pr.yml", "rust", "affected"],
-      [".github/workflows/main.yml", "verify", "full"],
+      [".github/workflows/main.yml", "verify", "affected"],
       [".github/workflows/assurance.yml", "full-graph", "shadow"]
     ] as const;
 
@@ -159,7 +159,7 @@ describe("workflow evidence producers", () => {
   test("every Node caller passes the release-derived matrix, aggregate job id, and routing mode", () => {
     const cases = [
       [".github/workflows/pr.yml", "node", "affected"],
-      [".github/workflows/main.yml", "node", "full"]
+      [".github/workflows/main.yml", "node", "affected"]
     ] as const;
 
     for (const [path, jobId, mode] of cases) {
@@ -179,6 +179,35 @@ describe("workflow evidence producers", () => {
     expect(source).toContain("node_matrix:");
     expect(source).toContain("has_node:");
     expect(workflowStep(job, "Node matrix").run).toContain("--kind node");
+  });
+
+  test("main routes changed-package checks separately from the exhaustive artifact build", () => {
+    const route = readWorkflow(".github/workflows/_route.yml");
+    const routeCall = workflowTriggers(route).workflow_call as {
+      readonly inputs: Readonly<Record<string, { readonly required?: boolean }>>;
+    };
+    const routeJob = workflowJob(route, "route");
+    const mainRoute = workflowJob(readWorkflow(".github/workflows/main.yml"), "route");
+    const mainInputs = mainRoute.with as Readonly<Record<string, unknown>>;
+
+    expect(routeCall.inputs.artifact_mode?.required).toBeTrue();
+    expect(mainInputs.mode).toBe("affected");
+    expect(mainInputs.artifact_mode).toBe("full");
+    expect(workflowStep(routeJob, "Select").run).toContain('--mode "${{ inputs.mode }}"');
+    expect(workflowStep(routeJob, "Select artifact graph").run).toContain(
+      '--mode "${{ inputs.artifact_mode }}"'
+    );
+    expect(workflowStep(routeJob, "Artifact matrix").run).toContain(
+      "--selection artifact-selection.json"
+    );
+    for (const step of ["Test matrix", "Node matrix"]) {
+      expect(workflowStep(routeJob, step).run).toContain(
+        "--artifact-selection artifact-selection.json"
+      );
+    }
+    for (const step of ["Scenario matrix", "Terraform matrix"]) {
+      expect(workflowStep(routeJob, step).run).toContain("--selection selection.json");
+    }
   });
 
   test("the Terraform lane derives and verifies a receipt from one real test run", () => {
@@ -232,7 +261,7 @@ describe("workflow evidence producers", () => {
   test("every Terraform caller supplies its aggregate job id and routing mode", () => {
     const cases = [
       [".github/workflows/pr.yml", "terraform", "affected"],
-      [".github/workflows/main.yml", "terraform", "full"]
+      [".github/workflows/main.yml", "terraform", "affected"]
     ] as const;
 
     for (const [path, jobId, mode] of cases) {

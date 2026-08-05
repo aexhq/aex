@@ -11,10 +11,14 @@ use aex_release_tool::graph::verify;
 use common::{CratePlan, Fixture, SOUND_SCENARIOS, SOUND_UNITS, deployable_meta, live_meta};
 
 fn run(root: &std::path::Path, changed: &[&str], mode: Mode) -> Selection {
+    run_for_lane(root, changed, mode, Lane::Pr)
+}
+
+fn run_for_lane(root: &std::path::Path, changed: &[&str], mode: Mode, lane: Lane) -> Selection {
     let inputs = GraphInputs::load(root).expect("fixture inputs");
     let built = verify::build(&inputs).expect("a buildable graph");
     let changed: Vec<String> = changed.iter().map(|path| (*path).to_owned()).collect();
-    select(&built, &inputs, &changed, mode, Lane::Pr).expect("a selection")
+    select(&built, &inputs, &changed, mode, lane).expect("a selection")
 }
 
 fn ids(selection: &[aex_release_tool::graph::select::Selected]) -> Vec<String> {
@@ -41,6 +45,31 @@ fn a_leaf_change_selects_its_whole_reverse_closure() {
             "cargo:aex-top",
             "cargo:demo-api",
         ]
+    );
+}
+
+#[test]
+fn main_affected_selection_skips_unrelated_packages_without_losing_dependants() {
+    let root = Fixture::new()
+        .add_crate(CratePlan::new("aex-leaf", "crates/aex-leaf"))
+        .add_crate(CratePlan::new("aex-dependent", "crates/aex-dependent").dep("aex-leaf"))
+        .add_crate(CratePlan::new("aex-unrelated", "crates/aex-unrelated"))
+        .build();
+    let selection = run_for_lane(
+        &root,
+        &["crates/aex-leaf/src/lib.rs"],
+        Mode::Affected,
+        Lane::Main,
+    );
+
+    assert_eq!(selection.mode, Mode::Affected);
+    assert_eq!(
+        ids(&selection.test),
+        vec!["cargo:aex-dependent", "cargo:aex-leaf"]
+    );
+    assert!(
+        !ids(&selection.test).contains(&"cargo:aex-unrelated".to_owned()),
+        "an unchanged disconnected package must not rerun"
     );
 }
 

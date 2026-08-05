@@ -175,6 +175,9 @@ enum GraphCommand {
         /// The selection document.
         #[arg(long)]
         selection: PathBuf,
+        /// Artifact selection whose owning packages must emit validation receipts.
+        #[arg(long)]
+        artifact_selection: Option<PathBuf>,
         /// Which slice.
         #[arg(long)]
         kind: MatrixKind,
@@ -1155,18 +1158,22 @@ fn run_graph(cli: &Cli, root: &Path, command: &GraphCommand) -> Result<()> {
         }
         GraphCommand::Matrix {
             selection,
+            artifact_selection,
             kind,
             partitions,
             shard_durations,
             github_output,
         } => {
             let selection: select::Selection = read_json(selection)?;
+            let artifact_selection: Option<select::Selection> =
+                artifact_selection.as_deref().map(read_json).transpose()?;
             let durations: BTreeMap<String, u64> = match shard_durations {
                 Some(path) => read_json(path)?,
                 None => BTreeMap::new(),
             };
-            let output = matrix::build(
+            let output = matrix::build_with_artifacts(
                 &selection,
+                artifact_selection.as_ref(),
                 *kind,
                 *partitions,
                 &durations,

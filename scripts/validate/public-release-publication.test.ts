@@ -29,7 +29,9 @@ describe("public main-push publication", () => {
       "artifact-metadata": "write",
       packages: "write"
     });
-    expect(workflow.jobs.route.with.mode).toBe("full");
+    expect(workflow.jobs.route.with.mode).toBe("affected");
+    expect(workflow.jobs.route.with.artifact_mode).toBe("full");
+    expect(workflow.jobs.build.with.matrix).toBe("${{ needs.route.outputs.artifact_matrix }}");
   });
 
   test("main publication uses the same root gates as pull requests", () => {

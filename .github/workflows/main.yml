@@ -27,10 +27,11 @@ jobs:
     name: Route
     uses: ./.github/workflows/_route.yml
     with:
-      # Until immutable predecessor-manifest carry-forward exists, a protected
-      # main publication must rebuild the complete registry. An affected-only
-      # matrix cannot mint a first complete 39-unit composition.
-      mode: full
+      # Package checks use the affected reverse closure. Until immutable
+      # predecessor-manifest carry-forward exists, publication still rebuilds
+      # the complete registry so this source mints all 39 unit identities.
+      mode: affected
+      artifact_mode: full
       lane: main
       base_sha: ${{ github.event.before }}
       head_sha: ${{ github.sha }}
@@ -97,7 +98,7 @@ jobs:
       matrix: ${{ needs.route.outputs.test_matrix }}
       lane: main
       job_name: verify
-      selection_mode: full
+      selection_mode: affected
       cache_mode: restore-save
 
   node:
@@ -108,7 +109,7 @@ jobs:
       matrix: ${{ needs.route.outputs.node_matrix }}
       lane: main
       job_name: node
-      selection_mode: full
+      selection_mode: affected
 
   scenarios:
     name: Scenarios
@@ -129,7 +130,7 @@ jobs:
       mode: static
       lane: main
       job_name: terraform
-      selection_mode: full
+      selection_mode: affected
 
   build:
     name: Build and publish

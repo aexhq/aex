@@ -17,6 +17,10 @@ on:
         description: affected | full | shadow
         type: string
         required: true
+      artifact_mode:
+        description: affected | full | shadow for the artifact matrix
+        type: string
+        required: true
       lane:
         description: pr | main | assurance | release
         type: string
@@ -118,12 +122,21 @@ jobs:
             --mode "${{ inputs.mode }}" --lane "${{ inputs.lane }}" \
             --out selection.json --quiet
 
+      - name: Select artifact graph
+        run: |
+          set -euo pipefail
+          ./target/release/aex-release-tool graph select \
+            --base "${{ inputs.base_sha }}" --head "${{ inputs.head_sha }}" \
+            --mode "${{ inputs.artifact_mode }}" --lane "${{ inputs.lane }}" \
+            --out artifact-selection.json --quiet
+
       - name: Test matrix
         id: test
         run: |
           set -euo pipefail
           ./target/release/aex-release-tool graph matrix \
             --selection selection.json --kind test \
+            --artifact-selection artifact-selection.json \
             --partitions "${{ inputs.partitions }}" \
             --github-output "$GITHUB_OUTPUT" --quiet
 
@@ -132,7 +145,7 @@ jobs:
         run: |
           set -euo pipefail
           ./target/release/aex-release-tool graph matrix \
-            --selection selection.json --kind artifact \
+            --selection artifact-selection.json --kind artifact \
             --github-output "$GITHUB_OUTPUT" --quiet
 
       - name: Node matrix
@@ -141,6 +154,7 @@ jobs:
           set -euo pipefail
           ./target/release/aex-release-tool graph matrix \
             --selection selection.json --kind node \
+            --artifact-selection artifact-selection.json \
             --partitions "${{ inputs.partitions }}" \
             --github-output "$GITHUB_OUTPUT" --quiet
 
@@ -171,5 +185,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: selection-${{ inputs.lane }}
-          path: selection.json
+          path: |
+            selection.json
+            artifact-selection.json
           if-no-files-found: error

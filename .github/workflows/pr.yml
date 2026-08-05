@@ -27,6 +27,7 @@ jobs:
     uses: ./.github/workflows/_route.yml
     with:
       mode: affected
+      artifact_mode: affected
       lane: pr
       base_sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
       head_sha: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
