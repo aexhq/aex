@@ -114,15 +114,17 @@ jobs:
         with:
           toolchain: "1.97.1"
 
-      - name: Install cargo-deny
-        uses: taiki-e/install-action@2cdf2d81f4edfc3b41d5ddf56083c70b48ac2475  # v2.62.35
-        with:
-          tool: cargo-deny@0.20.2
-
-      - name: Install cargo-audit
-        uses: taiki-e/install-action@2cdf2d81f4edfc3b41d5ddf56083c70b48ac2475  # v2.62.35
-        with:
-          tool: cargo-audit@0.22.2
+      - name: Install exact auditors
+        run: |
+          set -euo pipefail
+          if ! cargo-deny --version 2>/dev/null | grep -Fxq 'cargo-deny 0.20.2'; then
+            cargo install --locked --force cargo-deny@0.20.2
+          fi
+          if ! cargo-audit --version 2>/dev/null | grep -Fxq 'cargo-audit 0.22.2'; then
+            cargo install --locked --force cargo-audit@0.22.2
+          fi
+          cargo-deny --version | grep -Fx 'cargo-deny 0.20.2'
+          cargo-audit --version | grep -Fx 'cargo-audit 0.22.2'
 
       - name: Cargo advisories and licences
         run: cargo deny --all-features check
