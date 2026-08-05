@@ -35,6 +35,7 @@ pub mod pool;
 pub mod redact;
 pub mod router;
 pub mod sse;
+pub mod stream;
 pub mod transport;
 pub mod vercel_ai_gateway;
 pub mod wire_pending;

@@ -10,15 +10,16 @@ use aex_brain_application::ports::{
 };
 use aex_brain_domain::effect::{DispatchEvidence, DispatchProof, DispatchStage, DurableEffect};
 use aex_model_catalog::canonical::{
-    CorrelationId, CredentialBindingRef, PreviewFrame, ProviderReceipt,
+    CorrelationId, CredentialBindingRef, ProviderReceipt,
     RateLimitSource as ReceiptRateLimitSource, ReceiptBounds, ReceiptRateLimit, seal,
 };
 use aex_model_catalog::document::{AdapterSourceDigest, EntryState};
+use aex_model_catalog::primitives::ProviderRequestId;
 use aex_model_catalog::{BoundedString, ProviderFailureKind, RedactedDetail};
 use aex_wire::provider::ProviderId;
 use futures::StreamExt as _;
 
-use crate::adapter::{BoundedBody, FrameOutcome, HeaderView, ProviderAdapter, RequestBuildError};
+use crate::adapter::{BoundedBody, HeaderView, ProviderAdapter, RequestBuildError};
 use crate::anthropic::AnthropicAdapter;
 use crate::budget::{BudgetOverrun, StreamBudget};
 use crate::credential::{
@@ -32,7 +33,10 @@ use crate::moonshotai::MoonshotAdapter;
 use crate::openai::OpenAiAdapter;
 use crate::openrouter::OpenRouterAdapter;
 use crate::pool::{ClientPool, IsolationKey, PoolError};
-use crate::sse::{SseDecoder, SseError};
+use crate::stream::{
+    ResponseStartSink, ResponseStartSinkError, StreamConsumeError, StreamFailure,
+    consume_provider_stream,
+};
 use crate::transport::{ExecuteError, SendState, execute};
 use crate::vercel_ai_gateway::VercelAiGatewayAdapter;
 use crate::zai::ZaiAdapter;
@@ -45,6 +49,37 @@ pub struct ProviderRouter {
     cache: CredentialCache,
     pool: ClientPool,
     adapter_source: AdapterSourceDigest,
+}
+
+struct DurableResponseStart<'a> {
+    effects: &'a dyn EffectStore,
+    ticket: &'a DispatchTicket,
+}
+
+impl ResponseStartSink for DurableResponseStart<'_> {
+    fn mark(
+        &self,
+        provider_request_id: Option<ProviderRequestId>,
+    ) -> BoxFuture<'_, Result<(), ResponseStartSinkError>> {
+        Box::pin(async move {
+            self.effects
+                .mark_response_started(
+                    self.ticket,
+                    &DispatchEvidence {
+                        stage: DispatchStage::Streaming,
+                        proof: DispatchProof::ResponseStarted,
+                        attempt: self.ticket.attempt(),
+                        provider_request_id,
+                        external_operation: None,
+                        detached_tool: None,
+                        receipt: None,
+                        detail: None,
+                    },
+                )
+                .await
+                .map_err(|_| ResponseStartSinkError)
+        })
+    }
 }
 
 impl core::fmt::Debug for ProviderRouter {
@@ -317,173 +352,31 @@ impl ProviderRouter {
         attempts: u16,
         binding: &crate::credential::ProviderCredentialBinding,
     ) -> Result<ProviderOutcome, ProviderDispatchError> {
-        let mut stream = response.bytes_stream();
-        let mut decoder = SseDecoder::new(budget.max_frame_bytes);
-        let mut state = adapter.new_state(&request.selection);
-        let mut response_bytes = 0_u64;
-        let mut first_frame_at = None;
-        let mut response_started = false;
-        let mut terminal = false;
-
-        while !terminal {
-            if cancel.is_cancelled() {
-                return Err(error(
-                    DispatchStage::Streaming,
-                    if response_started {
-                        DispatchProof::ResponseStarted
-                    } else {
-                        DispatchProof::PossiblySent
-                    },
-                    ProviderFailureKind::Cancelled,
-                    "dispatch was cancelled while streaming",
-                ));
-            }
-            let timeout = if response_started {
-                budget.idle_frame_timeout
-            } else {
-                budget.first_frame_timeout
-            }
-            .min(remaining(
-                budget,
-                started_steady,
-                if response_started {
-                    DispatchProof::ResponseStarted
-                } else {
-                    DispatchProof::PossiblySent
-                },
-            )?);
-            let chunk = tokio::time::timeout(timeout, stream.next())
-                .await
-                .map_err(|_| {
-                    let overrun = if response_started {
-                        BudgetOverrun::IdleFrame { after: timeout }
-                    } else {
-                        BudgetOverrun::FirstFrame { after: timeout }
-                    };
-                    budget_error(
-                        overrun,
-                        if response_started {
-                            DispatchProof::ResponseStarted
-                        } else {
-                            DispatchProof::PossiblySent
-                        },
-                    )
-                })?;
-            let Some(chunk) = chunk else {
-                break;
-            };
-            let chunk = chunk.map_err(|_| {
-                error(
-                    DispatchStage::Streaming,
-                    if response_started {
-                        DispatchProof::ResponseStarted
-                    } else {
-                        DispatchProof::PossiblySent
-                    },
-                    ProviderFailureKind::Transport,
-                    "provider stream transport failed",
-                )
-            })?;
-            response_bytes = response_bytes.saturating_add(chunk.len() as u64);
-            if response_bytes > budget.max_response_bytes {
-                return Err(budget_error(
-                    BudgetOverrun::Response {
-                        limit: budget.max_response_bytes,
-                    },
-                    if response_started {
-                        DispatchProof::ResponseStarted
-                    } else {
-                        DispatchProof::PossiblySent
-                    },
-                ));
-            }
-            decoder
-                .push(&chunk)
-                .map_err(|failure| sse_error(failure, response_started))?;
-            for event in decoder
-                .drain()
-                .map_err(|failure| sse_error(failure, response_started))?
-            {
-                let outcome = adapter
-                    .decode(&mut state, &event.as_ref(), budget)
-                    .map_err(|_| {
-                        error(
-                            DispatchStage::Streaming,
-                            if response_started {
-                                DispatchProof::ResponseStarted
-                            } else {
-                                DispatchProof::PossiblySent
-                            },
-                            ProviderFailureKind::ProtocolViolation,
-                            "provider frame violated the admitted dialect",
-                        )
-                    })?;
-                if !response_started && state.response_started {
-                    response_started = true;
-                    let observed = elapsed_timestamp(started, started_steady)?;
-                    first_frame_at = Some(observed);
-                    let provider_request_id =
-                        adapter.request_id(&HeaderView::new(&headers), &state);
-                    self.effects
-                        .mark_response_started(
-                            ticket,
-                            &DispatchEvidence {
-                                stage: DispatchStage::Streaming,
-                                proof: DispatchProof::ResponseStarted,
-                                attempt: ticket.attempt(),
-                                provider_request_id,
-                                external_operation: None,
-                                detached_tool: None,
-                                receipt: None,
-                                detail: None,
-                            },
-                        )
-                        .await
-                        .map_err(|_| {
-                            error(
-                                DispatchStage::Streaming,
-                                DispatchProof::ResponseStarted,
-                                ProviderFailureKind::Transport,
-                                "response-start evidence could not be committed",
-                            )
-                        })?;
-                }
-                match outcome {
-                    FrameOutcome::Ignored => {}
-                    FrameOutcome::ResponseStarted | FrameOutcome::Progress => {
-                        let _ = preview.offer(PreviewFrame::InterimUsage(state.usage));
-                    }
-                    FrameOutcome::Terminal => terminal = true,
-                    FrameOutcome::Failed(failure) => {
-                        return Err(provider_failure(
-                            DispatchStage::Streaming,
-                            DispatchProof::ResponseStarted,
-                            *failure,
-                        ));
-                    }
-                }
-            }
-        }
-
-        if !terminal {
-            decoder
-                .finish()
-                .map_err(|failure| sse_error(failure, response_started))?;
-        }
-        let frames = state.ledger.frames;
-        let provider_request_id = adapter.request_id(&HeaderView::new(&headers), &state);
-        let assembled = adapter.finish(state).map_err(|_| {
-            error(
-                DispatchStage::Streaming,
-                if response_started {
-                    DispatchProof::ResponseStarted
-                } else {
-                    DispatchProof::PossiblySent
-                },
-                ProviderFailureKind::ProtocolViolation,
-                "provider stream ended without a complete admitted response",
-            )
-        })?;
+        let response_start = DurableResponseStart {
+            effects: self.effects.as_ref(),
+            ticket,
+        };
+        let consumed = consume_provider_stream(
+            adapter,
+            &request.selection,
+            response.bytes_stream(),
+            HeaderView::new(&headers),
+            budget,
+            preview,
+            cancel,
+            started_steady,
+            &response_start,
+        )
+        .await
+        .map_err(stream_consume_error)?;
+        let first_frame_at = consumed
+            .first_frame_after
+            .map(|elapsed| elapsed_timestamp_after(started, elapsed))
+            .transpose()?;
+        let response_bytes = consumed.response_bytes;
+        let frames = consumed.frames;
+        let provider_request_id = consumed.provider_request_id;
+        let assembled = consumed.response;
         let usage = assembled.usage;
         let message = seal(
             assembled.blocks,
@@ -917,10 +810,17 @@ fn elapsed_timestamp(
     started: aex_wire::types::Timestamp,
     started_steady: Instant,
 ) -> Result<aex_wire::types::Timestamp, ProviderDispatchError> {
+    elapsed_timestamp_after(started, started_steady.elapsed())
+}
+
+fn elapsed_timestamp_after(
+    started: aex_wire::types::Timestamp,
+    elapsed: Duration,
+) -> Result<aex_wire::types::Timestamp, ProviderDispatchError> {
     // Derive receipt ordering from the same monotonic clock as the deadline.
     // An NTP correction during a stream must not turn a valid result into an
     // internally impossible `completed_at < started_at` receipt.
-    let elapsed = i64::try_from(started_steady.elapsed().as_millis()).unwrap_or(i64::MAX);
+    let elapsed = i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX);
     let millis = started.unix_millis().saturating_add(elapsed);
     aex_wire::types::Timestamp::from_unix_millis(millis).map_err(|_| {
         error(
@@ -1022,17 +922,32 @@ fn execute_error(failure: ExecuteError) -> ProviderDispatchError {
     )
 }
 
-fn sse_error(failure: SseError, started: bool) -> ProviderDispatchError {
-    error(
-        DispatchStage::Streaming,
-        if started {
-            DispatchProof::ResponseStarted
-        } else {
-            DispatchProof::PossiblySent
-        },
-        ProviderFailureKind::ProtocolViolation,
-        &failure.to_string(),
-    )
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "this conversion consumes the stream failure into a redacted dispatch diagnostic"
+)]
+fn stream_consume_error(failure: StreamConsumeError) -> ProviderDispatchError {
+    let proof = failure.proof();
+    let kind = failure.kind();
+    let provider_request_id = failure.provider_request_id;
+    let (retry_after, detail) = match failure.failure {
+        StreamFailure::Provider(failure) => {
+            let ProviderFailure { detail, rate_limit } = *failure;
+            (rate_limit.retry_after, detail)
+        }
+        failure => (
+            None,
+            RedactedDetail::new(kind, BoundedString::truncating(&failure.to_string())),
+        ),
+    };
+    ProviderDispatchError {
+        stage: DispatchStage::Streaming,
+        proof,
+        kind,
+        provider_request_id,
+        retry_after,
+        detail,
+    }
 }
 
 #[allow(
