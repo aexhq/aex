@@ -352,14 +352,16 @@ fn model_catalog_inputs(
         collection_sha256,
         tool_catalog_sha256,
     ] = bindings;
-    let present = [
+    let catalog_present = [
         trust_roots_json.is_some(),
         trust_roots_sha256.is_some(),
         collection_file.is_some(),
         collection_sha256.is_some(),
-        tool_catalog_sha256.is_some(),
     ];
-    if present.iter().any(|value| *value) && !present.iter().all(|value| *value) {
+    if !catalog_present.iter().any(|value| *value) {
+        return Ok(None);
+    }
+    if !catalog_present.iter().all(|value| *value) || tool_catalog_sha256.is_none() {
         return Err(ToolError::single(
             Exit::Usage,
             "model-catalog-build-binding-partial",
@@ -1930,6 +1932,30 @@ alarm_spec = "regional-session-api"
             error.rules(),
             vec!["model-catalog-collection-digest-mismatch"]
         );
+    }
+
+    #[test]
+    fn a_tool_catalog_digest_alone_does_not_misreport_a_partial_model_catalog() {
+        let temp = tempfile::tempdir().unwrap();
+        let inputs = model_catalog_inputs(
+            temp.path(),
+            [
+                None,
+                None,
+                None,
+                None,
+                Some(
+                    "sha256:b3cae3e3b5cb64b3ca274f22f67c3ba1e305ac4ca14084967348f06d0ba0fdec"
+                        .to_owned(),
+                ),
+            ],
+        )
+        .expect("the independently derived tool catalog is not a partial model catalog");
+        assert!(inputs.is_none());
+
+        let error = publication_plan_with_model_catalog(&brain_unit(), inputs.as_ref())
+            .expect_err("publication must still fail closed without a signed model catalog");
+        assert_eq!(error.rules(), vec!["model-catalog-build-binding-missing"]);
     }
 
     #[test]
