@@ -291,14 +291,16 @@ unset until all of the following exist together:
    The current executable deliberately handles the first production revision;
    chain extension must additionally consume exact still-live session pins.
    No real signing invocation or signed collection exists yet.
-4. The exact collection bytes at a normalized workspace-relative path before
-   `artifact plan` runs. The current workflow performs no catalog download, so
-   this means a reviewed tracked release input unless the workflow first gains
-   a separate immutable, digest-verified acquisition step.
+4. The exact collection bytes at the normalized workspace-relative path before
+   `artifact plan` runs. The build workflow now downloads only a same-repository
+   immutable GitHub release asset and verifies its configured SHA-256 before
+   exposing `.tmp/model-catalog/collection.json` to the release tool.
 
 Only then may publication configure
-`AEX_MODEL_CATALOG_TRUST_ROOTS_JSON`, its SHA-256,
-`AEX_MODEL_CATALOG_COLLECTION_FILE`, and its SHA-256 as repository variables.
+`AEX_MODEL_CATALOG_TRUST_ROOTS_JSON`, its SHA-256, the immutable collection
+URI, and the collection SHA-256 as repository variables. The workflow derives
+the local collection path after download; a runner-specific file path is not a
+release binding.
 `AEX_TOOL_CATALOG_SHA256` is derived from the checked-out source by the
 workflow. The release tool revalidates canonical roots, both digests, the
 workspace-relative path, and the built-in tool-catalog digest before compiling
@@ -306,12 +308,12 @@ workspace-relative path, and the built-in tool-catalog digest before compiling
 at least one serviceable `Active` model.
 
 The 2026-08-04 protected publication failure is therefore an external
-authority blocker, not missing boilerplate configuration. The public
-repository has no configured values, the workspace plane environments carry
-none, the hosted composition declares the same readiness blocker, and the live
-AWS workload/state regions contain no catalog-signing KMS key. Deriving values
-from the existing encryption keys, test fixtures, or staged launch entries
-would manufacture a trust root and must remain impossible.
+authority blocker, not missing boilerplate configuration. The dedicated
+signing authority is now provisioned in `eu-west-1` and the protected publisher
+environment is configured, but the public repository still has no signed
+collection or published binding values. Deriving values from the existing
+encryption keys, test fixtures, or staged launch entries would manufacture a
+trust root and must remain impossible.
 
 ---
 
