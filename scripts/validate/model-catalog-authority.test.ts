@@ -19,7 +19,7 @@ const terraformStatementActions = (source: string, sid: string): readonly string
   if (actions === undefined) {
     throw new Error(`Terraform statement ${sid} has no action list`);
   }
-  return Array.from(actions.matchAll(/"(kms:[^"]+)"/g), (match) => match[1]);
+  return Array.from(actions.matchAll(/"(kms:[^"]+)"/g), (match) => match[1]!);
 };
 
 describe("protected model-catalog authority", () => {
