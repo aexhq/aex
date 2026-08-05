@@ -24,6 +24,21 @@ function listFiles(dir: string): string[] {
   return out;
 }
 
+function listTerraformRoots(): string[] {
+  return ["infra/examples", "infra/modules"]
+    .flatMap((parent) =>
+      readdirSync(resolve(repoRoot, parent), { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => `${parent}/${entry.name}`)
+        .filter((root) =>
+          readdirSync(resolve(repoRoot, root), { withFileTypes: true }).some(
+            (entry) => entry.isFile() && entry.name.endsWith(".tf")
+          )
+        )
+    )
+    .sort();
+}
+
 describe("repository hygiene", () => {
   it("keeps generated release and suite scratch out of tracked public files", () => {
     const ignore = read(".gitignore");
@@ -68,6 +83,24 @@ describe("repository hygiene", () => {
 
     expect(ignore).toMatch(/^\.aex-generated-dist\.lock\/$/m);
     expect(ignore).toMatch(/^\.aex-generated-dist\.lock\.breaker\/$/m);
+  });
+
+  it("tracks a provider lockfile for every Terraform root", () => {
+    const roots = listTerraformRoots();
+    const trackedLockfiles = new Set(
+      execFileSync("git", ["ls-files", "-z", "--", "infra/examples", "infra/modules"], {
+        cwd: repoRoot,
+        encoding: "utf8"
+      })
+        .split("\0")
+        .filter((path) => path.endsWith("/.terraform.lock.hcl"))
+    );
+
+    expect(
+      roots
+        .map((root) => `${root}/.terraform.lock.hcl`)
+        .filter((lockfile) => !trackedLockfiles.has(lockfile))
+    ).toEqual([]);
   });
 
   it("keeps every published JavaScript sourcemap reference resolvable", () => {
