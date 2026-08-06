@@ -142,17 +142,10 @@ impl PackageGroup {
     }
 }
 
-/// The `curl` swap that must run **before** any install.
-///
-/// This base's `dnf` is a symlink to `microdnf`, which has no `--allowerasing`, so
-/// listing `curl` in the install set aborts the whole transaction with
-/// `curl-minimal conflicts with curl`. That is a real one-minute
-/// `CreateMicrovmImage` failure observed on 2026-07-18, not a precaution.
-pub const CURL_SWAP: &str = "dnf swap curl-minimal curl";
-
 /// Packages that must never appear in an install list.
 pub const FORBIDDEN_INSTALL_PACKAGES: [&str; 5] = [
-    // See `CURL_SWAP`.
+    // AL2023 minimal already supplies `curl-minimal`; installing the legacy
+    // `curl` name conflicts with it.
     "curl",
     // Deleted with the in-guest firewall: root can flush any nft table, and the
     // IMDS rule protected an execution role this target never attaches.
@@ -210,9 +203,9 @@ pub fn variants() -> Vec<ImageVariant> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AGENT_PATH, ARCHITECTURE, CURL_SWAP, Capability, FORBIDDEN_INSTALL_PACKAGES,
-        FORBIDDEN_ROOTFS_PATHS, GUEST_TARGET, HOOK_PORT, ImageLock, LockVerdict, OS_CAPABILITIES,
-        PackageGroup, ROOTFS_CONTRACT, variants,
+        AGENT_PATH, ARCHITECTURE, Capability, FORBIDDEN_INSTALL_PACKAGES, FORBIDDEN_ROOTFS_PATHS,
+        GUEST_TARGET, HOOK_PORT, ImageLock, LockVerdict, OS_CAPABILITIES, PackageGroup,
+        ROOTFS_CONTRACT, variants,
     };
 
     fn lock(nevras: &[&str]) -> ImageLock {
@@ -254,8 +247,7 @@ mod tests {
     }
 
     #[test]
-    fn curl_is_swapped_and_never_installed() {
-        assert!(CURL_SWAP.starts_with("dnf swap curl-minimal curl"));
+    fn the_conflicting_full_curl_package_is_never_installed() {
         for group in PackageGroup::ALL {
             assert!(
                 !group.packages().contains(&"curl"),
