@@ -73,6 +73,7 @@ describe("workflow evidence producers", () => {
     const source = readRepoFile(".github/workflows/_rust-lane.yml");
     const workflow = readWorkflow(".github/workflows/_rust-lane.yml");
     const job = workflowJob(workflow, "test");
+    const lint = workflowJob(workflow, "lint");
     const workflowCall = workflowTriggers(workflow).workflow_call as {
       readonly inputs: Readonly<Record<string, { readonly required?: boolean }>>;
     };
@@ -80,26 +81,49 @@ describe("workflow evidence producers", () => {
     expect(workflowCall.inputs.job_name?.required).toBeTrue();
     expect(workflowCall.inputs.selection_mode?.required).toBeTrue();
     expect(stepIndex(job, "Record the declared test inventory")).toBeLessThan(stepIndex(job, "Test"));
-    expect(stepIndex(job, "Record the receipt source identity")).toBeLessThan(
-      stepIndex(job, "Clippy")
+    // Clippy left the 104-cell matrix for one dedicated job. It must not come
+    // back: a cell that clippies again pays the second full compile the move
+    // exists to remove.
+    expect(workflowSteps(job).some((step) => step.run?.includes("cargo clippy"))).toBeFalse();
+    expect(lint.strategy).toBeUndefined();
+    expect(stepIndex(lint, "Record the receipt source identity")).toBeLessThan(
+      stepIndex(lint, "Clippy every selected package")
     );
-    expect(stepIndex(job, "Clippy")).toBeLessThan(
-      stepIndex(job, "Build and verify the lint receipt")
+    expect(stepIndex(lint, "Clippy every selected package")).toBeLessThan(
+      stepIndex(lint, "Build and verify every lint receipt")
     );
-    expect(workflowStep(job, "Clippy").run).toContain("--message-format=json");
-    expect(workflowStep(job, "Clippy").run).toContain("clippy.json");
-    expect(workflowStep(job, "Clippy").run).not.toContain("2>&1");
-    expect(workflowStep(job, "Build and verify the lint receipt").run).toContain(
+    expect(workflowStep(lint, "Clippy every selected package").run).toContain(
+      "--message-format=json"
+    );
+    expect(workflowStep(lint, "Clippy every selected package").run).toContain("clippy.json");
+    expect(workflowStep(lint, "Clippy every selected package").run).not.toContain("2>&1");
+    // A bash loop replaced GitHub's matrix as the thing that guarantees every
+    // routed package is linted, so prove the loop reads the routed matrix and
+    // refuses to cover fewer rows than it declares.
+    expect(workflowStep(lint, "Clippy every selected package").run).toContain("SELECTED_MATRIX");
+    expect(workflowStep(lint, "Clippy every selected package").run).toContain(
+      "jq -er '.include | length'"
+    );
+    expect(workflowStep(lint, "Clippy every selected package").run).toContain(
+      "(( linted == routed ))"
+    );
+    expect(workflowStep(lint, "Build and verify every lint receipt").run).toContain(
       "aex-release-tool evidence new-cargo"
     );
-    expect(workflowStep(job, "Build and verify the lint receipt").run).toContain(
+    expect(workflowStep(lint, "Build and verify every lint receipt").run).toContain(
       "aex-release-tool evidence attach"
     );
-    expect(workflowStep(job, "Build and verify the lint receipt").run).toContain(
+    expect(workflowStep(lint, "Build and verify every lint receipt").run).toContain(
       "aex-release-tool evidence verify"
     );
-    expect(workflowStep(job, "Build and verify the lint receipt").run).toContain(
-      "artifact://lint-${RECEIPT_LANE}-${SELECTED_PACKAGE}-${PARTITION_INDEX}/clippy.json"
+    expect(workflowStep(lint, "Build and verify every lint receipt").run).toContain(
+      "artifact://lint-${RECEIPT_LANE}-rust/${SELECTED_PACKAGE}-${PARTITION_INDEX}/clippy.json"
+    );
+    // The attach URI names a path inside this archive, so the archive root must
+    // not depend on how many rows the router selected. A directory roots at
+    // itself; a glob roots at whatever it happened to match.
+    expect(workflowStep(lint, "Upload the lint evidence").with?.path).toBe(
+      "target/aex-evidence/lint"
     );
     expect(stepIndex(job, "Test")).toBeLessThan(stepIndex(job, "Prove the no-skip inventory"));
     expect(stepIndex(job, "Prove the no-skip inventory")).toBeLessThan(
@@ -133,10 +157,10 @@ describe("workflow evidence producers", () => {
     expect(source).toContain('class: "lint"');
     expect(source).toContain('packages: [$package]');
     expect(source).toContain(
-      "LINT_RECEIPT: target/aex-evidence/${{ matrix.name }}/receipt-lint-${{ matrix.name }}-${{ matrix.partition }}.json"
+      'LINT_RECEIPT="$receipt_dir/receipt-lint-$SELECTED_PACKAGE-$PARTITION_INDEX.json"'
     );
-    expect(source).toContain("name: receipt-${{ inputs.lane }}-rust-lint-");
-    expect(source).toContain("name: lint-${{ inputs.lane }}-${{ matrix.name }}-");
+    expect(source).toContain("name: receipt-${{ inputs.lane }}-rust-lint-all");
+    expect(source).toContain("name: lint-${{ inputs.lane }}-rust");
     expect(source).toContain("name: receipt-${{ inputs.lane }}-rust-");
     expect(source).not.toContain("composition-inputs");
     expect(source).not.toContain('class: "deny"');
@@ -451,6 +475,7 @@ describe("workflow evidence producers", () => {
     for (const [path, consumerId] of [
       [".github/workflows/_route.yml", "route"],
       [".github/workflows/_rust-lane.yml", "test"],
+      [".github/workflows/_rust-lane.yml", "lint"],
       [".github/workflows/_node-lane.yml", "unit"],
       [".github/workflows/_terraform-lane.yml", "terraform"],
       [".github/workflows/_receipts.yml", "aggregate"],

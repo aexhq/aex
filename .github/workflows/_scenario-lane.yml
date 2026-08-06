@@ -74,6 +74,16 @@ jobs:
         with:
           toolchain: "1.97.1"
 
+      # `cargo nextest list --features live` compiles an `aex-live-*` crate's
+      # whole registry closure. Without this the cell had no cache at all and
+      # built it from nothing. Restore only: `--features live` resolves features
+      # differently from the unit cells and must not overwrite their key.
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@bc2d2e71bd35c5549942babaa51a89c586b981d1  # v2.8.1
+        with:
+          save-if: false
+          shared-key: main
+
       - name: Download pinned nextest
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
         with:

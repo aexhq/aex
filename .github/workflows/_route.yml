@@ -97,19 +97,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      # The tool is no longer compiled here, but `graph *` shells out to
-      # `cargo metadata --locked`, so the toolchain and the restored registry
-      # index are what keep that resolution offline.
+      # The tool is no longer compiled here, but `graph *` still shells out to
+      # `cargo metadata --no-deps`, so the toolchain has to exist. No cargo
+      # cache: `--no-deps` resolves nothing and reads no registry, and the key
+      # this job used to declare was never written by any workflow anyway.
       - name: Install Rust
         uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
         with:
           toolchain: "1.97.1"
-
-      - name: Restore cargo cache
-        uses: Swatinem/rust-cache@bc2d2e71bd35c5549942babaa51a89c586b981d1  # v2.8.1
-        with:
-          save-if: false
-          shared-key: router
 
       - name: Download the prepared workspace tools
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0

@@ -100,11 +100,15 @@ jobs:
           toolchain: "1.97.1"
           components: rustfmt, clippy
 
+      # A literal key, not `${{ inputs.lane }}`: only the main lane passes
+      # `restore-save`, so a lane-named key meant `pr` and `assurance` read a
+      # key nothing ever writes and compiled the whole closure cold. One key,
+      # one writer, and GitHub lets any branch read the default branch's scope.
       - name: Cargo cache
         uses: Swatinem/rust-cache@bc2d2e71bd35c5549942babaa51a89c586b981d1  # v2.8.1
         with:
           save-if: ${{ inputs.cache_mode == 'restore-save' }}
-          shared-key: ${{ inputs.lane }}
+          shared-key: main
 
       - name: Download the prepared workspace tools
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
@@ -146,126 +150,6 @@ jobs:
           chmod 0755 cargo-nextest
           ./cargo-nextest --version | grep -Eq '^cargo-nextest 0\.9\.108([[:space:]]|$)'
           echo "$RUNNER_TEMP/aex-nextest" >> "$GITHUB_PATH"
-
-      - name: Record the receipt source identity
-        env:
-          RECEIPT_DIR: target/aex-evidence/${{ matrix.name }}
-        run: |
-          set -euo pipefail
-          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
-          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ ]]
-          [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
-          test -z "$(git status --porcelain=v1 --untracked-files=all)"
-          mkdir -p "$RECEIPT_DIR"
-          date --utc +'%Y-%m-%dT%H:%M:%SZ' > "$RECEIPT_DIR/lint-started-at.txt"
-
-      - name: Clippy
-        env:
-          CARGO_INCREMENTAL: "0"
-          RECEIPT_DIR: target/aex-evidence/${{ matrix.name }}
-        run: |
-          set -euo pipefail
-          cargo clippy --locked -p "${{ matrix.name }}" --all-targets \
-            --message-format=json -- -D warnings \
-            | tee "$RECEIPT_DIR/clippy.json"
-
-      - name: Build and verify the lint receipt
-        env:
-          CALLER_JOB: ${{ inputs.job_name }}
-          LINT_RECEIPT: target/aex-evidence/${{ matrix.name }}/receipt-lint-${{ matrix.name }}-${{ matrix.partition }}.json
-          RECEIPT_DIR: target/aex-evidence/${{ matrix.name }}
-          SELECTED_PACKAGE: ${{ matrix.name }}
-          SELECTED_UNITS_JSON: ${{ toJSON(matrix.units) }}
-          SELECTION_MODE: ${{ inputs.selection_mode }}
-          PARTITION_INDEX: ${{ matrix.partition }}
-          PARTITION_TOTAL: ${{ matrix.partitions }}
-          RECEIPT_LANE: ${{ inputs.lane }}
-        run: |
-          set -euo pipefail
-          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
-          test -z "$(git status --porcelain=v1 --untracked-files=all)"
-          completed_at=$(date --utc +'%Y-%m-%dT%H:%M:%SZ')
-          started_at=$(<"$RECEIPT_DIR/lint-started-at.txt")
-          cargo_lock_digest="sha256:$(sha256sum Cargo.lock | cut -d' ' -f1)"
-          package_key=$(printf '%s' "$SELECTED_PACKAGE" | sha256sum | cut -c1-12)
-          receipt_id="rc_${RECEIPT_LANE}_rust_lint_${package_key}_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
-          jq -n \
-            --arg receiptId "$receipt_id" \
-            --arg lane "$RECEIPT_LANE" \
-            --arg repository "$GITHUB_REPOSITORY" \
-            --arg commitSha "$GITHUB_SHA" \
-            --arg workflowRunId "$GITHUB_RUN_ID" \
-            --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
-            --arg jobName "$CALLER_JOB" \
-            --arg builderId "https://github.com/$GITHUB_REPOSITORY/.github/workflows/_rust-lane.yml@$GITHUB_SHA" \
-            --arg cargoLockDigest "$cargo_lock_digest" \
-            --argjson unitIds "$SELECTED_UNITS_JSON" \
-            --arg mode "$SELECTION_MODE" \
-            --arg package "$SELECTED_PACKAGE" \
-            --argjson partitionIndex "$PARTITION_INDEX" \
-            --argjson partitionTotal "$PARTITION_TOTAL" \
-            --arg startedAt "$started_at" \
-            --arg completedAt "$completed_at" \
-            '{
-              receiptId: $receiptId,
-              class: "lint",
-              layer: "unit",
-              lane: $lane,
-              concerns: [],
-              declared: 1,
-              source: {
-                repository: $repository,
-                commitSha: $commitSha,
-                treeClean: true,
-                workflowRunId: $workflowRunId,
-                runAttempt: $runAttempt,
-                jobName: $jobName,
-                builderId: $builderId
-              },
-              inputs: {cargoLockDigest: $cargoLockDigest},
-              subject: {unitIds: $unitIds},
-              selection: {
-                mode: $mode,
-                filterset: "clippy(--all-targets,-Dwarnings)",
-                packages: [$package],
-                partition: {index: $partitionIndex, total: $partitionTotal}
-              },
-              data: {residue: "none", secretCanaryObserved: false},
-              startedAt: $startedAt,
-              completedAt: $completedAt
-            }' > "$RECEIPT_DIR/lint-context.json"
-          aex-release-tool evidence new-cargo \
-            --context "$RECEIPT_DIR/lint-context.json" \
-            --messages "$RECEIPT_DIR/clippy.json" \
-            --out "$LINT_RECEIPT"
-          aex-release-tool evidence attach \
-            --receipt "$LINT_RECEIPT" --kind log \
-            --file "$RECEIPT_DIR/clippy.json" \
-            --uri "artifact://lint-${RECEIPT_LANE}-${SELECTED_PACKAGE}-${PARTITION_INDEX}/clippy.json"
-          jq -e '
-            .schema == "aex.evidence-receipt.v1" and
-            .class == "lint" and
-            .source.commitSha == env.GITHUB_SHA and
-            .source.workflowRunId == env.GITHUB_RUN_ID and
-            .source.runAttempt == (env.GITHUB_RUN_ATTEMPT | tonumber) and
-            .source.jobName == env.CALLER_JOB and
-            .subject.unitIds == (env.SELECTED_UNITS_JSON | fromjson) and
-            .selection.packages == [env.SELECTED_PACKAGE] and
-            .inventory == {
-              declared: 1,
-              collected: 1,
-              passed: 1,
-              failed: 0,
-              skipped: 0,
-              ignored: 0,
-              filteredAtRuntime: 0,
-              retried: 0,
-              flaky: 0
-            }
-          ' "$LINT_RECEIPT" >/dev/null
-          aex-release-tool evidence verify \
-            --receipt "$LINT_RECEIPT"
 
       - name: Record the declared test inventory
         env:
@@ -507,27 +391,12 @@ jobs:
           path: target/aex-evidence/${{ matrix.name }}/receipt.json
           if-no-files-found: error
 
-      - name: Upload the lint receipt
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
-        with:
-          name: receipt-${{ inputs.lane }}-rust-lint-${{ matrix.name }}-${{ matrix.partition }}
-          path: target/aex-evidence/${{ matrix.name }}/receipt-lint-${{ matrix.name }}-${{ matrix.partition }}.json
-          if-no-files-found: error
-
       - name: Upload semantic receipts
         if: ${{ hashFiles(format('target/aex-evidence/{0}/receipt-semantic-*.json', matrix.name)) != '' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: receipt-${{ inputs.lane }}-rust-semantic-${{ matrix.name }}-${{ matrix.partition }}
           path: target/aex-evidence/${{ matrix.name }}/receipt-semantic-*.json
-          if-no-files-found: error
-
-      - name: Upload the lint evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
-        with:
-          name: lint-${{ inputs.lane }}-${{ matrix.name }}-${{ matrix.partition }}
-          path: target/aex-evidence/${{ matrix.name }}/clippy.json
           if-no-files-found: error
 
       - name: Upload the test evidence
@@ -539,6 +408,238 @@ jobs:
             target/nextest/${{ inputs.profile }}/junit.xml
             target/aex-evidence/${{ matrix.name }}/nextest-list.json
             target/aex-evidence/${{ matrix.name }}/doctest.log
+          if-no-files-found: error
+
+  # Clippy is a check build under `RUSTC_WORKSPACE_WRAPPER`; the cells' test
+  # build is codegen without it. Neither can consume the other's artifacts in
+  # either order, so running both in one cell recompiled the whole closure
+  # twice, 104 times over. The command, the receipt body, the schema and the
+  # tool are unchanged here — only the place they run, so the compiled closure
+  # is shared across packages instead of rebuilt per cell.
+  #
+  # `source.jobName` is the CALLER's job id, never this job's, so the receipts
+  # this job emits are byte-identical to the ones the cells emitted and
+  # `evidence aggregate` still demands one per routed matrix row.
+  #
+  # A single `--workspace` clippy would be cheaper still and is rejected:
+  # `aex-session-dynamodb` has real default features that nine members switch
+  # off, and workspace-wide feature unification would stop linting the
+  # `default-features = false` arms those members actually compile against.
+  lint:
+    name: Lint every selected package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
+        with:
+          toolchain: "1.97.1"
+          components: clippy
+
+      # Restore only, whatever the lane. Clippy fingerprints its workspace
+      # members differently from the test cells, and this job must not be able
+      # to replace the key those cells read.
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@bc2d2e71bd35c5549942babaa51a89c586b981d1  # v2.8.1
+        with:
+          save-if: false
+          shared-key: main
+
+      - name: Download the prepared workspace tools
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: workspace-tools-${{ github.run_id }}
+          path: ${{ runner.temp }}/aex-tools
+
+      # The digests arrive through the job-output channel, not inside the
+      # artifact, so an artifact that lies about itself cannot self-certify.
+      - name: Use the prepared workspace tools
+        env:
+          RELEASE_TOOL_SHA256: ${{ inputs.release_tool_sha256 }}
+          WORKSPACE_CHECK_SHA256: ${{ inputs.workspace_check_sha256 }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/aex-tools"
+          [[ "$RELEASE_TOOL_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$WORKSPACE_CHECK_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          printf '%s  %s\n' "$RELEASE_TOOL_SHA256" aex-release-tool > expected.sha256
+          printf '%s  %s\n' "$WORKSPACE_CHECK_SHA256" aex-workspace-check >> expected.sha256
+          sha256sum --check --strict expected.sha256
+          [[ "$(find . -maxdepth 1 -type f ! -name expected.sha256 | wc -l)" -eq 2 ]]
+          chmod 0755 aex-release-tool aex-workspace-check
+          ./aex-release-tool --version | grep -Eq '^aex-release-tool [0-9]+\.[0-9]+\.[0-9]+'
+          ./aex-workspace-check --version | grep -Eq '^aex-workspace-check [0-9]+\.[0-9]+\.[0-9]+'
+          echo "$RUNNER_TEMP/aex-tools" >> "$GITHUB_PATH"
+
+      - name: Record the receipt source identity
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+      - name: Clippy every selected package
+        env:
+          CARGO_INCREMENTAL: "0"
+          SELECTED_MATRIX: ${{ inputs.matrix }}
+        run: |
+          set -euo pipefail
+          mapfile -t rows < <(
+            jq -er '.include[] | [.name, (.partition | tostring)] | @tsv' <<<"$SELECTED_MATRIX"
+          )
+          for row in "${rows[@]}"; do
+            IFS=$'\t' read -r package partition <<<"$row"
+            evidence_dir="target/aex-evidence/lint/$package-$partition"
+            receipt_dir="target/aex-evidence/lint-receipts/$package-$partition"
+            mkdir -p "$evidence_dir" "$receipt_dir"
+            date --utc +'%Y-%m-%dT%H:%M:%SZ' > "$receipt_dir/lint-started-at.txt"
+            cargo clippy --locked -p "$package" --all-targets \
+              --message-format=json -- -D warnings \
+              | tee "$evidence_dir/clippy.json"
+          done
+          # A bash loop, not GitHub's matrix, now decides what gets linted. A
+          # short loop is a silent skip, so prove the loop covered the routed
+          # matrix here rather than discovering it as N missing receipts later.
+          linted=$(find target/aex-evidence/lint -name clippy.json | wc -l)
+          routed=$(jq -er '.include | length' <<<"$SELECTED_MATRIX")
+          (( linted == routed ))
+
+      - name: Build and verify every lint receipt
+        env:
+          CALLER_JOB: ${{ inputs.job_name }}
+          SELECTED_MATRIX: ${{ inputs.matrix }}
+          SELECTION_MODE: ${{ inputs.selection_mode }}
+          RECEIPT_LANE: ${{ inputs.lane }}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          cargo_lock_digest="sha256:$(sha256sum Cargo.lock | cut -d' ' -f1)"
+          mapfile -t rows < <(jq -c '.include[]' <<<"$SELECTED_MATRIX")
+          for row in "${rows[@]}"; do
+            SELECTED_PACKAGE=$(jq -er .name <<<"$row")
+            SELECTED_UNITS_JSON=$(jq -cer '.units | select(type == "array")' <<<"$row")
+            export SELECTED_PACKAGE SELECTED_UNITS_JSON
+            PARTITION_INDEX=$(jq -er .partition <<<"$row")
+            PARTITION_TOTAL=$(jq -er .partitions <<<"$row")
+            evidence_dir="target/aex-evidence/lint/$SELECTED_PACKAGE-$PARTITION_INDEX"
+            receipt_dir="target/aex-evidence/lint-receipts/$SELECTED_PACKAGE-$PARTITION_INDEX"
+            LINT_RECEIPT="$receipt_dir/receipt-lint-$SELECTED_PACKAGE-$PARTITION_INDEX.json"
+            completed_at=$(date --utc +'%Y-%m-%dT%H:%M:%SZ')
+            started_at=$(<"$receipt_dir/lint-started-at.txt")
+            package_key=$(printf '%s' "$SELECTED_PACKAGE" | sha256sum | cut -c1-12)
+            receipt_id="rc_${RECEIPT_LANE}_rust_lint_${package_key}_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+            jq -n \
+              --arg receiptId "$receipt_id" \
+              --arg lane "$RECEIPT_LANE" \
+              --arg repository "$GITHUB_REPOSITORY" \
+              --arg commitSha "$GITHUB_SHA" \
+              --arg workflowRunId "$GITHUB_RUN_ID" \
+              --argjson runAttempt "$GITHUB_RUN_ATTEMPT" \
+              --arg jobName "$CALLER_JOB" \
+              --arg builderId "https://github.com/$GITHUB_REPOSITORY/.github/workflows/_rust-lane.yml@$GITHUB_SHA" \
+              --arg cargoLockDigest "$cargo_lock_digest" \
+              --argjson unitIds "$SELECTED_UNITS_JSON" \
+              --arg mode "$SELECTION_MODE" \
+              --arg package "$SELECTED_PACKAGE" \
+              --argjson partitionIndex "$PARTITION_INDEX" \
+              --argjson partitionTotal "$PARTITION_TOTAL" \
+              --arg startedAt "$started_at" \
+              --arg completedAt "$completed_at" \
+              '{
+                receiptId: $receiptId,
+                class: "lint",
+                layer: "unit",
+                lane: $lane,
+                concerns: [],
+                declared: 1,
+                source: {
+                  repository: $repository,
+                  commitSha: $commitSha,
+                  treeClean: true,
+                  workflowRunId: $workflowRunId,
+                  runAttempt: $runAttempt,
+                  jobName: $jobName,
+                  builderId: $builderId
+                },
+                inputs: {cargoLockDigest: $cargoLockDigest},
+                subject: {unitIds: $unitIds},
+                selection: {
+                  mode: $mode,
+                  filterset: "clippy(--all-targets,-Dwarnings)",
+                  packages: [$package],
+                  partition: {index: $partitionIndex, total: $partitionTotal}
+                },
+                data: {residue: "none", secretCanaryObserved: false},
+                startedAt: $startedAt,
+                completedAt: $completedAt
+              }' > "$receipt_dir/lint-context.json"
+            aex-release-tool evidence new-cargo \
+              --context "$receipt_dir/lint-context.json" \
+              --messages "$evidence_dir/clippy.json" \
+              --out "$LINT_RECEIPT"
+            aex-release-tool evidence attach \
+              --receipt "$LINT_RECEIPT" --kind log \
+              --file "$evidence_dir/clippy.json" \
+              --uri "artifact://lint-${RECEIPT_LANE}-rust/${SELECTED_PACKAGE}-${PARTITION_INDEX}/clippy.json"
+            jq -e '
+              .schema == "aex.evidence-receipt.v1" and
+              .class == "lint" and
+              .source.commitSha == env.GITHUB_SHA and
+              .source.workflowRunId == env.GITHUB_RUN_ID and
+              .source.runAttempt == (env.GITHUB_RUN_ATTEMPT | tonumber) and
+              .source.jobName == env.CALLER_JOB and
+              .subject.unitIds == (env.SELECTED_UNITS_JSON | fromjson) and
+              .selection.packages == [env.SELECTED_PACKAGE] and
+              .inventory == {
+                declared: 1,
+                collected: 1,
+                passed: 1,
+                failed: 0,
+                skipped: 0,
+                ignored: 0,
+                filteredAtRuntime: 0,
+                retried: 0,
+                flaky: 0
+              }
+            ' "$LINT_RECEIPT" >/dev/null
+            aex-release-tool evidence verify \
+              --receipt "$LINT_RECEIPT"
+          done
+          # Same reason as the clippy loop: `evidence aggregate` would catch a
+          # short loop as N missing receipts, which names the symptom instead of
+          # the cause.
+          built=$(find target/aex-evidence/lint-receipts -name 'receipt-lint-*.json' | wc -l)
+          routed=$(jq -er '.include | length' <<<"$SELECTED_MATRIX")
+          (( built == routed ))
+
+      # One artifact holding every lint receipt. `_receipts.yml` downloads
+      # `receipt-*` with `merge-multiple: false` and then finds every `*.json`
+      # under it, so N receipts in one artifact are collected exactly as N
+      # artifacts holding one each.
+      - name: Upload the lint receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: receipt-${{ inputs.lane }}-rust-lint-all
+          path: target/aex-evidence/lint-receipts/*/receipt-lint-*.json
+          if-no-files-found: error
+
+      # A directory, not a glob. `upload-artifact` derives the archive root
+      # from what the pattern matched, so a glob that matches one file can root
+      # it differently from a glob that matches many — and the attach URI above
+      # names a path inside this archive. A directory roots at itself either way.
+      - name: Upload the lint evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: lint-${{ inputs.lane }}-rust
+          path: target/aex-evidence/lint
           if-no-files-found: error
 
   capacity-limit-projection:
@@ -562,7 +663,7 @@ jobs:
         uses: Swatinem/rust-cache@bc2d2e71bd35c5549942babaa51a89c586b981d1  # v2.8.1
         with:
           save-if: ${{ inputs.cache_mode == 'restore-save' }}
-          shared-key: ${{ inputs.lane }}-capacity-limit-projection
+          shared-key: main-capacity-limit-projection
 
       - name: Download pinned nextest
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
