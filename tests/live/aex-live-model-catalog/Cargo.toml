@@ -37,6 +37,22 @@ path = "src/main.rs"
 name = "aex-model-catalog-qualifier"
 path = "src/qualify.rs"
 
+[[test]]
+name = "catalog_source"
+path = "tests/catalog_source.rs"
+
+[[test]]
+name = "deepseek_qualification"
+path = "tests/deepseek_qualification.rs"
+
+[[test]]
+name = "genesis"
+path = "tests/genesis.rs"
+
+[[test]]
+name = "qualification_output"
+path = "tests/qualification_output.rs"
+
 [dependencies]
 aex-brain-application = { path = "../../../crates/aex-brain-application" }
 aex-brain-provider-gateway = { path = "../../../crates/aex-brain-provider-gateway" }
