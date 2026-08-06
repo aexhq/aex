@@ -28,3 +28,16 @@ lengthening release feedback. The future lane should record findings for
 triage, keep scanner failures non-blocking for dev, and introduce a blocking
 rule only for a separately reviewed, demonstrably exploitable runtime-critical
 finding.
+
+## Browser MicroVM variants
+
+The `2gb-browser`, `4gb-browser`, and `8gb-browser` image variants are excluded
+from the public release authority during prelaunch. The pinned AL2023 ARM64
+repository does not publish Chromium, so listing those variants would create
+artifacts that deterministically fail in the provider image builder. The five
+non-browser variants remain published.
+
+Revisit this when the image build has a digest-pinned ARM64 browser artifact
+with verified provenance and a live AWS MicroVM qualification. Keep the browser
+runtime contract and local generator code until then; restoring release rows
+requires the provider build and browser smoke to pass for every restored shape.

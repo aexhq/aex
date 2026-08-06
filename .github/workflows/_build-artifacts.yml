@@ -900,7 +900,7 @@ jobs:
             packaged-units/artifact-*/draft-envelope.json
             oci-units/oci-artifact-*/draft-envelope.json
           )
-          test "${#drafts[@]}" -eq 39
+          test "${#drafts[@]}" -eq 36
           tag="main-${GITHUB_SHA}-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}"
           release_base="https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag"
           builder="https://github.com/$GITHUB_REPOSITORY/.github/workflows/_build-artifacts.yml@refs/heads/main"
@@ -1099,8 +1099,8 @@ jobs:
             exit 30
           fi
           total=$((blob_count + oci_count))
-          if [ "$total" -ne 39 ]; then
-            echo "unit inventory accounted for $total entries, expected exactly 39" >&2
+          if [ "$total" -ne 36 ]; then
+            echo "unit inventory accounted for $total entries, expected exactly 36" >&2
             exit 30
           fi
           aux_count=$(find dist/aux-assets -maxdepth 1 -type f | wc -l)

@@ -13,8 +13,6 @@
 //! Claiming reproducibility for the OS layer would be a false guarantee; a checked
 //! lockfile is a real one.
 
-use serde::{Deserialize, Serialize};
-
 pub use aex_hands_agent::image_contract::{
     AGENT_PATH, FORBIDDEN_ROOTFS_PATHS, ImageLock, LockVerdict, ROOTFS_CONTRACT, SBOM_DIR,
 };
@@ -49,14 +47,6 @@ pub const HOOK_PORT: u16 = 8_080;
 /// protecting anything.
 pub const OS_CAPABILITIES: &str = "ALL";
 
-/// A capability layer an image variant may carry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Capability {
-    /// Headless Chromium plus its font and NSS dependencies.
-    Browser,
-}
-
 /// A package group in the manifest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum PackageGroup {
@@ -66,18 +56,11 @@ pub enum PackageGroup {
     ArchiveNet,
     /// Language toolchains.
     Languages,
-    /// The browser layer.
-    Browser,
 }
 
 impl PackageGroup {
     /// Every group.
-    pub const ALL: [Self; 4] = [
-        Self::ShellCore,
-        Self::ArchiveNet,
-        Self::Languages,
-        Self::Browser,
-    ];
+    pub const ALL: [Self; 3] = [Self::ShellCore, Self::ArchiveNet, Self::Languages];
 
     /// The packages in this group.
     ///
@@ -122,19 +105,7 @@ impl PackageGroup {
                 "gcc",
                 "gcc-c++",
             ],
-            Self::Browser => &[
-                "chromium-headless",
-                "nss",
-                "liberation-fonts",
-                "dejavu-sans-fonts",
-            ],
         }
-    }
-
-    /// Whether this group is only present in a browser variant.
-    #[must_use]
-    pub const fn is_browser_layer(self) -> bool {
-        matches!(self, Self::Browser)
     }
 }
 
@@ -159,49 +130,35 @@ pub const FORBIDDEN_INSTALL_PACKAGES: [&str; 5] = [
 pub struct ImageVariant {
     /// The compute shape it is built for.
     pub size: &'static str,
-    /// Its capability layers.
-    pub capabilities: Vec<Capability>,
     /// `minimumMemoryInMiB` for `CreateMicrovmImage`.
     pub minimum_memory_mib: u32,
 }
 
-/// Every variant published per region.
-///
-/// Five base images plus browser images for the three shapes that can carry
-/// Chromium: eight per region, inside the hundred-image account limit.
+/// The five non-browser variants the local generator and release authority offer.
 #[must_use]
 pub fn variants() -> Vec<ImageVariant> {
-    let shapes: [(&str, u32, bool); 5] = [
-        ("512mb", 512, false),
-        ("1gb", 1_024, false),
-        ("2gb", 2_048, true),
-        ("4gb", 4_096, true),
-        ("8gb", 8_192, true),
+    let shapes: [(&str, u32); 5] = [
+        ("512mb", 512),
+        ("1gb", 1_024),
+        ("2gb", 2_048),
+        ("4gb", 4_096),
+        ("8gb", 8_192),
     ];
-    let mut out = Vec::new();
-    for (size, memory, browser) in shapes {
-        out.push(ImageVariant {
+    shapes
+        .into_iter()
+        .map(|(size, minimum_memory_mib)| ImageVariant {
             size,
-            capabilities: Vec::new(),
-            minimum_memory_mib: memory,
-        });
-        if browser {
-            out.push(ImageVariant {
-                size,
-                capabilities: vec![Capability::Browser],
-                minimum_memory_mib: memory,
-            });
-        }
-    }
-    out
+            minimum_memory_mib,
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        AGENT_PATH, ARCHITECTURE, Capability, FORBIDDEN_INSTALL_PACKAGES, FORBIDDEN_ROOTFS_PATHS,
-        GUEST_TARGET, HOOK_PORT, ImageLock, LockVerdict, OS_CAPABILITIES, PackageGroup,
-        ROOTFS_CONTRACT, variants,
+        AGENT_PATH, ARCHITECTURE, FORBIDDEN_INSTALL_PACKAGES, FORBIDDEN_ROOTFS_PATHS, GUEST_TARGET,
+        HOOK_PORT, ImageLock, LockVerdict, OS_CAPABILITIES, PackageGroup, ROOTFS_CONTRACT,
+        variants,
     };
 
     fn lock(nevras: &[&str]) -> ImageLock {
@@ -216,25 +173,21 @@ mod tests {
     }
 
     #[test]
-    fn eight_variants_are_published_per_region() {
+    fn five_non_browser_variants_are_published_per_region() {
         let published = variants();
-        assert_eq!(published.len(), 8, "five base plus three browser variants");
-        let browser: Vec<&str> = published
-            .iter()
-            .filter(|variant| variant.capabilities.contains(&Capability::Browser))
-            .map(|variant| variant.size)
-            .collect();
+        assert_eq!(published.len(), 5);
         assert_eq!(
-            browser,
-            vec!["2gb", "4gb", "8gb"],
-            "Chromium is not offered below a 2 GiB baseline"
+            published
+                .iter()
+                .map(|variant| variant.size)
+                .collect::<Vec<_>>(),
+            vec!["512mb", "1gb", "2gb", "4gb", "8gb"]
         );
-        assert!(published.len() <= 100, "inside the account image limit");
     }
 
     #[test]
     fn every_variant_declares_its_minimum_memory() {
-        let expected = [512, 1_024, 2_048, 2_048, 4_096, 4_096, 8_192, 8_192];
+        let expected = [512, 1_024, 2_048, 4_096, 8_192];
         let observed: Vec<u32> = variants()
             .iter()
             .map(|variant| variant.minimum_memory_mib)
@@ -294,20 +247,13 @@ mod tests {
     }
 
     #[test]
-    fn the_browser_layer_is_its_own_group() {
-        assert!(PackageGroup::Browser.is_browser_layer());
+    fn no_published_package_group_contains_a_browser() {
         for group in PackageGroup::ALL {
-            assert_eq!(
-                group.is_browser_layer(),
-                group == PackageGroup::Browser,
+            assert!(
+                !group.packages().contains(&"chromium-headless"),
                 "{group:?}"
             );
         }
-        assert!(
-            PackageGroup::Browser
-                .packages()
-                .contains(&"chromium-headless")
-        );
     }
 
     #[test]

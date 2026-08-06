@@ -916,27 +916,6 @@ minimum_memory_mib = 2048
 browser = false
 
 [[unit]]
-id = "hands-image-2gb-browser"
-kind = "microvm-image"
-plane = "runtime"
-package = "hands-image"
-target = "aarch64-unknown-linux-musl"
-profile = "release"
-form = "zip"
-base_image = "public.ecr.aws/lambda/microvms:al2023-minimal@sha256:05cb9b38d841e7ff1b693dc9e894909612f340bf99ec97d426e8000a5bbe96c3"
-config_env_namespace = "AEX_HANDS_IMAGE_"
-config_schema_version = 1
-required_receipts = ["unit", "lint", "package-integrity", "determinism"]
-alarm_spec = "hands-image"
-live_suite = "aex-live-hands-image"
-extra_inputs = ["cargo:hands-agent"]
-
-[unit.microvm]
-variant = "2gb-browser"
-minimum_memory_mib = 2048
-browser = true
-
-[[unit]]
 id = "hands-image-4gb"
 kind = "microvm-image"
 plane = "runtime"
@@ -958,27 +937,6 @@ minimum_memory_mib = 4096
 browser = false
 
 [[unit]]
-id = "hands-image-4gb-browser"
-kind = "microvm-image"
-plane = "runtime"
-package = "hands-image"
-target = "aarch64-unknown-linux-musl"
-profile = "release"
-form = "zip"
-base_image = "public.ecr.aws/lambda/microvms:al2023-minimal@sha256:05cb9b38d841e7ff1b693dc9e894909612f340bf99ec97d426e8000a5bbe96c3"
-config_env_namespace = "AEX_HANDS_IMAGE_"
-config_schema_version = 1
-required_receipts = ["unit", "lint", "package-integrity", "determinism"]
-alarm_spec = "hands-image"
-live_suite = "aex-live-hands-image"
-extra_inputs = ["cargo:hands-agent"]
-
-[unit.microvm]
-variant = "4gb-browser"
-minimum_memory_mib = 4096
-browser = true
-
-[[unit]]
 id = "hands-image-8gb"
 kind = "microvm-image"
 plane = "runtime"
@@ -998,24 +956,3 @@ extra_inputs = ["cargo:hands-agent"]
 variant = "8gb"
 minimum_memory_mib = 8192
 browser = false
-
-[[unit]]
-id = "hands-image-8gb-browser"
-kind = "microvm-image"
-plane = "runtime"
-package = "hands-image"
-target = "aarch64-unknown-linux-musl"
-profile = "release"
-form = "zip"
-base_image = "public.ecr.aws/lambda/microvms:al2023-minimal@sha256:05cb9b38d841e7ff1b693dc9e894909612f340bf99ec97d426e8000a5bbe96c3"
-config_env_namespace = "AEX_HANDS_IMAGE_"
-config_schema_version = 1
-required_receipts = ["unit", "lint", "package-integrity", "determinism"]
-alarm_spec = "hands-image"
-live_suite = "aex-live-hands-image"
-extra_inputs = ["cargo:hands-agent"]
-
-[unit.microvm]
-variant = "8gb-browser"
-minimum_memory_mib = 8192
-browser = true

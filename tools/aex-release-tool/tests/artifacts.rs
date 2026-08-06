@@ -40,23 +40,23 @@ fn every_shipped_unit_has_a_recipe() {
 }
 
 #[test]
-fn publication_inventory_is_exactly_39_with_every_gap_classified() {
+fn publication_inventory_is_exactly_36_with_every_gap_classified() {
     let units = shipped_units();
-    assert_eq!(units.units.len(), 39);
+    assert_eq!(units.units.len(), 36);
     let blob = units
         .units
         .iter()
         .filter(|unit| !unit.kind.starts_with("rust-oci-"))
         .count();
     let oci = units.units.len() - blob;
-    assert_eq!(blob, 34, "blob units can use immutable release assets");
+    assert_eq!(blob, 31, "blob units can use immutable release assets");
     assert_eq!(oci, 5, "OCI units require real GHCR manifest publication");
     let unique = units
         .units
         .iter()
         .map(|unit| unit.id.as_str())
         .collect::<std::collections::BTreeSet<_>>();
-    assert_eq!(unique.len(), 39, "no two deployables may share an identity");
+    assert_eq!(unique.len(), 36, "no two deployables may share an identity");
 }
 
 #[test]
@@ -101,8 +101,8 @@ fn recipes_name_the_real_build_output_instead_of_guessing_from_the_unit_id() {
         "target/aarch64-unknown-linux-musl/release/hands-agent"
     );
     assert_eq!(
-        recipe("hands-image-4gb-browser").input,
-        "target/microvm/hands-image-4gb-browser"
+        recipe("hands-image-4gb").input,
+        "target/microvm/hands-image-4gb"
     );
 }
 
@@ -158,14 +158,14 @@ fn the_brain_release_recipe_records_the_exact_catalog_build_bindings() {
 }
 
 #[test]
-fn the_eight_microvm_recipes_are_variant_specific_service_zips() {
+fn the_five_published_microvm_recipes_are_variant_specific_service_zips() {
     let units = shipped_units();
     let images: Vec<_> = units
         .units
         .iter()
         .filter(|unit| unit.kind == "microvm-image")
         .collect();
-    assert_eq!(images.len(), 8);
+    assert_eq!(images.len(), 5);
     for unit in images {
         let recipe = plan(unit).expect("MicroVM recipe");
         let shape = unit.microvm.as_ref().expect("declared shape");
