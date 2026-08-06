@@ -52,7 +52,7 @@ struct Bound {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct AwsRunHook {
-    /// The provider identity for this MicroVM. AWS documents 1–256 characters.
+    /// The provider identity for this `MicroVM`. AWS documents 1–256 characters.
     microvm_id: String,
     /// The verbatim string supplied to `RunMicrovm.runHookPayload`.
     run_hook_payload: String,
@@ -148,7 +148,7 @@ impl Guest {
         Ok(incarnation)
     }
 
-    /// Reopens the snapshotted binding after AWS resumes the MicroVM.
+    /// Reopens the snapshotted binding after AWS resumes the `MicroVM`.
     ///
     /// # Errors
     ///
