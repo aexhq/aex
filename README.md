@@ -1,6 +1,6 @@
 # Aex
 
-Performant, scalable agent cloud platform 
+High Performance agent platform 
 
 [![npm version](https://img.shields.io/npm/v/@aexhq/sdk.svg)](https://www.npmjs.com/package/@aexhq/sdk)
 
