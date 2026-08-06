@@ -71,12 +71,7 @@ impl PackageGroup {
     pub const fn packages(self) -> &'static [&'static str] {
         match self {
             Self::ShellCore => &[
-                "bash",
-                "coreutils",
                 "findutils",
-                "grep",
-                "sed",
-                "gawk",
                 "which",
                 "less",
                 "procps-ng",
@@ -92,7 +87,6 @@ impl PackageGroup {
                 "zip",
                 "wget",
                 "jq",
-                "ca-certificates",
                 "openssh-clients",
             ],
             Self::Languages => &[
@@ -110,10 +104,21 @@ impl PackageGroup {
 }
 
 /// Packages that must never appear in an install list.
-pub const FORBIDDEN_INSTALL_PACKAGES: [&str; 5] = [
+pub const FORBIDDEN_INSTALL_PACKAGES: [&str; 11] = [
+    // These exact packages are already installed in the pinned AL2023 base.
+    // Re-requesting them adds no capability and needlessly lets the transaction
+    // reconsider the base package set.
+    "bash",
+    "grep",
+    "sed",
+    "gawk",
+    "ca-certificates",
     // AL2023 minimal already supplies `curl-minimal`; installing the legacy
     // `curl` name conflicts with it.
     "curl",
+    // AL2023 minimal already supplies `coreutils-single`; installing the full
+    // `coreutils` package conflicts with it and aborts the image transaction.
+    "coreutils",
     // Deleted with the in-guest firewall: root can flush any nft table, and the
     // IMDS rule protected an execution role this target never attaches.
     "nftables",
@@ -204,6 +209,30 @@ mod tests {
             );
         }
         assert!(FORBIDDEN_INSTALL_PACKAGES.contains(&"curl"));
+    }
+
+    #[test]
+    fn the_conflicting_full_coreutils_package_is_never_installed() {
+        for group in PackageGroup::ALL {
+            assert!(
+                !group.packages().contains(&"coreutils"),
+                "{group:?} lists coreutils, which conflicts with the base coreutils-single package"
+            );
+        }
+        assert!(FORBIDDEN_INSTALL_PACKAGES.contains(&"coreutils"));
+    }
+
+    #[test]
+    fn the_pinned_base_packages_are_never_reinstalled() {
+        for package in ["bash", "grep", "sed", "gawk", "ca-certificates"] {
+            assert!(FORBIDDEN_INSTALL_PACKAGES.contains(&package), "{package}");
+            for group in PackageGroup::ALL {
+                assert!(
+                    !group.packages().contains(&package),
+                    "{group:?} redundantly requests base-installed `{package}`"
+                );
+            }
+        }
     }
 
     #[test]
