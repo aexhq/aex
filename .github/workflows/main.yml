@@ -153,6 +153,10 @@ jobs:
   manifest:
     name: Manifest
     needs: build
+    # Build may run with intentionally skipped scenario/Terraform ancestors;
+    # do not let the transitive default success() condition skip the manifest
+    # after the reusable build has itself passed.
+    if: always() && needs.build.result == 'success'
     runs-on: ubuntu-latest
     outputs:
       manifest_uri: ${{ steps.publish_handoff.outputs.manifest_uri }}

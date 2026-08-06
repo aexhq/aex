@@ -20,6 +20,8 @@ describe("public main-push publication", () => {
       "terraform"
     ]);
     expect(workflow.jobs.build.if).toContain("needs.gates.result == 'success'");
+    expect(workflow.jobs.manifest.needs).toBe("build");
+    expect(workflow.jobs.manifest.if).toBe("always() && needs.build.result == 'success'");
     expect(source).not.toContain("needs.route.outputs.has_artifact == 'true'");
     expect(workflow.jobs.build.with.publish).toBeTrue();
     expect(workflow.jobs.build.permissions).toEqual({
