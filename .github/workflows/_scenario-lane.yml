@@ -42,14 +42,18 @@ jobs:
           cp "$(command -v cargo-nextest)" "$RUNNER_TEMP/aex-nextest/cargo-nextest"
           (cd "$RUNNER_TEMP/aex-nextest" && sha256sum cargo-nextest > cargo-nextest.sha256)
 
+      # The run id alone, so a partial re-run — which does not re-execute this
+      # job — still finds the artifact. `overwrite` covers the full re-run that
+      # does re-execute it.
       - name: Upload pinned nextest
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
-          name: cargo-nextest-${{ inputs.lane }}-scenario-${{ github.run_id }}-${{ github.run_attempt }}
+          name: cargo-nextest-${{ inputs.lane }}-scenario-${{ github.run_id }}
           path: |
             ${{ runner.temp }}/aex-nextest/cargo-nextest
             ${{ runner.temp }}/aex-nextest/cargo-nextest.sha256
           if-no-files-found: error
+          overwrite: true
           retention-days: 1
 
   scenario:
@@ -73,7 +77,7 @@ jobs:
       - name: Download pinned nextest
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
         with:
-          name: cargo-nextest-${{ inputs.lane }}-scenario-${{ github.run_id }}-${{ github.run_attempt }}
+          name: cargo-nextest-${{ inputs.lane }}-scenario-${{ github.run_id }}
           path: ${{ runner.temp }}/aex-nextest
 
       - name: Use pinned nextest

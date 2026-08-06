@@ -12,6 +12,7 @@ describe("public main-push publication", () => {
     expect(workflow.jobs).toHaveProperty("gates");
     expect(workflow.jobs).toHaveProperty("terraform");
     expect(workflow.jobs.build.needs).toEqual([
+      "tools",
       "route",
       "gates",
       "verify",
@@ -19,6 +20,7 @@ describe("public main-push publication", () => {
       "scenarios",
       "terraform"
     ]);
+    expect(workflow.jobs.build.if).toContain("needs.tools.result == 'success'");
     expect(workflow.jobs.build.if).toContain("needs.gates.result == 'success'");
     expect(workflow.jobs.manifest.needs).toBe("build");
     expect(workflow.jobs.manifest.if).toBe("always() && needs.build.result == 'success'");

@@ -1,0 +1,97 @@
+# The workspace tools, built once per run.
+#
+# `Swatinem/rust-cache` evicts workspace members, so every lane used to pay a
+# cold optimized build of the same two binaries. One producer and one digest
+# make what every consumer executes proven identical rather than assumed
+# identical: the bytes travel as an artifact, the digests travel as job
+# outputs, and a consumer admits the bytes only when the two agree.
+#
+# The artifact name carries the run id but NOT the run attempt. GitHub does not
+# re-execute a job that already succeeded, so on a partial re-run this producer
+# does not run and an attempt-scoped name would leave every consumer with
+# nothing to download — breaking exactly the recovery path a late-stage failure
+# needs. `overwrite: true` is the other half: a full re-run does re-execute
+# this job, and without it the second upload collides with the first.
+
+name: tools
+
+on:
+  workflow_call:
+    outputs:
+      release_tool_sha256:
+        description: SHA-256 of the exact aex-release-tool bytes every job runs.
+        value: ${{ jobs.tools.outputs.release_tool_sha256 }}
+      workspace_check_sha256:
+        description: SHA-256 of the exact aex-workspace-check bytes every job runs.
+        value: ${{ jobs.tools.outputs.workspace_check_sha256 }}
+
+permissions:
+  contents: read
+
+jobs:
+  tools:
+    name: Prepare workspace tools
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      release_tool_sha256: ${{ steps.stage.outputs.release_tool_sha256 }}
+      workspace_check_sha256: ${{ steps.stage.outputs.workspace_check_sha256 }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
+        with:
+          toolchain: "1.97.1"
+
+      # The only job that saves this key is this one, so the restore can
+      # actually hit. Saving from a pull request would let a proposal seed the
+      # cache every later run reads.
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@bc2d2e71bd35c5549942babaa51a89c586b981d1  # v2.8.1
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          shared-key: tools
+
+      # Neither tool declares a `[features]` section and no call site passes
+      # `--features`, so one selection produces the bytes every consumer wants.
+      # `aex-workspace-check` is already a path dependency of the release tool;
+      # naming both here builds its `[[bin]]` in the same invocation instead of
+      # a second time in every Rust cell.
+      - name: Build both workspace tools once
+        env:
+          CARGO_INCREMENTAL: "0"
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -p aex-release-tool -p aex-workspace-check
+
+      - name: Stage and record the exact tool identities
+        id: stage
+        run: |
+          set -euo pipefail
+          built=target/release
+          staged="$RUNNER_TEMP/aex-tools"
+          mkdir -p "$staged"
+          install -m 0755 "$built/aex-release-tool" "$staged/aex-release-tool"
+          install -m 0755 "$built/aex-workspace-check" "$staged/aex-workspace-check"
+          release_tool_sha256=$(sha256sum "$staged/aex-release-tool" | cut -d' ' -f1)
+          workspace_check_sha256=$(sha256sum "$staged/aex-workspace-check" | cut -d' ' -f1)
+          [[ "$release_tool_sha256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$workspace_check_sha256" =~ ^[0-9a-f]{64}$ ]]
+          "$staged/aex-release-tool" --version | grep -Eq '^aex-release-tool [0-9]+\.[0-9]+\.[0-9]+'
+          "$staged/aex-workspace-check" --version | grep -Eq '^aex-workspace-check [0-9]+\.[0-9]+\.[0-9]+'
+          echo "release_tool_sha256=$release_tool_sha256" >> "$GITHUB_OUTPUT"
+          echo "workspace_check_sha256=$workspace_check_sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the workspace tools
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: workspace-tools-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/aex-tools/aex-release-tool
+            ${{ runner.temp }}/aex-tools/aex-workspace-check
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 1

@@ -34,6 +34,14 @@ on:
         type: string
         required: false
         default: ci
+      release_tool_sha256:
+        description: SHA-256 of the run's prepared aex-release-tool.
+        type: string
+        required: true
+      workspace_check_sha256:
+        description: SHA-256 of the run's prepared aex-workspace-check.
+        type: string
+        required: true
 
 permissions:
   contents: read
@@ -59,14 +67,18 @@ jobs:
           cp "$(command -v cargo-nextest)" "$RUNNER_TEMP/aex-nextest/cargo-nextest"
           (cd "$RUNNER_TEMP/aex-nextest" && sha256sum cargo-nextest > cargo-nextest.sha256)
 
+      # The run id alone, so a partial re-run — which does not re-execute this
+      # job — still finds the artifact. `overwrite` covers the full re-run that
+      # does re-execute it.
       - name: Upload pinned nextest
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
-          name: cargo-nextest-${{ inputs.lane }}-${{ inputs.job_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: cargo-nextest-${{ inputs.lane }}-${{ inputs.job_name }}-${{ github.run_id }}
           path: |
             ${{ runner.temp }}/aex-nextest/cargo-nextest
             ${{ runner.temp }}/aex-nextest/cargo-nextest.sha256
           if-no-files-found: error
+          overwrite: true
           retention-days: 1
 
   test:
@@ -94,10 +106,36 @@ jobs:
           save-if: ${{ inputs.cache_mode == 'restore-save' }}
           shared-key: ${{ inputs.lane }}
 
+      - name: Download the prepared workspace tools
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: workspace-tools-${{ github.run_id }}
+          path: ${{ runner.temp }}/aex-tools
+
+      # The digests arrive through the job-output channel, not inside the
+      # artifact, so an artifact that lies about itself cannot self-certify.
+      - name: Use the prepared workspace tools
+        env:
+          RELEASE_TOOL_SHA256: ${{ inputs.release_tool_sha256 }}
+          WORKSPACE_CHECK_SHA256: ${{ inputs.workspace_check_sha256 }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/aex-tools"
+          [[ "$RELEASE_TOOL_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$WORKSPACE_CHECK_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          printf '%s  %s\n' "$RELEASE_TOOL_SHA256" aex-release-tool > expected.sha256
+          printf '%s  %s\n' "$WORKSPACE_CHECK_SHA256" aex-workspace-check >> expected.sha256
+          sha256sum --check --strict expected.sha256
+          [[ "$(find . -maxdepth 1 -type f ! -name expected.sha256 | wc -l)" -eq 2 ]]
+          chmod 0755 aex-release-tool aex-workspace-check
+          ./aex-release-tool --version | grep -Eq '^aex-release-tool [0-9]+\.[0-9]+\.[0-9]+'
+          ./aex-workspace-check --version | grep -Eq '^aex-workspace-check [0-9]+\.[0-9]+\.[0-9]+'
+          echo "$RUNNER_TEMP/aex-tools" >> "$GITHUB_PATH"
+
       - name: Download pinned nextest
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
         with:
-          name: cargo-nextest-${{ inputs.lane }}-${{ inputs.job_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: cargo-nextest-${{ inputs.lane }}-${{ inputs.job_name }}-${{ github.run_id }}
           path: ${{ runner.temp }}/aex-nextest
 
       - name: Use pinned nextest
@@ -197,11 +235,11 @@ jobs:
               startedAt: $startedAt,
               completedAt: $completedAt
             }' > "$RECEIPT_DIR/lint-context.json"
-          cargo run --locked --release -p aex-release-tool -- evidence new-cargo \
+          aex-release-tool evidence new-cargo \
             --context "$RECEIPT_DIR/lint-context.json" \
             --messages "$RECEIPT_DIR/clippy.json" \
             --out "$LINT_RECEIPT"
-          cargo run --locked --release -p aex-release-tool -- evidence attach \
+          aex-release-tool evidence attach \
             --receipt "$LINT_RECEIPT" --kind log \
             --file "$RECEIPT_DIR/clippy.json" \
             --uri "artifact://lint-${RECEIPT_LANE}-${SELECTED_PACKAGE}-${PARTITION_INDEX}/clippy.json"
@@ -226,7 +264,7 @@ jobs:
               flaky: 0
             }
           ' "$LINT_RECEIPT" >/dev/null
-          cargo run --locked --release -p aex-release-tool -- evidence verify \
+          aex-release-tool evidence verify \
             --receipt "$LINT_RECEIPT"
 
       - name: Record the declared test inventory
@@ -283,7 +321,7 @@ jobs:
           RECEIPT_DIR: target/aex-evidence/${{ matrix.name }}
         run: |
           set -euo pipefail
-          cargo run --locked --release -p aex-workspace-check -- flake scan \
+          aex-workspace-check flake scan \
             --list "$RECEIPT_DIR/nextest-list.json" \
             --junit "target/nextest/${{ inputs.profile }}/junit.xml" \
             --doctest "$RECEIPT_DIR/doctest.log" \
@@ -358,19 +396,19 @@ jobs:
               startedAt: $startedAt,
               completedAt: $completedAt
             }' > "$RECEIPT_DIR/context.json"
-          cargo run --locked --release -p aex-release-tool -- evidence new \
+          aex-release-tool evidence new \
             --context "$RECEIPT_DIR/context.json" \
             --junit "target/nextest/${{ inputs.profile }}/junit.xml" \
             --out "$RECEIPT_DIR/receipt.json"
-          cargo run --locked --release -p aex-release-tool -- evidence attach \
+          aex-release-tool evidence attach \
             --receipt "$RECEIPT_DIR/receipt.json" --kind junit \
             --file "target/nextest/${{ inputs.profile }}/junit.xml" \
             --uri "artifact://junit-${RECEIPT_LANE}-${SELECTED_PACKAGE}-${PARTITION_INDEX}/junit.xml"
-          cargo run --locked --release -p aex-release-tool -- evidence attach \
+          aex-release-tool evidence attach \
             --receipt "$RECEIPT_DIR/receipt.json" --kind nextest-list \
             --file "$RECEIPT_DIR/nextest-list.json" \
             --uri "artifact://junit-${RECEIPT_LANE}-${SELECTED_PACKAGE}-${PARTITION_INDEX}/nextest-list.json"
-          cargo run --locked --release -p aex-release-tool -- evidence attach \
+          aex-release-tool evidence attach \
             --receipt "$RECEIPT_DIR/receipt.json" --kind log \
             --file "$RECEIPT_DIR/doctest.log" \
             --uri "artifact://junit-${RECEIPT_LANE}-${SELECTED_PACKAGE}-${PARTITION_INDEX}/doctest.log"
@@ -387,7 +425,7 @@ jobs:
             .inventory.retried == $scan[0].retried and
             .inventory.flaky == $scan[0].flaky
           ' "$RECEIPT_DIR/receipt.json" >/dev/null
-          cargo run --locked --release -p aex-release-tool -- evidence verify \
+          aex-release-tool evidence verify \
             --receipt "$RECEIPT_DIR/receipt.json"
 
       - name: Build and verify declared semantic receipts
@@ -450,15 +488,15 @@ jobs:
                .selection.filterset=$filterset | .selection.partition=null |
                .startedAt=$startedAt | .completedAt=$completedAt' \
               "$RECEIPT_DIR/context.json" > "$context"
-            cargo run --locked --release -p aex-release-tool -- evidence new \
+            aex-release-tool evidence new \
               --context "$context" --junit "$junit" --out "$output"
-            cargo run --locked --release -p aex-release-tool -- evidence attach \
+            aex-release-tool evidence attach \
               --receipt "$output" --kind junit --file "$junit" \
               --uri "artifact://junit-${RECEIPT_LANE}-${SELECTED_PACKAGE}-${class}/junit.xml"
-            cargo run --locked --release -p aex-release-tool -- evidence attach \
+            aex-release-tool evidence attach \
               --receipt "$output" --kind nextest-list --file "$list" \
               --uri "artifact://junit-${RECEIPT_LANE}-${SELECTED_PACKAGE}-${class}/nextest-list.json"
-            cargo run --locked --release -p aex-release-tool -- evidence verify \
+            aex-release-tool evidence verify \
               --receipt "$output"
           done
 
@@ -529,7 +567,7 @@ jobs:
       - name: Download pinned nextest
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
         with:
-          name: cargo-nextest-${{ inputs.lane }}-${{ inputs.job_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: cargo-nextest-${{ inputs.lane }}-${{ inputs.job_name }}-${{ github.run_id }}
           path: ${{ runner.temp }}/aex-nextest
 
       - name: Use pinned nextest

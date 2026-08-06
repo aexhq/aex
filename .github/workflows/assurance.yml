@@ -60,9 +60,18 @@ jobs:
             *) echo "unrecognised schedule"; exit 2 ;;
           esac
 
+  # Only the full-graph suite calls a lane that needs the tools, so the
+  # producer carries the same gate as its consumers rather than building
+  # binaries the other two suites would never run.
+  tools:
+    name: Tools
+    needs: suite
+    if: needs.suite.outputs.name == 'full-graph'
+    uses: ./.github/workflows/_tools.yml
+
   route:
     name: Route
-    needs: suite
+    needs: [suite, tools]
     if: needs.suite.outputs.name == 'full-graph'
     uses: ./.github/workflows/_route.yml
     with:
@@ -75,10 +84,12 @@ jobs:
       base_sha: ${{ github.sha }}
       head_sha: ${{ github.sha }}
       partitions: 8
+      release_tool_sha256: ${{ needs.tools.outputs.release_tool_sha256 }}
+      workspace_check_sha256: ${{ needs.tools.outputs.workspace_check_sha256 }}
 
   full-graph:
     name: Full graph
-    needs: [suite, route]
+    needs: [suite, tools, route]
     if: needs.suite.outputs.name == 'full-graph'
     uses: ./.github/workflows/_rust-lane.yml
     with:
@@ -87,6 +98,8 @@ jobs:
       job_name: full-graph
       selection_mode: full
       cache_mode: restore
+      release_tool_sha256: ${{ needs.tools.outputs.release_tool_sha256 }}
+      workspace_check_sha256: ${{ needs.tools.outputs.workspace_check_sha256 }}
 
   full-scenarios:
     name: Full scenarios

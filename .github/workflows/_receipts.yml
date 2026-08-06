@@ -34,6 +34,14 @@ on:
         description: JSON object mapping every required job to its result and skip policy.
         type: string
         required: true
+      release_tool_sha256:
+        description: SHA-256 of the run's prepared aex-release-tool.
+        type: string
+        required: true
+      workspace_check_sha256:
+        description: SHA-256 of the run's prepared aex-workspace-check.
+        type: string
+        required: true
 
 permissions:
   contents: read
@@ -48,11 +56,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
-        with:
-          toolchain: "1.97.1"
-
+      # No Rust toolchain: this job only ever runs `evidence aggregate`, which
+      # reads and writes files and never shells out to cargo.
       - name: Require every workflow job to pass
         env:
           REQUIRED_JOB_RESULTS: ${{ inputs.required_job_results }}
@@ -75,6 +80,34 @@ jobs:
           jq -cn --arg lane "$RECEIPT_LANE" --argjson jobs "$REQUIRED_JOB_RESULTS" '
             {schema: "aex.workflow-job-results.v1", lane: $lane, jobs: $jobs}
           ' > required-job-results.json
+
+      # After the job-result gate, never before it. A failed `tools` job must
+      # be reported by name here rather than turning into a missing artifact.
+      - name: Download the prepared workspace tools
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: workspace-tools-${{ github.run_id }}
+          path: ${{ runner.temp }}/aex-tools
+
+      # The digests arrive through the job-output channel, not inside the
+      # artifact, so an artifact that lies about itself cannot self-certify.
+      - name: Use the prepared workspace tools
+        env:
+          RELEASE_TOOL_SHA256: ${{ inputs.release_tool_sha256 }}
+          WORKSPACE_CHECK_SHA256: ${{ inputs.workspace_check_sha256 }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/aex-tools"
+          [[ "$RELEASE_TOOL_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$WORKSPACE_CHECK_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          printf '%s  %s\n' "$RELEASE_TOOL_SHA256" aex-release-tool > expected.sha256
+          printf '%s  %s\n' "$WORKSPACE_CHECK_SHA256" aex-workspace-check >> expected.sha256
+          sha256sum --check --strict expected.sha256
+          [[ "$(find . -maxdepth 1 -type f ! -name expected.sha256 | wc -l)" -eq 2 ]]
+          chmod 0755 aex-release-tool aex-workspace-check
+          ./aex-release-tool --version | grep -Eq '^aex-release-tool [0-9]+\.[0-9]+\.[0-9]+'
+          ./aex-workspace-check --version | grep -Eq '^aex-workspace-check [0-9]+\.[0-9]+\.[0-9]+'
+          echo "$RUNNER_TEMP/aex-tools" >> "$GITHUB_PATH"
 
       - name: Declare the expected receipt job set
         id: expected
@@ -177,8 +210,7 @@ jobs:
           for receipt in "${receipts[@]}"; do
             args+=(--receipt "$receipt")
           done
-          cargo run --locked --release -p aex-release-tool -- \
-            evidence aggregate "${args[@]}" --expect declared-producers.json \
+          aex-release-tool evidence aggregate "${args[@]}" --expect declared-producers.json \
             --out lane-receipt.json
 
       - name: Upload the lane receipt

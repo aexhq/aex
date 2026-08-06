@@ -1,3 +1,4 @@
+import { readdirSync } from "node:fs";
 import { describe, expect, test } from "bun:test";
 
 import {
@@ -11,6 +12,11 @@ import {
   workflowTriggers
 } from "./workflow-test-helpers.js";
 
+const workflowPaths = readdirSync(new URL("../../.github/workflows/", import.meta.url))
+  .filter((name) => name.endsWith(".yml") || name.endsWith(".yaml"))
+  .map((name) => `.github/workflows/${name}`)
+  .sort();
+
 describe("workflow evidence producers", () => {
   test("nextest is exact, verified, and downloaded only once per matrix lane", () => {
     const download =
@@ -20,17 +26,17 @@ describe("workflow evidence producers", () => {
       [
         ".github/workflows/_rust-lane.yml",
         "test",
-        "cargo-nextest-${{ inputs.lane }}-${{ inputs.job_name }}-${{ github.run_id }}-${{ github.run_attempt }}"
+        "cargo-nextest-${{ inputs.lane }}-${{ inputs.job_name }}-${{ github.run_id }}"
       ],
       [
         ".github/workflows/_rust-lane.yml",
         "capacity-limit-projection",
-        "cargo-nextest-${{ inputs.lane }}-${{ inputs.job_name }}-${{ github.run_id }}-${{ github.run_attempt }}"
+        "cargo-nextest-${{ inputs.lane }}-${{ inputs.job_name }}-${{ github.run_id }}"
       ],
       [
         ".github/workflows/_scenario-lane.yml",
         "scenario",
-        "cargo-nextest-${{ inputs.lane }}-scenario-${{ github.run_id }}-${{ github.run_attempt }}"
+        "cargo-nextest-${{ inputs.lane }}-scenario-${{ github.run_id }}"
       ]
     ] as const) {
       const workflow = readWorkflow(path);
@@ -44,6 +50,11 @@ describe("workflow evidence producers", () => {
       expect(build.run).toContain("cargo install --locked --version 0.9.108 cargo-nextest");
       expect(build.run).toContain("cargo-nextest 0\\.9\\.108");
       expect(upload.with?.name).toBe(artifactName);
+      // A partial re-run does not re-execute a producer that already
+      // succeeded, so an attempt-scoped name would leave the consumer with
+      // nothing to download; `overwrite` covers the full re-run that does.
+      expect(upload.with?.name, path).not.toContain("run_attempt");
+      expect(upload.with?.overwrite, path).toBeTrue();
       expect(jobNeeds(consumer)).toContain("nextest");
       expect(acquire.uses).toBe(download);
       expect(acquire.with?.name).toBe(artifactName);
@@ -79,13 +90,13 @@ describe("workflow evidence producers", () => {
     expect(workflowStep(job, "Clippy").run).toContain("clippy.json");
     expect(workflowStep(job, "Clippy").run).not.toContain("2>&1");
     expect(workflowStep(job, "Build and verify the lint receipt").run).toContain(
-      "aex-release-tool -- evidence new-cargo"
+      "aex-release-tool evidence new-cargo"
     );
     expect(workflowStep(job, "Build and verify the lint receipt").run).toContain(
-      "aex-release-tool -- evidence attach"
+      "aex-release-tool evidence attach"
     );
     expect(workflowStep(job, "Build and verify the lint receipt").run).toContain(
-      "aex-release-tool -- evidence verify"
+      "aex-release-tool evidence verify"
     );
     expect(workflowStep(job, "Build and verify the lint receipt").run).toContain(
       "artifact://lint-${RECEIPT_LANE}-${SELECTED_PACKAGE}-${PARTITION_INDEX}/clippy.json"
@@ -103,16 +114,16 @@ describe("workflow evidence producers", () => {
     expect(workflowStep(job, "Doctests").run).toContain('[[ "$has_library" == "true" ]]');
     expect(workflowStep(job, "Doctests").run).toContain("has no library target");
     expect(workflowStep(job, "Prove the no-skip inventory").run).toContain(
-      "aex-workspace-check -- flake scan"
+      "aex-workspace-check flake scan"
     );
     expect(workflowStep(job, "Prove the no-skip inventory").run).toContain(
       "--default-features-only"
     );
     expect(workflowStep(job, "Build and verify the unit receipt").run).toContain(
-      "aex-release-tool -- evidence new"
+      "aex-release-tool evidence new"
     );
     expect(workflowStep(job, "Build and verify the unit receipt").run).toContain(
-      "aex-release-tool -- evidence verify"
+      "aex-release-tool evidence verify"
     );
     expect(source).toContain("commitSha: $commitSha");
     expect(source).toContain("workflowRunId: $workflowRunId");
@@ -182,10 +193,10 @@ describe("workflow evidence producers", () => {
       "assert-no-skips.mjs"
     );
     expect(workflowStep(job, "Build and verify the unit receipt").run).toContain(
-      "aex-release-tool -- evidence new"
+      "aex-release-tool evidence new"
     );
     expect(workflowStep(job, "Build and verify the unit receipt").run).toContain(
-      "aex-release-tool -- evidence verify"
+      "aex-release-tool evidence verify"
     );
     expect(source).toContain("SELECTED_PACKAGE: ${{ matrix.name }}");
     expect(source).toContain("SELECTED_PACKAGE_DIR: ${{ matrix.directory }}");
@@ -293,10 +304,10 @@ describe("workflow evidence producers", () => {
       'type == "test_cleanup"'
     );
     expect(workflowStep(job, "Build and verify the Terraform receipt").run).toContain(
-      "aex-release-tool -- evidence new"
+      "aex-release-tool evidence new"
     );
     expect(workflowStep(job, "Build and verify the Terraform receipt").run).toContain(
-      "aex-release-tool -- evidence verify"
+      "aex-release-tool evidence verify"
     );
     expect(source).toContain("commitSha: $commitSha");
     expect(source).toContain("workflowRunId: $workflowRunId");
@@ -323,12 +334,12 @@ describe("workflow evidence producers", () => {
     const cases = [
       {
         path: ".github/workflows/pr.yml",
-        resultJobs: ["route", "gates", "rust", "node", "scenarios", "terraform", "artifacts"],
+        resultJobs: ["tools", "route", "gates", "rust", "node", "scenarios", "terraform", "artifacts"],
         receiptJobs: ["rust", "node", "terraform"]
       },
       {
         path: ".github/workflows/main.yml",
-        resultJobs: ["route", "gates", "verify", "node", "scenarios", "terraform", "build", "manifest"],
+        resultJobs: ["tools", "route", "gates", "verify", "node", "scenarios", "terraform", "build", "manifest"],
         receiptJobs: ["verify", "node", "terraform"]
       }
     ] as const;
@@ -377,6 +388,11 @@ describe("workflow evidence producers", () => {
     expect(stepIndex(job, "Require every workflow job to pass")).toBeLessThan(
       stepIndex(job, "Declare the expected receipt job set")
     );
+    // A failed `tools` job must be reported here by name, not turn into a
+    // missing artifact that hides which job actually failed.
+    expect(stepIndex(job, "Require every workflow job to pass")).toBeLessThan(
+      stepIndex(job, "Use the prepared workspace tools")
+    );
     expect(stepIndex(job, "Declare the expected receipt job set")).toBeLessThan(
       stepIndex(job, "Download every receipt")
     );
@@ -413,5 +429,93 @@ describe("workflow evidence producers", () => {
     expect(source).toContain("if: steps.expected.outputs.has_receipts == 'true'");
     expect(source).toContain("required-job-results.json");
     expect(source).not.toContain("no receipt was collected at all");
+  });
+
+  test("one producer builds both workspace tools and every consumer proves the digest", () => {
+    const download = "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093";
+    const artifact = "workspace-tools-${{ github.run_id }}";
+    const producer = workflowJob(readWorkflow(".github/workflows/_tools.yml"), "tools");
+    const build = workflowStep(producer, "Build both workspace tools once");
+    const upload = workflowStep(producer, "Upload the workspace tools");
+    const outputs = producer.outputs as Readonly<Record<string, string>> | undefined;
+
+    expect(build.run).toContain("-p aex-release-tool -p aex-workspace-check");
+    expect(upload.with?.name).toBe(artifact);
+    // A partial re-run does not re-execute this producer, so an
+    // attempt-scoped name would leave every consumer with nothing to download.
+    expect(upload.with?.name).not.toContain("run_attempt");
+    expect(upload.with?.overwrite).toBeTrue();
+    expect(outputs?.release_tool_sha256).toBeDefined();
+    expect(outputs?.workspace_check_sha256).toBeDefined();
+
+    for (const [path, consumerId] of [
+      [".github/workflows/_route.yml", "route"],
+      [".github/workflows/_rust-lane.yml", "test"],
+      [".github/workflows/_node-lane.yml", "unit"],
+      [".github/workflows/_terraform-lane.yml", "terraform"],
+      [".github/workflows/_receipts.yml", "aggregate"],
+      [".github/workflows/_build-artifacts.yml", "build"],
+      [".github/workflows/main.yml", "gates"],
+      [".github/workflows/pr.yml", "gates"]
+    ] as const) {
+      const consumer = workflowJob(readWorkflow(path), consumerId);
+      const acquire = workflowStep(consumer, "Download the prepared workspace tools");
+      const verify = workflowStep(consumer, "Use the prepared workspace tools");
+
+      expect(acquire.uses, path).toBe(download);
+      expect(acquire.with?.name, path).toBe(artifact);
+      expect(verify.run, path).toContain("sha256sum --check --strict expected.sha256");
+      expect(verify.run, path).toContain('[[ "$RELEASE_TOOL_SHA256" =~ ^[0-9a-f]{64}$ ]]');
+      expect(verify.run, path).toContain('[[ "$WORKSPACE_CHECK_SHA256" =~ ^[0-9a-f]{64}$ ]]');
+      expect(verify.run, path).toContain('echo "$RUNNER_TEMP/aex-tools" >> "$GITHUB_PATH"');
+      expect(readRepoFile(path), path).not.toContain(
+        "cargo run --locked --release -p aex-release-tool"
+      );
+      expect(readRepoFile(path), path).not.toContain("cargo run --locked -p aex-workspace-check");
+    }
+  });
+
+  test("every local caller supplies every required input of the workflow it calls", () => {
+    for (const path of workflowPaths) {
+      for (const [jobId, job] of Object.entries(readWorkflow(path).jobs)) {
+        const target = typeof job.uses === "string" ? job.uses : undefined;
+        if (target === undefined || !target.startsWith("./")) continue;
+        const called = workflowTriggers(readWorkflow(target.slice(2))).workflow_call as
+          | { readonly inputs?: Readonly<Record<string, { readonly required?: boolean }>> }
+          | undefined;
+        const supplied = (job.with ?? {}) as Readonly<Record<string, unknown>>;
+        const missing = Object.entries(called?.inputs ?? {})
+          .filter(([name, spec]) => spec.required === true && supplied[name] === undefined)
+          .map(([name]) => name)
+          .sort();
+
+        expect(missing, `${path} job ${jobId} calls ${target}`).toEqual([]);
+      }
+    }
+  });
+
+  test("every caller of a tool-consuming lane reads the digests from its own tools job", () => {
+    for (const [path, jobIds] of [
+      [".github/workflows/main.yml", ["route", "verify", "node", "terraform", "build", "receipts"]],
+      [".github/workflows/pr.yml", ["route", "rust", "node", "terraform", "artifacts", "checks"]],
+      [".github/workflows/assurance.yml", ["route", "full-graph"]]
+    ] as const) {
+      const workflow = readWorkflow(path);
+      expect(workflowJob(workflow, "tools").uses, path).toBe("./.github/workflows/_tools.yml");
+
+      for (const jobId of jobIds) {
+        const job = workflowJob(workflow, jobId);
+        const inputs = (job.with ?? {}) as Readonly<Record<string, unknown>>;
+        const where = `${path} job ${jobId}`;
+
+        expect(jobNeeds(job), where).toContain("tools");
+        expect(inputs.release_tool_sha256, where).toBe(
+          "${{ needs.tools.outputs.release_tool_sha256 }}"
+        );
+        expect(inputs.workspace_check_sha256, where).toBe(
+          "${{ needs.tools.outputs.workspace_check_sha256 }}"
+        );
+      }
+    }
   });
 });

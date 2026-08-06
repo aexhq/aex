@@ -35,6 +35,14 @@ on:
         type: number
         required: false
         default: 4
+      release_tool_sha256:
+        description: SHA-256 of the run's prepared aex-release-tool.
+        type: string
+        required: true
+      workspace_check_sha256:
+        description: SHA-256 of the run's prepared aex-workspace-check.
+        type: string
+        required: true
     outputs:
       routing_failed:
         value: ${{ jobs.route.outputs.routing_failed }}
@@ -89,6 +97,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      # The tool is no longer compiled here, but `graph *` shells out to
+      # `cargo metadata --locked`, so the toolchain and the restored registry
+      # index are what keep that resolution offline.
       - name: Install Rust
         uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
         with:
@@ -100,8 +111,31 @@ jobs:
           save-if: false
           shared-key: router
 
-      - name: Build the release tool
-        run: cargo build --locked --release -p aex-release-tool
+      - name: Download the prepared workspace tools
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: workspace-tools-${{ github.run_id }}
+          path: ${{ runner.temp }}/aex-tools
+
+      # The digests arrive through the job-output channel, not inside the
+      # artifact, so an artifact that lies about itself cannot self-certify.
+      - name: Use the prepared workspace tools
+        env:
+          RELEASE_TOOL_SHA256: ${{ inputs.release_tool_sha256 }}
+          WORKSPACE_CHECK_SHA256: ${{ inputs.workspace_check_sha256 }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/aex-tools"
+          [[ "$RELEASE_TOOL_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$WORKSPACE_CHECK_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          printf '%s  %s\n' "$RELEASE_TOOL_SHA256" aex-release-tool > expected.sha256
+          printf '%s  %s\n' "$WORKSPACE_CHECK_SHA256" aex-workspace-check >> expected.sha256
+          sha256sum --check --strict expected.sha256
+          [[ "$(find . -maxdepth 1 -type f ! -name expected.sha256 | wc -l)" -eq 2 ]]
+          chmod 0755 aex-release-tool aex-workspace-check
+          ./aex-release-tool --version | grep -Eq '^aex-release-tool [0-9]+\.[0-9]+\.[0-9]+'
+          ./aex-workspace-check --version | grep -Eq '^aex-workspace-check [0-9]+\.[0-9]+\.[0-9]+'
+          echo "$RUNNER_TEMP/aex-tools" >> "$GITHUB_PATH"
 
       - name: Verify the delivery graph
         env:
@@ -109,15 +143,15 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "$ROUTING_LANE" == "release" ]]; then
-            ./target/release/aex-release-tool graph verify --release
+            aex-release-tool graph verify --release
           else
-            ./target/release/aex-release-tool graph verify
+            aex-release-tool graph verify
           fi
 
       - name: Select
         run: |
           set -euo pipefail
-          ./target/release/aex-release-tool graph select \
+          aex-release-tool graph select \
             --base "${{ inputs.base_sha }}" --head "${{ inputs.head_sha }}" \
             --mode "${{ inputs.mode }}" --lane "${{ inputs.lane }}" \
             --out selection.json --quiet
@@ -125,7 +159,7 @@ jobs:
       - name: Select artifact graph
         run: |
           set -euo pipefail
-          ./target/release/aex-release-tool graph select \
+          aex-release-tool graph select \
             --base "${{ inputs.base_sha }}" --head "${{ inputs.head_sha }}" \
             --mode "${{ inputs.artifact_mode }}" --lane "${{ inputs.lane }}" \
             --out artifact-selection.json --quiet
@@ -134,7 +168,7 @@ jobs:
         id: test
         run: |
           set -euo pipefail
-          ./target/release/aex-release-tool graph matrix \
+          aex-release-tool graph matrix \
             --selection selection.json --kind test \
             --artifact-selection artifact-selection.json \
             --partitions "${{ inputs.partitions }}" \
@@ -144,7 +178,7 @@ jobs:
         id: artifact
         run: |
           set -euo pipefail
-          ./target/release/aex-release-tool graph matrix \
+          aex-release-tool graph matrix \
             --selection artifact-selection.json --kind artifact \
             --github-output "$GITHUB_OUTPUT" --quiet
 
@@ -152,7 +186,7 @@ jobs:
         id: node
         run: |
           set -euo pipefail
-          ./target/release/aex-release-tool graph matrix \
+          aex-release-tool graph matrix \
             --selection selection.json --kind node \
             --artifact-selection artifact-selection.json \
             --partitions "${{ inputs.partitions }}" \
@@ -162,7 +196,7 @@ jobs:
         id: scenario
         run: |
           set -euo pipefail
-          ./target/release/aex-release-tool graph matrix \
+          aex-release-tool graph matrix \
             --selection selection.json --kind scenario \
             --github-output "$GITHUB_OUTPUT" --quiet
 
@@ -170,14 +204,14 @@ jobs:
         id: terraform
         run: |
           set -euo pipefail
-          ./target/release/aex-release-tool graph matrix \
+          aex-release-tool graph matrix \
             --selection selection.json --kind terraform \
             --github-output "$GITHUB_OUTPUT" --quiet
 
       - name: Summarize the routing decision
         run: |
           set -euo pipefail
-          ./target/release/aex-release-tool graph diff \
+          aex-release-tool graph diff \
             --base "${{ inputs.base_sha }}" --head "${{ inputs.head_sha }}" \
             --format markdown >> "$GITHUB_STEP_SUMMARY"
 
