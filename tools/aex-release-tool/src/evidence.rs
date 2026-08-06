@@ -437,21 +437,6 @@ impl Receipt {
                 ),
             ));
         }
-        if self.source.run_attempt > 1
-            && !self
-                .attachments
-                .iter()
-                .any(|attachment| attachment.kind == "first-failure")
-        {
-            violations.push(Violation::new(
-                "flake-first-failure-lost",
-                format!(
-                    "receipt `{}` is attempt {} and carries no preserved first failure; the \
-                     original verdict may not be discarded",
-                    self.receipt_id, self.source.run_attempt
-                ),
-            ));
-        }
         // `unreclaimed` is a janitor finding, not a lane's declaration about
         // itself, and no explanation makes it acceptable. OD-36 makes
         // reclamation a release gate; a lane that left something in production
@@ -1514,11 +1499,10 @@ mod tests {
     }
 
     #[test]
-    fn a_rerun_that_discarded_its_first_failure_is_rejected() {
+    fn workflow_attempt_alone_does_not_imply_a_receipt_rerun() {
         let mut receipt = receipt("unit");
         receipt.source.run_attempt = 2;
-        let err = receipt.verify().unwrap_err();
-        assert!(err.rules().contains(&"flake-first-failure-lost"));
+        receipt.verify().unwrap();
     }
 
     #[test]

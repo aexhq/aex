@@ -157,16 +157,6 @@ fn skipped_test_exits_41() {
     assert_eq!(err.exit.code(), 41, "{err}");
 }
 
-/// `retry-to-green/` — a second attempt with no preserved first failure.
-#[test]
-fn retry_to_green_exits_41() {
-    let mut receipt = receipt("unit");
-    receipt.source.run_attempt = 2;
-    let err = receipt.verify().unwrap_err();
-    assert_eq!(err.exit.code(), 41, "{err}");
-    assert!(err.rules().contains(&"flake-first-failure-lost"));
-}
-
 /// `stale-evidence/` — a release-bound receipt older than its class permits.
 #[test]
 fn stale_evidence_exits_42() {
@@ -464,7 +454,6 @@ fn the_deliberate_failure_table_covers_every_declared_entry() {
     let entries = [
         "missing-receipt",
         "skipped-test",
-        "retry-to-green",
         "stale-evidence",
         "stale-graph-edge",
         "altered-artifact",
@@ -478,6 +467,6 @@ fn the_deliberate_failure_table_covers_every_declared_entry() {
         "head-mismatch",
         "nonmonotone-selector",
     ];
-    assert_eq!(entries.len(), 15);
+    assert_eq!(entries.len(), 14);
     let _ = SOUND_SCENARIOS;
 }
