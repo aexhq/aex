@@ -26,6 +26,8 @@ use bytes::Bytes;
 pub enum Accept {
     /// `text/event-stream`. Every launch dialect streams.
     TextEventStream,
+    /// `application/json`, used only by protected qualification parity probes.
+    Json,
 }
 
 impl Accept {
@@ -34,6 +36,7 @@ impl Accept {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::TextEventStream => "text/event-stream",
+            Self::Json => "application/json",
         }
     }
 }
@@ -276,6 +279,17 @@ pub enum ExecuteError {
     },
 }
 
+/// A static qualification-only transport fault scheduled after the send gate.
+///
+/// This closed enum cannot inject a result or bypass request assembly. It only
+/// selects the one pre-response-head boundary needed to prove that the
+/// production gate has already made `NotSent` unavailable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QualificationSendFault {
+    /// Fail after consuming the send gate and before handing bytes to reqwest.
+    DropBeforeNetwork,
+}
+
 impl ExecuteError {
     /// What this failure proves about whether the provider saw the request.
     #[must_use]
@@ -303,6 +317,36 @@ pub async fn execute(
     request: &WireRequest,
     key: &crate::credential::ProviderApiKey,
     state: &mut SendState,
+) -> Result<reqwest::Response, ExecuteError> {
+    execute_core(client, request, key, state, None).await
+}
+
+/// Exercises the production request assembly and send gate with a closed fault.
+///
+/// This seam is only for protected live qualification. The fault is injected
+/// after `state.send()` and before network I/O, so its proof comes from the
+/// same state transition as production transport failures.
+///
+/// # Errors
+///
+/// Returns ordinary [`ExecuteError`] values, including a `PossiblySent`
+/// transport error for [`QualificationSendFault::DropBeforeNetwork`].
+pub async fn execute_qualification_fault(
+    client: &reqwest::Client,
+    request: &WireRequest,
+    key: &crate::credential::ProviderApiKey,
+    state: &mut SendState,
+    fault: QualificationSendFault,
+) -> Result<reqwest::Response, ExecuteError> {
+    execute_core(client, request, key, state, Some(fault)).await
+}
+
+async fn execute_core(
+    client: &reqwest::Client,
+    request: &WireRequest,
+    key: &crate::credential::ProviderApiKey,
+    state: &mut SendState,
+    fault: Option<QualificationSendFault>,
 ) -> Result<reqwest::Response, ExecuteError> {
     // ---- everything below is NotSent while the gate is held ----
     let url = request.url()?;
@@ -335,6 +379,13 @@ pub async fn execute(
     // ---- the gate. Nothing above this line reached a socket. ----
     let _dispatched = state.send()?;
 
+    if matches!(fault, Some(QualificationSendFault::DropBeforeNetwork)) {
+        return Err(ExecuteError::Transport {
+            detail: BoundedString::new("qualification drop before response headers")
+                .expect("static qualification fault detail is bounded"),
+        });
+    }
+
     built.send().await.map_err(|error| ExecuteError::Transport {
         detail: crate::redact::redact(&error.to_string(), &[key.expose_for_redaction()]),
     })
@@ -345,7 +396,11 @@ mod tests {
     use aex_model_catalog::document::EndpointPin;
     use aex_model_catalog::primitives::BoundedString;
 
-    use super::{Accept, AuthScheme, SendState, WireRequest};
+    use super::{
+        Accept, AuthScheme, QualificationSendFault, SendState, WireRequest,
+        execute_qualification_fault,
+    };
+    use crate::credential::ProviderApiKey;
     use crate::wire_pending::DispatchProof;
 
     fn request(endpoint: EndpointPin, path: &str, auth: AuthScheme) -> WireRequest {
@@ -371,6 +426,28 @@ mod tests {
     fn a_consumed_gate_proves_possibly_sent() {
         let mut state = SendState::new();
         state.send().expect("first send");
+        assert_eq!(state.proof(), DispatchProof::PossiblySent);
+        assert!(state.has_sent());
+    }
+
+    #[tokio::test]
+    async fn the_qualification_drop_uses_the_production_send_gate() {
+        let built = request(
+            EndpointPin::DeepSeekApi,
+            "/chat/completions",
+            AuthScheme::BearerAuthorization,
+        );
+        let mut state = SendState::new();
+        let error = execute_qualification_fault(
+            &reqwest::Client::new(),
+            &built,
+            &ProviderApiKey::new("qualification-fixture".to_owned()),
+            &mut state,
+            QualificationSendFault::DropBeforeNetwork,
+        )
+        .await
+        .expect_err("the static fault fires before network I/O");
+        assert_eq!(error.proof(), DispatchProof::PossiblySent);
         assert_eq!(state.proof(), DispatchProof::PossiblySent);
         assert!(state.has_sent());
     }

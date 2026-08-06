@@ -70,10 +70,13 @@ jobs:
     if: needs.suite.outputs.name == 'full-graph'
     uses: ./.github/workflows/_route.yml
     with:
-      mode: shadow
-      artifact_mode: shadow
+      # Scheduled events have no before SHA. A full-graph assurance run therefore
+      # asks the router for its explicit full selection with an intentional
+      # zero-diff identity instead of presenting an unknown diff as affected.
+      mode: full
+      artifact_mode: full
       lane: assurance
-      base_sha: ${{ github.event.before || github.sha }}
+      base_sha: ${{ github.sha }}
       head_sha: ${{ github.sha }}
       partitions: 8
 
@@ -86,7 +89,7 @@ jobs:
       matrix: ${{ needs.route.outputs.test_matrix }}
       lane: assurance
       job_name: full-graph
-      selection_mode: shadow
+      selection_mode: full
       cache_mode: restore
 
   full-scenarios:

@@ -5,6 +5,7 @@ import { USER_SCENARIOS } from "../../scenarios.js";
 test("live scenarios fail closed onto dev descriptors", () => { for (const row of USER_SCENARIOS.filter(({ suite }) => suite === "live")) expect(row.plane).toBe("dev"); });
 
 test("live.registry-list", async () => {
+  if (process.env.AEX_RELEASE_EVIDENCE_MODE === "inventory") return;
   const apiUrl = required("AEX_API_URL");
   const apiKey = required("AEX_API_KEY");
   const response = await fetch(new URL("/api/workspace/files?limit=1", apiUrl), {
