@@ -310,7 +310,7 @@ pub fn containerfile(variant: &Variant) -> String {
          FROM --platform=linux/arm64 {base}\n\n\
          # AL2023 minimal already supplies `curl-minimal`. Do not replace it with\n\
          # the conflicting full curl package during this noninteractive build.\n\n\
-         RUN dnf --releasever={RELEASEVER} --setopt=install_weak_deps=false -y install \\\n    \
+         RUN dnf --releasever={RELEASEVER} --setopt=install_weak_deps=0 -y install \\\n    \
          {packages} \\\n && dnf clean all\n",
         base = pinned_base(),
     );
@@ -404,7 +404,7 @@ mod tests {
             generated.contains(&format!("--releasever={RELEASEVER}")),
             "an unpinned dnf resolves against whatever the mirror serves today"
         );
-        assert!(generated.contains("--setopt=install_weak_deps=false"));
+        assert!(generated.contains("--setopt=install_weak_deps=0"));
     }
 
     #[test]

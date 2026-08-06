@@ -66,19 +66,16 @@ pub enum PackageGroup {
     ArchiveNet,
     /// Language toolchains.
     Languages,
-    /// Search tools.
-    Search,
     /// The browser layer.
     Browser,
 }
 
 impl PackageGroup {
     /// Every group.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 4] = [
         Self::ShellCore,
         Self::ArchiveNet,
         Self::Languages,
-        Self::Search,
         Self::Browser,
     ];
 
@@ -125,7 +122,6 @@ impl PackageGroup {
                 "gcc",
                 "gcc-c++",
             ],
-            Self::Search => &["ripgrep"],
             Self::Browser => &[
                 "chromium-headless",
                 "nss",
@@ -255,6 +251,16 @@ mod tests {
             );
         }
         assert!(FORBIDDEN_INSTALL_PACKAGES.contains(&"curl"));
+    }
+
+    #[test]
+    fn the_pinned_al2023_snapshot_does_not_request_unavailable_ripgrep() {
+        for group in PackageGroup::ALL {
+            assert!(
+                !group.packages().contains(&"ripgrep"),
+                "{group:?} requests ripgrep, which the pinned AL2023 snapshot does not publish"
+            );
+        }
     }
 
     #[test]
