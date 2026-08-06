@@ -156,9 +156,9 @@ pub struct OciPublication {
 
 /// Create a new minimal, deterministic image context.
 ///
-/// The destination must not exist. This makes two reproducibility builds use
-/// genuinely separate contexts instead of silently reusing files from the
-/// first invocation.
+/// The destination must not exist. The workflow packages one ELF into two
+/// contexts and builds each independently, so refusing an existing destination
+/// is what stops the second packaging from reusing a file from the first.
 ///
 /// # Errors
 /// Refuses unsupported units, malformed source/base identities, a non-AArch64

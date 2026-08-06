@@ -346,7 +346,7 @@ jobs:
             bun install --frozen-lockfile
           fi
 
-      - name: Build OCI ELF twice from clean target directories
+      - name: Build the OCI ELF once
         if: ${{ startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
         env:
           CARGO_INCREMENTAL: "0"
@@ -356,13 +356,19 @@ jobs:
           input=$(jq -er .input "$RELEASE_DIR/recipe.json")
           [[ "$input" == target/* ]]
           suffix=${input#target/}
+          target_dir="$RELEASE_DIR/cargo"
+          CARGO_TARGET_DIR="$target_dir" python3 -c \
+            "import json,os,subprocess,sys; recipe=json.load(open(sys.argv[1])); env=os.environ.copy(); env.update(recipe['env']); sys.exit(subprocess.call(recipe['argv'], env=env))" \
+            "$RELEASE_DIR/recipe.json"
+          binary="$target_dir/$suffix"
+          test -f "$binary"
+          # One compile, two contexts. The pair below proves that packaging the
+          # same ELF twice reaches the same image digest, which is the whole of
+          # the `package-integrity` receipt these units carry; no receipt here
+          # ever claimed the compiler was reproducible. `oci-prepare` refuses a
+          # destination that already exists, so the second context still cannot
+          # inherit a file from the first.
           for attempt in 1 2; do
-            target_dir="$RELEASE_DIR/cargo-$attempt"
-            CARGO_TARGET_DIR="$target_dir" python3 -c \
-              "import json,os,subprocess,sys; recipe=json.load(open(sys.argv[1])); env=os.environ.copy(); env.update(recipe['env']); sys.exit(subprocess.call(recipe['argv'], env=env))" \
-              "$RELEASE_DIR/recipe.json"
-            binary="$target_dir/$suffix"
-            test -f "$binary"
             aex-release-tool artifact oci-prepare --unit "${{ matrix.name }}" \
               --recipe "$RELEASE_DIR/recipe.json" \
               --input "$binary" \
@@ -877,7 +883,14 @@ jobs:
           pattern: receipt-main-*
           path: validation-receipts
 
-      - name: Build twice and prove byte determinism
+      # The published tool is a statically linked musl binary, so it is not the
+      # run's prepared host tool and has to be compiled here. No incremental
+      # state, a fixed epoch and a remapped workspace path keep these bytes a
+      # function of the commit rather than of the runner. Only the target
+      # directory is renamed: the `cmp` of two differently named target
+      # directories that this replaces passed on every run, so that path was
+      # never in the published bytes.
+      - name: Build the published release tool
         env:
           CARGO_INCREMENTAL: "0"
           SOURCE_DATE_EPOCH: "0"
@@ -889,14 +902,11 @@ jobs:
           set -euo pipefail
           target=x86_64-unknown-linux-musl
           cargo build --locked --release -p aex-release-tool --target "$target" \
-            --target-dir target/release-tool-first
-          cargo build --locked --release -p aex-release-tool --target "$target" \
-            --target-dir target/release-tool-second
+            --target-dir target/release-tool
           mkdir -p dist
-          first="target/release-tool-first/$target/release/aex-release-tool"
-          second="target/release-tool-second/$target/release/aex-release-tool"
-          cmp "$first" "$second"
-          install -m 0755 "$first" dist/aex-release-tool
+          built="target/release-tool/$target/release/aex-release-tool"
+          test -f "$built"
+          install -m 0755 "$built" dist/aex-release-tool
 
       - name: Package modules twice and prove byte determinism
         run: |
