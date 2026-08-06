@@ -83,15 +83,15 @@ function runScenario(scenario: string): ChildResult {
 }
 
 describe("live user-test preflight", () => {
-  it("proves authenticated access through the canonical sessions list route", () => {
+  it("proves authenticated access through the canonical registry list route", () => {
     const result = runScenario("retry503");
 
     expect(result.ok).toBe(true);
     expect(result.result).toMatchObject({ status: 200, attempt: 2 });
     expect(result.calls).toBe(2);
     expect(result.sleeps).toEqual([3_000]);
-    expect(result.logs).toContain("/api/sessions transient HTTP 503");
-    expect(result.out).toContain("/api/sessions preflight passed");
+    expect(result.logs).toContain("/api/workspace/files transient HTTP 503");
+    expect(result.out).toContain("/api/workspace/files preflight passed");
     expect(`${result.logs}${result.out}`).not.toContain(baseEnv.AEX_API_KEY);
   });
 

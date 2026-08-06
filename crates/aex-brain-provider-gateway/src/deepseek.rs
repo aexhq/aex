@@ -46,7 +46,8 @@ use aex_model_catalog::canonical::{
     UsageCompleteness, UsageField, UsageFieldSet,
 };
 use aex_model_catalog::document::{
-    Capability, EndpointPin, ModelEntry, ReasoningReplay, SamplingSupport, StructuredOutputPolicy,
+    Capability, Dialect, EndpointPin, EntryState, ModelEntry, ReasoningReplay, SamplingSupport,
+    StructuredOutputPolicy,
 };
 use aex_model_catalog::primitives::{BoundedString, ProviderRequestId, ToolCallId, ToolName};
 use aex_wire::CanonicalJson;
@@ -109,6 +110,226 @@ struct RequestView<'a> {
     stop_sequences: &'a [BoundedString<64>],
     reasoning: ReasoningRequest,
     structured_output: Option<&'a StructuredOutputRequest>,
+}
+
+/// Candidate request view used only by the protected conformance runner.
+///
+/// Production generation continues to require a [`QualifiedModel`]. This
+/// separate seam accepts one explicit [`EntryState::Staged`] entry so the
+/// probes needed to earn its receipt do not depend on already having that
+/// receipt. It contains no credential, origin, provider default or free-form
+/// endpoint and reuses the same private request builder as production.
+#[derive(Debug, Clone, Copy)]
+pub struct QualificationRequest<'a> {
+    /// System instruction blocks.
+    pub system: &'a [SystemBlock],
+    /// Canonical conversation history.
+    pub messages: &'a [CanonicalMessage],
+    /// Tool declarations.
+    pub tools: &'a [CanonicalToolDef],
+    /// Requested tool selection mode.
+    pub tool_choice: &'a ToolChoice,
+    /// Whether parallel tool calls are permitted.
+    pub parallel_tools: bool,
+    /// Requested output ceiling.
+    pub max_output_tokens: u32,
+    /// Temperature in integer milli-units.
+    pub temperature_milli: Option<u16>,
+    /// Nucleus sampling in integer milli-units.
+    pub top_p_milli: Option<u16>,
+    /// Caller stop sequences.
+    pub stop_sequences: &'a [BoundedString<64>],
+    /// Reasoning request.
+    pub reasoning: ReasoningRequest,
+    /// Structured output request.
+    pub structured_output: Option<&'a StructuredOutputRequest>,
+}
+
+impl<'a> From<QualificationRequest<'a>> for RequestView<'a> {
+    fn from(request: QualificationRequest<'a>) -> Self {
+        Self {
+            system: request.system,
+            messages: request.messages,
+            tools: request.tools,
+            tool_choice: request.tool_choice,
+            parallel_tools: request.parallel_tools,
+            max_output_tokens: request.max_output_tokens,
+            temperature_milli: request.temperature_milli,
+            top_p_milli: request.top_p_milli,
+            stop_sequences: request.stop_sequences,
+            reasoning: request.reasoning,
+            structured_output: request.structured_output,
+        }
+    }
+}
+
+/// Builds the exact production `DeepSeek` wire request for a staged candidate.
+///
+/// # Errors
+///
+/// Rejects any non-staged entry, provider/dialect/endpoint mismatch, missing
+/// capability or invalid request bound before a credential or socket exists.
+pub fn build_qualification_request(
+    entry: &ModelEntry,
+    request: QualificationRequest<'_>,
+) -> Result<WireRequest, RequestBuildError> {
+    if entry.state != EntryState::Staged {
+        return Err(RequestBuildError::Encoding {
+            reason: "qualification accepts only a staged catalog entry",
+        });
+    }
+    if entry.provider != ProviderId::Deepseek
+        || entry.dialect != Dialect::DeepSeekChat
+        || entry.endpoint != EndpointPin::DeepSeekApi
+    {
+        return Err(RequestBuildError::Encoding {
+            reason: "the staged entry does not pin the DeepSeek production dialect",
+        });
+    }
+    build(entry, request.into())
+}
+
+/// Builds the provider's documented non-streamed shape for protected parity
+/// qualification of one staged candidate.
+///
+/// Production generation remains streaming-only. This seam starts with the
+/// exact production request builder, changes only the documented `stream`
+/// controls, and retains the same pinned endpoint, path, auth tag and body
+/// bound.
+///
+/// # Errors
+///
+/// As [`build_qualification_request`], plus an encoding failure if the closed
+/// request body cannot be projected onto the documented non-streamed form.
+pub fn build_non_streamed_qualification_request(
+    entry: &ModelEntry,
+    request: QualificationRequest<'_>,
+) -> Result<WireRequest, RequestBuildError> {
+    let mut wire = build_qualification_request(entry, request)?;
+    let mut body: Value =
+        serde_json::from_slice(&wire.body).map_err(|_| RequestBuildError::Encoding {
+            reason: "the production DeepSeek request body is not JSON",
+        })?;
+    let object = body.as_object_mut().ok_or(RequestBuildError::Encoding {
+        reason: "the production DeepSeek request body is not an object",
+    })?;
+    object.insert("stream".to_owned(), Value::Bool(false));
+    object.remove("stream_options");
+    let bytes = serde_json::to_vec(&body).map_err(|_| RequestBuildError::Encoding {
+        reason: "the non-streamed qualification body is not serializable JSON",
+    })?;
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX)
+        > u64::from(entry.limits.request_body_max_bytes)
+    {
+        return Err(RequestBuildError::BodyTooLarge {
+            limit: entry.limits.request_body_max_bytes,
+        });
+    }
+    wire.body = Bytes::from(bytes);
+    wire.accept = Accept::Json;
+    Ok(wire)
+}
+
+/// Decodes the documented non-streamed response through the production
+/// `DeepSeek` state machine for protected stream-parity qualification.
+///
+/// The response is projected onto the dialect's equivalent single chunk and
+/// terminal sentinel. Content, reasoning, tool calls, finish tokens and usage
+/// are then validated and sealed by the same decoder used in production.
+///
+/// # Errors
+///
+/// Rejects a truncated, malformed, unknown or unsealable response shape.
+pub fn decode_non_streamed_qualification_response(
+    body: &BoundedBody,
+    budget: &StreamBudget,
+) -> Result<SealedResponse, FrameDecodeError> {
+    if body.is_truncated() {
+        return Err(FrameDecodeError::Budget(BudgetOverrun::Response {
+            limit: budget.max_response_bytes,
+        }));
+    }
+    let value = body.as_json().ok_or(FrameDecodeError::NotJson)?;
+    let object = value
+        .as_object()
+        .ok_or(FrameDecodeError::MalformedField { field: "response" })?;
+    if object.get("object").and_then(Value::as_str) != Some("chat.completion") {
+        return Err(FrameDecodeError::UnknownEvent {
+            event: BoundedString::truncating(
+                object
+                    .get("object")
+                    .and_then(Value::as_str)
+                    .unwrap_or("non_stream_response"),
+            ),
+        });
+    }
+    let choices = object
+        .get("choices")
+        .and_then(Value::as_array)
+        .ok_or(FrameDecodeError::MalformedField { field: "choices" })?;
+    let choice = choices
+        .first()
+        .and_then(Value::as_object)
+        .ok_or(FrameDecodeError::MalformedField { field: "choices.0" })?;
+    let message = choice.get("message").and_then(Value::as_object).ok_or(
+        FrameDecodeError::MalformedField {
+            field: "choices.0.message",
+        },
+    )?;
+    let mut delta = Map::new();
+    for key in ["role", "content", "reasoning_content", "tool_calls"] {
+        if let Some(member) = message.get(key) {
+            delta.insert(key.to_owned(), member.clone());
+        }
+    }
+    let finish_reason =
+        choice
+            .get("finish_reason")
+            .cloned()
+            .ok_or(FrameDecodeError::MalformedField {
+                field: "choices.0.finish_reason",
+            })?;
+    let chunk = json!({
+        "object": CHUNK_OBJECT,
+        "choices": [{
+            "index": choice.get("index").cloned().unwrap_or(Value::from(0)),
+            "delta": Value::Object(delta),
+            "finish_reason": finish_reason,
+        }],
+        "usage": object.get("usage").cloned().unwrap_or(Value::Null),
+    });
+    let encoded = serde_json::to_vec(&chunk)
+        .map_err(|_| FrameDecodeError::MalformedField { field: "response" })?;
+    let mut state = DialectState::new();
+    match DeepSeekAdapter.decode(
+        &mut state,
+        &SseEvent {
+            name: None,
+            data: &encoded,
+            id: None,
+        },
+        budget,
+    )? {
+        FrameOutcome::Failed(_) => {
+            return Err(FrameDecodeError::MalformedField {
+                field: "finish_reason",
+            });
+        }
+        FrameOutcome::Ignored
+        | FrameOutcome::ResponseStarted
+        | FrameOutcome::Progress
+        | FrameOutcome::Terminal => {}
+    }
+    DeepSeekAdapter.decode(
+        &mut state,
+        &SseEvent {
+            name: None,
+            data: b"[DONE]",
+            id: None,
+        },
+        budget,
+    )?;
+    DeepSeekAdapter.finish(state)
 }
 
 impl<'a> RequestView<'a> {
@@ -710,10 +931,63 @@ const fn status_kind(status: u16) -> ProviderFailureKind {
         400 | 422 => ProviderFailureKind::InvalidRequest,
         401 => ProviderFailureKind::Authentication,
         402 => ProviderFailureKind::Billing,
+        404 => ProviderFailureKind::ModelNotFound,
         429 => ProviderFailureKind::RateLimited,
         503 => ProviderFailureKind::Overloaded,
         _ => ProviderFailureKind::ServerError,
     }
+}
+
+/// Recognizes the one bounded `DeepSeek` diagnostic that proves a numeric
+/// context-window overflow. A generic 400, a code token, or a substring match
+/// is deliberately insufficient because all other malformed requests share
+/// the same status and error type.
+fn is_exact_context_overflow_message(message: &str) -> bool {
+    const PREFIX: &str = "This model's maximum context length is ";
+    const MAX_SUFFIX: &str = " tokens. However, you requested ";
+    const REQUESTED_SUFFIX: &str = " tokens (";
+    const MESSAGE_SUFFIX: &str = " in the messages, ";
+    const COMPLETION_SUFFIX: &str =
+        " in the completion). Please reduce the length of the messages or completion.";
+
+    if message.len() > 256 {
+        return false;
+    }
+    let Some(rest) = message.strip_prefix(PREFIX) else {
+        return false;
+    };
+    let Some((maximum, rest)) = take_bounded_decimal(rest, MAX_SUFFIX) else {
+        return false;
+    };
+    let Some((requested, rest)) = take_bounded_decimal(rest, REQUESTED_SUFFIX) else {
+        return false;
+    };
+    let Some((message_tokens, rest)) = take_bounded_decimal(rest, MESSAGE_SUFFIX) else {
+        return false;
+    };
+    let Some((completion_tokens, rest)) = take_bounded_decimal(rest, COMPLETION_SUFFIX) else {
+        return false;
+    };
+    rest.is_empty()
+        && maximum > 0
+        && requested > maximum
+        && message_tokens
+            .checked_add(completion_tokens)
+            .is_some_and(|total| total == requested)
+}
+
+fn take_bounded_decimal<'a>(input: &'a str, suffix: &str) -> Option<(u64, &'a str)> {
+    let split = input.find(suffix)?;
+    let digits = &input[..split];
+    if digits.is_empty()
+        || digits.len() > 10
+        || !digits.bytes().all(|byte| byte.is_ascii_digit())
+        || (digits.len() > 1 && digits.starts_with('0'))
+    {
+        return None;
+    }
+    let value = digits.parse().ok()?;
+    Some((value, &input[split + suffix.len()..]))
 }
 
 // ---------------------------------------------------------------------------
@@ -1135,7 +1409,14 @@ impl ProviderAdapter for DeepSeekAdapter {
         let message = error
             .and_then(|error| error.get("message"))
             .and_then(Value::as_str);
-        let kind = status_kind(status);
+        let kind = if status == 400
+            && !body.is_truncated()
+            && message.is_some_and(is_exact_context_overflow_message)
+        {
+            ProviderFailureKind::ContextOverflow
+        } else {
+            status_kind(status)
+        };
         let text = message.or_else(|| body.as_str()).unwrap_or_default();
         let mut detail = if text.trim().is_empty() {
             RedactedDetail::internal(kind, "the provider returned no diagnostic body")
@@ -1185,11 +1466,13 @@ mod tests {
         Accept, AuthScheme, BoundedBody, BoundedString, Bytes, CHAT_COMPLETIONS_PATH,
         CanonicalBlock, CanonicalJson, CanonicalMessage, CanonicalToolDef, Capability,
         DeepSeekAdapter, DialectState, EndpointPin, FinishToken, FrameDecodeError, FrameOutcome,
-        HeaderView, ModelEntry, ProviderAdapter, ProviderFailureKind, ProviderId, ReasoningBlock,
-        ReasoningBody, ReasoningEffort, ReasoningReplay, ReasoningRequest, ReasoningToken,
-        RequestBuildError, RequestView, Role, SealedResponse, StopReason, StreamBudget,
-        StructuredOutputRequest, SystemBlock, ToolChoice, ToolName, ToolResultPart,
-        UsageCompleteness, Value, build, build_body, finish_token, status_kind,
+        HeaderView, ModelEntry, ProviderAdapter, ProviderFailureKind, ProviderId,
+        QualificationRequest, ReasoningBlock, ReasoningBody, ReasoningEffort, ReasoningReplay,
+        ReasoningRequest, ReasoningToken, RequestBuildError, RequestView, Role, SealedResponse,
+        StopReason, StreamBudget, StructuredOutputRequest, SystemBlock, ToolChoice, ToolName,
+        ToolResultPart, UsageCompleteness, Value, build, build_body,
+        build_non_streamed_qualification_request, build_qualification_request,
+        decode_non_streamed_qualification_response, finish_token, status_kind,
     };
     use crate::error::RateLimitSource;
     use crate::sse::SseDecoder;
@@ -1360,6 +1643,75 @@ mod tests {
                 r#""thinking":{"reasoning_effort":"high","type":"enabled"}}"#,
             ),
         );
+    }
+
+    #[test]
+    fn qualification_builds_the_production_wire_shape_from_a_staged_entry() {
+        let entry = entry();
+        assert_eq!(entry.state, aex_model_catalog::document::EntryState::Staged);
+        let draft = Draft::new();
+        let request = build_qualification_request(
+            &entry,
+            QualificationRequest {
+                system: &draft.system,
+                messages: &draft.messages,
+                tools: &draft.tools,
+                tool_choice: &draft.tool_choice,
+                parallel_tools: draft.parallel_tools,
+                max_output_tokens: draft.max_output_tokens,
+                temperature_milli: draft.temperature_milli,
+                top_p_milli: draft.top_p_milli,
+                stop_sequences: &draft.stop_sequences,
+                reasoning: draft.reasoning,
+                structured_output: draft.structured_output.as_ref(),
+            },
+        )
+        .expect("a staged candidate uses the production request builder");
+        assert_eq!(
+            request.url().expect("compiled URL").as_str(),
+            "https://api.deepseek.com/chat/completions"
+        );
+        let body: Value = serde_json::from_slice(&request.body).expect("request JSON");
+        assert_eq!(body["model"], "deepseek-v4-pro");
+        assert_eq!(body["stream"], true);
+    }
+
+    #[test]
+    fn qualification_non_stream_parity_reuses_the_production_decoder() {
+        let entry = entry();
+        let draft = Draft::new();
+        let request = QualificationRequest {
+            system: &draft.system,
+            messages: &draft.messages,
+            tools: &draft.tools,
+            tool_choice: &draft.tool_choice,
+            parallel_tools: draft.parallel_tools,
+            max_output_tokens: draft.max_output_tokens,
+            temperature_milli: draft.temperature_milli,
+            top_p_milli: draft.top_p_milli,
+            stop_sequences: &draft.stop_sequences,
+            reasoning: draft.reasoning,
+            structured_output: draft.structured_output.as_ref(),
+        };
+        let wire = build_non_streamed_qualification_request(&entry, request)
+            .expect("a staged candidate can request the parity shape");
+        assert_eq!(wire.accept, Accept::Json);
+        let body: Value = serde_json::from_slice(&wire.body).expect("request JSON");
+        assert_eq!(body["stream"], false);
+        assert!(body.get("stream_options").is_none());
+
+        let response = BoundedBody::new(
+            br#"{"object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"prompt_cache_hit_tokens":2,"prompt_cache_miss_tokens":8,"completion_tokens":1,"completion_tokens_details":{"reasoning_tokens":0},"total_tokens":11}}"#.to_vec(),
+            false,
+        );
+        let sealed =
+            decode_non_streamed_qualification_response(&response, &StreamBudget::default())
+                .expect("the non-streamed shape passes through the production decoder");
+        assert_eq!(sealed.stop_reason, StopReason::EndTurn);
+        assert_eq!(sealed.usage.input_tokens, 8);
+        assert_eq!(sealed.usage.cache_read_input_tokens, 2);
+        assert_eq!(sealed.usage.output_tokens, 1);
+        assert_eq!(sealed.usage.completeness, UsageCompleteness::Exact);
     }
 
     #[test]
@@ -2328,6 +2680,7 @@ mod tests {
             (400, ProviderFailureKind::InvalidRequest),
             (401, ProviderFailureKind::Authentication),
             (402, ProviderFailureKind::Billing),
+            (404, ProviderFailureKind::ModelNotFound),
             (422, ProviderFailureKind::InvalidRequest),
             (429, ProviderFailureKind::RateLimited),
             (500, ProviderFailureKind::ServerError),
@@ -2349,6 +2702,40 @@ mod tests {
             &HeaderView::new(&headers),
             &BoundedBody::new(body.to_vec(), false),
         )
+    }
+
+    #[test]
+    fn exact_numeric_400_context_diagnostic_is_typed_as_overflow() {
+        let failure = classify(
+            400,
+            br#"{"error":{"message":"This model's maximum context length is 1000000 tokens. However, you requested 1000002 tokens (1000001 in the messages, 1 in the completion). Please reduce the length of the messages or completion.","type":"invalid_request_error"}}"#,
+        );
+        assert_eq!(failure.kind(), ProviderFailureKind::ContextOverflow);
+    }
+
+    #[test]
+    fn context_overflow_near_misses_remain_invalid_requests() {
+        for body in [
+            br#"{"error":{"message":"Maximum context length exceeded","code":"context_length_exceeded"}}"#.as_slice(),
+            br#"{"error":{"message":"This model's maximum context length is 1000000 tokens. However, you requested 1000002 tokens (1000000 in the messages, 1 in the completion). Please reduce the length of the messages or completion."}}"#.as_slice(),
+            br#"{"error":{"message":"This model's maximum context length is 1000000 tokens. However, you requested 999999 tokens (999998 in the messages, 1 in the completion). Please reduce the length of the messages or completion."}}"#.as_slice(),
+            br#"{"error":{"message":"This model's maximum context length is 1000000 tokens. However, you requested 1000002 tokens (1000001 in the messages, 1 in the completion). Please reduce the length of the messages or completion!"}}"#.as_slice(),
+        ] {
+            assert_eq!(classify(400, body).kind(), ProviderFailureKind::InvalidRequest);
+        }
+
+        let headers = reqwest::header::HeaderMap::new();
+        let exact = br#"{"error":{"message":"This model's maximum context length is 1000000 tokens. However, you requested 1000002 tokens (1000001 in the messages, 1 in the completion). Please reduce the length of the messages or completion."}}"#;
+        let truncated = DeepSeekAdapter.classify_http(
+            400,
+            &HeaderView::new(&headers),
+            &BoundedBody::new(exact.to_vec(), true),
+        );
+        assert_eq!(truncated.kind(), ProviderFailureKind::InvalidRequest);
+        assert_eq!(
+            classify(422, exact).kind(),
+            ProviderFailureKind::InvalidRequest
+        );
     }
 
     #[test]

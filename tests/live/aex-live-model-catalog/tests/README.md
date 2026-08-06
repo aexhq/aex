@@ -34,10 +34,9 @@ Credential names are explicit and provider-affine:
 | `vercel_ai_gateway` | `AEX_LIVE_PROVIDER_KEY_VERCEL_AI_GATEWAY` | none |
 
 The authoritative name wins when both names exist; an empty or non-Unicode
-value fails, and no key value is retained in the matrix. The protected runner
-must obtain the secret through the approved custody path before making a real
-provider call. `PendingProbeExecutor` intentionally fails on the first
-required probe, so this scaffolding cannot be mistaken for live evidence.
+value fails, and no key value is retained in the matrix. The generic
+`PendingProbeExecutor` intentionally fails on the first required probe, so it
+cannot be mistaken for live evidence.
 
 `ConfiguredProbeExecutor` is the reusable next boundary: it runs
 asynchronously over one exact target and one explicit owner-supplied program
@@ -48,15 +47,38 @@ fail closed. Driver failures may carry only the gateway's bounded
 `RedactedDetail`, and receipt facts are made from closed enums, hashes and
 counters rather than provider response strings.
 
-No executable live profile is checked in yet. The protected owner must supply
-all of the following before replacing `PendingProbeExecutor` in a live target:
+The `aex-model-catalog-qualifier` executable and
+`model-catalog-qualify.yml` protected workflow now bind the first exact target,
+`deepseek/deepseek-v4-flash`. `preflight` reports one production program for
+every P-01 through P-23 probe. Completeness and all fixed identities are checked
+before environment credential acquisition, HTTP-client creation, or provider
+I/O. A failed run emits neither evidence nor a receipt. The qualifier cannot
+emit a `CatalogDocument`; static catalog source and protected publication are a
+separate release path.
 
-- the exact reviewed provider/model pair, capabilities, full `ModelEntry` and
-  signed catalog revision; adapter test fixtures and syntactically valid model
-  strings are not catalog authority;
+Local canned outcomes remain explicitly rejected as evidence. P-15 consumes a
+real provider response through the production stream core, while P-18 uses the
+production send gate for its pre-header boundary. The post-head drop,
+oversized-frame and idle schedules run through the same bounded production
+stream consumer used by the router without making billable throwaway calls;
+their evidence is derived from its typed failure, dispatch proof, counters and
+elapsed timer. P-20 uses the
+production transport and DeepSeek HTTP classifier with redacted response shapes. The public DeepSeek adapter also
+exposes a qualification-only request seam for a reviewed `Staged` entry; it
+reuses the private production request builder without accepting a credential,
+origin override, provider default, or already-qualified model.
+
+The protected owner must still supply all of the following before preflight can
+admit a live run:
+
+- the exact reviewed provider/model pair, capabilities and full compatibility
+  `ModelEntry`; adapter test fixtures and arbitrary model strings are not
+  qualification inputs;
+- the pinned official tokenizer input used to verify the exact P-16 and P-17
+  context corpora;
 - the customer-owned key through the protected runner's approved custody path,
-  using the accepted variable identity above; the executor never reads an
-  environment value or stores plaintext;
+  using only `AEX_LIVE_PROVIDER_KEY_DEEPSEEK`; the protected wrapper zeroizes
+  owned bytes and exposes only redacted diagnostics;
 - exact per-probe canonical request programs and deterministic oracles:
   prompts, tool schemas/results, structured-output schema, reasoning replay,
   cache prefix, stop sequence, tokenizer/context corpus, and output bounds;
@@ -66,8 +88,8 @@ all of the following before replacing `PendingProbeExecutor` in a live target:
   the four P-18 drop points, oversized-frame injection, idle injection, exact
   byte/frame accounting, and the production adapter's diagnostic redaction;
 - receipt metadata and custody for the redacted evidence bundle, request ids,
-  token totals, evidence digest, plane/region/time, adapter-source digest and
-  protected publisher signature.
+  token totals, evidence digest, plane/region/time and adapter-source digest.
 
-Until every required program and authority above exists, execution stops at
-the first unavailable slot and no receipt or catalog asset is emitted.
+If any required authority or live assertion is unavailable, execution stops
+and no evidence or receipt is emitted. This monitoring result does not create,
+remove, or block publication of repository-reviewed signed catalog metadata.

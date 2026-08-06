@@ -244,6 +244,12 @@ describe("release-bound public evidence producer", () => {
       '[[ "$DISPATCH_REF" == "refs/tags/$RELEASE_TAG" ]]'
     );
     expect(workflowStep(job, "Require non-empty release scenario and user-journey inventories").run).toContain("graph verify --release");
+    expect(workflowStep(job, "Require non-empty release scenario and user-journey inventories").run).toContain(
+      "AEX_RELEASE_EVIDENCE_MODE=inventory"
+    );
+    expect(workflowStep(job, "Require non-empty release scenario and user-journey inventories").run).toContain(
+      "bun test apps/user-tests/test/live"
+    );
     expect(source).toContain("AEX_RELEASE_EVIDENCE_HEALTH_URL");
     expect(source).toContain("https://{0}/api/release/health");
     expect(source).not.toContain("secrets.AEX_RELEASE_EVIDENCE_HEALTH_URL");
@@ -260,6 +266,9 @@ describe("release-bound public evidence producer", () => {
     expect(source).not.toContain("preflight-live-user-tests.mjs");
     expect(workflowStep(job, "Run release-bound E2E and user suites").run).toContain("run-e2e");
     expect(workflowStep(job, "Run release-bound E2E and user suites").run).toContain("run-user");
+    expect(producerSource).toContain('AEX_RELEASE_EVIDENCE_MODE: "inventory"');
+    expect(producerSource).toContain('AEX_RELEASE_EVIDENCE_MODE: "execute"');
+    expect(producerSource).not.toContain('"--list-tests"');
     expect(workflowStep(job, "Verify inventory, cleanup, spend and secret-canary evidence").run).toContain("assert-no-skips.mjs");
     expect(workflowStep(job, "Verify inventory, cleanup, spend and secret-canary evidence").run).toContain("grep -rFq");
     expect(workflowStep(job, "Build the release-bound receipts").run).toContain("evidence new");

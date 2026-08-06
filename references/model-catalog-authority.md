@@ -158,13 +158,19 @@ never overwritten.
 
 ## Monitoring is not publication authority
 
-Provider compatibility and availability may be monitored independently, but
-monitor output is never called or consumed by ordinary CI, the publisher, the
-build lane, or runtime startup. A failed, skipped, expired, or unavailable
+The scheduled/manual compatibility monitoring lane may observe provider
+compatibility and availability independently, but monitor output is never called
+or consumed
+by ordinary CI, the publisher, the build lane, or runtime startup. A failed,
+skipped, expired, or unavailable
 provider observation cannot remove a signed entry, replace a build binding,
 fail a main build, or block release consumption. Compatibility changes are made
 only by reviewing a new static source file and passing it through the protected
 publisher.
+
+The release-evidence inventory pass likewise exercises only the registered
+journey descriptors; it does not contact a provider or the deployed API. The
+same journeys run once, with credentials, during the evidence phase.
 
 ## Fail-closed checks
 

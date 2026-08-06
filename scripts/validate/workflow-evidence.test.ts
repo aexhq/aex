@@ -139,7 +139,7 @@ describe("workflow evidence producers", () => {
     const cases = [
       [".github/workflows/pr.yml", "rust", "affected"],
       [".github/workflows/main.yml", "verify", "affected"],
-      [".github/workflows/assurance.yml", "full-graph", "shadow"]
+      [".github/workflows/assurance.yml", "full-graph", "full"]
     ] as const;
 
     for (const [path, jobId, mode] of cases) {

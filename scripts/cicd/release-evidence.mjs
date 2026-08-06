@@ -324,7 +324,10 @@ async function runUser(outputRoot) {
   const listPath = resolve(absoluteRoot, "list.txt");
   const junit = resolve(absoluteRoot, "junit.xml");
   const hygienePath = resolve(absoluteRoot, "hygiene.json");
-  const listed = run(["bun", "test", "--list-tests", "apps/user-tests/test/live"], { capture: true });
+  const listed = run(["bun", "test", "apps/user-tests/test/live"], {
+    capture: true,
+    env: { ...process.env, AEX_RELEASE_EVIDENCE_MODE: "inventory" }
+  });
   writeFileSync(listPath, listed);
   const scenarios = await import(new URL("../../apps/user-tests/scenarios.ts", import.meta.url));
   const liveIds = scenarios.USER_SCENARIOS.filter(({ suite }) => suite === "live").map(({ id }) => id);
@@ -336,7 +339,11 @@ async function runUser(outputRoot) {
   });
   run(["bun", "test", "--isolate", "apps/user-tests/test/live", "--reporter=junit",
     `--reporter-outfile=${junit}`], {
-    env: { ...process.env, AEX_RELEASE_EVIDENCE_HYGIENE_PATH: hygienePath }
+    env: {
+      ...process.env,
+      AEX_RELEASE_EVIDENCE_HYGIENE_PATH: hygienePath,
+      AEX_RELEASE_EVIDENCE_MODE: "execute"
+    }
   });
   assertClosedJunit(junit, { cases });
   if (!existsSync(hygienePath)) throw new Error("release-evidence user suite emitted no hygiene report");
