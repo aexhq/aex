@@ -44,8 +44,8 @@ describe("protected model-catalog authority", () => {
     expect(source).toContain("git ls-files --error-unmatch");
     expect(source).toContain("release/model-catalog/*.source.json");
     expect(source).toContain("git diff --name-only --no-renames --diff-filter=ACMRT");
-    expect(source).toContain('generate \\\n            --source "$CATALOG_SOURCE_PATH"');
-    expect(source).toContain('validate \\\n            --source "$CATALOG_SOURCE_PATH"');
+    expect(source).toMatch(/generate \\\r?\n\s+--source "\$CATALOG_SOURCE_PATH"/);
+    expect(source).toMatch(/validate \\\r?\n\s+--source "\$CATALOG_SOURCE_PATH"/);
     expect(source).toContain('--document "$PUBLISH_DIR/catalog-document.json"');
     expect(source).toContain('--previous-collection "$PREVIOUS_COLLECTION_PATH"');
     expect(source).toContain("AEX_MODEL_CATALOG_BINDING_JSON");
@@ -71,6 +71,9 @@ describe("protected model-catalog authority", () => {
     expect(source).toContain('.SigningAlgorithms == ["ECDSA_SHA_256"]');
     expect(source).toContain("aws kms sign --key-id");
     expect(source).toContain("--signing-algorithm ECDSA_SHA_256 --message-type DIGEST");
+    expect(source).toContain("od -An -v -tx1");
+    expect(source).toContain('[[ "sha256:$decoded_digest" == "$request_digest" ]]');
+    expect(source).not.toContain('sha256sum "$PUBLISH_DIR/message.digest"');
     expect(source).toContain('--message "fileb://$PWD/$PUBLISH_DIR/message.digest"');
     expect(source).toContain('aex-model-catalog-publisher" assemble');
     expect(source).toContain("gh release create");

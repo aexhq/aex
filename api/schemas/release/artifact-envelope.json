@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.aex.dev/release/v1/artifact-envelope.json",
   "title": "aex.artifact-envelope.v1",
-  "description": "Everything that shaped one artifact's bytes, plus the supply-chain verdicts and the receipts earned before publication. Post-deployment evidence is deliberately absent: an artifact cannot contain proof that only exists once it is deployed.",
+  "description": "Everything that shaped one artifact's bytes, plus publication evidence and the receipts earned before publication. Startup releases may explicitly defer supply-chain scanning. Post-deployment evidence is deliberately absent: an artifact cannot contain proof that only exists once it is deployed.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -270,10 +270,10 @@
       "additionalProperties": false,
       "required": ["format", "digest", "uri", "componentCount"],
       "properties": {
-        "format": { "enum": ["spdx-2.3", "cyclonedx-1.6"] },
-        "digest": { "$ref": "#/$defs/sha256" },
+        "format": { "enum": ["spdx-2.3", "cyclonedx-1.6", "deferred-startup"] },
+        "digest": { "oneOf": [{ "$ref": "#/$defs/sha256" }, { "const": "" }] },
         "uri": { "type": "string" },
-        "componentCount": { "type": "integer", "minimum": 1 }
+        "componentCount": { "type": "integer", "minimum": 0 }
       }
     },
     "licenses": {
@@ -281,8 +281,8 @@
       "additionalProperties": false,
       "required": ["policyDigest", "verdict", "denials"],
       "properties": {
-        "policyDigest": { "$ref": "#/$defs/sha256" },
-        "verdict": { "const": "allowed" },
+        "policyDigest": { "oneOf": [{ "$ref": "#/$defs/sha256" }, { "const": "" }] },
+        "verdict": { "enum": ["allowed", "deferred-startup"] },
         "denials": { "type": "array", "maxItems": 0, "items": { "type": "string" } },
         "inventoryDigest": { "$ref": "#/$defs/sha256" }
       }
@@ -294,7 +294,7 @@
       "properties": {
         "scanner": { "type": "string" },
         "database": { "type": "string" },
-        "scannedAt": { "type": "string", "format": "date-time" },
+        "scannedAt": { "type": "string" },
         "unapprovedCritical": { "const": 0 },
         "unapprovedHigh": { "const": 0 },
         "approvedExceptions": {
@@ -313,6 +313,7 @@
         }
       }
     },
+    "supplyChainDeferred": { "type": "boolean" },
     "provenance": {
       "type": "object",
       "additionalProperties": false,
@@ -388,6 +389,79 @@
     },
     "createdAt": { "type": "string", "format": "date-time" }
   },
+  "allOf": [
+    {
+      "if": {
+        "required": ["supplyChainDeferred"],
+        "properties": { "supplyChainDeferred": { "const": true } }
+      },
+      "then": {
+        "properties": {
+          "sbom": {
+            "properties": {
+              "format": { "const": "deferred-startup" },
+              "digest": { "const": "" },
+              "uri": { "const": "" },
+              "componentCount": { "const": 0 }
+            }
+          },
+          "licenses": {
+            "properties": {
+              "policyDigest": { "const": "" },
+              "verdict": { "const": "deferred-startup" },
+              "denials": { "maxItems": 0 },
+              "inventoryDigest": false
+            }
+          },
+          "vulnerabilities": {
+            "properties": {
+              "scanner": { "const": "deferred-startup" },
+              "database": { "const": "" },
+              "scannedAt": { "const": "" },
+              "unapprovedCritical": { "const": 0 },
+              "unapprovedHigh": { "const": 0 },
+              "approvedExceptions": { "maxItems": 0 }
+            }
+          },
+          "receipts": {
+            "not": {
+              "contains": {
+                "type": "object",
+                "required": ["class"],
+                "properties": {
+                  "class": { "enum": ["deny", "sbom", "license", "vulnerability"] }
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "sbom": {
+            "properties": {
+              "format": { "enum": ["spdx-2.3", "cyclonedx-1.6"] },
+              "digest": { "$ref": "#/$defs/sha256" },
+              "componentCount": { "type": "integer", "minimum": 1 }
+            }
+          },
+          "licenses": {
+            "properties": {
+              "policyDigest": { "$ref": "#/$defs/sha256" },
+              "verdict": { "const": "allowed" }
+            }
+          },
+          "vulnerabilities": {
+            "properties": {
+              "scanner": { "type": "string", "minLength": 1, "not": { "const": "deferred-startup" } },
+              "database": { "type": "string", "minLength": 1 },
+              "scannedAt": { "type": "string", "format": "date-time" }
+            }
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
     "sha1": { "type": "string", "pattern": "^[0-9a-f]{40}$" },

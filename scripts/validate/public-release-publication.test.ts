@@ -20,6 +20,8 @@ describe("public main-push publication", () => {
       "terraform"
     ]);
     expect(workflow.jobs.build.if).toContain("needs.gates.result == 'success'");
+    expect(workflow.jobs.manifest.needs).toBe("build");
+    expect(workflow.jobs.manifest.if).toBe("always() && needs.build.result == 'success'");
     expect(source).not.toContain("needs.route.outputs.has_artifact == 'true'");
     expect(workflow.jobs.build.with.publish).toBeTrue();
     expect(workflow.jobs.build.permissions).toEqual({
@@ -52,7 +54,7 @@ describe("public main-push publication", () => {
     const buildJob = workflow.jobs.build;
     const certification = job.steps.find(
       (step: { readonly name?: string }) =>
-        step.name === "Produce artifact-bound supply-chain evidence and certify every unit"
+        step.name === "Certify exact build and publication identities"
     );
     const certifiedUpload = job.steps.find(
       (step: { readonly name?: string }) => step.name === "Upload the exact certified artifact inventory"
@@ -131,7 +133,7 @@ describe("public main-push publication", () => {
     expect(source).toContain("--draft --prerelease");
     expect(source).not.toContain("--clobber");
     expect(source.match(/gh release create/g)).toHaveLength(1);
-    expect(source).toContain('if [ "$total" -ne 39 ]');
+    expect(source).toContain('if [ "$total" -ne 36 ]');
     expect(source).toContain('if [ "$oci_count" -ne 5 ]');
     expect(source).toContain("push-by-digest=true");
     const rdsBundle = buildJob.steps.find(
@@ -160,8 +162,13 @@ describe("public main-push publication", () => {
     expect(source).toContain("Download every same-run validation receipt");
     expect(source).toContain("find validation-receipts -type f -name '*.json' -print0");
     expect(source).not.toContain("merge-multiple: true");
-    expect(certification?.run).toContain("syft scan");
-    expect(certification?.run).toContain("grype");
+    expect(source).not.toContain("cargo deny");
+    expect(source).not.toContain("cargo audit");
+    expect(source).not.toContain("bun audit");
+    expect(source).not.toContain("syft scan");
+    expect(source).not.toContain("grype");
+    expect(source).not.toContain("--pattern 'sbom-*'");
+    expect(certification?.run).toContain("--defer-supply-chain");
     expect(certification?.run).toContain("evidence new-check");
     expect(certification?.run).toContain("evidence bind-artifact");
     expect(certification?.run).toContain("artifact certify");
@@ -230,7 +237,8 @@ describe("public main-push publication", () => {
     }
     expect(doc).toMatch(/current\r?\nlast-good signed collection/);
     expect(doc).toContain("replace `AEX_MODEL_CATALOG_BINDING_JSON` in one operation");
-    expect(doc).toContain("scheduled/manual compatibility monitoring");
+    expect(doc).toContain("Monitoring is not publication authority");
+    expect(doc).toMatch(/provider observation cannot remove a signed entry/);
     expect(doc).toContain("No application encryption key");
   });
 

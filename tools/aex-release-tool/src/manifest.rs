@@ -396,11 +396,8 @@ pub const DEFAULT_ORDER: &[(&str, &[&str])] = &[
             "hands-image-512mb",
             "hands-image-1gb",
             "hands-image-2gb",
-            "hands-image-2gb-browser",
             "hands-image-4gb",
-            "hands-image-4gb-browser",
             "hands-image-8gb",
-            "hands-image-8gb-browser",
         ],
     ),
     ("web", &["dashboard", "site"]),
@@ -1363,7 +1360,7 @@ pub fn diff(from: &CompositionManifest, to: &CompositionManifest) -> ManifestDif
 /// Whether a reference names a mutable target instead of a digest.
 #[must_use]
 pub fn looks_like_mutable_reference(value: &str) -> bool {
-    if value.contains("@sha256:") {
+    if value.contains("@sha256:") || valid_prefixed_hex_digest(value, "blake3:", 64) {
         return false;
     }
     // An image reference with a tag: `repo:tag` after the last `/`, where the
@@ -1418,13 +1415,16 @@ fn walk(value: &serde_json::Value, path: &str, findings: &mut Vec<Violation>) {
 }
 
 fn scan_string(text: &str, path: &str, findings: &mut Vec<Violation>) {
+    let exact_public_asset = is_exact_public_asset_uri(text, path);
     if text.starts_with("arn:") {
         findings.push(Violation::new(
             "manifest-environment-identity",
             format!("`{path}` holds an ARN: `{text}`"),
         ));
     }
-    if looks_like_account_id(text) {
+    if !is_manifest_cryptographic_identity(text, path, exact_public_asset)
+        && looks_like_account_id(text)
+    {
         findings.push(Violation::new(
             "manifest-environment-identity",
             format!("`{path}` holds a 12-digit account identifier"),
@@ -1434,11 +1434,6 @@ fn scan_string(text: &str, path: &str, findings: &mut Vec<Violation>) {
         let host = text
             .split_once("//")
             .map_or("", |(_, rest)| rest.split('/').next().unwrap_or(""));
-        let exact_public_asset = host == "github.com"
-            && (matches!(
-                path,
-                ".releaseTool.uri" | ".infra.moduleBundleUri" | ".migrations.regional.bundleUri"
-            ) || (path.starts_with(".units.") && path.ends_with(".location.uri")));
         if !exact_public_asset
             && !matches!(
                 host,
@@ -1485,6 +1480,52 @@ fn scan_string(text: &str, path: &str, findings: &mut Vec<Violation>) {
 fn looks_like_account_id(text: &str) -> bool {
     let candidates = text.split(|ch: char| !ch.is_ascii_digit());
     candidates.into_iter().any(|run| run.len() == 12)
+}
+
+fn valid_prefixed_hex_digest(value: &str, prefix: &str, digits: usize) -> bool {
+    value.strip_prefix(prefix).is_some_and(|payload| {
+        payload.len() == digits
+            && payload
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    })
+}
+
+fn valid_lower_hex(value: &str, digits: usize) -> bool {
+    value.len() == digits
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+fn is_exact_public_asset_uri(text: &str, path: &str) -> bool {
+    let host = text
+        .strip_prefix("https://")
+        .or_else(|| text.strip_prefix("http://"))
+        .map_or("", |rest| rest.split('/').next().unwrap_or(""));
+    host == "github.com"
+        && (matches!(
+            path,
+            ".releaseTool.uri" | ".infra.moduleBundleUri" | ".migrations.regional.bundleUri"
+        ) || (path.starts_with(".units.") && path.ends_with(".location.uri")))
+}
+
+fn is_manifest_cryptographic_identity(text: &str, path: &str, exact_public_asset: bool) -> bool {
+    let digest_position =
+        path.ends_with("Digest") || path.ends_with("digest") || path.ends_with("releaseId");
+    let commit_position = path.ends_with("commitSha");
+    let oci_location = path.starts_with(".units.")
+        && path.ends_with(".location.uri")
+        && text
+            .rsplit_once("@sha256:")
+            .is_some_and(|(_, digest)| valid_lower_hex(digest, 64));
+
+    exact_public_asset
+        || (digest_position
+            && (valid_prefixed_hex_digest(text, "sha256:", 64)
+                || valid_prefixed_hex_digest(text, "blake3:", 64)))
+        || (commit_position && valid_lower_hex(text, 40))
+        || oci_location
 }
 
 fn is_semver_range(text: &str) -> bool {
@@ -1799,6 +1840,31 @@ alarm_spec = "regional-otlp"
     }
 
     #[test]
+    fn decimal_runs_inside_cryptographic_identities_are_not_account_ids() {
+        let sha256 = format!("sha256:{}{}", "0".repeat(12), "ab".repeat(26));
+        let blake3 = format!("blake3:{}{}", "0".repeat(12), "cd".repeat(26));
+        let commit = format!("{}{}", "0".repeat(12), "ab".repeat(14));
+        let uri = format!("https://github.com/aexhq/aex/releases/download/x/unit-{sha256}.zip");
+
+        assert!(scan_environment(&json!({ "digest": sha256 })).is_empty());
+        assert!(scan_environment(&json!({ "definitionsDigest": blake3 })).is_empty());
+        assert!(scan_environment(&json!({ "commitSha": commit })).is_empty());
+        assert!(scan_environment(&json!({ "releaseTool": { "uri": uri } })).is_empty());
+    }
+
+    #[test]
+    fn an_account_id_padded_to_a_hash_length_remains_an_environment_identity() {
+        let findings = scan_environment(&json!({
+            "uri": "s3://aaaaaaaaaaaaaa522921482290bbbbbbbbbbbbbb/x"
+        }));
+        assert!(
+            findings
+                .iter()
+                .any(|violation| violation.rule == "manifest-environment-identity")
+        );
+    }
+
+    #[test]
     fn an_arn_is_an_environment_identity() {
         let findings = scan_environment(&json!({ "role": "arn:aws:iam::x:role/y" }));
         assert!(
@@ -1817,6 +1883,11 @@ alarm_spec = "regional-otlp"
         ));
         assert!(!looks_like_mutable_reference("s3://bucket/key.zip"));
         assert!(!looks_like_mutable_reference("registry:5000/brain-mux"));
+        assert!(!looks_like_mutable_reference(&format!(
+            "blake3:{}",
+            "ab".repeat(32)
+        )));
+        assert!(looks_like_mutable_reference("blake3:latest"));
     }
 
     #[test]

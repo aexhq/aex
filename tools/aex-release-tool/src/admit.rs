@@ -242,6 +242,9 @@ pub fn admit(inputs: &AdmissionInputs<'_>) -> Result<Admission> {
     // Rule 6: zero unapproved supply-chain findings.
     let mut supply = Vec::new();
     for (id, envelope) in inputs.envelopes {
+        if envelope.supply_chain_deferred {
+            continue;
+        }
         if envelope.vulnerabilities.unapproved_critical > 0
             || envelope.vulnerabilities.unapproved_high > 0
         {

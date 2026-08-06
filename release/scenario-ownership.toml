@@ -268,15 +268,12 @@ observes = ["artifact:brain-mux", "artifact:regional-session-api"]
 [[scenario]]
 id = "SC-HANDS-HOSTILE"
 owner = "hands"
-deferred = "The hostile-workload matrix across Hands agent and all image variants has no executable target yet."
+deferred = "The hostile-workload matrix across Hands agent and all published image variants has no executable target yet. Browser variants remain deferred until their pinned ARM64 browser layer exists."
 observes = [
   "artifact:hands-agent",
   "artifact:hands-image-512mb",
   "artifact:hands-image-1gb",
   "artifact:hands-image-2gb",
-  "artifact:hands-image-2gb-browser",
   "artifact:hands-image-4gb",
-  "artifact:hands-image-4gb-browser",
   "artifact:hands-image-8gb",
-  "artifact:hands-image-8gb-browser",
 ]

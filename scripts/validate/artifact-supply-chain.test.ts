@@ -38,6 +38,39 @@ test("supply-chain evidence binds exact CycloneDX, licenses, database, and sever
   expect(output.reports.sbom.checks).toHaveLength(2);
 });
 
+test("a Syft file SBOM uses metadata.component when no packages were detected", () => {
+  const output = inspectSupplyChain({
+    rawSbom: {
+      bomFormat: "CycloneDX",
+      specVersion: "1.6",
+      metadata: {
+        component: {
+          "bom-ref": "84498d875ca5956e",
+          type: "file",
+          name: "artifact.bin",
+          version: hex("d")
+        }
+      }
+    },
+    draft: { artifactSubjectDigest: hex("d"), unit: { id: "central-authz" } },
+    grype: { matches: [], descriptor: { db: { built: "2026-08-05", checksum: "sha256:db" } } },
+    denyPolicy: { licenses: { allow: ["Apache-2.0"] } },
+    denyPolicyBytes: "[licenses]\nallow=[]\n",
+    syftVersion: "1.50.0",
+    grypeVersion: "0.116.1",
+    scannedAt: "2026-08-05T00:00:00Z"
+  });
+
+  expect(output.licenseInventory.components).toEqual([{
+    source: "metadata.component",
+    name: "artifact.bin",
+    version: hex("d"),
+    licenseEvidence: "not-declared",
+    licenses: [],
+    denied: []
+  }]);
+});
+
 test("unknown licenses and high vulnerabilities fail instead of becoming receipts", () => {
   const base = {
     draft: { artifactSubjectDigest: hex("b"), unit: { id: "hands-agent" } },

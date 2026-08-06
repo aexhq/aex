@@ -135,6 +135,31 @@ pub struct Worker {
     lease: Duration,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum DispatchDisposition {
+    MarkDispatched,
+    Release {
+        available_at: OffsetDateTime,
+        error: String,
+    },
+}
+
+fn dispatch_disposition<F>(result: Result<(), String>, attempts: u32, now: F) -> DispatchDisposition
+where
+    F: FnOnce() -> OffsetDateTime,
+{
+    match result {
+        Ok(()) => DispatchDisposition::MarkDispatched,
+        Err(error) => {
+            let backoff = i64::from(2_u32.saturating_pow(attempts.min(8))).min(300);
+            DispatchDisposition::Release {
+                available_at: now() + Duration::seconds(backoff),
+                error,
+            }
+        }
+    }
+}
+
 impl Worker {
     #[allow(clippy::too_many_arguments)]
     #[must_use]
@@ -195,20 +220,20 @@ impl Worker {
             .await
             .map_err(redacted_store)?;
         for message in messages {
-            match self.dispatch(&message).await {
-                Ok(()) => self
+            match dispatch_disposition(self.dispatch(&message).await, message.attempts, || {
+                self.clock.now()
+            }) {
+                DispatchDisposition::MarkDispatched => self
                     .store
                     .mark_outbox_dispatched(message.id, self.clock.now())
                     .await
                     .map_err(redacted_store)?,
-                Err(error) => {
-                    let backoff = i64::from(2_u32.saturating_pow(message.attempts.min(8))).min(300);
+                DispatchDisposition::Release {
+                    available_at,
+                    error,
+                } => {
                     self.store
-                        .release_outbox(
-                            message.id,
-                            self.clock.now() + Duration::seconds(backoff),
-                            &error,
-                        )
+                        .release_outbox(message.id, available_at, &error)
                         .await
                         .map_err(redacted_store)?;
                 }
@@ -692,5 +717,31 @@ fn system_audit(
         operation_id: Some(workspace.provision_operation_id),
         detail: serde_json::json!({ "to_status": "active" }),
         occurred_at: now,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DispatchDisposition, dispatch_disposition};
+    use time::{Duration, OffsetDateTime};
+
+    #[test]
+    fn a_mail_provider_failure_is_released_with_an_observable_bounded_retry() {
+        let now = OffsetDateTime::UNIX_EPOCH;
+        assert_eq!(
+            dispatch_disposition(Err("ses_delivery_unavailable".to_owned()), 3, || now),
+            DispatchDisposition::Release {
+                available_at: now + Duration::seconds(8),
+                error: "ses_delivery_unavailable".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn an_accepted_delivery_is_the_only_outcome_marked_dispatched() {
+        assert_eq!(
+            dispatch_disposition(Ok(()), 1, || panic!("success needs no retry clock")),
+            DispatchDisposition::MarkDispatched
+        );
     }
 }

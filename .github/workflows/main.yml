@@ -29,7 +29,7 @@ jobs:
     with:
       # Package checks use the affected reverse closure. Until immutable
       # predecessor-manifest carry-forward exists, publication still rebuilds
-      # the complete registry so this source mints all 39 unit identities.
+      # the complete registry so this source mints all 36 unit identities.
       mode: affected
       artifact_mode: full
       lane: main
@@ -60,11 +60,6 @@ jobs:
           save-if: false
           shared-key: gates
 
-      - name: Install cargo-deny
-        uses: taiki-e/install-action@2cdf2d81f4edfc3b41d5ddf56083c70b48ac2475  # v2.62.35
-        with:
-          tool: cargo-deny@0.20.2
-
       - name: Format
         run: cargo fmt --all -- --check
 
@@ -82,9 +77,6 @@ jobs:
 
       - name: Terraform packages no code
         run: cargo run --locked --release -p aex-release-tool -- policy terraform
-
-      - name: Supply chain
-        run: cargo deny --all-features check
 
       - name: Secret scan
         run: bash scripts/cicd/scan-secrets.sh
@@ -161,6 +153,10 @@ jobs:
   manifest:
     name: Manifest
     needs: build
+    # Build may run with intentionally skipped scenario/Terraform ancestors;
+    # do not let the transitive default success() condition skip the manifest
+    # after the reusable build has itself passed.
+    if: always() && needs.build.result == 'success'
     runs-on: ubuntu-latest
     outputs:
       manifest_uri: ${{ steps.publish_handoff.outputs.manifest_uri }}

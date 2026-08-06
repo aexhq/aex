@@ -306,11 +306,8 @@ pub fn verify(inputs: &GraphInputs) -> Result<BuiltGraph> {
         ("512mb", 512, false),
         ("1gb", 1_024, false),
         ("2gb", 2_048, false),
-        ("2gb-browser", 2_048, true),
         ("4gb", 4_096, false),
-        ("4gb-browser", 4_096, true),
         ("8gb", 8_192, false),
-        ("8gb-browser", 8_192, true),
     ]
     .into_iter()
     .map(|(variant, memory, browser)| (variant.to_owned(), memory, browser))
@@ -334,7 +331,7 @@ pub fn verify(inputs: &GraphInputs) -> Result<BuiltGraph> {
         violations.push(Violation::new(
             "microvm-variant-set",
             format!(
-                "MicroVM artifacts must declare exactly the five base and three browser variants; found {actual_microvms:?}"
+                "MicroVM artifacts must declare exactly the five published non-browser variants; found {actual_microvms:?}"
             ),
         ));
     }

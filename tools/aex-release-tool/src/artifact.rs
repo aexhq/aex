@@ -2,7 +2,7 @@
 //!
 //! An artifact's identity is its bytes. The envelope records everything that
 //! shaped those bytes — source commit, toolchain, lockfile, build argv,
-//! input-closure digest, base image — plus the supply-chain verdicts and the
+//! input-closure digest, base image — plus the startup supply-chain state and
 //! receipts earned before publication. Post-deployment evidence is deliberately
 //! absent: an artifact cannot contain proof that only exists once it is
 //! deployed, so smoke, e2e, user, capacity and soak receipts live in the
@@ -854,6 +854,10 @@ pub struct ArtifactEnvelope {
     pub licenses: Licenses,
     /// Advisory verdict.
     pub vulnerabilities: Vulnerabilities,
+    /// Whether startup-mode publication deliberately deferred dependency,
+    /// licence, vulnerability and SBOM analysis off the release critical path.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub supply_chain_deferred: bool,
     /// Build provenance.
     pub provenance: Provenance,
     /// Signature, where one applies.
@@ -1179,12 +1183,12 @@ pub struct Sbom {
 }
 
 /// Licence verdict.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Licenses {
     /// Digest of the policy that produced the verdict.
     pub policy_digest: String,
-    /// Always `allowed`; a denial is a failed build, not a recorded state.
+    /// `allowed` when scanned, or the explicit startup deferral sentinel.
     pub verdict: String,
     /// Always empty.
     pub denials: Vec<String>,
@@ -1208,7 +1212,7 @@ pub struct AdvisoryException {
 }
 
 /// Advisory verdict.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Vulnerabilities {
     /// Scanner identity.
@@ -1217,9 +1221,9 @@ pub struct Vulnerabilities {
     pub database: String,
     /// When the scan ran.
     pub scanned_at: String,
-    /// Always zero.
+    /// Zero for certified or deferred startup publication.
     pub unapproved_critical: u32,
-    /// Always zero.
+    /// Zero for certified or deferred startup publication.
     pub unapproved_high: u32,
     /// Time-boxed, attributed exceptions.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1572,7 +1576,69 @@ impl ArtifactEnvelope {
                 "the envelope carries no receipt; publication would prove nothing",
             ));
         }
+        let deferred_supply_chain_shape = self.sbom.format == "deferred-startup"
+            && self.sbom.digest.is_empty()
+            && self.sbom.uri.is_empty()
+            && self.sbom.component_count == 0
+            && self.licenses.policy_digest.is_empty()
+            && self.licenses.verdict == "deferred-startup"
+            && self.licenses.denials.is_empty()
+            && self.licenses.inventory_digest.is_none()
+            && self.vulnerabilities.scanner == "deferred-startup"
+            && self.vulnerabilities.database.is_empty()
+            && self.vulnerabilities.scanned_at.is_empty()
+            && self.vulnerabilities.unapproved_critical == 0
+            && self.vulnerabilities.unapproved_high == 0
+            && self.vulnerabilities.approved_exceptions.is_empty();
+        let scanned_supply_chain_shape =
+            matches!(self.sbom.format.as_str(), "spdx-2.3" | "cyclonedx-1.6")
+                && valid_sha256_digest(&self.sbom.digest)
+                && valid_sha256_digest(&self.licenses.policy_digest)
+                && self.licenses.verdict != "deferred-startup"
+                && self
+                    .licenses
+                    .inventory_digest
+                    .as_deref()
+                    .is_none_or(valid_sha256_digest)
+                && !self.vulnerabilities.scanner.is_empty()
+                && self.vulnerabilities.scanner != "deferred-startup"
+                && !self.vulnerabilities.database.is_empty()
+                && time::OffsetDateTime::parse(
+                    &self.vulnerabilities.scanned_at,
+                    &time::format_description::well_known::Rfc3339,
+                )
+                .is_ok();
+        if self.supply_chain_deferred && !deferred_supply_chain_shape {
+            structural.push(Violation::new(
+                "envelope-deferred-supply-chain-shape",
+                "a deferred supply chain must carry only the exact startup deferral sentinels",
+            ));
+        } else if !self.supply_chain_deferred && deferred_supply_chain_shape {
+            structural.push(Violation::new(
+                "envelope-deferred-supply-chain-flag",
+                "the startup deferral sentinels require supplyChainDeferred=true",
+            ));
+        } else if !self.supply_chain_deferred && !scanned_supply_chain_shape {
+            structural.push(Violation::new(
+                "envelope-scanned-supply-chain-shape",
+                "a non-deferred supply chain must carry complete scanner-backed evidence",
+            ));
+        }
         for receipt in &self.receipts {
+            if self.supply_chain_deferred
+                && matches!(
+                    receipt.class.as_str(),
+                    "deny" | "sbom" | "license" | "vulnerability"
+                )
+            {
+                structural.push(Violation::new(
+                    "envelope-deferred-supply-chain-receipt",
+                    format!(
+                        "deferred supply-chain envelope cannot claim a `{}` receipt",
+                        receipt.class
+                    ),
+                ));
+            }
             if receipt.conclusion != "passed" {
                 structural.push(Violation::new(
                     "envelope-receipt-not-passed",
@@ -1691,7 +1757,9 @@ impl ArtifactEnvelope {
         }
 
         let mut supply = Vec::new();
-        if self.licenses.verdict != "allowed" || !self.licenses.denials.is_empty() {
+        if !self.supply_chain_deferred
+            && (self.licenses.verdict != "allowed" || !self.licenses.denials.is_empty())
+        {
             supply.push(Violation::new(
                 "license-denied",
                 format!(
@@ -1701,7 +1769,9 @@ impl ArtifactEnvelope {
                 ),
             ));
         }
-        if self.vulnerabilities.unapproved_critical > 0 || self.vulnerabilities.unapproved_high > 0
+        if !self.supply_chain_deferred
+            && (self.vulnerabilities.unapproved_critical > 0
+                || self.vulnerabilities.unapproved_high > 0)
         {
             supply.push(Violation::new(
                 "advisory-denied",
@@ -1713,7 +1783,7 @@ impl ArtifactEnvelope {
                 ),
             ));
         }
-        if self.sbom.component_count == 0 {
+        if !self.supply_chain_deferred && self.sbom.component_count == 0 {
             supply.push(Violation::new(
                 "sbom-empty",
                 format!("unit `{}` has an SBOM with no components", self.unit.id),

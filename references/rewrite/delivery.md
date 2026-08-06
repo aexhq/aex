@@ -426,7 +426,7 @@ is the authority map for the first public Rust-native candidate:
 | `infra`               | Published module-bundle identity plus one exact Terraform/provider lock closure                                            | Produced from a deterministic module rebuild, the exact version in `_terraform-lane.yml`, and every module provider lock; version drift is refused.                     |
 | `catalogs`            | Signed catalogue publication identities carried by certified runtime envelopes                                             | Brain build plans now bind model and tool digests; composition requires both from a certified Brain envelope and checks the tool digest against source.                  |
 | `policy`              | Canonical digest producers for the artifact and freshness policies, the pinned Rust channel, and the source-policy version | Produced directly from the policy files and pinned toolchain.                                                                                                             |
-| unit envelopes        | `artifact certify` over immutable readback, GitHub provenance, real scanner outputs and artifact-bound passing receipts    | The workflow uploads only drafts. Required deny, SBOM, licence, vulnerability, package-integrity, determinism and other per-unit receipts are not all produced or bound. |
+| unit envelopes        | `artifact certify` over immutable readback, GitHub provenance and artifact-bound passing build/test receipts               | Implemented for all 36 currently published units. Browser MicroVM variants are deferred until a pinned ARM64 browser layer exists. Startup-mode envelopes explicitly defer supply-chain scanners while retaining exact build, catalogue, provenance and publication identity. |
 | manifest publication  | Exact manifest bytes, HTTPS release asset identity and GitHub attestation under the workflow the private verifier trusts   | `main.yml` attests and uploads manifest/store before undrafting, then reads both back. The private verifier must pin `main.yml` for these two subjects.                  |
 
 The smallest honest completion sequence is:
@@ -493,12 +493,11 @@ regional capacity producer.
    `declares-policy-or-rate-logic`) are declared in the policy and not
    implemented; they are content predicates rather than path globs. The corpus
    test skips them explicitly rather than counting them as covered.
-9. **Certified unit envelopes remain absent.** The raw Linux x86_64 release
-   tool, Terraform module bundle, regional-table bundle, authoritative
-   `CompositionInputs`, and manifest/store publication path now have exact
-   producers. The workflow must still earn and bind every required per-unit
-   supply-chain and semantic receipt before composition can run; private
-   immutable acquisition must continue to fail until that release completes.
+9. **Supply-chain assurance is startup-deferred.** Certified unit envelopes
+   explicitly record the deferral while retaining exact build, test, catalogue,
+   provenance, signature and immutable publication identities. The revisit
+   trigger is tracked in `references/backlog.md`; scanner availability does not
+   block public composition or dev release.
 10. **Private roots still use sibling public-module paths.** A hosted plan may
     satisfy those paths only from the verified module bundle extracted at the
     fixed path recorded in its saved-plan envelope—never by checking out public

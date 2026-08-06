@@ -273,16 +273,22 @@ function runE2e(matrix, outputRoot) {
     };
     if (entry.package.startsWith("cargo:")) {
       const packageName = entry.package.slice("cargo:".length);
-      const listed = run(["cargo", "nextest", "list", "--locked", "--profile", "live", "-p", packageName,
-        "--test", entry.target, "--message-format", "json"], { env, capture: true });
+      const listed = run(
+        ["cargo", "nextest", "list", "--locked", "--profile", "live", "-p", packageName,
+          "--features", "live", "--test", entry.target, "--ignore-default-filter", "--message-format", "json"],
+        { env, capture: true }
+      );
       writeFileSync(resolve(scenarioRoot, "nextest-list.json"), listed);
       const cases = nextestCases(listed);
       if (cases.length === 0) throw new Error(`release-evidence scenario ${entry.name} declared no Cargo cases`);
       writeJson(inventory, { schema: "aex.release-evidence-inventory.v1", scenario: entry.name, cases });
       const nextestJunit = resolve(repoRoot, "target", "nextest", "live", "junit.xml");
       rmSync(nextestJunit, { force: true });
-      run(["cargo", "nextest", "run", "--locked", "--profile", "live", "-p", packageName,
-        "--test", entry.target, "--no-tests=fail"], { env });
+      run(
+        ["cargo", "nextest", "run", "--locked", "--profile", "live", "-p", packageName,
+          "--features", "live", "--test", entry.target, "--ignore-default-filter", "--no-tests=fail"],
+        { env }
+      );
       if (!existsSync(nextestJunit)) throw new Error(`release-evidence scenario ${entry.name} emitted no JUnit report`);
       copyFileSync(nextestJunit, junit);
     } else {

@@ -27,6 +27,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
+use serde::Deserialize;
 use tokio::sync::RwLock;
 
 use crate::execute::{Dispatch, Executor};
@@ -45,6 +46,27 @@ struct Bound {
     supervisor: Supervisor,
     /// Whether the pinned image carries the browser capability.
     browser: bool,
+}
+
+/// The exact envelope AWS sends to the `/run` lifecycle hook.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct AwsRunHook {
+    /// The provider identity for this `MicroVM`. AWS documents 1–256 characters.
+    microvm_id: String,
+    /// The verbatim string supplied to `RunMicrovm.runHookPayload`.
+    run_hook_payload: String,
+}
+
+impl AwsRunHook {
+    /// Decodes the provider envelope and then the closed AEX identity payload.
+    fn decode(body: &[u8]) -> Option<RunHook> {
+        let envelope: Self = serde_json::from_slice(body).ok()?;
+        if !(1..=256).contains(&envelope.microvm_id.chars().count()) {
+            return None;
+        }
+        serde_json::from_str(&envelope.run_hook_payload).ok()
+    }
 }
 
 /// The guest's whole state.
@@ -103,22 +125,7 @@ impl Guest {
     /// Returns [`JournalError`] when the journal cannot be replayed. Any failure
     /// leaves the guest unbound, so the launch fails closed.
     pub async fn bind(&self, hook: &RunHook, now: Timestamp) -> Result<u32, JournalError> {
-        let incarnation = self.journal.bump_incarnation()?;
-        let probe = crate::host::HostProbe;
-        // Replay before accepting. An operation whose process group is gone is
-        // recorded `Interrupted` rather than left looking live.
-        for entry in self.journal.replay(&probe)? {
-            if matches!(
-                entry.verdict,
-                aex_hands_agent::journal::ReplayVerdict::Interrupted
-            ) {
-                let terminal = aex_hands_agent::session::interrupted_terminal(&entry.meta, now);
-                match self.journal.record_terminal(entry.operation, &terminal) {
-                    Ok(()) | Err(JournalError::AlreadyTerminal { .. }) => {}
-                    Err(error) => return Err(error),
-                }
-            }
-        }
+        let incarnation = self.replay(now)?;
         let bounds = hook.bounds.resolve();
         self.journal
             .write_binding(&aex_hands_agent::journal::GuestBinding {
@@ -138,6 +145,77 @@ impl Guest {
             ),
             browser: hook.carries_browser(),
         });
+        Ok(incarnation)
+    }
+
+    /// Reopens the snapshotted binding after AWS resumes the `MicroVM`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`JournalError`] when the in-memory or persisted binding is absent,
+    /// disagrees, or the journal cannot be replayed.
+    pub async fn resume(&self, now: Timestamp) -> Result<u32, JournalError> {
+        let (generation, fence_floor, browser) = {
+            let bound = self.bound.read().await;
+            let Some(bound) = bound.as_ref() else {
+                return Err(JournalError::Malformed {
+                    path: self.journal.root().join("binding.json"),
+                    reason: "the resume hook arrived before a run binding".to_owned(),
+                });
+            };
+            (
+                bound.supervisor.generation(),
+                bound.supervisor.fence_floor(),
+                bound.browser,
+            )
+        };
+        let Some(mut binding) = self.journal.read_binding()? else {
+            return Err(JournalError::Malformed {
+                path: self.journal.root().join("binding.json"),
+                reason: "the resume hook has no persisted run binding".to_owned(),
+            });
+        };
+        if binding.generation != generation {
+            return Err(JournalError::Malformed {
+                path: self.journal.root().join("binding.json"),
+                reason: "the persisted generation disagrees with the snapshotted supervisor"
+                    .to_owned(),
+            });
+        }
+        binding.fence_floor = fence_floor;
+        let incarnation = self.replay(now)?;
+        self.journal.write_binding(&binding)?;
+        *self.bound.write().await = Some(Bound {
+            supervisor: Supervisor::new(
+                self.journal.clone(),
+                binding.generation,
+                binding.fence_floor,
+                binding.bounds,
+                incarnation,
+            ),
+            browser,
+        });
+        Ok(incarnation)
+    }
+
+    /// Advances the incarnation and reconciles the journal before admission.
+    fn replay(&self, now: Timestamp) -> Result<u32, JournalError> {
+        let incarnation = self.journal.bump_incarnation()?;
+        let probe = crate::host::HostProbe;
+        // Replay before accepting. An operation whose process group is gone is
+        // recorded `Interrupted` rather than left looking live.
+        for entry in self.journal.replay(&probe)? {
+            if matches!(
+                entry.verdict,
+                aex_hands_agent::journal::ReplayVerdict::Interrupted
+            ) {
+                let terminal = aex_hands_agent::session::interrupted_terminal(&entry.meta, now);
+                match self.journal.record_terminal(entry.operation, &terminal) {
+                    Ok(()) | Err(JournalError::AlreadyTerminal { .. }) => {}
+                    Err(error) => return Err(error),
+                }
+            }
+        }
         Ok(incarnation)
     }
 
@@ -179,16 +257,10 @@ pub fn router(guest: Arc<Guest>) -> Router {
         }),
     );
     for hook in LifecycleHook::ALL {
-        router = match hook {
-            LifecycleHook::Ready | LifecycleHook::Validate => router.route(
-                hook.path(),
-                get(move |state, body| hook_handler(hook, state, body)),
-            ),
-            _ => router.route(
-                hook.path(),
-                post(move |state, body| hook_handler(hook, state, body)),
-            ),
-        };
+        router = router.route(
+            hook.path(),
+            post(move |state, body| hook_handler(hook, state, body)),
+        );
     }
     router.with_state(guest)
 }
@@ -214,8 +286,8 @@ async fn hook_handler(
     body: Bytes,
 ) -> Response {
     match hook {
-        LifecycleHook::Run | LifecycleHook::Resume => {
-            let Ok(payload) = serde_json::from_slice::<RunHook>(&body) else {
+        LifecycleHook::Run => {
+            let Some(payload) = AwsRunHook::decode(&body) else {
                 // Fail closed: an unreadable run payload means the guest does not
                 // know which generation it serves, and a guest that guesses would
                 // answer for the wrong one.
@@ -232,6 +304,10 @@ async fn hook_handler(
                 }
             }
         }
+        LifecycleHook::Resume => match guest.resume(now()).await {
+            Ok(incarnation) => (StatusCode::OK, incarnation.to_string()).into_response(),
+            Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
+        },
         LifecycleHook::Suspend | LifecycleHook::Terminate => match guest.flush() {
             Ok(()) => (StatusCode::OK, "flushed").into_response(),
             Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
@@ -537,6 +613,14 @@ mod tests {
         }
     }
 
+    fn aws_run_hook_body() -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "microvmId": "mvm-01234567-abcd-ef01-2345-6789abcdef01",
+            "runHookPayload": serde_json::to_string(&hook()).expect("the payload serializes"),
+        }))
+        .expect("the AWS envelope serializes")
+    }
+
     /// A runner that records what it was asked to start and never forks.
     #[derive(Default)]
     struct FakeRunner {
@@ -656,7 +740,7 @@ mod tests {
         let (status, _) = post(
             &app,
             aex_hands_agent::session::LifecycleHook::Run.path(),
-            serde_json::to_vec(&hook()).expect("the payload serializes"),
+            aws_run_hook_body(),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "the launch fails closed otherwise");
@@ -759,7 +843,7 @@ mod tests {
         post(
             &app,
             aex_hands_agent::session::LifecycleHook::Run.path(),
-            serde_json::to_vec(&hook()).expect("the payload serializes"),
+            aws_run_hook_body(),
         )
         .await;
 
@@ -804,7 +888,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_suspend_hook_flushes_and_the_build_hooks_answer() {
+    async fn the_provider_hooks_are_post_only_and_the_build_hooks_answer() {
         let dir = tempfile::tempdir().expect("a temporary directory");
         let app = router(guest(dir.path(), Arc::new(FakeRunner::default())));
         for hook in [
@@ -818,6 +902,8 @@ mod tests {
             aex_hands_agent::session::LifecycleHook::Ready,
             aex_hands_agent::session::LifecycleHook::Validate,
         ] {
+            let (status, _) = post(&app, hook.path(), Vec::new()).await;
+            assert_eq!(status, StatusCode::OK, "{hook:?}");
             let response = app
                 .clone()
                 .oneshot(
@@ -827,8 +913,35 @@ mod tests {
                 )
                 .await
                 .expect("a response");
-            assert_eq!(response.status(), StatusCode::OK, "{hook:?}");
+            assert_eq!(
+                response.status(),
+                StatusCode::METHOD_NOT_ALLOWED,
+                "AWS invokes every provider lifecycle hook with POST: {hook:?}"
+            );
         }
+    }
+
+    #[tokio::test]
+    async fn the_empty_resume_hook_replays_the_existing_binding() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let app = router(guest(dir.path(), Arc::new(FakeRunner::default())));
+        let (run_status, run_body) = post(
+            &app,
+            aex_hands_agent::session::LifecycleHook::Run.path(),
+            aws_run_hook_body(),
+        )
+        .await;
+        assert_eq!(run_status, StatusCode::OK);
+        assert_eq!(run_body, b"1");
+
+        let (resume_status, resume_body) = post(
+            &app,
+            aex_hands_agent::session::LifecycleHook::Resume.path(),
+            Vec::new(),
+        )
+        .await;
+        assert_eq!(resume_status, StatusCode::OK);
+        assert_eq!(resume_body, b"2", "resume advances the incarnation");
     }
 
     #[tokio::test]

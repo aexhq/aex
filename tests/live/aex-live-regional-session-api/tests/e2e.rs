@@ -22,7 +22,10 @@ async fn authenticated_registry_inventory_is_admitted_and_anonymous_access_is_de
         .await
         .expect("the anonymous admission check must receive a response");
     assert!(
-        matches!(anonymous.status(), StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN),
+        matches!(
+            anonymous.status(),
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
+        ),
         "anonymous registry inventory returned {}",
         anonymous.status()
     );
@@ -54,7 +57,10 @@ fn write_hygiene() {
     let digest = Sha256::digest(b"[]");
     let cleanup_digest = format!(
         "sha256:{}",
-        digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>()
+        digest
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
     );
     let evidence = json!({
         "schema": "aex.release-evidence-hygiene.v1",

@@ -35,7 +35,7 @@ struct Cli {
 enum Command {
     /// Writes the build context for one variant.
     Context {
-        /// Which variant, such as `1gb` or `4gb-browser`.
+        /// Which non-browser variant, such as `1gb` or `4gb`.
         #[arg(long)]
         variant: String,
         /// Where to write it.
@@ -70,7 +70,7 @@ enum Command {
     /// This is the release recipe. Its child build argv and SBOM projection are
     /// fixed in source, so CI has no unrecorded shell pre-step.
     Artifact {
-        /// Which of the eight image variants to produce.
+        /// Which of the five non-browser image variants to produce.
         #[arg(long)]
         variant: String,
         /// An empty directory that becomes the root of the service ZIP.
@@ -102,7 +102,7 @@ enum Command {
 /// Why `hands-image` stopped.
 #[derive(Debug, thiserror::Error)]
 enum RunError {
-    /// A variant name was not one of the eight.
+    /// A variant name was not one of the five published variants.
     #[error("{0}")]
     Variant(String),
     /// A file could not be read or written.
@@ -375,7 +375,7 @@ mod tests {
     #[test]
     fn the_context_carries_the_dockerfile_agent_and_source_sbom() {
         let dir = tempfile::tempdir().expect("a temporary directory");
-        let variant = Variant::parse("2gb-browser").expect("an offered variant");
+        let variant = Variant::parse("2gb").expect("an offered variant");
         let (agent, sbom) = inputs(dir.path());
         let context = dir.path().join("context");
         let written =
@@ -386,7 +386,7 @@ mod tests {
             Some("Dockerfile")
         );
         let generated = std::fs::read_to_string(&written).expect("it reads back");
-        assert!(generated.contains("chromium-headless"));
+        assert!(!generated.contains("chromium-headless"));
         assert!(context.join("hands-agent").is_file());
         assert!(context.join("agent.cdx.json").is_file());
         let registration =
@@ -394,9 +394,9 @@ mod tests {
                 .expect("the registration descriptor reads back");
         let registration: crate::build::MicrovmImageRegistration =
             serde_json::from_str(&registration).expect("the registration descriptor decodes");
-        assert_eq!(registration.variant, "2gb-browser");
+        assert_eq!(registration.variant, "2gb");
         assert_eq!(registration.resources[0].minimum_memory_in_mi_b, 2_048);
-        assert!(registration.browser);
+        assert!(!registration.browser);
         assert!(generated.contains("image.lock.json"));
         assert!(generated.contains("rpm-nevra.txt"));
     }
@@ -534,15 +534,15 @@ mod tests {
             "hands-image",
             "artifact",
             "--variant",
-            "4gb-browser",
+            "4gb",
             "--out",
-            "target/microvm/hands-image-4gb-browser",
+            "target/microvm/hands-image-4gb",
         ]);
         assert!(matches!(
             cli.command,
             Command::Artifact { variant, out }
-                if variant == "4gb-browser"
-                    && out == std::path::Path::new("target/microvm/hands-image-4gb-browser")
+                if variant == "4gb"
+                    && out == std::path::Path::new("target/microvm/hands-image-4gb")
         ));
     }
 }

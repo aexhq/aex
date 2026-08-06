@@ -225,13 +225,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-regional-session-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "tests/live/aex-live-regional-stream",
     "owner": "regional-services",
     "blocking_rule": "aex-empty-unit",

@@ -137,7 +137,7 @@ run "brain_mux_is_pinned_to_one_task_and_drains_for_two_minutes" {
   }
 
   assert {
-    condition     = aws_appautoscaling_target.this.max_capacity == 1
+    condition     = one(aws_appautoscaling_target.this).max_capacity == 1
     error_message = "brain-mux must not be able to scale past a single task."
   }
 }
@@ -257,4 +257,51 @@ run "rejects_an_environment_key_outside_the_aex_namespace" {
   }
 
   expect_failures = [var.env]
+}
+
+run "fixed_count_creates_no_autoscaling_resources" {
+  command = plan
+
+  variables {
+    desired_count = 2
+
+    autoscaling_bounds = {
+      min_capacity = 2
+      max_capacity = 2
+    }
+
+    autoscaling_metrics = []
+  }
+
+  assert {
+    condition     = aws_ecs_service.this.desired_count == 2
+    error_message = "Fixed-count mode must preserve the reviewed desired task count."
+  }
+
+  assert {
+    condition     = length(aws_appautoscaling_target.this) == 0
+    error_message = "Fixed-count mode must not create an Application Auto Scaling target."
+  }
+
+  assert {
+    condition     = length(aws_appautoscaling_policy.this) == 0
+    error_message = "Fixed-count mode must not create Application Auto Scaling policies."
+  }
+}
+
+run "rejects_uncollapsed_bounds_without_autoscaling_metrics" {
+  command = plan
+
+  variables {
+    desired_count = 2
+
+    autoscaling_bounds = {
+      min_capacity = 1
+      max_capacity = 2
+    }
+
+    autoscaling_metrics = []
+  }
+
+  expect_failures = [var.autoscaling_bounds]
 }

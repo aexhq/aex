@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  jobNeeds,
   readRepoFile,
   readWorkflow,
   stepIndex,
@@ -11,6 +12,52 @@ import {
 } from "./workflow-test-helpers.js";
 
 describe("workflow evidence producers", () => {
+  test("nextest is exact, verified, and downloaded only once per matrix lane", () => {
+    const download =
+      "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093";
+
+    for (const [path, consumerId, artifactName] of [
+      [
+        ".github/workflows/_rust-lane.yml",
+        "test",
+        "cargo-nextest-${{ inputs.lane }}-${{ inputs.job_name }}-${{ github.run_id }}-${{ github.run_attempt }}"
+      ],
+      [
+        ".github/workflows/_rust-lane.yml",
+        "capacity-limit-projection",
+        "cargo-nextest-${{ inputs.lane }}-${{ inputs.job_name }}-${{ github.run_id }}-${{ github.run_attempt }}"
+      ],
+      [
+        ".github/workflows/_scenario-lane.yml",
+        "scenario",
+        "cargo-nextest-${{ inputs.lane }}-scenario-${{ github.run_id }}-${{ github.run_attempt }}"
+      ]
+    ] as const) {
+      const workflow = readWorkflow(path);
+      const producer = workflowJob(workflow, "nextest");
+      const consumer = workflowJob(workflow, consumerId);
+      const build = workflowStep(producer, "Build, stage, and verify exact nextest");
+      const upload = workflowStep(producer, "Upload pinned nextest");
+      const acquire = workflowStep(consumer, "Download pinned nextest");
+      const verify = workflowStep(consumer, "Use pinned nextest");
+
+      expect(build.run).toContain("cargo install --locked --version 0.9.108 cargo-nextest");
+      expect(build.run).toContain("cargo-nextest 0\\.9\\.108");
+      expect(upload.with?.name).toBe(artifactName);
+      expect(jobNeeds(consumer)).toContain("nextest");
+      expect(acquire.uses).toBe(download);
+      expect(acquire.with?.name).toBe(artifactName);
+      expect(verify.run).toContain("sha256sum --check cargo-nextest.sha256");
+      expect(verify.run).toContain("cargo-nextest 0\\.9\\.108");
+      expect(workflowSteps(consumer).some((step) => step.uses?.startsWith("taiki-e/"))).toBeFalse();
+    }
+
+    const evidence = workflowJob(readWorkflow(".github/workflows/release-evidence.yml"), "evidence");
+    const build = workflowStep(evidence, "Build and verify exact nextest");
+    expect(build.run).toContain("cargo install --locked --version 0.9.108 cargo-nextest");
+    expect(build.run).toContain("cargo-nextest 0\\.9\\.108");
+  });
+
   test("the Rust lane derives and verifies a receipt from real runner output", () => {
     const source = readRepoFile(".github/workflows/_rust-lane.yml");
     const workflow = readWorkflow(".github/workflows/_rust-lane.yml");
