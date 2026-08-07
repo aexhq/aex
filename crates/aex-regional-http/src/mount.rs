@@ -19,12 +19,13 @@ use aex_wire::server::AcceptKind;
 use aex_wire::types::{HttpMethod, RequestId};
 use axum::Router;
 use axum::body::Bytes;
-use axum::extract::{RawQuery, State};
+use axum::extract::{DefaultBodyLimit, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode, Uri, header};
 use axum::response::{IntoResponse as _, Response};
 use axum::routing::{MethodFilter, on};
 
 use crate::context::RequestContext;
+use crate::envelope::ENVELOPE_BYTES;
 use crate::router::{RouteOwner, route_owner};
 
 /// Everything the edge is given about one request before it is admitted.
@@ -230,8 +231,14 @@ where
         tree = tree.route(descriptor.template, on(filter, handle::<D, A>));
         mounted.push(id);
     }
+    // The transport ceiling is the declared provider envelope. axum's own
+    // extractor default (2 MiB) is smaller than [`ENVELOPE_BYTES`], so leaving
+    // it in place would refuse a body the published contract admits — at the
+    // extractor, before admission measures anything.
     Ok(Mounted {
-        router: tree.with_state(state),
+        router: tree
+            .layer(DefaultBodyLimit::max(ENVELOPE_BYTES))
+            .with_state(state),
         routes: mounted,
     })
 }

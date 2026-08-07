@@ -1,6 +1,8 @@
-//! One scheduled invocation: drain each category's pending page.
+//! One scheduled invocation: drain each category's backlog within the deadline.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
+use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
@@ -21,13 +23,27 @@ pub enum DispatchRequest {
 pub struct DrainReport {
     /// Receipts the regional queue accepted.
     pub dispatched: usize,
-    /// Receipts that stayed pending because the queue refused them.
+    /// Distinct receipts that stayed pending because the queue refused them.
     pub deferred: usize,
-    /// Receipts that have taken more attempts than the configured bound.
+    /// Distinct receipts over the configured attempt bound.
     pub over_attempt_bound: usize,
+    /// Whether paging stopped before every category read an empty page: the
+    /// invocation deadline arrived, or a full page moved nothing. Unread
+    /// backlog remains for the next scheduled invocation.
+    #[serde(default)]
+    pub truncated: bool,
 }
 
-/// Drains one page for every bound category.
+/// Drains every bound category to an empty page, inside the deadline.
+///
+/// Every category is guaranteed one page per invocation; remaining time is
+/// then spent round-robin on the categories whose last page was full, so one
+/// deep backlog cannot starve the other queues and a backlog deeper than one
+/// page no longer needs one scheduled tick per page. `stop` is where paging
+/// ends — the caller derives it from the Lambda deadline minus
+/// [`crate::config::DEADLINE_SAFETY_MARGIN`] — and a drain that stops early
+/// says so in [`DrainReport::truncated`] rather than pretending the backlog
+/// was one page deep.
 ///
 /// # Errors
 ///
@@ -40,22 +56,56 @@ pub async fn drain<O: ReceiptOutbox, P: ReceiptPublisher>(
     categories: &[String],
     page_limit: u32,
     max_attempts: u32,
+    stop: Instant,
 ) -> Result<DrainReport, DispatchError> {
     let mut report = DrainReport::default();
-    for category in categories {
-        for receipt in outbox.pending(category, page_limit).await? {
-            if u32::try_from(receipt.attempts).unwrap_or(u32::MAX) >= max_attempts {
-                report.over_attempt_bound += 1;
+    let mut deferred = BTreeSet::new();
+    let mut over_bound = BTreeSet::new();
+    let mut open: Vec<&String> = categories.iter().collect();
+    let mut first_round = true;
+    while !open.is_empty() {
+        let mut still_open = Vec::new();
+        for category in open {
+            if !first_round && Instant::now() >= stop {
+                // The deadline margin is spent. Whatever is still open keeps
+                // its backlog until the next scheduled invocation, and the
+                // report says so instead of ending on a clean-looking count.
+                report.truncated = true;
+                still_open.clear();
+                break;
             }
-            if publisher.publish(&receipt).await.is_ok() {
-                outbox.mark_dispatched(receipt.receipt_id).await?;
-                report.dispatched += 1;
-            } else {
-                outbox.count_attempt(receipt.receipt_id).await?;
-                report.deferred += 1;
+            let page = outbox.pending(category, page_limit).await?;
+            let full = page.len() >= page_limit as usize;
+            let mut progressed = false;
+            for receipt in page {
+                if u32::try_from(receipt.attempts).unwrap_or(u32::MAX) >= max_attempts {
+                    over_bound.insert(receipt.receipt_id);
+                }
+                if publisher.publish(&receipt).await.is_ok() {
+                    outbox.mark_dispatched(receipt.receipt_id).await?;
+                    report.dispatched += 1;
+                    progressed = true;
+                } else {
+                    outbox.count_attempt(receipt.receipt_id).await?;
+                    deferred.insert(receipt.receipt_id);
+                }
+            }
+            if full {
+                if progressed {
+                    still_open.push(category);
+                } else {
+                    // A full page the queue refused entirely: the next page
+                    // would return these same pending rows, so paging on is a
+                    // spin, not progress. The backlog stays, visibly.
+                    report.truncated = true;
+                }
             }
         }
+        open = still_open;
+        first_round = false;
     }
+    report.deferred = deferred.len();
+    report.over_attempt_bound = over_bound.len();
     Ok(report)
 }
 
@@ -90,6 +140,7 @@ pub async fn handle<O: ReceiptOutbox, P: ReceiptPublisher>(
     categories: &[String],
     page_limit: u32,
     max_attempts: u32,
+    stop: Instant,
 ) -> Result<DispatchResponse, DispatchError> {
     match request {
         DispatchRequest::Readyz => match outbox.probe_role().await {
@@ -103,7 +154,15 @@ pub async fn handle<O: ReceiptOutbox, P: ReceiptPublisher>(
             }),
         },
         DispatchRequest::Drain => {
-            let report = drain(outbox, publisher, categories, page_limit, max_attempts).await?;
+            let report = drain(
+                outbox,
+                publisher,
+                categories,
+                page_limit,
+                max_attempts,
+                stop,
+            )
+            .await?;
             Ok(DispatchResponse::Drained { report })
         }
     }
@@ -113,11 +172,22 @@ pub async fn handle<O: ReceiptOutbox, P: ReceiptPublisher>(
 mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{Duration, Instant};
 
     use parking_lot::Mutex;
 
     use super::{DispatchRequest, DispatchResponse, drain, handle};
     use crate::outbox::{DispatchError, PendingReceipt, ReceiptOutbox, ReceiptPublisher};
+
+    /// A stop instant no test drain reaches on its own.
+    fn no_deadline() -> Instant {
+        Instant::now() + Duration::from_mins(1)
+    }
+
+    /// A stop instant that has already passed when the drain starts.
+    fn expired_deadline() -> Instant {
+        Instant::now()
+    }
 
     #[derive(Debug, Default)]
     struct Fake {
@@ -135,24 +205,39 @@ mod tests {
         async fn pending(
             &self,
             category: &str,
-            _page_limit: u32,
+            page_limit: u32,
         ) -> Result<Vec<PendingReceipt>, DispatchError> {
+            // The real outbox pages: it answers at most `page_limit` rows and a
+            // dispatched receipt leaves the pending set. A fake that returned
+            // everything forever would make every paging assertion vacuous.
             Ok(self
                 .pending
                 .lock()
                 .iter()
                 .filter(|receipt| receipt.category == category)
+                .take(usize::try_from(page_limit).unwrap_or(usize::MAX))
                 .cloned()
                 .collect())
         }
 
         async fn mark_dispatched(&self, receipt_id: uuid::Uuid) -> Result<(), DispatchError> {
             self.dispatched.lock().push(receipt_id);
+            self.pending
+                .lock()
+                .retain(|receipt| receipt.receipt_id != receipt_id);
             Ok(())
         }
 
         async fn count_attempt(&self, receipt_id: uuid::Uuid) -> Result<(), DispatchError> {
             self.attempts.lock().push(receipt_id);
+            if let Some(receipt) = self
+                .pending
+                .lock()
+                .iter_mut()
+                .find(|receipt| receipt.receipt_id == receipt_id)
+            {
+                receipt.attempts += 1;
+            }
             Ok(())
         }
     }
@@ -205,12 +290,61 @@ mod tests {
             receipt(3, "transfer", 0),
         ]);
         let publisher = Arc::new(Publisher::default());
-        let report = drain(&outbox, &publisher, &categories(), 10, 25)
+        let report = drain(&outbox, &publisher, &categories(), 10, 25, no_deadline())
             .await
             .expect("the drain completes");
         assert_eq!(report.dispatched, 3);
         assert_eq!(report.deferred, 0);
+        assert!(!report.truncated, "the whole backlog was read");
         assert_eq!(outbox.dispatched.lock().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn a_backlog_deeper_than_one_page_is_paged_to_empty() {
+        let outbox = Arc::new(Fake::default());
+        outbox
+            .pending
+            .lock()
+            .extend((1..=25).map(|index| receipt(index, "compute", 0)));
+        let publisher = Arc::new(Publisher::default());
+        let report = drain(&outbox, &publisher, &categories(), 10, 25, no_deadline())
+            .await
+            .expect("the drain completes");
+        assert_eq!(
+            report.dispatched, 25,
+            "one invocation drains the whole backlog, not one page of it"
+        );
+        assert!(!report.truncated);
+        assert!(outbox.pending.lock().is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_expired_deadline_stops_after_the_guaranteed_page_and_says_so() {
+        let outbox = Arc::new(Fake::default());
+        outbox
+            .pending
+            .lock()
+            .extend((1..=25).map(|index| receipt(index, "compute", 0)));
+        let publisher = Arc::new(Publisher::default());
+        let report = drain(
+            &outbox,
+            &publisher,
+            &categories(),
+            10,
+            25,
+            expired_deadline(),
+        )
+        .await
+        .expect("the drain completes");
+        assert_eq!(
+            report.dispatched, 10,
+            "every category still gets its one guaranteed page"
+        );
+        assert!(
+            report.truncated,
+            "the report must not pretend the backlog ended at the deadline"
+        );
+        assert_eq!(outbox.pending.lock().len(), 15);
     }
 
     #[tokio::test]
@@ -221,11 +355,15 @@ mod tests {
             refuse: true,
             ..Publisher::default()
         });
-        let report = drain(&outbox, &publisher, &categories(), 10, 25)
+        let report = drain(&outbox, &publisher, &categories(), 10, 25, no_deadline())
             .await
             .expect("a queue failure is not an outbox failure");
         assert_eq!(report.dispatched, 0);
         assert_eq!(report.deferred, 1);
+        assert!(
+            !report.truncated,
+            "a short page was read to its end; nothing is unread"
+        );
         assert!(
             outbox.dispatched.lock().is_empty(),
             "a receipt the queue never accepted stays pending"
@@ -234,11 +372,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_full_page_the_queue_refuses_entirely_stops_paging_rather_than_spinning() {
+        let outbox = Arc::new(Fake::default());
+        outbox
+            .pending
+            .lock()
+            .extend((1..=15).map(|index| receipt(index, "compute", 0)));
+        let publisher = Arc::new(Publisher {
+            refuse: true,
+            ..Publisher::default()
+        });
+        let report = drain(&outbox, &publisher, &categories(), 10, 25, no_deadline())
+            .await
+            .expect("a queue failure is not an outbox failure");
+        assert_eq!(
+            publisher.calls.load(Ordering::Relaxed),
+            10,
+            "a page that moved nothing is not fetched again: the next page is the same rows"
+        );
+        assert_eq!(report.deferred, 10);
+        assert!(report.truncated, "unread backlog is reported, not hidden");
+        assert_eq!(outbox.pending.lock().len(), 15);
+    }
+
+    #[tokio::test]
     async fn a_receipt_over_its_attempt_bound_is_reported_but_still_replayed() {
         let outbox = Arc::new(Fake::default());
         outbox.pending.lock().push(receipt(1, "compute", 99));
         let publisher = Arc::new(Publisher::default());
-        let report = drain(&outbox, &publisher, &categories(), 10, 25)
+        let report = drain(&outbox, &publisher, &categories(), 10, 25, no_deadline())
             .await
             .expect("the drain completes");
         assert_eq!(report.over_attempt_bound, 1);
@@ -283,6 +445,7 @@ mod tests {
             &categories(),
             10,
             25,
+            no_deadline(),
         )
         .await
         .expect_err("an unreadable outbox is visible");
@@ -298,6 +461,7 @@ mod tests {
             &categories(),
             10,
             25,
+            no_deadline(),
         )
         .await
         .expect("readiness answers");

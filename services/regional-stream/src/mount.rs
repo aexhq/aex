@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use aex_regional_http::edge::{RegionalEdge, SystemClock};
+use aex_regional_http::envelope::ENVELOPE_BYTES;
 use aex_regional_http::mount::{AdmissionRequest, EdgeAdmission as _};
 use aex_regional_http::router::{RouteOwner, route_owner};
 use aex_wire::dispatch::{DispatchOutcome, RawRequest, RequestLimits};
@@ -14,7 +15,7 @@ use aex_wire::server::{AcceptKind, dispatch_observations};
 use aex_wire::types::{HttpMethod, RequestId};
 use axum::Router;
 use axum::body::{Body, Bytes};
-use axum::extract::{RawQuery, State};
+use axum::extract::{DefaultBodyLimit, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode, Uri, header};
 use axum::response::{IntoResponse as _, Response};
 use axum::routing::{MethodFilter, get, on};
@@ -58,12 +59,18 @@ pub fn router(state: Arc<AppState>) -> Router {
             on(method_filter(descriptor.method), handle),
         );
     }
-    tree.with_state(Arc::clone(&state)).merge(
-        Router::new()
-            .route("/internal/healthz", get(healthz))
-            .route("/internal/readyz", get(readyz))
-            .with_state(state),
-    )
+    // The transport ceiling is the declared provider envelope, exactly as on
+    // the unary mounts: axum's own extractor default (2 MiB) is smaller than
+    // `ENVELOPE_BYTES` and would refuse a body the published contract admits
+    // before this service's admission ever measures it.
+    tree.layer(DefaultBodyLimit::max(ENVELOPE_BYTES))
+        .with_state(Arc::clone(&state))
+        .merge(
+            Router::new()
+                .route("/internal/healthz", get(healthz))
+                .route("/internal/readyz", get(readyz))
+                .with_state(state),
+        )
 }
 
 const fn method_filter(method: HttpMethod) -> MethodFilter {

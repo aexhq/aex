@@ -112,16 +112,30 @@ enum RunError {
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    let config = match Config::from_env() {
-        Ok(config) => config,
+    // Telemetry first: a configuration refusal must reach the wire, or a
+    // crash-looping deployment is visible only to whoever tails stderr. The
+    // pump refusing to spawn is the one failure that stays stderr-only,
+    // because there is no installed exporter to carry it yet.
+    let telemetry = match aex_platform_telemetry::LongLivedTelemetry::install() {
+        Ok(telemetry) => telemetry,
         Err(error) => {
             eprintln!("regional-stream: refusing to start: {error}");
             return ExitCode::FAILURE;
         }
     };
-    let telemetry = match aex_platform_telemetry::LongLivedTelemetry::install() {
-        Ok(telemetry) => telemetry,
+    let config = match Config::from_env() {
+        Ok(config) => config,
         Err(error) => {
+            telemetry.handle().emit(
+                aex_platform_telemetry::Record::event(
+                    aex_telemetry_schema::generated::EVENT_AEX_PROCESS_CONFIGURATION_REJECTED,
+                )
+                .with(
+                    aex_telemetry_schema::generated::AEX_DEPLOYABLE,
+                    "regional-stream",
+                ),
+            );
+            let _ = telemetry.shutdown();
             eprintln!("regional-stream: refusing to start: {error}");
             return ExitCode::FAILURE;
         }

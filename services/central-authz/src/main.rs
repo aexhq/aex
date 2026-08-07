@@ -551,19 +551,6 @@ pub async fn run(
     telemetry: &aex_platform_telemetry::Handle,
 ) -> Result<(), RunError> {
     aex_central_http::capability::admit(&manifest(), &config.resolved())?;
-    telemetry.emit(
-        aex_platform_telemetry::Record::event(
-            aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_PLANE,
-            config.plane.as_str().to_owned(),
-        )
-        .with(
-            aex_telemetry_schema::generated::AEX_REGION,
-            config.region.as_str().to_owned(),
-        ),
-    );
 
     let aws = aws_config::from_env()
         .region(aws_config::Region::new(config.region.as_str().to_owned()))
@@ -590,6 +577,24 @@ pub async fn run(
             probe: unresolved(probes),
         });
     }
+
+    // Started is asserted only after every probe answered. Emitted any earlier
+    // it would fire on each attempt of a crash loop, and a process that starts,
+    // fails its probes and exits would be indistinguishable from a healthy
+    // fleet of cold starts.
+    telemetry.emit(
+        aex_platform_telemetry::Record::event(
+            aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
+        )
+        .with(
+            aex_telemetry_schema::generated::AEX_PLANE,
+            config.plane.as_str().to_owned(),
+        )
+        .with(
+            aex_telemetry_schema::generated::AEX_REGION,
+            config.region.as_str().to_owned(),
+        ),
+    );
 
     let authority = Arc::new(authority);
     let config = Arc::new(config.clone());
@@ -754,15 +759,27 @@ async fn handle<R: AuthorizationReader, S: AssertionSigner>(
 
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
+    // Telemetry first: a configuration refusal must reach the wire, or a
+    // crash-looping deployment is visible only to whoever tails stderr.
+    let settings = aex_platform_telemetry::Settings::default();
+    let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
     let config = match Config::from_env() {
         Ok(config) => config,
         Err(error) => {
+            telemetry.emit(
+                aex_platform_telemetry::Record::event(
+                    aex_telemetry_schema::generated::EVENT_AEX_PROCESS_CONFIGURATION_REJECTED,
+                )
+                .with(
+                    aex_telemetry_schema::generated::AEX_DEPLOYABLE,
+                    DEPLOYABLE.as_str(),
+                ),
+            );
+            let _ = telemetry.flush(settings.flush_deadline);
             eprintln!("central-authz: refusing to start: {error}");
             return std::process::ExitCode::FAILURE;
         }
     };
-    let settings = aex_platform_telemetry::Settings::default();
-    let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
     let outcome = run(&config, &telemetry).await;
     if let aex_platform_telemetry::FlushOutcome::DeadlineExceeded { pending } =
         telemetry.flush(settings.flush_deadline)

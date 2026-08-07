@@ -61,6 +61,16 @@ pub const CATEGORIES: [&str; 3] = ["compute", "storage", "transfer"];
 /// `SendMessageBatch` accepts at most ten entries.
 pub const MAX_BATCH_SIZE: u32 = 10;
 
+/// How much of the invocation deadline the drain loop leaves unspent.
+///
+/// `release/units.toml` gives this unit a 60 s Lambda timeout; the runtime
+/// hands each invocation that deadline and kills the process at it. The margin
+/// converts the platform deadline into a paging bound: the loop stops asking
+/// for further pages once less than this remains, so the final queue round
+/// trip, the response encode and the telemetry flush finish inside the timeout
+/// instead of being killed mid-write.
+pub const DEADLINE_SAFETY_MARGIN: Duration = Duration::from_secs(5);
+
 /// Validated start-up configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {

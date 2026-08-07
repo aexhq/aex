@@ -2,8 +2,9 @@
 //!
 //! The bounded publisher trust-root set and collection bytes are build inputs
 //! copied into the binary by `build.rs`. Runtime environment variables are never consulted.
-//! Missing real release inputs produce an explicit readiness blocker rather
-//! than an invented key or an empty authority.
+//! Missing real release inputs are a start-up refusal: `main` maps the error
+//! into a non-zero process exit, rather than an invented key, an empty
+//! authority, or a task that idles alive but unready.
 
 use aex_brain_provider_gateway::catalog_port::{CatalogArtifactError, VerifiedCatalogPort};
 use aex_model_catalog::signature::TrustedKeys;
@@ -38,8 +39,9 @@ pub enum ReleaseCatalogError {
 /// # Errors
 ///
 /// Missing real release inputs, any collection verification failure, or a
-/// cryptographically valid but service-incapable zero-Active collection keeps
-/// readiness false.
+/// cryptographically valid but service-incapable zero-Active collection
+/// refuses start-up: the caller exits non-zero instead of serving without
+/// catalog authority.
 pub fn load(now: aex_wire::types::Timestamp) -> Result<VerifiedCatalogPort, ReleaseCatalogError> {
     if let Some(reason) = RELEASE_INPUT_BLOCKER {
         return Err(ReleaseCatalogError::MissingReleaseInputs(reason));
