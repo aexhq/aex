@@ -28,14 +28,6 @@ on:
         type: boolean
         required: false
         default: false
-      release_tool_sha256:
-        description: SHA-256 of the run's prepared aex-release-tool.
-        type: string
-        required: true
-      workspace_check_sha256:
-        description: SHA-256 of the run's prepared aex-workspace-check.
-        type: string
-        required: true
     secrets:
       AEX_GHCR_VISIBILITY_BOOTSTRAP:
         description: Protected second authority for the one-time GHCR namespace bootstrap.
@@ -130,34 +122,6 @@ jobs:
           save-if: ${{ inputs.lane == 'main' }}
           shared-key: artifacts
 
-      # The toolchain and the cache above stay: this job compiles the artifact
-      # itself. Only the release tool is no longer rebuilt here.
-      - name: Download the prepared workspace tools
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
-        with:
-          name: workspace-tools-${{ github.run_id }}
-          path: ${{ runner.temp }}/aex-tools
-
-      # The digests arrive through the job-output channel, not inside the
-      # artifact, so an artifact that lies about itself cannot self-certify.
-      - name: Use the prepared workspace tools
-        env:
-          RELEASE_TOOL_SHA256: ${{ inputs.release_tool_sha256 }}
-          WORKSPACE_CHECK_SHA256: ${{ inputs.workspace_check_sha256 }}
-        run: |
-          set -euo pipefail
-          cd "$RUNNER_TEMP/aex-tools"
-          [[ "$RELEASE_TOOL_SHA256" =~ ^[0-9a-f]{64}$ ]]
-          [[ "$WORKSPACE_CHECK_SHA256" =~ ^[0-9a-f]{64}$ ]]
-          printf '%s  %s\n' "$RELEASE_TOOL_SHA256" aex-release-tool > expected.sha256
-          printf '%s  %s\n' "$WORKSPACE_CHECK_SHA256" aex-workspace-check >> expected.sha256
-          sha256sum --check --strict expected.sha256
-          [[ "$(find . -maxdepth 1 -type f ! -name expected.sha256 | wc -l)" -eq 2 ]]
-          chmod 0755 aex-release-tool aex-workspace-check
-          ./aex-release-tool --version | grep -Eq '^aex-release-tool [0-9]+\.[0-9]+\.[0-9]+'
-          ./aex-workspace-check --version | grep -Eq '^aex-workspace-check [0-9]+\.[0-9]+\.[0-9]+'
-          echo "$RUNNER_TEMP/aex-tools" >> "$GITHUB_PATH"
-
       - name: Install Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
         with:
@@ -173,14 +137,16 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RELEASE_DIR"
-          aex-release-tool artifact oci-source-clean \
+          cargo run --locked --release -p aex-release-tool -- \
+            artifact oci-source-clean \
             --out "$RELEASE_DIR/source-clean-before-plan.json"
 
       - name: Bind the immutable Brain tool catalogue
         if: ${{ matrix.name == 'brain-mux' }}
         run: |
           set -euo pipefail
-          identity=$(aex-release-tool artifact tool-catalog)
+          identity=$(cargo run --locked --release -p aex-release-tool -- \
+            artifact tool-catalog)
           digest=$(jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))' <<<"$identity")
           echo "AEX_TOOL_CATALOG_SHA256=$digest" >> "$GITHUB_ENV"
 
@@ -265,7 +231,8 @@ jobs:
           if [ "${{ inputs.publish }}" = "true" ] && [ "${{ matrix.name }}" = "brain-mux" ]; then
             required+=(--require-model-catalog)
           fi
-          aex-release-tool artifact plan --unit "${{ matrix.name }}" "${required[@]}" | tee "$RELEASE_DIR/recipe.json"
+          cargo run --locked --release -p aex-release-tool -- \
+            artifact plan --unit "${{ matrix.name }}" "${required[@]}" | tee "$RELEASE_DIR/recipe.json"
           kind=$(jq -r .kind "$RELEASE_DIR/recipe.json")
           [[ -n "$kind" && "$kind" != "null" ]]
           echo "kind=$kind" >> "$GITHUB_OUTPUT"
@@ -333,7 +300,8 @@ jobs:
           buildkit_container="buildx_buildkit_${buildkit_node}"
           [[ "$(docker inspect --format '{{.Config.Image}}' "$buildkit_container")" == \
             "moby/buildkit:v0.30.0@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f" ]]
-          aex-release-tool artifact oci-toolchain \
+          cargo run --locked --release -p aex-release-tool -- \
+            artifact oci-toolchain \
             --buildx-binary "$buildx_binary" \
             --zig-binary "$tool_root/zig/zig" \
             --cargo-zigbuild-binary "$tool_root/bin/cargo-zigbuild" \
@@ -346,7 +314,7 @@ jobs:
             bun install --frozen-lockfile
           fi
 
-      - name: Build the OCI ELF once
+      - name: Build OCI ELF twice from clean target directories
         if: ${{ startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
         env:
           CARGO_INCREMENTAL: "0"
@@ -356,20 +324,15 @@ jobs:
           input=$(jq -er .input "$RELEASE_DIR/recipe.json")
           [[ "$input" == target/* ]]
           suffix=${input#target/}
-          target_dir="$RELEASE_DIR/cargo"
-          CARGO_TARGET_DIR="$target_dir" python3 -c \
-            "import json,os,subprocess,sys; recipe=json.load(open(sys.argv[1])); env=os.environ.copy(); env.update(recipe['env']); sys.exit(subprocess.call(recipe['argv'], env=env))" \
-            "$RELEASE_DIR/recipe.json"
-          binary="$target_dir/$suffix"
-          test -f "$binary"
-          # One compile, two contexts. The pair below proves that packaging the
-          # same ELF twice reaches the same image digest, which is the whole of
-          # the `package-integrity` receipt these units carry; no receipt here
-          # ever claimed the compiler was reproducible. `oci-prepare` refuses a
-          # destination that already exists, so the second context still cannot
-          # inherit a file from the first.
           for attempt in 1 2; do
-            aex-release-tool artifact oci-prepare --unit "${{ matrix.name }}" \
+            target_dir="$RELEASE_DIR/cargo-$attempt"
+            CARGO_TARGET_DIR="$target_dir" python3 -c \
+              "import json,os,subprocess,sys; recipe=json.load(open(sys.argv[1])); env=os.environ.copy(); env.update(recipe['env']); sys.exit(subprocess.call(recipe['argv'], env=env))" \
+              "$RELEASE_DIR/recipe.json"
+            binary="$target_dir/$suffix"
+            test -f "$binary"
+            cargo run --locked --release -p aex-release-tool -- \
+              artifact oci-prepare --unit "${{ matrix.name }}" \
               --recipe "$RELEASE_DIR/recipe.json" \
               --input "$binary" \
               --context "$RELEASE_DIR/context-$attempt" \
@@ -417,24 +380,21 @@ jobs:
               "$RELEASE_DIR/context-$attempt"
             mkdir "$RELEASE_DIR/layout-$attempt"
             tar -xf "$RELEASE_DIR/image-$attempt.tar" -C "$RELEASE_DIR/layout-$attempt"
-            aex-release-tool artifact oci-inspect \
+            cargo run --locked --release -p aex-release-tool -- \
+              artifact oci-inspect \
               --layout "$RELEASE_DIR/layout-$attempt" \
               --binding "$RELEASE_DIR/binding-$attempt.json" \
               --out "$RELEASE_DIR/identity-$attempt.json" \
               --manifest-out "$RELEASE_DIR/manifest-$attempt.json"
           done
-          aex-release-tool artifact oci-compare \
+          cargo run --locked --release -p aex-release-tool -- \
+            artifact oci-compare \
             --first "$RELEASE_DIR/identity-1.json" \
             --second "$RELEASE_DIR/identity-2.json"
-          # `packagings`, not `builds`. One compile now feeds both contexts, so
-          # what these two independent `docker buildx build --no-cache` runs
-          # prove is that packaging the same ELF twice reaches the same digest.
-          # The id is the machine-readable claim; a verifier diffing receipts
-          # across commits has no other way to see that it narrowed.
           jq -n \
-            --arg producer "aex-release-tool $(aex-release-tool --version | awk '{print $2}')" \
+            --arg producer "aex-release-tool $(cargo run --locked --release -p aex-release-tool -- --version | awk '{print $2}')" \
             '{schema:"aex.check-report.v1",producer:$producer,checks:[
-              {id:"independent-oci-packagings-match",status:"passed"},
+              {id:"independent-oci-builds-match",status:"passed"},
               {id:"inspected-manifest-digests-match",status:"passed"}
             ]}' > "$RELEASE_DIR/package-integrity-report.json"
 
@@ -455,12 +415,13 @@ jobs:
         if: ${{ !startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
         run: |
           set -euo pipefail
-          input="$(jq -er .input "$RELEASE_DIR/recipe.json")"
+          input="$(jq -r .input "$RELEASE_DIR/recipe.json")"
           if [ ! -e "$input" ]; then
             echo "the authoritative build output does not exist: $input" >&2
             exit 30
           fi
-          aex-release-tool artifact package --unit "${{ matrix.name }}" \
+          cargo run --locked --release -p aex-release-tool -- \
+            artifact package --unit "${{ matrix.name }}" \
             --input "$input" \
             --out "$RELEASE_DIR/artifact.bin"
           kind=$(jq -er .kind "$RELEASE_DIR/recipe.json")
@@ -477,13 +438,14 @@ jobs:
           else
             determinism_check+=(--argjson deterministic false)
           fi
-          aex-release-tool artifact package --unit "${{ matrix.name }}" \
+          cargo run --locked --release -p aex-release-tool -- \
+            artifact package --unit "${{ matrix.name }}" \
             --input "$input" \
             --out "$RELEASE_DIR/artifact.check.bin"
           cmp --silent "$RELEASE_DIR/artifact.bin" "$RELEASE_DIR/artifact.check.bin"
           rm "$RELEASE_DIR/artifact.check.bin"
           jq -n \
-            --arg producer "aex-release-tool $(aex-release-tool --version | awk '{print $2}')" \
+            --arg producer "aex-release-tool $(cargo run --locked --release -p aex-release-tool -- --version | awk '{print $2}')" \
             "${determinism_check[@]}" \
             '{schema:"aex.check-report.v1",producer:$producer,checks:([
               {id:"independent-packages-byte-identical",status:"passed"},
@@ -496,7 +458,8 @@ jobs:
         run: |
           set -euo pipefail
           contract_digest=$(jq -er .contractDigest api/generated/bundle.lock.json)
-          aex-release-tool artifact describe --unit "${{ matrix.name }}" \
+          cargo run --locked --release -p aex-release-tool -- \
+            artifact describe --unit "${{ matrix.name }}" \
             --file "$RELEASE_DIR/artifact.bin" \
             --recipe "$RELEASE_DIR/recipe.json" \
             --contract-digest "$contract_digest" \
@@ -508,7 +471,8 @@ jobs:
         run: |
           set -euo pipefail
           contract_digest=$(jq -er .contractDigest api/generated/bundle.lock.json)
-          aex-release-tool artifact describe --unit "${{ matrix.name }}" \
+          cargo run --locked --release -p aex-release-tool -- \
+            artifact describe --unit "${{ matrix.name }}" \
             --file "$RELEASE_DIR/manifest-1.json" \
             --recipe "$RELEASE_DIR/recipe.json" \
             --oci-identity "$RELEASE_DIR/identity-1.json" \
@@ -595,7 +559,8 @@ jobs:
             test -n "$BOOTSTRAP_AUTHORITY"
             bootstrap+=(--bootstrap-authorized)
           fi
-          aex-release-tool artifact oci-visibility \
+          cargo run --locked --release -p aex-release-tool -- \
+            artifact oci-visibility \
             --identity "$RELEASE_DIR/identity-1.json" \
             --visibility "$visibility" \
             --phase before-push \
@@ -618,7 +583,8 @@ jobs:
           set -euo pipefail
           image_repository=$(jq -er .imageRepository "$RELEASE_DIR/identity-1.json")
           expected_digest=$(jq -er .outputDigest "$RELEASE_DIR/identity-1.json")
-          aex-release-tool artifact oci-source-clean \
+          cargo run --locked --release -p aex-release-tool -- \
+            artifact oci-source-clean \
             --out "$RELEASE_DIR/source-clean-before-push.json"
           docker buildx build \
             --builder "${{ steps.buildx.outputs.name }}" \
@@ -661,7 +627,8 @@ jobs:
             test -n "$BOOTSTRAP_AUTHORITY"
             bootstrap+=(--bootstrap-authorized)
           fi
-          aex-release-tool artifact oci-visibility \
+          cargo run --locked --release -p aex-release-tool -- \
+            artifact oci-visibility \
             --identity "$RELEASE_DIR/identity-1.json" \
             --visibility "$visibility" \
             --phase after-push \
@@ -672,7 +639,8 @@ jobs:
         if: ${{ inputs.publish && startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
         run: |
           set -euo pipefail
-          aex-release-tool artifact oci-source-clean \
+          cargo run --locked --release -p aex-release-tool -- \
+            artifact oci-source-clean \
             --out "$RELEASE_DIR/source-clean-before-attestation.json"
 
       - name: Attest the immutable OCI digest
@@ -718,7 +686,8 @@ jobs:
           docker cp "$container:/usr/local/bin/$bin" "$RELEASE_DIR/readback-elf"
           docker rm "$container" >/dev/null
           trap - EXIT
-          aex-release-tool artifact oci-readback \
+          cargo run --locked --release -p aex-release-tool -- \
+            artifact oci-readback \
             --identity "$RELEASE_DIR/identity-1.json" \
             --manifest "$RELEASE_DIR/readback-manifest.json" \
             --config-digest "$config_digest" \
@@ -888,14 +857,7 @@ jobs:
           pattern: receipt-main-*
           path: validation-receipts
 
-      # The published tool is a statically linked musl binary, so it is not the
-      # run's prepared host tool and has to be compiled here. No incremental
-      # state, a fixed epoch and a remapped workspace path keep these bytes a
-      # function of the commit rather than of the runner. Only the target
-      # directory is renamed: the `cmp` of two differently named target
-      # directories that this replaces passed on every run, so that path was
-      # never in the published bytes.
-      - name: Build the published release tool
+      - name: Build twice and prove byte determinism
         env:
           CARGO_INCREMENTAL: "0"
           SOURCE_DATE_EPOCH: "0"
@@ -907,11 +869,14 @@ jobs:
           set -euo pipefail
           target=x86_64-unknown-linux-musl
           cargo build --locked --release -p aex-release-tool --target "$target" \
-            --target-dir target/release-tool
+            --target-dir target/release-tool-first
+          cargo build --locked --release -p aex-release-tool --target "$target" \
+            --target-dir target/release-tool-second
           mkdir -p dist
-          built="target/release-tool/$target/release/aex-release-tool"
-          test -f "$built"
-          install -m 0755 "$built" dist/aex-release-tool
+          first="target/release-tool-first/$target/release/aex-release-tool"
+          second="target/release-tool-second/$target/release/aex-release-tool"
+          cmp "$first" "$second"
+          install -m 0755 "$first" dist/aex-release-tool
 
       - name: Package modules twice and prove byte determinism
         run: |

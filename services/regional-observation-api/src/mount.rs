@@ -425,6 +425,7 @@ mod tests {
             "session-authority",
             "observations",
             2_000,
+            Arc::new(regional_observation_api::counters::ReadCounters::default()),
         );
         let ring = CursorKeyRing::new(
             CursorKey::new("test", vec![7; 32]).expect("a strong test key"),

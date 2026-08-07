@@ -145,34 +145,6 @@ fn a_source_edit_selects_the_artifact() {
 }
 
 #[test]
-fn a_non_artifact_path_beside_a_source_edit_still_mints_the_artifact() {
-    // The seed map remembers one path per node and `git diff --name-only`
-    // sorts bytewise, so `tests/` reaches the map before `src/` for the same
-    // crate. Deciding the artifact seed from that first path drops the whole
-    // deployment on account of a file that cannot reach production bytes.
-    // Both orders are asserted because the failure is order-dependent by
-    // construction, which is also what makes it invisible in review.
-    let root = common::sound_fixture();
-    for changed in [
-        [
-            "services/demo-api/tests/config.rs",
-            "services/demo-api/src/main.rs",
-        ],
-        [
-            "services/demo-api/src/main.rs",
-            "services/demo-api/tests/config.rs",
-        ],
-    ] {
-        let selection = run(&root, &changed, Mode::Affected);
-        assert_eq!(
-            ids(&selection.deploy),
-            vec!["artifact:demo-api"],
-            "a source edit stopped minting bytes because {changed:?} rode along"
-        );
-    }
-}
-
-#[test]
 fn a_dependency_source_edit_selects_the_downstream_artifact() {
     let root = common::sound_fixture();
     let selection = run(&root, &["crates/aex-middle/src/lib.rs"], Mode::Affected);

@@ -14,6 +14,7 @@
 //! - the wire types themselves (`aex-wire`)
 
 pub mod assertion;
+pub mod assertion_flight;
 pub mod authz;
 pub mod capability;
 pub mod capacity;

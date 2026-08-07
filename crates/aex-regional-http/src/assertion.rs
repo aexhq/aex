@@ -17,7 +17,6 @@
 //! tampered with, and there is exactly one implementation of the check.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use aex_control_domain::epoch::{Epoch, EpochSubjectKind};
 use aex_identity_domain::assertion::{
@@ -31,6 +30,16 @@ use async_trait::async_trait;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 use zeroize::Zeroizing;
+
+use crate::assertion_flight::{FlightRegistry, FlightRole, MAX_ACTIVE_FLIGHTS};
+
+/// The identity every structure keyed by a credential uses: the presented
+/// token's digest, which is safe to hold and index by.
+///
+/// One name for it, because the cache and the flight registry are keyed by the
+/// same fact and a second spelling is how they would come to disagree about
+/// which two credentials are the same one.
+pub type CredentialKey = [u8; 32];
 
 /// The one credential a regional host accepts.
 ///
@@ -112,7 +121,7 @@ impl PresentedCredential {
 
     /// The cache identity: the digest, which is safe to hold and index by.
     #[must_use]
-    pub const fn cache_key(&self) -> &[u8; 32] {
+    pub const fn cache_key(&self) -> &CredentialKey {
         self.digest.as_bytes()
     }
 
@@ -248,12 +257,28 @@ impl RegionalFloors {
     /// three of the subjects and forget the fourth.
     #[must_use]
     pub fn admits(&self, claims: &AssertionClaims) -> bool {
-        claims.epochs.used().all(|slot| {
-            !slot
-                .epoch
-                .is_stale_against(self.projected(slot.kind, slot.id))
-        })
+        stale_slot(self, claims).is_none()
     }
+}
+
+/// The first subject the region has moved past, as the refusal the verifier
+/// itself raises for that slot.
+///
+/// The staleness rule is stated once here and read by every caller that has to
+/// apply it outside `verify` — the cache hit path and the flight waiter path —
+/// so a revocation cannot be honoured by one of them and missed by another.
+fn stale_slot(projection: &impl EpochProjection, claims: &AssertionClaims) -> Option<VerifyError> {
+    claims.epochs.used().find_map(|slot| {
+        let projected = projection.projected(slot.kind, slot.id);
+        slot.epoch
+            .is_stale_against(projected)
+            .then(|| VerifyError::EpochStale {
+                kind: slot.kind,
+                id: slot.id,
+                claimed: slot.epoch.get(),
+                projected: projected.get(),
+            })
+    })
 }
 
 impl EpochProjection for RegionalFloors {
@@ -315,6 +340,17 @@ pub enum AuthFailure {
     /// Configured byte budget cannot hold one entry.
     #[error("assertion cache byte budget is too small")]
     CacheBudget,
+    /// This process already has its declared ceiling of central resolutions
+    /// outstanding, and refuses rather than displacing one that has callers
+    /// waiting on it. Transient by construction: a flight lives for one central
+    /// exchange.
+    #[error("too many assertion resolutions are already in flight")]
+    FlightCapacity,
+    /// The caller leading this credential's resolution went away before it
+    /// produced an answer, so no answer exists to share. A later request starts
+    /// a fresh resolution.
+    #[error("the assertion resolution was cancelled before it completed")]
+    FlightCancelled,
 }
 
 impl From<VerifyError> for AuthFailure {
@@ -370,24 +406,24 @@ pub const fn plane(name: &str) -> Option<Plane> {
     }
 }
 
-#[derive(Clone, Copy)]
-struct Cached {
-    authorization: VerifiedAuthorization,
-    expires_at_ms: u64,
-}
-
 /// Byte-bounded credential cache with one refresh flight per credential.
 ///
 /// The cache holds a *verified* assertion for at most its own thirty-second
 /// lifetime, and the regional projection is read on every request regardless —
 /// which is the only thing that makes caching an authorization decision safe.
+///
+/// The two structures are bounded independently and clean up independently: a
+/// stored decision is evicted when the byte budget is full or when it stops
+/// being admissible, and a flight is retired when its resolution ends. Neither
+/// event touches the other, so an eviction storm cannot strand a flight and a
+/// cancelled flight cannot drop a decision that is still good.
 pub struct VerifyingAssertionCache<S> {
     source: S,
     keys: VerificationKeySet,
     audience: Audience,
     max_entries: usize,
-    entries: Mutex<HashMap<[u8; 32], Cached>>,
-    flights: Mutex<HashMap<[u8; 32], Arc<Mutex<()>>>>,
+    entries: Mutex<HashMap<CredentialKey, VerifiedAuthorization>>,
+    flights: FlightRegistry,
 }
 
 impl<S: AssertionSource> VerifyingAssertionCache<S> {
@@ -412,7 +448,7 @@ impl<S: AssertionSource> VerifyingAssertionCache<S> {
             audience,
             max_entries,
             entries: Mutex::new(HashMap::new()),
-            flights: Mutex::new(HashMap::new()),
+            flights: FlightRegistry::new(MAX_ACTIVE_FLIGHTS),
         })
     }
 
@@ -422,12 +458,35 @@ impl<S: AssertionSource> VerifyingAssertionCache<S> {
         self.audience
     }
 
-    /// Returns a current cached assertion or performs one credential-keyed refresh.
+    /// How many central resolutions are outstanding right now.
+    ///
+    /// Both cardinalities are observable because both are bounded: an operator
+    /// reading a refusal needs to see which of the two ceilings produced it.
+    #[must_use]
+    pub fn outstanding_flights(&self) -> usize {
+        self.flights.outstanding()
+    }
+
+    /// How many verified assertions are currently stored.
+    pub async fn stored_assertions(&self) -> usize {
+        self.entries.lock().await.len()
+    }
+
+    /// Returns a current cached assertion or joins one credential-keyed refresh.
+    ///
+    /// Concurrent misses for one credential produce exactly one central
+    /// exchange: the first caller leads it and the rest wait on the same
+    /// outcome, success or failure. A waiter still applies its own floor and its
+    /// own clock to what it inherits, so sharing a resolution never means
+    /// sharing an admission the waiter's own inputs refuse.
     ///
     /// # Errors
     ///
     /// Returns a verification or source failure without extending an expired
-    /// entry and without admitting one whose epochs the region has moved past.
+    /// entry and without admitting one whose epochs the region has moved past;
+    /// [`AuthFailure::FlightCapacity`] when this process already has its ceiling
+    /// of resolutions outstanding, and [`AuthFailure::FlightCancelled`] when the
+    /// caller that was leading this one went away.
     pub async fn resolve(
         &self,
         credential: &PresentedCredential,
@@ -438,15 +497,31 @@ impl<S: AssertionSource> VerifyingAssertionCache<S> {
         if let Some(hit) = self.cached(key, floors, now).await {
             return Ok(hit);
         }
-        let flight = {
-            let mut flights = self.flights.lock().await;
-            Arc::clone(
-                flights
-                    .entry(key)
-                    .or_insert_with(|| Arc::new(Mutex::new(()))),
-            )
-        };
-        let _guard = flight.lock().await;
+        match self.flights.board(key)? {
+            FlightRole::Leader(leader) => {
+                let outcome = self.lead(key, credential, floors, now).await;
+                // Publishing before returning is what makes the leader's own
+                // cancellation the only way a waiter can be left without an
+                // answer, and `FlightLeader` covers that case as it drops.
+                leader.publish(&outcome);
+                outcome
+            }
+            FlightRole::Follower(flight) => admissible(&flight.wait().await?, floors, now),
+        }
+    }
+
+    /// The leading caller's half: one cache re-check, one central exchange, one
+    /// verification against this caller's own floors.
+    async fn lead(
+        &self,
+        key: CredentialKey,
+        credential: &PresentedCredential,
+        floors: &CredentialFloors,
+        now: Timestamp,
+    ) -> Result<VerifiedAuthorization, AuthFailure> {
+        // A flight that completed between this caller's miss and its boarding
+        // has already stored the answer, and waiters that joined behind this
+        // leader are entitled to it rather than to a second exchange.
         if let Some(hit) = self.cached(key, floors, now).await {
             return Ok(hit);
         }
@@ -459,54 +534,64 @@ impl<S: AssertionSource> VerifyingAssertionCache<S> {
             floors,
             now,
         )?;
-        let expires_at_ms = authorization.claims.expires_at_ms;
+        self.store(key, &authorization).await;
+        Ok(authorization)
+    }
+
+    /// Stores a verified decision, evicting the nearest to expiry when the byte
+    /// budget is already full.
+    async fn store(&self, key: CredentialKey, authorization: &VerifiedAuthorization) {
         let mut entries = self.entries.lock().await;
         if entries.len() >= self.max_entries {
-            let oldest = entries
+            let soonest = entries
                 .iter()
-                .min_by_key(|(_, entry)| entry.expires_at_ms)
+                .min_by_key(|(_, entry)| entry.claims.expires_at_ms)
                 .map(|(binding, _)| *binding);
-            if let Some(oldest) = oldest {
-                entries.remove(&oldest);
+            if let Some(soonest) = soonest {
+                entries.remove(&soonest);
             }
         }
-        entries.insert(
-            key,
-            Cached {
-                authorization,
-                expires_at_ms,
-            },
-        );
-        Ok(authorization)
+        entries.insert(key, *authorization);
     }
 
     async fn cached(
         &self,
-        key: [u8; 32],
+        key: CredentialKey,
         floors: &CredentialFloors,
         now: Timestamp,
     ) -> Option<VerifiedAuthorization> {
         let mut entries = self.entries.lock().await;
         let entry = *entries.get(&key)?;
-        let now_ms = u64::try_from(now.unix_millis()).ok()?;
-        if now_ms >= entry.expires_at_ms {
+        // A stored decision this caller cannot use is dropped rather than left
+        // for the next one: it lost its lifetime, or the region moved past it,
+        // and neither of those un-happens.
+        let Ok(authorization) = admissible(&entry, floors, now) else {
             entries.remove(&key);
             return None;
-        }
-        // A cached decision still loses to a revocation published a moment ago:
-        // the credential floor is read on every request and re-applied here, and
-        // the full subject-bound check runs outside this cache on every request
-        // too, so an entry that was admissible when it was stored is dropped the
-        // instant the region moves past it.
-        for slot in entry.authorization.claims.epochs.used() {
-            if slot
-                .epoch
-                .is_stale_against(floors.projected(slot.kind, slot.id))
-            {
-                entries.remove(&key);
-                return None;
-            }
-        }
-        Some(entry.authorization)
+        };
+        Some(authorization)
     }
+}
+
+/// Whether a decision that was verified a moment ago is still one *this* caller
+/// may be given.
+///
+/// Two facts can have changed since it was produced — the hard lifetime has run
+/// out, or the region published a revocation — and each is answered with the
+/// refusal this caller's own verification would have raised for it. Every path
+/// that hands over a decision it did not itself verify goes through here: the
+/// cache hit, and the waiter inheriting a flight's outcome.
+fn admissible(
+    authorization: &VerifiedAuthorization,
+    floors: &CredentialFloors,
+    now: Timestamp,
+) -> Result<VerifiedAuthorization, AuthFailure> {
+    let now_ms = u64::try_from(now.unix_millis()).map_err(|_| VerifyError::NotYetValid)?;
+    if now_ms >= authorization.claims.expires_at_ms {
+        return Err(VerifyError::Expired.into());
+    }
+    if let Some(stale) = stale_slot(floors, &authorization.claims) {
+        return Err(stale.into());
+    }
+    Ok(*authorization)
 }

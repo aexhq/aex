@@ -1,6 +1,7 @@
 //! Black-box requirements for the regional edge primitives.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
@@ -12,9 +13,10 @@ use aex_identity_domain::assertion::{
 };
 use aex_internal_contracts::assertion::AssertionAudience;
 use aex_regional_http::assertion::{
-    AssertionSource, AuthFailure, CredentialFloors, PresentedCredential, VerifyingAssertionCache,
-    verify,
+    AssertionSource, AuthFailure, CredentialFloors, PresentedCredential, VerifiedAuthorization,
+    VerifyingAssertionCache, verify,
 };
+use aex_regional_http::assertion_flight::{Flight, FlightLeader, FlightRegistry, FlightRole};
 use aex_regional_http::capability::{
     CapabilityBinding, CompositionManifest, DeployableId, ResolvedConfig, admit,
 };
@@ -49,7 +51,6 @@ use aex_wire::routes::{BodyClass, Plane, RouteId, route};
 use aex_wire::scopes::ScopeSet;
 use aex_wire::types::{DecimalU128, HttpMethod, Region, RequestId, Timestamp};
 use async_trait::async_trait;
-use base64::Engine as _;
 use http::{HeaderMap, HeaderValue};
 use http_body_util::BodyExt as _;
 use proptest::prelude::*;
@@ -107,10 +108,33 @@ fn request_context() -> RequestContext {
 }
 
 /// A syntactically complete workspace API key, and the credential it becomes.
-fn fixture_credential(seed: u8) -> PresentedCredential {
-    let uuid = aex_wire::Uuid7::compose(1_754_051_696_789, [seed; 10]);
+///
+/// One minter for every credential this file needs, because a flight and a
+/// cache entry are both keyed by the digest of the *whole* token: a second
+/// minter is a second answer to "are these two credentials the same".
+fn fixture_credential(index: u32) -> PresentedCredential {
+    let bytes = index.to_be_bytes();
+    // Two of the ten entropy bytes are masked to carry the uuid version and
+    // variant, so the index goes into four that survive intact and every index
+    // is a distinct key id.
+    let mut entropy = [0_u8; 10];
+    entropy[1] = bytes[0];
+    entropy[3] = bytes[1];
+    entropy[4] = bytes[2];
+    entropy[5] = bytes[3];
+    let uuid = aex_wire::Uuid7::compose(1_754_051_696_789, entropy);
     let suffix = String::from_utf8(uuid.encode_suffix().to_vec()).expect("Crockford is ASCII");
-    let secret = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([seed; 32]);
+    // The secret is 43 base64url characters and the token is split on `_`, one
+    // of the two characters base64url adds to the alphabet. Spelling the index
+    // in letters keeps every credential distinct without ever minting the
+    // character that would change the token's shape.
+    let mut secret = [b'A'; 43];
+    let mut remaining = index;
+    for slot in secret.iter_mut().take(7) {
+        *slot = b'A' + u8::try_from(remaining % 26).expect("a remainder below 26");
+        remaining /= 26;
+    }
+    let secret = String::from_utf8(secret.to_vec()).expect("letters are ASCII");
     let token = format!("aex_wk_{}_{suffix}_{secret}", Region::EuWest1.code());
     PresentedCredential::new(token.into_bytes()).expect("a workspace key is a credential")
 }
@@ -742,6 +766,389 @@ async fn assertion_refresh_is_single_flight_for_one_credential() {
         task.await.expect("task").expect("authorization");
     }
     assert_eq!(calls.load(AtomicOrdering::SeqCst), 1);
+    // The flight that deduplicated those hundred callers is gone with them.
+    assert_eq!(cache.outstanding_flights(), 0);
+}
+
+/// What the gated central source answers, once it is released.
+#[derive(Clone, Copy)]
+enum GatedAnswer {
+    Issue,
+    Refuse,
+    Unavailable,
+}
+
+/// A central source that cannot answer until the test lets it.
+///
+/// The gate is what makes "exactly one call" a statement about the flight rather
+/// than about scheduling luck: while it is closed, every later caller is still
+/// inside the resolution the first one started, so a second call would have to
+/// come from a second flight.
+struct GatedSource {
+    calls: Arc<AtomicUsize>,
+    gate: Arc<tokio::sync::Semaphore>,
+    answer: GatedAnswer,
+}
+
+#[async_trait]
+impl AssertionSource for GatedSource {
+    async fn obtain(&self, credential: &PresentedCredential) -> Result<Assertion, AuthFailure> {
+        self.calls.fetch_add(1, AtomicOrdering::SeqCst);
+        self.gate
+            .acquire()
+            .await
+            .expect("the gate is never closed")
+            .forget();
+        match self.answer {
+            GatedAnswer::Issue => Ok(signed(credential, ASSERTION_MAX_LIFETIME_MS)),
+            GatedAnswer::Refuse => Err(AuthFailure::Refused),
+            GatedAnswer::Unavailable => Err(AuthFailure::SourceUnavailable),
+        }
+    }
+}
+
+/// A central source that refuses everything it is shown.
+///
+/// The shape of the attack in the finding this lane closes: a structurally valid
+/// token needs no secret to reach the authority and be refused, so the refusal
+/// path is the one whose residue matters.
+struct RefusingSource {
+    calls: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl AssertionSource for RefusingSource {
+    async fn obtain(&self, _credential: &PresentedCredential) -> Result<Assertion, AuthFailure> {
+        self.calls.fetch_add(1, AtomicOrdering::SeqCst);
+        Err(AuthFailure::Refused)
+    }
+}
+
+/// Yields until `condition` holds.
+///
+/// Ordering here is established by the single-threaded scheduler rather than by
+/// a timer: every spawned task runs to its first pending await while this loop
+/// yields, so the bound is a test failure and never a timeout.
+async fn until(condition: impl Fn() -> bool) {
+    for _ in 0..10_000 {
+        if condition() {
+            return;
+        }
+        tokio::task::yield_now().await;
+    }
+    panic!("the awaited condition never held");
+}
+
+/// One hundred concurrent first-time callers of one credential, all of them
+/// inside the flight before the source is allowed to answer.
+///
+/// Returns what each caller got, how many times the source was called, and how
+/// many flights the cache is left holding.
+async fn stampede(
+    answer: GatedAnswer,
+) -> (
+    Vec<Result<VerifiedAuthorization, AuthFailure>>,
+    usize,
+    usize,
+) {
+    let credential = fixture_credential(5);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    let cache = Arc::new(
+        VerifyingAssertionCache::new(
+            GatedSource {
+                calls: Arc::clone(&calls),
+                gate: Arc::clone(&gate),
+                answer,
+            },
+            anchors(),
+            audience(AssertionAudience::RegionalSession),
+            4_096,
+        )
+        .expect("cache"),
+    );
+    let floor = floors(&credential, 4);
+    let boarded = Arc::new(AtomicUsize::new(0));
+    let tasks = (0..100)
+        .map(|_| {
+            let cache = Arc::clone(&cache);
+            let credential = credential.clone();
+            let boarded = Arc::clone(&boarded);
+            tokio::spawn(async move {
+                // Nothing between this count and joining the flight can park:
+                // the entry lock is uncontended and the source is the leader's
+                // to call, so a task counted here is a task inside the flight.
+                boarded.fetch_add(1, AtomicOrdering::SeqCst);
+                cache.resolve(&credential, &floor, stamp(2_000)).await
+            })
+        })
+        .collect::<Vec<_>>();
+    until(|| boarded.load(AtomicOrdering::SeqCst) == 100).await;
+    assert_eq!(cache.outstanding_flights(), 1);
+    gate.add_permits(100);
+
+    let mut outcomes = Vec::with_capacity(100);
+    for task in tasks {
+        outcomes.push(task.await.expect("task"));
+    }
+    let calls = calls.load(AtomicOrdering::SeqCst);
+    let outstanding = cache.outstanding_flights();
+    (outcomes, calls, outstanding)
+}
+
+#[tokio::test]
+async fn one_hundred_concurrent_first_time_callers_share_one_issued_assertion() {
+    let (outcomes, calls, outstanding) = stampede(GatedAnswer::Issue).await;
+    let first = *outcomes.first().expect("a hundred outcomes");
+    first.expect("the credential was issued an assertion");
+    assert!(outcomes.iter().all(|outcome| *outcome == first));
+    assert_eq!(calls, 1);
+    assert_eq!(outstanding, 0);
+}
+
+#[tokio::test]
+async fn one_hundred_concurrent_first_time_callers_share_one_refusal() {
+    let (outcomes, calls, outstanding) = stampede(GatedAnswer::Refuse).await;
+    assert!(
+        outcomes
+            .iter()
+            .all(|outcome| *outcome == Err(AuthFailure::Refused))
+    );
+    // A refusal is a shared outcome exactly as an issue is: a hundred callers
+    // presenting one rejected credential ask the authority once.
+    assert_eq!(calls, 1);
+    assert_eq!(outstanding, 0);
+}
+
+#[tokio::test]
+async fn one_hundred_concurrent_first_time_callers_share_one_unavailability() {
+    let (outcomes, calls, outstanding) = stampede(GatedAnswer::Unavailable).await;
+    assert!(
+        outcomes
+            .iter()
+            .all(|outcome| *outcome == Err(AuthFailure::SourceUnavailable))
+    );
+    // An authority that is down is not asked a hundred more times because it
+    // was down once.
+    assert_eq!(calls, 1);
+    assert_eq!(outstanding, 0);
+}
+
+#[tokio::test]
+async fn a_cancelled_leader_wakes_its_waiters_and_leaves_the_next_caller_a_fresh_flight() {
+    let credential = fixture_credential(5);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    let cache = Arc::new(
+        VerifyingAssertionCache::new(
+            GatedSource {
+                calls: Arc::clone(&calls),
+                gate: Arc::clone(&gate),
+                answer: GatedAnswer::Issue,
+            },
+            anchors(),
+            audience(AssertionAudience::RegionalSession),
+            4_096,
+        )
+        .expect("cache"),
+    );
+    let floor = floors(&credential, 4);
+
+    let leader = tokio::spawn({
+        let cache = Arc::clone(&cache);
+        let credential = credential.clone();
+        async move { cache.resolve(&credential, &floor, stamp(2_000)).await }
+    });
+    until(|| calls.load(AtomicOrdering::SeqCst) == 1).await;
+    assert_eq!(cache.outstanding_flights(), 1);
+
+    let boarded = Arc::new(AtomicUsize::new(0));
+    let waiters = (0..5)
+        .map(|_| {
+            let cache = Arc::clone(&cache);
+            let credential = credential.clone();
+            let boarded = Arc::clone(&boarded);
+            tokio::spawn(async move {
+                boarded.fetch_add(1, AtomicOrdering::SeqCst);
+                cache.resolve(&credential, &floor, stamp(2_000)).await
+            })
+        })
+        .collect::<Vec<_>>();
+    until(|| boarded.load(AtomicOrdering::SeqCst) == 5).await;
+
+    leader.abort();
+    assert!(
+        leader
+            .await
+            .expect_err("the leading request went away")
+            .is_cancelled()
+    );
+
+    // The gate opens before the waiters are joined, so a waiter that had *not*
+    // been inside the flight would resolve successfully here and show up as a
+    // second source call rather than as a silent pass.
+    gate.add_permits(100);
+    for waiter in waiters {
+        assert_eq!(
+            waiter.await.expect("task"),
+            Err(AuthFailure::FlightCancelled)
+        );
+    }
+    assert_eq!(calls.load(AtomicOrdering::SeqCst), 1);
+    assert_eq!(cache.outstanding_flights(), 0);
+
+    // Nothing of the cancelled flight survives to block the next caller.
+    cache
+        .resolve(&credential, &floor, stamp(2_000))
+        .await
+        .expect("a fresh resolution");
+    assert_eq!(calls.load(AtomicOrdering::SeqCst), 2);
+    assert_eq!(cache.outstanding_flights(), 0);
+}
+
+#[tokio::test]
+async fn a_long_sequence_of_distinct_refused_credentials_leaves_no_flight_behind() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let cache = VerifyingAssertionCache::new(
+        RefusingSource {
+            calls: Arc::clone(&calls),
+        },
+        anchors(),
+        audience(AssertionAudience::RegionalSession),
+        4_096,
+    )
+    .expect("cache");
+
+    // More distinct credentials than the flight ceiling admits at once: a
+    // registry that kept an entry per credential it had ever seen would refuse
+    // the later ones for capacity, and every one of them reaches the authority.
+    for index in 0..5_000 {
+        let credential = fixture_credential(index);
+        assert_eq!(
+            cache
+                .resolve(&credential, &floors(&credential, 4), stamp(2_000))
+                .await,
+            Err(AuthFailure::Refused)
+        );
+        assert_eq!(cache.outstanding_flights(), 0);
+    }
+    assert_eq!(calls.load(AtomicOrdering::SeqCst), 5_000);
+    assert_eq!(cache.outstanding_flights(), 0);
+    // A refusal is never stored, so the byte-bounded cache is untouched by any
+    // of it.
+    assert_eq!(cache.stored_assertions().await, 0);
+}
+
+#[tokio::test]
+async fn assertion_eviction_and_flight_retirement_never_touch_each_other() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let gate = Arc::new(tokio::sync::Semaphore::new(1_000));
+    let cache = VerifyingAssertionCache::new(
+        GatedSource {
+            calls: Arc::clone(&calls),
+            gate,
+            answer: GatedAnswer::Issue,
+        },
+        anchors(),
+        audience(AssertionAudience::RegionalSession),
+        // Two entries: the third credential evicts one of the first two.
+        2_048,
+    )
+    .expect("cache");
+
+    for index in 0..3 {
+        let credential = fixture_credential(index);
+        cache
+            .resolve(&credential, &floors(&credential, 4), stamp(2_000))
+            .await
+            .expect("an issued assertion");
+        // Storing, and evicting to make room for storing, retire the flight
+        // that produced the entry and nothing else.
+        assert_eq!(cache.outstanding_flights(), 0);
+    }
+    assert_eq!(calls.load(AtomicOrdering::SeqCst), 3);
+    assert_eq!(cache.stored_assertions().await, 2);
+
+    // The eviction did not disturb the decision stored by the flight that
+    // caused it, and retiring that flight did not evict it either.
+    let latest = fixture_credential(2);
+    cache
+        .resolve(&latest, &floors(&latest, 4), stamp(2_100))
+        .await
+        .expect("the stored assertion");
+    assert_eq!(calls.load(AtomicOrdering::SeqCst), 3);
+    assert_eq!(cache.stored_assertions().await, 2);
+    assert_eq!(cache.outstanding_flights(), 0);
+}
+
+/// The leader a caller becomes for a key nobody is resolving yet.
+fn lead(registry: &FlightRegistry, key: [u8; 32]) -> FlightLeader<'_> {
+    match registry.board(key) {
+        Ok(FlightRole::Leader(leader)) => leader,
+        Ok(FlightRole::Follower(_)) => panic!("that credential is already being resolved"),
+        Err(failure) => panic!("boarding was refused: {failure}"),
+    }
+}
+
+/// The flight a caller joins when one is already running for its key.
+fn follow(registry: &FlightRegistry, key: [u8; 32]) -> Arc<Flight> {
+    match registry.board(key) {
+        Ok(FlightRole::Follower(flight)) => flight,
+        Ok(FlightRole::Leader(_)) => panic!("nobody is resolving that credential"),
+        Err(failure) => panic!("boarding was refused: {failure}"),
+    }
+}
+
+#[tokio::test]
+async fn a_full_flight_registry_refuses_a_new_credential_rather_than_displacing_an_active_one() {
+    let registry = FlightRegistry::new(NonZeroUsize::new(2).expect("a positive ceiling"));
+    let first = lead(&registry, [1; 32]);
+    let second = lead(&registry, [2; 32]);
+    assert_eq!(registry.outstanding(), 2);
+    assert_eq!(registry.ceiling().get(), 2);
+
+    let Err(refused) = registry.board([3; 32]) else {
+        panic!("a third credential is beyond the ceiling");
+    };
+    assert_eq!(refused, AuthFailure::FlightCapacity);
+    // Refusing cost neither running flight its place, and a caller that only
+    // wants to wait on one of them is not refused at all: joining costs no
+    // entry.
+    assert_eq!(registry.outstanding(), 2);
+    let waiting = follow(&registry, [1; 32]);
+
+    first.publish(&Err(AuthFailure::Refused));
+    assert_eq!(waiting.wait().await, Err(AuthFailure::Refused));
+    assert_eq!(registry.outstanding(), 1);
+
+    // The entry that ending a flight frees is what admits the credential that
+    // was refused a moment ago.
+    drop(lead(&registry, [3; 32]));
+    assert_eq!(registry.outstanding(), 1);
+    drop(second);
+    assert_eq!(registry.outstanding(), 0);
+}
+
+#[tokio::test]
+async fn a_retired_flight_is_never_the_one_a_later_caller_joins() {
+    let registry = FlightRegistry::new(NonZeroUsize::new(2).expect("a positive ceiling"));
+    let cancelled = lead(&registry, [7; 32]);
+    let retired = follow(&registry, [7; 32]);
+    drop(cancelled);
+    assert_eq!(retired.wait().await, Err(AuthFailure::FlightCancelled));
+    assert_eq!(registry.outstanding(), 0);
+
+    let leader = lead(&registry, [7; 32]);
+    let current = follow(&registry, [7; 32]);
+    // Same key, different flight: the outcome the retired one carries is spoken
+    // for, and no later caller may be handed it.
+    assert!(!Arc::ptr_eq(&retired, &current));
+    assert_eq!(current.outcome(), None);
+
+    leader.publish(&Err(AuthFailure::Refused));
+    assert_eq!(current.wait().await, Err(AuthFailure::Refused));
+    assert_eq!(retired.outcome(), Some(Err(AuthFailure::FlightCancelled)));
+    assert_eq!(registry.outstanding(), 0);
 }
 
 #[tokio::test]

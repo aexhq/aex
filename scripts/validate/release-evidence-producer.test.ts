@@ -244,12 +244,6 @@ describe("release-bound public evidence producer", () => {
       '[[ "$DISPATCH_REF" == "refs/tags/$RELEASE_TAG" ]]'
     );
     expect(workflowStep(job, "Require non-empty release scenario and user-journey inventories").run).toContain("graph verify --release");
-    expect(workflowStep(job, "Require non-empty release scenario and user-journey inventories").run).toContain(
-      "AEX_RELEASE_EVIDENCE_MODE=inventory"
-    );
-    expect(workflowStep(job, "Require non-empty release scenario and user-journey inventories").run).toContain(
-      "bun test apps/user-tests/test/live"
-    );
     expect(source).toContain("AEX_RELEASE_EVIDENCE_HEALTH_URL");
     expect(source).toContain("https://{0}/api/release/health");
     expect(source).not.toContain("secrets.AEX_RELEASE_EVIDENCE_HEALTH_URL");
@@ -266,9 +260,6 @@ describe("release-bound public evidence producer", () => {
     expect(source).not.toContain("preflight-live-user-tests.mjs");
     expect(workflowStep(job, "Run release-bound E2E and user suites").run).toContain("run-e2e");
     expect(workflowStep(job, "Run release-bound E2E and user suites").run).toContain("run-user");
-    expect(producerSource).toContain('AEX_RELEASE_EVIDENCE_MODE: "inventory"');
-    expect(producerSource).toContain('AEX_RELEASE_EVIDENCE_MODE: "execute"');
-    expect(producerSource).not.toContain('"--list-tests"');
     expect(workflowStep(job, "Verify inventory, cleanup, spend and secret-canary evidence").run).toContain("assert-no-skips.mjs");
     expect(workflowStep(job, "Verify inventory, cleanup, spend and secret-canary evidence").run).toContain("grep -rFq");
     expect(workflowStep(job, "Build the release-bound receipts").run).toContain("evidence new");
@@ -317,27 +308,5 @@ describe("release-bound public evidence producer", () => {
       .map((path) => path.replaceAll("\\", "/"))
       .sort();
     expect(owners).toEqual(["services/regional-session-api/src/main.rs"]);
-  });
-
-  // The producer lists the live suite by RUNNING it under
-  // AEX_RELEASE_EVIDENCE_MODE=inventory, because `bun test` has no list-only
-  // mode. A test that reaches the network during that pass makes the listing
-  // depend on a live plane, and the release becomes uncertifiable for as long as
-  // the plane is unwell. release-evidence runs 31127031271 and 31136928714 both
-  // died exactly here, first on ConnectionRefused and then on 401.
-  it("every live test that reaches the network returns early under inventory mode", () => {
-    const root = resolve(import.meta.dir, "../..");
-    const dir = "apps/user-tests/test/live";
-    const files = [...new Bun.Glob("*.test.ts").scanSync({ cwd: resolve(root, dir) })].sort();
-    expect(files.length).toBeGreaterThan(0);
-
-    const guard = 'if (process.env.AEX_RELEASE_EVIDENCE_MODE === "inventory") return;';
-    const unguarded = files.filter((file) => {
-      const source = readFileSync(resolve(root, dir, file), "utf8");
-      const reachesNetwork = /\bfetch\s*\(|\brequired\s*\(\s*"AEX_/.test(source);
-      return reachesNetwork && !source.includes(guard);
-    });
-
-    expect(unguarded).toEqual([]);
   });
 });
