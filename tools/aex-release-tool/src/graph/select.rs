@@ -224,13 +224,24 @@ pub fn select(
     let mut router_changed = false;
     let mut unowned = Vec::new();
     let mut changed_seeds: BTreeMap<u32, String> = BTreeMap::new();
-    let mut artifact_input_paths: Vec<String> = Vec::new();
+    // Tracked apart from `changed_seeds`, which remembers only the first
+    // changed path per node. Whether a node reaches production bytes is a
+    // property of *any* of its changed paths, not of whichever one sorted
+    // first: `git diff --name-only` emits byte-sorted paths, so `benches/`,
+    // `docs/`, `examples/` and `fuzz/` all precede `src/` and would otherwise
+    // decide the artifact seed on behalf of the source change beside them.
+    let mut artifact_seed_paths: BTreeMap<u32, String> = BTreeMap::new();
 
     for path in changed {
         match inputs.path_map.classify(path, &npm_dirs) {
             Classification::Owned { node, .. } => {
                 if let Some(slot) = built.graph.slot(&node) {
                     changed_seeds.entry(slot).or_insert_with(|| path.clone());
+                    if is_artifact_input(path) {
+                        artifact_seed_paths
+                            .entry(slot)
+                            .or_insert_with(|| path.clone());
+                    }
                 } else {
                     unowned.push(path.clone());
                 }
@@ -245,9 +256,6 @@ pub fn select(
                 unowned.push(path.clone());
                 repo_wide = true;
             }
-        }
-        if is_artifact_input(path) {
-            artifact_input_paths.push(path.clone());
         }
     }
 
@@ -336,11 +344,7 @@ pub fn select(
         // The deployment graph is recomputed rather than filtered: a
         // test-only path never enters an artifact's input closure, so an
         // artifact reached only through a test path is dropped here.
-        let artifact_seeds: Vec<u32> = changed_seeds
-            .iter()
-            .filter(|(_, path)| is_artifact_input(path))
-            .map(|(slot, _)| *slot)
-            .collect();
+        let artifact_seeds: Vec<u32> = artifact_seed_paths.keys().copied().collect();
         let mut deploy_reasons: BTreeMap<NodeId, SelectionReason> = BTreeMap::new();
         for slot in &artifact_seeds {
             let node = built.graph.node(*slot);
@@ -349,7 +353,7 @@ pub fn select(
                     node.id.clone(),
                     SelectionReason::ArtifactInput {
                         artifact: node.id.clone(),
-                        path: changed_seeds[slot].clone(),
+                        path: artifact_seed_paths[slot].clone(),
                     },
                 );
             }
@@ -365,7 +369,7 @@ pub fn select(
             deploy_reasons.entry(node.id.clone()).or_insert_with(|| {
                 SelectionReason::ArtifactInput {
                     artifact: node.id.clone(),
-                    path: changed_seeds
+                    path: artifact_seed_paths
                         .get(&origin)
                         .cloned()
                         .unwrap_or_else(|| "(closure)".to_owned()),
