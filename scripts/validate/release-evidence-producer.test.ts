@@ -318,4 +318,26 @@ describe("release-bound public evidence producer", () => {
       .sort();
     expect(owners).toEqual(["services/regional-session-api/src/main.rs"]);
   });
+
+  // The producer lists the live suite by RUNNING it under
+  // AEX_RELEASE_EVIDENCE_MODE=inventory, because `bun test` has no list-only
+  // mode. A test that reaches the network during that pass makes the listing
+  // depend on a live plane, and the release becomes uncertifiable for as long as
+  // the plane is unwell. release-evidence runs 31127031271 and 31136928714 both
+  // died exactly here, first on ConnectionRefused and then on 401.
+  it("every live test that reaches the network returns early under inventory mode", () => {
+    const root = resolve(import.meta.dir, "../..");
+    const dir = "apps/user-tests/test/live";
+    const files = [...new Bun.Glob("*.test.ts").scanSync({ cwd: resolve(root, dir) })].sort();
+    expect(files.length).toBeGreaterThan(0);
+
+    const guard = 'if (process.env.AEX_RELEASE_EVIDENCE_MODE === "inventory") return;';
+    const unguarded = files.filter((file) => {
+      const source = readFileSync(resolve(root, dir, file), "utf8");
+      const reachesNetwork = /\bfetch\s*\(|\brequired\s*\(\s*"AEX_/.test(source);
+      return reachesNetwork && !source.includes(guard);
+    });
+
+    expect(unguarded).toEqual([]);
+  });
 });
