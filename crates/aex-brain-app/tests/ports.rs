@@ -10,10 +10,10 @@
 //! The `trybuild` harness is not a workspace dependency, and adding one is a
 //! shared-manifest change this stream does not own.
 
-use aex_brain_application::ports::hands::HandsResult;
-use aex_brain_application::ports::proof::{NullPreviewSink, PreviewSink};
-use aex_brain_application::ports::tool::{ControlStateView, DetachedStatus};
-use aex_brain_application::ports::{
+use aex_brain_app::ports::hands::HandsResult;
+use aex_brain_app::ports::proof::{NullPreviewSink, PreviewSink};
+use aex_brain_app::ports::tool::{ControlStateView, DetachedStatus};
+use aex_brain_app::ports::{
     BoxFuture, CancelToken, DispatchTicket, FenceGuard, HandsAccepted, HandsEndpoint, HandsError,
     HandsOperationStart, HandsOperationStatus, HandsPort, PreparedToolCall, ProviderDispatchError,
     ProviderFailureKind, ProviderOutcome, ProviderPort, RedactedDetail, ResultBounds, StreamBudget,

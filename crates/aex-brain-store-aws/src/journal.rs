@@ -10,7 +10,7 @@
 //!   conditional on `attribute_not_exists`, so the second attempt loses that action and
 //!   comes back as [`ConditionFailure::IdempotentReplay`].
 
-use aex_brain_application::ports::{
+use aex_brain_app::ports::{
     AgentHead, BoxFuture, CommitError, CommitReceipt, ConditionFailure, DecisionContext,
     DispatchTicket, EffectStore, FenceGuard, JournalCursor, JournalPage, JournalStore, ReadBudget,
     SessionAuthority, StoreError,
@@ -44,7 +44,7 @@ pub const fn dispatch_order() -> &'static [aex_session_dynamodb::plan::Participa
 /// The `DynamoDB` half of the Brain store.
 ///
 /// One type implements [`JournalStore`], [`EffectStore`] and
-/// [`LeaseStore`](aex_brain_application::ports::LeaseStore) because all three address the
+/// [`LeaseStore`](aex_brain_app::ports::LeaseStore) because all three address the
 /// same two partitions with the same client and the same table configuration. Three types
 /// would be three copies of that configuration and three chances for them to disagree about
 /// which table an agent lives in.

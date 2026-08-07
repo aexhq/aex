@@ -8,7 +8,7 @@
 //! the identical category boundary, so a fourth deployable would buy nothing and
 //! would break Area 9's frozen inventory.
 //!
-//! The behaviour lives in `aex_usage_application::worker`, which is
+//! The behaviour lives in `aex_usage_app::worker`, which is
 //! category-generic over ports. This binary is the only place that names a
 //! table, and it names exactly one: `aex-usage-transfer-aws`. That is what makes
 //! "this worker cannot write a sibling authority" a link-graph fact rather than
@@ -18,7 +18,7 @@
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use aex_usage_application::worker::{BillingMode, UsageWorker, WorkerLimits};
+use aex_usage_app::worker::{BillingMode, UsageWorker, WorkerLimits};
 use aex_usage_domain::wire_pending::RegionId;
 use aex_usage_transfer_aws::clock::SystemClock;
 use aex_usage_transfer_aws::projection::QueryProjection;

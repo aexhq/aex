@@ -40,7 +40,7 @@ Plan of record: `references/rust-native-rewrite-2026-07-31/plans/09-tools-mcp-we
   unknown exact selections, missing exact capabilities/credentials, and
   approval-policy names outside the advertised set are typed failures. Default
   composition honestly omits optional `web_search` and browser authority.
-- `CompositeToolRouter` implements the peer `aex_brain_application::ToolPort`.
+- `CompositeToolRouter` implements the peer `aex_brain_app::ToolPort`.
   Routes are resolved only from an exact immutable `CatalogPin`; duplicate
   executors/catalogs/tools fail at construction. Detached query and cancel take
   the durable `DetachedOperationRef { id, executor }`, address that executor's

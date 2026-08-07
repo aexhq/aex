@@ -398,10 +398,10 @@ pub fn compose(config: &Config) -> Result<compose::Composition, RunError> {
         safety_cap: config.budget.saturating_mul(2),
         offered_ceiling: config.budget.saturating_mul(5),
     };
-    let policy = aex_brain_application::activation::ActivationPolicy {
+    let policy = aex_brain_app::activation::ActivationPolicy {
         receive_batch: 1,
         max_concurrent_drives: usize::try_from(config.budget).unwrap_or(usize::MAX),
-        ..aex_brain_application::activation::ActivationPolicy::default()
+        ..aex_brain_app::activation::ActivationPolicy::default()
     };
     compose::Composition::build(
         bounds,
@@ -633,7 +633,7 @@ fn bind_release_catalog()
 }
 
 struct PumpPorts {
-    ports: aex_brain_application::activation::Ports,
+    ports: aex_brain_app::activation::Ports,
     bindings: wake::Bindings,
 }
 
@@ -693,15 +693,15 @@ async fn pump(
 /// the whole set, so cooperative drain polls admitted activations to settlement and hard
 /// abort drops every remaining receive or effect future before exit can be reported.
 async fn run_wake_scheduler<F>(
-    pump: aex_brain_application::activation::WakeLoop,
-    drain: std::sync::Arc<aex_brain_application::kernel::DrainGate>,
+    pump: aex_brain_app::activation::WakeLoop,
+    drain: std::sync::Arc<aex_brain_app::kernel::DrainGate>,
     aggregate_cap: usize,
     mut observe: F,
 ) where
     F: FnMut(
         &Result<
-            aex_brain_application::activation::PollReport,
-            aex_brain_application::activation::ActivationError,
+            aex_brain_app::activation::PollReport,
+            aex_brain_app::activation::ActivationError,
         >,
     ),
 {
@@ -749,11 +749,11 @@ async fn run_wake_scheduler<F>(
 }
 
 async fn poll_after(
-    pump: &aex_brain_application::activation::WakeLoop,
+    pump: &aex_brain_app::activation::WakeLoop,
     delay: core::time::Duration,
 ) -> Result<
-    aex_brain_application::activation::PollReport,
-    aex_brain_application::activation::ActivationError,
+    aex_brain_app::activation::PollReport,
+    aex_brain_app::activation::ActivationError,
 > {
     if !delay.is_zero() {
         tokio::time::sleep(delay).await;
@@ -764,19 +764,19 @@ async fn poll_after(
 fn emit_due_isolations(
     telemetry: &aex_platform_telemetry::Handle,
     config: &Config,
-    report: &aex_brain_application::activation::PollReport,
+    report: &aex_brain_app::activation::PollReport,
 ) {
     let count = u32::try_from(report.malformed).unwrap_or(u32::MAX);
     for isolation in &report.isolations {
         let reason = match isolation.reason {
-            aex_brain_application::ports::DueRowIsolationReason::MalformedProjection => {
+            aex_brain_app::ports::DueRowIsolationReason::MalformedProjection => {
                 "malformed_projection"
             }
-            aex_brain_application::ports::DueRowIsolationReason::BaseKeyMismatch => {
+            aex_brain_app::ports::DueRowIsolationReason::BaseKeyMismatch => {
                 "base_key_mismatch"
             }
-            aex_brain_application::ports::DueRowIsolationReason::ShardMismatch => "shard_mismatch",
-            aex_brain_application::ports::DueRowIsolationReason::DuePositionMismatch => {
+            aex_brain_app::ports::DueRowIsolationReason::ShardMismatch => "shard_mismatch",
+            aex_brain_app::ports::DueRowIsolationReason::DuePositionMismatch => {
                 "due_position_mismatch"
             }
         };
@@ -1036,9 +1036,9 @@ mod tests {
         USAGE_COMPUTE_QUEUE_VAR, USAGE_STORAGE_QUEUE_VAR, WAKE_QUEUE_VAR, WORK_TABLE_VAR, compose,
         emit_due_isolations,
     };
-    use aex_brain_application::activation::PollReport;
-    use aex_brain_application::kernel::PermitKind;
-    use aex_brain_application::ports::{DueRowIsolation, DueRowIsolationReason};
+    use aex_brain_app::activation::PollReport;
+    use aex_brain_app::kernel::PermitKind;
+    use aex_brain_app::ports::{DueRowIsolation, DueRowIsolationReason};
     use aex_platform_telemetry::{AttributeValue, InMemoryExporter};
     use std::collections::BTreeMap;
 

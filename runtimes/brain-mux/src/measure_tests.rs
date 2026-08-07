@@ -5,7 +5,7 @@
 //! test machine's scheduler rather than the accounting rule.
 
 use super::{Measurement, RECONCILE_INTERVAL, SINK_CAPACITY, byte_ms, millicpu_ms_from_cpu_us};
-use aex_usage_application::probe::{
+use aex_usage_app::probe::{
     ActivationKey, ActivationScoped, CpuInstant, CpuJob, MAX_ATTRIBUTED_POLL_US, PhysicalCpuSource,
     ProbeContext, ProbeError, ThreadCpuClock, WallClock,
 };

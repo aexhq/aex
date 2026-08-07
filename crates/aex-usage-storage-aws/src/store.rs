@@ -21,7 +21,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use aex_usage_application::ports::{
+use aex_usage_app::ports::{
     Admission, AuthorityStore, Clock, FactLocation, OutboxEntry, PortError, ReceiptOutcome,
     SettlementReceipt,
 };
@@ -46,7 +46,7 @@ use crate::{CATEGORY, gsi};
 ///
 /// Re-exported from the application rather than restated, so the sweep and the
 /// writer cannot disagree about how many pages one sweep has to read.
-pub use aex_usage_application::worker::OUTBOX_SHARDS;
+pub use aex_usage_app::worker::OUTBOX_SHARDS;
 
 /// The name this store reports in a port error.
 const WHAT: &str = "usage authority";

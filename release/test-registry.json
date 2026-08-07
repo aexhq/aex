@@ -137,8 +137,8 @@
       "unmapped_targets": [],
       "awaiting_owner": false
     },
-    "crates/aex-brain-application": {
-      "name": "aex-brain-application",
+    "crates/aex-brain-app": {
+      "name": "aex-brain-app",
       "kind": "cargo",
       "meta": {
         "owner": "brain-core",
@@ -1222,8 +1222,8 @@
       "unmapped_targets": [],
       "awaiting_owner": false
     },
-    "crates/aex-observation-application": {
-      "name": "aex-observation-application",
+    "crates/aex-observation-app": {
+      "name": "aex-observation-app",
       "kind": "cargo",
       "meta": {
         "owner": "observations-usage",
@@ -2064,8 +2064,8 @@
       "unmapped_targets": [],
       "awaiting_owner": false
     },
-    "crates/aex-usage-application": {
-      "name": "aex-usage-application",
+    "crates/aex-usage-app": {
+      "name": "aex-usage-app",
       "kind": "cargo",
       "meta": {
         "owner": "observations-usage",

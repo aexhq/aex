@@ -6,7 +6,7 @@
 //! reservation integrates exactly, a crossing produces at most one fact, and a
 //! suspended Hands generation is billed nothing.
 
-use aex_usage_application::probe::{
+use aex_usage_app::probe::{
     ActivationKey, ActivationMeter, ActivationScoped, BoundaryReceipt, BoundedFactSink, CpuInstant,
     CpuJob, EgressCounter, FactSink, LambdaReport, MAX_ATTRIBUTED_POLL_US, MemoryBudget,
     OverflowLedger, ProbeContext, ProbeError, RuntimeReceipt, ThreadCpuClock, WallClock,

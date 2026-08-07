@@ -1,4 +1,4 @@
-//! `aex-observation-application` owns the observation stage, admit, abort, reconcile,
+//! `aex-observation-app` owns the observation stage, admit, abort, reconcile,
 //! rebuild and delete use cases and their ports.
 //!
 //! # Invariants

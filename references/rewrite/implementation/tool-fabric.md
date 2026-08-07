@@ -25,7 +25,7 @@ lease, fence, and receipt authority.
 
 Likely ownership:
 
-- `crates/aex-brain-application/src/activation/`
+- `crates/aex-brain-app/src/activation/`
 - Brain effect/domain types and DynamoDB store adapters
 - `runtimes/brain-mux/src/` composition and model-request construction
 - `crates/aex-brain-tool-catalog`

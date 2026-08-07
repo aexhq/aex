@@ -20,7 +20,7 @@ related:
 
 Plan of record: `references/rust-native-rewrite-2026-07-31/plans/07-brain-core.md` in the parent workspace.
 
-Owned: `crates/aex-brain-domain`, `crates/aex-brain-application`,
+Owned: `crates/aex-brain-domain`, `crates/aex-brain-app`,
 `crates/aex-brain-store-aws`, `runtimes/brain-mux`, the `journal_gen` and
 `histories` modules of `crates/aex-brain-test-support`.
 
@@ -50,7 +50,7 @@ Fold properties **F1–F12** are implemented as one test each over the
 cover the semantic cases; roughly half are hostile and each is asserted against
 the *named* guard rather than against "an error happened".
 
-### `aex-brain-application` — ports and the kernel
+### `aex-brain-app` — ports and the kernel
 
 Ten port traits (§2), plus the synchronization kernel that holds every atomic
 and lock in the stream: `ActivationRegistry`, `PermitSet`, `WarmCacheShard`,
@@ -72,7 +72,7 @@ superseded `/livez` asserted *not* to resolve.
 
 ## 2. Port traits published
 
-All in `aex_brain_application::ports`. `BoxFuture` makes every port
+All in `aex_brain_app::ports`. `BoxFuture` makes every port
 dyn-compatible so the composition root selects adapters at runtime.
 
 ```rust
@@ -275,13 +275,13 @@ Loom-checked; what is missing is the Tokio composition that drives them.
 
 ```
 cargo fmt --all                                                    clean
-cargo clippy -p aex-brain-domain -p aex-brain-application \
+cargo clippy -p aex-brain-domain -p aex-brain-app \
              -p aex-brain-store-aws -p brain-mux --all-targets \
              -- -D warnings                                        clean
-cargo nextest run -p aex-brain-domain -p aex-brain-application \
+cargo nextest run -p aex-brain-domain -p aex-brain-app \
                   -p aex-brain-store-aws -p brain-mux
     Summary [134.743s] 203 tests run: 203 passed, 0 skipped
-cargo nextest run -p aex-brain-application --features loom \
+cargo nextest run -p aex-brain-app --features loom \
                   --test concurrency  (LOOM_MAX_PREEMPTIONS=3)     6 passed
 cargo check --workspace --all-targets                              clean
 cargo run -p aex-workspace-check
@@ -324,7 +324,7 @@ Request bytes are asserted with `capture_request`; page contiguity and fork
 detection are asserted on decoded rows, because they are the two rules that
 decide whether an agent may act at all and neither needs a service to observe.
 
-#### `aex-brain-application` — the subagent scheduler
+#### `aex-brain-app` — the subagent scheduler
 
 `subagent::fanout` plans a spawn as a pure function of the parent's fold, the
 session's capacity and the request. `subagent::claim` acquires local permits
@@ -376,12 +376,12 @@ process can answer a probe before it can do anything else.
 
 ```
 cargo fmt --all                                                    clean
-cargo clippy -p aex-brain-application -p aex-brain-store-aws \
+cargo clippy -p aex-brain-app -p aex-brain-store-aws \
              -p brain-mux --all-targets -- -D warnings             clean
-cargo nextest run -p aex-brain-domain -p aex-brain-application \
+cargo nextest run -p aex-brain-domain -p aex-brain-app \
                   -p aex-brain-store-aws -p brain-mux
     Summary [124.705s] 355 tests run: 355 passed, 0 skipped
-cargo nextest run -p aex-brain-application --features loom \
+cargo nextest run -p aex-brain-app --features loom \
                   --test concurrency  (LOOM_MAX_PREEMPTIONS=3)     6 passed
 cargo check --workspace --all-targets                              clean
 cargo run -p aex-workspace-check
@@ -402,7 +402,7 @@ This pass landed the loop that drives them.
 
 ### 12. What the third pass implemented
 
-#### `aex-brain-application::activation` — the loop
+#### `aex-brain-app::activation` — the loop
 
 `activation` was an empty placeholder. It now holds the whole cycle:
 
@@ -494,7 +494,7 @@ and none of it is attributed.
 | # | Decision | Why |
 | --- | --- | --- |
 | BR-38 | Journal pagination carries `DynamoDB`'s complete native `LastEvaluatedKey`; every `pk`/`sk`, partition, journal sort key and resume sequence is decoded and revalidated, and activation accepts a restore only when its final `(sequence, content hash)` equals the pair returned in the claimed `AgentHead` | `DynamoDB` may return a short page with a continuation, so entry count cannot distinguish EOF. Sequence alone also cannot distinguish a same-tail fork. Either ambiguity reaching recovery or planning can dispatch from a prefix or a different history. |
-| BR-39 | Cold restore has strict activation-wide entry and canonical inline-body-byte ceilings in addition to per-page bounds; mux admission reserves a separate conservative decoded-restore allowance before restore and releases it by RAII with the activation | many valid pages are still unbounded in aggregate, and payload bytes understate decoded Rust plus canonicalization memory. The code-owned [`ActivationPolicy::default`](../../crates/aex-brain-application/src/activation/mod.rs) bounds are inclusive across all pages. Model token limits are not memory measurements and are not used. The current 64 MiB reservation covers the measured four-megabyte-body amplification and conservatively extrapolates through the eight-megabyte launch ceiling; it must be retuned only from reproducible measurements. |
+| BR-39 | Cold restore has strict activation-wide entry and canonical inline-body-byte ceilings in addition to per-page bounds; mux admission reserves a separate conservative decoded-restore allowance before restore and releases it by RAII with the activation | many valid pages are still unbounded in aggregate, and payload bytes understate decoded Rust plus canonicalization memory. The code-owned [`ActivationPolicy::default`](../../crates/aex-brain-app/src/activation/mod.rs) bounds are inclusive across all pages. Model token limits are not memory measurements and are not used. The current 64 MiB reservation covers the measured four-megabyte-body amplification and conservatively extrapolates through the eight-megabyte launch ceiling; it must be retuned only from reproducible measurements. |
 
 ### 13.5 Decisions taken in the runtime-liveness pass
 
@@ -593,13 +593,13 @@ executors and the concrete Hands backend are still absent, so the process receiv
 ### 15. Third-pass gate output
 
 ```
-cargo fmt -p aex-brain-application -p aex-brain-store-aws -p brain-mux  clean
-cargo clippy -p aex-brain-application -p aex-brain-store-aws \
+cargo fmt -p aex-brain-app -p aex-brain-store-aws -p brain-mux  clean
+cargo clippy -p aex-brain-app -p aex-brain-store-aws \
              -p brain-mux --all-targets -- -D warnings                 clean
-cargo nextest run -p aex-brain-domain -p aex-brain-application \
+cargo nextest run -p aex-brain-domain -p aex-brain-app \
                   -p aex-brain-store-aws -p brain-mux
     Summary [311.890s] 384 tests run: 384 passed, 0 skipped
-cargo nextest run -p aex-brain-application --features loom \
+cargo nextest run -p aex-brain-app --features loom \
                   --test concurrency  (LOOM_MAX_PREEMPTIONS=3)         6 passed
 cargo check --workspace --all-targets                                  clean
 cargo run -p aex-workspace-check
@@ -610,13 +610,13 @@ cargo run -p aex-workspace-check -- registry build      no change to either file
 ### 16. Continuation-pass gate output
 
 ```text
-cargo fmt -p aex-brain-application -p aex-brain-store-aws -p brain-mux  clean
-cargo clippy -p aex-brain-application -p aex-brain-store-aws \
+cargo fmt -p aex-brain-app -p aex-brain-store-aws -p brain-mux  clean
+cargo clippy -p aex-brain-app -p aex-brain-store-aws \
              -p brain-mux --all-targets -- -D warnings                 clean
-cargo nextest run -p aex-brain-domain -p aex-brain-application \
+cargo nextest run -p aex-brain-domain -p aex-brain-app \
                   -p aex-brain-store-aws -p brain-mux
     Summary [136.307s] 388 tests run: 388 passed, 0 skipped
-cargo nextest run -p aex-brain-application --features loom \
+cargo nextest run -p aex-brain-app --features loom \
                   --test concurrency  (LOOM_MAX_PREEMPTIONS=3)
     Summary [21.599s] 6 tests run: 6 passed, 0 skipped
 cargo check --workspace --all-targets                                  clean
@@ -632,19 +632,19 @@ owned packages are formatted individually.
 ### 17. Wake-reliability-pass gate output
 
 ```text
-cargo fmt -p aex-brain-domain -p aex-brain-application \
+cargo fmt -p aex-brain-domain -p aex-brain-app \
           -p aex-brain-store-aws -p aex-work-dynamodb                  clean
-cargo clippy -p aex-brain-domain -p aex-brain-application \
+cargo clippy -p aex-brain-domain -p aex-brain-app \
              -p aex-brain-store-aws -p aex-work-dynamodb \
              -p brain-mux --all-targets -- -D warnings                clean
-cargo nextest run -p aex-brain-domain -p aex-brain-application \
+cargo nextest run -p aex-brain-domain -p aex-brain-app \
                   -p aex-brain-store-aws -p aex-work-dynamodb \
                   -p brain-mux
     Summary [216.550s] 444 tests run: 444 passed, 0 skipped
-cargo nextest run -p aex-brain-application --features loom \
+cargo nextest run -p aex-brain-app --features loom \
                   --test concurrency  (LOOM_MAX_PREEMPTIONS=3)
     Summary [9.681s] 6 tests run: 6 passed, 0 skipped
-cargo test -p aex-brain-application activation::tests
+cargo test -p aex-brain-app activation::tests
     21 passed, 0 failed
 cargo check --workspace --all-targets                                  clean
 cargo run -p aex-workspace-check
@@ -657,14 +657,14 @@ git diff --check                                         clean
 
 ```text
 cargo fmt -p aex-session-dynamodb -p aex-brain-domain \
-          -p aex-brain-application -p aex-brain-store-aws \
+          -p aex-brain-app -p aex-brain-store-aws \
           -p aex-brain-hands -p aex-brain-test-support -p brain-mux   clean
 cargo clippy -p aex-session-dynamodb -p aex-brain-domain \
-             -p aex-brain-application -p aex-brain-store-aws \
+             -p aex-brain-app -p aex-brain-store-aws \
              -p aex-brain-hands -p aex-brain-test-support \
              -p brain-mux --all-targets -- -D warnings                clean
 cargo test -p aex-session-dynamodb -p aex-brain-domain \
-           -p aex-brain-application -p aex-brain-store-aws \
+           -p aex-brain-app -p aex-brain-store-aws \
            -p aex-brain-hands -p brain-mux
     554 passed, 0 failed
 cargo check --workspace --all-targets                                  clean
@@ -699,13 +699,13 @@ preserves the returned fence/head atomically with the claim update.
 ### 19. Capacity-accounting pass gate output
 
 ```text
-cargo fmt -p aex-brain-application -p brain-mux                      clean
-cargo test -p aex-brain-application -p brain-mux
+cargo fmt -p aex-brain-app -p brain-mux                      clean
+cargo test -p aex-brain-app -p brain-mux
     application unit 101, threaded concurrency 15, ports 6,
     brain-mux 112; 234 passed, 0 failed
-LOOM_MAX_PREEMPTIONS=3 cargo test -p aex-brain-application \
+LOOM_MAX_PREEMPTIONS=3 cargo test -p aex-brain-app \
     --features loom --test concurrency                               7 passed
-cargo clippy -p aex-brain-application -p brain-mux \
+cargo clippy -p aex-brain-app -p brain-mux \
     --all-targets --all-features -- -D warnings                      clean
 git diff --check                                                     clean
 ```

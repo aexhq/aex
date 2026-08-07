@@ -217,11 +217,11 @@ impl GapStore {
 }
 
 #[async_trait::async_trait]
-impl aex_observation_application::ports::GapSink for GapStore {
+impl aex_observation_app::ports::GapSink for GapStore {
     async fn append_gap(
         &self,
         record: &GapRecord,
-    ) -> Result<(), aex_observation_application::ports::PortError> {
+    ) -> Result<(), aex_observation_app::ports::PortError> {
         // The port carries durability, which is the only fact admission may
         // branch on. A deferred hint is deliberately not raised here: the
         // revision is durable, and turning "readers will see this a recovery
@@ -229,7 +229,7 @@ impl aex_observation_application::ports::GapSink for GapStore {
         // optimisation row. [`GapStore::append`] returns the fact to any caller
         // that can act on it.
         self.append(record).await.map(|_| ()).map_err(|error| {
-            aex_observation_application::ports::PortError::Unavailable {
+            aex_observation_app::ports::PortError::Unavailable {
                 authority: "observation",
                 reason: error.to_string().into_boxed_str(),
             }

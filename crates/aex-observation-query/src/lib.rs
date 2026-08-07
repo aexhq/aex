@@ -15,7 +15,7 @@
 //! # Not this crate's job
 //!
 //! - network, credentials or provider retry
-//! - admission or authority mutation (`aex-observation-application`)
+//! - admission or authority mutation (`aex-observation-app`)
 //! - customer authorization
 
 pub mod aggregate;

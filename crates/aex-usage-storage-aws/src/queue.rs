@@ -11,8 +11,8 @@
 //! and that only works if the caller can tell the difference between "delivered"
 //! and "deferred".
 
-use aex_usage_application::outbox::OutboxMessage;
-use aex_usage_application::ports::{PortError, RatingQueue};
+use aex_usage_app::outbox::OutboxMessage;
+use aex_usage_app::ports::{PortError, RatingQueue};
 use async_trait::async_trait;
 use aws_sdk_sqs::Client;
 use aws_sdk_sqs::types::MessageAttributeValue;

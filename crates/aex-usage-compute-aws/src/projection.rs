@@ -4,7 +4,7 @@
 //! is derived, generation-keyed and rebuildable. That is why this adapter may
 //! update rows in place while the authority adapter may not.
 //!
-//! The fold itself is pure and lives in [`aex_usage_application::projection`].
+//! The fold itself is pure and lives in [`aex_usage_app::projection`].
 //! This module only renders a [`ProjectionTransaction`] into one
 //! `TransactWriteItems`, verbatim: every `ADD`, every `SET` and every condition
 //! comes from the fold, so a coverage fence cannot be dropped on the way to the
@@ -17,8 +17,8 @@
 //! [`Applied::AlreadyCovered`] — an expected condition, not a fault. Reporting
 //! it as a failure would make a normal Lambda redelivery look like an outage.
 
-use aex_usage_application::ports::{Applied, CoverageAdvance, PortError, ProjectionStore};
-use aex_usage_application::projection::{ProjectionTransaction, ProjectionWrite, Sign};
+use aex_usage_app::ports::{Applied, CoverageAdvance, PortError, ProjectionStore};
+use aex_usage_app::projection::{ProjectionTransaction, ProjectionWrite, Sign};
 use aex_usage_domain::projection::{Generation, ProjectionKeys};
 use async_trait::async_trait;
 use aws_sdk_dynamodb::Client;

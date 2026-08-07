@@ -55,7 +55,7 @@ name = "qualification_output"
 path = "tests/qualification_output.rs"
 
 [dependencies]
-aex-brain-application = { path = "../../../crates/aex-brain-application" }
+aex-brain-app = { path = "../../../crates/aex-brain-app" }
 aex-brain-provider-gateway = { path = "../../../crates/aex-brain-provider-gateway" }
 aex-model-catalog = { path = "../../../crates/aex-model-catalog" }
 aex-test-harness = { path = "../../support/aex-test-harness" }

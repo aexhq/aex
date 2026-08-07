@@ -1,7 +1,7 @@
 [package]
-name = "aex-brain-application"
+name = "aex-brain-app"
 version = "0.1.0"
-description = "`aex-brain-application` owns activation and effect orchestration ports: park/wake, provider ambiguity, cancellation and the pressure policy."
+description = "`aex-brain-app` owns activation and effect orchestration ports: park/wake, provider ambiguity, cancellation and the pressure policy."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

@@ -11,7 +11,7 @@
 //! orchestrator kill it along with them. It simply stops being a candidate for new work.
 
 use crate::control::HealthState;
-use aex_brain_application::ports::{BoxFuture, StoreError};
+use aex_brain_app::ports::{BoxFuture, StoreError};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Instant;
@@ -206,7 +206,7 @@ mod tests {
     use super::{Dependency, DependencyProbe, PROBE_INTERVAL, Reachable};
     use crate::control::HealthState;
     use crate::health::{LIVE_PATH, READY_PATH};
-    use aex_brain_application::ports::{BoxFuture, StoreError};
+    use aex_brain_app::ports::{BoxFuture, StoreError};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 

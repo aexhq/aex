@@ -529,7 +529,7 @@ mod tests {
         AttributeValue::N(value.to_string())
     }
 
-    /// The attribute set `aex_usage_application::projection` writes for a
+    /// The attribute set `aex_usage_app::projection` writes for a
     /// rollup, spelled exactly as it spells it.
     fn aggregate() -> Row {
         HashMap::from([

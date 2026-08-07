@@ -47,7 +47,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 time.workspace = true
 uuid.workspace = true
-aex-brain-application = { path = "../aex-brain-application" }
+aex-brain-app = { path = "../aex-brain-app" }
 aex-brain-domain = { path = "../aex-brain-domain" }
 aex-content-aws = { path = "../aex-content-aws" }
 # The shared regional store machinery: key templates, row codecs, item

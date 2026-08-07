@@ -31,7 +31,7 @@ integration = "integration"
 [package.metadata.aex.not_applicable]
 
 [dependencies]
-aex-brain-application = { path = "../aex-brain-application" }
+aex-brain-app = { path = "../aex-brain-app" }
 aex-brain-domain = { path = "../aex-brain-domain" }
 aex-brain-tool-catalog = { path = "../aex-brain-tool-catalog" }
 aex-model-catalog = { path = "../aex-model-catalog" }

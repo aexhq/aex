@@ -1,4 +1,4 @@
-//! `aex-brain-application` owns activation and effect orchestration ports: park/wake,
+//! `aex-brain-app` owns activation and effect orchestration ports: park/wake,
 //! provider ambiguity, cancellation and the pressure policy.
 //!
 //! # Invariants

@@ -13,7 +13,7 @@
 //! that the one-append case produces exactly [`DECISION_ORDER`]. Sharing the item shapes
 //! matters; sharing one function that cannot express the decision does not.
 
-use aex_brain_application::ports::{DecisionContext, SessionAuthority};
+use aex_brain_app::ports::{DecisionContext, SessionAuthority};
 use aex_brain_domain::budget::{BudgetDelta, Dimension};
 use aex_brain_domain::child::{ChildOutcome, ChildState};
 use aex_brain_domain::commit::{ChildWrite, DecisionCommit, EffectWrite, JoinWrite, WakeCreate};

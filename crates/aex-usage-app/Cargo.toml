@@ -1,7 +1,7 @@
 [package]
-name = "aex-usage-application"
+name = "aex-usage-app"
 version = "0.1.0"
-description = "`aex-usage-application` owns the usage accept, project, publish, receive-settlement-receipt and rebuild use cases."
+description = "`aex-usage-app` owns the usage accept, project, publish, receive-settlement-receipt and rebuild use cases."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -58,7 +58,7 @@ tokio = { workspace = true, features = ["rt", "macros"] }
 # built. The feature stays non-default for real consumers — the three usage
 # workers never link `rustix` or cgroup reading — while the default test lane
 # still covers the probe rather than silently skipping it.
-aex-usage-application = { path = ".", features = ["probe"] }
+aex-usage-app = { path = ".", features = ["probe"] }
 
 [[test]]
 name = "probe_properties"

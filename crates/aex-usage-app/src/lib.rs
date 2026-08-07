@@ -1,4 +1,4 @@
-//! `aex-usage-application` owns the usage accept, project, publish,
+//! `aex-usage-app` owns the usage accept, project, publish,
 //! receive-settlement-receipt and rebuild use cases.
 //!
 //! # Invariants

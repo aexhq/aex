@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use aex_brain_application::ports::{
+use aex_brain_app::ports::{
     BoxFuture, DispatchTicket, HandsAccepted, HandsEndpoint, HandsError, HandsOperationStart,
     HandsOperationStatus, HandsPort, HandsResult, ResultBounds,
 };
@@ -163,7 +163,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::{HandsAdapter, HandsBackend};
-    use aex_brain_application::ports::{
+    use aex_brain_app::ports::{
         BoxFuture, CancelToken, DispatchTicket, FenceGuard, HandsAccepted, HandsEndpoint,
         HandsError, HandsOperationStart, HandsOperationStatus, HandsPort as _, HandsResult,
         ResultBounds,

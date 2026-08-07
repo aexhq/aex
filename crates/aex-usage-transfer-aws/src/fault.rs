@@ -11,7 +11,7 @@
 //!   ambiguous commit blindly is how a duplicate settlement is produced
 //!   (`U-29`), so the two are never collapsed into one "error".
 
-use aex_usage_application::ports::PortError;
+use aex_usage_app::ports::PortError;
 use aws_sdk_dynamodb::error::{ProvideErrorMetadata, SdkError};
 
 /// Whether re-issuing the failed call is safe.
@@ -97,7 +97,7 @@ fn service<E: ProvideErrorMetadata>(what: &'static str, error: &E) -> PortError 
 #[cfg(test)]
 mod tests {
     use super::{Idempotence, classify};
-    use aex_usage_application::ports::PortError;
+    use aex_usage_app::ports::PortError;
     use aws_sdk_dynamodb::error::SdkError;
     use aws_sdk_dynamodb::operation::get_item::GetItemError;
     use aws_sdk_dynamodb::types::error::{

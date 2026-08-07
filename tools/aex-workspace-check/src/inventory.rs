@@ -37,7 +37,7 @@ pub const NON_CARGO_DIRECTORIES: &[&str] = &[
 
 /// The 67 library crates under `crates/`.
 pub const CRATES: &[&str] = &[
-    "aex-brain-application",
+    "aex-brain-app",
     "aex-brain-domain",
     "aex-brain-hands",
     "aex-brain-managed-web",
@@ -69,7 +69,7 @@ pub const CRATES: &[&str] = &[
     "aex-identity-domain",
     "aex-internal-contracts",
     "aex-model-catalog",
-    "aex-observation-application",
+    "aex-observation-app",
     "aex-observation-domain",
     "aex-observation-export",
     "aex-observation-query",
@@ -94,7 +94,7 @@ pub const CRATES: &[&str] = &[
     "aex-session-domain",
     "aex-session-dynamodb",
     "aex-telemetry-schema",
-    "aex-usage-application",
+    "aex-usage-app",
     "aex-usage-compute-aws",
     "aex-usage-domain",
     "aex-usage-query-aws",

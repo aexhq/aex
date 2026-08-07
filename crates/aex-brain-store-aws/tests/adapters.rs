@@ -6,7 +6,7 @@
 //! two rules that decide whether an agent may act at all, and neither should need a service
 //! to observe.
 
-use aex_brain_application::ports::{
+use aex_brain_app::ports::{
     AgentHead, CancelToken, Claim, ClaimError, ConditionFailure, DispatchTicket, DueScanCursor,
     DurableWake, EffectStore, FenceGuard, JournalCursor, JournalStore, LeaseStore, ReadBudget,
     ReleaseDisposition, SessionAuthority, StoreError, WakeQueue,

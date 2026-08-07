@@ -7,7 +7,7 @@
 
 use core::time::Duration;
 
-use aex_brain_application::ports::{HandsError, ProviderFailureKind, RedactedDetail};
+use aex_brain_app::ports::{HandsError, ProviderFailureKind, RedactedDetail};
 use aex_brain_domain::effect::{DispatchProof, DispatchStage};
 use aex_hands_agent::wire::{
     FrameExpectation, PROTOCOL_V1, REQUEST_PREAMBLE_LEN, RESPONSE_PREAMBLE_LEN, RequestPreamble,
@@ -475,7 +475,7 @@ fn transport(
 #[cfg(test)]
 mod tests {
     use super::{AuthenticatedGuestEndpoint, HttpGuestTransport, decode_reply};
-    use aex_brain_application::ports::HandsError;
+    use aex_brain_app::ports::HandsError;
     use aex_brain_domain::effect::{DispatchProof, DispatchStage};
     use aex_hands_agent::wire::{
         FrameExpectation, PROTOCOL_V1, ResponsePreamble, ResponseStatus, Verb, decode_request,

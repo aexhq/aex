@@ -44,7 +44,7 @@ thiserror.workspace = true
 time.workspace = true
 uuid.workspace = true
 xxhash-rust.workspace = true
-aex-usage-application = { path = "../aex-usage-application" }
+aex-usage-app = { path = "../aex-usage-app" }
 aex-usage-domain = { path = "../aex-usage-domain" }
 
 [dev-dependencies]

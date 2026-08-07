@@ -4,7 +4,7 @@
 //! an error, because a silently defaulted fence or revision is indistinguishable from a
 //! correct one right up to the moment it decides who may write.
 
-use aex_brain_application::ports::AgentHead;
+use aex_brain_app::ports::AgentHead;
 use aex_brain_domain::budget::{BudgetNode, DIMENSIONS, DimensionVector};
 use aex_brain_domain::ids::{
     AgentKey, AgentRevision, CancelEpoch, ContentHash, EffectId, Fence, JournalSeq, Timestamp,

@@ -42,7 +42,7 @@ thiserror.workspace = true
 time.workspace = true
 uuid.workspace = true
 aex-observation-domain = { path = "../aex-observation-domain" }
-aex-observation-application = { path = "../aex-observation-application" }
+aex-observation-app = { path = "../aex-observation-app" }
 aex-wire = { path = "../aex-wire" }
 
 [dev-dependencies]

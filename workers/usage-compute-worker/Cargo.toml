@@ -40,7 +40,7 @@ lambda_runtime.workspace = true
 tokio.workspace = true
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
-aex-usage-application = { path = "../../crates/aex-usage-application" }
+aex-usage-app = { path = "../../crates/aex-usage-app" }
 aex-usage-domain = { path = "../../crates/aex-usage-domain" }
 aex-usage-compute-aws = { path = "../../crates/aex-usage-compute-aws" }
 serde_json.workspace = true

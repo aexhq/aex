@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use aex_brain_application::ports::{FoldSnapshotStore, SnapshotPublishOutcome, StoreError};
+use aex_brain_app::ports::{FoldSnapshotStore, SnapshotPublishOutcome, StoreError};
 use aex_brain_domain::snapshot::{FoldSnapshotArtifact, JournalPoint, SnapshotReplay};
 use aex_brain_store_aws::{AwsFoldSnapshotStore, SnapshotBodyStore, SnapshotContentContext};
 use aex_content_aws::ContentObjectError;

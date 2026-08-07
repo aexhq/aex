@@ -94,9 +94,13 @@ pub fn is_domain_crate(name: &str) -> bool {
 }
 
 /// Whether a workspace crate name denotes an application crate.
+///
+/// One suffix, not two. `-application` was retired because the anchored search
+/// an agent actually types — `grep -- '-app$'` — returned four of the seven
+/// application crates under the split and now returns all seven.
 #[must_use]
 pub fn is_application_crate(name: &str) -> bool {
-    name.ends_with("-app") || name.ends_with("-application")
+    name.ends_with("-app")
 }
 
 /// Whether a workspace crate name denotes test-only code.

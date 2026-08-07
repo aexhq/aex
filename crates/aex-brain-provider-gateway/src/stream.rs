@@ -8,7 +8,7 @@
 
 use std::time::{Duration, Instant};
 
-use aex_brain_application::ports::{BoxFuture, CancelToken, PreviewSink};
+use aex_brain_app::ports::{BoxFuture, CancelToken, PreviewSink};
 use aex_brain_domain::effect::DispatchProof;
 use aex_model_catalog::QualifiedModel;
 use aex_model_catalog::canonical::PreviewFrame;
@@ -483,7 +483,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{Duration, Instant};
 
-    use aex_brain_application::ports::{BoxFuture, CancelToken, NullPreviewSink};
+    use aex_brain_app::ports::{BoxFuture, CancelToken, NullPreviewSink};
     use aex_brain_domain::effect::DispatchProof;
     use aex_model_catalog::canonical::{CanonicalBlock, CanonicalModelRequest, StopReason};
     use aex_model_catalog::document::{Capability, CapabilitySet, EntryState};

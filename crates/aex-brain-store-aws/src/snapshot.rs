@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use aex_brain_application::ports::{
+use aex_brain_app::ports::{
     BoxFuture, FoldSnapshotStore, SnapshotPublishOutcome, StoreError,
 };
 use aex_brain_domain::snapshot::{
@@ -274,7 +274,7 @@ impl FoldSnapshotStore for AwsFoldSnapshotStore {
                 .map_err(|error| map_content_read(error, pointer, max_bytes))?;
             if u64::try_from(body.len()).ok() != Some(pointer.body_bytes) {
                 return Err(StoreError::SnapshotRejected {
-                    diagnostic: aex_brain_application::ports::SnapshotDiagnostic::Rejected(
+                    diagnostic: aex_brain_app::ports::SnapshotDiagnostic::Rejected(
                         aex_brain_domain::snapshot::FoldSnapshotError::BodyLengthMismatch {
                             declared: pointer.body_bytes,
                             actual: body.len(),
@@ -284,7 +284,7 @@ impl FoldSnapshotStore for AwsFoldSnapshotStore {
             }
             if BodyDigest::of(&body) != pointer.body_digest {
                 return Err(StoreError::SnapshotRejected {
-                    diagnostic: aex_brain_application::ports::SnapshotDiagnostic::Rejected(
+                    diagnostic: aex_brain_app::ports::SnapshotDiagnostic::Rejected(
                         aex_brain_domain::snapshot::FoldSnapshotError::BodyDigestMismatch,
                     ),
                 });
@@ -382,7 +382,7 @@ fn validate_artifact(artifact: &FoldSnapshotArtifact) -> Result<(), StoreError> 
     let pointer = artifact.pointer();
     if usize::try_from(pointer.body_bytes).ok() != Some(artifact.body().len()) {
         return Err(StoreError::SnapshotRejected {
-            diagnostic: aex_brain_application::ports::SnapshotDiagnostic::Rejected(
+            diagnostic: aex_brain_app::ports::SnapshotDiagnostic::Rejected(
                 aex_brain_domain::snapshot::FoldSnapshotError::BodyLengthMismatch {
                     declared: pointer.body_bytes,
                     actual: artifact.body().len(),
@@ -392,7 +392,7 @@ fn validate_artifact(artifact: &FoldSnapshotArtifact) -> Result<(), StoreError> 
     }
     if BodyDigest::of(artifact.body()) != pointer.body_digest {
         return Err(StoreError::SnapshotRejected {
-            diagnostic: aex_brain_application::ports::SnapshotDiagnostic::Rejected(
+            diagnostic: aex_brain_app::ports::SnapshotDiagnostic::Rejected(
                 aex_brain_domain::snapshot::FoldSnapshotError::BodyDigestMismatch,
             ),
         });
@@ -457,7 +457,7 @@ fn map_content_read(
                 }
             } else if let Ok(actual) = usize::try_from(requested) {
                 StoreError::SnapshotRejected {
-                    diagnostic: aex_brain_application::ports::SnapshotDiagnostic::Rejected(
+                    diagnostic: aex_brain_app::ports::SnapshotDiagnostic::Rejected(
                         aex_brain_domain::snapshot::FoldSnapshotError::BodyLengthMismatch {
                             declared: pointer.body_bytes,
                             actual,

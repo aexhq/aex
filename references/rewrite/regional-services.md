@@ -443,7 +443,7 @@ Two smaller consequences, both recorded rather than worked around:
 | `aex-secret-custody-dynamodb::expressions::delete`, the conditional custody delete that `secret_delete` commits. | regional stores |
 | The `central-authz` invoke request/response shapes for a **workspace key**. `aex-internal-contracts::assertion` publishes `ResolveSessionForWorkspace`/`ResolvedSessionAssertion` for a browser session only, so a concrete `AssertionSource` cannot be written without inventing the workspace-key payload. | central identity |
 | `aws-sdk-lambda` in `[workspace.dependencies]`, which the concrete `AssertionSource` needs and no member currently declares. | delivery |
-| `graph verify` reports one pre-existing violation unrelated to this stream: `[graph-cycle] cargo:aex-usage-application -> cargo:aex-usage-application`. | usage metering |
+| `graph verify` reports one pre-existing violation unrelated to this stream: `[graph-cycle] cargo:aex-usage-app -> cargo:aex-usage-app`. | usage metering |
 
 ### Decisions taken beyond section 10
 
@@ -977,7 +977,7 @@ not.
 `UsageProjectionReads` publishes the three reads the projection holds — the
 generation pointer, one coverage row and one bounded page of rollups — and
 `UsageQueryStore` is its DynamoDB adapter. Decoding is strict against the exact
-attribute names `aex_usage_application::projection` writes.
+attribute names `aex_usage_app::projection` writes.
 
 Three decisions worth naming:
 

@@ -17,11 +17,11 @@
 /// The threaded layer: real `std::thread`, run in every lane the `loom` feature is off.
 #[cfg(not(feature = "loom"))]
 mod threaded {
-    use aex_brain_application::kernel::{
+    use aex_brain_app::kernel::{
         ActivationRegistry, DrainGate, PermitKind, PermitSet, RenewalOutcome, RenewalState,
         WarmCacheShard, WarmEntry,
     };
-    use aex_brain_application::ports::CancelToken;
+    use aex_brain_app::ports::CancelToken;
     use aex_brain_domain::fold::FoldState;
     use aex_brain_domain::ids::{AgentId, AgentKey, AgentRevision, Fence, SessionId};
     use std::collections::BTreeMap;
@@ -453,7 +453,7 @@ mod threaded {
 
 #[cfg(feature = "loom")]
 mod loom_models {
-    use aex_brain_application::kernel::{
+    use aex_brain_app::kernel::{
         ActivationRegistry, DrainGate, PermitKind, PermitSet, PermitSetFull, RenewalOutcome,
         RenewalState, WarmCacheShard, WarmEntry,
     };
@@ -476,7 +476,7 @@ mod loom_models {
     fn full_is_named(error: PermitSetFull) -> PermitKind {
         error.kind
     }
-    use aex_brain_application::ports::CancelToken;
+    use aex_brain_app::ports::CancelToken;
     use aex_brain_domain::fold::FoldState;
     use aex_brain_domain::ids::{AgentRevision, Fence};
     use loom::thread;

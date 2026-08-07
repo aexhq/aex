@@ -8,7 +8,7 @@
 //! - **A renewal never moves the fence.** Extending a lease proves nothing changed hands,
 //!   and advancing the fence would fence out the very owner doing the renewing.
 
-use aex_brain_application::ports::{
+use aex_brain_app::ports::{
     BoxFuture, Claim, ClaimError, LeaseStore, ReleaseDisposition, SessionAuthority, StoreError,
 };
 use aex_brain_domain::ids::{AgentKey, Fence, OwnerToken, Timestamp};
@@ -340,7 +340,7 @@ fn renewal_transaction_error<R>(
 
 #[cfg(test)]
 mod tests {
-    use aex_brain_application::ports::{ClaimError, StoreError};
+    use aex_brain_app::ports::{ClaimError, StoreError};
     use aex_session_domain::DeletionState;
     use aex_session_domain::testing::{id, session_fixture};
     use aex_wire::ids::{SessionId, WorkspaceId};

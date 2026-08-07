@@ -119,7 +119,7 @@ assert this.
   weight-carrying t-digest at the pinned compression, and pre-read rejection of
   invalid instrument/calculation pairs.
 
-### `crates/aex-observation-application`
+### `crates/aex-observation-app`
 
 `SemanticEventSource`, `SecretManifestSource`, `ObservationAuthority` and
 `GapSink` ports, and async `AdmitBatch::admit_semantic` with the `GapOnFailure`
@@ -221,11 +221,11 @@ aex_observation_store_aws::health::{HEALTHZ, READYZ, Probe, readiness};
 aex_observation_store_aws::segments::{Segment, SegmentDirectory};
 aex_observation_store_aws::store::{AdmissionPlan, TransactionEnvelope, StoreError};
 
-// aex-observation-application
-aex_observation_application::ports::SemanticEventSource;
-aex_observation_application::ports::SecretManifestSource;
-aex_observation_application::ports::ObservationAuthority;
-aex_observation_application::use_cases::{AdmitBatch, GapOnFailure, SemanticAdmission};
+// aex-observation-app
+aex_observation_app::ports::SemanticEventSource;
+aex_observation_app::ports::SecretManifestSource;
+aex_observation_app::ports::ObservationAuthority;
+aex_observation_app::use_cases::{AdmitBatch, GapOnFailure, SemanticAdmission};
 
 // aex-observation-query
 aex_observation_query::plan::{plan, NormalizedQuery, Plan, Budget, classify, PageOutcome};
@@ -519,7 +519,7 @@ cargo run -p aex-workspace-check
     source-rewrite phase
 cargo run -p aex-workspace-check -- registry build           regenerated, committed
 cargo run -p aex-release-tool -- graph verify
-    1 violation(s): [graph-cycle] cargo:aex-usage-application -> itself
+    1 violation(s): [graph-cycle] cargo:aex-usage-app -> itself
     (pre-existing, another stream's crate; no resource-shape violation on any
     of the five units)
 ```

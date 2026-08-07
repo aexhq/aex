@@ -43,7 +43,7 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "crates/aex-observation-application",
+    "subject": "crates/aex-observation-app",
     "owner": "observations-usage",
     "blocking_rule": "aex-empty-unit",
     "detail": "awaiting the observations-usage stream; the cases land with the crate's own implementation"

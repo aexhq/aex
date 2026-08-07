@@ -9,7 +9,7 @@ use core::time::Duration;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use aex_brain_application::ports::{BoxFuture, CancelToken, NullPreviewSink};
+use aex_brain_app::ports::{BoxFuture, CancelToken, NullPreviewSink};
 use aex_brain_provider_gateway::DispatchProof;
 use aex_brain_provider_gateway::adapter::{
     BoundedBody, HeaderView, ProviderAdapter, SealedResponse,

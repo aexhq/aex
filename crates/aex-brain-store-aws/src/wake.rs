@@ -8,7 +8,7 @@
 //! commit: the ack happens strictly after the decision commits, so a crash between them
 //! redelivers rather than loses.
 
-use aex_brain_application::ports::{
+use aex_brain_app::ports::{
     BoxFuture, DueRowIsolation, DueRowIsolationReason, DueScanCursor, DueScanPage, DurableWake,
     MAX_DUE_ROW_ISOLATIONS, MalformedWakeDelivery, MalformedWakeReason, StoreError, WakeBatch,
     WakeDelivery, WakeOrigin, WakeQueue, WakeState,
@@ -747,7 +747,7 @@ mod tests {
         WAKE_QUEUE_IAM_ACTIONS, cursor_from_key, cursor_key, decode_body, decode_due_entries,
         decode_due_entry, decode_message, decode_messages,
     };
-    use aex_brain_application::ports::{DueRowIsolationReason, MAX_DUE_ROW_ISOLATIONS};
+    use aex_brain_app::ports::{DueRowIsolationReason, MAX_DUE_ROW_ISOLATIONS};
     use aex_session_dynamodb::attr::{Item, n, s, stamp};
     use aex_wire::ids::{PrefixedId, Uuid7};
     use std::collections::BTreeSet;

@@ -5,7 +5,7 @@
 //! if every action carries its precondition. Both are properties of the compiled plan, so
 //! both are asserted here rather than observed indirectly and expensively on a live plane.
 
-use aex_brain_application::ports::{DecisionContext, SessionAuthority};
+use aex_brain_app::ports::{DecisionContext, SessionAuthority};
 use aex_brain_domain::budget::{BudgetDelta, Dimension, DimensionVector};
 use aex_brain_domain::commit::{
     ChildWrite, ControlUpdate, DecisionCommit, EffectWrite, FenceGuardRef, JoinWrite,

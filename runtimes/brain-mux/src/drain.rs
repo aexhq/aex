@@ -11,7 +11,7 @@
 //! `OutcomeUnknown` and terminalizes the run `interrupted`. That is honest; reporting a
 //! clean cancellation for a request that may have been served is not.
 
-use aex_brain_application::ports::ReleaseDisposition;
+use aex_brain_app::ports::ReleaseDisposition;
 
 /// How long the orchestrator gives the task to stop.
 pub const STOP_TIMEOUT: core::time::Duration = core::time::Duration::from_mins(2);
@@ -149,7 +149,7 @@ mod tests {
         COMMIT_MARGIN, Disposition, STOP_TIMEOUT, Stage, disposition, non_replayable_budget,
         release_disposition,
     };
-    use aex_brain_application::ports::ReleaseDisposition;
+    use aex_brain_app::ports::ReleaseDisposition;
 
     const fn secs(value: u64) -> core::time::Duration {
         core::time::Duration::from_secs(value)

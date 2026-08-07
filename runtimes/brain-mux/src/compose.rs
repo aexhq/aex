@@ -10,7 +10,7 @@ use crate::control::HealthState;
 use crate::drain::Stage;
 use crate::runtime::{ComputeLane, RuntimeShape};
 use crate::scale::ScaleBounds;
-use aex_brain_application::kernel::{ActivationRegistry, DrainGate, PermitKind, PermitSet};
+use aex_brain_app::kernel::{ActivationRegistry, DrainGate, PermitKind, PermitSet};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -121,7 +121,7 @@ pub struct Composition {
     /// The scale-out bounds.
     pub scale: ScaleBounds,
     /// The activation policy whose demand was proven against this envelope.
-    pub policy: aex_brain_application::activation::ActivationPolicy,
+    pub policy: aex_brain_app::activation::ActivationPolicy,
 }
 
 /// Why the composition was refused.
@@ -146,7 +146,7 @@ impl Composition {
         cache: CachePolicy,
         scale: ScaleBounds,
         shape: RuntimeShape,
-        policy: aex_brain_application::activation::ActivationPolicy,
+        policy: aex_brain_app::activation::ActivationPolicy,
     ) -> Result<Self, CompositionError> {
         bounds
             .validate()
@@ -268,7 +268,7 @@ mod tests {
     use crate::health::{LIVE_PATH, READY_PATH};
     use crate::runtime::RuntimeShape;
     use crate::scale::ScaleBounds;
-    use aex_brain_application::kernel::PermitKind;
+    use aex_brain_app::kernel::PermitKind;
 
     fn scale() -> ScaleBounds {
         ScaleBounds {
@@ -291,11 +291,11 @@ mod tests {
         .expect("the candidate launch shape composes")
     }
 
-    fn launch_policy() -> aex_brain_application::activation::ActivationPolicy {
-        aex_brain_application::activation::ActivationPolicy {
+    fn launch_policy() -> aex_brain_app::activation::ActivationPolicy {
+        aex_brain_app::activation::ActivationPolicy {
             receive_batch: 1,
             max_concurrent_drives: 48,
-            ..aex_brain_application::activation::ActivationPolicy::default()
+            ..aex_brain_app::activation::ActivationPolicy::default()
         }
     }
 

@@ -1,6 +1,6 @@
 //! The composed wake loop, and the ports the composition itself owns.
 //!
-//! `aex_brain_application::activation` owns what an activation *means*. This module owns
+//! `aex_brain_app::activation` owns what an activation *means*. This module owns
 //! which adapter each port resolves to in a deployed task, and it is where an absent peer is
 //! named rather than papered over.
 //!
@@ -23,14 +23,14 @@
 //! can always tell what did and did not leave the process.
 
 use crate::admission::{Admission, AdmissionOutcome};
-use aex_brain_application::activation::{
+use aex_brain_app::activation::{
     Activation, ActivationPolicy, AdmissionControl, AdmissionDecision, DispatchControl,
     DispatchDecision, DispatchLane, Ports, WakeLoop,
 };
-use aex_brain_application::kernel::{
+use aex_brain_app::kernel::{
     ActivationRegistry, DrainGate, FoldCache, PermitKind, PermitSet,
 };
-use aex_brain_application::ports::{
+use aex_brain_app::ports::{
     AgentHead, BoxFuture, CancelToken, CatalogDigest, CatalogError, CatalogPort, Claim, ClaimError,
     ClockPort, CommitError, CommitReceipt, DecisionContext, DispatchTicket, EffectStore,
     FenceGuard, FoldSnapshotStore, HandsAccepted, HandsEndpoint, HandsError, HandsOperationStart,
@@ -316,7 +316,7 @@ impl JournalStore for UnboundStore {
         _key: &'a AgentKey,
         _from: JournalSeq,
         _budget: ReadBudget,
-        _after: Option<aex_brain_application::ports::JournalCursor>,
+        _after: Option<aex_brain_app::ports::JournalCursor>,
     ) -> BoxFuture<'a, Result<JournalPage, StoreError>> {
         Box::pin(async { Err(Self::refusal()) })
     }
@@ -1141,7 +1141,7 @@ pub fn credential_bindings(
 #[must_use]
 pub fn unavailable_ports(
     store: Arc<aex_brain_store_aws::BrainStore>,
-    wakes: Arc<dyn aex_brain_application::ports::WakeQueue>,
+    wakes: Arc<dyn aex_brain_app::ports::WakeQueue>,
 ) -> Ports {
     partial_ports(store, wakes, Arc::new(AbsentProvider))
 }
@@ -1150,7 +1150,7 @@ pub fn unavailable_ports(
 #[must_use]
 pub fn partial_ports(
     store: Arc<aex_brain_store_aws::BrainStore>,
-    wakes: Arc<dyn aex_brain_application::ports::WakeQueue>,
+    wakes: Arc<dyn aex_brain_app::ports::WakeQueue>,
     provider: Arc<dyn ProviderPort>,
 ) -> Ports {
     partial_ports_with_catalog(store, wakes, provider, Arc::new(AbsentCatalog))
@@ -1161,7 +1161,7 @@ pub fn partial_ports(
 #[must_use]
 pub fn partial_ports_with_catalog(
     store: Arc<aex_brain_store_aws::BrainStore>,
-    wakes: Arc<dyn aex_brain_application::ports::WakeQueue>,
+    wakes: Arc<dyn aex_brain_app::ports::WakeQueue>,
     provider: Arc<dyn ProviderPort>,
     catalog: Arc<dyn CatalogPort>,
 ) -> Ports {
@@ -1186,7 +1186,7 @@ pub fn partial_ports_with_catalog(
 #[must_use]
 pub fn production_ports(
     store: Arc<aex_brain_store_aws::BrainStore>,
-    wakes: Arc<dyn aex_brain_application::ports::WakeQueue>,
+    wakes: Arc<dyn aex_brain_app::ports::WakeQueue>,
     peers: ProductionPeers,
 ) -> Ports {
     Ports {
@@ -1251,11 +1251,11 @@ mod tests {
         STORE_UNBOUND, SystemClock, UnboundStore,
     };
     use crate::admission::{ActivationResources, Admission, AdmissionBounds};
-    use aex_brain_application::activation::{
+    use aex_brain_app::activation::{
         AdmissionControl, AdmissionDecision, DispatchControl, DispatchDecision, DispatchLane,
     };
-    use aex_brain_application::kernel::{DrainGate, PermitKind, PermitSet};
-    use aex_brain_application::ports::{
+    use aex_brain_app::kernel::{DrainGate, PermitKind, PermitSet};
+    use aex_brain_app::ports::{
         BoxFuture, CancelToken, CatalogPort, ClockPort, DetachedStatus, DispatchTicket, IdPort,
         JournalStore, LeaseStore, PreparedToolCall, StoreError, ToolDispatchError, ToolOutcome,
     };
@@ -1380,7 +1380,7 @@ mod tests {
     /// served, and would interrupt every run instead of failing it honestly.
     #[test]
     fn the_absent_provider_proves_nothing_was_sent() {
-        let ports: &dyn aex_brain_application::ports::ProviderPort = &AbsentProvider;
+        let ports: &dyn aex_brain_app::ports::ProviderPort = &AbsentProvider;
         let _ = ports;
         assert!(PROVIDER_ABSENT.contains("build-stamped adapter source identity"));
     }
@@ -1449,11 +1449,11 @@ mod tests {
         assert!(advertised.parallel_safe);
         assert!(matches!(
             tools.route(&pin, &ToolName::parse("wait").expect("name")),
-            Err(aex_brain_application::ports::ToolRoutingError::NotAdmitted { .. })
+            Err(aex_brain_app::ports::ToolRoutingError::NotAdmitted { .. })
         ));
         assert!(matches!(
             tools.route(&pin, &ToolName::parse("read_file").expect("name")),
-            Err(aex_brain_application::ports::ToolRoutingError::NotAdmitted { .. })
+            Err(aex_brain_app::ports::ToolRoutingError::NotAdmitted { .. })
         ));
     }
 

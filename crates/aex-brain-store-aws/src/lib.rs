@@ -9,7 +9,7 @@
 //!
 //! # Not this crate's job
 //!
-//! - Brain semantics (`aex-brain-domain`, `aex-brain-application`)
+//! - Brain semantics (`aex-brain-domain`, `aex-brain-app`)
 //! - provider or tool transport
 //! - immutable body placement (`aex-content-aws` through regional content authority)
 //! - session authority rows (`aex-session-dynamodb`)

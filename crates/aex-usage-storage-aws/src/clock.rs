@@ -7,7 +7,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use aex_usage_application::ports::Clock;
+use aex_usage_app::ports::Clock;
 use aex_usage_domain::wire_pending::Timestamp;
 
 /// The process wall clock.
@@ -56,7 +56,7 @@ impl Clock for SystemClock {
 #[cfg(test)]
 mod tests {
     use super::SystemClock;
-    use aex_usage_application::ports::Clock;
+    use aex_usage_app::ports::Clock;
 
     #[test]
     fn the_authority_clock_advances_and_is_representable() {

@@ -20,7 +20,7 @@
 //! # Not this crate's job
 //!
 //! - customer observation admission: customer-visible semantic events go through
-//!   `aex-observation-application` and obey its durable admission and gap contract
+//!   `aex-observation-app` and obey its durable admission and gap contract
 //! - naming: attribute, instrument, span and event names and their classes belong
 //!   to `aex-telemetry-schema`
 //! - transport choice: the host binary selects the profile — [`LongLivedTelemetry`]

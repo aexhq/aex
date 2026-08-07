@@ -1,7 +1,7 @@
 [package]
-name = "aex-observation-application"
+name = "aex-observation-app"
 version = "0.1.0"
-description = "`aex-observation-application` owns the observation stage, admit, abort, reconcile, rebuild and delete use cases and their ports."
+description = "`aex-observation-app` owns the observation stage, admit, abort, reconcile, rebuild and delete use cases and their ports."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

@@ -23,7 +23,7 @@
 //! - exporting, batching or service initialisation: that is
 //!   `aex-platform-telemetry`, which is the only crate permitted to depend on an
 //!   `OpenTelemetry` implementation
-//! - customer-visible observations: those go through `aex-observation-application`
+//! - customer-visible observations: those go through `aex-observation-app`
 //!   and obey its durable admission contract
 //! - deciding whether a given deployable emits a given signal; that coverage
 //!   requirement is recorded per deployable, not here

@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use aex_brain_application::ports::BoxFuture;
+use aex_brain_app::ports::BoxFuture;
 use aex_brain_provider_gateway::credential::{
     BindingState, CredentialResolveError, CredentialRevision, ProviderApiKey,
     ProviderCredentialBinding, ProviderCredentialDecryptor, ProviderCredentialDirectory,

@@ -17,8 +17,8 @@
 //! would be the wrong blame, so the invocation fails and says which record and
 //! which filter.
 
-use aex_usage_application::ports::SettlementReceipt;
-use aex_usage_application::worker::{ReceiptRecord, StreamRecord, UndecodableRecord};
+use aex_usage_app::ports::SettlementReceipt;
+use aex_usage_app::worker::{ReceiptRecord, StreamRecord, UndecodableRecord};
 use aex_usage_domain::frontier::AcceptedSequence;
 use aex_usage_domain::identity::FactId;
 use aex_usage_domain::keys::ItemType;

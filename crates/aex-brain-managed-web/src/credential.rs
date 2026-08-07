@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use aex_brain_application::ports::{BoxFuture, DispatchTicket};
+use aex_brain_app::ports::{BoxFuture, DispatchTicket};
 use aex_secret_aws::{SealedSecret, SecretCrypto, SecretCryptoError};
 use aex_secret_custody_dynamodb::{
     CallAuthorization, CustodyBinding, CustodyHead, CustodyStore, SecretCustodyStore,
@@ -263,7 +263,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::Mutex;
 
-    use aex_brain_application::ports::{CancelToken, FenceGuard};
+    use aex_brain_app::ports::{CancelToken, FenceGuard};
     use aex_brain_domain::ids::{
         AgentId, AgentKey, AgentRevision, CancelEpoch, EffectId, Fence, OwnerToken,
         SessionId as BrainSessionId, Timestamp as BrainTimestamp,
