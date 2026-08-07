@@ -47,6 +47,21 @@ describe("public main-push publication", () => {
     expect(main.jobs.gates).toEqual(pr.jobs.gates);
   });
 
+  test("pull requests remain read-only and never call the publication workflow", () => {
+    const source = read(".github/workflows/pr.yml");
+    const workflow = Bun.YAML.parse(source) as {
+      readonly permissions: Record<string, string>;
+      readonly jobs: Record<string, any>;
+    };
+
+    expect(workflow.permissions).toEqual({ contents: "read" });
+    expect(workflow.jobs).not.toHaveProperty("artifacts");
+    expect(source).not.toContain("_build-artifacts.yml");
+    expect(source).not.toMatch(
+      /^\s+(?:contents|id-token|attestations|artifact-metadata|packages): write$/m
+    );
+  });
+
   test("the reusable workflow mints non-overwriting public inputs", () => {
     const source = read(".github/workflows/_build-artifacts.yml");
     const workflow = Bun.YAML.parse(source) as { readonly on: any; readonly jobs: Record<string, any> };

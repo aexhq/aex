@@ -323,7 +323,7 @@ describe("workflow evidence producers", () => {
     const cases = [
       {
         path: ".github/workflows/pr.yml",
-        resultJobs: ["route", "gates", "rust", "node", "scenarios", "terraform", "artifacts"],
+        resultJobs: ["route", "gates", "rust", "node", "scenarios", "terraform"],
         receiptJobs: ["rust", "node", "terraform"]
       },
       {

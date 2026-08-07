@@ -1,8 +1,6 @@
 # Lane class 1 — pull request and merge queue.
 #
-# No cloud, registry, publish or signing credential reaches this lane. The
-# artifacts job compiles and packages at the production profile so the bytes
-# are proved buildable, and uploads nothing.
+# No cloud, registry, publish or signing credential reaches this lane.
 #
 # `checks` is the single required status. It is the only job whose result is
 # meaningful on its own, because it compares what the lane declared it would
@@ -120,19 +118,9 @@ jobs:
       job_name: terraform
       selection_mode: affected
 
-  artifacts:
-    name: Artifacts
-    needs: route
-    if: needs.route.outputs.has_artifact == 'true'
-    uses: ./.github/workflows/_build-artifacts.yml
-    with:
-      matrix: ${{ needs.route.outputs.artifact_matrix }}
-      lane: pr
-      publish: false
-
   checks:
     name: Checks
-    needs: [route, gates, rust, node, scenarios, terraform, artifacts]
+    needs: [route, gates, rust, node, scenarios, terraform]
     if: always()
     uses: ./.github/workflows/_receipts.yml
     with:
@@ -143,4 +131,4 @@ jobs:
       node_matrix: ${{ needs.route.outputs.node_matrix }}
       terraform_matrix: ${{ needs.route.outputs.terraform_matrix }}
       required_job_results: >-
-        {"route":{"result":"${{ needs.route.result }}","allowSkipped":false},"gates":{"result":"${{ needs.gates.result }}","allowSkipped":false},"rust":{"result":"${{ needs.rust.result }}","allowSkipped":true},"node":{"result":"${{ needs.node.result }}","allowSkipped":false},"scenarios":{"result":"${{ needs.scenarios.result }}","allowSkipped":true},"terraform":{"result":"${{ needs.terraform.result }}","allowSkipped":true},"artifacts":{"result":"${{ needs.artifacts.result }}","allowSkipped":true}}
+        {"route":{"result":"${{ needs.route.result }}","allowSkipped":false},"gates":{"result":"${{ needs.gates.result }}","allowSkipped":false},"rust":{"result":"${{ needs.rust.result }}","allowSkipped":true},"node":{"result":"${{ needs.node.result }}","allowSkipped":false},"scenarios":{"result":"${{ needs.scenarios.result }}","allowSkipped":true},"terraform":{"result":"${{ needs.terraform.result }}","allowSkipped":true}}
