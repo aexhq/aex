@@ -132,26 +132,6 @@ variable "table_definitions" {
   }
 
   validation {
-    condition = alltrue(flatten([
-      for t in var.table_definitions : [
-        for g in coalesce(t.global_secondary_indexes, []) :
-        g.projection_type != "INCLUDE" || length(coalesce(g.non_key_attributes, [])) <= 20
-      ]
-    ]))
-    error_message = "An `INCLUDE` projection may name at most 20 non-key attributes; this is a DynamoDB hard limit."
-  }
-
-  validation {
-    condition = alltrue([
-      for t in var.table_definitions : sum(concat([0], [
-        for g in coalesce(t.global_secondary_indexes, []) :
-        g.projection_type == "INCLUDE" ? length(coalesce(g.non_key_attributes, [])) : 0
-      ])) <= 100
-    ])
-    error_message = "The non-key attributes projected by all `INCLUDE` indexes on one table may sum to at most 100; repeated names count once per index."
-  }
-
-  validation {
     condition = alltrue([
       for t in var.table_definitions :
       t.pinned_physical_name == null || can(regex("^[a-zA-Z0-9_.-]{3,255}$", coalesce(t.pinned_physical_name, "none")))

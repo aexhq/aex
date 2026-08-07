@@ -145,61 +145,6 @@ pub fn produce(
     authorities: EnvelopeAuthorities,
 ) -> Result<CompositionInputs> {
     validate_run(root, run)?;
-    validate_authorities(root, registry, &authorities)?;
-    let published = read_published_inputs(root, files, &authorities)?;
-    let base = release_base(run);
-    let source = PublicSource {
-        repository: run.repository.clone(),
-        commit_sha: run.commit_sha.clone(),
-        workflow_run_id: run.workflow_run_id.clone(),
-        workflow_run_attempt: run.workflow_run_attempt,
-    };
-
-    Ok(CompositionInputs {
-        contract_digest: contract_digest(root)?,
-        source,
-        release_tool: ReleaseToolIdentity {
-            version: run.release_tool_version.clone(),
-            digest: canon::digest_bytes(&published.tool_bytes),
-            size_bytes: published.tool_bytes.len() as u64,
-            uri: format!("{base}/aex-release-tool"),
-            target: "x86_64-unknown-linux-musl".to_owned(),
-        },
-        // Hosted deployables are built from this exact source checkout. The
-        // registry contains no npm-package unit, so an empty registry map is an
-        // explicit fact rather than a missing publication claim.
-        packages: BTreeMap::new(),
-        migrations: Migrations {
-            central: CentralMigrations {
-                bundle_digest: published.central_bundle_digest,
-                head: published.central_head,
-                admin_image_digest: authorities.central_admin_image_digest,
-            },
-            regional: RegionalMigrations {
-                bundle_digest: canon::digest_bytes(&published.regional_bytes),
-                bundle_size_bytes: published.regional_bytes.len() as u64,
-                bundle_uri: format!("{base}/regional-tables.json"),
-                definitions_digest: published.regional_identity.definitions_digest,
-                generation: published.regional_identity.generation,
-            },
-        },
-        infra: Infra {
-            module_bundle_digest: canon::digest_bytes(&published.module_bytes),
-            module_bundle_size_bytes: published.module_bytes.len() as u64,
-            module_bundle_uri: format!("{base}/terraform-modules.tar.gz"),
-            terraform_version: terraform_version(root)?,
-            provider_versions: provider_versions(root)?,
-        },
-        catalogs: authorities.catalogs,
-        policy: policy(root)?,
-    })
-}
-
-fn validate_authorities(
-    root: &Path,
-    registry: &Units,
-    authorities: &EnvelopeAuthorities,
-) -> Result<()> {
     require_sha256(
         &authorities.central_admin_image_digest,
         "composition-central-admin-digest",
@@ -225,23 +170,7 @@ fn validate_authorities(
             "the deployable registry contains an npm package but no registry publication identity was supplied",
         ));
     }
-    Ok(())
-}
 
-struct PublishedInputs {
-    tool_bytes: Vec<u8>,
-    module_bytes: Vec<u8>,
-    regional_bytes: Vec<u8>,
-    regional_identity: crate::publication::RegionalTablesIdentity,
-    central_bundle_digest: String,
-    central_head: String,
-}
-
-fn read_published_inputs(
-    root: &Path,
-    files: PublicInputFiles<'_>,
-    authorities: &EnvelopeAuthorities,
-) -> Result<PublishedInputs> {
     let tool_bytes = read(files.release_tool, "composition-release-tool-missing")?;
     let module_bytes = read(files.module_bundle, "composition-module-bundle-missing")?;
     let expected_modules = crate::publication::package_module_bundle(root)?;
@@ -252,7 +181,9 @@ fn read_published_inputs(
             "the acquired Terraform module bundle is not the deterministic bundle of this source commit",
         ));
     }
-    let (tracked_regional, regional_identity) = crate::publication::regional_tables_bundle(root)?;
+
+    let (tracked_regional, tracked_regional_identity) =
+        crate::publication::regional_tables_bundle(root)?;
     let regional_bytes = read(files.regional_tables, "composition-regional-tables-missing")?;
     if regional_bytes != tracked_regional {
         return Err(ToolError::single(
@@ -261,6 +192,7 @@ fn read_published_inputs(
             "the acquired regional table bundle is not the generated bundle in this source commit",
         ));
     }
+
     let central = crate::migration::build_bundle(root)?;
     let central_bytes = canon::to_file_bytes(&central)?;
     let central_bundle_digest = canon::digest_bytes(&central_bytes);
@@ -282,13 +214,56 @@ fn read_published_inputs(
             ),
         ));
     }
-    Ok(PublishedInputs {
-        tool_bytes,
-        module_bytes,
-        regional_bytes,
-        regional_identity,
-        central_bundle_digest,
-        central_head: central.head,
+
+    let base = release_base(run);
+    let contract_digest = contract_digest(root)?;
+    let provider_versions = provider_versions(root)?;
+    let policy = policy(root)?;
+    let terraform_version = terraform_version(root)?;
+    let source = PublicSource {
+        repository: run.repository.clone(),
+        commit_sha: run.commit_sha.clone(),
+        workflow_run_id: run.workflow_run_id.clone(),
+        workflow_run_attempt: run.workflow_run_attempt,
+    };
+
+    Ok(CompositionInputs {
+        contract_digest,
+        source,
+        release_tool: ReleaseToolIdentity {
+            version: run.release_tool_version.clone(),
+            digest: canon::digest_bytes(&tool_bytes),
+            size_bytes: tool_bytes.len() as u64,
+            uri: format!("{base}/aex-release-tool"),
+            target: "x86_64-unknown-linux-musl".to_owned(),
+        },
+        // Hosted deployables are built from this exact source checkout. The
+        // registry contains no npm-package unit, so an empty registry map is an
+        // explicit fact rather than a missing publication claim.
+        packages: BTreeMap::new(),
+        migrations: Migrations {
+            central: CentralMigrations {
+                bundle_digest: central_bundle_digest,
+                head: central.head,
+                admin_image_digest: authorities.central_admin_image_digest,
+            },
+            regional: RegionalMigrations {
+                bundle_digest: canon::digest_bytes(&regional_bytes),
+                bundle_size_bytes: regional_bytes.len() as u64,
+                bundle_uri: format!("{base}/regional-tables.json"),
+                definitions_digest: tracked_regional_identity.definitions_digest,
+                generation: tracked_regional_identity.generation,
+            },
+        },
+        infra: Infra {
+            module_bundle_digest: canon::digest_bytes(&module_bytes),
+            module_bundle_size_bytes: module_bytes.len() as u64,
+            module_bundle_uri: format!("{base}/terraform-modules.tar.gz"),
+            terraform_version,
+            provider_versions,
+        },
+        catalogs: authorities.catalogs,
+        policy,
     })
 }
 

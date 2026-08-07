@@ -39,12 +39,6 @@ Do not create or unpack root-level `.release-diagnostics/`,
 `release-diagnostics/`. Their ignore rules are defensive protection for
 legacy tooling and accidental downloads, not approved storage.
 
-The protected main artifact lane uses the deterministic CI-only path
-.tmp/model-catalog/collection.json for a downloaded, digest-bound release
-asset. It is not a durable catalog source, is never uploaded as raw scratch,
-and is discarded with the ephemeral runner; the collection's immutable release
-asset URI and SHA-256 are the only retained identities.
-
 ## Curated evidence
 
 Promote evidence to `references/` only when it will remain useful after the
@@ -67,17 +61,3 @@ dependency trees, credentials, signed URLs, or copied environment output.
 Every new generator must use an approved root and document its redaction,
 retention, and cleanup behavior here. Update the repository-hygiene validation
 in the same change if a new output class is genuinely required.
-
-## Terraform dependency identity
-
-Every Terraform root directly below `infra/modules/` or `infra/examples/`
-tracks its own `.terraform.lock.hcl`. The lockfile is source identity: CI runs
-`terraform init` before asserting that the checkout is still clean, and the
-receipt records the exact lockfile digest. Provider binaries under
-`.terraform/` remain ignored checkout-local state.
-
-When adding a Terraform root or changing its provider requirements, regenerate
-the lockfile for both `linux_amd64` (CI) and `windows_amd64` (the supported
-local checkout), then commit it with the root. The repository-hygiene gate
-enumerates Terraform roots from their checked-in `.tf` files and rejects any
-root whose lockfile is not Git-tracked.

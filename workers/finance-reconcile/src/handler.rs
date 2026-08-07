@@ -36,8 +36,6 @@ pub enum ReconcileResponse {
         stranded: usize,
         /// Effects escalated to an operator.
         escalated: usize,
-        /// Effects whose provider outcome was resolved durably.
-        resolved: usize,
     },
     /// The process has proved its own grants.
     Ready {
@@ -89,7 +87,6 @@ pub async fn handle<A: ReconcileAuthority, R: OperationsAlarm>(
                 lookup_required: report.lookup_required.len(),
                 stranded: report.stranded.len(),
                 escalated: report.escalated.len(),
-                resolved: report.resolved.len(),
             })
         }
     }

@@ -31,39 +31,17 @@ pub struct CertificationClaims {
     /// Immutable public location of the artifact bytes/OCI manifest.
     pub location: Location,
     /// SBOM format and immutable URI. Digest/count are recomputed.
-    #[serde(default)]
     pub sbom_format: String,
     /// Immutable SBOM URI.
-    #[serde(default)]
     pub sbom_uri: String,
     /// Licence policy verdict. Inventory digest is recomputed.
-    #[serde(default)]
     pub licenses: Licenses,
     /// Advisory scanner verdict.
-    #[serde(default)]
     pub vulnerabilities: Vulnerabilities,
     /// Attestation identity. Bundle digest is recomputed.
-    pub provenance: CertificationProvenance,
+    pub provenance: Provenance,
     /// Detached signature identity where policy requires one.
     pub signature: Signature,
-}
-
-/// Provenance identity claimed by the protected workflow.
-///
-/// The bundle digest is deliberately absent: [`certify`] computes it from the
-/// exact attestation bundle supplied alongside these claims.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct CertificationProvenance {
-    /// Predicate type.
-    pub predicate_type: String,
-    /// Attestation URI.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub uri: Option<String>,
-    /// Builder identity.
-    pub builder_id: String,
-    /// Whether the attestation verified.
-    pub attested: bool,
 }
 
 /// Files whose bytes back certification claims.
@@ -73,19 +51,12 @@ pub struct CertificationFiles<'a> {
     /// its identity is the registry manifest digest.
     pub artifact: Option<&'a Path>,
     /// `CycloneDX` JSON document.
-    pub sbom: Option<&'a Path>,
+    pub sbom: &'a Path,
     /// Full licence inventory emitted by the passing licence scan.
-    pub license_inventory: Option<&'a Path>,
-    /// Full vulnerability verdict emitted by the passing artifact scan.
-    pub vulnerability_verdict: Option<&'a Path>,
+    pub license_inventory: &'a Path,
     /// Downloaded GitHub attestation bundle whose verification produced the
     /// provenance claim.
     pub provenance_bundle: &'a Path,
-    /// Verified `cosign sign-blob` bundle for the downloadable Rust binary.
-    pub signature_bundle: Option<&'a Path>,
-    /// Startup-mode release: keep exact build/publication/provenance checks but
-    /// defer scanners and their receipts outside the release critical path.
-    pub defer_supply_chain: bool,
 }
 
 /// Fill an unearned local draft from immutable CI evidence and verify the
@@ -126,139 +97,55 @@ pub fn certify(
         crate::publication::verify_blob(artifact, &draft.output.digest, draft.output.size_bytes)?;
     }
 
-    let supply_files = if files.defer_supply_chain {
-        None
-    } else {
-        Some((
-            files.sbom.ok_or_else(|| {
-                ToolError::single(
-                    Exit::SupplyChainDenied,
-                    "certify-sbom-missing",
-                    "strict supply-chain certification requires an SBOM",
-                )
-            })?,
-            files.license_inventory.ok_or_else(|| {
-                ToolError::single(
-                    Exit::SupplyChainDenied,
-                    "certify-license-inventory-missing",
-                    "strict supply-chain certification requires a licence inventory",
-                )
-            })?,
-            files.vulnerability_verdict.ok_or_else(|| {
-                ToolError::single(
-                    Exit::SupplyChainDenied,
-                    "certify-vulnerability-verdict-missing",
-                    "strict supply-chain certification requires a vulnerability verdict",
-                )
-            })?,
-        ))
-    };
-
-    let (component_count, sbom_digest) = if let Some((sbom, _, _)) = supply_files {
-        let sbom_bytes = read(sbom, "certify-sbom-missing")?;
-        let sbom_value: serde_json::Value = serde_json::from_slice(&sbom_bytes).map_err(|err| {
-            ToolError::single(
-                Exit::SupplyChainDenied,
-                "certify-sbom-json",
-                format!("`{}` is not JSON: {err}", sbom.display()),
-            )
-        })?;
-        let is_named_component = |value: &serde_json::Value| {
-            value
-                .get("name")
-                .and_then(serde_json::Value::as_str)
-                .is_some_and(|name| !name.is_empty())
-        };
-        let detected_component_count = sbom_value
-            .get("components")
-            .and_then(serde_json::Value::as_array)
-            .map_or(0, |components| {
-                components
-                    .iter()
-                    .filter(|component| is_named_component(component))
-                    .count() as u64
-            });
-        let subject_component_count = u64::from(
-            sbom_value
-                .pointer("/metadata/component")
-                .is_some_and(is_named_component),
-        );
-        let component_count = detected_component_count + subject_component_count;
-        let cyclonedx_16 = sbom_value
-            .get("bomFormat")
+    let sbom_bytes = read(files.sbom, "certify-sbom-missing")?;
+    let sbom_value: serde_json::Value = serde_json::from_slice(&sbom_bytes).map_err(|err| {
+        ToolError::single(
+            Exit::SupplyChainDenied,
+            "certify-sbom-json",
+            format!("`{}` is not JSON: {err}", files.sbom.display()),
+        )
+    })?;
+    let component_count = sbom_value
+        .get("components")
+        .and_then(serde_json::Value::as_array)
+        .map_or(0, |components| components.len() as u64);
+    let cyclonedx_16 = sbom_value
+        .get("bomFormat")
+        .and_then(serde_json::Value::as_str)
+        == Some("CycloneDX")
+        && sbom_value
+            .get("specVersion")
             .and_then(serde_json::Value::as_str)
-            == Some("CycloneDX")
-            && sbom_value
-                .get("specVersion")
-                .and_then(serde_json::Value::as_str)
-                == Some("1.6");
-        let sbom_subject_bound = sbom_value
-            .pointer("/metadata/properties")
-            .and_then(serde_json::Value::as_array)
-            .is_some_and(|properties| {
-                properties.iter().any(|property| {
-                    property.get("name").and_then(serde_json::Value::as_str)
-                        == Some("aex:artifactSubjectDigest")
-                        && property.get("value").and_then(serde_json::Value::as_str)
-                            == Some(draft.artifact_subject_digest.as_str())
-                })
-            });
-        if component_count == 0 || !cyclonedx_16 || !sbom_subject_bound {
-            return Err(ToolError::single(
-                Exit::SupplyChainDenied,
-                "certify-sbom-empty",
-                "the supplied SBOM must be non-empty CycloneDX 1.6 bound to the exact artifact subject",
-            ));
-        }
-        let sbom_digest = canon::digest_bytes(&sbom_bytes);
-        let expected_sbom_uri = crate::publication::github_release_aux_uri(
-            &draft.source.repository,
-            &draft.source.commit_sha,
-            &claims.workflow.run_id,
-            u64::from(claims.workflow.run_attempt),
-            &unit.id,
-            &sbom_digest,
-            crate::publication::AuxiliaryAsset {
-                class: "sbom",
-                extension: "cdx.json",
-            },
-        )?;
-        if claims.sbom_format != "cyclonedx-1.6" || claims.sbom_uri != expected_sbom_uri {
-            return Err(ToolError::single(
-                Exit::SupplyChainDenied,
-                "certify-sbom-identity",
-                format!("the SBOM must be CycloneDX 1.6 at `{expected_sbom_uri}`"),
-            ));
-        }
-        (component_count, Some(sbom_digest))
-    } else {
-        (0, None)
-    };
-
-    let (license_bytes, vulnerability_bytes) =
-        if let Some((_, licenses, vulnerabilities)) = supply_files {
-            (
-                Some(read(licenses, "certify-license-inventory-missing")?),
-                Some(read(
-                    vulnerabilities,
-                    "certify-vulnerability-verdict-missing",
-                )?),
-            )
-        } else {
-            (None, None)
-        };
-    if let (Some(license_bytes), Some(vulnerability_bytes)) =
-        (license_bytes.as_deref(), vulnerability_bytes.as_deref())
-    {
-        validate_supply_documents(
-            unit,
-            &draft,
-            &claims.licenses,
-            &claims.vulnerabilities,
-            license_bytes,
-            vulnerability_bytes,
-        )?;
+            == Some("1.6");
+    if component_count == 0 || !cyclonedx_16 {
+        return Err(ToolError::single(
+            Exit::SupplyChainDenied,
+            "certify-sbom-empty",
+            "the supplied SBOM must be a CycloneDX 1.6 document with at least one component",
+        ));
     }
+    let sbom_digest = canon::digest_bytes(&sbom_bytes);
+    let expected_sbom_uri = crate::publication::github_release_aux_uri(
+        &draft.source.repository,
+        &draft.source.commit_sha,
+        &claims.workflow.run_id,
+        u64::from(claims.workflow.run_attempt),
+        &unit.id,
+        &sbom_digest,
+        crate::publication::AuxiliaryAsset {
+            class: "sbom",
+            extension: "cdx.json",
+        },
+    )?;
+    if claims.sbom_format != "cyclonedx-1.6" || claims.sbom_uri != expected_sbom_uri {
+        return Err(ToolError::single(
+            Exit::SupplyChainDenied,
+            "certify-sbom-identity",
+            format!("the SBOM must be CycloneDX 1.6 at `{expected_sbom_uri}`"),
+        ));
+    }
+
+    let license_bytes = read(files.license_inventory, "certify-license-inventory-missing")?;
     let provenance_bytes = read(files.provenance_bundle, "certify-provenance-bundle-missing")?;
 
     draft.source.workflow = claims.workflow.clone();
@@ -271,7 +158,7 @@ pub fn certify(
             "applying certification claims changed the artifact subject identity",
         ));
     }
-    let (receipt_refs, mut missing_receipts) = validate_available_receipts(
+    let receipt_refs = validate_receipts(
         &draft,
         unit,
         &claims.workflow,
@@ -279,39 +166,10 @@ pub fn certify(
         receipts,
         freshness,
     )?;
-    if files.defer_supply_chain {
-        missing_receipts.retain(|class| {
-            !matches!(
-                class.as_str(),
-                "deny" | "sbom" | "license" | "vulnerability"
-            )
-        });
-    }
-    if !missing_receipts.is_empty() {
-        return Err(ToolError::many(
-            Exit::EvidenceMissing,
-            missing_receipts
-                .into_iter()
-                .map(|required| {
-                    Violation::new(
-                        "certify-receipt-missing",
-                        format!("unit `{}` requires a passing `{required}` receipt", unit.id),
-                    )
-                })
-                .collect(),
-        ));
-    }
     let mut licenses = claims.licenses;
-    if let Some(license_bytes) = license_bytes.as_deref() {
-        licenses.inventory_digest = Some(canon::digest_bytes(license_bytes));
-    }
-    let provenance = Provenance {
-        predicate_type: claims.provenance.predicate_type,
-        bundle_digest: canon::digest_bytes(&provenance_bytes),
-        uri: claims.provenance.uri,
-        builder_id: claims.provenance.builder_id,
-        attested: claims.provenance.attested,
-    };
+    licenses.inventory_digest = Some(canon::digest_bytes(&license_bytes));
+    let mut provenance = claims.provenance;
+    provenance.bundle_digest = canon::digest_bytes(&provenance_bytes);
     if provenance.uri.as_deref().is_none_or(str::is_empty) {
         return Err(ToolError::single(
             Exit::ProvenanceMissing,
@@ -344,16 +202,15 @@ pub fn certify(
         ));
     }
 
-    let signature = validate_signature(unit, claims.signature, files.signature_bundle)?;
-    if !files.defer_supply_chain
-        && (!valid_sha256(&licenses.policy_digest)
-            || licenses.verdict != "allowed"
-            || !licenses.denials.is_empty()
-            || claims.vulnerabilities.scanner.is_empty()
-            || claims.vulnerabilities.database.is_empty()
-            || claims.vulnerabilities.scanned_at.is_empty()
-            || claims.vulnerabilities.unapproved_critical != 0
-            || claims.vulnerabilities.unapproved_high != 0)
+    validate_signature(unit, &claims.signature)?;
+    if !valid_sha256(&licenses.policy_digest)
+        || licenses.verdict != "allowed"
+        || !licenses.denials.is_empty()
+        || claims.vulnerabilities.scanner.is_empty()
+        || claims.vulnerabilities.database.is_empty()
+        || claims.vulnerabilities.scanned_at.is_empty()
+        || claims.vulnerabilities.unapproved_critical != 0
+        || claims.vulnerabilities.unapproved_high != 0
     {
         return Err(ToolError::single(
             Exit::SupplyChainDenied,
@@ -361,151 +218,25 @@ pub fn certify(
             "licence and vulnerability claims must carry exact passing scanner identities",
         ));
     }
-    if files.defer_supply_chain {
-        draft.sbom = Sbom {
-            format: "deferred-startup".to_owned(),
-            digest: String::new(),
-            uri: String::new(),
-            component_count: 0,
-        };
-        draft.licenses = Licenses {
-            policy_digest: String::new(),
-            verdict: "deferred-startup".to_owned(),
-            denials: Vec::new(),
-            inventory_digest: None,
-        };
-        draft.vulnerabilities = Vulnerabilities {
-            scanner: "deferred-startup".to_owned(),
-            database: String::new(),
-            scanned_at: String::new(),
-            unapproved_critical: 0,
-            unapproved_high: 0,
-            approved_exceptions: Vec::new(),
-        };
-        draft.supply_chain_deferred = true;
-    } else {
-        let sbom_digest = sbom_digest.ok_or_else(|| {
-            ToolError::single(
-                Exit::SupplyChainDenied,
-                "certify-sbom-missing",
-                "strict supply-chain certification did not compute an SBOM digest",
-            )
-        })?;
-        draft.sbom = Sbom {
-            format: claims.sbom_format,
-            digest: sbom_digest,
-            uri: claims.sbom_uri,
-            component_count,
-        };
-        draft.licenses = licenses;
-        draft.vulnerabilities = claims.vulnerabilities;
-        draft.supply_chain_deferred = false;
-    }
+    draft.sbom = Sbom {
+        format: claims.sbom_format,
+        digest: sbom_digest,
+        uri: claims.sbom_uri,
+        component_count,
+    };
+    draft.licenses = licenses;
+    draft.vulnerabilities = claims.vulnerabilities;
     draft.provenance = provenance;
-    draft.signature = signature;
+    draft.signature = claims.signature;
     draft.receipts = receipt_refs;
     let certified = draft.seal()?;
     certified.verify(files.artifact, unit.kind == "rust-binary")?;
     Ok(certified)
 }
 
-fn validate_supply_documents(
-    unit: &Unit,
-    draft: &ArtifactEnvelope,
-    licenses: &Licenses,
-    vulnerabilities: &Vulnerabilities,
-    license_bytes: &[u8],
-    vulnerability_bytes: &[u8],
-) -> Result<()> {
-    let license: serde_json::Value = serde_json::from_slice(license_bytes).map_err(|err| {
-        ToolError::single(
-            Exit::SupplyChainDenied,
-            "certify-license-inventory-json",
-            format!("the license inventory is not JSON: {err}"),
-        )
-    })?;
-    let components = license
-        .get("components")
-        .and_then(serde_json::Value::as_array);
-    let license_bound = license.get("schema").and_then(serde_json::Value::as_str)
-        == Some("aex.license-inventory.v1")
-        && license.get("unit").and_then(serde_json::Value::as_str) == Some(unit.id.as_str())
-        && license
-            .get("artifactSubjectDigest")
-            .and_then(serde_json::Value::as_str)
-            == Some(draft.artifact_subject_digest.as_str())
-        && license
-            .get("policyDigest")
-            .and_then(serde_json::Value::as_str)
-            == Some(licenses.policy_digest.as_str())
-        && components.is_some_and(|rows| {
-            !rows.is_empty()
-                && rows.iter().all(|row| {
-                    row.get("denied")
-                        .and_then(serde_json::Value::as_array)
-                        .is_some_and(Vec::is_empty)
-                })
-        });
-    if !license_bound {
-        return Err(ToolError::single(
-            Exit::SupplyChainDenied,
-            "certify-license-inventory-binding",
-            "the complete allowed license inventory must bind the exact unit, artifact subject, and policy",
-        ));
-    }
-
-    let verdict: serde_json::Value =
-        serde_json::from_slice(vulnerability_bytes).map_err(|err| {
-            ToolError::single(
-                Exit::SupplyChainDenied,
-                "certify-vulnerability-verdict-json",
-                format!("the vulnerability verdict is not JSON: {err}"),
-            )
-        })?;
-    let vulnerability_bound = verdict.get("schema").and_then(serde_json::Value::as_str)
-        == Some("aex.vulnerability-verdict.v1")
-        && verdict.get("unit").and_then(serde_json::Value::as_str) == Some(unit.id.as_str())
-        && verdict
-            .get("artifactSubjectDigest")
-            .and_then(serde_json::Value::as_str)
-            == Some(draft.artifact_subject_digest.as_str())
-        && verdict.get("scanner").and_then(serde_json::Value::as_str)
-            == Some(vulnerabilities.scanner.as_str())
-        && verdict.get("database").and_then(serde_json::Value::as_str)
-            == Some(vulnerabilities.database.as_str())
-        && verdict.get("scannedAt").and_then(serde_json::Value::as_str)
-            == Some(vulnerabilities.scanned_at.as_str())
-        && verdict
-            .get("unapprovedCritical")
-            .and_then(serde_json::Value::as_u64)
-            == Some(u64::from(vulnerabilities.unapproved_critical))
-        && verdict
-            .get("unapprovedHigh")
-            .and_then(serde_json::Value::as_u64)
-            == Some(u64::from(vulnerabilities.unapproved_high));
-    if !vulnerability_bound {
-        return Err(ToolError::single(
-            Exit::SupplyChainDenied,
-            "certify-vulnerability-verdict-binding",
-            "the vulnerability verdict must bind the exact unit, artifact subject, scanner, database, scan time, and severity counts",
-        ));
-    }
-    Ok(())
-}
-
-pub(crate) fn validate_draft(draft: &ArtifactEnvelope, unit: &Unit) -> Result<()> {
+fn validate_draft(draft: &ArtifactEnvelope, unit: &Unit) -> Result<()> {
     let mut violations = Vec::new();
     let recomputed_subject = draft.compute_artifact_subject_digest()?;
-    let resealed = draft.clone().seal()?;
-    if draft.envelope_digest != resealed.envelope_digest {
-        violations.push(Violation::new(
-            "certify-draft-envelope-digest-mismatch",
-            format!(
-                "draft envelopeDigest `{}` does not match the canonical document `{}`",
-                draft.envelope_digest, resealed.envelope_digest
-            ),
-        ));
-    }
     if draft.artifact_subject_digest != recomputed_subject {
         violations.push(Violation::new(
             "certify-artifact-subject-mismatch",
@@ -550,7 +281,7 @@ pub(crate) fn validate_draft(draft: &ArtifactEnvelope, unit: &Unit) -> Result<()
     }
 }
 
-pub(crate) fn validate_workflow(draft: &ArtifactEnvelope, workflow: &Workflow) -> Result<()> {
+fn validate_workflow(draft: &ArtifactEnvelope, workflow: &Workflow) -> Result<()> {
     let positive_run = !workflow.run_id.is_empty()
         && !workflow.run_id.starts_with('0')
         && workflow.run_id.bytes().all(|byte| byte.is_ascii_digit());
@@ -571,14 +302,14 @@ pub(crate) fn validate_workflow(draft: &ArtifactEnvelope, workflow: &Workflow) -
     Ok(())
 }
 
-pub(crate) fn validate_available_receipts(
+fn validate_receipts(
     draft: &ArtifactEnvelope,
     unit: &Unit,
     workflow: &Workflow,
     artifact_subject_digest: &str,
     receipts: &[Receipt],
     freshness: &FreshnessPolicy,
-) -> Result<(Vec<ReceiptRef>, Vec<String>)> {
+) -> Result<Vec<ReceiptRef>> {
     let mut by_class = BTreeMap::new();
     let mut violations = Vec::new();
     for receipt in receipts {
@@ -645,16 +376,18 @@ pub(crate) fn validate_available_receipts(
             ));
         }
     }
+    for required in &unit.required_receipts {
+        if !by_class.contains_key(required) {
+            violations.push(Violation::new(
+                "certify-receipt-missing",
+                format!("unit `{}` requires a passing `{required}` receipt", unit.id),
+            ));
+        }
+    }
     if !violations.is_empty() {
         return Err(ToolError::many(Exit::EvidenceMissing, violations));
     }
-    let missing = unit
-        .required_receipts
-        .iter()
-        .filter(|required| !by_class.contains_key(required.as_str()))
-        .cloned()
-        .collect();
-    let refs = by_class
+    Ok(by_class
         .into_values()
         .map(|receipt| ReceiptRef {
             class: receipt.class.clone(),
@@ -667,59 +400,23 @@ pub(crate) fn validate_available_receipts(
             },
             conclusion: receipt.conclusion.clone(),
         })
-        .collect();
-    Ok((refs, missing))
+        .collect())
 }
 
-fn validate_signature(
-    unit: &Unit,
-    mut signature: Signature,
-    signature_bundle: Option<&Path>,
-) -> Result<Signature> {
+fn validate_signature(unit: &Unit, signature: &Signature) -> Result<()> {
     let valid = if unit.kind == "rust-binary" {
-        let bundle = signature_bundle.ok_or_else(|| {
-            ToolError::single(
-                Exit::ProvenanceMissing,
-                "certify-signature-bundle",
-                "a downloadable Rust binary requires its verified Sigstore bundle",
-            )
-        })?;
-        let bytes = read(bundle, "certify-signature-bundle")?;
-        let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|err| {
-            ToolError::single(
-                Exit::ProvenanceMissing,
-                "certify-signature-bundle",
-                format!(
-                    "`{}` is not a Sigstore JSON bundle: {err}",
-                    bundle.display()
-                ),
-            )
-        })?;
-        signature.bundle_digest = Some(canon::digest_bytes(&bytes));
         signature.present
             && signature.kind == "sigstore-cosign"
             && signature.key_id.as_deref().is_some_and(|id| !id.is_empty())
-            && value.get("mediaType").and_then(serde_json::Value::as_str)
-                == Some("application/vnd.dev.sigstore.bundle.v0.3+json")
             && signature.bundle_digest.as_deref().is_some_and(valid_sha256)
     } else {
-        if signature_bundle.is_some() {
-            return Err(ToolError::single(
-                Exit::ProvenanceMissing,
-                "certify-signature-bundle",
-                format!(
-                    "unit kind `{}` does not accept a detached signature",
-                    unit.kind
-                ),
-            ));
-        }
         !signature.present
             && signature.kind == "none"
             && signature.key_id.is_none()
             && signature.bundle_digest.is_none()
     };
     if valid {
-        Ok(signature)
+        Ok(())
     } else {
         Err(ToolError::single(
             Exit::ProvenanceMissing,

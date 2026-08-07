@@ -132,21 +132,6 @@ fn every_valid_fixture_is_accepted_by_both_authorities() {
 }
 
 #[test]
-fn verification_statement_schema_requires_every_release_receipt_class() {
-    for missing in ["smoke", "e2e", "user"] {
-        let mut statement = valid_statement();
-        statement["receipts"]
-            .as_array_mut()
-            .expect("statement receipt array")
-            .retain(|receipt| receipt["class"] != missing);
-        assert!(
-            !schema_accepts(SchemaName::VerificationStatement, &statement),
-            "the verification statement schema accepted no `{missing}` receipt"
-        );
-    }
-}
-
-#[test]
 fn an_unknown_member_is_rejected_by_both_authorities() {
     for (name, schema, mut document, serde_accepts) in corpus() {
         document["surpriseKey"] = json!("value");
@@ -238,50 +223,6 @@ fn the_receipt_schema_forbids_an_observed_secret_canary() {
 }
 
 #[test]
-fn release_e2e_and_user_receipts_require_a_deployment_context_digest() {
-    for class in ["e2e", "user"] {
-        let mut receipt = valid_receipt();
-        receipt["class"] = json!(class);
-        receipt["layer"] = json!(class);
-        receipt["lane"] = json!("release");
-        receipt["subject"] = json!({ "releaseId": digest(0x11), "unitIds": [] });
-        assert!(
-            !schema_accepts(SchemaName::EvidenceReceipt, &receipt),
-            "a release {class} receipt without its VERIFYING continuation is not evidence"
-        );
-
-        receipt["subject"]["deploymentContextDigest"] = json!(digest(0x12));
-        assert!(schema_accepts(SchemaName::EvidenceReceipt, &receipt));
-    }
-}
-
-#[test]
-fn architecture_receipts_require_the_exact_arm_execution_shape() {
-    let mut receipt = valid_receipt();
-    receipt["class"] = json!("arch-qualification");
-    assert!(
-        !schema_accepts(SchemaName::EvidenceReceipt, &receipt),
-        "naming the class without exact execution evidence must fail closed"
-    );
-    receipt["architectureQualification"] = json!({
-        "artifactDigest": digest(0x32),
-        "target": "aarch64",
-        "hostIdentity": "github-hosted-ubuntu-arm64",
-        "executorIdentity": "native-linux-arm64",
-        "executorKind": "native",
-        "bootstrapResult": "passed",
-        "dependencyLoaderResult": "passed",
-        "observedAt": "2026-08-01T00:00:00Z",
-        "expiresAt": "2026-08-08T00:00:00Z",
-        "workloadSmokes": [{ "id": "bootstrap-start", "result": "passed" }]
-    });
-    assert!(schema_accepts(SchemaName::EvidenceReceipt, &receipt));
-
-    receipt["architectureQualification"]["target"] = json!("x86_64");
-    assert!(!schema_accepts(SchemaName::EvidenceReceipt, &receipt));
-}
-
-#[test]
 fn the_envelope_schema_forbids_a_mutable_location_and_a_dirty_tree() {
     let mut envelope = valid_envelope();
     envelope["output"]["location"]["immutable"] = json!(false);
@@ -290,74 +231,6 @@ fn the_envelope_schema_forbids_a_mutable_location_and_a_dirty_tree() {
     let mut envelope = valid_envelope();
     envelope["source"]["treeClean"] = json!(false);
     assert!(!schema_accepts(SchemaName::ArtifactEnvelope, &envelope));
-}
-
-#[test]
-fn deferred_supply_chain_schema_requires_flag_and_exact_sentinels() {
-    let mut deferred = valid_envelope();
-    deferred["supplyChainDeferred"] = json!(true);
-    deferred["sbom"] = json!({
-        "format": "deferred-startup",
-        "digest": "",
-        "uri": "",
-        "componentCount": 0
-    });
-    deferred["licenses"] = json!({
-        "policyDigest": "",
-        "verdict": "deferred-startup",
-        "denials": []
-    });
-    deferred["vulnerabilities"] = json!({
-        "scanner": "deferred-startup",
-        "database": "",
-        "scannedAt": "",
-        "unapprovedCritical": 0,
-        "unapprovedHigh": 0
-    });
-    let schema = schemas::document(SchemaName::ArtifactEnvelope).unwrap();
-    let validator = jsonschema::validator_for(&schema).unwrap();
-    let errors = validator
-        .iter_errors(&deferred)
-        .map(|error| error.to_string())
-        .collect::<Vec<_>>();
-    assert!(errors.is_empty(), "{errors:#?}");
-
-    let mut mixed = deferred.clone();
-    mixed["sbom"] = valid_envelope()["sbom"].clone();
-    assert!(!schema_accepts(SchemaName::ArtifactEnvelope, &mixed));
-
-    let mut strict_with_flag = valid_envelope();
-    strict_with_flag["supplyChainDeferred"] = json!(true);
-    assert!(!schema_accepts(
-        SchemaName::ArtifactEnvelope,
-        &strict_with_flag
-    ));
-
-    let mut false_with_sentinels = deferred.clone();
-    false_with_sentinels["supplyChainDeferred"] = json!(false);
-    assert!(!schema_accepts(
-        SchemaName::ArtifactEnvelope,
-        &false_with_sentinels
-    ));
-
-    let mut absent_with_sentinels = deferred.clone();
-    absent_with_sentinels
-        .as_object_mut()
-        .unwrap()
-        .remove("supplyChainDeferred");
-    assert!(!schema_accepts(
-        SchemaName::ArtifactEnvelope,
-        &absent_with_sentinels
-    ));
-
-    for class in ["deny", "sbom", "license", "vulnerability"] {
-        let mut with_scanner_receipt = deferred.clone();
-        with_scanner_receipt["receipts"][0]["class"] = json!(class);
-        assert!(
-            !schema_accepts(SchemaName::ArtifactEnvelope, &with_scanner_receipt),
-            "deferred envelope accepted `{class}` receipt"
-        );
-    }
 }
 
 #[test]
@@ -391,17 +264,6 @@ fn public_location_schemas_reject_wrong_hosts_tags_and_mutable_oci_refs() {
 
     let mut manifest = valid_manifest();
     manifest["units"]["regional-session-api"]["kind"] = json!("rust-oci-service");
-    manifest["units"]["regional-session-api"]
-        .as_object_mut()
-        .unwrap()
-        .remove("lambda");
-    manifest["units"]["regional-session-api"]["fargate"] = json!({
-        "cpu": 256,
-        "memoryMiB": 512,
-        "desiredCount": 1,
-        "stopTimeoutS": 30,
-        "port": 8080
-    });
     manifest["units"]["regional-session-api"]["location"] = json!({
         "kind": "oci",
         "uri": format!("oci://ghcr.io/aexhq/aex-units/regional-session-api@{digest}"),
@@ -412,49 +274,6 @@ fn public_location_schemas_reject_wrong_hosts_tags_and_mutable_oci_refs() {
         "oci://ghcr.io/aexhq/aex-units/regional-session-api:main@{digest}"
     ));
     assert!(!schema_accepts(SchemaName::CompositionManifest, &manifest));
-}
-
-#[test]
-fn manifest_unit_shapes_are_closed_and_kind_specific() {
-    let valid = valid_manifest();
-    assert!(schema_accepts(SchemaName::CompositionManifest, &valid));
-
-    let mut missing = valid.clone();
-    missing["units"]["regional-session-api"]
-        .as_object_mut()
-        .unwrap()
-        .remove("lambda");
-    assert!(!schema_accepts(SchemaName::CompositionManifest, &missing));
-
-    let mut extra = valid.clone();
-    extra["units"]["regional-session-api"]["lambda"]["invented"] = json!(1);
-    assert!(!schema_accepts(SchemaName::CompositionManifest, &extra));
-
-    let mut microvm = valid;
-    let unit = &mut microvm["units"]["regional-session-api"];
-    unit["kind"] = json!("microvm-image");
-    unit.as_object_mut().unwrap().remove("lambda");
-    unit["microvm"] = json!({
-        "variant": "2gb-browser",
-        "minimumMemoryMiB": 2048,
-        "browser": true
-    });
-    assert!(schema_accepts(SchemaName::CompositionManifest, &microvm));
-
-    let mut oneshot = valid_manifest();
-    let unit = &mut oneshot["units"]["regional-session-api"];
-    unit["kind"] = json!("rust-oci-task");
-    unit.as_object_mut().unwrap().remove("lambda");
-    unit["fargate"] = json!({
-        "cpu": 512,
-        "memoryMiB": 1024,
-        "desiredCount": 0,
-        "stopTimeoutS": 60,
-        "port": 0
-    });
-    assert!(schema_accepts(SchemaName::CompositionManifest, &oneshot));
-    oneshot["units"]["regional-session-api"]["fargate"]["desiredCount"] = json!(1);
-    assert!(!schema_accepts(SchemaName::CompositionManifest, &oneshot));
 }
 
 #[test]
@@ -472,6 +291,7 @@ fn the_binding_schema_has_no_field_a_secret_value_can_occupy() {
     let binding = json!({
         "schema": "aex.environment-binding.v1",
         "bindingDigest": digest(0x51),
+        "bindingRef": sha1(),
         "plane": "dev",
         "regions": ["eu-west-1"],
         "desiredReleaseId": digest(0x11),

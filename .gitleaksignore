@@ -7,51 +7,7 @@
 # finding absent here, an entry with no stated reason, and an entry no finding
 # matches any more.
 #
-# Full-history scan measured 2026-08-04 with gitleaks 8.30.1. Every entry below
-# is one reviewed fingerprint; no path, commit, regex, or rule is suppressed.
-
-# Malformed-workspace-key boundary test: the matched value is a deliberately invalid JSON fixture.
-7a954e15dc494c7d554920c592c1c54d1994471c:crates/aex-internal-contracts/tests/boundaries.rs:generic-api-key:146
-# Finance route conformance test: the matched idempotency header is deterministic test input.
-b9887671c77316eec6471216481f6f5b50f2ee62:services/finance-api/tests/conformance.rs:generic-api-key:189
-# Finance authorization conformance test: the matched credential is deterministic test input.
-b9887671c77316eec6471216481f6f5b50f2ee62:services/finance-api/tests/conformance.rs:generic-api-key:230
-# DeepSeek error-redaction test: the matched provider-shaped key is a synthetic leak canary.
-59a659743c1e93d4a604ac317c7a11f0454feb44:crates/aex-brain-provider-gateway/src/deepseek.rs:generic-api-key:2428
-# OpenAI stream-redaction test: the matched provider-shaped key is a synthetic leak canary.
-59a659743c1e93d4a604ac317c7a11f0454feb44:crates/aex-brain-provider-gateway/src/openai.rs:generic-api-key:3221
-# OpenAI error-redaction test: the matched provider-shaped key is a synthetic leak canary.
-59a659743c1e93d4a604ac317c7a11f0454feb44:crates/aex-brain-provider-gateway/src/openai.rs:generic-api-key:3320
-# Bounded-redaction test: the matched provider-shaped key is a synthetic truncation canary.
-d22645e139f5eaa394c0c1fe03f5248cdb70ab5b:crates/aex-brain-provider-gateway/src/redact.rs:generic-api-key:114
-# Split-boundary redaction test: the matched provider-shaped key is a synthetic truncation canary.
-d22645e139f5eaa394c0c1fe03f5248cdb70ab5b:crates/aex-brain-provider-gateway/src/redact.rs:generic-api-key:122
-# Terraform release-identity assertion: the matched value is a deterministic content digest.
-f1a4568deb20f15aef012e524a23f46549eb4943:infra/examples/central-application/tests/central-application.tftest.hcl:generic-api-key:127
-# SDK retry documentation: the matched value is a public idempotency-key example.
-60a3c39e74f803fb333a9a79373bbd9057ea4442:packages/sdk/docs/retries.md:generic-api-key:17
-# Historical SDK retry documentation: the matched value is the same public idempotency-key example.
-a1fa269c8b244ed9c704cacb6602303a9e7217c4:packages/sdk/docs/retries.md:generic-api-key:17
-# Deleted public-safe-payload test: the matched value named itself as a synthetic redaction fixture.
-4f1c4bb6953140f6917eb448bcc10dd9631ad450:packages/contracts/test/public-safe-payload.test.ts:generic-api-key:17
-# Deleted public-safe-payload test: the matched provider-shaped value was a synthetic fixture.
-4f1c4bb6953140f6917eb448bcc10dd9631ad450:packages/contracts/test/public-safe-payload.test.ts:generic-api-key:19
-# Deleted public-safe-payload test: the matched provider-shaped value was a synthetic fixture.
-4f1c4bb6953140f6917eb448bcc10dd9631ad450:packages/contracts/test/public-safe-payload.test.ts:generic-api-key:20
-# Deleted public-safe-payload test: the matched AWS-shaped value was a synthetic fixture.
-4f1c4bb6953140f6917eb448bcc10dd9631ad450:packages/contracts/test/public-safe-payload.test.ts:generic-api-key:25
-# Offline user test: the matched provider-shaped value is a synthetic sanitization canary.
-ceec85286b5d114bb7eceac641632c94380e891e:apps/user-tests/test/offline/live-session-start-result.test.ts:generic-api-key:52
-# Deleted webhook verifier test: the matched value was a deterministic signing fixture.
-e8b6b7d54187b2be212e6c1332cf86d84861b08d:packages/contracts/test/webhook-verify.test.ts:generic-api-key:48
-# Deleted SDK-secret test: the matched provider-shaped value was a synthetic redaction fixture.
-ebb3f0688f3954a50e3a1be75dd2e36d88ea1ca2:packages/contracts/test/sdk-secrets.test.ts:generic-api-key:27
-# Deleted SDK-secret test: both JWT-shaped matches on this line were synthetic redaction fixtures.
-ebb3f0688f3954a50e3a1be75dd2e36d88ea1ca2:packages/contracts/test/sdk-secrets.test.ts:jwt:24
-# Deleted SDK sanitizer test: the matched JWT-shaped value was a synthetic redaction fixture.
-ebb3f0688f3954a50e3a1be75dd2e36d88ea1ca2:packages/sdk/test/unit/fixtures-sanitize.test.ts:jwt:17
-# Deleted fake GCP auth helper: the matched test private key was an intentionally invalid fixture.
-13ce8748027f36fd750fc1a1186d7e55f122c79a:packages/shared/src/testing/fake-gcp-auth.ts:private-key:29
-# Deleted GCP redaction test: the matched test private key was the same intentionally invalid fixture.
-13ce8748027f36fd750fc1a1186d7e55f122c79a:packages/shared/test/redaction-gcp.test.ts:private-key:11
+# Current scan measured 2026-08-01 (gitleaks 8.30.1) after the Rust-native
+# rewrite: no finding remains. The two entries this file used to carry were
+# synthetic redaction-corpus fixtures in the deleted `packages/contracts` tree.
 

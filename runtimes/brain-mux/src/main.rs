@@ -13,7 +13,6 @@ pub mod compose;
 pub mod control;
 pub mod drain;
 pub mod health;
-pub mod inline_tools;
 pub mod measure;
 pub mod release_catalog;
 pub mod runtime;
@@ -48,24 +47,6 @@ pub struct Config {
     pub secret_custody_table: String,
     /// The exact KMS root key ARN wrapping workspace branch keys.
     pub secret_kms_key_arn: String,
-    /// Regional content bucket holding immutable fold snapshots.
-    pub content_bucket: String,
-    /// Account that must own the regional content bucket.
-    pub content_expected_owner: String,
-    /// Exact KMS key ARN used by the regional content bucket.
-    pub content_kms_key_arn: String,
-    /// Runtime-activity table used by Hands.
-    pub runtime_activity_table: String,
-    /// Compute-authority usage ingress used by runtime-control.
-    pub usage_compute_queue_url: String,
-    /// Storage-authority usage ingress used by runtime-control.
-    pub usage_storage_queue_url: String,
-    /// Runtime due-index shard count.
-    pub runtime_due_shards: u16,
-    /// Runtime due scan budget.
-    pub runtime_due_page: aex_runtime_control::store::PageBudget,
-    /// Exact pricing version attached to runtime usage drafts.
-    pub pricing_version: String,
     /// Maximum concurrently active activations for one task.
     pub budget: u32,
 }
@@ -107,9 +88,6 @@ pub enum RunError {
     /// Graceful drain could not prove every admitted activation stopped.
     #[error(transparent)]
     Drain(#[from] drain::DrainError),
-    /// The production tool peer set is incomplete or invalid.
-    #[error(transparent)]
-    Tools(#[from] wake::ToolCompositionError),
 }
 
 /// Environment variable naming the deployment plane.
@@ -129,26 +107,6 @@ pub const WORK_TABLE_VAR: &str = "AEX_WORK_TABLE";
 pub const SECRET_CUSTODY_TABLE_VAR: &str = "AEX_SECRET_CUSTODY_TABLE";
 /// Environment variable naming the root KMS key for workspace branch keys.
 pub const SECRET_KMS_KEY_ARN_VAR: &str = "AEX_SECRET_KMS_KEY_ARN";
-/// Environment variable naming the regional content bucket.
-pub const CONTENT_BUCKET_VAR: &str = "AEX_CONTENT_BUCKET";
-/// Environment variable naming the account that must own the content bucket.
-pub const CONTENT_EXPECTED_OWNER_VAR: &str = "AEX_CONTENT_EXPECTED_OWNER";
-/// Environment variable naming the regional content KMS key.
-pub const CONTENT_KMS_KEY_ARN_VAR: &str = "AEX_CONTENT_KMS_KEY_ARN";
-/// Environment variable naming the runtime-activity table.
-pub const RUNTIME_ACTIVITY_TABLE_VAR: &str = "AEX_RUNTIME_ACTIVITY_TABLE";
-/// Environment variable naming the compute usage ingress.
-pub const USAGE_COMPUTE_QUEUE_VAR: &str = "AEX_USAGE_COMPUTE_QUEUE_URL";
-/// Environment variable naming the storage usage ingress.
-pub const USAGE_STORAGE_QUEUE_VAR: &str = "AEX_USAGE_STORAGE_QUEUE_URL";
-/// Environment variable naming the runtime due-index shard count.
-pub const RUNTIME_DUE_SHARDS_VAR: &str = "AEX_RUNTIME_DUE_SHARDS";
-/// Environment variable naming the maximum items in one runtime due scan.
-pub const RUNTIME_DUE_PAGE_ITEMS_VAR: &str = "AEX_RUNTIME_DUE_PAGE_ITEMS";
-/// Environment variable naming the maximum reads in one runtime due scan.
-pub const RUNTIME_DUE_PAGE_READS_VAR: &str = "AEX_RUNTIME_DUE_PAGE_READS";
-/// Environment variable naming the exact runtime pricing version.
-pub const PRICING_VERSION_VAR: &str = "AEX_PRICING_VERSION";
 /// Environment variable naming maximum concurrently active activations for one task.
 pub const BUDGET_VAR: &str = "AEX_MAX_ACTIVE_ACTIVATIONS";
 
@@ -201,32 +159,7 @@ impl Config {
         let work_table = required(&lookup, WORK_TABLE_VAR)?;
         let secret_custody_table = required(&lookup, SECRET_CUSTODY_TABLE_VAR)?;
         let secret_kms_key_arn = required(&lookup, SECRET_KMS_KEY_ARN_VAR)?;
-        validate_kms_arn(SECRET_KMS_KEY_ARN_VAR, &secret_kms_key_arn, &region)?;
-        let content_bucket = required(&lookup, CONTENT_BUCKET_VAR)?;
-        let content_expected_owner = required(&lookup, CONTENT_EXPECTED_OWNER_VAR)?;
-        validate_account_id(CONTENT_EXPECTED_OWNER_VAR, &content_expected_owner)?;
-        let content_kms_key_arn = required(&lookup, CONTENT_KMS_KEY_ARN_VAR)?;
-        validate_kms_arn(CONTENT_KMS_KEY_ARN_VAR, &content_kms_key_arn, &region)?;
-        let runtime_activity_table = required(&lookup, RUNTIME_ACTIVITY_TABLE_VAR)?;
-        let usage_compute_queue_url = endpoint(&lookup, USAGE_COMPUTE_QUEUE_VAR, &region)?;
-        let usage_storage_queue_url = endpoint(&lookup, USAGE_STORAGE_QUEUE_VAR, &region)?;
-        if usage_compute_queue_url == usage_storage_queue_url {
-            return Err(ConfigError::Invalid {
-                name: USAGE_STORAGE_QUEUE_VAR,
-                reason: "compute and storage usage authorities cannot share one queue".to_owned(),
-            });
-        }
-        let runtime_due_shards = positive(&lookup, RUNTIME_DUE_SHARDS_VAR)?;
-        let runtime_due_page_items = positive(&lookup, RUNTIME_DUE_PAGE_ITEMS_VAR)?;
-        if runtime_due_page_items > 32 {
-            return Err(ConfigError::Invalid {
-                name: RUNTIME_DUE_PAGE_ITEMS_VAR,
-                reason: "must be at most 32 so one due page fits one provider-await wave"
-                    .to_owned(),
-            });
-        }
-        let runtime_due_page_reads = positive(&lookup, RUNTIME_DUE_PAGE_READS_VAR)?;
-        let pricing_version = required(&lookup, PRICING_VERSION_VAR)?;
+        validate_kms_arn(&secret_kms_key_arn, &region)?;
         let raw_budget = required(&lookup, BUDGET_VAR)?;
         let budget = raw_budget
             .parse::<u32>()
@@ -248,18 +181,6 @@ impl Config {
             work_table,
             secret_custody_table,
             secret_kms_key_arn,
-            content_bucket,
-            content_expected_owner,
-            content_kms_key_arn,
-            runtime_activity_table,
-            usage_compute_queue_url,
-            usage_storage_queue_url,
-            runtime_due_shards,
-            runtime_due_page: aex_runtime_control::store::PageBudget {
-                max_items: runtime_due_page_items,
-                max_reads: runtime_due_page_reads,
-            },
-            pricing_version,
             budget,
         })
     }
@@ -295,7 +216,7 @@ impl Config {
     }
 }
 
-fn validate_kms_arn(name: &'static str, value: &str, region: &str) -> Result<(), ConfigError> {
+fn validate_kms_arn(value: &str, region: &str) -> Result<(), ConfigError> {
     let parts = value.splitn(6, ':').collect::<Vec<_>>();
     let expected_partition = if region.starts_with("cn-") {
         "aws-cn"
@@ -315,55 +236,10 @@ fn validate_kms_arn(name: &'static str, value: &str, region: &str) -> Result<(),
         Ok(())
     } else {
         Err(ConfigError::Invalid {
-            name,
+            name: SECRET_KMS_KEY_ARN_VAR,
             reason: format!("expected a KMS key ARN in `{region}`"),
         })
     }
-}
-
-fn validate_account_id(name: &'static str, value: &str) -> Result<(), ConfigError> {
-    if value.len() == 12 && value.bytes().all(|byte| byte.is_ascii_digit()) {
-        Ok(())
-    } else {
-        Err(ConfigError::Invalid {
-            name,
-            reason: "expected a 12-digit AWS account id".to_owned(),
-        })
-    }
-}
-
-fn endpoint<F>(lookup: &F, name: &'static str, region: &str) -> Result<String, ConfigError>
-where
-    F: Fn(&str) -> Option<String>,
-{
-    let value = required(lookup, name)?;
-    if !value.starts_with("https://") || !value.contains(region) {
-        return Err(ConfigError::Invalid {
-            name,
-            reason: format!("expected an https endpoint in `{region}`, got `{value}`"),
-        });
-    }
-    Ok(value)
-}
-
-fn positive<F, T>(lookup: &F, name: &'static str) -> Result<T, ConfigError>
-where
-    F: Fn(&str) -> Option<String>,
-    T: core::str::FromStr + PartialEq + Default,
-    T::Err: core::fmt::Display,
-{
-    let raw = required(lookup, name)?;
-    let value = raw.parse::<T>().map_err(|error| ConfigError::Invalid {
-        name,
-        reason: format!("expected a positive integer, got `{raw}`: {error}"),
-    })?;
-    if value == T::default() {
-        return Err(ConfigError::Invalid {
-            name,
-            reason: "expected a positive integer, got `0`".to_owned(),
-        });
-    }
-    Ok(value)
 }
 
 fn required<F>(lookup: &F, name: &'static str) -> Result<String, ConfigError>
@@ -404,10 +280,7 @@ pub fn compose(config: &Config) -> Result<compose::Composition, RunError> {
     compose::Composition::build(
         bounds,
         compose::Envelope::candidate_launch(),
-        // Replay-body bytes are not an exact resident-size measurement for `FoldState`.
-        // Keep the production accelerator off until every retained heap byte can own a
-        // `WarmCacheBytes` reservation; authority always falls back to snapshot + journal.
-        cache::CachePolicy::disabled(),
+        cache::CachePolicy::default(),
         scale::ScaleBounds {
             min_tasks: 1,
             max_tasks: 32,
@@ -421,8 +294,8 @@ pub fn compose(config: &Config) -> Result<compose::Composition, RunError> {
 
 /// Runs `brain-mux` until it stops.
 ///
-/// Production authorities resolve before any thread begins serving. Once resolved, the
-/// dedicated control thread starts before work so reactor pressure cannot delay probes.
+/// Three schedulers, started in one order that matters: the control thread first, so the
+/// process can answer a probe before it can do anything else, then the main runtime.
 /// `SIGTERM` starts the drain sequence; the process exits zero once it has quiesced.
 ///
 /// # Errors
@@ -447,6 +320,17 @@ pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Resul
         ),
     );
 
+    // The control thread starts before anything that could saturate a scheduler. It runs a
+    // current-thread runtime on its own OS thread precisely so no amount of work on the main
+    // reactor can delay a probe (BC-20).
+    let health = std::sync::Arc::clone(&composition.health);
+    let control = std::thread::Builder::new()
+        .name("brain-mux-control".to_owned())
+        .spawn(move || serve_health(&health))
+        .map_err(|error| RunError::Runtime {
+            reason: format!("the control thread could not start: {error}"),
+        })?;
+
     let main_runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(composition.shape.worker_threads)
         .max_blocking_threads(composition.shape.max_blocking_threads)
@@ -457,21 +341,52 @@ pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Resul
             reason: format!("the main runtime could not start: {error}"),
         })?;
 
-    let PumpPorts { ports, bindings } = resolve_production_ports(config, &main_runtime)?;
+    // One SDK configuration feeds the store, queue, exact credential directory,
+    // and KMS decryptor. Provider composition is per-request tenant scoped; no
+    // workspace state is installed on the process.
+    let aws = main_runtime.block_on(wake::aws_bindings(
+        &config.region,
+        &config.wake_queue_url,
+        &config.resource,
+        &config.work_table,
+    ));
+    let provider = wake::provider_binding(
+        &aws.sdk,
+        std::sync::Arc::clone(&aws.store),
+        &config.secret_custody_table,
+        &config.secret_kms_key_arn,
+        config.secret_plane(),
+        config.placement_region(),
+        &config.credential_cache_partition(),
+    );
+    let (provider, mut bindings): (
+        std::sync::Arc<dyn aex_brain_application::ports::ProviderPort>,
+        wake::Bindings,
+    ) = match provider {
+        Ok(provider) => (provider, wake::Bindings::provider_ready()),
+        Err(error) => {
+            eprintln!("brain-mux: production provider binding unavailable: {error}");
+            (
+                std::sync::Arc::new(wake::AbsentProvider),
+                wake::Bindings::unavailable(),
+            )
+        }
+    };
 
+    let catalog = bind_release_catalog(&mut bindings)?;
+
+    // The process configuration parsed, but production authorities did not all bind. Do
+    // not translate "the binary started" into "secret bindings validated": readiness must
+    // remain false until the signed catalog/trust root, tool executors and Hands backend
+    // actually exist. Provider pin/custody/KMS composition is independently reported above.
     composition.health.schema_matched();
-    composition.health.catalog_verified();
-    composition.health.bindings_validated();
-
-    // The control thread starts only after production composition succeeded. This prevents a
-    // startup error from detaching a health thread that can never observe drain.
-    let health = std::sync::Arc::clone(&composition.health);
-    let control = std::thread::Builder::new()
-        .name("brain-mux-control".to_owned())
-        .spawn(move || serve_health(&health))
-        .map_err(|error| RunError::Runtime {
-            reason: format!("the control thread could not start: {error}"),
-        })?;
+    // Every peer that remains unproved is named rather than collapsed to a bare false.
+    for reason in bindings.unsatisfied() {
+        eprintln!("brain-mux: production binding unavailable: {reason}");
+    }
+    if bindings.catalog.is_ready() {
+        composition.health.catalog_verified();
+    }
 
     let drain_result = main_runtime.block_on(async {
         let sampler = tokio::spawn(sample_reactor_delay(std::sync::Arc::clone(&composition)));
@@ -479,7 +394,13 @@ pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Resul
             std::sync::Arc::clone(&composition),
             config.clone(),
             telemetry.clone(),
-            PumpPorts { ports, bindings },
+            PumpPorts {
+                store: aws.store,
+                queue: aws.queue,
+                provider,
+                catalog,
+                bindings,
+            },
         ));
         wait_for_shutdown().await;
         let stages = drain_sequence(&composition, pump).await;
@@ -495,88 +416,9 @@ pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Resul
     Ok(())
 }
 
-fn resolve_production_ports(
-    config: &Config,
-    runtime: &tokio::runtime::Runtime,
-) -> Result<PumpPorts, RunError> {
-    // One SDK configuration feeds every AWS client. Per-request tenant authority still comes
-    // from each durable ticket; no workspace state is installed on the process.
-    let aws = runtime.block_on(wake::aws_bindings(
-        &config.region,
-        &config.wake_queue_url,
-        &config.resource,
-        &config.work_table,
-    ));
-    let credentials = wake::credential_bindings(
-        &aws.sdk,
-        std::sync::Arc::clone(&aws.store),
-        &config.secret_custody_table,
-        &config.secret_kms_key_arn,
-        config.secret_plane(),
-        config.placement_region(),
-        &config.credential_cache_partition(),
-    );
-    let catalog = bind_release_catalog()?;
-    let snapshots = wake::snapshot_binding(
-        &aws.sdk,
-        aex_brain_store_aws::BrainTables {
-            session_authority: config.resource.clone(),
-            regional_work: config.work_table.clone(),
-        },
-        wake::SnapshotBinding {
-            bucket: config.content_bucket.clone(),
-            expected_owner: config.content_expected_owner.clone(),
-            kms_key_arn: config.content_kms_key_arn.clone(),
-            plane: config.plane.clone(),
-            region: config.region.clone(),
-        },
-    )
-    .map_err(|error| RunError::Runtime {
-        reason: format!("production fold-snapshot binding failed: {error}"),
-    })?;
-    let hands = wake::hands_binding(
-        &aws.sdk,
-        wake::HandsBinding {
-            region: config.placement_region(),
-            runtime_activity_table: config.runtime_activity_table.clone(),
-            session_authority_table: config.resource.clone(),
-            compute_queue_url: config.usage_compute_queue_url.clone(),
-            storage_queue_url: config.usage_storage_queue_url.clone(),
-            due_shards: config.runtime_due_shards,
-            due_page: config.runtime_due_page,
-            pricing_version: config.pricing_version.clone(),
-        },
-    )
-    .map_err(|error| RunError::Runtime {
-        reason: format!("production Hands binding failed: {error}"),
-    })?;
-
-    // The earned pure control subset is real, but catalog composition still
-    // refuses startup until every active BrainInline row and MCP authority has
-    // exact executor coverage. A partial executor can never make the task ready.
-    let tools = wake::ProductionToolExecutors {
-        brain_inline: Some(std::sync::Arc::new(inline_tools::BrainControlExecutor)),
-        managed_web: Some(std::sync::Arc::clone(&credentials.managed_web)),
-        mcp: None,
-        hands: Some(std::sync::Arc::clone(&hands.executor)),
-    }
-    .compose(catalog.retained_pins())?;
-    let peers = wake::ProductionPeers::new(
-        credentials.provider,
-        tools,
-        hands.backend,
-        std::sync::Arc::clone(&catalog) as std::sync::Arc<_>,
-        snapshots,
-    );
-    let ports = wake::production_ports(aws.store, aws.queue, peers);
-    Ok(PumpPorts {
-        ports,
-        bindings: wake::Bindings::production(),
-    })
-}
-
-fn bind_release_catalog()
--> Result<std::sync::Arc<aex_brain_provider_gateway::catalog_port::VerifiedCatalogPort>, RunError> {
+fn bind_release_catalog(
+    bindings: &mut wake::Bindings,
+) -> Result<std::sync::Arc<dyn aex_brain_application::ports::CatalogPort>, RunError> {
     // Catalog authority is build/release scoped, never tenant or runtime-env
     // scoped. The exact collection and bounded publisher trust-root set are
     // compiled together and the entire retained chain verifies before lookup.
@@ -584,22 +426,36 @@ fn bind_release_catalog()
         .map_err(|error| RunError::Runtime {
         reason: format!("the startup clock is outside the catalog timestamp range: {error}"),
     })?;
-    release_catalog::load(now)
-        .map(std::sync::Arc::new)
-        .map_err(|error| RunError::Runtime {
-            reason: format!("production model-catalog binding failed: {error}"),
-        })
+    match release_catalog::load(now) {
+        Ok(catalog) => {
+            *bindings = bindings.with_catalog_capability(catalog.is_service_capable());
+            Ok(std::sync::Arc::new(catalog))
+        }
+        Err(error @ release_catalog::ReleaseCatalogError::NoActiveModels) => {
+            eprintln!("brain-mux: production catalog binding unavailable: {error}");
+            *bindings = bindings.with_catalog_capability(false);
+            Ok(std::sync::Arc::new(wake::AbsentCatalog))
+        }
+        Err(error) => {
+            eprintln!("brain-mux: production catalog binding unavailable: {error}");
+            Ok(std::sync::Arc::new(wake::AbsentCatalog))
+        }
+    }
 }
 
 struct PumpPorts {
-    ports: aex_brain_application::activation::Ports,
+    store: std::sync::Arc<aex_brain_store_aws::BrainStore>,
+    queue: std::sync::Arc<aex_brain_store_aws::SqsWakeQueue>,
+    provider: std::sync::Arc<dyn aex_brain_application::ports::ProviderPort>,
+    catalog: std::sync::Arc<dyn aex_brain_application::ports::CatalogPort>,
     bindings: wake::Bindings,
 }
 
 /// Receives wakes and drives them until drain starts.
 ///
-/// The loop asks admission before every receive. Startup constructs this value only from a
-/// complete production peer set; no partial port set can reach this function.
+/// The loop asks admission before every receive, and admission is false while any binding is
+/// unsatisfied. Any absent or service-incapable catalog, tool executor, or Hands-runtime peer
+/// keeps the newly bound store idle rather than taking work that cannot complete.
 async fn pump(
     composition: std::sync::Arc<compose::Composition>,
     config: Config,
@@ -612,15 +468,11 @@ async fn pump(
     // target, so nested batch concurrency remains one and cannot multiply that target.
     policy.max_concurrent_drives = 1;
     let pump = wake::wake_loop(
-        ports.ports,
+        wake::partial_ports_with_catalog(ports.store, ports.queue, ports.provider, ports.catalog),
         policy,
         std::sync::Arc::clone(&composition.registry),
         std::sync::Arc::clone(&composition.drain),
         std::sync::Arc::clone(&composition.admission),
-        wake::ActivationAccelerators::new(
-            std::sync::Arc::clone(&composition.permits),
-            std::sync::Arc::clone(&composition.fold_cache) as std::sync::Arc<_>,
-        ),
         ports.bindings,
     );
     run_wake_scheduler(
@@ -915,12 +767,14 @@ async fn sample_reactor_delay(composition: std::sync::Arc<compose::Composition>)
 async fn wait_for_shutdown() {
     #[cfg(unix)]
     {
-        let Ok(mut terminate) =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        else {
-            let _ = tokio::signal::ctrl_c().await;
-            return;
-        };
+        let mut terminate =
+            match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+                Ok(signal) => signal,
+                Err(_) => {
+                    let _ = tokio::signal::ctrl_c().await;
+                    return;
+                }
+            };
         tokio::select! {
             _ = terminate.recv() => {}
             _ = tokio::signal::ctrl_c() => {}
@@ -960,15 +814,11 @@ fn main() -> std::process::ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        BUDGET_VAR, CONTENT_BUCKET_VAR, CONTENT_EXPECTED_OWNER_VAR, CONTENT_KMS_KEY_ARN_VAR,
-        Config, ConfigError, PLANE_VAR, PRICING_VERSION_VAR, REGION_VAR, RESOURCE_VAR,
-        RUNTIME_ACTIVITY_TABLE_VAR, RUNTIME_DUE_PAGE_ITEMS_VAR, RUNTIME_DUE_PAGE_READS_VAR,
-        RUNTIME_DUE_SHARDS_VAR, SECRET_CUSTODY_TABLE_VAR, SECRET_KMS_KEY_ARN_VAR,
-        USAGE_COMPUTE_QUEUE_VAR, USAGE_STORAGE_QUEUE_VAR, WAKE_QUEUE_VAR, WORK_TABLE_VAR, compose,
+        BUDGET_VAR, Config, ConfigError, PLANE_VAR, REGION_VAR, RESOURCE_VAR,
+        SECRET_CUSTODY_TABLE_VAR, SECRET_KMS_KEY_ARN_VAR, WAKE_QUEUE_VAR, WORK_TABLE_VAR, compose,
         emit_due_isolations,
     };
     use aex_brain_application::activation::PollReport;
-    use aex_brain_application::kernel::PermitKind;
     use aex_brain_application::ports::{DueRowIsolation, DueRowIsolationReason};
     use aex_platform_telemetry::{AttributeValue, InMemoryExporter};
     use std::collections::BTreeMap;
@@ -991,28 +841,6 @@ mod tests {
                 SECRET_KMS_KEY_ARN_VAR,
                 "arn:aws:kms:eu-west-1:123456789012:key/fixture".to_owned(),
             ),
-            (CONTENT_BUCKET_VAR, "aex-dev-content-fixture".to_owned()),
-            (CONTENT_EXPECTED_OWNER_VAR, "123456789012".to_owned()),
-            (
-                CONTENT_KMS_KEY_ARN_VAR,
-                "arn:aws:kms:eu-west-1:123456789012:key/content".to_owned(),
-            ),
-            (
-                RUNTIME_ACTIVITY_TABLE_VAR,
-                "aex-dev-runtime-activity".to_owned(),
-            ),
-            (
-                USAGE_COMPUTE_QUEUE_VAR,
-                "https://sqs.eu-west-1.amazonaws.com/1/aex-dev-usage-compute".to_owned(),
-            ),
-            (
-                USAGE_STORAGE_QUEUE_VAR,
-                "https://sqs.eu-west-1.amazonaws.com/1/aex-dev-usage-storage".to_owned(),
-            ),
-            (RUNTIME_DUE_SHARDS_VAR, "8".to_owned()),
-            (RUNTIME_DUE_PAGE_ITEMS_VAR, "32".to_owned()),
-            (RUNTIME_DUE_PAGE_READS_VAR, "100".to_owned()),
-            (PRICING_VERSION_VAR, "synthetic-zero-v1".to_owned()),
             (BUDGET_VAR, "8".to_owned()),
         ])
     }
@@ -1047,16 +875,6 @@ mod tests {
         assert_eq!(composition.admission.bounds().target, 48);
         assert_eq!(composition.policy.max_concurrent_drives, 48);
         assert_eq!(composition.shape.worker_threads, 2);
-        assert!(
-            composition.cache.is_disabled(),
-            "production must not retain folds without exact resident-byte permits"
-        );
-        assert_eq!(composition.fold_cache.bytes(), 0);
-        assert_eq!(
-            composition.permits.held(PermitKind::WarmCacheBytes),
-            0,
-            "a disabled cache owns no byte reservation"
-        );
 
         vars.insert(BUDGET_VAR, "49".to_owned());
         let config = read(&vars).expect("capacity is a composition concern");
@@ -1074,16 +892,6 @@ mod tests {
             WORK_TABLE_VAR,
             SECRET_CUSTODY_TABLE_VAR,
             SECRET_KMS_KEY_ARN_VAR,
-            CONTENT_BUCKET_VAR,
-            CONTENT_EXPECTED_OWNER_VAR,
-            CONTENT_KMS_KEY_ARN_VAR,
-            RUNTIME_ACTIVITY_TABLE_VAR,
-            USAGE_COMPUTE_QUEUE_VAR,
-            USAGE_STORAGE_QUEUE_VAR,
-            RUNTIME_DUE_SHARDS_VAR,
-            RUNTIME_DUE_PAGE_ITEMS_VAR,
-            RUNTIME_DUE_PAGE_READS_VAR,
-            PRICING_VERSION_VAR,
             BUDGET_VAR,
         ] {
             let mut vars = complete();

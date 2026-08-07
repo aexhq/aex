@@ -2,7 +2,7 @@
 //!
 //! An artifact's identity is its bytes. The envelope records everything that
 //! shaped those bytes — source commit, toolchain, lockfile, build argv,
-//! input-closure digest, base image — plus the startup supply-chain state and
+//! input-closure digest, base image — plus the supply-chain verdicts and the
 //! receipts earned before publication. Post-deployment evidence is deliberately
 //! absent: an artifact cannot contain proof that only exists once it is
 //! deployed, so smoke, e2e, user, capacity and soak receipts live in the
@@ -352,16 +352,14 @@ fn model_catalog_inputs(
         collection_sha256,
         tool_catalog_sha256,
     ] = bindings;
-    let catalog_present = [
+    let present = [
         trust_roots_json.is_some(),
         trust_roots_sha256.is_some(),
         collection_file.is_some(),
         collection_sha256.is_some(),
+        tool_catalog_sha256.is_some(),
     ];
-    if !catalog_present.iter().any(|value| *value) {
-        return Ok(None);
-    }
-    if !catalog_present.iter().all(|value| *value) || tool_catalog_sha256.is_none() {
+    if present.iter().any(|value| *value) && !present.iter().all(|value| *value) {
         return Err(ToolError::single(
             Exit::Usage,
             "model-catalog-build-binding-partial",
@@ -584,10 +582,6 @@ fn validate_model_catalog_build_inputs(inputs: &ModelCatalogBuildInputs) -> Resu
 /// # Errors
 /// Returns a classified refusal if the source omits or ambiguously declares
 /// the snapshot identity.
-///
-/// # Panics
-/// The regular expression is a compile-time constant; construction can only
-/// fail if this source is changed to contain an invalid expression.
 pub fn tool_catalog_digest(workspace_root: &Path) -> Result<String> {
     let path = workspace_root.join("crates/aex-brain-tool-catalog/src/catalog.rs");
     let source =
@@ -854,10 +848,6 @@ pub struct ArtifactEnvelope {
     pub licenses: Licenses,
     /// Advisory verdict.
     pub vulnerabilities: Vulnerabilities,
-    /// Whether startup-mode publication deliberately deferred dependency,
-    /// licence, vulnerability and SBOM analysis off the release critical path.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub supply_chain_deferred: bool,
     /// Build provenance.
     pub provenance: Provenance,
     /// Signature, where one applies.
@@ -1183,12 +1173,12 @@ pub struct Sbom {
 }
 
 /// Licence verdict.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Licenses {
     /// Digest of the policy that produced the verdict.
     pub policy_digest: String,
-    /// `allowed` when scanned, or the explicit startup deferral sentinel.
+    /// Always `allowed`; a denial is a failed build, not a recorded state.
     pub verdict: String,
     /// Always empty.
     pub denials: Vec<String>,
@@ -1212,7 +1202,7 @@ pub struct AdvisoryException {
 }
 
 /// Advisory verdict.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Vulnerabilities {
     /// Scanner identity.
@@ -1221,9 +1211,9 @@ pub struct Vulnerabilities {
     pub database: String,
     /// When the scan ran.
     pub scanned_at: String,
-    /// Zero for certified or deferred startup publication.
+    /// Always zero.
     pub unapproved_critical: u32,
-    /// Zero for certified or deferred startup publication.
+    /// Always zero.
     pub unapproved_high: u32,
     /// Time-boxed, attributed exceptions.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1576,69 +1566,7 @@ impl ArtifactEnvelope {
                 "the envelope carries no receipt; publication would prove nothing",
             ));
         }
-        let deferred_supply_chain_shape = self.sbom.format == "deferred-startup"
-            && self.sbom.digest.is_empty()
-            && self.sbom.uri.is_empty()
-            && self.sbom.component_count == 0
-            && self.licenses.policy_digest.is_empty()
-            && self.licenses.verdict == "deferred-startup"
-            && self.licenses.denials.is_empty()
-            && self.licenses.inventory_digest.is_none()
-            && self.vulnerabilities.scanner == "deferred-startup"
-            && self.vulnerabilities.database.is_empty()
-            && self.vulnerabilities.scanned_at.is_empty()
-            && self.vulnerabilities.unapproved_critical == 0
-            && self.vulnerabilities.unapproved_high == 0
-            && self.vulnerabilities.approved_exceptions.is_empty();
-        let scanned_supply_chain_shape =
-            matches!(self.sbom.format.as_str(), "spdx-2.3" | "cyclonedx-1.6")
-                && valid_sha256_digest(&self.sbom.digest)
-                && valid_sha256_digest(&self.licenses.policy_digest)
-                && self.licenses.verdict != "deferred-startup"
-                && self
-                    .licenses
-                    .inventory_digest
-                    .as_deref()
-                    .is_none_or(valid_sha256_digest)
-                && !self.vulnerabilities.scanner.is_empty()
-                && self.vulnerabilities.scanner != "deferred-startup"
-                && !self.vulnerabilities.database.is_empty()
-                && time::OffsetDateTime::parse(
-                    &self.vulnerabilities.scanned_at,
-                    &time::format_description::well_known::Rfc3339,
-                )
-                .is_ok();
-        if self.supply_chain_deferred && !deferred_supply_chain_shape {
-            structural.push(Violation::new(
-                "envelope-deferred-supply-chain-shape",
-                "a deferred supply chain must carry only the exact startup deferral sentinels",
-            ));
-        } else if !self.supply_chain_deferred && deferred_supply_chain_shape {
-            structural.push(Violation::new(
-                "envelope-deferred-supply-chain-flag",
-                "the startup deferral sentinels require supplyChainDeferred=true",
-            ));
-        } else if !self.supply_chain_deferred && !scanned_supply_chain_shape {
-            structural.push(Violation::new(
-                "envelope-scanned-supply-chain-shape",
-                "a non-deferred supply chain must carry complete scanner-backed evidence",
-            ));
-        }
         for receipt in &self.receipts {
-            if self.supply_chain_deferred
-                && matches!(
-                    receipt.class.as_str(),
-                    "deny" | "sbom" | "license" | "vulnerability"
-                )
-            {
-                structural.push(Violation::new(
-                    "envelope-deferred-supply-chain-receipt",
-                    format!(
-                        "deferred supply-chain envelope cannot claim a `{}` receipt",
-                        receipt.class
-                    ),
-                ));
-            }
             if receipt.conclusion != "passed" {
                 structural.push(Violation::new(
                     "envelope-receipt-not-passed",
@@ -1757,9 +1685,7 @@ impl ArtifactEnvelope {
         }
 
         let mut supply = Vec::new();
-        if !self.supply_chain_deferred
-            && (self.licenses.verdict != "allowed" || !self.licenses.denials.is_empty())
-        {
+        if self.licenses.verdict != "allowed" || !self.licenses.denials.is_empty() {
             supply.push(Violation::new(
                 "license-denied",
                 format!(
@@ -1769,9 +1695,7 @@ impl ArtifactEnvelope {
                 ),
             ));
         }
-        if !self.supply_chain_deferred
-            && (self.vulnerabilities.unapproved_critical > 0
-                || self.vulnerabilities.unapproved_high > 0)
+        if self.vulnerabilities.unapproved_critical > 0 || self.vulnerabilities.unapproved_high > 0
         {
             supply.push(Violation::new(
                 "advisory-denied",
@@ -1783,7 +1707,7 @@ impl ArtifactEnvelope {
                 ),
             ));
         }
-        if !self.supply_chain_deferred && self.sbom.component_count == 0 {
+        if self.sbom.component_count == 0 {
             supply.push(Violation::new(
                 "sbom-empty",
                 format!("unit `{}` has an SBOM with no components", self.unit.id),
@@ -2002,30 +1926,6 @@ alarm_spec = "regional-session-api"
             error.rules(),
             vec!["model-catalog-collection-digest-mismatch"]
         );
-    }
-
-    #[test]
-    fn a_tool_catalog_digest_alone_does_not_misreport_a_partial_model_catalog() {
-        let temp = tempfile::tempdir().unwrap();
-        let inputs = model_catalog_inputs(
-            temp.path(),
-            [
-                None,
-                None,
-                None,
-                None,
-                Some(
-                    "sha256:b3cae3e3b5cb64b3ca274f22f67c3ba1e305ac4ca14084967348f06d0ba0fdec"
-                        .to_owned(),
-                ),
-            ],
-        )
-        .expect("the independently derived tool catalog is not a partial model catalog");
-        assert!(inputs.is_none());
-
-        let error = publication_plan_with_model_catalog(&brain_unit(), inputs.as_ref())
-            .expect_err("publication must still fail closed without a signed model catalog");
-        assert_eq!(error.rules(), vec!["model-catalog-build-binding-missing"]);
     }
 
     #[test]

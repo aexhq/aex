@@ -30,10 +30,13 @@ use aex_wire::limits::LimitId;
 use proptest::prelude::*;
 use time::Duration;
 
-fn limits(materialized_agents: u64) -> EffectiveLimits {
-    [(LimitId::SessionMaterializedAgents, materialized_agents)]
-        .into_iter()
-        .collect()
+fn limits(concurrency: u64, depth: u64) -> EffectiveLimits {
+    [
+        (LimitId::SessionSubagentConcurrency, concurrency),
+        (LimitId::SessionSubagentDepth, depth),
+    ]
+    .into_iter()
+    .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -700,7 +703,7 @@ proptest! {
 
     /// 20 `agent_ceiling_effective`.
     #[test]
-    fn agent_ceiling_effective(ceiling in 2_u64..8, spawns in 1_usize..16) {
+    fn agent_ceiling_effective(ceiling in 1_u64..8, spawns in 1_usize..16) {
         let session = session_fixture();
         let root_agent = create_root(id::<AgentId>(1), &session, materialized_state(), moment(0)).agent;
         let mut live: Vec<AgentControl> = Vec::new();
@@ -712,19 +715,19 @@ proptest! {
                 id::<AgentId>(tag),
                 &root_agent,
                 &session,
-                &limits(ceiling),
+                &limits(ceiling, 8),
                 &live,
                 materialized_state(),
                 moment(1),
             ) {
                 Ok(commit) => {
                     admitted += 1;
-                    prop_assert!(admitted < ceiling);
+                    prop_assert!(admitted <= ceiling);
                     live.push(commit.agent);
                 }
                 Err(AgentError::CeilingExceeded { effective, .. }) => {
                     prop_assert_eq!(effective, ceiling);
-                    prop_assert_eq!(admitted + 1, ceiling);
+                    prop_assert_eq!(admitted, ceiling);
                 }
                 Err(other) => prop_assert!(false, "unexpected {other:?}"),
             }
@@ -746,7 +749,7 @@ proptest! {
                 id::<AgentId>(200),
                 &root_agent,
                 &session,
-                &limits(ceiling),
+                &limits(ceiling, 8),
                 &live,
                 materialized_state(),
                 moment(3),
@@ -768,7 +771,7 @@ proptest! {
                     id::<AgentId>(u8::try_from(index).expect("bounded") + 10),
                     &root_agent,
                     &session,
-                    &limits(8),
+                    &limits(8, 8),
                     &[],
                     materialized_state(),
                     moment(1),
@@ -807,7 +810,7 @@ fn a_stale_generation_cancellation_is_the_second_declared_no_op() {
         id::<AgentId>(10),
         &root_agent,
         &session,
-        &limits(4),
+        &limits(4, 4),
         &[],
         materialized_state(),
         moment(1),
