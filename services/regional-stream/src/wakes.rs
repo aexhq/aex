@@ -28,6 +28,14 @@ const RETRY_MIN: Duration = Duration::from_secs(1);
 const RETRY_MAX: Duration = Duration::from_secs(30);
 const SESSION_CACHE_ENTRIES: usize = 4_096;
 
+/// How many session-to-workspace resolutions one record batch holds open.
+///
+/// The bound converts the shared HTTP pool's appetite, not a table quota — an
+/// on-demand table has none. A serial resolver made a 1,000-record batch pay up
+/// to a thousand sequential point reads before the next `GetRecords`, which is
+/// latency the wake path exists to remove.
+const WORKSPACE_RESOLUTION_CONCURRENCY: usize = 8;
+
 /// Escalating retry delay for one shard reader.
 ///
 /// Only a successful `GetRecords` proves the shard readable, so only success
@@ -298,11 +306,20 @@ async fn read_shard(
                 break;
             };
             retry.success();
+            // Scope hints fire immediately and synchronously; only the
+            // session-to-workspace resolutions wait on the table, and those are
+            // deduplicated per batch and driven concurrently rather than one
+            // record at a time.
+            let mut sessions = BTreeSet::new();
             for record in output.records() {
                 if let Some(scope) = classify(record, spec.authority) {
-                    resolver.notify(&hub, scope).await;
+                    hub.notify(scope);
+                    if let ScopeKey::Session(session) = scope {
+                        sessions.insert(session);
+                    }
                 }
             }
+            resolver.notify_workspaces(&hub, sessions).await;
             let count = output.records().len();
             let Some(next) = output.next_shard_iterator().map(str::to_owned) else {
                 return;
@@ -357,13 +374,21 @@ impl WorkspaceResolver {
         }
     }
 
-    async fn notify(&self, hub: &WakeHub, scope: ScopeKey) {
-        hub.notify(scope);
-        let ScopeKey::Session(session) = scope else {
-            return;
-        };
-        if let Some(workspace) = self.workspace(session).await {
-            hub.notify(ScopeKey::Workspace(workspace));
+    /// Wakes the workspace scope of each distinct session in one batch.
+    ///
+    /// The resolutions are driven at a bounded width and in no particular
+    /// order: a wake is a keyed latency hint, never truth, so which workspace
+    /// is notified first cannot matter.
+    async fn notify_workspaces(&self, hub: &WakeHub, sessions: BTreeSet<SessionId>) {
+        use futures::StreamExt as _;
+
+        let resolutions = sessions.into_iter().map(|session| self.workspace(session));
+        let mut open =
+            futures::stream::iter(resolutions).buffer_unordered(WORKSPACE_RESOLUTION_CONCURRENCY);
+        while let Some(workspace) = open.next().await {
+            if let Some(workspace) = workspace {
+                hub.notify(ScopeKey::Workspace(workspace));
+            }
         }
     }
 
@@ -384,7 +409,11 @@ impl WorkspaceResolver {
             .table_name(self.table_name.as_ref())
             .key("pk", TableAttribute::S(pk))
             .key("sk", TableAttribute::S(sk.to_owned()))
-            .consistent_read(true)
+            // The session-to-workspace binding is written once at session
+            // creation and never changes, so a replica answer is as good as the
+            // leader's; a miss on a just-created session only delays a latency
+            // hint by one poll.
+            .consistent_read(false)
             .send()
             .await
             .ok()?
@@ -411,7 +440,7 @@ mod tests {
 
     use aex_observation_domain::keys::{BucketHour, ScopeKey, observation_pk};
     use aex_observation_domain::signal::Signal;
-    use aex_wire::ids::{PrefixedId as _, SessionId, Uuid7};
+    use aex_wire::ids::{PrefixedId as _, SessionId, Uuid7, WorkspaceId};
     use aws_sdk_dynamodbstreams::types::{AttributeValue, Record, StreamRecord, StreamViewType};
     use aws_smithy_http_client::test_util::{ReplayEvent, StaticReplayClient, capture_request};
     use aws_smithy_types::body::SdkBody;
@@ -529,6 +558,103 @@ mod tests {
 
     fn session(seed: u8) -> SessionId {
         SessionId::from_uuid7(Uuid7::compose(1, [seed; 10]))
+    }
+
+    #[tokio::test]
+    async fn a_session_record_wakes_its_workspace_through_one_eventual_binding_read() {
+        let session_id = session(3);
+        let workspace_id = WorkspaceId::from_uuid7(Uuid7::compose(1, [7; 10]));
+        let records = serde_json::json!({
+            "Records": [{
+                "dynamodb": {
+                    "Keys": {
+                        "pk": {"S": format!("SESSION#{session_id}")},
+                        "sk": {"S": "EVT#00000000000000000001"}
+                    },
+                    "StreamViewType": "KEYS_ONLY"
+                }
+            }]
+        })
+        .to_string();
+        let client = streams_client(vec![
+            event(200, r#"{"ShardIterator":"iter"}"#),
+            // A terminal page: records without a next iterator end the shard.
+            event(200, &records),
+        ]);
+
+        let head = serde_json::json!({
+            "Item": {
+                "itemType": {"S": "session_head"},
+                "workspaceId": {"S": workspace_id.to_string()}
+            }
+        })
+        .to_string();
+        let table_replay = StaticReplayClient::new(vec![ReplayEvent::new(
+            http::Request::builder()
+                .method("POST")
+                .uri("https://dynamodb.eu-west-1.amazonaws.com/")
+                .body(SdkBody::empty())
+                .expect("a request"),
+            http::Response::builder()
+                .status(200)
+                .body(SdkBody::from(head))
+                .expect("a response"),
+        )]);
+        let table = aws_sdk_dynamodb::Client::from_conf(
+            aws_sdk_dynamodb::config::Builder::new()
+                .behavior_version(aws_sdk_dynamodb::config::BehaviorVersion::latest())
+                .region(aws_sdk_dynamodb::config::Region::new("eu-west-1"))
+                .credentials_provider(aws_sdk_dynamodb::config::Credentials::new(
+                    "AKIDTESTTESTTESTTEST",
+                    "test-secret",
+                    None,
+                    None,
+                    "aex-tests",
+                ))
+                .http_client(table_replay.clone())
+                .build(),
+        );
+
+        let hub = WakeHub::default();
+        let mut session_wake = hub.subscribe(ScopeKey::Session(session_id));
+        let mut workspace_wake = hub.subscribe(ScopeKey::Workspace(workspace_id));
+
+        read_shard(
+            client,
+            StreamSpec {
+                arn: "arn:aws:dynamodb:eu-west-1:000000000000:table/t/stream/1".to_owned(),
+                authority: AuthorityStream::Session,
+            },
+            "shard-0".to_owned(),
+            hub.clone(),
+            WorkspaceResolver::new(table, "session-authority".to_owned()),
+            Arc::new(ReadCounters::default()),
+        )
+        .await;
+
+        assert!(session_wake.wait(Duration::from_millis(1)).await);
+        assert!(
+            workspace_wake.wait(Duration::from_millis(1)).await,
+            "the workspace scope is woken from the resolved binding"
+        );
+
+        let request = table_replay
+            .actual_requests()
+            .next()
+            .expect("one binding read");
+        let body: serde_json::Value =
+            serde_json::from_slice(request.body().bytes().expect("the body is in memory"))
+                .expect("the request body is JSON");
+        assert_eq!(
+            body["ConsistentRead"], false,
+            "the session-to-workspace binding is immutable; a replica answer \
+             is as good as the leader's"
+        );
+        assert_eq!(
+            body["Key"]["pk"]["S"].as_str(),
+            Some(format!("SESSION#{session_id}").as_str())
+        );
+        assert_eq!(body["Key"]["sk"]["S"], "HEAD");
     }
 
     fn record(pk: String, sk: &str, view: StreamViewType) -> Record {
