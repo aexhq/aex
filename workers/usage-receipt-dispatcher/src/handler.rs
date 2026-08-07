@@ -181,7 +181,7 @@ mod tests {
 
     /// A stop instant no test drain reaches on its own.
     fn no_deadline() -> Instant {
-        Instant::now() + Duration::from_secs(60)
+        Instant::now() + Duration::from_mins(1)
     }
 
     /// A stop instant that has already passed when the drain starts.
