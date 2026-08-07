@@ -210,7 +210,7 @@ impl OtlpRequest {
         let now = Timestamp::from_datetime_trunc_ms(time::OffsetDateTime::now_utc())
             .map_err(|_| WireError::new(ErrorCode::InternalError))?;
         let request = AdmissionRequest {
-            batch_id: mint_batch_id(),
+            batch_id: batch_id_for(&digest),
             organization: self.authorized.auth.organization_id,
             workspace: self.authorized.auth.workspace_id,
             scope: scope_key,
@@ -373,11 +373,32 @@ fn principal_id(cx: &RequestContext) -> String {
     serde_json::to_string(&cx.principal).unwrap_or_else(|_| "unknown".to_owned())
 }
 
-/// Mints one batch identity.
-fn mint_batch_id() -> TelemetryBatchId {
-    let bytes = *uuid::Uuid::now_v7().as_bytes();
-    let id = Uuid7::from_bytes(bytes).unwrap_or_else(|_| Uuid7::compose(0, [0u8; 10]));
-    TelemetryBatchId::from_uuid7(id)
+/// Derives the batch identity from the batch intent digest.
+///
+/// Content-addressed on purpose. An exporter retry after a lost response — and
+/// a retry of this service's own retryable `503` — re-presents the same bound
+/// content, so deriving the identity from the intent digest makes every
+/// equal-content retry converge on one `(workspace, batchId)` receipt row.
+/// That convergence is what makes the staged-commit idempotency machinery
+/// reachable at all: a clock-minted id gave every retry a fresh receipt, new
+/// sequences and undedupable duplicates.
+///
+/// The value still parses as a `UUIDv7`, but its embedded 48-bit timestamp is
+/// digest bytes, not a clock reading. Nothing reads it as time or as an order:
+/// the receipt and staging rows key on the `BATCH#` partition alone, the spool
+/// sort key orders by the admission wall clock, and the observation order
+/// tuple (`aex-observation-domain::order`) uses ids only as a tie-break after
+/// its own time component. `stable_observation_id` inherits the same
+/// pseudo-time, with the same non-dependence.
+fn batch_id_for(digest: &aex_wire::idempotency::IntentDigest) -> TelemetryBatchId {
+    let bytes = digest.as_bytes();
+    let mut millis = 0u64;
+    for byte in &bytes[..6] {
+        millis = (millis << 8) | u64::from(*byte);
+    }
+    let mut entropy = [0u8; 10];
+    entropy.copy_from_slice(&bytes[6..16]);
+    TelemetryBatchId::from_uuid7(Uuid7::compose(millis, entropy))
 }
 
 /// The `regional-secret-custody` redaction manifest reader.
@@ -477,10 +498,12 @@ fn parse_entries(item: &HashMap<String, AttributeValue>) -> Vec<SecretDigest> {
 mod tests {
     use std::time::Duration;
 
+    use aex_observation_domain::canonical::{BatchBinding, CanonicalValue, batch_intent_digest};
     use aex_otlp_admission::{MemoryBudget, OtlpError};
     use aex_wire::error::ErrorCode;
+    use aex_wire::ids::PrefixedId as _;
 
-    use super::{CustodyManifests, authority_error, otlp_error, reserve};
+    use super::{CustodyManifests, authority_error, batch_id_for, otlp_error, reserve};
     use crate::authority::AuthorityError;
 
     #[test]
@@ -552,10 +575,58 @@ mod tests {
 
     #[test]
     fn the_manifest_key_is_the_published_redact_family() {
-        use aex_wire::ids::PrefixedId as _;
         let session = aex_wire::ids::SessionId::from_uuid7(aex_wire::Uuid7::compose(1, [4; 10]));
         let key = CustodyManifests::partition_key(session);
         assert!(key.starts_with("REDACT#"), "{key}");
         assert!(key.ends_with(&session.to_string()));
+    }
+
+    /// The binding of one fixture batch.
+    fn binding() -> BatchBinding<'static> {
+        BatchBinding {
+            principal_id: "{\"kind\":\"workspaceKey\"}",
+            method: "POST",
+            canonical_route: "/api/telemetry/otlp/v1/logs",
+            workspace_id: "wsp_01h455vb4pex5vsknk084sn02q",
+            scope: "WS#wsp_01h455vb4pex5vsknk084sn02q",
+        }
+    }
+
+    #[test]
+    fn an_equal_content_retry_converges_on_one_batch_identity() {
+        // The whole idempotency guarantee hangs on this derivation: the same
+        // bound content — same principal, route, workspace, scope and bodies —
+        // must resolve to the same `(workspace, batchId)` receipt on every
+        // retry, and different content must not.
+        let bodies = vec![CanonicalValue::Str("one log line".into())];
+        let first = batch_intent_digest(&binding(), &bodies).expect("a digest");
+        let second = batch_intent_digest(&binding(), &bodies).expect("a digest");
+        assert_eq!(batch_id_for(&first), batch_id_for(&second));
+
+        let other_bodies = vec![CanonicalValue::Str("a different line".into())];
+        let different = batch_intent_digest(&binding(), &other_bodies).expect("a digest");
+        assert_ne!(batch_id_for(&first), batch_id_for(&different));
+
+        let reordered =
+            batch_intent_digest(&binding(), &[other_bodies[0].clone(), bodies[0].clone()])
+                .expect("a digest");
+        assert_ne!(
+            batch_id_for(&different),
+            batch_id_for(&reordered),
+            "the observation list is ordered; reordering is a different batch"
+        );
+    }
+
+    #[test]
+    fn a_derived_batch_identity_is_a_parseable_uuid7() {
+        // `Uuid7::compose` forces the version and variant nibbles, so a digest
+        // -derived identity must survive the same encode/parse round trip a
+        // clock-minted one did.
+        let digest =
+            batch_intent_digest(&binding(), &[CanonicalValue::Str("x".into())]).expect("a digest");
+        let id = batch_id_for(&digest);
+        let parsed = aex_wire::ids::TelemetryBatchId::parse(id.encode().as_str())
+            .expect("a derived identity round-trips");
+        assert_eq!(parsed, id);
     }
 }
