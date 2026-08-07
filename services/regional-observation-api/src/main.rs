@@ -223,9 +223,23 @@ fn release_digest() -> String {
 
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
+    // Telemetry first: a configuration refusal must reach the wire, or a
+    // crash-looping deployment is visible only to whoever tails stderr.
+    let settings = aex_platform_telemetry::Settings::default();
+    let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
     let config = match Config::from_env() {
         Ok(config) => config,
         Err(error) => {
+            telemetry.emit(
+                aex_platform_telemetry::Record::event(
+                    aex_telemetry_schema::generated::EVENT_AEX_PROCESS_CONFIGURATION_REJECTED,
+                )
+                .with(
+                    aex_telemetry_schema::generated::AEX_DEPLOYABLE,
+                    "regional-observation-api",
+                ),
+            );
+            let _ = telemetry.flush(settings.flush_deadline);
             eprintln!("regional-observation-api: refusing to start: {error}");
             eprintln!(
                 "regional-observation-api: required configuration: {}",
@@ -234,8 +248,6 @@ async fn main() -> std::process::ExitCode {
             return std::process::ExitCode::FAILURE;
         }
     };
-    let settings = aex_platform_telemetry::Settings::default();
-    let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
     telemetry.emit(
         aex_platform_telemetry::Record::event(
             aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
