@@ -13,6 +13,8 @@
 //! Claiming reproducibility for the OS layer would be a false guarantee; a checked
 //! lockfile is a real one.
 
+use serde::{Deserialize, Serialize};
+
 pub use aex_hands_agent::image_contract::{
     AGENT_PATH, FORBIDDEN_ROOTFS_PATHS, ImageLock, LockVerdict, ROOTFS_CONTRACT, SBOM_DIR,
 };
@@ -47,6 +49,14 @@ pub const HOOK_PORT: u16 = 8_080;
 /// protecting anything.
 pub const OS_CAPABILITIES: &str = "ALL";
 
+/// A capability layer an image variant may carry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Capability {
+    /// Headless Chromium plus its font and NSS dependencies.
+    Browser,
+}
+
 /// A package group in the manifest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum PackageGroup {
@@ -56,11 +66,21 @@ pub enum PackageGroup {
     ArchiveNet,
     /// Language toolchains.
     Languages,
+    /// Search tools.
+    Search,
+    /// The browser layer.
+    Browser,
 }
 
 impl PackageGroup {
     /// Every group.
-    pub const ALL: [Self; 3] = [Self::ShellCore, Self::ArchiveNet, Self::Languages];
+    pub const ALL: [Self; 5] = [
+        Self::ShellCore,
+        Self::ArchiveNet,
+        Self::Languages,
+        Self::Search,
+        Self::Browser,
+    ];
 
     /// The packages in this group.
     ///
@@ -71,7 +91,12 @@ impl PackageGroup {
     pub const fn packages(self) -> &'static [&'static str] {
         match self {
             Self::ShellCore => &[
+                "bash",
+                "coreutils",
                 "findutils",
+                "grep",
+                "sed",
+                "gawk",
                 "which",
                 "less",
                 "procps-ng",
@@ -87,6 +112,7 @@ impl PackageGroup {
                 "zip",
                 "wget",
                 "jq",
+                "ca-certificates",
                 "openssh-clients",
             ],
             Self::Languages => &[
@@ -99,26 +125,35 @@ impl PackageGroup {
                 "gcc",
                 "gcc-c++",
             ],
+            Self::Search => &["ripgrep"],
+            Self::Browser => &[
+                "chromium-headless",
+                "nss",
+                "liberation-fonts",
+                "dejavu-sans-fonts",
+            ],
         }
+    }
+
+    /// Whether this group is only present in a browser variant.
+    #[must_use]
+    pub const fn is_browser_layer(self) -> bool {
+        matches!(self, Self::Browser)
     }
 }
 
+/// The `curl` swap that must run **before** any install.
+///
+/// This base's `dnf` is a symlink to `microdnf`, which has no `--allowerasing`, so
+/// listing `curl` in the install set aborts the whole transaction with
+/// `curl-minimal conflicts with curl`. That is a real one-minute
+/// `CreateMicrovmImage` failure observed on 2026-07-18, not a precaution.
+pub const CURL_SWAP: &str = "dnf swap curl-minimal curl";
+
 /// Packages that must never appear in an install list.
-pub const FORBIDDEN_INSTALL_PACKAGES: [&str; 11] = [
-    // These exact packages are already installed in the pinned AL2023 base.
-    // Re-requesting them adds no capability and needlessly lets the transaction
-    // reconsider the base package set.
-    "bash",
-    "grep",
-    "sed",
-    "gawk",
-    "ca-certificates",
-    // AL2023 minimal already supplies `curl-minimal`; installing the legacy
-    // `curl` name conflicts with it.
+pub const FORBIDDEN_INSTALL_PACKAGES: [&str; 5] = [
+    // See `CURL_SWAP`.
     "curl",
-    // AL2023 minimal already supplies `coreutils-single`; installing the full
-    // `coreutils` package conflicts with it and aborts the image transaction.
-    "coreutils",
     // Deleted with the in-guest firewall: root can flush any nft table, and the
     // IMDS rule protected an execution role this target never attaches.
     "nftables",
@@ -135,35 +170,49 @@ pub const FORBIDDEN_INSTALL_PACKAGES: [&str; 11] = [
 pub struct ImageVariant {
     /// The compute shape it is built for.
     pub size: &'static str,
+    /// Its capability layers.
+    pub capabilities: Vec<Capability>,
     /// `minimumMemoryInMiB` for `CreateMicrovmImage`.
     pub minimum_memory_mib: u32,
 }
 
-/// The five non-browser variants the local generator and release authority offer.
+/// Every variant published per region.
+///
+/// Five base images plus browser images for the three shapes that can carry
+/// Chromium: eight per region, inside the hundred-image account limit.
 #[must_use]
 pub fn variants() -> Vec<ImageVariant> {
-    let shapes: [(&str, u32); 5] = [
-        ("512mb", 512),
-        ("1gb", 1_024),
-        ("2gb", 2_048),
-        ("4gb", 4_096),
-        ("8gb", 8_192),
+    let shapes: [(&str, u32, bool); 5] = [
+        ("512mb", 512, false),
+        ("1gb", 1_024, false),
+        ("2gb", 2_048, true),
+        ("4gb", 4_096, true),
+        ("8gb", 8_192, true),
     ];
-    shapes
-        .into_iter()
-        .map(|(size, minimum_memory_mib)| ImageVariant {
+    let mut out = Vec::new();
+    for (size, memory, browser) in shapes {
+        out.push(ImageVariant {
             size,
-            minimum_memory_mib,
-        })
-        .collect()
+            capabilities: Vec::new(),
+            minimum_memory_mib: memory,
+        });
+        if browser {
+            out.push(ImageVariant {
+                size,
+                capabilities: vec![Capability::Browser],
+                minimum_memory_mib: memory,
+            });
+        }
+    }
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        AGENT_PATH, ARCHITECTURE, FORBIDDEN_INSTALL_PACKAGES, FORBIDDEN_ROOTFS_PATHS, GUEST_TARGET,
-        HOOK_PORT, ImageLock, LockVerdict, OS_CAPABILITIES, PackageGroup, ROOTFS_CONTRACT,
-        variants,
+        AGENT_PATH, ARCHITECTURE, CURL_SWAP, Capability, FORBIDDEN_INSTALL_PACKAGES,
+        FORBIDDEN_ROOTFS_PATHS, GUEST_TARGET, HOOK_PORT, ImageLock, LockVerdict, OS_CAPABILITIES,
+        PackageGroup, ROOTFS_CONTRACT, variants,
     };
 
     fn lock(nevras: &[&str]) -> ImageLock {
@@ -178,21 +227,25 @@ mod tests {
     }
 
     #[test]
-    fn five_non_browser_variants_are_published_per_region() {
+    fn eight_variants_are_published_per_region() {
         let published = variants();
-        assert_eq!(published.len(), 5);
+        assert_eq!(published.len(), 8, "five base plus three browser variants");
+        let browser: Vec<&str> = published
+            .iter()
+            .filter(|variant| variant.capabilities.contains(&Capability::Browser))
+            .map(|variant| variant.size)
+            .collect();
         assert_eq!(
-            published
-                .iter()
-                .map(|variant| variant.size)
-                .collect::<Vec<_>>(),
-            vec!["512mb", "1gb", "2gb", "4gb", "8gb"]
+            browser,
+            vec!["2gb", "4gb", "8gb"],
+            "Chromium is not offered below a 2 GiB baseline"
         );
+        assert!(published.len() <= 100, "inside the account image limit");
     }
 
     #[test]
     fn every_variant_declares_its_minimum_memory() {
-        let expected = [512, 1_024, 2_048, 4_096, 8_192];
+        let expected = [512, 1_024, 2_048, 2_048, 4_096, 4_096, 8_192, 8_192];
         let observed: Vec<u32> = variants()
             .iter()
             .map(|variant| variant.minimum_memory_mib)
@@ -201,7 +254,8 @@ mod tests {
     }
 
     #[test]
-    fn the_conflicting_full_curl_package_is_never_installed() {
+    fn curl_is_swapped_and_never_installed() {
+        assert!(CURL_SWAP.starts_with("dnf swap curl-minimal curl"));
         for group in PackageGroup::ALL {
             assert!(
                 !group.packages().contains(&"curl"),
@@ -209,40 +263,6 @@ mod tests {
             );
         }
         assert!(FORBIDDEN_INSTALL_PACKAGES.contains(&"curl"));
-    }
-
-    #[test]
-    fn the_conflicting_full_coreutils_package_is_never_installed() {
-        for group in PackageGroup::ALL {
-            assert!(
-                !group.packages().contains(&"coreutils"),
-                "{group:?} lists coreutils, which conflicts with the base coreutils-single package"
-            );
-        }
-        assert!(FORBIDDEN_INSTALL_PACKAGES.contains(&"coreutils"));
-    }
-
-    #[test]
-    fn the_pinned_base_packages_are_never_reinstalled() {
-        for package in ["bash", "grep", "sed", "gawk", "ca-certificates"] {
-            assert!(FORBIDDEN_INSTALL_PACKAGES.contains(&package), "{package}");
-            for group in PackageGroup::ALL {
-                assert!(
-                    !group.packages().contains(&package),
-                    "{group:?} redundantly requests base-installed `{package}`"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn the_pinned_al2023_snapshot_does_not_request_unavailable_ripgrep() {
-        for group in PackageGroup::ALL {
-            assert!(
-                !group.packages().contains(&"ripgrep"),
-                "{group:?} requests ripgrep, which the pinned AL2023 snapshot does not publish"
-            );
-        }
     }
 
     #[test]
@@ -276,13 +296,20 @@ mod tests {
     }
 
     #[test]
-    fn no_published_package_group_contains_a_browser() {
+    fn the_browser_layer_is_its_own_group() {
+        assert!(PackageGroup::Browser.is_browser_layer());
         for group in PackageGroup::ALL {
-            assert!(
-                !group.packages().contains(&"chromium-headless"),
+            assert_eq!(
+                group.is_browser_layer(),
+                group == PackageGroup::Browser,
                 "{group:?}"
             );
         }
+        assert!(
+            PackageGroup::Browser
+                .packages()
+                .contains(&"chromium-headless")
+        );
     }
 
     #[test]

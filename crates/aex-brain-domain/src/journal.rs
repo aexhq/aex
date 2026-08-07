@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::budget::{BudgetDelta, BudgetGrant};
 use crate::child::{ChildOutcome, ChildState, QueuedReason};
-use crate::effect::{DetachedOperationRef, EffectClass, EffectKind, SettledOutcome};
+use crate::effect::{EffectClass, EffectKind, SettledOutcome};
 use crate::ids::{
     AgentId, ContentHash, EffectId, JoinId, JournalSeq, Timestamp, ToolCallId, WaitId,
 };
@@ -81,7 +81,7 @@ pub enum MessageOrigin {
 
 /// Why an agent is parked.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "park", rename_all = "snake_case", deny_unknown_fields)]
+#[serde(tag = "park", rename_all = "snake_case")]
 pub enum ParkReason {
     /// Waiting for the next user message.
     AwaitingUserMessage,
@@ -89,8 +89,6 @@ pub enum ParkReason {
     AwaitingToolResult {
         /// The call the agent is waiting on.
         call: ToolCallId,
-        /// The executor-bound operation being polled.
-        operation: DetachedOperationRef,
     },
     /// Waiting for a Hands operation.
     AwaitingHandsOperation {

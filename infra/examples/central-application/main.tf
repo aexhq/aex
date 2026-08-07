@@ -22,7 +22,6 @@ module "role" {
   assume_principal            = each.value.assume_principal
   action_grants               = each.value.action_grants
   wildcard_resource_allowlist = each.value.wildcard_resource_allowlist
-  boundary_policy_arn         = var.permissions_boundary_policy_arn
   tags                        = var.tags
 }
 
@@ -92,7 +91,6 @@ module "schema_admin" {
   image              = var.schema_admin.image
   cpu                = var.schema_admin.cpu
   memory             = var.schema_admin.memory
-  stop_timeout       = var.schema_admin.stop_timeout
   role_arn           = module.role["central-schema-admin"].role_arn
   execution_role_arn = var.schema_admin.execution_role_arn
   subnets            = var.subnet_ids

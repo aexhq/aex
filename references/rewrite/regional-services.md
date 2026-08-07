@@ -631,47 +631,11 @@ on.
 
 | Route(s) | Blocker |
 | --- | --- |
-| `secret_put`, `provider_credential_register` | KMS `ReEncrypt` closes context-changing rewrap only; it requires an existing source ciphertext and does not expose the active branch-key ciphertext that a first seal needs. `SecretCrypto::seal` still takes that ciphertext, while `aex_secret_keystore_dynamodb::ActiveBranchKey` publishes `version`, `create_time`, `kms_arn` and `hierarchy_version` but not `BranchKeyRecord::enc`. `secret_put` also declares `Idempotency-Key`, but `expressions::set` has only generation, metadata and lineage participants and writes no durable receipt, so replay/collision and an ambiguous transaction outcome cannot be resolved honestly. `provider_credential_register` has no register expression or atomic secret-generation + metadata + `pcr_` binding + receipt transaction. Its generated request carries a human label and plaintext but no workspace-secret identity, while OD-23 requires the `pcr_` row to reference one; no accepted record decides the minted secret name, label/name uniqueness, or collision behavior, and the generated route declares no collision error. A retry must also replay the original minted `pcr_` id, which requires the missing receipt transaction. Both routes therefore remain unserved. |
-| `session_create` | The canonical session document now round-trips the complete domain session, but creation authority is still absent. `aex-session-app` has no complete `create_session` use case; no production adapter implements its session/registry/content/custody/limits/commit ports; and the generated handler returns `not_served`. More importantly, the same atomic transaction must establish the root agent, sealed registry manifest/root pin, first custody authority, exact logical Hands generation and current pointer, canonical replay response, idempotency receipt and `session.created` event. `SessionTransaction::validate` deliberately rejects every `CreateSession` intent because its plan vocabulary cannot express those runtime-activity and event participants, while the runtime adapter's generation/current-pointer methods are separate hidden writes. See `regional-domains.md` “Session-create authority closure”. |
-| the other 14 `sessions` routes | Read composition still lacks the `aex-session-app` port adapters and complete projections for each generated response; mutating routes additionally need command-specific transaction/hint ownership. `session_message_send` and message listing retain the separate public/domain `MessagePart` mismatch below. They remain absent rather than returning a partial resource. |
+| `secret_put`, `provider_credential_register` | `SecretCrypto::seal` takes the **wrapped branch key** as an argument, and no port exposes it: `aex_secret_keystore_dynamodb::ActiveBranchKey` publishes `version`, `create_time`, `kms_arn` and `hierarchy_version` but not `BranchKeyRecord::enc`. Nothing can seal a plaintext until it does. `provider_credential_register` is blocked a second time: the request carries a human label plus plaintext but no workspace-secret binding, and OD-23 requires the `pcr_` row to reference one — which secret name a registration mints, and what happens when that name already exists, is decided by no accepted record, and the route declares no error code for the collision. |
+| the 15 `sessions` routes | `aex-session-dynamodb`'s stored `SessionHead` cannot decode into `aex_session_domain::Session`: it holds no `initial_root`, `persisted_root`, `persist_revision`, `last_persisted_at`, `generation`, `work_admission`, `mutation_guard` or `lineage`, so `aex_session_app::ports::SessionReader` has nothing to build a snapshot from, and **no adapter implements any `aex-session-app` port** — a grep for `SessionReader` outside `aex-session-app` finds nothing. `session_get` and `sessions_list` are blocked twice over: the head stores only a `resolvedConfigDigest`, while `Session.resolvedConfig` and `SessionListItem.{model, provider}` need the resolved configuration itself. `session_create` is blocked a third time — `aex-session-app` declares `create_session` as an unwritten use case. |
 | `session_message_send`, `session_messages_list` | **Contract gap.** `aex_wire::models::MessagePart` is `Text` or `File`; `aex_session_domain::MessagePart` is `Text`, `ToolCall` or `ToolResult`. The two vocabularies intersect only at `Text`, so neither direction is total: a wire `File` part has no domain arm and a domain tool part has no wire arm. No adapter work can close this. |
 | the 21 `registry`, 6 `files`, 4 `uploads`, 3 `approvals`, 3 `operations`, 1 `usage` and 3 `workspace` routes | Their adapters exist but no projection was written for them in this pass. They are mechanically the same shape as the four served here — read the row, project, tag, page — and are unblocked. |
 | `provider_credential_revoke` | Servable: the expression, the store method and the projection all exist. It is left unmounted only because the directory cannot be populated until `provider_credential_register` lands, so nothing would exercise it end to end. |
-
-### Session-create and Hands-generation closure
-
-This is a release-blocking product path, not a provider-registration detail.
-Publishing eight immutable Hands images makes them available; it does not give a
-session a generation. The accepted H-LAZY boundary requires session creation to
-allocate and persist the logical generation while making **no** provider call.
-The first Hands operation materializes that already-pinned generation later.
-
-The smallest correct implementation is one owned slice:
-
-1. `aex-session-app::create_session` resolves the request, selects one exact
-   image ARN/version/artifact digest from the deployment's immutable eight-entry
-   catalog, mints the session/root-agent/generation identities once, and returns
-   one closed transaction plan.
-2. The plan vocabulary gains typed runtime-generation and current-pointer
-   writes. `aex-runtime-activity-dynamodb` publishes builders for the initial
-   `requested`, fence-zero, revision-zero rows rather than exposing a second
-   independent commit.
-3. The production session adapters implement the existing application ports and
-   compile the session, runtime, registry/content, custody, receipt and created
-   event participants into one DynamoDB transaction. The receipt identity and
-   deterministic `ClientRequestToken` make an ambiguous retry return the same
-   minted identities.
-4. `regional-session-api` mounts `session_create` only after the transaction and
-   its replay/conflict path pass through the real router and adapter tests.
-
-The alternatives are materially worse. Allocating the generation in a second
-transaction leaves either a session that can never launch Hands or an orphan
-generation after a crash. Allocating it on the first tool call moves catalog
-selection onto a high-concurrency latency path and lets a mutable catalog change
-which image a retry means. A runtime database catalog adds a network read and a
-new availability dependency to every allocation. Selecting from the immutable
-deployment catalog in process is O(1), and the single bounded transaction gives
-one concurrency winner without a compensating repair workflow.
 
 ### The listener is still health-only
 
@@ -984,8 +948,7 @@ Three decisions worth naming:
 - **It stays inside its own stream.** The three usage authority adapters carry
   their own row reader and their own port error rather than linking
   `aex-session-dynamodb`, so this one does too. That is what keeps
-  `crates/aex-usage-query-aws/tests/write_incapability.rs` a fact about this
-  crate's sources alone.
+  `tests/write_incapability.rs` a fact about this crate's sources alone.
 - **`current_generation` answers `Option`.** An absent pointer means the
   projection was never cut over. Substituting `Generation::FIRST` would make a
   never-built projection read as an empty one.
@@ -1441,13 +1404,11 @@ purging partitions in one total order, while the legacy method queries exactly
 one caller-selected lifecycle. Neither requirement can be replaced with a
 `FilterExpression` or an unbounded scan.
 
-The workspace index is now a `KEYS_ONLY` ordered locator, so a reader must
-strongly hydrate every selected base head before filtering or returning it.
-That avoids treating an eventually consistent index projection as session
-truth, but it does not close the response authority gap: the hydrated head
-still carries only `resolvedConfigDigest`, not the required
-`SessionListItem.provider` or `.model`. Extra reads therefore preserve
-correctness without manufacturing either missing value.
+Even after those locator semantics are fixed, the INCLUDE projection carries
+only identity, workspace, status, lifecycle, revision and timestamps. The
+required `SessionListItem.provider` and `.model` are absent. Strongly hydrating
+the selected base heads would still recover only `resolvedConfigDigest`, not
+either value, so extra reads cannot repair the decisive authority gap.
 
 There are also two cursor owners, neither of which justifies a partial route.
 The legacy write-capable `SessionStore::list_sessions` owns its own HMAC cursor

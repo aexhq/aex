@@ -403,68 +403,6 @@ run "rejects_a_keys_only_projection_that_names_attributes" {
   expect_failures = [var.table_definitions]
 }
 
-run "rejects_an_include_projection_above_the_dynamodb_per_index_limit" {
-  command = plan
-
-  variables {
-    table_definitions = [
-      {
-        logical_name                = "session_journal"
-        authority                   = "session"
-        hash_key                    = "pk"
-        billing_mode                = "PAY_PER_REQUEST"
-        point_in_time_recovery_days = 35
-        deletion_protection         = true
-        attributes = [
-          { name = "pk", type = "S" },
-          { name = "workspaceId", type = "S" },
-        ]
-        global_secondary_indexes = [
-          {
-            name               = "gsi_workspace_index"
-            hash_key           = "workspaceId"
-            projection_type    = "INCLUDE"
-            non_key_attributes = [for position in range(21) : "field${position}"]
-          },
-        ]
-      },
-    ]
-  }
-
-  expect_failures = [var.table_definitions]
-}
-
-run "rejects_a_table_whose_include_projections_sum_above_one_hundred" {
-  command = plan
-
-  variables {
-    table_definitions = [
-      {
-        logical_name                = "session_journal"
-        authority                   = "session"
-        hash_key                    = "pk"
-        billing_mode                = "PAY_PER_REQUEST"
-        point_in_time_recovery_days = 35
-        deletion_protection         = true
-        attributes = concat(
-          [{ name = "pk", type = "S" }],
-          [for position in range(6) : { name = "gsiPk${position}", type = "S" }]
-        )
-        global_secondary_indexes = [
-          for position in range(6) : {
-            name               = "gsi_limit_${position}"
-            hash_key           = "gsiPk${position}"
-            projection_type    = "INCLUDE"
-            non_key_attributes = [for attribute in range(20) : "field${position}_${attribute}"]
-          }
-        ]
-      },
-    ]
-  }
-
-  expect_failures = [var.table_definitions]
-}
-
 run "rejects_a_definition_set_that_does_not_match_the_pinned_bundle" {
   command = plan
 

@@ -33,6 +33,4 @@ pub mod keystore;
 
 pub use crypto::{EnvelopeCrypto, IMPLEMENTATION, SealedSecret, SecretCrypto, SecretCryptoError};
 pub use envelope::{BranchKeyMaterial, EnvelopeError};
-pub use keystore::{
-    BranchKeyCache, BranchKeyProvider, KeyMaterialError, KmsBranchKeys, RewrappedBranchKey,
-};
+pub use keystore::{BranchKeyCache, BranchKeyProvider, KeyMaterialError, KmsBranchKeys};

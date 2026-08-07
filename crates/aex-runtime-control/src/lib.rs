@@ -17,7 +17,6 @@
 //! `tokio`, no AWS client and no I/O, which is what makes the 180000 ms boundary
 //! testable as an exhaustive table rather than as a timing observation.
 
-pub mod catalog;
 pub mod clock;
 pub mod generation;
 pub mod idle;
@@ -27,7 +26,6 @@ pub mod shape;
 pub mod store;
 pub mod usage;
 
-pub use catalog::{CatalogError, HANDS_IMAGE_VARIANTS, HandsImageCatalog, HandsImageCatalogEntry};
 pub use clock::{millis_between, minus_millis, plus_millis};
 pub use generation::{
     AdmissionRefused, Admitted, FenceVerdict, GUEST_ROOT, GenerationHead, GenerationState,

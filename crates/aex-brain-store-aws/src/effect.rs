@@ -6,13 +6,12 @@
 //! a second generation.
 
 use aex_brain_domain::effect::{
-    DetachedOperationRef, DispatchEvidence, DispatchProof, DispatchStage, DurableEffect,
-    EffectClass, EffectKind, EffectState,
+    DispatchEvidence, DispatchProof, DispatchStage, DurableEffect, EffectClass, EffectKind,
+    EffectState,
 };
 use aex_brain_domain::ids::{
     ContentHash, DetachedOperationId, EffectId, ProviderRequestId, Timestamp,
 };
-use aex_brain_domain::journal::ExecutorRoute;
 use aex_session_dynamodb::attr::{CodecError, Item, Row};
 use aex_wire::ids::GenerationId;
 
@@ -46,7 +45,7 @@ pub fn decode(item: &Item) -> Result<DurableEffect, CodecError> {
         }
     }
     let attempt = u16::try_from(row.opt_u64("attempt")?.unwrap_or(0)).unwrap_or(u16::MAX);
-    let evidence = decode_evidence(&row, attempt, kind)?;
+    let evidence = decode_evidence(&row, attempt)?;
     Ok(DurableEffect {
         id,
         kind,
@@ -63,96 +62,28 @@ pub fn decode(item: &Item) -> Result<DurableEffect, CodecError> {
     })
 }
 
-fn decode_evidence(
-    row: &Row<'_>,
-    attempt: u16,
-    kind: EffectKind,
-) -> Result<Option<DispatchEvidence>, CodecError> {
-    let stage = row.opt_string("dispatchStage")?;
-    let proof = row.opt_string("dispatchProof")?;
-    let provider_request_id = row.opt_string("providerRequestId")?;
-    let external_operation = row
-        .opt_string("externalOperationId")?
-        .map(|text| DetachedOperationId(text.to_owned()));
-    let detached_id = row.opt_string("detachedOperationId")?;
-    let detached_executor = row.opt_string("detachedExecutor")?;
-    let receipt = row.opt_string("receiptHash")?;
-    let Some(stage) = stage else {
-        if proof.is_some()
-            || provider_request_id.is_some()
-            || external_operation.is_some()
-            || detached_id.is_some()
-            || detached_executor.is_some()
-            || receipt.is_some()
-        {
-            return Err(malformed(
-                "dispatchStage",
-                "dispatch evidence attributes require a stage".to_owned(),
-            ));
-        }
+fn decode_evidence(row: &Row<'_>, attempt: u16) -> Result<Option<DispatchEvidence>, CodecError> {
+    let Some(stage) = row.opt_string("dispatchStage")? else {
         return Ok(None);
     };
-    let detached_tool = match (detached_id, detached_executor) {
-        (Some(id), Some(executor)) => Some(DetachedOperationRef {
-            id: DetachedOperationId(id.to_owned()),
-            executor: parse_executor(executor)?,
-        }),
-        (None, None) => None,
-        (Some(_), None) => {
-            return Err(malformed(
-                "detachedExecutor",
-                "a detached tool operation requires its exact executor".to_owned(),
-            ));
-        }
-        (None, Some(_)) => {
-            return Err(malformed(
-                "detachedOperationId",
-                "a detached executor requires its operation id".to_owned(),
-            ));
-        }
-    };
-    if external_operation.is_some() && detached_tool.is_some() {
-        return Err(malformed(
-            "externalOperationId",
-            "external and detached-tool operation bindings are mutually exclusive".to_owned(),
-        ));
-    }
-    if detached_tool.is_some() && kind != EffectKind::ToolCall {
-        return Err(malformed(
-            "detachedExecutor",
-            "only a ToolCall may carry a detached tool operation".to_owned(),
-        ));
-    }
+    let proof = row.opt_string("dispatchProof")?.unwrap_or("PossiblySent");
     Ok(Some(DispatchEvidence {
         attempt,
         stage: parse_stage(stage)?,
-        proof: parse_proof(proof.unwrap_or("PossiblySent"))?,
-        provider_request_id: provider_request_id
+        proof: parse_proof(proof)?,
+        provider_request_id: row
+            .opt_string("providerRequestId")?
             .map(|text| {
                 ProviderRequestId::new(text)
                     .map_err(|error| malformed("providerRequestId", error.to_string()))
             })
             .transpose()?,
-        external_operation,
-        detached_tool,
-        receipt: receipt.map(parse_hash).transpose()?,
+        operation: row
+            .opt_string("operationId")?
+            .map(|text| DetachedOperationId(text.to_owned())),
+        receipt: row.opt_string("receiptHash")?.map(parse_hash).transpose()?,
         detail: None,
     }))
-}
-
-fn parse_executor(text: &str) -> Result<ExecutorRoute, CodecError> {
-    Ok(match text {
-        "BrainInline" => ExecutorRoute::BrainInline,
-        "ManagedWeb" => ExecutorRoute::ManagedWeb,
-        "Mcp" => ExecutorRoute::Mcp,
-        "Hands" => ExecutorRoute::Hands,
-        other => {
-            return Err(malformed(
-                "detachedExecutor",
-                format!("`{other}` is not an executor route"),
-            ));
-        }
-    })
 }
 
 fn malformed(attribute: &'static str, reason: String) -> CodecError {
@@ -286,9 +217,7 @@ fn parse_state(
 #[cfg(test)]
 mod tests {
     use super::{AGENT_EFFECT, decode};
-    use aex_brain_domain::effect::{DetachedOperationRef, EffectClass, EffectKind, EffectState};
-    use aex_brain_domain::ids::DetachedOperationId;
-    use aex_brain_domain::journal::ExecutorRoute;
+    use aex_brain_domain::effect::{EffectClass, EffectKind, EffectState};
     use aex_session_dynamodb::attr::{ItemBuilder, n, s};
     use aex_wire::ids::{GenerationId, PrefixedId as _, Uuid7};
 
@@ -358,86 +287,6 @@ mod tests {
             .build();
         let error = decode(&item).expect_err("stored authority is decoded strictly");
         assert!(format!("{error}").contains("providerRequestId"), "{error}");
-    }
-
-    #[test]
-    fn a_detached_tool_binding_round_trips_with_its_executor() {
-        let item = row("responding")
-            .set("kind", s("ToolCall"))
-            .set("dispatchStage", s("Streaming"))
-            .set("dispatchProof", s("ResponseStarted"))
-            .set("detachedOperationId", s("same-id"))
-            .set("detachedExecutor", s("ManagedWeb"))
-            .build();
-        let effect = decode(&item).expect("closed detached operation binding");
-        assert_eq!(
-            effect.evidence.and_then(|value| value.detached_tool),
-            Some(DetachedOperationRef {
-                id: DetachedOperationId("same-id".to_owned()),
-                executor: ExecutorRoute::ManagedWeb,
-            })
-        );
-    }
-
-    #[test]
-    fn detached_tool_binding_refuses_half_pairs_unknown_routes_and_wrong_kinds() {
-        for item in [
-            row("responding")
-                .set("kind", s("ToolCall"))
-                .set("dispatchStage", s("Streaming"))
-                .set("detachedOperationId", s("op"))
-                .build(),
-            row("responding")
-                .set("kind", s("ToolCall"))
-                .set("dispatchStage", s("Streaming"))
-                .set("detachedExecutor", s("Mcp"))
-                .build(),
-            row("responding")
-                .set("kind", s("ToolCall"))
-                .set("dispatchStage", s("Streaming"))
-                .set("detachedOperationId", s("op"))
-                .set("detachedExecutor", s("Broadcast"))
-                .build(),
-            row("responding")
-                .set("dispatchStage", s("Streaming"))
-                .set("detachedOperationId", s("op"))
-                .set("detachedExecutor", s("Mcp"))
-                .build(),
-        ] {
-            assert!(decode(&item).is_err(), "{item:?}");
-        }
-    }
-
-    #[test]
-    fn external_and_detached_tool_bindings_are_mutually_exclusive() {
-        let item = row("responding")
-            .set("kind", s("ToolCall"))
-            .set("dispatchStage", s("Streaming"))
-            .set("externalOperationId", s("provider-op"))
-            .set("detachedOperationId", s("tool-op"))
-            .set("detachedExecutor", s("Mcp"))
-            .build();
-        assert!(decode(&item).is_err());
-    }
-
-    #[test]
-    fn dispatch_attributes_without_their_stage_are_refused() {
-        for item in [
-            row("responding")
-                .set("kind", s("ToolCall"))
-                .set("detachedOperationId", s("op"))
-                .set("detachedExecutor", s("Mcp"))
-                .build(),
-            row("responding")
-                .set("externalOperationId", s("provider-op"))
-                .build(),
-            row("responding")
-                .set("dispatchProof", s("ResponseStarted"))
-                .build(),
-        ] {
-            let error = decode(&item).expect_err("partial dispatch evidence is not absence");
-            assert!(format!("{error}").contains("dispatchStage"), "{error}");
-        }
     }
 
     #[test]

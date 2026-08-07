@@ -31,7 +31,6 @@ budget = "unit"
 envelope = "unit"
 recovery = "unit"
 mutation = "unit"
-snapshot = "unit"
 
 [package.metadata.aex.not_applicable]
 live_suite = "pure domain crate; Area 9's registry declares no independent live seam"
@@ -81,11 +80,3 @@ path = "tests/recovery.rs"
 [[test]]
 name = "mutation"
 path = "tests/mutation.rs"
-
-[[test]]
-name = "snapshot"
-path = "tests/snapshot.rs"
-
-[[example]]
-name = "snapshot_memory"
-path = "examples/snapshot_memory.rs"

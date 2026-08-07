@@ -4,8 +4,8 @@
 //! this module is that the *shape* — which scheduler runs what, what is bounded by what,
 //! what happens on `SIGTERM` — is one readable thing rather than scattered across a `main`.
 
-use crate::admission::{ActivationResources, Admission, AdmissionBounds};
-use crate::cache::{CachePolicy, ConfiguredFoldCache};
+use crate::admission::{Admission, AdmissionBounds};
+use crate::cache::CachePolicy;
 use crate::control::HealthState;
 use crate::drain::Stage;
 use crate::runtime::{ComputeLane, RuntimeShape};
@@ -43,22 +43,21 @@ pub struct Envelope {
 }
 
 impl Envelope {
-    /// The build-bound launch shape, split into independently bounded pools.
+    /// The candidate launch shape: 1 vCPU / 2 GiB ARM, split 256 / 1024 / 512 / 256 MiB.
     ///
-    /// The 3 GiB context pool proves 48 simultaneous 64 MiB worst-case restores. Stream
-    /// buffers retain their independent 128 MiB pool; cache cannot borrow admitted memory;
-    /// 384 MiB remains unavailable to all permits as process/allocator failure headroom.
+    /// `PERF-02` selects the final shape; this is the starting point those gates confirm or
+    /// replace, which is why it is a named constructor rather than a `Default`.
     #[must_use]
     pub const fn candidate_launch() -> Self {
         const MIB: u64 = 1_024 * 1_024;
         Self {
-            task_memory_bytes: crate::task_shape::task_memory_bytes(),
-            context_bytes: 3_072 * MIB,
+            task_memory_bytes: 2_048 * MIB,
+            context_bytes: 1_024 * MIB,
             stream_buffer_bytes: 128 * MIB,
             warm_cache_bytes: 512 * MIB,
-            headroom_bytes: 384 * MIB,
-            provider_streams: 48,
-            hands_rpcs: 48,
+            headroom_bytes: 256 * MIB,
+            provider_streams: 200,
+            hands_rpcs: 32,
         }
     }
 
@@ -116,12 +115,8 @@ pub struct Composition {
     pub envelope: Envelope,
     /// The warm cache's lifecycle.
     pub cache: CachePolicy,
-    /// The exact-revision process-local fold cache.
-    pub fold_cache: Arc<ConfiguredFoldCache>,
     /// The scale-out bounds.
     pub scale: ScaleBounds,
-    /// The activation policy whose demand was proven against this envelope.
-    pub policy: aex_brain_application::activation::ActivationPolicy,
 }
 
 /// Why the composition was refused.
@@ -146,7 +141,6 @@ impl Composition {
         cache: CachePolicy,
         scale: ScaleBounds,
         shape: RuntimeShape,
-        policy: aex_brain_application::activation::ActivationPolicy,
     ) -> Result<Self, CompositionError> {
         bounds
             .validate()
@@ -154,22 +148,6 @@ impl Composition {
         envelope
             .validate()
             .map_err(|reason| CompositionError { reason })?;
-
-        let resources = ActivationResources {
-            context_bytes: policy.restore_resident_bytes,
-            stream_buffer_bytes: u64::try_from(policy.stream_buffer_bytes).unwrap_or(u64::MAX),
-            provider_streams: 1,
-            hands_rpcs: 1,
-        };
-        resources
-            .validate()
-            .map_err(|reason| CompositionError { reason })?;
-        validate_target_capacity(
-            bounds.target,
-            envelope,
-            resources,
-            policy.max_concurrent_drives,
-        )?;
 
         let permits = Arc::new(PermitSet::new(BTreeMap::from([
             (PermitKind::Activation, u64::from(bounds.safety_cap)),
@@ -181,13 +159,11 @@ impl Composition {
             (PermitKind::WarmCacheBytes, envelope.warm_cache_bytes),
         ])));
         let drain = Arc::new(DrainGate::new());
-        let fold_cache = Arc::new(ConfiguredFoldCache::new(cache));
         Ok(Self {
             admission: Arc::new(Admission::new(
                 bounds,
                 Arc::clone(&permits),
                 Arc::clone(&drain),
-                resources,
             )),
             lane: Arc::new(ComputeLane::new(Arc::clone(&permits))),
             registry: Arc::new(ActivationRegistry::new()),
@@ -197,9 +173,7 @@ impl Composition {
             shape,
             envelope,
             cache,
-            fold_cache,
             scale,
-            policy,
         })
     }
 
@@ -222,47 +196,10 @@ impl Composition {
     }
 }
 
-fn validate_target_capacity(
-    target: u32,
-    envelope: Envelope,
-    resources: ActivationResources,
-    scheduler_width: usize,
-) -> Result<(), CompositionError> {
-    let target = u64::from(target);
-    if resources.context_bytes.saturating_mul(target) > envelope.context_bytes {
-        return Err(CompositionError {
-            reason: "the admission target exceeds reserved context capacity",
-        });
-    }
-    if resources.stream_buffer_bytes.saturating_mul(target) > envelope.stream_buffer_bytes {
-        return Err(CompositionError {
-            reason: "the admission target exceeds reserved stream-buffer capacity",
-        });
-    }
-    if resources.provider_streams.saturating_mul(target) > envelope.provider_streams {
-        return Err(CompositionError {
-            reason: "the admission target exceeds provider-stream capacity",
-        });
-    }
-    if resources.hands_rpcs.saturating_mul(target) > envelope.hands_rpcs {
-        return Err(CompositionError {
-            reason: "the admission target exceeds Hands RPC capacity",
-        });
-    }
-    if u64::try_from(scheduler_width).unwrap_or(u64::MAX) < target {
-        return Err(CompositionError {
-            reason: "the scheduler width is below the admission target",
-        });
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        Composition, Envelope, REACTOR_DELAY_BOUND_MS, REACTOR_TICK, validate_target_capacity,
-    };
-    use crate::admission::{ActivationResources, AdmissionBounds};
+    use super::{Composition, Envelope, REACTOR_DELAY_BOUND_MS, REACTOR_TICK};
+    use crate::admission::AdmissionBounds;
     use crate::cache::CachePolicy;
     use crate::drain::Stage;
     use crate::health::{LIVE_PATH, READY_PATH};
@@ -279,24 +216,14 @@ mod tests {
     }
 
     fn composition() -> Composition {
-        let policy = launch_policy();
         Composition::build(
             AdmissionBounds::default(),
             Envelope::candidate_launch(),
             CachePolicy::default(),
             scale(),
             RuntimeShape::for_parallelism(2),
-            policy,
         )
         .expect("the candidate launch shape composes")
-    }
-
-    fn launch_policy() -> aex_brain_application::activation::ActivationPolicy {
-        aex_brain_application::activation::ActivationPolicy {
-            receive_batch: 1,
-            max_concurrent_drives: 48,
-            ..aex_brain_application::activation::ActivationPolicy::default()
-        }
     }
 
     /// The candidate shape is the one PERF-02 will confirm or replace, so it is pinned.
@@ -304,13 +231,10 @@ mod tests {
     fn the_candidate_launch_envelope_is_the_recorded_split() {
         const MIB: u64 = 1_024 * 1_024;
         let envelope = Envelope::candidate_launch();
-        assert_eq!(envelope.task_memory_bytes, 4_096 * MIB);
-        assert_eq!(envelope.context_bytes, 3_072 * MIB);
-        assert_eq!(envelope.stream_buffer_bytes, 128 * MIB);
+        assert_eq!(envelope.task_memory_bytes, 2_048 * MIB);
+        assert_eq!(envelope.context_bytes, 1_024 * MIB);
         assert_eq!(envelope.warm_cache_bytes, 512 * MIB);
-        assert_eq!(envelope.headroom_bytes, 384 * MIB);
-        assert_eq!(envelope.provider_streams, 48);
-        assert_eq!(envelope.hands_rpcs, 48);
+        assert_eq!(envelope.headroom_bytes, 256 * MIB);
         assert!(envelope.validate().is_ok());
     }
 
@@ -329,8 +253,7 @@ mod tests {
                 envelope,
                 CachePolicy::default(),
                 scale(),
-                RuntimeShape::for_parallelism(2),
-                launch_policy()
+                RuntimeShape::for_parallelism(2)
             )
             .is_err()
         );
@@ -357,85 +280,10 @@ mod tests {
                 Envelope::candidate_launch(),
                 CachePolicy::default(),
                 scale(),
-                RuntimeShape::for_parallelism(2),
-                launch_policy()
+                RuntimeShape::for_parallelism(2)
             )
             .is_err()
         );
-    }
-
-    /// The scheduler may run only the target proven simultaneously by every resource pool.
-    /// Raising a single number cannot silently overrun context, stream, provider or Hands.
-    #[test]
-    fn launch_target_is_the_minimum_composite_capacity() {
-        const MIB: u64 = 1_024 * 1_024;
-        let envelope = Envelope::candidate_launch();
-        let resources = ActivationResources {
-            context_bytes: 64 * MIB,
-            stream_buffer_bytes: MIB,
-            provider_streams: 1,
-            hands_rpcs: 1,
-        };
-        assert_eq!(envelope.context_bytes / resources.context_bytes, 48);
-        assert_eq!(
-            envelope.stream_buffer_bytes / resources.stream_buffer_bytes,
-            128
-        );
-        assert_eq!(envelope.provider_streams / resources.provider_streams, 48);
-        assert_eq!(envelope.hands_rpcs / resources.hands_rpcs, 48);
-        assert!(validate_target_capacity(48, envelope, resources, 48).is_ok());
-        assert_eq!(
-            validate_target_capacity(49, envelope, resources, 49)
-                .expect_err("the 49th worst-case restore is not reserved")
-                .reason,
-            "the admission target exceeds reserved context capacity"
-        );
-        assert_eq!(
-            validate_target_capacity(48, envelope, resources, 47)
-                .expect_err("47 scheduler lanes cannot honestly advertise target 48")
-                .reason,
-            "the scheduler width is below the admission target"
-        );
-        for (resources, reason) in [
-            (
-                ActivationResources {
-                    context_bytes: 1,
-                    stream_buffer_bytes: 3 * MIB,
-                    provider_streams: 1,
-                    hands_rpcs: 1,
-                },
-                "the admission target exceeds reserved stream-buffer capacity",
-            ),
-            (
-                ActivationResources {
-                    context_bytes: 1,
-                    stream_buffer_bytes: 1,
-                    provider_streams: 2,
-                    hands_rpcs: 1,
-                },
-                "the admission target exceeds provider-stream capacity",
-            ),
-            (
-                ActivationResources {
-                    context_bytes: 1,
-                    stream_buffer_bytes: 1,
-                    provider_streams: 1,
-                    hands_rpcs: 2,
-                },
-                "the admission target exceeds Hands RPC capacity",
-            ),
-        ] {
-            assert_eq!(
-                validate_target_capacity(48, envelope, resources, 48)
-                    .expect_err("the targeted resource is underprovisioned")
-                    .reason,
-                reason
-            );
-        }
-        let composition = composition();
-        assert_eq!(composition.admission.bounds().target, 48);
-        assert_eq!(composition.policy.max_concurrent_drives, 48);
-        assert_eq!(composition.policy.receive_batch, 1);
     }
 
     /// The cache's byte budget is a separate permit from accepted work's, so the cache can

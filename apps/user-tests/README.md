@@ -1,52 +1,214 @@
 # @aexhq/user-tests
 
-Blackbox tests for the public SDK, native CLI, dashboard, and site. The typed
-scenario authority is [`scenarios.ts`](scenarios.ts); artifact selection is
-defined in [`artifacts.ts`](artifacts.ts).
+Layer-4 test workspace. Exercises a clean install of the current **packed
+tarball** (local/offline default, CI, and manual live workflow runs) or the
+exact **published artifact** selected by release workflows, the way a real user
+or AI agent would on day one of `npm i @aexhq/sdk`.
 
-## Offline tests
+This workspace deliberately has **no `workspace:*` dependencies on
+`@aexhq/sdk` or other `@aexhq/*` packages**. Every scenario spawns a child process whose
+`cwd` is a freshly created tempdir containing a clean install of the
+artifact under test. Inside that child, `import "@aexhq/sdk"` resolves
+through the install, never through the monorepo symlink.
 
-From the repository root:
+These tests are the blackbox layer for install, CLI, SDK, package, and
+published-artifact behavior.
 
-```bash
-bun run test:user:offline
-```
+## Running
 
-The implemented packed SDK tests build and pack the checked-out
-`@aexhq/sdk`, then create separate temporary consumers for Node and Bun. The
-Node consumer installs the tarball with npm in offline mode; the Bun consumer
-installs it with Bun in offline mode. Both disable package lifecycle scripts,
-resolve `@aexhq/sdk` through the temporary consumer's `node_modules`, import
-the published root entry, check its runtime exports, and execute deterministic
-routing and download-range behavior. Temporary tarballs, caches, installs, and
-probes are removed when the suite finishes.
+For local/offline runs, no artifact env is required: when neither env below is
+set, the fixture packs the current workspace SDK once into a tempdir and
+installs that tarball.
 
-These tests prove clean local tarball installation and the current SDK root
-surface. They do not contact a registry, product API, provider, or deployed
-plane, and they do not prove publication or live behavior.
+CI can still pin the artifact under test by providing **exactly one** of:
 
-## Current scope
+| Env | Source under test |
+|---|---|
+| `AEX_USER_TEST_TARBALL` | absolute path to a Bun-packed tarball |
+| `AEX_USER_TEST_VERSION` | published package version, e.g. `0.26.0` |
 
-`USER_SCENARIOS` contains 47 planned scenario identities across the `packed`,
-`local`, `live`, `browser`, `money`, and `operator` suites. At present, the two
-packed SDK install scenarios above have real blackbox journey bodies. The
-remaining registered tests validate scenario ownership and metadata only; they
-must not be treated as journey, network, browser, money, or operator coverage.
-
-`resolveArtifactSelection` accepts either a paired SDK tarball/native CLI
-archive or identical exact SDK/CLI versions, and rejects partial or mixed
-selection families. Wiring those external selections into journey execution,
-native CLI archive testing, and deployed-plane execution remains outstanding.
-
-Useful focused commands are:
+Then:
 
 ```bash
-bun run test:user:smoke
-bun run test:user:offline
+# Offline scenarios (install / cli-bin / sdk-imports / typescript-consumer)
+bun run --filter @aexhq/user-tests test:user:offline
+
+# Full suite incl. the live siblings (requires the live target vars below)
+bun run --filter @aexhq/user-tests test:user
+# or from the repo root:
 bun run test:user
+
+# Explicit live suites kept out of the default public sweep.
+bun run test:user:fuzz
+bun run test:user:providers
+bun run test:user:tool-fuzz   # deploy-gated; use manually for reproduction
 ```
 
-`test:user:smoke` checks the scenario and artifact-selection registries.
-`test:user:offline` runs the registry plus packed and local tests. `test:user`
-runs every currently committed test file; it does not turn registry-only live
-rows into live coverage.
+Offline runs default to 4 parallel test files (`bun test --parallel=4`, tests
+serial within each file). Override with `AEX_USER_TEST_OFFLINE_MAX_WORKERS=<n>`. The default live sweep
+uses `AEX_USER_TEST_MAX_WORKERS` and keeps a lower local default; CI prepares one
+SDK artifact, discovers the gating files under `test/live`, and runs one test
+file per matrix job. The preflight sums each file's declared peak session-slot
+demand, including scenarios that deliberately open concurrent sessions, before
+the uncapped file-level fanout starts.
+
+The scenarios live under `test:user` / `test:user:offline`, NOT
+`test:unit` — on purpose. The root unit gate (`bun run test:unit`) is a
+workspace-recursive runner that invokes every package's `test:unit`
+script; because these are named `test:user*`, that gate never runs them
+by default. That matters: they fail loudly when the artifact-under-test
+env is unset (by design), so pulling them into the default gate would
+break it for everyone. They run only via explicit invocation here and
+from the hosted user-test workflows.
+The main-push public CI is limited to lint, type, and unit checks; the
+platform deploy pipeline runs the published-artifact suite.
+
+Explicit artifact inputs are strict: setting both variables, an invalid version,
+or a missing tarball path is a **hard error**, never a silent skip. The
+post-publish gates must stay pinned to the exact published version through
+`AEX_USER_TEST_VERSION`.
+
+`test:user:tool-fuzz` is the explicit paid tool-capability gate. It uses seeded,
+reproducible inputs and real hosted sessions to cover every builtin tool plus custom
+tool bundle upload, schema arguments, environment/secret access, result forms,
+and failure propagation. It is excluded from the default public live
+sweep, but it is a hard gate in the platform deploy suite, using the supplied
+published SDK candidate when present and npm `latest` otherwise.
+
+## CI prerequisites
+
+The offline path needs no provider key. The downstream platform deploy installs
+the exact published canary in dev and prd and runs the same SDK-as-a-real-user
+suite against both Lambda and container runtimes.
+
+Live scenarios are driven from `.github/workflows/live-user-tests.yml`, against
+the configured hosted API. The workflow creates one job per discovered gating
+live-test file; offline tests, fixtures, provider-specific suites, and dedicated
+heavy/fuzz gates are not part of that matrix.
+They require:
+
+- **Variable `AEX_API_URL`** — hosted API URL.
+- **Secret `AEX_API_KEY`** — workspace API key for the selected API URL.
+- **Optional variable `AEX_USER_TEST_DEEPSEEK_MODEL`** — managed-gateway
+  `creator/model` slug; defaults to `deepseek/deepseek-v4-flash`.
+
+## Live SDK siblings (2026 rebuild)
+
+The `test/live/live-sdk-*.test.ts` files exercise the packed tarball
+end-to-end against the configured hosted API. Gating coverage uses one cheap
+managed-gateway model; the on-demand matrix exercises an additional model
+family. Neither lane accepts or needs a customer provider key.
+
+Each test installs the packed tarball into a tempdir, opens a session or runs a
+one-shot `aex.start({ model, message, ... })`, reads through the session accessors,
+and asserts the user's probe string round-trips through a real upstream LLM call.
+
+Required env:
+
+- `AEX_API_URL`
+- `AEX_API_KEY`
+- `AEX_USER_TEST_TARBALL` *or* `AEX_USER_TEST_VERSION` when testing an
+  explicit artifact; if neither is set, the harness packs the checked-out SDK.
+
+Local `.env.local` files should use the canonical variables above.
+
+CI lives in `.github/workflows/live-user-tests.yml`.
+
+`test/live/config-proxyendpoints.user.test.ts` requires a real
+`PROXY_OK` round-trip. The test uses a public no-auth upstream and must not be
+run against a plane whose `AEX_PROXY_PUBLIC_BASE_URL` does not serve the
+dashboard-owned `/api/sessions/:id/proxy/:name` route.
+
+## Heavy full-feature long-session gate
+
+`test/live/live-sdk-heavy-session.test.ts` is the heaviest live scenario:
+one deliberately long (multi-minute) session per cell that exercises the
+**entire** customer feature surface at once — 3 inline skills, 2 remote
+MCP servers, a long `system` message, a multi-step `prompt` (shell +
+multiple file writes + read-backs), an AGENTS.md, a custom
+`fileCapture.allowedDirs` path, `builtins`, `environment.envVars` and `metadata` — and validates
+**every observable aspect** of the session: the full AG-UI event vocabulary
+(incl. `TOOL_CALL_*`, not just text), tool use, skill materialization,
+the system/AGENTS.md/prompt channel probes, and the files round-trip
+pipeline. (Input files / workspace assets are not
+exercised — that feature was dropped in the MVP.) Its purpose is to
+prove the **app** behaves as expected under a
+maximal submission, not to test model capability.
+
+Scope: one DeepSeek-managed cell using the configured
+`AEX_USER_TEST_DEEPSEEK_MODEL` or the default
+`deepseek/deepseek-v4-flash`.
+
+It is **excluded** from the default `test:user` sweep (see
+`collectDefaultSweepFiles()` in `scripts/user-bun-test.mjs`) and runs only via
+its own entrypoint:
+
+```bash
+bun run --filter @aexhq/user-tests test:user:heavy   # or: bun run test:user:heavy
+```
+
+Required env is identical to the comprehensive scenario
+(`AEX_API_URL`, `AEX_API_KEY`, `AEX_USER_TEST_TARBALL` or
+`AEX_USER_TEST_VERSION`); model override is
+`AEX_USER_TEST_DEEPSEEK_MODEL`.
+
+CI: it runs via the consolidated on-demand pipeline (see below), not the
+default sweep.
+
+## Tool capability fuzz gate
+
+`test/live/live-sdk-tool-capability-fuzz.test.ts` is the paid blackbox tool
+matrix. It drives seeded real hosted DeepSeek sessions through a clean SDK install
+and covers every builtin tool: file read/write/edit/navigation, process tools,
+background bash, web fetch/search, the subagent/subagent_result protocol, and
+custom tool bundle upload/execution.
+
+It also covers custom tool schemas, structured arguments, environment and secret
+access, result forms, and expected tool failures. It is **excluded**
+from the default `test:user` sweep, runs in the platform deploy suite via
+`platform/.github/workflows/aws-suite.yml`, and remains directly invokable
+for reproduction:
+
+```bash
+bun run --filter @aexhq/user-tests test:user:tool-fuzz
+```
+
+Required env is `AEX_API_URL`, `AEX_API_KEY`, `AEX_USER_TEST_TARBALL` or
+`AEX_USER_TEST_VERSION`; model override is
+`AEX_USER_TEST_DEEPSEEK_MODEL`.
+
+Because this gate is a single file, its only parallelism lever was running the
+seeded cells concurrently within the file (each cell is an independent live
+session with a uniquely-named runner script and idempotency key). Under
+`bun test` the cells currently run **serially**: bun has no config-driven
+in-file concurrency and the cells are not marked `test.concurrent`, so the
+spend bound is 1 concurrent session — strictly lower than the previous cap of
+4 — at the cost of wall-clock (up to ~4x). `AEX_USER_TEST_TOOL_FUZZ_CONCURRENCY`
+is therefore inert until the cells are marked `test.concurrent` and the lane
+passes `--max-concurrency` (follow-up; live-validate on the dev plane first).
+
+## Managed model-family correctness suite
+
+`test/live/providers/` holds one minimal round-trip per non-gate managed model
+family. Each proves that the managed gateway reaches the real upstream and
+returns a valid response; feature depth stays in the default DeepSeek suite.
+The suite is **excluded** from the default `test:user` sweep (see
+`collectDefaultSweepFiles()` in `scripts/user-bun-test.mjs`) and runs via its
+own lane script:
+
+```bash
+bun run --filter @aexhq/user-tests test:user:providers
+```
+
+## Consolidated on-demand pipeline
+
+The optional suites above — the per-provider correctness matrix and the heavy
+full-feature session — are kept out of the default sweep and run together from a
+single manual trigger:
+`.github/workflows/live-on-demand-tests.yml`. One dispatch prepares the selected
+SDK artifact once, then runs `test:user:providers` and `test:user:heavy` as
+independent jobs so you get the full optional signal from one trigger.
+`test:user:tool-fuzz` belongs to the platform deploy suite instead, because it
+is a deterministic paid gate rather than a non-gating on-demand probe. The
+default `live-user-tests.yml` workflow is purely the always-on workhorse sweep
+(DeepSeek only) and no longer carries a `ses_heavy` toggle.

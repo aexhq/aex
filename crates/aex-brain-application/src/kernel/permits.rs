@@ -110,77 +110,6 @@ impl PermitSet {
         })
     }
 
-    /// Atomically acquires every requested resource.
-    ///
-    /// Duplicate kinds are combined before capacity is checked. Either all reservations are
-    /// returned or no counter changes; another activation can therefore never take a
-    /// provider slot between this activation's memory and stream-buffer reservations.
-    ///
-    /// # Errors
-    ///
-    /// Returns the first exhausted resource in request order.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the internal lock was poisoned.
-    pub fn acquire_many(
-        self: &Arc<Self>,
-        requests: &[(PermitKind, u64)],
-    ) -> Result<Vec<Reservation>, PermitSetFull> {
-        let mut held = self.held.lock().expect("the permit lock is not poisoned");
-        for (index, _) in requests.iter().enumerate() {
-            let Some((kind, units)) = combined_request_at(requests, index) else {
-                continue;
-            };
-            let limit = self.limits.get(&kind).copied().unwrap_or(0);
-            let current = held.get(&kind).copied().unwrap_or(0);
-            let available = limit.saturating_sub(current);
-            if units > available {
-                return Err(PermitSetFull {
-                    kind,
-                    requested: units,
-                    available,
-                    limit,
-                });
-            }
-        }
-        let mut reservations = Vec::with_capacity(requests.len());
-        for (index, _) in requests.iter().enumerate() {
-            let Some((kind, units)) = combined_request_at(requests, index) else {
-                continue;
-            };
-            let current = held.get(&kind).copied().unwrap_or(0);
-            held.insert(kind, current.saturating_add(units));
-            reservations.push(Reservation {
-                permits: Arc::clone(self),
-                kind,
-                units,
-            });
-        }
-        Ok(reservations)
-    }
-
-    /// Whether every request could be acquired together at this instant.
-    ///
-    /// This is an admission hint, not a reservation. The caller must still use
-    /// [`Self::acquire_many`], whose atomic check owns the race with another activation.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the internal lock was poisoned.
-    #[must_use]
-    pub fn can_acquire_many(&self, requests: &[(PermitKind, u64)]) -> bool {
-        let held = self.held.lock().expect("the permit lock is not poisoned");
-        requests.iter().enumerate().all(|(index, _)| {
-            let Some((kind, units)) = combined_request_at(requests, index) else {
-                return true;
-            };
-            let limit = self.limits.get(&kind).copied().unwrap_or(0);
-            let current = held.get(&kind).copied().unwrap_or(0);
-            units <= limit.saturating_sub(current)
-        })
-    }
-
     /// How many units of `kind` are held.
     ///
     /// # Panics
@@ -209,18 +138,6 @@ impl PermitSet {
         // negative would silently hand out permits that do not exist.
         held.insert(kind, current.saturating_sub(units));
     }
-}
-
-fn combined_request_at(requests: &[(PermitKind, u64)], index: usize) -> Option<(PermitKind, u64)> {
-    let (kind, units) = requests[index];
-    if units == 0 || requests[..index].iter().any(|(prior, _)| *prior == kind) {
-        return None;
-    }
-    let total = requests[index + 1..]
-        .iter()
-        .filter(|(candidate, _)| *candidate == kind)
-        .fold(units, |sum, (_, extra)| sum.saturating_add(*extra));
-    Some((kind, total))
 }
 
 impl Reservation {

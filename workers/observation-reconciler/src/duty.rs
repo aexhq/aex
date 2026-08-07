@@ -319,15 +319,6 @@ pub struct DutySettings {
     pub max_attempts: u32,
 }
 
-/// The terminal state and claim fence applied alongside durable gap evidence.
-struct GapTerminalization<'a> {
-    state: &'a str,
-    reason: Option<&'a str>,
-    expected_attempts: u32,
-    claimed_at: Option<Timestamp>,
-    changed_at: Timestamp,
-}
-
 /// The duty engine.
 #[derive(Clone, Debug)]
 pub struct DutyEngine {
@@ -608,18 +599,16 @@ impl DutyEngine {
         now: Timestamp,
     ) -> Result<(), DutyError> {
         if self.settings.duty == ControlDomain::SpoolRepair {
-            let gaps = Self::loss_gap_records(item, TelemetryGapReason::SpoolLost, now)?;
+            let gaps = self.loss_gap_records(item, TelemetryGapReason::SpoolLost, now)?;
             return self
                 .terminalize_with_gaps(
                     item,
+                    QUARANTINED,
+                    Some(reason),
                     &gaps,
-                    GapTerminalization {
-                        state: QUARANTINED,
-                        reason: Some(reason),
-                        expected_attempts: item.attempts,
-                        claimed_at: None,
-                        changed_at: now,
-                    },
+                    item.attempts,
+                    None,
+                    now,
                 )
                 .await;
         }
@@ -651,6 +640,7 @@ impl DutyEngine {
 
     /// Builds every exact per-signal gap a failed source item proves.
     fn loss_gap_records(
+        &self,
         item: &DueItem,
         reason: TelemetryGapReason,
         now: Timestamp,
@@ -668,18 +658,13 @@ impl DutyEngine {
     async fn terminalize_with_gaps(
         &self,
         item: &DueItem,
+        terminal: &str,
+        reason: Option<&str>,
         gaps: &[GapRecord],
-        transition: GapTerminalization<'_>,
+        expected_attempts: u32,
+        claimed: Option<Timestamp>,
+        now: Timestamp,
     ) -> Result<(), DutyError> {
-        use std::fmt::Write as _;
-
-        let GapTerminalization {
-            state: terminal,
-            reason,
-            expected_attempts,
-            claimed_at,
-            changed_at: transition_at,
-        } = transition;
         let mut builder = ExpressionBuilder::new();
         let state = builder.name(STATE);
         let changed_at = builder.name("stateChangedAt");
@@ -689,23 +674,23 @@ impl DutyEngine {
         let sort = builder.name(SK);
         let attempts = builder.name(ATTEMPTS);
         let terminal_value = builder.string(terminal.to_owned());
-        let when = builder.string(transition_at.to_wire());
+        let when = builder.string(now.to_wire());
         let expected_attempts = builder.number(expected_attempts);
         let mut update = format!("SET {state} = {terminal_value}, {changed_at} = {when}");
         if let Some(reason) = reason {
             let why = builder.name(QUARANTINE_REASON);
             let text = builder.string(reason.to_owned());
-            let _ = write!(update, ", {why} = {text}");
+            update.push_str(&format!(", {why} = {text}"));
         }
-        let _ = write!(update, " REMOVE {control_partition}, {control_sort}");
+        update.push_str(&format!(" REMOVE {control_partition}, {control_sort}"));
         let mut condition = format!(
             "attribute_exists({partition}) AND attribute_exists({sort}) AND \
              {attempts} = {expected_attempts}"
         );
-        if let Some(claimed) = claimed_at {
+        if let Some(claimed) = claimed {
             let claimed_at = builder.name(CLAIMED_AT);
             let claimed_value = builder.string(claimed.to_wire());
-            let _ = write!(condition, " AND {claimed_at} = {claimed_value}");
+            condition.push_str(&format!(" AND {claimed_at} = {claimed_value}"));
         }
         let source = Update::builder()
             .table_name(&self.settings.table)
@@ -1352,14 +1337,12 @@ impl DutyEngine {
         // exact ordinals rather than a silently short answer.
         self.terminalize_with_gaps(
             item,
+            "gapped",
+            None,
             &gaps,
-            GapTerminalization {
-                state: "gapped",
-                reason: None,
-                expected_attempts: item.attempts.saturating_add(1),
-                claimed_at: Some(now),
-                changed_at: now,
-            },
+            item.attempts.saturating_add(1),
+            Some(now),
+            now,
         )
         .await
     }
