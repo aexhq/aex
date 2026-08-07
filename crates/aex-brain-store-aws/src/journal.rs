@@ -141,28 +141,40 @@ impl BrainStore {
 
     async fn query_effects(&self, key: &AgentKey) -> Result<Vec<DurableEffect>, StoreError> {
         let partition = keys::agent_partition(key).map_err(|error| store_key_error(&error))?;
-        let output = self
-            .client
-            .query()
-            .table_name(self.table())
-            .consistent_read(true)
-            .key_condition_expression("pk = :pk AND begins_with(sk, :prefix)")
-            .expression_attribute_values(":pk", s(partition))
-            .expression_attribute_values(":prefix", s(keys::effect_prefix()))
-            .send()
-            .await
-            .map_err(|error| transport("load_open", &error))?;
         let mut open = Vec::new();
-        for item in output.items() {
-            let decoded = effect::decode(item).map_err(|error| StoreError::Undecodable {
-                location: "agent effect".to_owned(),
-                reason: error.to_string(),
-            })?;
-            if !decoded.state.is_settled() {
-                open.push(decoded);
+        let mut start_key = None;
+        // Paginated to exhaustion: settled effects share the prefix and are
+        // never deleted, so a long-lived agent's open set can sit past the
+        // service's 1 MB page boundary. Stopping at one page would drop open
+        // effects from the claim-path set, and dispatch would run against a
+        // fold that cannot see them.
+        loop {
+            let output = self
+                .client
+                .query()
+                .table_name(self.table())
+                .consistent_read(true)
+                .key_condition_expression("pk = :pk AND begins_with(sk, :prefix)")
+                .expression_attribute_values(":pk", s(partition.clone()))
+                .expression_attribute_values(":prefix", s(keys::effect_prefix()))
+                .set_exclusive_start_key(start_key)
+                .send()
+                .await
+                .map_err(|error| transport("load_open", &error))?;
+            for item in output.items() {
+                let decoded = effect::decode(item).map_err(|error| StoreError::Undecodable {
+                    location: "agent effect".to_owned(),
+                    reason: error.to_string(),
+                })?;
+                if !decoded.state.is_settled() {
+                    open.push(decoded);
+                }
+            }
+            start_key = output.last_evaluated_key().cloned();
+            if start_key.is_none() {
+                return Ok(open);
             }
         }
-        Ok(open)
     }
 }
 

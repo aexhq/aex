@@ -825,6 +825,102 @@ async fn an_early_service_page_boundary_resumes_without_skipping_or_repeating() 
     );
 }
 
+fn control_item() -> aex_session_dynamodb::attr::Item {
+    let control = aex_brain_store_aws::keys::control(&key()).expect("a valid key");
+    ItemBuilder::new(aex_session_dynamodb::codec::AGENT_CONTROL)
+        .set(aex_session_dynamodb::attr::PK, s(control.pk))
+        .set(aex_session_dynamodb::attr::SK, s(control.sk))
+        .set(
+            "generationId",
+            s(GenerationId::from_uuid7(Uuid7::compose(1_767_225_600_000, [9; 10])).to_string()),
+        )
+        .set("revision", n(1))
+        .set("fence", n(3))
+        .set("journalTail", n(4))
+        .set("journalTailHash", s(ContentHash::of(b"tail").to_hex()))
+        .set("hasJournal", aex_session_dynamodb::attr::boolean(true))
+        .set("status", s("awaiting_model"))
+        .build()
+}
+
+fn effect_item(seed: u8, state: &str) -> aex_session_dynamodb::attr::Item {
+    let id = EffectId([seed; 16]);
+    let effect = aex_brain_store_aws::keys::effect(&key(), id).expect("a valid key");
+    ItemBuilder::new(aex_session_dynamodb::codec::AGENT_EFFECT)
+        .set(aex_session_dynamodb::attr::PK, s(effect.pk))
+        .set(aex_session_dynamodb::attr::SK, s(effect.sk))
+        .set("effectId", s(id.to_hex()))
+        .set("kind", s("ModelCall"))
+        .set("effectClass", s("NonReplayable"))
+        .set("requestHash", s("a".repeat(64)))
+        .set("attempt", n(2))
+        .set("state", s(state))
+        .build()
+}
+
+/// Settled effects share the `EFFECT#` prefix and are never deleted, so a
+/// long-lived agent's effect directory can cross the service's 1 MB page
+/// boundary. The open set feeds every claim: discovery that stopped at one
+/// service page would drop open effects at random, and the fold would dispatch
+/// against a set it cannot see.
+#[tokio::test]
+async fn open_effect_discovery_walks_the_native_continuation_to_exhaustion() {
+    let settled = effect_item(1, "settled");
+    let first_open = effect_item(2, "prepared");
+    let second_open = effect_item(3, "dispatched");
+    let boundary = aex_session_dynamodb::attr::Item::from([
+        (
+            aex_session_dynamodb::attr::PK.to_owned(),
+            first_open[aex_session_dynamodb::attr::PK].clone(),
+        ),
+        (
+            aex_session_dynamodb::attr::SK.to_owned(),
+            first_open[aex_session_dynamodb::attr::SK].clone(),
+        ),
+    ]);
+    let (store, replay) = replaying(vec![
+        serde_json::json!({"Item": dynamo_item(&control_item())}),
+        serde_json::json!({
+            "Items": [dynamo_item(&settled), dynamo_item(&first_open)],
+            "Count": 2,
+            "ScannedCount": 2,
+            "LastEvaluatedKey": dynamo_item(&boundary),
+        }),
+        serde_json::json!({
+            "Items": [dynamo_item(&second_open)],
+            "Count": 1,
+            "ScannedCount": 1,
+        }),
+    ]);
+
+    let head = store
+        .load_head(&key())
+        .await
+        .expect("both service pages decode")
+        .expect("the control row exists");
+    assert_eq!(
+        head.open_effects,
+        [EffectId([2; 16]), EffectId([3; 16])],
+        "open effects from every service page survive; settled ones are filtered"
+    );
+
+    let requests = captured_requests(&replay);
+    assert_eq!(requests.len(), 3, "one control read, two effect pages");
+    assert!(requests[1]["ExclusiveStartKey"].is_null());
+    assert_eq!(
+        requests[2]["ExclusiveStartKey"],
+        dynamo_item(&boundary),
+        "the complete service continuation is returned verbatim"
+    );
+    for request in &requests[1..] {
+        assert_eq!(request["ConsistentRead"], true);
+        assert_eq!(
+            request["ExpressionAttributeValues"][":prefix"]["S"], "EFFECT#",
+            "a resumed query retains the original key condition"
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // page rules
 // ---------------------------------------------------------------------------
