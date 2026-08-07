@@ -138,14 +138,13 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
     }));
     let mounted = mount_unary(Arc::new(dispatcher), Arc::new(edge), limits(config))?;
 
-    // The health surfaces are merged rather than layered: they are not generated
-    // routes and must answer without an assertion. The public release identity
-    // is mounted only by this deployable; the internal paths remain private.
+    // The health surface is merged rather than layered: `/internal/healthz` and
+    // `/internal/readyz` are not generated routes and must answer without an
+    // assertion, which is exactly why they are not in the mounted partition.
     lambda_http::run(
         mounted
             .router
-            .merge(aex_regional_http::health::router(readiness.clone()))
-            .merge(aex_regional_http::release_health::router(readiness)),
+            .merge(aex_regional_http::health::router(readiness)),
     )
     .await
     .map_err(|error| RunError::Runtime(error.to_string()))

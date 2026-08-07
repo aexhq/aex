@@ -173,27 +173,24 @@ terraform fmt -check -recursive infra/                        clean
 terraform init -backend=false && validate && test             29/29 directories pass
 ```
 
-The 2026-08-02 count of 148 graph violations and the later raw-gap count are
-superseded by the explicit-deferral correction below. The current authorities
-carry 49 exact unmounted-route deferrals and 20 exact non-runnable-scenario
-deferrals. `graph verify` is green because every incomplete state is explicit,
-non-empty, mutually exclusive with a served/runnable claim, and included in its
-machine summary. This is structural accounting, not a release receipt:
-deferred scenarios are absent from execution matrices, and artifact
-certification plus environment admission still require real evidence.
+The 2026-08-02 count of 148 graph violations is superseded by the actual-mount
+and runnable-scenario correction below. The current authorities deliberately
+imply 176 delivery violations while no scenario has an executable claim: 20
+`scenario-runnable-missing`, 51 `aex-route-unserved`, and 105
+`aex-route-uncovered` scenario references across the 95 actually served routes.
+Malformed, cross-plane, and planned/actual owner disagreements are all zero.
+That red state names missing work; it is not a release receipt.
 
 ## 3. What every stream owes me
 
-`graph verify` is the structural gate. It rejects every implicit or
-contradictory gap and reports explicit prelaunch debt in its summary. Artifact
-certification and environment admission remain the evidence gates.
+`graph verify` is the gate. It is red today and names exactly who owes what.
 
 ### 3.1 `[package.metadata.aex]` — landed
 
 All manifests carry ownership metadata. `aex-live-model-catalog` names
 `brain-mux` as its deployable: the catalogue is loaded and enforced inside that
 runtime rather than shipped as a standalone service. The former reference to a
-nonexistent artifact-metadata manifest is removed, so the live companion
+nonexistent `release/artifact-metadata.toml` is removed, so the live companion
 has a real started-artifact subject and `graph verify` no longer reports
 `aex-metadata-missing-deployable`.
 
@@ -234,22 +231,19 @@ edges and the path map routes their directories to their real npm nodes.
    route; `servedOperations` resolves the optional `servedArtifact`, which is
    emitted only when a runnable production composition really mounts the
    operation. The first value drives ownership and selection and is not mount
-   proof. An unmounted route must instead have an exact non-empty
-   `deferredOperations` reason; absence of both is `aex-route-unserved`, and a
-   served+deferred conflict also fails. The verifier rejects malformed and
-   cross-plane owners and checks service mount sets against the generated actual
-   projection. The account read remains planned for `central-identity-api` but
-   explicitly deferred. Session telemetry export admission is likewise honestly
-   deferred, and `regional-session-api` currently serves exactly 17 operations.
+   proof. `graph verify` reports `aex-route-unserved` for every route with no
+   actual mount, rejects malformed and cross-plane owners, and checks service
+   mount sets against the generated actual projection. The account read remains
+   planned for `central-identity-api` but unserved; the identity process mounts
+   only Auth. Session telemetry export admission is likewise honestly absent,
+   and `regional-session-api` currently serves exactly 15 operations.
 
    Scenario selection is also executable now: an `observes` edge is necessary
    but insufficient. Every scenario must name a namespaced Cargo/npm `package`
    and exact `target`, and the package must claim both in its AEX metadata. The
    route workflow emits and downstream lanes consume a scenario matrix carrying
-   those exact claims. Existing scenario rows have no invented runnable claims;
-   they carry non-empty `deferred` reasons, remain visible in the graph summary,
-   and are excluded from the scenario matrix until real targets land. Missing,
-   partial, or runnable+deferred claims still fail verification.
+   those exact claims. Existing scenario rows intentionally have no invented
+   runnable claims, so the graph remains red until real targets land.
 
    Freshness starts from authored OpenAPI/route metadata rather than optional
    generated sentinels. Deleting both `bundle.json` and `routes.json`, or
@@ -426,7 +420,7 @@ is the authority map for the first public Rust-native candidate:
 | `infra`               | Published module-bundle identity plus one exact Terraform/provider lock closure                                            | Produced from a deterministic module rebuild, the exact version in `_terraform-lane.yml`, and every module provider lock; version drift is refused.                     |
 | `catalogs`            | Signed catalogue publication identities carried by certified runtime envelopes                                             | Brain build plans now bind model and tool digests; composition requires both from a certified Brain envelope and checks the tool digest against source.                  |
 | `policy`              | Canonical digest producers for the artifact and freshness policies, the pinned Rust channel, and the source-policy version | Produced directly from the policy files and pinned toolchain.                                                                                                             |
-| unit envelopes        | `artifact certify` over immutable readback, GitHub provenance and artifact-bound passing build/test receipts               | Implemented for all 36 currently published units. Browser MicroVM variants are deferred until a pinned ARM64 browser layer exists. Startup-mode envelopes explicitly defer supply-chain scanners while retaining exact build, catalogue, provenance and publication identity. |
+| unit envelopes        | `artifact certify` over immutable readback, GitHub provenance, real scanner outputs and artifact-bound passing receipts    | The workflow uploads only drafts. Required deny, SBOM, licence, vulnerability, package-integrity, determinism and other per-unit receipts are not all produced or bound. |
 | manifest publication  | Exact manifest bytes, HTTPS release asset identity and GitHub attestation under the workflow the private verifier trusts   | `main.yml` attests and uploads manifest/store before undrafting, then reads both back. The private verifier must pin `main.yml` for these two subjects.                  |
 
 The smallest honest completion sequence is:
@@ -493,11 +487,12 @@ regional capacity producer.
    `declares-policy-or-rate-logic`) are declared in the policy and not
    implemented; they are content predicates rather than path globs. The corpus
    test skips them explicitly rather than counting them as covered.
-9. **Supply-chain assurance is startup-deferred.** Certified unit envelopes
-   explicitly record the deferral while retaining exact build, test, catalogue,
-   provenance, signature and immutable publication identities. The revisit
-   trigger is tracked in `references/backlog.md`; scanner availability does not
-   block public composition or dev release.
+9. **Certified unit envelopes remain absent.** The raw Linux x86_64 release
+   tool, Terraform module bundle, regional-table bundle, authoritative
+   `CompositionInputs`, and manifest/store publication path now have exact
+   producers. The workflow must still earn and bind every required per-unit
+   supply-chain and semantic receipt before composition can run; private
+   immutable acquisition must continue to fail until that release completes.
 10. **Private roots still use sibling public-module paths.** A hosted plan may
     satisfy those paths only from the verified module bundle extracted at the
     fixed path recorded in its saved-plan envelope—never by checking out public

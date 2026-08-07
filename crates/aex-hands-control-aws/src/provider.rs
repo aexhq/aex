@@ -262,9 +262,6 @@ pub struct MicrovmDescription {
     pub endpoint: Option<String>,
     /// When the provider says it launched.
     pub launched_at: Option<Timestamp>,
-    /// The request identity on an effect response. `GetMicrovm` and list reads
-    /// carry none; `RunMicrovm` must preserve it for the durable launch receipt.
-    pub request_id: Option<ProviderRequestId>,
 }
 
 /// An endpoint authorization token.
@@ -365,8 +362,7 @@ pub trait MicrovmControlApi: Send + Sync + 'static {
         ports: &'a [u16],
     ) -> ProviderFuture<'a, EndpointToken>;
 
-    /// `ListMicrovms`. Never on a request path; used only by bounded startup
-    /// validation and background reconciliation.
+    /// `ListMicrovms`. Never on a request path; the orphan sweep only.
     fn list<'a>(
         &'a self,
         image: Option<&'a ImageIdentifier>,

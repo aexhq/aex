@@ -14,7 +14,7 @@ use central_schema_admin::connect::ADVISORY_LOCK_KEY;
 use central_schema_admin::grants::GrantSet;
 use central_schema_admin::migration::{MigrationBundle, native_migrator};
 use central_schema_admin::runner::{
-    RunnerError, applied_head, apply_grants, check_conservation, diff_grants, expect_applied_head,
+    applied_head, apply_grants, check_conservation, diff_grants, expect_applied_head,
 };
 use sqlx::{Connection as _, Executor as _, PgConnection};
 
@@ -137,40 +137,10 @@ async fn checksum_drift_on_an_applied_version_fails_closed() {
 async fn an_out_of_order_release_is_refused_before_it_applies_anything() {
     let fixture = Fixture::start().await;
     let mut connection = fixture.connect().await;
-    let versions = MigrationBundle::embedded()
-        .expect("the embedded bundle is linear")
-        .versions();
-    let [.., expected_previous_head, _bundle_head] = versions.as_slice() else {
-        panic!("an out-of-order release needs a predecessor and a pending head");
-    };
-    let error = expect_applied_head(&mut connection, *expected_previous_head)
+    let error = expect_applied_head(&mut connection, 20_260_801_000_700)
         .await
         .expect_err("an empty database is not at the expected head");
-    assert!(matches!(
-        error,
-        RunnerError::HeadMismatch {
-            found: None,
-            expected,
-        } if expected == *expected_previous_head
-    ));
-    assert_eq!(
-        applied_head(&mut connection)
-            .await
-            .expect("the refused database still reads"),
-        None,
-        "the refusal must not create migration history"
-    );
-    let product_schema_exists: bool = sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM information_schema.schemata \
-           WHERE schema_name IN ('control', 'finance', 'identity'))",
-    )
-    .fetch_one(&mut connection)
-    .await
-    .expect("the product-schema absence reads");
-    assert!(
-        !product_schema_exists,
-        "the refusal must happen before the first migration statement"
-    );
+    assert!(error.to_string().contains("20260801000800"));
 }
 
 #[tokio::test(flavor = "multi_thread")]

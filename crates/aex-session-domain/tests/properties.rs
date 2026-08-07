@@ -719,7 +719,7 @@ proptest! {
             ) {
                 Ok(commit) => {
                     admitted += 1;
-                    prop_assert!(admitted < ceiling);
+                    prop_assert!(admitted + 1 <= ceiling);
                     live.push(commit.agent);
                 }
                 Err(AgentError::CeilingExceeded { effective, .. }) => {

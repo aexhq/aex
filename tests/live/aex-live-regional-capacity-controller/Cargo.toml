@@ -24,4 +24,4 @@ risk = ["iam", "concurrency"]
 scenarios = []
 
 [package.metadata.aex.not_applicable]
-targets = "regional-services owns this live companion; live evidence requires the private regional deployment composition"
+targets = "live evidence requires the private regional deployment composition"

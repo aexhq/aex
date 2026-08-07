@@ -36,7 +36,7 @@ pub(crate) mod sync {
     pub(crate) use std::sync::{Mutex, atomic};
 }
 
-pub use cache::{FoldCache, WarmCacheShard, WarmEntry};
+pub use cache::{WarmCacheShard, WarmEntry};
 pub use drain::{DrainGate, DrainPermit};
 pub use permits::{PermitKind, PermitSet, PermitSetFull, Reservation};
 pub use registry::{ActivationRegistry, Busy, RegistrySlot};

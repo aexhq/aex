@@ -83,10 +83,6 @@ pub fn emit_all(ir: &ContractIr) -> GeneratedTree {
         crate::emit_client::rust_client(ir, &digest),
     );
     tree.insert(
-        "packages/wire/src/generated/models.ts",
-        crate::typescript::typescript_wire(ir, &digest),
-    );
-    tree.insert(
         "conformance/routes/bindings.jsonl",
         route_binding_corpus(ir),
     );
@@ -322,12 +318,6 @@ fn route_registry_document(operation: &OperationIr) -> Value {
             .as_object_mut()
             .expect("route documents are objects")
             .insert("servedArtifact".to_owned(), json!(served_artifact));
-    }
-    if let Some(reason) = &operation.deferred_reason {
-        document
-            .as_object_mut()
-            .expect("route documents are objects")
-            .insert("deferredReason".to_owned(), json!(reason));
     }
     document
 }

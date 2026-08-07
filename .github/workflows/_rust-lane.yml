@@ -34,56 +34,13 @@ on:
         type: string
         required: false
         default: ci
-      release_tool_sha256:
-        description: SHA-256 of the run's prepared aex-release-tool.
-        type: string
-        required: true
-      workspace_check_sha256:
-        description: SHA-256 of the run's prepared aex-workspace-check.
-        type: string
-        required: true
 
 permissions:
   contents: read
 
 jobs:
-  nextest:
-    name: Prepare pinned nextest
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
-        with:
-          toolchain: "1.97.1"
-
-      - name: Build, stage, and verify exact nextest
-        run: |
-          set -euo pipefail
-          cargo install --locked --version 0.9.108 cargo-nextest
-          cargo-nextest --version | grep -Eq '^cargo-nextest 0\.9\.108([[:space:]]|$)'
-          mkdir -p "$RUNNER_TEMP/aex-nextest"
-          cp "$(command -v cargo-nextest)" "$RUNNER_TEMP/aex-nextest/cargo-nextest"
-          (cd "$RUNNER_TEMP/aex-nextest" && sha256sum cargo-nextest > cargo-nextest.sha256)
-
-      # The run id alone, so a partial re-run — which does not re-execute this
-      # job — still finds the artifact. `overwrite` covers the full re-run that
-      # does re-execute it.
-      - name: Upload pinned nextest
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
-        with:
-          name: cargo-nextest-${{ inputs.lane }}-${{ inputs.job_name }}-${{ github.run_id }}
-          path: |
-            ${{ runner.temp }}/aex-nextest/cargo-nextest
-            ${{ runner.temp }}/aex-nextest/cargo-nextest.sha256
-          if-no-files-found: error
-          overwrite: true
-          retention-days: 1
-
   test:
     name: ${{ matrix.name }}
-    needs: nextest
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -103,53 +60,13 @@ jobs:
       - name: Cargo cache
         uses: Swatinem/rust-cache@bc2d2e71bd35c5549942babaa51a89c586b981d1  # v2.8.1
         with:
-          # Keyed on the writer, not the reader. Only the main lane passes
-          # `restore-save`, so a per-lane key left every `pr` and `assurance`
-          # cell reading a key nothing ever wrote, compiling the closure cold.
-          # `save-if` is unchanged, so main remains the single writer.
           save-if: ${{ inputs.cache_mode == 'restore-save' }}
-          shared-key: main
+          shared-key: ${{ inputs.lane }}
 
-      - name: Download the prepared workspace tools
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+      - name: Install nextest
+        uses: taiki-e/install-action@2cdf2d81f4edfc3b41d5ddf56083c70b48ac2475  # v2.62.35
         with:
-          name: workspace-tools-${{ github.run_id }}
-          path: ${{ runner.temp }}/aex-tools
-
-      # The digests arrive through the job-output channel, not inside the
-      # artifact, so an artifact that lies about itself cannot self-certify.
-      - name: Use the prepared workspace tools
-        env:
-          RELEASE_TOOL_SHA256: ${{ inputs.release_tool_sha256 }}
-          WORKSPACE_CHECK_SHA256: ${{ inputs.workspace_check_sha256 }}
-        run: |
-          set -euo pipefail
-          cd "$RUNNER_TEMP/aex-tools"
-          [[ "$RELEASE_TOOL_SHA256" =~ ^[0-9a-f]{64}$ ]]
-          [[ "$WORKSPACE_CHECK_SHA256" =~ ^[0-9a-f]{64}$ ]]
-          printf '%s  %s\n' "$RELEASE_TOOL_SHA256" aex-release-tool > expected.sha256
-          printf '%s  %s\n' "$WORKSPACE_CHECK_SHA256" aex-workspace-check >> expected.sha256
-          sha256sum --check --strict expected.sha256
-          [[ "$(find . -maxdepth 1 -type f ! -name expected.sha256 | wc -l)" -eq 2 ]]
-          chmod 0755 aex-release-tool aex-workspace-check
-          ./aex-release-tool --version | grep -Eq '^aex-release-tool [0-9]+\.[0-9]+\.[0-9]+'
-          ./aex-workspace-check --version | grep -Eq '^aex-workspace-check [0-9]+\.[0-9]+\.[0-9]+'
-          echo "$RUNNER_TEMP/aex-tools" >> "$GITHUB_PATH"
-
-      - name: Download pinned nextest
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
-        with:
-          name: cargo-nextest-${{ inputs.lane }}-${{ inputs.job_name }}-${{ github.run_id }}
-          path: ${{ runner.temp }}/aex-nextest
-
-      - name: Use pinned nextest
-        run: |
-          set -euo pipefail
-          cd "$RUNNER_TEMP/aex-nextest"
-          sha256sum --check cargo-nextest.sha256
-          chmod 0755 cargo-nextest
-          ./cargo-nextest --version | grep -Eq '^cargo-nextest 0\.9\.108([[:space:]]|$)'
-          echo "$RUNNER_TEMP/aex-nextest" >> "$GITHUB_PATH"
+          tool: cargo-nextest
 
       - name: Record the receipt source identity
         env:
@@ -239,11 +156,11 @@ jobs:
               startedAt: $startedAt,
               completedAt: $completedAt
             }' > "$RECEIPT_DIR/lint-context.json"
-          aex-release-tool evidence new-cargo \
+          cargo run --locked --release -p aex-release-tool -- evidence new-cargo \
             --context "$RECEIPT_DIR/lint-context.json" \
             --messages "$RECEIPT_DIR/clippy.json" \
             --out "$LINT_RECEIPT"
-          aex-release-tool evidence attach \
+          cargo run --locked --release -p aex-release-tool -- evidence attach \
             --receipt "$LINT_RECEIPT" --kind log \
             --file "$RECEIPT_DIR/clippy.json" \
             --uri "artifact://lint-${RECEIPT_LANE}-${SELECTED_PACKAGE}-${PARTITION_INDEX}/clippy.json"
@@ -268,7 +185,7 @@ jobs:
               flaky: 0
             }
           ' "$LINT_RECEIPT" >/dev/null
-          aex-release-tool evidence verify \
+          cargo run --locked --release -p aex-release-tool -- evidence verify \
             --receipt "$LINT_RECEIPT"
 
       - name: Record the declared test inventory
@@ -299,38 +216,21 @@ jobs:
         env:
           CARGO_INCREMENTAL: "0"
           RECEIPT_DIR: target/aex-evidence/${{ matrix.name }}
-          SELECTED_PACKAGE: ${{ matrix.name }}
         run: |
           set -euo pipefail
-          metadata=$(cargo metadata --locked --no-deps --format-version 1)
-          package_count=$(jq --arg package "$SELECTED_PACKAGE" \
-            '[.packages[] | select(.name == $package)] | length' <<<"$metadata")
-          [[ "$package_count" == "1" ]]
-          has_library=$(jq -r --arg package "$SELECTED_PACKAGE" \
-            '[.packages[] | select(.name == $package).targets[] | select(.kind | index("lib"))] | length > 0' \
-            <<<"$metadata")
-          if [[ "$has_library" == "true" ]]; then
-            cargo test --locked --color never --doc -p "$SELECTED_PACKAGE" 2>&1 \
-              | tee "$RECEIPT_DIR/doctest.log"
-          elif [[ "$has_library" == "false" ]]; then
-            printf '%s\n' "$SELECTED_PACKAGE has no library target; doctests are not applicable" \
-              > "$RECEIPT_DIR/doctest.log"
-          else
-            echo "invalid library-target verdict for $SELECTED_PACKAGE: $has_library" >&2
-            exit 2
-          fi
+          cargo test --locked --doc -p "${{ matrix.name }}" 2>&1 \
+            | tee "$RECEIPT_DIR/doctest.log"
 
       - name: Prove the no-skip inventory
         env:
           RECEIPT_DIR: target/aex-evidence/${{ matrix.name }}
         run: |
           set -euo pipefail
-          aex-workspace-check flake scan \
+          cargo run --locked --release -p aex-workspace-check -- flake scan \
             --list "$RECEIPT_DIR/nextest-list.json" \
             --junit "target/nextest/${{ inputs.profile }}/junit.xml" \
             --doctest "$RECEIPT_DIR/doctest.log" \
             --profile "${{ inputs.profile }}" \
-            --default-features-only \
             --package "${{ matrix.name }}" \
             > "$RECEIPT_DIR/inventory.json"
 
@@ -400,19 +300,19 @@ jobs:
               startedAt: $startedAt,
               completedAt: $completedAt
             }' > "$RECEIPT_DIR/context.json"
-          aex-release-tool evidence new \
+          cargo run --locked --release -p aex-release-tool -- evidence new \
             --context "$RECEIPT_DIR/context.json" \
             --junit "target/nextest/${{ inputs.profile }}/junit.xml" \
             --out "$RECEIPT_DIR/receipt.json"
-          aex-release-tool evidence attach \
+          cargo run --locked --release -p aex-release-tool -- evidence attach \
             --receipt "$RECEIPT_DIR/receipt.json" --kind junit \
             --file "target/nextest/${{ inputs.profile }}/junit.xml" \
             --uri "artifact://junit-${RECEIPT_LANE}-${SELECTED_PACKAGE}-${PARTITION_INDEX}/junit.xml"
-          aex-release-tool evidence attach \
+          cargo run --locked --release -p aex-release-tool -- evidence attach \
             --receipt "$RECEIPT_DIR/receipt.json" --kind nextest-list \
             --file "$RECEIPT_DIR/nextest-list.json" \
             --uri "artifact://junit-${RECEIPT_LANE}-${SELECTED_PACKAGE}-${PARTITION_INDEX}/nextest-list.json"
-          aex-release-tool evidence attach \
+          cargo run --locked --release -p aex-release-tool -- evidence attach \
             --receipt "$RECEIPT_DIR/receipt.json" --kind log \
             --file "$RECEIPT_DIR/doctest.log" \
             --uri "artifact://junit-${RECEIPT_LANE}-${SELECTED_PACKAGE}-${PARTITION_INDEX}/doctest.log"
@@ -429,80 +329,8 @@ jobs:
             .inventory.retried == $scan[0].retried and
             .inventory.flaky == $scan[0].flaky
           ' "$RECEIPT_DIR/receipt.json" >/dev/null
-          aex-release-tool evidence verify \
+          cargo run --locked --release -p aex-release-tool -- evidence verify \
             --receipt "$RECEIPT_DIR/receipt.json"
-
-      - name: Build and verify declared semantic receipts
-        env:
-          RECEIPT_DIR: target/aex-evidence/${{ matrix.name }}
-          SELECTED_PACKAGE: ${{ matrix.name }}
-          SELECTED_UNITS_JSON: ${{ toJSON(matrix.units) }}
-          RECEIPT_LANE: ${{ inputs.lane }}
-          NEXTEST_PROFILE: ${{ inputs.profile }}
-        run: |
-          set -euo pipefail
-          mapfile -t producers < <(
-            jq -c --arg package "$SELECTED_PACKAGE" \
-              '.producers[] | select(.package == $package)' release/semantic-receipts.json
-          )
-          for producer in "${producers[@]}"; do
-            unit=$(jq -er .unit <<<"$producer")
-            class=$(jq -er .class <<<"$producer")
-            layer=$(jq -er .layer <<<"$producer")
-            filterset=$(jq -er .filterset <<<"$producer")
-            jq -e --arg unit "$unit" 'index($unit) != null' \
-              <<<"$SELECTED_UNITS_JSON" >/dev/null
-            started_at=$(date --utc +'%Y-%m-%dT%H:%M:%SZ')
-            list="$RECEIPT_DIR/nextest-list.json"
-            junit="target/nextest/$NEXTEST_PROFILE/junit.xml"
-            declared=$(jq -er .declared "$RECEIPT_DIR/inventory.json")
-            if [[ "$filterset" != "all()" ]]; then
-              profile="$NEXTEST_PROFILE"
-              feature_args=()
-              if jq -e '.features != null' <<<"$producer" >/dev/null; then
-                profile=integration
-                features=$(jq -er '.features | join(",")' <<<"$producer")
-                feature_args+=(--features "$features")
-              fi
-              key=$(printf '%s-%s' "$unit" "$class" | tr -c 'A-Za-z0-9._-' '-')
-              list="$RECEIPT_DIR/nextest-list-$key.json"
-              cargo nextest list --locked --profile "$profile" \
-                -p "$SELECTED_PACKAGE" --all-targets "${feature_args[@]}" \
-                -E "$filterset" --message-format json > "$list"
-              cargo nextest run --locked --profile "$profile" \
-                -p "$SELECTED_PACKAGE" "${feature_args[@]}" \
-                -E "$filterset" --no-tests=fail
-              junit="target/nextest/$profile/junit.xml"
-              declared=$(jq -er '[."rust-suites"[].testcases | length] | add | select(. > 0)' "$list")
-            fi
-            completed_at=$(date --utc +'%Y-%m-%dT%H:%M:%SZ')
-            output="$RECEIPT_DIR/receipt-semantic-$unit-$class.json"
-            context="$RECEIPT_DIR/context-semantic-$unit-$class.json"
-            jq \
-              --arg receiptId "rc_${RECEIPT_LANE}_rust_${class}_${unit}_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}" \
-              --arg class "$class" \
-              --arg layer "$layer" \
-              --arg unit "$unit" \
-              --arg filterset "$filterset" \
-              --argjson declared "$declared" \
-              --arg startedAt "$started_at" \
-              --arg completedAt "$completed_at" \
-              '.receiptId=$receiptId | .class=$class | .layer=$layer |
-               .concerns=[$class] | .declared=$declared | .subject.unitIds=[$unit] |
-               .selection.filterset=$filterset | .selection.partition=null |
-               .startedAt=$startedAt | .completedAt=$completedAt' \
-              "$RECEIPT_DIR/context.json" > "$context"
-            aex-release-tool evidence new \
-              --context "$context" --junit "$junit" --out "$output"
-            aex-release-tool evidence attach \
-              --receipt "$output" --kind junit --file "$junit" \
-              --uri "artifact://junit-${RECEIPT_LANE}-${SELECTED_PACKAGE}-${class}/junit.xml"
-            aex-release-tool evidence attach \
-              --receipt "$output" --kind nextest-list --file "$list" \
-              --uri "artifact://junit-${RECEIPT_LANE}-${SELECTED_PACKAGE}-${class}/nextest-list.json"
-            aex-release-tool evidence verify \
-              --receipt "$output"
-          done
 
       - name: Upload the unit receipt
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
@@ -516,14 +344,6 @@ jobs:
         with:
           name: receipt-${{ inputs.lane }}-rust-lint-${{ matrix.name }}-${{ matrix.partition }}
           path: target/aex-evidence/${{ matrix.name }}/receipt-lint-${{ matrix.name }}-${{ matrix.partition }}.json
-          if-no-files-found: error
-
-      - name: Upload semantic receipts
-        if: ${{ hashFiles(format('target/aex-evidence/{0}/receipt-semantic-*.json', matrix.name)) != '' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
-        with:
-          name: receipt-${{ inputs.lane }}-rust-semantic-${{ matrix.name }}-${{ matrix.partition }}
-          path: target/aex-evidence/${{ matrix.name }}/receipt-semantic-*.json
           if-no-files-found: error
 
       - name: Upload the lint evidence
@@ -547,7 +367,6 @@ jobs:
 
   capacity-limit-projection:
     name: aex-session-dynamodb / capacity limit producer
-    needs: nextest
     if: ${{ contains(fromJSON(inputs.matrix).include.*.name, 'aex-session-dynamodb') }}
     runs-on: ubuntu-latest
     permissions:
@@ -566,22 +385,12 @@ jobs:
         uses: Swatinem/rust-cache@bc2d2e71bd35c5549942babaa51a89c586b981d1  # v2.8.1
         with:
           save-if: ${{ inputs.cache_mode == 'restore-save' }}
-          shared-key: main-capacity-limit-projection
+          shared-key: ${{ inputs.lane }}-capacity-limit-projection
 
-      - name: Download pinned nextest
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+      - name: Install nextest
+        uses: taiki-e/install-action@2cdf2d81f4edfc3b41d5ddf56083c70b48ac2475  # v2.62.35
         with:
-          name: cargo-nextest-${{ inputs.lane }}-${{ inputs.job_name }}-${{ github.run_id }}
-          path: ${{ runner.temp }}/aex-nextest
-
-      - name: Use pinned nextest
-        run: |
-          set -euo pipefail
-          cd "$RUNNER_TEMP/aex-nextest"
-          sha256sum --check cargo-nextest.sha256
-          chmod 0755 cargo-nextest
-          ./cargo-nextest --version | grep -Eq '^cargo-nextest 0\.9\.108([[:space:]]|$)'
-          echo "$RUNNER_TEMP/aex-nextest" >> "$GITHUB_PATH"
+          tool: cargo-nextest
 
       - name: Compile the isolated producer
         env:

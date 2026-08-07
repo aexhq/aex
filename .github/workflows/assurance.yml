@@ -16,11 +16,14 @@ on:
         required: true
         options:
           - full-graph
+          - supply-chain
           - deep-risk
           - cold-rebuild
   schedule:
     # full-graph
     - cron: "0 2 * * *"
+    # supply-chain
+    - cron: "0 3 * * *"
     # deep-risk
     - cron: "0 4 * * 0"
     # cold-rebuild
@@ -55,51 +58,35 @@ jobs:
           fi
           case "$SCHEDULE" in
             "0 2 * * *") echo "name=full-graph" >> "$GITHUB_OUTPUT" ;;
+            "0 3 * * *") echo "name=supply-chain" >> "$GITHUB_OUTPUT" ;;
             "0 4 * * 0") echo "name=deep-risk" >> "$GITHUB_OUTPUT" ;;
             "0 5 * * 1") echo "name=cold-rebuild" >> "$GITHUB_OUTPUT" ;;
             *) echo "unrecognised schedule"; exit 2 ;;
           esac
 
-  # Only the full-graph suite calls a lane that needs the tools, so the
-  # producer carries the same gate as its consumers rather than building
-  # binaries the other two suites would never run.
-  tools:
-    name: Tools
-    needs: suite
-    if: needs.suite.outputs.name == 'full-graph'
-    uses: ./.github/workflows/_tools.yml
-
   route:
     name: Route
-    needs: [suite, tools]
+    needs: suite
     if: needs.suite.outputs.name == 'full-graph'
     uses: ./.github/workflows/_route.yml
     with:
-      # Scheduled events have no before SHA. A full-graph assurance run therefore
-      # asks the router for its explicit full selection with an intentional
-      # zero-diff identity instead of presenting an unknown diff as affected.
-      mode: full
-      artifact_mode: full
+      mode: shadow
       lane: assurance
-      base_sha: ${{ github.sha }}
+      base_sha: ${{ github.event.before || github.sha }}
       head_sha: ${{ github.sha }}
       partitions: 8
-      release_tool_sha256: ${{ needs.tools.outputs.release_tool_sha256 }}
-      workspace_check_sha256: ${{ needs.tools.outputs.workspace_check_sha256 }}
 
   full-graph:
     name: Full graph
-    needs: [suite, tools, route]
+    needs: [suite, route]
     if: needs.suite.outputs.name == 'full-graph'
     uses: ./.github/workflows/_rust-lane.yml
     with:
       matrix: ${{ needs.route.outputs.test_matrix }}
       lane: assurance
       job_name: full-graph
-      selection_mode: full
+      selection_mode: shadow
       cache_mode: restore
-      release_tool_sha256: ${{ needs.tools.outputs.release_tool_sha256 }}
-      workspace_check_sha256: ${{ needs.tools.outputs.workspace_check_sha256 }}
 
   full-scenarios:
     name: Full scenarios
@@ -109,6 +96,44 @@ jobs:
     with:
       matrix: ${{ needs.route.outputs.scenario_matrix }}
       lane: assurance
+
+  supply-chain:
+    name: Supply chain
+    needs: suite
+    if: needs.suite.outputs.name == 'supply-chain'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
+        with:
+          toolchain: "1.97.1"
+
+      - name: Install the auditors
+        uses: taiki-e/install-action@2cdf2d81f4edfc3b41d5ddf56083c70b48ac2475  # v2.62.35
+        with:
+          tool: cargo-deny,cargo-audit
+
+      - name: Cargo advisories and licences
+        run: cargo deny --all-features check
+
+      - name: Cargo audit
+        run: cargo audit --deny warnings
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
+        with:
+          bun-version: "1.3.14"
+
+      - name: Bun audit
+        run: bun audit
+
+      - name: Action pin drift
+        run: cargo run --locked --release -p aex-release-tool -- policy workflows
 
   deep-risk:
     name: Deep risk

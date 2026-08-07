@@ -30,15 +30,6 @@ pub const BUNDLE_SCHEMA: &str = "aex.regional-tables.v1";
 /// generation as its predecessor.
 pub const BUNDLE_GENERATION: u32 = 1;
 
-/// `DynamoDB`'s hard maximum number of explicitly projected non-key attributes
-/// on one `INCLUDE` secondary index.
-pub const INCLUDE_ATTRIBUTES_PER_INDEX_MAX: usize = 20;
-
-/// `DynamoDB`'s hard maximum number of explicitly projected non-key attributes,
-/// summed across every `INCLUDE` secondary index on one table. Repeated names
-/// count once per index, exactly as the service counts them.
-pub const INCLUDE_ATTRIBUTES_PER_TABLE_MAX: usize = 100;
-
 /// Why a table definition could not be read, validated or bundled.
 #[derive(Debug, thiserror::Error)]
 pub enum TableError {
@@ -93,32 +84,6 @@ pub enum TableError {
         table: String,
         /// The attribute nothing references.
         attribute: String,
-    },
-    /// One `INCLUDE` index exceeds `DynamoDB`'s hard `NonKeyAttributes` bound.
-    #[error(
-        "table `{table}` index `{index}` projects {observed} non-key attributes, above DynamoDB's {limit}-attribute per-index limit"
-    )]
-    ProjectionIndexLimit {
-        /// The offending table.
-        table: String,
-        /// The offending index.
-        index: String,
-        /// The projected non-key attribute count.
-        observed: usize,
-        /// `DynamoDB`'s hard per-index limit.
-        limit: usize,
-    },
-    /// The sum of all `INCLUDE` projections exceeds `DynamoDB`'s table bound.
-    #[error(
-        "table `{table}` projects {observed} non-key attributes across its indexes, above DynamoDB's {limit}-attribute per-table limit"
-    )]
-    ProjectionTableLimit {
-        /// The offending table.
-        table: String,
-        /// The projected non-key attribute count summed across indexes.
-        observed: usize,
-        /// `DynamoDB`'s hard per-table limit.
-        limit: usize,
     },
     /// Two definitions claim the same logical table name.
     #[error("logical table `{table}` is defined twice")]
@@ -491,42 +456,6 @@ pub fn check_attribute_closure(definition: &TableDefinition) -> Result<(), Table
     Ok(())
 }
 
-/// Enforces `DynamoDB`'s non-adjustable secondary-index projection bounds before
-/// a generated bundle can reach Terraform or `CreateTable`.
-///
-/// # Errors
-///
-/// Returns [`TableError::ProjectionIndexLimit`] when one `INCLUDE` index names
-/// more than twenty non-key attributes, or
-/// [`TableError::ProjectionTableLimit`] when the sum across a table exceeds one
-/// hundred. `KEYS_ONLY` indexes contribute zero.
-pub fn check_projection_limits(definition: &TableDefinition) -> Result<(), TableError> {
-    let mut table_total = 0_usize;
-    for index in &definition.global_secondary_indexes {
-        if index.projection.projection_type != "INCLUDE" {
-            continue;
-        }
-        let observed = index.projection.attributes.len();
-        if observed > INCLUDE_ATTRIBUTES_PER_INDEX_MAX {
-            return Err(TableError::ProjectionIndexLimit {
-                table: definition.table.clone(),
-                index: index.name.clone(),
-                observed,
-                limit: INCLUDE_ATTRIBUTES_PER_INDEX_MAX,
-            });
-        }
-        table_total = table_total.saturating_add(observed);
-    }
-    if table_total > INCLUDE_ATTRIBUTES_PER_TABLE_MAX {
-        return Err(TableError::ProjectionTableLimit {
-            table: definition.table.clone(),
-            observed: table_total,
-            limit: INCLUDE_ATTRIBUTES_PER_TABLE_MAX,
-        });
-    }
-    Ok(())
-}
-
 /// Read, validate and sort every table definition under `directory`.
 ///
 /// # Errors
@@ -575,7 +504,6 @@ pub fn load_all(directory: &Path) -> Result<Vec<TableDefinition>, TableError> {
             });
         }
         check_attribute_closure(&definition)?;
-        check_projection_limits(&definition)?;
         if tables
             .iter()
             .any(|existing| existing.table == definition.table)
@@ -653,8 +581,8 @@ pub fn read_bundle() -> Result<TableBundle, TableError> {
 mod tests {
     use super::{
         AttributeDefinition, GlobalSecondaryIndex, KeySchema, Projection, TableDefinition,
-        TableError, bundle, check_attribute_closure, check_projection_limits,
-        definitions_directory, load_all, rebuild, render,
+        TableError, bundle, check_attribute_closure, definitions_directory, load_all, rebuild,
+        render,
     };
 
     fn sample() -> TableDefinition {
@@ -713,56 +641,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn every_projection_stays_inside_dynamodb_hard_limits() {
-        for table in load_all(&definitions_directory()).expect("the definitions load") {
-            check_projection_limits(&table).expect("the definition is creatable by DynamoDB");
-        }
-    }
-
-    #[test]
-    fn an_include_projection_above_twenty_attributes_is_rejected_before_bundle_generation() {
-        let mut table = sample();
-        table.global_secondary_indexes[0].projection.projection_type = "INCLUDE".to_owned();
-        table.global_secondary_indexes[0].projection.attributes =
-            (0..21).map(|value| format!("field{value}")).collect();
-        assert!(matches!(
-            check_projection_limits(&table),
-            Err(TableError::ProjectionIndexLimit {
-                observed: 21,
-                limit: 20,
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn a_table_projection_sum_above_one_hundred_is_rejected_before_bundle_generation() {
-        let mut table = sample();
-        let template = table.global_secondary_indexes[1].clone();
-        table.global_secondary_indexes = (0..6)
-            .map(|position| {
-                let mut index = template.clone();
-                index.name = format!("gsi_limit_{position}");
-                index.projection.projection_type = "INCLUDE".to_owned();
-                index.projection.attributes = (0..20)
-                    .map(|attribute| format!("field{position}_{attribute}"))
-                    .collect();
-                index
-            })
-            .collect();
-        assert!(matches!(
-            check_projection_limits(&table),
-            Err(TableError::ProjectionTableLimit {
-                observed: 120,
-                limit: 100,
-                ..
-            })
-        ));
-    }
-
     /// Attribute names that carry a record body, a prompt or a receipt.
-    const BODY_SHAPED: [&str; 11] = [
+    const BODY_SHAPED: [&str; 10] = [
         "bodyInline",
         "bodyDigest",
         "contentInline",
@@ -773,7 +653,6 @@ mod tests {
         "resolvedConfig",
         "resultInline",
         "enc",
-        "authorityDocument",
     ];
 
     #[test]

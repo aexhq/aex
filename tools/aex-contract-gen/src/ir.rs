@@ -322,11 +322,6 @@ pub struct OperationIr {
     /// Absence is an intentional delivery gap. This is route-registry
     /// metadata, not part of the public wire bundle.
     pub served_artifact: Option<String>,
-    /// Why the production composition intentionally does not mount this route.
-    ///
-    /// This is mutually exclusive with `served_artifact` and is delivery
-    /// metadata rather than part of the public wire contract.
-    pub deferred_reason: Option<String>,
     /// Release scenarios that exercise this operation.
     ///
     /// This is route-registry metadata, not part of the public wire bundle.
