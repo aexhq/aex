@@ -25,7 +25,6 @@ use axum::routing::{MethodFilter, on};
 use crate::admission::{OtlpRequest, OtlpService, SESSION_HEADER};
 use aex_internal_contracts::assertion::AssertionAudience;
 use aex_regional_http::authz::{LambdaAssertionSource, RegionalProjection};
-use aex_regional_http::capacity::CapacityProjection;
 use aex_regional_http::edge::{RegionalEdge, SystemClock};
 use aex_regional_http::mount::{AdmissionRequest, EdgeAdmission as _};
 
@@ -49,7 +48,6 @@ pub const AUDIENCE: AssertionAudience = AssertionAudience::RegionalOtlp;
 pub type Edge = RegionalEdge<
     LambdaAssertionSource,
     RegionalProjection<aex_session_dynamodb::projection::ProjectionReader>,
-    CapacityProjection<aex_session_dynamodb::projection::ProjectionReader>,
     SystemClock,
 >;
 
@@ -323,7 +321,7 @@ pub fn owned_routes() -> &'static [RouteId] {
 
 #[cfg(test)]
 mod tests {
-    use aex_wire::routes::{BodyClass, Plane, RouteId, TransportKind, route};
+    use aex_wire::routes::{BodyClass, Plane, TransportKind, route};
     use aex_wire::server::RouteGroup;
 
     use super::{GROUP, mounted_templates, owned_routes};
@@ -355,25 +353,6 @@ mod tests {
             assert_eq!(descriptor.body_class, BodyClass::Otlp);
             assert_eq!(descriptor.transport, TransportKind::Unary);
         }
-    }
-
-    #[test]
-    fn mounted_routes_match_the_generated_actual_mount_authority() {
-        let registry: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../api/generated/registries/routes.json"
-        ))
-        .expect("generated route registry");
-        let generated: Vec<RouteId> = registry["routes"]
-            .as_array()
-            .expect("route rows")
-            .iter()
-            .filter(|route| route["servedArtifact"] == "regional-otlp")
-            .map(|route| {
-                RouteId::parse(route["operationId"].as_str().expect("operation id"))
-                    .expect("generated operation id")
-            })
-            .collect();
-        assert_eq!(owned_routes(), generated);
     }
 
     #[test]

@@ -15,8 +15,8 @@ use aex_brain_domain::fold::{FoldError, FoldState, apply, fold};
 use aex_brain_domain::ids::{ContentHash, JournalSeq, Timestamp};
 use aex_brain_domain::journal::{FinishReason, JournalEntry, JournalRecord};
 use aex_brain_test_support::journal_gen::{
-    HistoryBuilder, agent, assistant_text, assistant_tool_use, effect_complete, effect_prepared,
-    finished, grant, model_effect, only, started, tool_result, user_text,
+    HistoryBuilder, agent, assistant_tool_use, effect_complete, effect_prepared, finished, grant,
+    model_effect, only, started, tool_result, user_text,
 };
 
 /// Applies `intruder` to the fold of `history` and returns the state before, the state
@@ -98,24 +98,31 @@ fn the_envelope_hash_guard_is_load_bearing() {
 /// enters model-visible history.
 #[test]
 fn the_completeness_guard_is_load_bearing() {
-    use aex_brain_domain::wire_pending::CanonicalBlock;
-    use aex_model_catalog::BoundedString;
+    use aex_brain_domain::wire_pending::{CanonicalBlock, CompleteProof, ProviderId, StopReason};
 
     let history = HistoryBuilder::new()
         .push(started(grant(1_000)))
         .push(user_text("go"))
         .build();
-    let mut intruder = assistant_text(
-        "what the proof covers",
-        model_effect(agent(1), JournalSeq(2)),
-    );
-    let JournalRecord::AssistantMessage { message, .. } = &mut intruder else {
-        unreachable!("assistant_text always returns an assistant message")
-    };
-    message.blocks = vec![CanonicalBlock::Text {
-        text: BoundedString::truncating("what actually arrived"),
-        annotations: Vec::new(),
+    let blocks = vec![CanonicalBlock::Text {
+        text: "what actually arrived".to_owned(),
     }];
+    let mismatched = CompleteProof::mint(
+        StopReason::EndTurn,
+        &[CanonicalBlock::Text {
+            text: "what the proof covers".to_owned(),
+        }],
+    )
+    .expect("a terminal proof mints");
+    let intruder = JournalRecord::AssistantMessage {
+        blocks,
+        usage: aex_brain_test_support::journal_gen::TURN_USAGE,
+        stop_reason: StopReason::EndTurn,
+        provider: ProviderId::Deepseek,
+        model: aex_brain_domain::ids::ModelSlug("deepseek-chat".to_owned()),
+        effect: model_effect(agent(1), JournalSeq(2)),
+        complete: mismatched,
+    };
     let (before, after, error) = probe(&history, intruder, JournalSeq(2));
     assert!(
         matches!(error, FoldError::UnprovenAssistantMessage { .. }),
@@ -123,49 +130,6 @@ fn the_completeness_guard_is_load_bearing() {
     );
     assert_eq!(before, after);
     assert!(after.model_history.is_empty(), "nothing may have leaked in");
-}
-
-/// A receipt for another response cannot authorize an otherwise valid
-/// assistant message, and the refusal happens before model history moves.
-#[test]
-fn the_provider_receipt_guard_is_load_bearing() {
-    let history = HistoryBuilder::new()
-        .push(started(grant(1_000)))
-        .push(user_text("go"))
-        .build();
-    let mut intruder = assistant_text("a complete response", model_effect(agent(1), JournalSeq(2)));
-    let JournalRecord::AssistantMessage { receipt, .. } = &mut intruder else {
-        unreachable!("assistant_text always returns an assistant message")
-    };
-    receipt.response_receipt = Some(aex_wire::ContentHash::of(b"another response"));
-    let (before, after, error) = probe(&history, intruder, JournalSeq(2));
-    assert!(
-        matches!(error, FoldError::ReceiptMismatch { .. }),
-        "{error:?}"
-    );
-    assert_eq!(before, after);
-    assert!(after.model_history.is_empty(), "nothing may have leaked in");
-}
-
-/// A response proof inside a receipt does not make a non-success HTTP response
-/// admissible as an assistant message.
-#[test]
-fn the_provider_receipt_success_shape_is_load_bearing() {
-    let history = HistoryBuilder::new()
-        .push(started(grant(1_000)))
-        .push(user_text("go"))
-        .build();
-    let mut intruder = assistant_text("a complete response", model_effect(agent(1), JournalSeq(2)));
-    let JournalRecord::AssistantMessage { receipt, .. } = &mut intruder else {
-        unreachable!("assistant_text always returns an assistant message")
-    };
-    receipt.http_status = 500;
-    let (before, after, error) = probe(&history, intruder, JournalSeq(2));
-    assert!(
-        matches!(error, FoldError::ReceiptMismatch { .. }),
-        "{error:?}"
-    );
-    assert_eq!(before, after);
 }
 
 /// The pending-call guard: a result for a call the model never made is refused.

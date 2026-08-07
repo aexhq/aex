@@ -33,7 +33,6 @@
 pub mod boot;
 pub mod capture;
 pub mod crc;
-pub mod image_contract;
 pub mod journal;
 pub mod session;
 pub mod wire;
@@ -44,10 +43,6 @@ pub use boot::{
 };
 pub use capture::{ATTACH_STREAM_CAP_BYTES, Capture, CaptureOutcome, MirrorChunk};
 pub use crc::crc32c;
-pub use image_contract::{
-    AGENT_PATH, AGENT_SBOM_PATH, FORBIDDEN_ROOTFS_PATHS, IMAGE_LOCK_PATH, ImageLock, LockVerdict,
-    ROOTFS_CONTRACT, RPM_LIST_PATH, RootfsEntry, SBOM_DIR,
-};
 pub use journal::{
     DIRECTORY_SYNC_AVAILABLE, GuestBinding, Journal, JournalError, OperationMeta, ProcessProbe,
     ProcessRecord, ReplayEntry, ReplayVerdict,

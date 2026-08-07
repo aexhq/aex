@@ -3,10 +3,6 @@
 A Fargate task definition for a job that runs once: the central schema admin,
 the observation export task, the regional secret key admin.
 
-The caller supplies the release-manifest `stop_timeout` explicitly. It is
-materialized as ECS `stopTimeout` (1..120 seconds), so a migration cannot be
-silently assigned the platform default.
-
 This module contains **no `aws_ecs_service`**. That is the whole point of it
 being a separate module from `ecs-service`. A service would restart a migration
 runner that had already decided the schema was up to date, and an exit code
@@ -51,7 +47,6 @@ outputs.
 - Every secret environment value is an ARN reference; a plaintext value is
   rejected.
 - Every environment key is namespaced `AEX_*`.
-- Task-definition revisions are retained on replacement or destroy. Release roles therefore do not need the resource-unscopable ECS deregistration action; plane-aware revision cleanup is a separate operational responsibility.
 
 ## Not expressed as a test
 

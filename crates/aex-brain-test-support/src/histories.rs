@@ -15,7 +15,6 @@ use aex_brain_domain::journal::{
     FinishReason, JournalEntry, JournalRecord, ParkReason, PreservedCounters, WaitResolution,
 };
 use aex_brain_domain::wire_pending::{CanonicalBlock, JoinMode, StopReason};
-use aex_model_catalog::BoundedString;
 
 use crate::journal_gen::{
     HistoryBuilder, TURN_USAGE, agent, assistant, assistant_text, assistant_tool_use,
@@ -120,24 +119,8 @@ pub struct Golden {
 
 fn text(body: &str) -> Vec<CanonicalBlock> {
     vec![CanonicalBlock::Text {
-        text: BoundedString::truncating(body),
-        annotations: Vec::new(),
+        text: body.to_owned(),
     }]
-}
-
-fn mismatched_assistant(
-    actual: &str,
-    covered: &str,
-    stop: StopReason,
-    effect: aex_brain_domain::ids::EffectId,
-) -> JournalRecord {
-    let mut record = assistant_text(covered, effect);
-    let JournalRecord::AssistantMessage { message, .. } = &mut record else {
-        unreachable!("assistant_text always returns an assistant message")
-    };
-    message.blocks = text(actual);
-    message.stop_reason = stop;
-    record
 }
 
 /// Every golden semantic history, in a stable order.
@@ -231,12 +214,22 @@ pub fn all() -> Vec<Golden> {
                 EffectKind::ModelCall,
                 EffectClass::NonReplayable,
             ))
-            .push(mismatched_assistant(
-                "cut off half",
-                "what the proof covers",
-                StopReason::MaxOutputTokens,
-                call(2),
-            ))
+            .push(JournalRecord::AssistantMessage {
+                blocks: text("cut off half"),
+                usage: TURN_USAGE,
+                stop_reason: StopReason::MaxTokens,
+                provider: aex_brain_domain::wire_pending::ProviderId::Deepseek,
+                model: aex_brain_domain::ids::ModelSlug("deepseek-chat".to_owned()),
+                effect: call(2),
+                // A truncating stop cannot mint a proof, so the record must carry the proof
+                // of the terminal reason it did *not* have. This case exists to prove the
+                // fold refuses it.
+                complete: aex_brain_domain::wire_pending::CompleteProof::mint(
+                    StopReason::EndTurn,
+                    &text("cut off half"),
+                )
+                .expect("a terminal proof mints"),
+            })
             .build(),
         expectation: Expectation::Rejected(Rejection::UnprovenAssistantMessage),
     });
@@ -244,15 +237,24 @@ pub fn all() -> Vec<Golden> {
     cases.push(Golden {
         name: "an unproved assistant message never enters model-visible history",
         history: {
+            let blocks = text("claimed complete");
+            let proof = aex_brain_domain::wire_pending::CompleteProof::mint(
+                StopReason::EndTurn,
+                &text("something else entirely"),
+            )
+            .expect("a terminal proof mints");
             HistoryBuilder::new()
                 .push(started(grant(1_000)))
                 .push(user_text("go"))
-                .push(mismatched_assistant(
-                    "claimed complete",
-                    "something else entirely",
-                    StopReason::EndTurn,
-                    call(2),
-                ))
+                .push(JournalRecord::AssistantMessage {
+                    blocks,
+                    usage: TURN_USAGE,
+                    stop_reason: StopReason::EndTurn,
+                    provider: aex_brain_domain::wire_pending::ProviderId::Deepseek,
+                    model: aex_brain_domain::ids::ModelSlug("deepseek-chat".to_owned()),
+                    effect: call(2),
+                    complete: proof,
+                })
                 .build()
         },
         expectation: Expectation::Rejected(Rejection::UnprovenAssistantMessage),

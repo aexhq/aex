@@ -2,8 +2,8 @@
 
 mod support;
 
-use aex_secret_aws::crypto::{EnvelopeCrypto, SecretCrypto, SecretCryptoError, key_version};
-use aex_secret_aws::keystore::{BranchKeyProvider, KeyMaterialError};
+use aex_secret_aws::crypto::{EnvelopeCrypto, SecretCrypto, SecretCryptoError};
+use aex_secret_aws::keystore::KeyMaterialError;
 
 use support::{FakeKeys, Pinned, WRAPPED, context, now, plaintext, session_context};
 
@@ -99,22 +99,4 @@ fn a_rewrap_whose_source_context_is_wrong_never_produces_a_target_value() {
     ))
     .expect_err("the source context is wrong");
     assert_eq!(error, SecretCryptoError::ContextMismatch);
-}
-
-#[test]
-fn the_fake_enforces_the_same_exact_context_rule_as_kms() {
-    let keys = FakeKeys::new();
-    let crypto = crypto(keys.clone());
-    let source = context("openai-key", 1);
-    run(crypto.seal(&source, WRAPPED, &plaintext("v"), now())).expect("seals");
-    let target = session_context("openai-key", 5);
-
-    let error = run(keys.material(
-        &target.workspace.to_string(),
-        key_version(WRAPPED),
-        WRAPPED,
-        &aex_secret_aws::context::kms_pairs(&target),
-    ))
-    .expect_err("the source ciphertext is not bound to the target context");
-    assert_eq!(error, KeyMaterialError::ContextMismatch);
 }

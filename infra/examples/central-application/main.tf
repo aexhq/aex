@@ -22,7 +22,6 @@ module "role" {
   assume_principal            = each.value.assume_principal
   action_grants               = each.value.action_grants
   wildcard_resource_allowlist = each.value.wildcard_resource_allowlist
-  boundary_policy_arn         = var.permissions_boundary_policy_arn
   tags                        = var.tags
 }
 
@@ -36,6 +35,7 @@ module "database" {
   min_acu                = var.database.min_acu
   max_acu                = var.database.max_acu
   backup_retention_days  = var.database.backup_retention_days
+  admin_secret_arn       = var.database.admin_secret_arn
   region                 = var.region
   kms_key_arn            = var.kms_key_arn
   subnet_ids             = var.subnet_ids
@@ -92,7 +92,6 @@ module "schema_admin" {
   image              = var.schema_admin.image
   cpu                = var.schema_admin.cpu
   memory             = var.schema_admin.memory
-  stop_timeout       = var.schema_admin.stop_timeout
   role_arn           = module.role["central-schema-admin"].role_arn
   execution_role_arn = var.schema_admin.execution_role_arn
   subnets            = var.subnet_ids

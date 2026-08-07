@@ -5,7 +5,7 @@
   "description": "One admitted turn of execution.",
   "properties": {
     "error": {
-      "$ref": "aex:schema:RunFailure",
+      "$ref": "aex:schema:ApiErrorBody",
       "description": "The terminal failure."
     },
     "id": {

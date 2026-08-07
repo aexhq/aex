@@ -317,36 +317,21 @@ fn a_hands_prepare_persists_the_exact_canonical_generation() {
 /// being stale, so a missing one is a hole rather than an optimization.
 #[test]
 fn the_control_update_carries_the_whole_precondition_set() {
-    let record = finished();
-    let expected_tail_hash = record.content_hash().expect("the record canonicalizes");
-    let compiled = plan::compile(&tables(), &context(), &base(vec![record])).expect("compiles");
+    let compiled = plan::compile(&tables(), &context(), &base(vec![finished()])).expect("compiles");
     let index = compiled
         .participants()
         .iter()
         .position(|it| *it == Participant::AGENT_CONTROL)
         .expect("a decision always writes the control item");
-    let update = compiled.actions()[index]
+    let expression = compiled.actions()[index]
         .update()
-        .expect("the control item is updated");
-    let expression = update
+        .expect("the control item is updated")
         .condition_expression()
         .expect("conditional")
         .to_owned();
     for attribute in ["revision", "fence", "claimOwner", "journalTail"] {
         assert!(expression.contains(attribute), "{expression}");
     }
-    assert!(
-        update.update_expression().contains("journalTailHash"),
-        "the authoritative sequence and hash move together"
-    );
-    assert_eq!(
-        update
-            .expression_attribute_values()
-            .expect("control values")[":nextTailHash"]
-            .as_s()
-            .expect("a hash string"),
-        &expected_tail_hash.to_hex()
-    );
 }
 
 /// A journal put is immutable. That single condition is what makes a redelivered decision

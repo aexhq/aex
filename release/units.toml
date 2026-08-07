@@ -15,23 +15,18 @@
 # the central plane (50 + 200 + 50 + 50 + 20 + 20 + 40 + 10 + 20 + 5 + 10 + 2)
 # and 432 in the regional plane (200 + 40 + 40 + 20 + 50 + 20 + 20 + 8 + 4 + 10 +
 # 10 + 10), both inside the 900 an account with the default 1000-concurrency
-# limit may reserve. Regional capacity adds five to the regional total, making
-# it 437; it is isolated from the request-edge reservations below.
+# limit may reserve.
 #
 # WHAT IS DELIBERATELY MISSING
 #
 # `dashboard`, `site`, `aex-cli`, `@aexhq/sdk`, the model and tool catalogues and
-# the three generated bundles are also release artifacts, but this registry
-# models hosted deployment units rather than every customer-facing artifact.
-# The dashboard, site, SDK and CLI are already workspace members. Their
-# immutable publication or archive identities, plus any catalogue or bundle
-# identity not carried by a hosted unit, must be represented by the release
-# artifact graph before release; absence here is not evidence that they do not
-# exist. The two Stripe TypeScript edges *are* hosted workspace packages —
-# `services/stripe-{command,webhook}-edge`, named explicitly by
-# `aex_workspace_check::collect::NPM_EXPLICIT` rather than by a `workspaces`
-# glob — so they carry rows here and the graph resolves their `package` to an
-# npm node.
+# the three generated bundles are also artifacts, and are absent here because
+# their packages are not workspace members yet. Adding a member is an
+# architecture decision this stream does not own. The two Stripe TypeScript
+# edges *are* workspace packages — `services/stripe-{command,webhook}-edge`,
+# named explicitly by `aex_workspace_check::collect::NPM_EXPLICIT` rather than by
+# a `workspaces` glob — so they carry rows here and the graph resolves their
+# `package` to an npm node.
 
 schema = "aex.units.v1"
 
@@ -51,7 +46,7 @@ config_env_namespace = "AEX_CENTRAL_IDENTITY_"
 config_schema_version = 1
 health_path = "/internal/healthz"
 ready_path = "/internal/readyz"
-required_receipts = ["unit", "contract", "lint", "package-integrity"]
+required_receipts = ["unit", "contract", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "central-identity-api"
 live_suite = "aex-live-central-identity-api"
 
@@ -78,7 +73,7 @@ form = "zip"
 entrypoint = "bootstrap"
 config_env_namespace = "AEX_CENTRAL_AUTHZ_"
 config_schema_version = 1
-required_receipts = ["unit", "contract", "property", "lint", "package-integrity"]
+required_receipts = ["unit", "contract", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "central-authz"
 live_suite = "aex-live-central-authz"
 
@@ -108,7 +103,7 @@ config_env_namespace = "AEX_CENTRAL_CONTROL_"
 config_schema_version = 1
 health_path = "/internal/healthz"
 ready_path = "/internal/readyz"
-required_receipts = ["unit", "contract", "lint", "package-integrity"]
+required_receipts = ["unit", "contract", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "central-control-api"
 live_suite = "aex-live-central-control-api"
 
@@ -135,7 +130,7 @@ config_env_namespace = "AEX_FINANCE_API_"
 config_schema_version = 1
 health_path = "/internal/healthz"
 ready_path = "/internal/readyz"
-required_receipts = ["unit", "contract", "property", "lint", "package-integrity"]
+required_receipts = ["unit", "contract", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "finance-api"
 live_suite = "aex-live-finance-api"
 
@@ -160,7 +155,7 @@ form = "zip"
 entrypoint = "bootstrap"
 config_env_namespace = "AEX_FINANCE_INGEST_"
 config_schema_version = 1
-required_receipts = ["unit", "contract", "property", "lint", "package-integrity"]
+required_receipts = ["unit", "contract", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "finance-ingest"
 live_suite = "aex-live-finance-ingest"
 
@@ -192,7 +187,7 @@ form = "zip"
 entrypoint = "handler.js"
 config_env_namespace = "AEX_STRIPE_COMMAND_"
 config_schema_version = 1
-required_receipts = ["unit", "contract", "lint", "package-integrity"]
+required_receipts = ["unit", "contract", "lint", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "stripe-command-edge"
 live_suite = "aex-live-stripe-command-edge"
 
@@ -218,7 +213,7 @@ form = "zip"
 entrypoint = "handler.js"
 config_env_namespace = "AEX_STRIPE_WEBHOOK_"
 config_schema_version = 1
-required_receipts = ["unit", "contract", "lint", "package-integrity"]
+required_receipts = ["unit", "contract", "lint", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "stripe-webhook-edge"
 live_suite = "aex-live-stripe-webhook-edge"
 
@@ -247,7 +242,7 @@ form = "zip"
 entrypoint = "bootstrap"
 config_env_namespace = "AEX_CENTRAL_CONTROL_WORKER_"
 config_schema_version = 1
-required_receipts = ["unit", "lint", "package-integrity"]
+required_receipts = ["unit", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "central-control-worker"
 live_suite = "aex-live-central-control-worker"
 
@@ -272,7 +267,7 @@ form = "zip"
 entrypoint = "bootstrap"
 config_env_namespace = "AEX_FINANCE_SETTLEMENT_"
 config_schema_version = 1
-required_receipts = ["unit", "property", "lint", "package-integrity"]
+required_receipts = ["unit", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "finance-settlement-worker"
 live_suite = "aex-live-finance-settlement-worker"
 
@@ -296,7 +291,7 @@ form = "zip"
 entrypoint = "bootstrap"
 config_env_namespace = "AEX_FINANCE_RECONCILE_"
 config_schema_version = 1
-required_receipts = ["unit", "property", "lint", "package-integrity"]
+required_receipts = ["unit", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "finance-reconcile"
 live_suite = "aex-live-finance-reconcile"
 
@@ -320,7 +315,7 @@ form = "zip"
 entrypoint = "bootstrap"
 config_env_namespace = "AEX_USAGE_RECEIPT_"
 config_schema_version = 1
-required_receipts = ["unit", "lint", "package-integrity"]
+required_receipts = ["unit", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "usage-receipt-dispatcher"
 live_suite = "aex-live-usage-receipt-dispatcher"
 
@@ -344,7 +339,7 @@ form = "zip"
 entrypoint = "bootstrap"
 config_env_namespace = "AEX_PROVIDER_COST_"
 config_schema_version = 1
-required_receipts = ["unit", "lint", "package-integrity"]
+required_receipts = ["unit", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "provider-cost-reconciler"
 live_suite = "aex-live-provider-cost-reconciler"
 
@@ -362,14 +357,12 @@ kind = "rust-oci-task"
 plane = "central"
 package = "central-schema-admin"
 bin = "central-schema-admin"
-extra_inputs = ["bundle:migration"]
 target = "aarch64-unknown-linux-gnu.2.34"
 profile = "release"
 form = "oci-image"
-base_image = "public.ecr.aws/amazonlinux/amazonlinux:2023-minimal@sha256:f536dd770d9f7065461c786418265a13f5ba548a11a57bbbf360e677b811ed39"
 config_env_namespace = "AEX_SCHEMA_ADMIN_"
 config_schema_version = 1
-required_receipts = ["unit", "integration", "lint", "package-integrity"]
+required_receipts = ["unit", "integration", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "central-schema-admin"
 live_suite = "aex-live-central-schema-admin"
 
@@ -403,7 +396,7 @@ config_env_namespace = "AEX_REGIONAL_SESSION_"
 config_schema_version = 1
 health_path = "/internal/healthz"
 ready_path = "/internal/readyz"
-required_receipts = ["unit", "contract", "conformance", "lint", "package-integrity"]
+required_receipts = ["unit", "contract", "conformance", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "regional-session-api"
 live_suite = "aex-live-regional-session-api"
 
@@ -430,7 +423,7 @@ config_env_namespace = "AEX_REGIONAL_SECRET_"
 config_schema_version = 1
 health_path = "/internal/healthz"
 ready_path = "/internal/readyz"
-required_receipts = ["unit", "contract", "lint", "package-integrity"]
+required_receipts = ["unit", "contract", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "regional-secret-api"
 live_suite = "aex-live-regional-secret-api"
 
@@ -455,7 +448,7 @@ config_env_namespace = "AEX_REGIONAL_OBSERVATION_"
 config_schema_version = 1
 health_path = "/internal/healthz"
 ready_path = "/internal/readyz"
-required_receipts = ["unit", "contract", "lint", "package-integrity"]
+required_receipts = ["unit", "contract", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "regional-observation-api"
 live_suite = "aex-live-regional-observation-api"
 
@@ -486,7 +479,7 @@ config_env_namespace = "AEX_REGIONAL_OTLP_"
 config_schema_version = 1
 health_path = "/internal/healthz"
 ready_path = "/internal/readyz"
-required_receipts = ["unit", "contract", "property", "lint", "package-integrity"]
+required_receipts = ["unit", "contract", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "regional-otlp"
 live_suite = "aex-live-regional-otlp"
 
@@ -512,12 +505,11 @@ bin = "regional-stream"
 target = "aarch64-unknown-linux-gnu.2.34"
 profile = "release"
 form = "oci-image"
-base_image = "public.ecr.aws/amazonlinux/amazonlinux:2023-minimal@sha256:f536dd770d9f7065461c786418265a13f5ba548a11a57bbbf360e677b811ed39"
 config_env_namespace = "AEX_REGIONAL_STREAM_"
 config_schema_version = 1
 health_path = "/internal/healthz"
 ready_path = "/internal/readyz"
-required_receipts = ["unit", "contract", "property", "lint", "package-integrity"]
+required_receipts = ["unit", "contract", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "regional-stream"
 live_suite = "aex-live-regional-stream"
 
@@ -535,33 +527,6 @@ port = 8080
 # --- regional plane: workers --------------------------------------------------
 
 [[unit]]
-id = "regional-capacity-controller"
-kind = "rust-lambda"
-plane = "regional"
-package = "regional-capacity-controller"
-bin = "regional-capacity-controller"
-target = "aarch64-unknown-linux-gnu.2.34"
-profile = "release-lambda"
-form = "zip"
-entrypoint = "bootstrap"
-config_env_namespace = "AEX_CAPACITY_"
-config_schema_version = 1
-required_receipts = ["unit", "contract", "lint", "package-integrity"]
-alarm_spec = "regional-capacity-controller"
-live_suite = "aex-live-regional-capacity-controller"
-
-# One invocation strongly reads one small authority row and commits one bounded
-# 16-action cross-table transaction. 512 MiB gives the SDK a whole vCPU share;
-# 15 s covers the read, transaction and one mandatory ambiguity-resolution read.
-# Commands are rare control traffic, and revision/fence conditions serialize a
-# workspace, so five concurrent invocations absorb provisioning/support bursts
-# without letting a bad caller consume the regional request reservation.
-[unit.lambda]
-memory_mb = 512
-timeout_s = 15
-reserved_concurrency = 5
-
-[[unit]]
 id = "session-operation-worker"
 kind = "rust-lambda"
 plane = "regional"
@@ -573,7 +538,7 @@ form = "zip"
 entrypoint = "bootstrap"
 config_env_namespace = "AEX_SESSION_OPERATION_"
 config_schema_version = 1
-required_receipts = ["unit", "property", "lint", "package-integrity"]
+required_receipts = ["unit", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "session-operation-worker"
 live_suite = "aex-live-session-operation-worker"
 
@@ -596,7 +561,7 @@ form = "zip"
 entrypoint = "bootstrap"
 config_env_namespace = "AEX_RUNTIME_CONTROL_"
 config_schema_version = 1
-required_receipts = ["unit", "property", "lint", "package-integrity"]
+required_receipts = ["unit", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "runtime-control-worker"
 live_suite = "aex-live-runtime-control-worker"
 
@@ -625,7 +590,7 @@ form = "zip"
 entrypoint = "bootstrap"
 config_env_namespace = "AEX_CONTENT_LIFECYCLE_"
 config_schema_version = 1
-required_receipts = ["unit", "property", "lint", "package-integrity"]
+required_receipts = ["unit", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "content-lifecycle-worker"
 live_suite = "aex-live-content-lifecycle-worker"
 
@@ -646,10 +611,9 @@ bin = "regional-secret-key-admin"
 target = "aarch64-unknown-linux-gnu.2.34"
 profile = "release"
 form = "oci-image"
-base_image = "public.ecr.aws/amazonlinux/amazonlinux:2023-minimal@sha256:f536dd770d9f7065461c786418265a13f5ba548a11a57bbbf360e677b811ed39"
 config_env_namespace = "AEX_SECRET_KEY_ADMIN_"
 config_schema_version = 1
-required_receipts = ["unit", "integration", "lint", "package-integrity"]
+required_receipts = ["unit", "integration", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "regional-secret-key-admin"
 live_suite = "aex-live-regional-secret-key-admin"
 
@@ -658,7 +622,7 @@ live_suite = "aex-live-regional-secret-key-admin"
 [unit.fargate]
 cpu = 512
 memory_mb = 1024
-desired_count = 0
+desired_count = 1
 stop_timeout_s = 60
 port = 0
 
@@ -674,7 +638,7 @@ form = "zip"
 entrypoint = "bootstrap"
 config_env_namespace = "AEX_OBSERVATION_RECONCILER_"
 config_schema_version = 1
-required_receipts = ["unit", "property", "lint", "package-integrity"]
+required_receipts = ["unit", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "observation-reconciler"
 live_suite = "aex-live-observation-reconciler"
 
@@ -700,7 +664,7 @@ form = "zip"
 entrypoint = "bootstrap"
 config_env_namespace = "AEX_OBSERVATION_EXPORT_"
 config_schema_version = 1
-required_receipts = ["unit", "lint", "package-integrity"]
+required_receipts = ["unit", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "observation-export-launcher"
 live_suite = "aex-live-observation-export-launcher"
 
@@ -723,10 +687,9 @@ bin = "observation-export-task"
 target = "aarch64-unknown-linux-gnu.2.34"
 profile = "release"
 form = "oci-image"
-base_image = "public.ecr.aws/amazonlinux/amazonlinux:2023-minimal@sha256:f536dd770d9f7065461c786418265a13f5ba548a11a57bbbf360e677b811ed39"
 config_env_namespace = "AEX_OBSERVATION_EXPORT_TASK_"
 config_schema_version = 1
-required_receipts = ["unit", "property", "lint", "package-integrity"]
+required_receipts = ["unit", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "observation-export-task"
 live_suite = "aex-live-observation-export-task"
 
@@ -756,7 +719,7 @@ form = "zip"
 entrypoint = "bootstrap"
 config_env_namespace = "AEX_USAGE_STORAGE_"
 config_schema_version = 1
-required_receipts = ["unit", "property", "lint", "package-integrity"]
+required_receipts = ["unit", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "usage-storage-worker"
 live_suite = "aex-live-usage-storage-worker"
 
@@ -777,7 +740,7 @@ form = "zip"
 entrypoint = "bootstrap"
 config_env_namespace = "AEX_USAGE_COMPUTE_"
 config_schema_version = 1
-required_receipts = ["unit", "property", "lint", "package-integrity"]
+required_receipts = ["unit", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "usage-compute-worker"
 live_suite = "aex-live-usage-compute-worker"
 
@@ -798,7 +761,7 @@ form = "zip"
 entrypoint = "bootstrap"
 config_env_namespace = "AEX_USAGE_TRANSFER_"
 config_schema_version = 1
-required_receipts = ["unit", "property", "lint", "package-integrity"]
+required_receipts = ["unit", "property", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "usage-transfer-worker"
 live_suite = "aex-live-usage-transfer-worker"
 
@@ -818,12 +781,11 @@ bin = "brain-mux"
 target = "aarch64-unknown-linux-gnu.2.34"
 profile = "release"
 form = "oci-image"
-base_image = "public.ecr.aws/amazonlinux/amazonlinux:2023-minimal@sha256:f536dd770d9f7065461c786418265a13f5ba548a11a57bbbf360e677b811ed39"
 config_env_namespace = "AEX_BRAIN_MUX_"
 config_schema_version = 1
 health_path = "/internal/healthz"
 ready_path = "/internal/readyz"
-required_receipts = ["unit", "property", "contract", "lint", "package-integrity"]
+required_receipts = ["unit", "property", "contract", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity"]
 alarm_spec = "brain-mux"
 live_suite = "aex-live-brain-mux"
 
@@ -843,116 +805,25 @@ kind = "rust-binary"
 plane = "runtime"
 package = "hands-agent"
 bin = "hands-agent"
-target = "aarch64-unknown-linux-musl"
+target = "x86_64-unknown-linux-musl"
 profile = "release"
 form = "tar.gz"
 config_env_namespace = "AEX_HANDS_AGENT_"
 config_schema_version = 1
-required_receipts = ["unit", "property", "contract", "lint", "determinism"]
+required_receipts = ["unit", "property", "contract", "lint", "deny", "sbom", "license", "vulnerability", "determinism"]
 alarm_spec = "hands-agent"
 live_suite = "aex-live-hands-agent"
 
 [[unit]]
-id = "hands-image-512mb"
-kind = "microvm-image"
+id = "hands-image"
+kind = "rootfs"
 plane = "runtime"
 package = "hands-image"
-target = "aarch64-unknown-linux-musl"
+target = "x86_64-unknown-linux-musl"
 profile = "release"
-form = "zip"
-base_image = "public.ecr.aws/lambda/microvms:al2023-minimal@sha256:05cb9b38d841e7ff1b693dc9e894909612f340bf99ec97d426e8000a5bbe96c3"
+form = "ext4"
 config_env_namespace = "AEX_HANDS_IMAGE_"
 config_schema_version = 1
-required_receipts = ["unit", "lint", "package-integrity", "determinism"]
+required_receipts = ["unit", "sbom", "license", "vulnerability", "determinism"]
 alarm_spec = "hands-image"
 live_suite = "aex-live-hands-image"
-extra_inputs = ["cargo:hands-agent"]
-
-[unit.microvm]
-variant = "512mb"
-minimum_memory_mib = 512
-browser = false
-
-[[unit]]
-id = "hands-image-1gb"
-kind = "microvm-image"
-plane = "runtime"
-package = "hands-image"
-target = "aarch64-unknown-linux-musl"
-profile = "release"
-form = "zip"
-base_image = "public.ecr.aws/lambda/microvms:al2023-minimal@sha256:05cb9b38d841e7ff1b693dc9e894909612f340bf99ec97d426e8000a5bbe96c3"
-config_env_namespace = "AEX_HANDS_IMAGE_"
-config_schema_version = 1
-required_receipts = ["unit", "lint", "package-integrity", "determinism"]
-alarm_spec = "hands-image"
-live_suite = "aex-live-hands-image"
-extra_inputs = ["cargo:hands-agent"]
-
-[unit.microvm]
-variant = "1gb"
-minimum_memory_mib = 1024
-browser = false
-
-[[unit]]
-id = "hands-image-2gb"
-kind = "microvm-image"
-plane = "runtime"
-package = "hands-image"
-target = "aarch64-unknown-linux-musl"
-profile = "release"
-form = "zip"
-base_image = "public.ecr.aws/lambda/microvms:al2023-minimal@sha256:05cb9b38d841e7ff1b693dc9e894909612f340bf99ec97d426e8000a5bbe96c3"
-config_env_namespace = "AEX_HANDS_IMAGE_"
-config_schema_version = 1
-required_receipts = ["unit", "lint", "package-integrity", "determinism"]
-alarm_spec = "hands-image"
-live_suite = "aex-live-hands-image"
-extra_inputs = ["cargo:hands-agent"]
-
-[unit.microvm]
-variant = "2gb"
-minimum_memory_mib = 2048
-browser = false
-
-[[unit]]
-id = "hands-image-4gb"
-kind = "microvm-image"
-plane = "runtime"
-package = "hands-image"
-target = "aarch64-unknown-linux-musl"
-profile = "release"
-form = "zip"
-base_image = "public.ecr.aws/lambda/microvms:al2023-minimal@sha256:05cb9b38d841e7ff1b693dc9e894909612f340bf99ec97d426e8000a5bbe96c3"
-config_env_namespace = "AEX_HANDS_IMAGE_"
-config_schema_version = 1
-required_receipts = ["unit", "lint", "package-integrity", "determinism"]
-alarm_spec = "hands-image"
-live_suite = "aex-live-hands-image"
-extra_inputs = ["cargo:hands-agent"]
-
-[unit.microvm]
-variant = "4gb"
-minimum_memory_mib = 4096
-browser = false
-
-[[unit]]
-id = "hands-image-8gb"
-kind = "microvm-image"
-plane = "runtime"
-package = "hands-image"
-target = "aarch64-unknown-linux-musl"
-profile = "release"
-form = "zip"
-base_image = "public.ecr.aws/lambda/microvms:al2023-minimal@sha256:05cb9b38d841e7ff1b693dc9e894909612f340bf99ec97d426e8000a5bbe96c3"
-config_env_namespace = "AEX_HANDS_IMAGE_"
-config_schema_version = 1
-required_receipts = ["unit", "lint", "package-integrity", "determinism"]
-alarm_spec = "hands-image"
-live_suite = "aex-live-hands-image"
-extra_inputs = ["cargo:hands-agent"]
-
-[unit.microvm]
-variant = "8gb"
-minimum_memory_mib = 8192
-browser = false

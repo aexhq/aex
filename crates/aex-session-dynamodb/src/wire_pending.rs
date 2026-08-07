@@ -19,8 +19,8 @@
 use aex_wire::idempotency::{IdempotencyKey, IntentDigest};
 use aex_wire::ids::OrganizationId;
 use aex_wire::ids::{
-    AgentId, ApiKeyId, ApprovalId, ContentHash, GenerationId, ObservationId, ResourceName, RunId,
-    SessionId, ToolCallId, WorkspaceId,
+    AgentId, ApiKeyId, ApprovalId, ContentHash, GenerationId, MessageId, ObservationId,
+    OperationId, ResourceName, RunId, SessionId, ToolCallId, WorkspaceId,
 };
 use aex_wire::types::Timestamp;
 
@@ -54,28 +54,188 @@ pub struct ProjectedWorkspaceLimit {
     pub changed_at: Timestamp,
 }
 
-/// Revision fence for one complete effective-limit projection.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProjectedLimitBundleHead {
-    /// Owning workspace.
-    pub workspace: WorkspaceId,
-    /// Authority revision shared by every row and the bundle payload.
-    pub revision: u64,
-    /// Canonical defaults revision used by the authority.
-    pub defaults_revision: u64,
-    /// When this effective set changed.
-    pub changed_at: Timestamp,
+// TODO(cross-stream): `aex-session-domain` publishes no separate lifecycle enum. It
+// folds the deletion path into `aex_session_domain::session::SessionStatus` as the
+// `Trashed` and `Purging` arms, and keeps the ceremony in `aex_session_domain::deletion`
+// (`SessionTombstone`, `TrashCommit`, `RestoreCommit`, `PurgeCommit`). Adopting that
+// collapses this enum and `SessionStatus` below into one.
+/// Where a session sits on the deletion path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SessionLifecycle {
+    /// Ordinary.
+    Active,
+    /// Trashed, restorable.
+    Trashed,
+    /// Purge admitted; not rollbackable.
+    Purging,
+    /// Purged.
+    Purged,
 }
 
-/// One complete, revision-bound effective-limit payload.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ProjectedLimitBundle {
-    /// Owning workspace.
+impl SessionLifecycle {
+    /// The stored spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Trashed => "trashed",
+            Self::Purging => "purging",
+            Self::Purged => "purged",
+        }
+    }
+
+    /// Parses a stored spelling.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "active" => Some(Self::Active),
+            "trashed" => Some(Self::Trashed),
+            "purging" => Some(Self::Purging),
+            "purged" => Some(Self::Purged),
+            _ => None,
+        }
+    }
+}
+
+// TODO(cross-stream): `aex_session_domain::session::SessionStatus` exists with five arms
+// — `Idle`, `Running`, `AwaitingApproval`, `Trashed`, `Purging` — and no `Stopping`. The
+// stored spellings here are therefore not its spellings.
+/// Whether a session is currently executing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SessionStatus {
+    /// No run is admitted.
+    Idle,
+    /// A run is admitted.
+    Running,
+    /// A cancellation is draining.
+    Stopping,
+}
+
+impl SessionStatus {
+    /// The stored spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Running => "running",
+            Self::Stopping => "stopping",
+        }
+    }
+
+    /// Parses a stored spelling.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "idle" => Some(Self::Idle),
+            "running" => Some(Self::Running),
+            "stopping" => Some(Self::Stopping),
+            _ => None,
+        }
+    }
+}
+
+// TODO(cross-stream): `aex-session-domain` publishes no head projection. It publishes the
+// whole `aex_session_domain::session::Session` plus a `session::MutationGuard`; this
+// adapter's head is a storage shape the domain does not name.
+/// The decoded session head.
+///
+/// Every field the admission condition fences on is a top-level attribute, not
+/// a member of a nested `session` document (D-30): a nested-document condition
+/// cannot fence one field and forces a whole-envelope rewrite per admission.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionHead {
+    /// Which session.
+    pub session: SessionId,
+    /// Its workspace.
     pub workspace: WorkspaceId,
-    /// Authority revision that must equal the strong head read.
+    /// Its organization.
+    pub organization: OrganizationId,
+    /// Whether a run is admitted.
+    pub status: SessionStatus,
+    /// Where it sits on the deletion path.
+    pub lifecycle: SessionLifecycle,
+    /// The optimistic revision every mutation fences on.
     pub revision: u64,
-    /// Every registered limit, in registry order.
-    pub limits: Vec<aex_wire::models::EffectiveWorkspaceLimit>,
+    /// Advanced by trash and purge admission.
+    pub deletion_epoch: u64,
+    /// Advanced by cancellation.
+    pub cancel_epoch: u64,
+    /// Advanced whenever admitted content must be re-staged.
+    pub content_admission_epoch: u64,
+    /// The admitted run, when there is one.
+    pub active_run: Option<RunId>,
+    /// The root agent.
+    pub root_agent: AgentId,
+    /// The materialized-agent budget carved at admission (D-04).
+    pub agent_budget: u64,
+    /// The digest of the resolved configuration the caller last saw.
+    pub resolved_config_digest: String,
+    /// The custody revision bound to this session.
+    pub custody_revision: u64,
+    /// When the session was created.
+    pub created_at: Timestamp,
+    /// When it last changed.
+    pub updated_at: Timestamp,
+    /// When it was trashed, if it was.
+    pub trashed_at: Option<Timestamp>,
+    /// When it was purged, if it was.
+    pub purged_at: Option<Timestamp>,
+    /// The operation that owns the current deletion, if any.
+    pub deletion_operation: Option<OperationId>,
+}
+
+// TODO(cross-stream): `aex_session_domain::run::Run` exists and is typed throughout — a
+// `RunStatus` rather than a `&'static str`, a `NonZeroU64` ceiling, a `ReservationId`
+// rather than a `String`, plus a `CancellationEpoch` at admission and a `RunOutcome`. It
+// carries no `result_digest`. Adopting it is a decode change, not a rename.
+/// One admitted turn of execution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Run {
+    /// Which run.
+    pub run: RunId,
+    /// Its session.
+    pub session: SessionId,
+    /// The message that admitted it.
+    pub message: MessageId,
+    /// Its status.
+    pub status: &'static str,
+    /// The tenant spend ceiling for this run, in cents.
+    pub max_spend_cents: u64,
+    /// The immutable reservation identity (D-05).
+    pub reservation: String,
+    /// When it must be finished by.
+    pub deadline_at: Timestamp,
+    /// When it was admitted.
+    pub queued_at: Timestamp,
+    /// When it started.
+    pub started_at: Option<Timestamp>,
+    /// When it settled.
+    pub terminal_at: Option<Timestamp>,
+    /// The digest of the result body.
+    pub result_digest: Option<String>,
+}
+
+// TODO(cross-stream): the peer type is `aex_session_domain::message::Message`, not
+// `session::Message`, and it is a different record: an owning `agent`, a typed
+// `MessageRole`, a `MessageState`, an ordered `Vec<MessagePart>` and a `sealed_at`, with
+// no single body and no `content_bytes`.
+/// One message in a session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Message {
+    /// Which message.
+    pub message: MessageId,
+    /// Its session.
+    pub session: SessionId,
+    /// The run it admitted, when it admitted one.
+    pub run: Option<RunId>,
+    /// Who said it.
+    pub role: String,
+    /// The body, inline or by reference.
+    pub body: Body,
+    /// The canonical plaintext length.
+    pub content_bytes: u64,
+    /// When it was admitted.
+    pub created_at: Timestamp,
 }
 
 // TODO(cross-stream): `aex-content-domain` publishes no body enum. The inline-or-stored
@@ -141,8 +301,6 @@ pub struct AgentControl {
     pub revision: u64,
     /// The highest journal sequence committed.
     pub journal_tail: u64,
-    /// The canonical entry identity at `journal_tail`, absent before the first append.
-    pub journal_tail_hash: Option<String>,
     /// The current claim owner, when claimed.
     pub claim_owner: Option<String>,
     /// The lease expiry, when claimed.
@@ -195,6 +353,36 @@ pub struct StoredOperation {
     pub version: u64,
 }
 
+// TODO(cross-stream): `aex-session-app` publishes no admission plan in its ports. Its
+// write-side vocabulary is `aex_session_app::plan::SessionTransaction` over
+// `plan::TransactionIntent`, `plan::Write` and `plan::Condition`.
+/// Everything the one public admission transaction commits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdmissionPlan {
+    /// The projected placement the caller was authorized against.
+    pub placement: PlacementGuard,
+    /// The staged body to commit, when the message exceeded the inline ceiling.
+    pub staged_body: Option<StagedBody>,
+    /// The head as the caller read it.
+    pub head: SessionHead,
+    /// The message being admitted.
+    pub message: Message,
+    /// The run being admitted.
+    pub run: Run,
+    /// The event announcing the admission.
+    pub event: SessionEvent,
+    /// The root agent's control as the caller read it.
+    pub root_control: AgentControl,
+    /// The child budget granted to the root agent.
+    pub child_budget: u64,
+    /// The wake that makes the run runnable.
+    pub wake: WakeIntent,
+    /// The replay identity.
+    pub replay: ReplayIntent,
+    /// The request clock.
+    pub now: Timestamp,
+}
+
 // TODO(cross-stream): `aex-workspace-domain` publishes no placement guard. Its modules are
 // `grant`, `persist`, `registry` and `upload`, and none of them names workspace placement.
 /// The projected authorization facts an admission fences on.
@@ -208,6 +396,20 @@ pub struct PlacementGuard {
     pub account_epoch: u64,
     /// The revocation epoch the assertion carried.
     pub revocation_epoch: u64,
+}
+
+// TODO(cross-stream): `aex-content-domain` publishes no staged body. A body it has
+// accepted is an `aex_content_domain::descriptor::ContentDescriptor`; there is no
+// pre-commit staging record.
+/// A staged content body being committed by an admission.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StagedBody {
+    /// The workspace it belongs to.
+    pub workspace: WorkspaceId,
+    /// Its `sha256:<hex>` digest.
+    pub digest: String,
+    /// The pin the admission takes on it.
+    pub pin_id: String,
 }
 
 // TODO(cross-stream): `aex-session-app` publishes no wake intent. Its ports module holds
@@ -263,6 +465,105 @@ impl PartialEq for ReplayIntent {
 }
 
 impl Eq for ReplayIntent {}
+
+// TODO(cross-stream): `aex-session-app` publishes no terminal plan; it has a
+// `use_cases::CommitTerminal` use case that emits an `aex_session_app::plan::SessionTransaction`.
+/// Everything the run terminal barrier commits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalPlan {
+    /// The session.
+    pub session: SessionId,
+    /// The run being settled.
+    pub run: RunId,
+    /// The head revision the settler read.
+    pub head_revision: u64,
+    /// The deletion epoch the settler read.
+    pub deletion_epoch: u64,
+    /// The terminal run status.
+    pub terminal_status: &'static str,
+    /// The digest of the result body, when there is one.
+    pub result_digest: Option<String>,
+    /// The usage closure identity.
+    pub usage_closure_id: String,
+    /// The root agent.
+    pub root_agent: AgentId,
+    /// The root agent's revision.
+    pub agent_revision: u64,
+    /// The root agent's fence.
+    pub agent_fence: u64,
+    /// The root agent's journal tail.
+    pub journal_tail: u64,
+    /// The root agent's terminal status.
+    pub terminal_agent_status: String,
+    /// The reservation being released.
+    pub reservation: String,
+    /// The terminal native event.
+    pub event: SessionEvent,
+    /// The wake being retired.
+    pub wake: WakeCommit,
+    /// The compute-closure usage fact.
+    pub usage_work_id: String,
+    /// The request clock.
+    pub now: Timestamp,
+}
+
+// TODO(cross-stream): `aex_operation_domain::lease` publishes `WorkCommit`, not
+// `WakeCommit`, over a `WorkItem` and a `Lease`. The wake vocabulary below is this
+// adapter's own.
+/// The claim a worker holds while it commits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WakeCommit {
+    /// The work identity.
+    pub work_id: String,
+    /// The fence the claim carries.
+    pub fence: u64,
+    /// The claim owner.
+    pub owner: String,
+    /// When the retired row may be reclaimed.
+    pub expires_at_epoch_seconds: i64,
+}
+
+// TODO(cross-stream): `aex-session-app` publishes no lifecycle plan; see the note on
+// `AdmissionPlan` above for the vocabulary it does publish.
+/// A trash, restore, purge admission or purge completion.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LifecyclePlan {
+    /// Which transition.
+    pub transition: LifecycleTransition,
+    /// The session.
+    pub session: SessionId,
+    /// Its workspace.
+    pub workspace: WorkspaceId,
+    /// The head revision the caller read.
+    pub revision: u64,
+    /// When the session was created, for the index sort key.
+    pub created_at: Timestamp,
+    /// The operation that owns the transition.
+    pub operation: Option<OperationId>,
+    /// The purge worker's wake, on a purge admission.
+    pub wake: Option<WakeIntent>,
+    /// The replay identity, when the transition is caller-initiated.
+    pub replay: Option<ReplayIntent>,
+    /// The request clock.
+    pub now: Timestamp,
+}
+
+// TODO(cross-stream): `aex-session-domain` publishes no lifecycle-transition enum. Each
+// transition is its own commit type in `aex_session_domain::deletion` — `TrashCommit`,
+// `RestoreCommit`, `PurgeCommit` — so the transition is proved by construction rather
+// than named by a tag.
+/// The four lifecycle transitions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LifecycleTransition {
+    /// Active to trashed.
+    Trash,
+    /// Trashed back to active.
+    Restore,
+    /// Active or trashed to purging. Not rollbackable.
+    PurgeAdmit,
+    /// Purging to purged, after the completion predicate is proved.
+    PurgeComplete,
+}
 
 // TODO(cross-stream): `aex-brain-domain` has no `decision` module. Its planning vocabulary
 // is `aex_brain_domain::planner::OwedStep` under an `aex_brain_domain::planner::PlanPolicy`.

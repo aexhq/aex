@@ -160,24 +160,6 @@ async fn a_presigned_read_expires_in_exactly_five_minutes_and_is_bound_to_the_ke
 }
 
 #[tokio::test]
-async fn a_bounded_read_addresses_only_the_workspace_scoped_immutable_key() {
-    let (store, receiver) = capturing_store();
-    let body = digest(0x42);
-    let _ignored = store.read_bounded(workspace(), &body, 16).await;
-
-    let request = captured(receiver);
-    assert_eq!(request.method, "GET");
-    assert!(
-        request
-            .uri
-            .contains(ObjectKey::new(workspace(), &body).as_str()),
-        "{}",
-        request.uri
-    );
-    assert_eq!(request.header("x-amz-expected-bucket-owner"), Some(ACCOUNT));
-}
-
-#[tokio::test]
 async fn a_presigned_part_upload_pins_the_part_checksum_and_its_length() {
     let (store, _receiver) = capturing_store();
     let handle = MultipartHandle {

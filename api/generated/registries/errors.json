@@ -182,15 +182,6 @@
     },
     {
       "class": "validation",
-      "code": "unsupported_media_type",
-      "message": "the request Content-Type or Content-Encoding is not supported by this endpoint",
-      "precedenceStage": "transport_envelope",
-      "remedy": null,
-      "retryable": false,
-      "status": 415
-    },
-    {
-      "class": "validation",
       "code": "payload_too_large",
       "message": "the encoded body exceeded the effective limit",
       "precedenceStage": "transport_envelope",
@@ -370,15 +361,6 @@
       "status": 410
     },
     {
-      "class": "unavailable",
-      "code": "export_capacity",
-      "message": "the export could not reserve its bounded worker capacity",
-      "precedenceStage": "domain_state",
-      "remedy": "retry after capacity is available or select a smaller export",
-      "retryable": true,
-      "status": 503
-    },
-    {
       "class": "not_found",
       "code": "download_grant_expired",
       "message": "the download grant expired",
@@ -440,15 +422,6 @@
       "remedy": null,
       "retryable": false,
       "status": 400
-    },
-    {
-      "class": "quota",
-      "code": "telemetry_query_budget_exhausted",
-      "message": "the observation query exhausted its scan budget before it could make progress",
-      "precedenceStage": "domain_state",
-      "remedy": "narrow the time range, add an indexed predicate, or request an export",
-      "retryable": false,
-      "status": 409
     },
     {
       "class": "validation",

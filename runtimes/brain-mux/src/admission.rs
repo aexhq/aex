@@ -16,50 +16,6 @@
 use aex_brain_application::kernel::{DrainGate, PermitKind, PermitSet, PermitSetFull, Reservation};
 use std::sync::Arc;
 
-/// The process resources held for one activation's lifetime.
-///
-/// External-I/O permits remain part of the validated task envelope, but are acquired by the
-/// phase-specific dispatch gate only after durable preparation. A refusal writes a typed
-/// continuation and releases the lease; it never waits locally while owning the session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ActivationResources {
-    /// Peak resident bytes reserved before any snapshot or journal body is read.
-    pub context_bytes: u64,
-    /// Maximum provider stream buffer held by one activation.
-    pub stream_buffer_bytes: u64,
-    /// Provider streams required by one provider/network dispatch.
-    pub provider_streams: u64,
-    /// Hands RPC slots required by one Hands dispatch.
-    pub hands_rpcs: u64,
-}
-
-impl ActivationResources {
-    const fn requests(self) -> [(PermitKind, u64); 3] {
-        [
-            (PermitKind::Activation, 1),
-            (PermitKind::ContextBytes, self.context_bytes),
-            (PermitKind::StreamBufferBytes, self.stream_buffer_bytes),
-        ]
-    }
-
-    /// Whether every per-activation resource has a non-zero reservation.
-    pub(crate) const fn validate(self) -> Result<(), &'static str> {
-        if self.context_bytes == 0 {
-            return Err("the activation context reservation must be positive");
-        }
-        if self.stream_buffer_bytes == 0 {
-            return Err("the activation stream-buffer reservation must be positive");
-        }
-        if self.provider_streams == 0 {
-            return Err("the activation provider-stream reservation must be positive");
-        }
-        if self.hands_rpcs == 0 {
-            return Err("the activation Hands reservation must be positive");
-        }
-        Ok(())
-    }
-}
-
 /// The declared bands one task admits within.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AdmissionBounds {
@@ -76,9 +32,9 @@ impl Default for AdmissionBounds {
     /// starting point those gates confirm or replace.
     fn default() -> Self {
         Self {
-            target: 48,
-            safety_cap: 96,
-            offered_ceiling: 240,
+            target: 100,
+            safety_cap: 200,
+            offered_ceiling: 500,
         }
     }
 }
@@ -164,7 +120,6 @@ pub struct Admission {
     bounds: AdmissionBounds,
     permits: Arc<PermitSet>,
     drain: Arc<DrainGate>,
-    resources: ActivationResources,
 }
 
 impl Admission {
@@ -174,13 +129,11 @@ impl Admission {
         bounds: AdmissionBounds,
         permits: Arc<PermitSet>,
         drain: Arc<DrainGate>,
-        resources: ActivationResources,
     ) -> Self {
         Self {
             bounds,
             permits,
             drain,
-            resources,
         }
     }
 
@@ -188,12 +141,6 @@ impl Admission {
     #[must_use]
     pub const fn bounds(&self) -> AdmissionBounds {
         self.bounds
-    }
-
-    /// The exact resources every admitted activation holds.
-    #[must_use]
-    pub const fn resources(&self) -> ActivationResources {
-        self.resources
     }
 
     /// How many activations are running.
@@ -209,14 +156,12 @@ impl Admission {
     /// no other task can take it.
     #[must_use]
     pub fn should_receive(&self) -> bool {
-        !self.drain.is_draining()
-            && self.active() < self.bounds.target
-            && self.permits.can_acquire_many(&self.resources.requests())
+        !self.drain.is_draining() && self.active() < self.bounds.target
     }
 
     /// Decides whether one activation may start.
     #[must_use]
-    pub fn admit(&self) -> AdmissionOutcome {
+    pub fn admit(&self, context_bytes: u64) -> AdmissionOutcome {
         if self.drain.is_draining() {
             return AdmissionOutcome::Shed(TypedOverload::Draining);
         }
@@ -227,22 +172,26 @@ impl Admission {
                 cap: self.bounds.safety_cap,
             });
         }
-        let held = match self.permits.acquire_many(&self.resources.requests()) {
-            Ok(reservations) => reservations,
-            // Memory is deferred rather than shed: the bytes will be free again shortly
-            // and the work is admissible, unlike an activation over the safety cap.
-            Err(full)
-                if matches!(
-                    full.kind,
-                    PermitKind::ContextBytes | PermitKind::StreamBufferBytes
-                ) =>
-            {
-                return AdmissionOutcome::Deferred {
-                    requeue_after: core::time::Duration::from_millis(250),
-                };
-            }
+        let mut held = Vec::with_capacity(2);
+        match self.permits.acquire(PermitKind::Activation, 1) {
+            Ok(reservation) => held.push(reservation),
             Err(full) => return AdmissionOutcome::Shed(shed(&full)),
-        };
+        }
+        if context_bytes > 0 {
+            match self
+                .permits
+                .acquire(PermitKind::ContextBytes, context_bytes)
+            {
+                Ok(reservation) => held.push(reservation),
+                // Memory is deferred rather than shed: the bytes will be free again shortly
+                // and the work is admissible, unlike an activation over the safety cap.
+                Err(_) => {
+                    return AdmissionOutcome::Deferred {
+                        requeue_after: core::time::Duration::from_millis(250),
+                    };
+                }
+            }
+        }
         if active >= self.bounds.target {
             // Between target and cap the task still finishes what it has locally, so an
             // admitted activation keeps its permits and runs.
@@ -262,34 +211,19 @@ const fn shed(full: &PermitSetFull) -> TypedOverload {
 
 #[cfg(test)]
 mod tests {
-    use super::{ActivationResources, Admission, AdmissionBounds, AdmissionOutcome, TypedOverload};
+    use super::{Admission, AdmissionBounds, AdmissionOutcome, TypedOverload};
     use aex_brain_application::kernel::{DrainGate, PermitKind, PermitSet};
     use std::collections::BTreeMap;
     use std::sync::Arc;
 
-    fn resources(context_bytes: u64) -> ActivationResources {
-        ActivationResources {
-            context_bytes,
-            stream_buffer_bytes: 1,
-            provider_streams: 1,
-            hands_rpcs: 1,
-        }
-    }
-
     fn admission(activations: u64, bytes: u64, bounds: AdmissionBounds) -> Admission {
-        let context_per_activation = if bytes == 0 { 1 } else { bytes };
-        let context_pool = if bytes == 0 { activations } else { bytes };
         Admission::new(
             bounds,
             Arc::new(PermitSet::new(BTreeMap::from([
                 (PermitKind::Activation, activations),
-                (PermitKind::ContextBytes, context_pool),
-                (PermitKind::StreamBufferBytes, activations),
-                (PermitKind::ProviderStream, activations),
-                (PermitKind::HandsRpc, activations),
+                (PermitKind::ContextBytes, bytes),
             ]))),
             Arc::new(DrainGate::new()),
-            resources(context_per_activation),
         )
     }
 
@@ -304,9 +238,9 @@ mod tests {
     #[test]
     fn the_launch_bands_are_the_measured_ones() {
         let default = AdmissionBounds::default();
-        assert_eq!(default.target, 48);
-        assert_eq!(default.safety_cap, 96);
-        assert_eq!(default.offered_ceiling, 240);
+        assert_eq!(default.target, 100);
+        assert_eq!(default.safety_cap, 200);
+        assert_eq!(default.offered_ceiling, 500);
         assert!(default.validate().is_ok());
     }
 
@@ -349,13 +283,13 @@ mod tests {
     #[test]
     fn receiving_stops_at_the_target_but_admission_continues_to_the_cap() {
         let admission = admission(4, 0, bounds());
-        let first = admission.admit();
-        let second = admission.admit();
+        let first = admission.admit(0);
+        let second = admission.admit(0);
         assert!(matches!(first, AdmissionOutcome::Admitted(_)));
         assert!(matches!(second, AdmissionOutcome::Admitted(_)));
         assert!(!admission.should_receive(), "at the target, stop receiving");
         assert!(
-            matches!(admission.admit(), AdmissionOutcome::Admitted(_)),
+            matches!(admission.admit(0), AdmissionOutcome::Admitted(_)),
             "local work still starts between target and cap"
         );
     }
@@ -367,12 +301,12 @@ mod tests {
         let admission = admission(8, 0, bounds());
         let mut held = Vec::new();
         for _ in 0..3 {
-            let AdmissionOutcome::Admitted(permits) = admission.admit() else {
+            let AdmissionOutcome::Admitted(permits) = admission.admit(0) else {
                 panic!("under the cap");
             };
             held.push(permits);
         }
-        let outcome = admission.admit();
+        let outcome = admission.admit(0);
         let AdmissionOutcome::Shed(overload) = outcome else {
             panic!("expected a shed at the cap");
         };
@@ -385,9 +319,9 @@ mod tests {
     #[test]
     fn exhausted_context_memory_defers_rather_than_sheds() {
         let admission = admission(8, 1_024, bounds());
-        let _first = admission.admit();
+        let _first = admission.admit(1_024);
         assert!(matches!(
-            admission.admit(),
+            admission.admit(1_024),
             AdmissionOutcome::Deferred { .. }
         ));
     }
@@ -397,9 +331,9 @@ mod tests {
     #[test]
     fn a_deferral_leaks_no_permit() {
         let admission = admission(8, 1_024, bounds());
-        let held = admission.admit();
+        let held = admission.admit(1_024);
         assert!(matches!(held, AdmissionOutcome::Admitted(_)));
-        drop(admission.admit());
+        drop(admission.admit(1_024));
         assert_eq!(
             admission.active(),
             1,
@@ -407,110 +341,19 @@ mod tests {
         );
     }
 
-    /// Multi-resource admission is one transaction over local counters. A late resource
-    /// failure must not consume activation or memory capacity and slowly shrink the task.
-    #[test]
-    fn one_exhausted_resource_leaks_no_other_reservation() {
-        let permits = Arc::new(PermitSet::new(BTreeMap::from([
-            (PermitKind::Activation, 2_u64),
-            (PermitKind::ContextBytes, 2_u64),
-            (PermitKind::StreamBufferBytes, 0_u64),
-            (PermitKind::ProviderStream, 2_u64),
-            (PermitKind::HandsRpc, 2_u64),
-        ])));
-        let admission = Admission::new(
-            bounds(),
-            Arc::clone(&permits),
-            Arc::new(DrainGate::new()),
-            resources(1),
-        );
-
-        assert!(!admission.should_receive());
-        assert!(matches!(
-            admission.admit(),
-            AdmissionOutcome::Deferred { .. }
-        ));
-        for kind in [
-            PermitKind::Activation,
-            PermitKind::ContextBytes,
-            PermitKind::StreamBufferBytes,
-            PermitKind::ProviderStream,
-            PermitKind::HandsRpc,
-        ] {
-            assert_eq!(permits.held(kind), 0, "{kind:?} leaked");
-        }
-    }
-
-    /// Restore resources stay held until the RAII bundle drops; dispatch lanes remain free.
-    #[test]
-    fn admitted_activation_holds_only_the_restore_resource_bundle() {
-        let permits = Arc::new(PermitSet::new(BTreeMap::from([
-            (PermitKind::Activation, 1_u64),
-            (PermitKind::ContextBytes, 64_u64),
-            (PermitKind::StreamBufferBytes, 8_u64),
-            (PermitKind::ProviderStream, 1_u64),
-            (PermitKind::HandsRpc, 1_u64),
-        ])));
-        let admission = Admission::new(
-            AdmissionBounds {
-                target: 1,
-                safety_cap: 1,
-                offered_ceiling: 1,
-            },
-            Arc::clone(&permits),
-            Arc::new(DrainGate::new()),
-            ActivationResources {
-                context_bytes: 64,
-                stream_buffer_bytes: 8,
-                provider_streams: 1,
-                hands_rpcs: 1,
-            },
-        );
-        let AdmissionOutcome::Admitted(held) = admission.admit() else {
-            panic!("the exact resource bundle is available");
-        };
-        for (kind, units) in [
-            (PermitKind::Activation, 1),
-            (PermitKind::ContextBytes, 64),
-            (PermitKind::StreamBufferBytes, 8),
-            (PermitKind::ProviderStream, 0),
-            (PermitKind::HandsRpc, 0),
-        ] {
-            assert_eq!(permits.held(kind), units, "{kind:?} was not reserved");
-        }
-        drop(held);
-        for kind in [
-            PermitKind::Activation,
-            PermitKind::ContextBytes,
-            PermitKind::StreamBufferBytes,
-            PermitKind::ProviderStream,
-            PermitKind::HandsRpc,
-        ] {
-            assert_eq!(permits.held(kind), 0, "{kind:?} did not release");
-        }
-    }
-
     #[test]
     fn a_draining_task_admits_nothing_and_receives_nothing() {
-        let permits = Arc::new(PermitSet::new(BTreeMap::from([
-            (PermitKind::Activation, 8_u64),
-            (PermitKind::ContextBytes, 1_u64),
-            (PermitKind::StreamBufferBytes, 1_u64),
-            (PermitKind::ProviderStream, 1_u64),
-            (PermitKind::HandsRpc, 1_u64),
-        ])));
+        let permits = Arc::new(PermitSet::new(BTreeMap::from([(
+            PermitKind::Activation,
+            8_u64,
+        )])));
         let drain = Arc::new(DrainGate::new());
-        let admission = Admission::new(
-            bounds(),
-            Arc::clone(&permits),
-            Arc::clone(&drain),
-            resources(1),
-        );
+        let admission = Admission::new(bounds(), Arc::clone(&permits), Arc::clone(&drain));
         assert!(admission.should_receive());
         drain.start_drain();
         assert!(!admission.should_receive());
         assert!(matches!(
-            admission.admit(),
+            admission.admit(0),
             AdmissionOutcome::Shed(TypedOverload::Draining)
         ));
     }
@@ -525,7 +368,7 @@ mod tests {
         let mut shed = 0_u32;
         let mut held = Vec::new();
         for _ in 0..bounds.offered_ceiling {
-            match admission.admit() {
+            match admission.admit(0) {
                 AdmissionOutcome::Admitted(permits) => {
                     admitted += 1;
                     held.push(permits);

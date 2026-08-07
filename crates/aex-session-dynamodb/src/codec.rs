@@ -12,8 +12,8 @@ use aex_operation_domain::{
 use aex_wire::CanonicalJson;
 use aex_wire::error::ErrorCode;
 use aex_wire::ids::{
-    AgentId, ApprovalId, ContentHash, GenerationId, MeasurementId, OperationId, ResourceName,
-    RunId, SessionId, ToolCallId, WorkspaceId,
+    AgentId, ApprovalId, ContentHash, GenerationId, MeasurementId, MessageId, OperationId,
+    OrganizationId, ResourceName, RunId, SessionId, ToolCallId, WorkspaceId,
 };
 
 use crate::attr::{CodecError, Item, ItemBuilder, Row, b, boolean, n, s, stamp};
@@ -21,7 +21,8 @@ use crate::keys;
 use crate::replay::{Receipt, parse_intent};
 use crate::wire_pending::{
     AgentControl, Approval, ApprovalBinding, ApprovalCancelCause, ApprovalStatus, Body,
-    JournalEntry, SessionEvent, StoredOperation,
+    JournalEntry, Message, Run, SessionEvent, SessionHead, SessionLifecycle, SessionStatus,
+    StoredOperation,
 };
 
 /// The `itemType` of a session head.
@@ -76,6 +77,202 @@ fn read_body(
     Err(CodecError::Missing {
         item_type: SESSION_EVENT,
         attribute: inline,
+    })
+}
+
+/// Encodes a session head, including its sparse index attributes.
+///
+/// A purged head carries neither index attribute, so it is physically absent
+/// from the workspace index rather than filtered out of it.
+#[must_use]
+pub fn encode_head(head: &SessionHead) -> Item {
+    let key = keys::head(head.session);
+    let indexed = head.lifecycle != SessionLifecycle::Purged;
+    let builder = ItemBuilder::new(SESSION_HEAD)
+        .set(crate::attr::PK, s(key.pk))
+        .set(crate::attr::SK, s(key.sk))
+        .set("sessionId", s(head.session.to_string()))
+        .set("workspaceId", s(head.workspace.to_string()))
+        .set("organizationId", s(head.organization.to_string()))
+        .set("status", s(head.status.as_str()))
+        .set("lifecycle", s(head.lifecycle.as_str()))
+        .set("revision", n(head.revision))
+        .set("deletionEpoch", n(head.deletion_epoch))
+        .set("cancelEpoch", n(head.cancel_epoch))
+        .set("contentAdmissionEpoch", n(head.content_admission_epoch))
+        .set_opt("activeRunId", head.active_run.map(|run| s(run.to_string())))
+        .set("rootAgentId", s(head.root_agent.to_string()))
+        .set("agentBudget", n(head.agent_budget))
+        .set(
+            "resolvedConfigDigest",
+            s(head.resolved_config_digest.clone()),
+        )
+        .set("custodyRevision", n(head.custody_revision))
+        .set("createdAt", stamp(head.created_at))
+        .set("updatedAt", stamp(head.updated_at))
+        .set_opt("trashedAt", head.trashed_at.map(stamp))
+        .set_opt("purgedAt", head.purged_at.map(stamp))
+        .set_opt(
+            "deletionOperationId",
+            head.deletion_operation
+                .map(|operation| s(operation.to_string())),
+        );
+    let builder = if indexed {
+        builder
+            .set(
+                keys::workspace_index::PK,
+                s(keys::workspace_index::session_partition(
+                    head.workspace,
+                    head.lifecycle.as_str(),
+                )),
+            )
+            .set(
+                keys::workspace_index::SK,
+                s(keys::workspace_index::session_sort(
+                    head.created_at,
+                    head.session,
+                )),
+            )
+    } else {
+        builder
+    };
+    builder.build()
+}
+
+/// Decodes a session head and re-checks its ownership.
+///
+/// # Errors
+///
+/// [`CodecError`] for any missing, mistyped or out-of-vocabulary attribute, and
+/// [`CodecError::WrongTenant`] when the row belongs to another workspace.
+pub fn decode_head(item: &Item, asserted: WorkspaceId) -> Result<SessionHead, CodecError> {
+    let row = Row::bind(item, SESSION_HEAD)?;
+    row.owned_by("workspaceId", &asserted.to_string())?;
+    let lifecycle_text = row.enumerated("lifecycle", keys::LIFECYCLES)?;
+    let status_text = row.enumerated("status", keys::STATUSES)?;
+    Ok(SessionHead {
+        session: row.id::<SessionId>("sessionId")?,
+        workspace: asserted,
+        organization: row.id::<OrganizationId>("organizationId")?,
+        status: SessionStatus::parse(status_text).ok_or(CodecError::Malformed {
+            item_type: SESSION_HEAD,
+            attribute: "status",
+            reason: "outside the closed status vocabulary".to_owned(),
+        })?,
+        lifecycle: SessionLifecycle::parse(lifecycle_text).ok_or(CodecError::Malformed {
+            item_type: SESSION_HEAD,
+            attribute: "lifecycle",
+            reason: "outside the closed lifecycle vocabulary".to_owned(),
+        })?,
+        revision: row.u64("revision")?,
+        deletion_epoch: row.u64("deletionEpoch")?,
+        cancel_epoch: row.u64("cancelEpoch")?,
+        content_admission_epoch: row.u64("contentAdmissionEpoch")?,
+        active_run: row.opt_id::<RunId>("activeRunId")?,
+        root_agent: row.id::<AgentId>("rootAgentId")?,
+        agent_budget: row.u64("agentBudget")?,
+        resolved_config_digest: row.string("resolvedConfigDigest")?.to_owned(),
+        custody_revision: row.u64("custodyRevision")?,
+        created_at: row.timestamp("createdAt")?,
+        updated_at: row.timestamp("updatedAt")?,
+        trashed_at: row.opt_timestamp("trashedAt")?,
+        purged_at: row.opt_timestamp("purgedAt")?,
+        deletion_operation: row.opt_id::<OperationId>("deletionOperationId")?,
+    })
+}
+
+/// Encodes one message.
+#[must_use]
+pub fn encode_message(
+    message: &Message,
+    workspace: WorkspaceId,
+    organization: OrganizationId,
+) -> Item {
+    let key = keys::message(message.session, message.message);
+    body_attributes(
+        ItemBuilder::new(MESSAGE)
+            .set(crate::attr::PK, s(key.pk))
+            .set(crate::attr::SK, s(key.sk))
+            .set("messageId", s(message.message.to_string()))
+            .set("sessionId", s(message.session.to_string()))
+            .set("workspaceId", s(workspace.to_string()))
+            .set("organizationId", s(organization.to_string()))
+            .set_opt("runId", message.run.map(|run| s(run.to_string())))
+            .set("role", s(message.role.clone()))
+            .set("contentBytes", n(message.content_bytes))
+            .set("createdAt", stamp(message.created_at)),
+        CONTENT_INLINE,
+        CONTENT_DIGEST,
+        &message.body,
+    )
+    .build()
+}
+
+/// Decodes one message.
+///
+/// # Errors
+///
+/// [`CodecError`] as for every decode here.
+pub fn decode_message(item: &Item, asserted: WorkspaceId) -> Result<Message, CodecError> {
+    let row = Row::bind(item, MESSAGE)?;
+    row.owned_by("workspaceId", &asserted.to_string())?;
+    Ok(Message {
+        message: row.id::<MessageId>("messageId")?,
+        session: row.id::<SessionId>("sessionId")?,
+        run: row.opt_id::<RunId>("runId")?,
+        role: row.string("role")?.to_owned(),
+        body: read_body(&row, CONTENT_INLINE, CONTENT_DIGEST)?,
+        content_bytes: row.u64("contentBytes")?,
+        created_at: row.timestamp("createdAt")?,
+    })
+}
+
+/// Encodes one run.
+#[must_use]
+pub fn encode_run(run: &Run, workspace: WorkspaceId, organization: OrganizationId) -> Item {
+    let key = keys::run(run.session, run.run);
+    ItemBuilder::new(RUN)
+        .set(crate::attr::PK, s(key.pk))
+        .set(crate::attr::SK, s(key.sk))
+        .set("runId", s(run.run.to_string()))
+        .set("sessionId", s(run.session.to_string()))
+        .set("workspaceId", s(workspace.to_string()))
+        .set("organizationId", s(organization.to_string()))
+        .set("messageId", s(run.message.to_string()))
+        .set("status", s(run.status))
+        .set("maxSpendCents", n(run.max_spend_cents))
+        .set("reservationId", s(run.reservation.clone()))
+        .set("deadlineAt", stamp(run.deadline_at))
+        .set("queuedAt", stamp(run.queued_at))
+        .set_opt("startedAt", run.started_at.map(stamp))
+        .set_opt("terminalAt", run.terminal_at.map(stamp))
+        .set_opt(
+            "resultDigest",
+            run.result_digest.as_ref().map(|digest| s(digest.clone())),
+        )
+        .build()
+}
+
+/// Decodes one run.
+///
+/// # Errors
+///
+/// [`CodecError`] as for every decode here.
+pub fn decode_run(item: &Item, asserted: WorkspaceId) -> Result<Run, CodecError> {
+    let row = Row::bind(item, RUN)?;
+    row.owned_by("workspaceId", &asserted.to_string())?;
+    Ok(Run {
+        run: row.id::<RunId>("runId")?,
+        session: row.id::<SessionId>("sessionId")?,
+        message: row.id::<MessageId>("messageId")?,
+        status: row.enumerated("status", keys::RUN_STATUSES)?,
+        max_spend_cents: row.u64("maxSpendCents")?,
+        reservation: row.string("reservationId")?.to_owned(),
+        deadline_at: row.timestamp("deadlineAt")?,
+        queued_at: row.timestamp("queuedAt")?,
+        started_at: row.opt_timestamp("startedAt")?,
+        terminal_at: row.opt_timestamp("terminalAt")?,
+        result_digest: row.opt_string("resultDigest")?.map(str::to_owned),
     })
 }
 
@@ -158,14 +355,6 @@ pub fn encode_control(control: &AgentControl) -> Item {
         .set("status", s(control.status.clone()))
         .set("revision", n(control.revision))
         .set("journalTail", n(control.journal_tail))
-        .set("hasJournal", boolean(control.journal_tail_hash.is_some()))
-        .set_opt(
-            "journalTailHash",
-            control
-                .journal_tail_hash
-                .as_ref()
-                .map(|hash| s(hash.clone())),
-        )
         .set_opt(
             "claimOwner",
             control.claim_owner.as_ref().map(|owner| s(owner.clone())),
@@ -187,26 +376,13 @@ pub fn encode_control(control: &AgentControl) -> Item {
 pub fn decode_control(item: &Item, asserted: WorkspaceId) -> Result<AgentControl, CodecError> {
     let row = Row::bind(item, AGENT_CONTROL)?;
     row.owned_by("workspaceId", &asserted.to_string())?;
-    let journal_tail = row.u64("journalTail")?;
-    let journal_tail_hash = row.opt_string("journalTailHash")?.map(str::to_owned);
-    let has_journal = row
-        .boolean("hasJournal")
-        .unwrap_or(journal_tail > 0 || journal_tail_hash.is_some());
-    if has_journal != journal_tail_hash.is_some() {
-        return Err(CodecError::Malformed {
-            item_type: AGENT_CONTROL,
-            attribute: "journalTailHash",
-            reason: "journal tail sequence and hash must be present together".to_owned(),
-        });
-    }
     Ok(AgentControl {
         agent: row.id::<AgentId>("agentId")?,
         session: row.id::<SessionId>("sessionId")?,
         workspace: asserted,
         generation: row.id::<GenerationId>("generationId")?,
         revision: row.u64("revision")?,
-        journal_tail,
-        journal_tail_hash,
+        journal_tail: row.u64("journalTail")?,
         claim_owner: row.opt_string("claimOwner")?.map(str::to_owned),
         lease_expires_at: row.opt_timestamp("leaseExpiresAt")?,
         fence: row.u64("fence")?,
@@ -675,20 +851,21 @@ mod tests {
     use aex_wire::error::ErrorCode;
     use aex_wire::idempotency::IntentDigest;
     use aex_wire::ids::{
-        AgentId, GenerationId, ObservationId, OperationId, PrefixedId, RunId, SessionId, Uuid7,
-        WorkspaceId,
+        AgentId, GenerationId, MessageId, ObservationId, OperationId, OrganizationId, PrefixedId,
+        RunId, SessionId, Uuid7, WorkspaceId,
     };
     use aex_wire::types::Timestamp;
 
     use super::{
-        decode_approval, decode_control, decode_event, decode_operation, encode_approval,
-        encode_control, encode_event, encode_operation,
+        SESSION_HEAD, decode_approval, decode_control, decode_event, decode_head, decode_message,
+        decode_operation, decode_run, encode_approval, encode_control, encode_event, encode_head,
+        encode_message, encode_operation, encode_run,
     };
     use crate::attr::CodecError;
     use crate::keys;
     use crate::wire_pending::{
         AgentControl, Approval, ApprovalBinding, ApprovalCancelCause, ApprovalStatus, Body,
-        SessionEvent, StoredOperation,
+        Message, Run, SessionEvent, SessionHead, SessionLifecycle, SessionStatus, StoredOperation,
     };
 
     fn stamp(millis: i64) -> Timestamp {
@@ -697,6 +874,30 @@ mod tests {
 
     fn workspace(byte: u8) -> WorkspaceId {
         WorkspaceId::from_uuid7(Uuid7::compose(1, [byte; 10]))
+    }
+
+    fn head() -> SessionHead {
+        SessionHead {
+            session: SessionId::from_uuid7(Uuid7::compose(1_000, [1; 10])),
+            workspace: workspace(1),
+            organization: OrganizationId::from_uuid7(Uuid7::compose(1, [2; 10])),
+            status: SessionStatus::Idle,
+            lifecycle: SessionLifecycle::Active,
+            revision: 3,
+            deletion_epoch: 0,
+            cancel_epoch: 0,
+            content_admission_epoch: 0,
+            active_run: None,
+            root_agent: AgentId::from_uuid7(Uuid7::compose(1, [3; 10])),
+            agent_budget: 256,
+            resolved_config_digest: "sha256:".to_owned() + &"a".repeat(64),
+            custody_revision: 1,
+            created_at: stamp(1_000),
+            updated_at: stamp(2_000),
+            trashed_at: None,
+            purged_at: None,
+            deletion_operation: None,
+        }
     }
 
     fn stored_operation(kind: OperationKind) -> StoredOperation {
@@ -742,7 +943,6 @@ mod tests {
             generation: GenerationId::from_uuid7(Uuid7::compose(1, [5; 10])),
             revision: 2,
             journal_tail: 7,
-            journal_tail_hash: Some("a".repeat(64)),
             claim_owner: None,
             lease_expires_at: None,
             fence: 3,
@@ -805,6 +1005,123 @@ mod tests {
         let item = encode_operation(&public).expect("encodes");
         assert!(item.contains_key(keys::workspace_index::PK));
         assert!(item.contains_key(keys::workspace_index::SK));
+    }
+
+    #[test]
+    fn a_head_round_trips_exactly() {
+        let original = head();
+        let decoded = decode_head(&encode_head(&original), original.workspace).expect("decodes");
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn a_head_from_another_workspace_is_rejected_after_read() {
+        let original = head();
+        let error =
+            decode_head(&encode_head(&original), workspace(9)).expect_err("another workspace");
+        assert!(matches!(error, CodecError::WrongTenant { .. }), "{error}");
+    }
+
+    #[test]
+    fn an_active_head_carries_the_index_attributes_and_a_purged_one_does_not() {
+        let mut active = head();
+        active.lifecycle = SessionLifecycle::Active;
+        let encoded = encode_head(&active);
+        assert!(encoded.contains_key(keys::workspace_index::PK));
+        assert!(encoded.contains_key(keys::workspace_index::SK));
+
+        let mut purged = head();
+        purged.lifecycle = SessionLifecycle::Purged;
+        purged.purged_at = Some(stamp(9_000));
+        let encoded = encode_head(&purged);
+        assert!(
+            !encoded.contains_key(keys::workspace_index::PK),
+            "a purged head must be physically absent from the workspace index"
+        );
+        assert!(!encoded.contains_key(keys::workspace_index::SK));
+    }
+
+    #[test]
+    fn trashing_moves_the_head_to_a_different_index_partition() {
+        let mut active = head();
+        active.lifecycle = SessionLifecycle::Active;
+        let mut trashed = head();
+        trashed.lifecycle = SessionLifecycle::Trashed;
+        assert_ne!(
+            encode_head(&active)[keys::workspace_index::PK],
+            encode_head(&trashed)[keys::workspace_index::PK]
+        );
+    }
+
+    #[test]
+    fn a_head_decoded_as_another_item_type_is_rejected() {
+        let encoded = encode_head(&head());
+        let error = crate::attr::Row::bind(&encoded, "run").expect_err("not a run");
+        assert!(
+            matches!(
+                error,
+                CodecError::UnexpectedItemType {
+                    expected: "run",
+                    ref found
+                } if found == SESSION_HEAD
+            ),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_message_round_trips_with_an_inline_body_and_with_a_reference() {
+        let base = Message {
+            message: MessageId::from_uuid7(Uuid7::compose(1, [4; 10])),
+            session: SessionId::from_uuid7(Uuid7::compose(1, [1; 10])),
+            run: Some(RunId::from_uuid7(Uuid7::compose(1, [5; 10]))),
+            role: "user".to_owned(),
+            body: Body::Inline(b"hello".to_vec()),
+            content_bytes: 5,
+            created_at: stamp(1),
+        };
+        let organization = OrganizationId::from_uuid7(Uuid7::compose(1, [2; 10]));
+        let encoded = encode_message(&base, workspace(1), organization);
+        assert_eq!(
+            decode_message(&encoded, workspace(1)).expect("decodes"),
+            base
+        );
+
+        let referenced = Message {
+            body: Body::Digest("sha256:".to_owned() + &"b".repeat(64)),
+            ..base
+        };
+        let encoded = encode_message(&referenced, workspace(1), organization);
+        assert_eq!(
+            decode_message(&encoded, workspace(1)).expect("decodes"),
+            referenced
+        );
+    }
+
+    #[test]
+    fn a_run_round_trips_and_rejects_a_status_outside_the_vocabulary() {
+        let run = Run {
+            run: RunId::from_uuid7(Uuid7::compose(1, [5; 10])),
+            session: SessionId::from_uuid7(Uuid7::compose(1, [1; 10])),
+            message: MessageId::from_uuid7(Uuid7::compose(1, [4; 10])),
+            status: "queued",
+            max_spend_cents: 500,
+            reservation: "rsv-1".to_owned(),
+            deadline_at: stamp(10_000),
+            queued_at: stamp(1_000),
+            started_at: None,
+            terminal_at: None,
+            result_digest: None,
+        };
+        let organization = OrganizationId::from_uuid7(Uuid7::compose(1, [2; 10]));
+        let mut encoded = encode_run(&run, workspace(1), organization);
+        assert_eq!(decode_run(&encoded, workspace(1)).expect("decodes"), run);
+
+        encoded.insert("status".to_owned(), crate::attr::s("teleported"));
+        assert!(matches!(
+            decode_run(&encoded, workspace(1)),
+            Err(CodecError::Malformed { .. })
+        ));
     }
 
     fn approval() -> Approval {

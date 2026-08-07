@@ -35,9 +35,9 @@ aex-operation-domain = { path = "../aex-operation-domain" }
 aex-secret-domain = { path = "../aex-secret-domain" }
 aex-wire = { path = "../aex-wire" }
 sha2.workspace = true
-serde_json.workspace = true
 thiserror.workspace = true
 time.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+serde_json.workspace = true

@@ -18,21 +18,18 @@ use aex_brain_domain::effect::{
     DispatchEvidence, DispatchProof, DispatchStage, EffectClass, EffectKind, SettledOutcome,
 };
 use aex_brain_domain::ids::{
-    AgentId, ContentHash, EffectId, JoinId, JournalSeq, Timestamp, ToolCallId, ToolName, WaitId,
+    AgentId, CatalogPin, ContentHash, EffectId, JoinId, JournalSeq, ModelSlug, Timestamp,
+    ToolCallId, ToolName, WaitId,
 };
 use aex_brain_domain::journal::{
     ExecutorRoute, FinishReason, JournalEntry, JournalRecord, MessageOrigin, ParkReason,
     PreservedCounters, TypedFailure, WaitResolution,
 };
 use aex_brain_domain::wire_pending::{
-    AgentLimits, CanonicalBlock, ContentBlockRef, JoinMode, NormalizedUsage, ProviderId,
-    ResolvedAgentConfig, StopReason, ToolResultPart,
+    AgentLimits, CanonicalBlock, CompleteProof, ContentBlockRef, JoinMode, NormalizedUsage,
+    ProviderId, ResolvedAgentConfig, StopReason,
 };
-use aex_model_catalog::canonical::{CredentialBindingRef, ProviderReceipt, ReceiptBounds, seal};
-use aex_model_catalog::document::CapabilitySet;
-use aex_model_catalog::{BoundedString, QualifiedModel, fixture};
-use aex_wire::CanonicalJson;
-use aex_wire::ids::{GenerationId, PrefixedId as _, ProviderCredentialId, Uuid7};
+use aex_wire::ids::{GenerationId, PrefixedId as _, Uuid7};
 use proptest::prelude::*;
 use uuid::Uuid;
 
@@ -122,17 +119,10 @@ pub fn wait(seed: u128) -> WaitId {
 /// The pinned configuration every generated agent runs under.
 #[must_use]
 pub fn config() -> ResolvedAgentConfig {
-    let model = model();
     ResolvedAgentConfig {
-        catalog_pin: model.catalog(),
+        catalog_pin: CatalogPin(ContentHash::of(b"fixture-catalog")),
         provider: ProviderId::Deepseek,
-        credential: aex_brain_domain::wire_pending::SessionCredentialPin {
-            binding: ProviderCredentialId::from_uuid7(Uuid7::compose(1, [8; 10])),
-            revision: core::num::NonZeroU64::MIN,
-            generation: core::num::NonZeroU64::MIN,
-            revocation_epoch: 0,
-        },
-        model: model.model().clone(),
+        model: ModelSlug("deepseek-chat".to_owned()),
         system: None,
         tool_manifest_digests: vec![ContentHash::of(b"fixture-tools")],
         hands_generation: GenerationId::from_uuid7(Uuid7::compose(1, [9; 10])),
@@ -142,16 +132,6 @@ pub fn config() -> ResolvedAgentConfig {
             turn_deadline_ms: 600_000,
         },
     }
-}
-
-/// The deterministic provider/model pair used by Brain fixtures.
-#[must_use]
-pub fn model() -> QualifiedModel {
-    fixture::qualified_entry(
-        ProviderId::Deepseek,
-        "deepseek-chat",
-        CapabilitySet::default(),
-    )
 }
 
 /// A grant with every dimension set to `value`.
@@ -195,8 +175,7 @@ pub fn user_text(text: &str) -> JournalRecord {
     JournalRecord::UserMessage {
         content: vec![ContentBlockRef::Inline {
             block: CanonicalBlock::Text {
-                text: BoundedString::truncating(text),
-                annotations: Vec::new(),
+                text: text.to_owned(),
             },
         }],
         origin: MessageOrigin::Submission,
@@ -215,44 +194,16 @@ pub fn assistant(
     stop_reason: StopReason,
     effect: EffectId,
 ) -> JournalRecord {
-    let message = seal(blocks, stop_reason, &TURN_USAGE, &model())
+    let complete = CompleteProof::mint(stop_reason, &blocks)
         .expect("a fixture assistant message must be provably complete");
-    let at = fixture::at(HISTORY_EPOCH_MILLIS);
-    let receipt = ProviderReceipt {
-        provider: message.provider,
-        model: message.model.clone(),
-        catalog: message.catalog,
-        dialect: model().dialect(),
-        dialect_revision: model().dialect_revision(),
-        credential: CredentialBindingRef {
-            id: ProviderCredentialId::from_uuid7(Uuid7::compose(1, [4; 10])),
-            revision: 1,
-            generation: 1,
-        },
-        provider_request_id: None,
-        gateway_route: None,
-        http_status: 200,
-        attempts: 1,
-        started_at: at,
-        first_frame_at: Some(at),
-        completed_at: at,
-        request_bytes: 1,
-        response_bytes: 1,
-        frames: 1,
-        rate_limit: None,
-        response_receipt: Some(message.proof.0),
-        bounds: ReceiptBounds {
-            max_frame_bytes: 1_024,
-            max_response_bytes: 1_024,
-            idle_frame_timeout_ms: 1_000,
-            total_deadline_ms: 10_000,
-        },
-    };
     JournalRecord::AssistantMessage {
-        message,
+        blocks,
         usage: TURN_USAGE,
-        receipt: Box::new(receipt),
+        stop_reason,
+        provider: ProviderId::Deepseek,
+        model: ModelSlug("deepseek-chat".to_owned()),
         effect,
+        complete,
     }
 }
 
@@ -261,8 +212,7 @@ pub fn assistant(
 pub fn assistant_text(text: &str, effect: EffectId) -> JournalRecord {
     assistant(
         vec![CanonicalBlock::Text {
-            text: BoundedString::truncating(text),
-            annotations: Vec::new(),
+            text: text.to_owned(),
         }],
         StopReason::EndTurn,
         effect,
@@ -270,19 +220,14 @@ pub fn assistant_text(text: &str, effect: EffectId) -> JournalRecord {
 }
 
 /// An assistant turn asking for the named tool calls, in order.
-///
-/// # Panics
-///
-/// Panics when a fixture supplies an invalid tool name. The tool input is a
-/// fixed valid canonical JSON object.
 #[must_use]
 pub fn assistant_tool_use(calls: &[(&str, &str)], effect: EffectId) -> JournalRecord {
     let blocks = calls
         .iter()
         .map(|(id, name)| CanonicalBlock::ToolUse {
-            id: ToolCallId::truncating(id),
-            name: ToolName::parse(name).expect("fixture tool name"),
-            input: CanonicalJson::parse("{}").expect("fixture tool input"),
+            id: ToolCallId((*id).to_owned()),
+            name: ToolName((*name).to_owned()),
+            input: serde_json::json!({}),
         })
         .collect();
     assistant(blocks, StopReason::ToolUse, effect)
@@ -292,9 +237,9 @@ pub fn assistant_tool_use(calls: &[(&str, &str)], effect: EffectId) -> JournalRe
 #[must_use]
 pub fn tool_result(call: &str, text: &str, effect: EffectId) -> JournalRecord {
     JournalRecord::ToolResult {
-        call: ToolCallId::truncating(call),
-        content: vec![ToolResultPart::Text {
-            text: BoundedString::truncating(text),
+        call: ToolCallId(call.to_owned()),
+        blocks: vec![CanonicalBlock::Text {
+            text: text.to_owned(),
         }],
         is_error: false,
         executed_on: ExecutorRoute::ManagedWeb,
@@ -306,13 +251,10 @@ pub fn tool_result(call: &str, text: &str, effect: EffectId) -> JournalRecord {
 /// The usage every generated assistant turn reports.
 pub const TURN_USAGE: NormalizedUsage = NormalizedUsage {
     input_tokens: 100,
-    cache_read_input_tokens: 0,
-    cache_write_input_tokens: 0,
     output_tokens: 20,
+    cache_creation_tokens: 0,
+    cache_read_tokens: 0,
     reasoning_tokens: 0,
-    tool_use_prompt_tokens: 0,
-    provider_total_tokens: Some(120),
-    completeness: aex_model_catalog::canonical::UsageCompleteness::Exact,
 };
 
 /// An `EffectPrepared` record for `effect`.
@@ -432,8 +374,7 @@ pub fn compaction(through: JournalSeq, preserved: PreservedCounters) -> JournalR
     JournalRecord::Compaction {
         replaces_through: through,
         summary: vec![CanonicalBlock::Text {
-            text: BoundedString::truncating("summary of the replaced prefix"),
-            annotations: Vec::new(),
+            text: "summary of the replaced prefix".to_owned(),
         }],
         preserved,
     }

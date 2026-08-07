@@ -128,48 +128,6 @@ fn an_unknown_kind_is_a_decode_error() {
     );
 }
 
-/// Prelaunch is a clean cut: a journal written before provider-credential
-/// authority existed cannot be reopened and dispatched under a mutable default.
-#[test]
-fn agent_started_without_an_immutable_credential_pin_is_refused() {
-    let started = all()
-        .into_iter()
-        .flat_map(|case| case.history)
-        .find(|entry| entry.record.kind_name() == "agent_started")
-        .expect("the corpus carries an agent start");
-    let mut value = serde_json::to_value(started.record).expect("the record serializes");
-    value
-        .get_mut("config")
-        .and_then(serde_json::Value::as_object_mut)
-        .expect("agent_started has a config")
-        .remove("credential")
-        .expect("the current config carries a credential pin");
-    let bytes = canonicalize_value(&value).expect("the hostile record canonicalizes");
-    assert!(
-        matches!(decode(&bytes), Err(JournalDecodeError::Malformed { .. })),
-        "a missing pin must never fall back to mutable credential state"
-    );
-}
-
-#[test]
-fn zero_credential_revision_or_generation_is_refused() {
-    let started = all()
-        .into_iter()
-        .flat_map(|case| case.history)
-        .find(|entry| entry.record.kind_name() == "agent_started")
-        .expect("the corpus carries an agent start");
-    let baseline = serde_json::to_value(started.record).expect("the record serializes");
-    for field in ["revision", "generation"] {
-        let mut value = baseline.clone();
-        value["config"]["credential"][field] = serde_json::json!(0);
-        let bytes = canonicalize_value(&value).expect("the hostile record canonicalizes");
-        assert!(
-            matches!(decode(&bytes), Err(JournalDecodeError::Malformed { .. })),
-            "zero {field} must never enter immutable session authority"
-        );
-    }
-}
-
 /// A float anywhere in a canonical body is rejected, not silently reformatted.
 ///
 /// Money is integer micro-USD and every Brain quantity is an integer, so a float is an

@@ -59,13 +59,6 @@ pub mod participant {
     pub const MAILBOX: Participant = Participant::new("brain.mailbox");
     /// One paged fanout intent.
     pub const FANOUT_INTENT: Participant = Participant::new("brain.fanout_intent");
-    /// The immutable journal row whose exact hash a snapshot absorbed.
-    pub const FOLD_SNAPSHOT_JOURNAL_POINT: Participant =
-        Participant::new("brain.fold_snapshot.journal_point");
-    /// The agent control row proving the historical point is not ahead of authority.
-    pub const FOLD_SNAPSHOT_CONTROL: Participant = Participant::new("brain.fold_snapshot.control");
-    /// The monotonically selected fold-snapshot pointer.
-    pub const FOLD_SNAPSHOT_POINTER: Participant = Participant::new("brain.fold_snapshot.pointer");
 }
 
 /// The only physical tables Brain's durable store addresses.
@@ -197,12 +190,6 @@ pub fn compile(
         plan.condition_check(Participant::AGENT_CONTROL, guard)
             .map_err(PlanError::Store)?;
     } else {
-        let next_tail_hash = commit
-            .appends
-            .last()
-            .map(aex_brain_domain::journal::JournalRecord::content_hash)
-            .transpose()
-            .map_err(aex_brain_domain::commit::EnvelopeViolation::from)?;
         let mut control = aws_sdk_dynamodb::types::Update::builder()
             .table_name(table)
             .set_key(Some(key(&control_key.pk, &control_key.sk)))
@@ -228,19 +215,12 @@ pub fn compile(
             .expression_attribute_values(":nextTail", n(commit.control.next_tail.get()))
             .expression_attribute_values(":status", s(commit.control.phase.clone()))
             .expression_attribute_values(":lease", stamp(lease))
-            .expression_attribute_values(":now", stamp(now));
+            .expression_attribute_values(":now", stamp(now))
+            .expression_attribute_values(":hasJournal", aex_session_dynamodb::attr::boolean(true));
         let mut set_clause = "revision = :nextRevision, journalTail = :nextTail, \
-                              #status = :status, leaseExpiresAt = :lease, updatedAt = :now"
+                              #status = :status, leaseExpiresAt = :lease, updatedAt = :now, \
+                              hasJournal = :hasJournal"
             .to_owned();
-        if let Some(hash) = next_tail_hash {
-            set_clause.push_str(", journalTailHash = :nextTailHash, hasJournal = :hasJournal");
-            control = control
-                .expression_attribute_values(":nextTailHash", s(hash.to_hex()))
-                .expression_attribute_values(
-                    ":hasJournal",
-                    aex_session_dynamodb::attr::boolean(true),
-                );
-        }
         if let Some(finish) = commit.control.finish {
             set_clause.push_str(", finishReason = :finish");
             control = control.expression_attribute_values(":finish", s(finish_name(finish)));

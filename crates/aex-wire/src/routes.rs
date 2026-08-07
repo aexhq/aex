@@ -77,12 +77,11 @@ pub struct RouteDescriptor {
     pub plane: Plane,
     /// Which authoring fragment owns it.
     pub fragment: &'static str,
-    /// The immutable release unit planned to own this operation.
+    /// The immutable release unit that mounts this operation.
     ///
-    /// Planned ownership selects input and deployment closures; it is not
-    /// evidence that the operation is mounted. Actual mounts live in the
-    /// generated delivery registry. This field is excluded from the public
-    /// contract bundle and therefore cannot change wire identity.
+    /// This is generated delivery/runtime composition metadata. It is excluded
+    /// from the public contract bundle and therefore cannot change wire
+    /// identity.
     pub serving_artifact: &'static str,
     /// HTTP method.
     pub method: HttpMethod,

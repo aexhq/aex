@@ -32,9 +32,10 @@ pub mod normalize;
 pub mod proto_pin;
 pub mod redact;
 pub mod response;
+pub mod wire_pending;
 
 pub use decode::{ContentCoding, DecodeRequest, DecodedBatch, OtlpEncoding, decode};
-pub use error::{OtlpError, OtlpSignal, RecordPointer};
+pub use error::{AdmissionCode, OtlpError, OtlpSignal, RecordPointer};
 pub use limits::OtlpLimits;
 pub use memory::{MemoryBudget, MemoryLease, reservation_for};
 pub use normalize::{

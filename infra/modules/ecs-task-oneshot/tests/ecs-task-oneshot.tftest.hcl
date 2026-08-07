@@ -5,7 +5,6 @@ variables {
   image              = "000000000000.dkr.ecr.eu-west-1.amazonaws.com/aex/central-schema-admin@sha256:0000000000000000000000000000000000000000000000000000000000000000"
   cpu                = 1024
   memory             = 2048
-  stop_timeout       = 120
   role_arn           = "arn:aws:iam::000000000000:role/aex-dev-central-schema-admin"
   execution_role_arn = "arn:aws:iam::000000000000:role/aex-dev-ecs-execution"
   subnets            = ["subnet-0123456789abcdef0"]
@@ -37,24 +36,6 @@ run "the_runtime_platform_is_explicit" {
   assert {
     condition     = one(aws_ecs_task_definition.this.runtime_platform).cpu_architecture == "ARM64"
     error_message = "The runtime platform must be declared so an image index cannot pick a different child."
-  }
-}
-
-run "task_definition_revisions_are_retained" {
-  command = plan
-
-  assert {
-    condition     = aws_ecs_task_definition.this.skip_destroy == true
-    error_message = "Terraform must retain old task definition revisions so the release role does not need unscopable deregistration authority."
-  }
-}
-
-run "the_declared_stop_timeout_reaches_ecs" {
-  command = plan
-
-  assert {
-    condition     = jsondecode(aws_ecs_task_definition.this.container_definitions)[0].stopTimeout == 120
-    error_message = "The one-shot release stop timeout must be materialized in the ECS container definition."
   }
 }
 
@@ -102,16 +83,6 @@ run "rejects_assigning_a_public_ip" {
   }
 
   expect_failures = [var.assign_public_ip]
-}
-
-run "rejects_an_invalid_stop_timeout" {
-  command = plan
-
-  variables {
-    stop_timeout = 121
-  }
-
-  expect_failures = [var.stop_timeout]
 }
 
 run "rejects_a_plaintext_secret_value" {

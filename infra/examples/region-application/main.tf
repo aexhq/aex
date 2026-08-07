@@ -28,7 +28,6 @@ module "role" {
   assume_principal            = each.value.assume_principal
   action_grants               = each.value.action_grants
   wildcard_resource_allowlist = each.value.wildcard_resource_allowlist
-  boundary_policy_arn         = var.permissions_boundary_policy_arn
   tags                        = var.tags
 }
 
@@ -94,15 +93,13 @@ module "public_lb" {
 module "stream_service" {
   source = "../../modules/ecs-service"
 
-  name                   = var.stream_service.name
-  task_definition_family = "aex-${var.plane}-${var.region}-${var.stream_service.name}"
-  cluster_arn            = module.cluster.arn
-  cluster_name           = var.cluster_name
+  name         = var.stream_service.name
+  cluster_arn  = module.cluster.arn
+  cluster_name = var.cluster_name
 
   image          = var.stream_service.image
   cpu            = var.stream_service.cpu
   memory         = var.stream_service.memory
-  desired_count  = var.stream_service.desired_count
   stop_timeout   = var.stream_service.stop_timeout
   container_port = var.stream_service.container_port
 

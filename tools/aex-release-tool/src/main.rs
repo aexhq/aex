@@ -16,7 +16,7 @@ use aex_release_tool::artifact::{self, ArtifactEnvelope, Form};
 use aex_release_tool::canon;
 use aex_release_tool::describe;
 use aex_release_tool::error::{Exit, Result, ToolError, Violation, io, usage};
-use aex_release_tool::evidence::{self, DeclaredProducers, FreshnessPolicy, Receipt};
+use aex_release_tool::evidence::{self, DeclaredJobs, FreshnessPolicy, Receipt};
 use aex_release_tool::graph::inputs::GraphInputs;
 use aex_release_tool::graph::matrix::{self, MatrixKind};
 use aex_release_tool::graph::select::{self, Lane, Mode};
@@ -25,13 +25,8 @@ use aex_release_tool::janitor::{self, Inventory, SweepMode};
 use aex_release_tool::ledger::{self, JsonlLedger, LedgerEntry, LedgerStore, Readback};
 use aex_release_tool::manifest::CompositionManifest;
 use aex_release_tool::migration;
-use aex_release_tool::oci::{
-    self, OciBuildBinding, OciImageIdentity, OciSource, OciToolchain, OciWorkflowRun,
-};
 use aex_release_tool::policy;
 use aex_release_tool::private_path;
-use aex_release_tool::publication;
-use aex_release_tool::release_contract;
 use aex_release_tool::schemas::{self, SchemaName};
 use aex_release_tool::selftest;
 use aex_release_tool::verification::VerificationStatement;
@@ -83,9 +78,6 @@ enum Command {
     /// Terraform plan handling.
     #[command(subcommand)]
     Plan(PlanCommand),
-    /// Validate public-schema/private-value release contracts.
-    #[command(subcommand)]
-    Contract(ContractCommand),
     /// The deployment ledger.
     #[command(subcommand)]
     Ledger(LedgerCommand),
@@ -120,11 +112,7 @@ enum GraphCommand {
         out: Option<PathBuf>,
     },
     /// Run every fail-closed verification rule.
-    Verify {
-        /// Also require executable cross-service evidence for a release route.
-        #[arg(long)]
-        release: bool,
-    },
+    Verify,
     /// Decide what runs.
     Select {
         /// Base commit of the diff.
@@ -175,9 +163,6 @@ enum GraphCommand {
         /// The selection document.
         #[arg(long)]
         selection: PathBuf,
-        /// Artifact selection whose owning packages must emit validation receipts.
-        #[arg(long)]
-        artifact_selection: Option<PathBuf>,
         /// Which slice.
         #[arg(long)]
         kind: MatrixKind,
@@ -205,20 +190,6 @@ enum DiffFormat {
 
 #[derive(Debug, Subcommand)]
 enum ArtifactCommand {
-    /// Package the committed public Terraform module closure deterministically.
-    ModuleBundle {
-        /// Where to write `terraform-modules.tar.gz`.
-        #[arg(long)]
-        out: PathBuf,
-    },
-    /// Validate and copy the generated regional table definition bundle.
-    RegionalTables {
-        /// Where to write `regional-tables.json`.
-        #[arg(long)]
-        out: PathBuf,
-    },
-    /// Print the snapshot-bound immutable tool catalogue identity.
-    ToolCatalog,
     /// Print every build recipe.
     Recipes {
         /// Restrict to one unit.
@@ -230,30 +201,6 @@ enum ArtifactCommand {
         /// The unit.
         #[arg(long)]
         unit: String,
-        /// Refuse an unbound brain-mux before any build is invoked.
-        #[arg(long)]
-        require_model_catalog: bool,
-    },
-    /// Require the complete Git worktree/index/untracked set to be clean.
-    OciSourceClean {
-        /// Where to write the clean-source evidence.
-        #[arg(long)]
-        out: PathBuf,
-    },
-    /// Verify and record the exact installed OCI producer executables.
-    OciToolchain {
-        /// Docker Buildx executable installed by the pinned action.
-        #[arg(long)]
-        buildx_binary: PathBuf,
-        /// Zig executable extracted from the pinned official archive.
-        #[arg(long)]
-        zig_binary: PathBuf,
-        /// `cargo-zigbuild` executable extracted from its pinned release.
-        #[arg(long)]
-        cargo_zigbuild_binary: PathBuf,
-        /// Where to write the closed producer identity.
-        #[arg(long)]
-        out: PathBuf,
     },
     /// Package a built input deterministically.
     Package {
@@ -273,120 +220,6 @@ enum ArtifactCommand {
         #[arg(long, default_value_t = 0)]
         source_date_epoch: u64,
     },
-    /// Create a clean, source-stable OCI build context for one compiled ELF.
-    OciPrepare {
-        /// The OCI unit.
-        #[arg(long)]
-        unit: String,
-        /// Authoritative recipe JSON emitted by `artifact plan`.
-        #[arg(long)]
-        recipe: PathBuf,
-        /// Independently compiled `AArch64` ELF.
-        #[arg(long)]
-        input: PathBuf,
-        /// New build context directory; it must not already exist.
-        #[arg(long)]
-        context: PathBuf,
-        /// Where to write the context binding.
-        #[arg(long)]
-        out: PathBuf,
-        /// Source `owner/repository`.
-        #[arg(long)]
-        repository: String,
-        /// Exact source commit.
-        #[arg(long)]
-        commit_sha: String,
-        /// Closed producer toolchain emitted by `artifact oci-toolchain`.
-        #[arg(long)]
-        toolchain: PathBuf,
-    },
-    /// Inspect one unpacked OCI layout and copy its exact manifest bytes.
-    OciInspect {
-        /// Unpacked OCI layout directory.
-        #[arg(long)]
-        layout: PathBuf,
-        /// Context binding emitted by `artifact oci-prepare`.
-        #[arg(long)]
-        binding: PathBuf,
-        /// Where to write the verified OCI identity.
-        #[arg(long)]
-        out: PathBuf,
-        /// Where to copy the verified raw image manifest.
-        #[arg(long)]
-        manifest_out: PathBuf,
-    },
-    /// Require two independent OCI builds to have identical identities.
-    OciCompare {
-        /// First inspected identity.
-        #[arg(long)]
-        first: PathBuf,
-        /// Second inspected identity.
-        #[arg(long)]
-        second: PathBuf,
-    },
-    /// Verify digest-only registry readback and bind it to this workflow run.
-    OciReadback {
-        /// Expected reproducible OCI identity.
-        #[arg(long)]
-        identity: PathBuf,
-        /// Raw manifest read back from the registry.
-        #[arg(long)]
-        manifest: PathBuf,
-        /// Config digest reported by the pulled local image.
-        #[arg(long)]
-        config_digest: String,
-        /// ELF copied from the pulled image.
-        #[arg(long)]
-        binary: PathBuf,
-        /// JSON emitted by `gh attestation verify --format json`.
-        #[arg(long)]
-        verified_provenance: PathBuf,
-        /// Exact Sigstore bundle passed to the official verifier.
-        #[arg(long)]
-        provenance_bundle: PathBuf,
-        /// Publishing workflow repository.
-        #[arg(long)]
-        workflow_repository: String,
-        /// Publishing workflow ref.
-        #[arg(long)]
-        workflow_ref: String,
-        /// Publishing workflow path.
-        #[arg(long)]
-        workflow_path: String,
-        /// Publishing workflow run id.
-        #[arg(long)]
-        run_id: String,
-        /// Publishing workflow attempt.
-        #[arg(long)]
-        run_attempt: u32,
-        /// Matrix job name, exactly the unit id.
-        #[arg(long)]
-        job_name: String,
-        /// OIDC builder identity for the protected workflow.
-        #[arg(long)]
-        builder_id: String,
-        /// Where to write the publication record.
-        #[arg(long)]
-        out: PathBuf,
-    },
-    /// Decide whether GHCR visibility permits a normal or bootstrap push.
-    OciVisibility {
-        /// Expected reproducible OCI identity.
-        #[arg(long)]
-        identity: PathBuf,
-        /// `missing`, `private`, or `public` from GitHub's package-read API.
-        #[arg(long)]
-        visibility: String,
-        /// `before-push` or `after-push`.
-        #[arg(long)]
-        phase: String,
-        /// Both explicit protected bootstrap authorities were present.
-        #[arg(long)]
-        bootstrap_authorized: bool,
-        /// Where to retain the typed decision/blocker.
-        #[arg(long)]
-        out: PathBuf,
-    },
     /// Assemble an envelope from a build that happened here.
     ///
     /// Every field a local build establishes is read from the tree; every field
@@ -400,12 +233,6 @@ enum ArtifactCommand {
         /// The packaged artifact bytes.
         #[arg(long)]
         file: PathBuf,
-        /// Exact recipe JSON that produced the bytes; otherwise derive it now.
-        #[arg(long)]
-        recipe: Option<PathBuf>,
-        /// Verified OCI identity when `file` is an OCI manifest.
-        #[arg(long)]
-        oci_identity: Option<PathBuf>,
         /// Where to write the envelope.
         #[arg(long)]
         out: PathBuf,
@@ -427,93 +254,6 @@ enum ArtifactCommand {
         #[arg(long)]
         now: Option<String>,
     },
-    /// Replace a local draft's unearned fields with exact CI evidence.
-    Certify {
-        /// The local draft emitted by `artifact describe`.
-        #[arg(long)]
-        draft: PathBuf,
-        /// CI/scanner claims. File-backed digests and counts are recomputed.
-        #[arg(long)]
-        claims: PathBuf,
-        /// Packaged bytes. Omit only for an OCI registry manifest.
-        #[arg(long)]
-        file: Option<PathBuf>,
-        /// `CycloneDX` JSON SBOM.
-        #[arg(long)]
-        sbom: Option<PathBuf>,
-        /// Complete licence inventory from the passing scan.
-        #[arg(long)]
-        license_inventory: Option<PathBuf>,
-        /// Complete vulnerability verdict from the passing artifact scan.
-        #[arg(long)]
-        vulnerability_verdict: Option<PathBuf>,
-        /// Defer scanner-derived supply-chain evidence outside the startup release path.
-        #[arg(long)]
-        defer_supply_chain: bool,
-        /// Official GitHub attestation bundle.
-        #[arg(long)]
-        provenance_bundle: PathBuf,
-        /// Verified Sigstore blob-signature bundle, required for `rust-binary`.
-        #[arg(long)]
-        signature_bundle: Option<PathBuf>,
-        /// Passing evidence receipts, repeated.
-        #[arg(long = "receipt")]
-        receipts: Vec<PathBuf>,
-        /// Where to write the certified envelope.
-        #[arg(long)]
-        out: PathBuf,
-    },
-    /// Record exact evidence gaps without minting a weaker envelope.
-    DeferCertification {
-        /// Local draft emitted by `artifact describe`.
-        #[arg(long)]
-        draft: PathBuf,
-        /// Unearned-field ledger emitted beside the draft.
-        #[arg(long)]
-        unearned: PathBuf,
-        /// Passing same-run receipts already bound to the artifact, repeated.
-        #[arg(long = "receipt")]
-        receipts: Vec<PathBuf>,
-        /// Positive protected workflow run id.
-        #[arg(long)]
-        workflow_run_id: String,
-        /// Positive protected workflow run attempt.
-        #[arg(long)]
-        workflow_run_attempt: u32,
-        /// Artifact-builder matrix job name.
-        #[arg(long)]
-        job_name: String,
-        /// Protected workflow builder identity.
-        #[arg(long)]
-        builder_id: String,
-        /// Where to write the canonical deferral.
-        #[arg(long)]
-        out: PathBuf,
-    },
-    /// Exhaustively account for certified and explicitly deferred units.
-    CertificationInventory {
-        /// Certified envelope files, repeated.
-        #[arg(long = "envelope")]
-        envelopes: Vec<PathBuf>,
-        /// Certification deferral files, repeated.
-        #[arg(long = "deferred")]
-        deferrals: Vec<PathBuf>,
-        /// Exact GitHub `owner/repository`.
-        #[arg(long)]
-        repository: String,
-        /// Exact lowercase 40-character source commit.
-        #[arg(long)]
-        commit_sha: String,
-        /// Positive GitHub Actions run id.
-        #[arg(long)]
-        workflow_run_id: String,
-        /// Positive GitHub Actions run attempt.
-        #[arg(long)]
-        workflow_run_attempt: u32,
-        /// Where to write the inventory before deferred units fail the gate.
-        #[arg(long)]
-        out: PathBuf,
-    },
     /// Verify an envelope, and optionally the bytes it describes.
     Verify {
         /// The envelope.
@@ -531,15 +271,6 @@ enum ArtifactCommand {
         /// The envelope.
         #[arg(long)]
         envelope: PathBuf,
-    },
-    /// Derive the safe content-addressed public asset basename from real bytes.
-    AssetName {
-        /// Registry unit id.
-        #[arg(long)]
-        unit: String,
-        /// Packaged artifact bytes.
-        #[arg(long)]
-        file: PathBuf,
     },
 }
 
@@ -563,55 +294,6 @@ enum ManifestCommand {
         #[arg(long)]
         out: PathBuf,
     },
-    /// Verify the complete certified envelope set and emit the canonical
-    /// composition manifest plus the artifact store admission consumes.
-    Handoff {
-        /// Certified envelope files, exactly one per registered deployable.
-        #[arg(long = "envelope")]
-        envelopes: Vec<PathBuf>,
-        /// Complete non-envelope composition identities.
-        #[arg(long)]
-        composition: PathBuf,
-        /// Where to write `composition-manifest.json`.
-        #[arg(long)]
-        manifest_out: PathBuf,
-        /// Where to write the unit-id-to-envelope artifact store.
-        #[arg(long)]
-        store_out: PathBuf,
-    },
-    /// Derive non-envelope composition identities from source and published bytes.
-    Inputs {
-        /// Certified envelope files, exactly one per registered deployable.
-        #[arg(long = "envelope")]
-        envelopes: Vec<PathBuf>,
-        /// Raw acquired release-tool executable.
-        #[arg(long)]
-        release_tool: PathBuf,
-        /// Acquired deterministic Terraform module bundle.
-        #[arg(long)]
-        module_bundle: PathBuf,
-        /// Acquired generated regional table bundle.
-        #[arg(long)]
-        regional_tables: PathBuf,
-        /// Exact GitHub `owner/repository`.
-        #[arg(long)]
-        repository: String,
-        /// Exact lowercase 40-character source commit.
-        #[arg(long)]
-        commit_sha: String,
-        /// Positive GitHub Actions run id.
-        #[arg(long)]
-        workflow_run_id: String,
-        /// Positive GitHub Actions run attempt.
-        #[arg(long)]
-        workflow_run_attempt: u64,
-        /// Version reported by the acquired release tool.
-        #[arg(long)]
-        release_tool_version: String,
-        /// Where to write canonical `composition-inputs.json`.
-        #[arg(long)]
-        out: PathBuf,
-    },
     /// Compare two compositions.
     Diff {
         /// The older manifest.
@@ -632,24 +314,6 @@ enum ManifestCommand {
         /// The manifest.
         #[arg(long)]
         file: PathBuf,
-        /// Also reject environment identities, mutable references and ranges.
-        #[arg(long)]
-        strict_environment_scan: bool,
-    },
-    /// Validate a manifest and the exact downloaded public acquisition inputs.
-    ValidateInputs {
-        /// The manifest.
-        #[arg(long)]
-        file: PathBuf,
-        /// Raw downloaded `aex-release-tool` executable.
-        #[arg(long)]
-        release_tool: PathBuf,
-        /// Downloaded `terraform-modules.tar.gz`.
-        #[arg(long)]
-        module_bundle: PathBuf,
-        /// Downloaded `regional-tables.json`.
-        #[arg(long)]
-        regional_tables: PathBuf,
         /// Also reject environment identities, mutable references and ranges.
         #[arg(long)]
         strict_environment_scan: bool,
@@ -688,30 +352,6 @@ enum EvidenceCommand {
         #[arg(long)]
         out: PathBuf,
     },
-    /// Build a command receipt from Cargo's JSON message stream.
-    NewCargo {
-        /// The command context: identity, source, selection and hygiene.
-        #[arg(long)]
-        context: PathBuf,
-        /// Cargo output produced with `--message-format=json`.
-        #[arg(long)]
-        messages: PathBuf,
-        /// Where to write the receipt.
-        #[arg(long)]
-        out: PathBuf,
-    },
-    /// Build a receipt from a closed machine-readable check report.
-    NewCheck {
-        /// The check context: identity, source, selection and hygiene.
-        #[arg(long)]
-        context: PathBuf,
-        /// Closed report emitted after the named checks completed.
-        #[arg(long)]
-        report: PathBuf,
-        /// Where to write the receipt.
-        #[arg(long)]
-        out: PathBuf,
-    },
     /// Hash a file and record it on a receipt.
     Attach {
         /// The receipt.
@@ -727,18 +367,6 @@ enum EvidenceCommand {
         #[arg(long)]
         uri: String,
         /// Where to write the resealed receipt. Defaults to the input path.
-        #[arg(long)]
-        out: Option<PathBuf>,
-    },
-    /// Bind an earned receipt to a receipt-independent artifact subject and reseal it.
-    BindArtifact {
-        /// Sound receipt whose source and unit scope already cover the artifact.
-        #[arg(long)]
-        receipt: PathBuf,
-        /// Draft or certified envelope carrying the artifact subject identity.
-        #[arg(long)]
-        envelope: PathBuf,
-        /// Where to write the bound receipt. Defaults to the input receipt.
         #[arg(long)]
         out: Option<PathBuf>,
     },
@@ -885,36 +513,6 @@ enum PlanCommand {
     },
 }
 
-#[derive(Debug, Clone, Copy, clap::ValueEnum)]
-#[clap(rename_all = "kebab-case")]
-enum ContractKind {
-    /// `aex.environment-binding.v1`.
-    EnvironmentBinding,
-    /// `aex.resolved-placement.v1`.
-    ResolvedPlacement,
-    /// `aex.saved-plan-envelope.v1`.
-    SavedPlanEnvelope,
-}
-
-#[derive(Debug, Subcommand)]
-enum ContractCommand {
-    /// Parse, close, digest-check and freshness-check a release contract.
-    Validate {
-        /// Contract kind.
-        #[arg(long)]
-        kind: ContractKind,
-        /// JSON contract document.
-        #[arg(long)]
-        file: PathBuf,
-        /// Opaque saved plan bytes. Valid only for a saved-plan envelope.
-        #[arg(long)]
-        payload: Option<PathBuf>,
-        /// Evaluation instant, RFC 3339. Defaults to now.
-        #[arg(long)]
-        now: Option<String>,
-    },
-}
-
 #[derive(Debug, Subcommand)]
 enum LedgerCommand {
     /// Append one entry.
@@ -1050,7 +648,6 @@ fn run(cli: &Cli) -> Result<()> {
         Command::Verification(command) => run_verification(cli, command),
         Command::Admit(args) => run_admit(cli, &root, args),
         Command::Plan(command) => run_plan(cli, command),
-        Command::Contract(command) => run_contract(cli, command),
         Command::Ledger(command) => run_ledger(cli, command),
         Command::PrivatePath(command) => run_private_path(command),
         Command::Migration(command) => run_migration(cli, &root, command),
@@ -1099,12 +696,8 @@ fn run_graph(cli: &Cli, root: &Path, command: &GraphCommand) -> Result<()> {
                 emit(cli, &summary)
             }
         }
-        GraphCommand::Verify { release } => {
-            let built = if *release {
-                verify::verify_release_candidate(&inputs)?
-            } else {
-                verify::verify(&inputs)?
-            };
+        GraphCommand::Verify => {
+            let built = verify::verify(&inputs)?;
             emit(cli, &verify::summarize(&built))
         }
         GraphCommand::Select {
@@ -1161,20 +754,17 @@ fn run_graph(cli: &Cli, root: &Path, command: &GraphCommand) -> Result<()> {
         }
         GraphCommand::Matrix {
             selection,
-            artifact_selection,
             kind,
             partitions,
             shard_durations,
             github_output,
         } => {
-            let output = build_graph_matrix(
-                &inputs,
-                selection,
-                artifact_selection.as_deref(),
-                *kind,
-                *partitions,
-                shard_durations.as_deref(),
-            )?;
+            let selection: select::Selection = read_json(selection)?;
+            let durations: BTreeMap<String, u64> = match shard_durations {
+                Some(path) => read_json(path)?,
+                None => BTreeMap::new(),
+            };
+            let output = matrix::build(&selection, *kind, *partitions, &durations)?;
             if let Some(path) = github_output {
                 append_text(path, &matrix::to_github_output(&output)?)?;
             }
@@ -1183,51 +773,26 @@ fn run_graph(cli: &Cli, root: &Path, command: &GraphCommand) -> Result<()> {
     }
 }
 
-fn build_graph_matrix(
-    inputs: &GraphInputs,
-    selection: &Path,
-    artifact_selection: Option<&Path>,
-    kind: MatrixKind,
-    partitions: usize,
-    shard_durations: Option<&Path>,
-) -> Result<matrix::MatrixOutput> {
-    let selection: select::Selection = read_json(selection)?;
-    let artifact_selection: Option<select::Selection> =
-        artifact_selection.map(read_json).transpose()?;
-    let durations: BTreeMap<String, u64> = match shard_durations {
-        Some(path) => read_json(path)?,
-        None => BTreeMap::new(),
-    };
-    matrix::build_with_artifacts(
-        &selection,
-        artifact_selection.as_ref(),
-        kind,
-        partitions,
-        &durations,
-        &inputs.scenarios,
-        &inputs.units,
-        &inputs.npm,
-    )
-}
-
 fn run_artifact(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()> {
     match command {
-        ArtifactCommand::ModuleBundle { out } => run_module_bundle(cli, root, out),
-        ArtifactCommand::RegionalTables { out } => run_regional_tables(cli, root, out),
-        ArtifactCommand::ToolCatalog => run_tool_catalog(cli, root),
         ArtifactCommand::Recipes { unit } => {
             let units = read_units(root)?;
-            let plans = artifact::release_recipes(&units, root)?;
+            let plans = artifact::recipes(&units)?;
             let selected: Vec<_> = plans
                 .into_iter()
                 .filter(|plan| unit.as_ref().is_none_or(|id| &plan.unit == id))
                 .collect();
             emit(cli, &selected)
         }
-        ArtifactCommand::Plan {
-            unit,
-            require_model_catalog,
-        } => run_artifact_plan(cli, root, unit, *require_model_catalog),
+        ArtifactCommand::Plan { unit } => {
+            let units = read_units(root)?;
+            let found = units
+                .units
+                .iter()
+                .find(|candidate| &candidate.id == unit)
+                .ok_or_else(|| usage(format!("`{unit}` is not in release/units.toml")))?;
+            emit(cli, &artifact::plan(found)?)
+        }
         ArtifactCommand::Package {
             unit,
             input,
@@ -1246,7 +811,7 @@ fn run_artifact(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()>
                 None => match artifact::plan(found)?.form.as_str() {
                     "lambda-zip" => Form::LambdaZip,
                     "oci" => Form::Oci,
-                    "microvm-zip" => Form::MicrovmZip,
+                    "rootfs" => Form::Rootfs,
                     "build-output" => Form::BuildOutput,
                     _ => Form::Tarball,
                 },
@@ -1268,21 +833,25 @@ fn run_artifact(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()>
                 }),
             )
         }
-        command @ (ArtifactCommand::OciSourceClean { .. }
-        | ArtifactCommand::OciToolchain { .. }
-        | ArtifactCommand::OciPrepare { .. }
-        | ArtifactCommand::OciInspect { .. }
-        | ArtifactCommand::OciCompare { .. }
-        | ArtifactCommand::OciReadback { .. }
-        | ArtifactCommand::OciVisibility { .. }) => run_artifact_oci(cli, root, command),
-        ArtifactCommand::Describe { .. } => run_artifact_describe(cli, root, command),
-        ArtifactCommand::Certify { .. } => run_artifact_certify(cli, root, command),
-        ArtifactCommand::DeferCertification { .. } => {
-            run_artifact_defer_certification(cli, root, command)
-        }
-        ArtifactCommand::CertificationInventory { .. } => {
-            run_artifact_certification_inventory(cli, root, command)
-        }
+        ArtifactCommand::Describe {
+            unit,
+            file,
+            out,
+            unearned_out,
+            contract_digest,
+            ran,
+            now,
+        } => run_describe(
+            cli,
+            root,
+            unit,
+            file,
+            out,
+            unearned_out.as_deref(),
+            contract_digest,
+            ran,
+            now.as_deref(),
+        ),
         ArtifactCommand::Verify {
             envelope,
             file,
@@ -1299,435 +868,7 @@ fn run_artifact(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()>
             let envelope: ArtifactEnvelope = read_json(envelope)?;
             emit(cli, &artifact::publish_destination(&envelope)?)
         }
-        ArtifactCommand::AssetName { .. } => run_artifact_asset_name(cli, root, command),
     }
-}
-
-fn run_tool_catalog(cli: &Cli, root: &Path) -> Result<()> {
-    let digest = artifact::tool_catalog_digest(root)?;
-    emit(
-        cli,
-        &serde_json::json!({
-            "schema": "aex.tool-catalog-identity.v1",
-            "digest": digest,
-            "source": "crates/aex-brain-tool-catalog/src/catalog.rs",
-        }),
-    )
-}
-
-fn run_artifact_describe(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()> {
-    let ArtifactCommand::Describe {
-        unit,
-        file,
-        recipe,
-        oci_identity,
-        out,
-        unearned_out,
-        contract_digest,
-        ran,
-        now,
-    } = command
-    else {
-        return Err(usage("internal artifact description dispatch mismatch"));
-    };
-    run_describe(
-        cli,
-        root,
-        unit,
-        file,
-        recipe.as_deref(),
-        oci_identity.as_deref(),
-        out,
-        unearned_out.as_deref(),
-        contract_digest,
-        ran,
-        now.as_deref(),
-    )
-}
-
-fn run_artifact_oci(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()> {
-    match command {
-        ArtifactCommand::OciSourceClean { out } => {
-            let evidence = oci::verify_clean(root)?;
-            write_canonical(out, &evidence)?;
-            emit(cli, &evidence)
-        }
-        ArtifactCommand::OciToolchain {
-            buildx_binary,
-            zig_binary,
-            cargo_zigbuild_binary,
-            out,
-        } => {
-            let toolchain =
-                oci::inspect_toolchain(buildx_binary, zig_binary, cargo_zigbuild_binary)?;
-            write_canonical(out, &toolchain)?;
-            emit(cli, &toolchain)
-        }
-        ArtifactCommand::OciPrepare {
-            unit,
-            recipe,
-            input,
-            context,
-            out,
-            repository,
-            commit_sha,
-            toolchain,
-        } => {
-            let units = read_units(root)?;
-            let found = units
-                .units
-                .iter()
-                .find(|candidate| &candidate.id == unit)
-                .ok_or_else(|| usage(format!("`{unit}` is not in release/units.toml")))?;
-            let recipe: artifact::BuildPlan = read_json(recipe)?;
-            let toolchain: OciToolchain = read_json(toolchain)?;
-            let binding = oci::prepare_context(
-                found,
-                &recipe,
-                input,
-                context,
-                OciSource {
-                    repository: repository.clone(),
-                    commit_sha: commit_sha.clone(),
-                },
-                toolchain,
-            )?;
-            write_canonical(out, &binding)?;
-            emit(cli, &binding)
-        }
-        ArtifactCommand::OciInspect {
-            layout,
-            binding,
-            out,
-            manifest_out,
-        } => {
-            let binding: OciBuildBinding = read_json(binding)?;
-            let identity = oci::inspect_layout(layout, &binding)?;
-            let source = oci::manifest_blob_path(layout, &identity);
-            let bytes =
-                std::fs::read(&source).map_err(|err| io(&source.display().to_string(), &err))?;
-            std::fs::write(manifest_out, bytes)
-                .map_err(|err| io(&manifest_out.display().to_string(), &err))?;
-            write_canonical(out, &identity)?;
-            emit(cli, &identity)
-        }
-        ArtifactCommand::OciCompare { first, second } => {
-            let first: OciImageIdentity = read_json(first)?;
-            let second: OciImageIdentity = read_json(second)?;
-            oci::verify_reproducible(&first, &second)?;
-            emit(
-                cli,
-                &serde_json::json!({
-                    "unit": first.unit,
-                    "digest": first.output_digest,
-                    "reproducible": true,
-                }),
-            )
-        }
-        command @ ArtifactCommand::OciReadback { .. } => run_oci_readback(cli, command),
-        command @ ArtifactCommand::OciVisibility { .. } => run_oci_visibility(cli, command),
-        _ => Err(usage("internal OCI artifact dispatch mismatch")),
-    }
-}
-
-fn run_oci_readback(cli: &Cli, command: &ArtifactCommand) -> Result<()> {
-    let ArtifactCommand::OciReadback {
-        identity,
-        manifest,
-        config_digest,
-        binary,
-        verified_provenance,
-        provenance_bundle,
-        workflow_repository,
-        workflow_ref,
-        workflow_path,
-        run_id,
-        run_attempt,
-        job_name,
-        builder_id,
-        out,
-    } = command
-    else {
-        return Err(usage("internal OCI readback dispatch mismatch"));
-    };
-    let identity: OciImageIdentity = read_json(identity)?;
-    let publication = oci::verify_readback(
-        &identity,
-        manifest,
-        config_digest,
-        binary,
-        OciWorkflowRun {
-            repository: workflow_repository.clone(),
-            r#ref: workflow_ref.clone(),
-            path: workflow_path.clone(),
-            run_id: run_id.clone(),
-            run_attempt: *run_attempt,
-            job_name: job_name.clone(),
-            builder_id: builder_id.clone(),
-        },
-        verified_provenance,
-        provenance_bundle,
-    )?;
-    write_canonical(out, &publication)?;
-    emit(cli, &publication)
-}
-
-fn run_oci_visibility(cli: &Cli, command: &ArtifactCommand) -> Result<()> {
-    let ArtifactCommand::OciVisibility {
-        identity,
-        visibility,
-        phase,
-        bootstrap_authorized,
-        out,
-    } = command
-    else {
-        return Err(usage("internal OCI visibility dispatch mismatch"));
-    };
-    let identity: OciImageIdentity = read_json(identity)?;
-    let visibility = visibility.parse().map_err(usage)?;
-    let phase = phase.parse().map_err(usage)?;
-    let decision = oci::decide_visibility(&identity, visibility, phase, *bootstrap_authorized);
-    write_canonical(out, &decision)?;
-    emit(cli, &decision)?;
-    if let Some(error) = decision.blocked_error() {
-        Err(error)
-    } else {
-        Ok(())
-    }
-}
-
-fn run_artifact_certify(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()> {
-    let ArtifactCommand::Certify {
-        draft,
-        claims,
-        file,
-        sbom,
-        license_inventory,
-        vulnerability_verdict,
-        defer_supply_chain,
-        provenance_bundle,
-        signature_bundle,
-        receipts,
-        out,
-    } = command
-    else {
-        return Err(usage("internal artifact certification dispatch mismatch"));
-    };
-    let draft: ArtifactEnvelope = read_json(draft)?;
-    let units = read_units(root)?;
-    let unit = units
-        .units
-        .iter()
-        .find(|candidate| candidate.id == draft.unit.id)
-        .ok_or_else(|| usage(format!("`{}` is not in release/units.toml", draft.unit.id)))?;
-    let claims: aex_release_tool::certify::CertificationClaims = read_json(claims)?;
-    let receipts = receipts
-        .iter()
-        .map(|path| read_json(path))
-        .collect::<Result<Vec<_>>>()?;
-    let freshness: FreshnessPolicy = read_toml(&root.join("release/policy/freshness.toml"))?;
-    let envelope = aex_release_tool::certify::certify(
-        draft,
-        unit,
-        claims,
-        aex_release_tool::certify::CertificationFiles {
-            artifact: file.as_deref(),
-            sbom: sbom.as_deref(),
-            license_inventory: license_inventory.as_deref(),
-            vulnerability_verdict: vulnerability_verdict.as_deref(),
-            provenance_bundle,
-            signature_bundle: signature_bundle.as_deref(),
-            defer_supply_chain: *defer_supply_chain,
-        },
-        &receipts,
-        &freshness,
-    )?;
-    write_canonical(out, &envelope)?;
-    emit(
-        cli,
-        &serde_json::json!({
-            "unit": envelope.unit.id,
-            "envelopeDigest": envelope.envelope_digest,
-            "artifactSubjectDigest": envelope.artifact_subject_digest,
-            "artifactDigest": envelope.output.digest,
-            "location": envelope.output.location,
-        }),
-    )
-}
-
-fn run_artifact_defer_certification(
-    cli: &Cli,
-    root: &Path,
-    command: &ArtifactCommand,
-) -> Result<()> {
-    let ArtifactCommand::DeferCertification {
-        draft,
-        unearned,
-        receipts,
-        workflow_run_id,
-        workflow_run_attempt,
-        job_name,
-        builder_id,
-        out,
-    } = command
-    else {
-        return Err(usage(
-            "internal artifact certification-deferral dispatch mismatch",
-        ));
-    };
-    let draft: ArtifactEnvelope = read_json(draft)?;
-    let units = read_units(root)?;
-    let unit = units
-        .units
-        .iter()
-        .find(|candidate| candidate.id == draft.unit.id)
-        .ok_or_else(|| usage(format!("`{}` is not in release/units.toml", draft.unit.id)))?;
-    let unearned = read_json(unearned)?;
-    let receipts = receipts
-        .iter()
-        .map(|path| read_json(path))
-        .collect::<Result<Vec<_>>>()?;
-    let freshness: FreshnessPolicy = read_toml(&root.join("release/policy/freshness.toml"))?;
-    let workflow = aex_release_tool::artifact::Workflow {
-        repository: draft.source.repository.clone(),
-        r#ref: "refs/heads/main".to_owned(),
-        path: ".github/workflows/_build-artifacts.yml".to_owned(),
-        run_id: workflow_run_id.clone(),
-        run_attempt: *workflow_run_attempt,
-        job_name: job_name.clone(),
-        builder_id: builder_id.clone(),
-    };
-    let deferral = aex_release_tool::certification::defer(
-        &draft, unit, workflow, unearned, &receipts, &freshness,
-    )?;
-    write_canonical(out, &deferral)?;
-    emit(cli, &deferral)
-}
-
-fn run_artifact_certification_inventory(
-    cli: &Cli,
-    root: &Path,
-    command: &ArtifactCommand,
-) -> Result<()> {
-    let ArtifactCommand::CertificationInventory {
-        envelopes,
-        deferrals,
-        repository,
-        commit_sha,
-        workflow_run_id,
-        workflow_run_attempt,
-        out,
-    } = command
-    else {
-        return Err(usage(
-            "internal artifact certification-inventory dispatch mismatch",
-        ));
-    };
-    let registry = read_units(root)?;
-    let envelopes = envelopes
-        .iter()
-        .map(|path| read_json(path))
-        .collect::<Result<Vec<_>>>()?;
-    let deferrals = deferrals
-        .iter()
-        .map(|path| read_json(path))
-        .collect::<Result<Vec<_>>>()?;
-    let report = aex_release_tool::certification::inventory(
-        &registry,
-        &envelopes,
-        &deferrals,
-        &aex_release_tool::certification::ExpectedSource {
-            repository,
-            commit_sha,
-            run_id: workflow_run_id,
-            run_attempt: *workflow_run_attempt,
-        },
-    )?;
-    write_canonical(out, &report)?;
-    emit(cli, &report)?;
-    if let Some(error) = report.blocking_error() {
-        Err(error)
-    } else {
-        Ok(())
-    }
-}
-
-fn run_artifact_asset_name(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()> {
-    let ArtifactCommand::AssetName { unit, file } = command else {
-        return Err(usage("internal artifact asset-name dispatch mismatch"));
-    };
-    let units = read_units(root)?;
-    let found = units
-        .units
-        .iter()
-        .find(|candidate| candidate.id == *unit)
-        .ok_or_else(|| usage(format!("`{unit}` is not in release/units.toml")))?;
-    if found.kind.starts_with("rust-oci-") {
-        return Err(usage(format!(
-            "unit `{unit}` is OCI and must publish a registry manifest, not a release asset"
-        )));
-    }
-    let bytes = std::fs::read(file).map_err(|err| io(&file.display().to_string(), &err))?;
-    let digest = canon::digest_bytes(&bytes);
-    let asset = publication::unit_asset_name(unit, &digest, &found.form)?;
-    emit(
-        cli,
-        &serde_json::json!({
-            "unit": unit,
-            "asset": asset,
-            "digest": digest,
-            "sizeBytes": bytes.len(),
-        }),
-    )
-}
-
-fn run_module_bundle(cli: &Cli, root: &Path, out: &Path) -> Result<()> {
-    let bytes = publication::package_module_bundle(root)?;
-    std::fs::write(out, &bytes).map_err(|err| io(&out.display().to_string(), &err))?;
-    emit(
-        cli,
-        &serde_json::json!({
-            "asset": publication::MODULE_BUNDLE_ASSET,
-            "digest": canon::digest_bytes(&bytes),
-            "sizeBytes": bytes.len(),
-            "path": out.display().to_string(),
-        }),
-    )
-}
-
-fn run_regional_tables(cli: &Cli, root: &Path, out: &Path) -> Result<()> {
-    let (bytes, identity) = publication::regional_tables_bundle(root)?;
-    std::fs::write(out, &bytes).map_err(|err| io(&out.display().to_string(), &err))?;
-    emit(
-        cli,
-        &serde_json::json!({
-            "asset": publication::REGIONAL_TABLES_ASSET,
-            "digest": identity.digest,
-            "sizeBytes": identity.size_bytes,
-            "definitionsDigest": identity.definitions_digest,
-            "path": out.display().to_string(),
-        }),
-    )
-}
-
-fn run_artifact_plan(
-    cli: &Cli,
-    root: &Path,
-    unit: &str,
-    require_model_catalog: bool,
-) -> Result<()> {
-    let units = read_units(root)?;
-    let found = units
-        .units
-        .iter()
-        .find(|candidate| candidate.id == unit)
-        .ok_or_else(|| usage(format!("`{unit}` is not in release/units.toml")))?;
-    let plan = if require_model_catalog {
-        artifact::publication_plan(found, root)?
-    } else {
-        artifact::release_plan(found, root)?
-    };
-    emit(cli, &plan)
 }
 
 /// Assemble an envelope for a unit built on this machine.
@@ -1740,8 +881,6 @@ fn run_describe(
     root: &Path,
     unit: &str,
     file: &Path,
-    recipe: Option<&Path>,
-    oci_identity: Option<&Path>,
     out: &Path,
     unearned_out: Option<&Path>,
     contract_digest: &str,
@@ -1754,28 +893,18 @@ fn run_describe(
         .iter()
         .find(|candidate| candidate.id == unit)
         .ok_or_else(|| usage(format!("`{unit}` is not in release/units.toml")))?;
-    let plan = if let Some(path) = recipe {
-        read_json(path)?
-    } else {
-        artifact::release_plan(found, root)?
-    };
+    let plan = artifact::plan(found)?;
     let inputs = GraphInputs::load(root)?;
     let built = verify::build(&inputs)?;
-    let oci_identity: Option<OciImageIdentity> = oci_identity.map(read_json).transpose()?;
-    let mut toolchain = local_toolchain(&found.target)?;
-    if let Some(image) = &oci_identity {
-        image.toolchain.enrich_envelope(&mut toolchain);
-    }
     let local = describe::LocalBuild {
         unit: found,
         plan: &plan,
         artifact: file,
-        oci_identity: oci_identity.as_ref(),
         repository: "aexhq/aex".to_owned(),
         commit_sha: git_output(root, &["rev-parse", "HEAD"])?,
         tree_clean: git_output(root, &["status", "--porcelain"])?.is_empty(),
-        git_ref: source_ref(root)?,
-        toolchain,
+        git_ref: None,
+        toolchain: local_toolchain(&found.target)?,
         lockfile_digest: file_digest(&root.join(lockfile_for(&found.kind)))?,
         contract_digest: contract_digest.to_owned(),
         actual_argv: (!ran.is_empty()).then(|| ran.to_vec()),
@@ -1821,7 +950,7 @@ fn run_manifest_new(
             Ok((envelope.unit.id.clone(), envelope))
         })
         .collect::<Result<_>>()?;
-    let inputs: aex_release_tool::manifest::CompositionInputs = read_json(composition)?;
+    let inputs: CompositionInputs = read_json(composition)?;
     let recorded: Vec<aex_workspace_check::registry::UnearnedRow> = match unearned {
         Some(path) => read_json(path)?,
         None => Vec::new(),
@@ -1831,7 +960,15 @@ fn run_manifest_new(
     if !holes.is_empty() {
         return Err(ToolError::many(Exit::CompositionIncompatible, holes));
     }
-    let manifest = aex_release_tool::manifest::new_manifest(inputs, &described, &registry)?;
+    let manifest = aex_release_tool::manifest::new_manifest(
+        inputs.contract_digest,
+        &described,
+        inputs.packages,
+        inputs.migrations,
+        inputs.infra,
+        inputs.catalogs,
+        inputs.policy,
+    )?;
     write_canonical(out, &manifest)?;
     emit(
         cli,
@@ -1844,130 +981,6 @@ fn run_manifest_new(
     )
 }
 
-/// Produce the two immutable public handoff documents only after every
-/// envelope and every cross-document identity verifies.
-fn run_manifest_handoff(
-    cli: &Cli,
-    root: &Path,
-    envelope_paths: &[PathBuf],
-    composition: &Path,
-    manifest_out: &Path,
-    store_out: &Path,
-) -> Result<()> {
-    if manifest_out == store_out {
-        return Err(usage(
-            "`--manifest-out` and `--store-out` must name different files",
-        ));
-    }
-    let envelopes = envelope_paths
-        .iter()
-        .map(|path| read_json(path))
-        .collect::<Result<Vec<ArtifactEnvelope>>>()?;
-    let registry = read_units(root)?;
-    // Audit the envelopes first. This intentionally reports the concrete
-    // certification/receipt gaps even while the separate composition-input
-    // producer is still absent.
-    let store = aex_release_tool::manifest::verify_handoff_envelopes(&registry, envelopes)?;
-    if !composition.is_file() {
-        return Err(ToolError::single(
-            Exit::EvidenceMissing,
-            "handoff-composition-inputs-missing",
-            format!(
-                "complete composition inputs were not published at `{}`",
-                composition.display()
-            ),
-        ));
-    }
-    let inputs: aex_release_tool::manifest::CompositionInputs = read_json(composition)?;
-    let manifest = aex_release_tool::manifest::new_handoff_manifest(inputs, &store, &registry)?;
-    let manifest_digest = canon::digest_bytes(&canon::to_file_bytes(&manifest)?);
-    let store_digest = canon::digest_bytes(&canon::to_file_bytes(&store)?);
-
-    // Nothing is written before the complete store and strict manifest have
-    // both passed. Admission consumes the store as this exact canonical map.
-    write_canonical(manifest_out, &manifest)?;
-    write_canonical(store_out, &store)?;
-    emit(
-        cli,
-        &serde_json::json!({
-            "releaseId": manifest.release_id,
-            "manifestDigest": manifest_digest,
-            "artifactStoreDigest": store_digest,
-            "units": store.len(),
-            "stages": manifest.order.len(),
-        }),
-    )
-}
-
-fn run_manifest_inputs(
-    cli: &Cli,
-    root: &Path,
-    envelope_paths: &[PathBuf],
-    files: aex_release_tool::composition_inputs::PublicInputFiles<'_>,
-    run: &aex_release_tool::composition_inputs::PublicRunIdentity,
-    out: &Path,
-) -> Result<()> {
-    let envelopes = envelope_paths
-        .iter()
-        .map(|path| read_json(path))
-        .collect::<Result<Vec<ArtifactEnvelope>>>()?;
-    let registry = read_units(root)?;
-    let (_, authorities) =
-        aex_release_tool::composition_inputs::envelope_authorities(&registry, envelopes)?;
-    let inputs =
-        aex_release_tool::composition_inputs::produce(root, &registry, files, run, authorities)?;
-    let digest = canon::digest_bytes(&canon::to_file_bytes(&inputs)?);
-    write_canonical(out, &inputs)?;
-    emit(
-        cli,
-        &serde_json::json!({
-            "schema": "aex.composition-inputs.v1",
-            "digest": digest,
-            "packages": inputs.packages.len(),
-            "catalogs": inputs.catalogs.len(),
-            "providers": inputs.infra.provider_versions.len(),
-            "path": out.display().to_string(),
-        }),
-    )
-}
-
-fn run_manifest_inputs_command(cli: &Cli, root: &Path, command: &ManifestCommand) -> Result<()> {
-    let ManifestCommand::Inputs {
-        envelopes,
-        release_tool,
-        module_bundle,
-        regional_tables,
-        repository,
-        commit_sha,
-        workflow_run_id,
-        workflow_run_attempt,
-        release_tool_version,
-        out,
-    } = command
-    else {
-        unreachable!("manifest inputs command arm only");
-    };
-    let run = aex_release_tool::composition_inputs::PublicRunIdentity {
-        repository: repository.clone(),
-        commit_sha: commit_sha.clone(),
-        workflow_run_id: workflow_run_id.clone(),
-        workflow_run_attempt: *workflow_run_attempt,
-        release_tool_version: release_tool_version.clone(),
-    };
-    run_manifest_inputs(
-        cli,
-        root,
-        envelopes,
-        aex_release_tool::composition_inputs::PublicInputFiles {
-            release_tool,
-            module_bundle,
-            regional_tables,
-        },
-        &run,
-        out,
-    )
-}
-
 fn run_manifest(cli: &Cli, root: &Path, command: &ManifestCommand) -> Result<()> {
     match command {
         ManifestCommand::New {
@@ -1976,13 +989,6 @@ fn run_manifest(cli: &Cli, root: &Path, command: &ManifestCommand) -> Result<()>
             unearned,
             out,
         } => run_manifest_new(cli, root, envelopes, composition, unearned.as_deref(), out),
-        ManifestCommand::Handoff {
-            envelopes,
-            composition,
-            manifest_out,
-            store_out,
-        } => run_manifest_handoff(cli, root, envelopes, composition, manifest_out, store_out),
-        ManifestCommand::Inputs { .. } => run_manifest_inputs_command(cli, root, command),
         ManifestCommand::Diff { from, to } => {
             let from: CompositionManifest = read_json(from)?;
             let to: CompositionManifest = read_json(to)?;
@@ -2002,25 +1008,6 @@ fn run_manifest(cli: &Cli, root: &Path, command: &ManifestCommand) -> Result<()>
             emit(
                 cli,
                 &serde_json::json!({ "releaseId": manifest.release_id, "valid": true }),
-            )
-        }
-        ManifestCommand::ValidateInputs {
-            file,
-            release_tool,
-            module_bundle,
-            regional_tables,
-            strict_environment_scan,
-        } => {
-            let manifest: CompositionManifest = read_json(file)?;
-            manifest.validate_acquired_inputs(
-                release_tool,
-                module_bundle,
-                regional_tables,
-                *strict_environment_scan,
-            )?;
-            emit(
-                cli,
-                &serde_json::json!({ "releaseId": manifest.release_id, "inputsValid": true }),
             )
         }
         ManifestCommand::Order { file } => {
@@ -2044,7 +1031,6 @@ fn run_manifest(cli: &Cli, root: &Path, command: &ManifestCommand) -> Result<()>
     }
 }
 
-#[allow(clippy::too_many_lines)]
 fn run_evidence(cli: &Cli, command: &EvidenceCommand) -> Result<()> {
     match command {
         EvidenceCommand::New {
@@ -2067,58 +1053,25 @@ fn run_evidence(cli: &Cli, command: &EvidenceCommand) -> Result<()> {
                 }),
             )
         }
-        EvidenceCommand::NewCargo {
-            context,
-            messages,
-            out,
-        } => {
-            let context: evidence::RunContext = read_json(context)?;
-            let messages = std::fs::read_to_string(messages)
-                .map_err(|err| io(&messages.display().to_string(), &err))?;
-            let summary = evidence::parse_cargo_messages(&messages)?;
-            let receipt = evidence::new_command_receipt(context, summary)?;
-            write_canonical(out, &receipt)?;
-            emit(
-                cli,
-                &serde_json::json!({
-                    "receiptId": receipt.receipt_id,
-                    "receiptDigest": receipt.receipt_digest,
-                    "conclusion": receipt.conclusion,
-                    "inventory": receipt.inventory,
-                }),
-            )
-        }
-        EvidenceCommand::NewCheck {
-            context,
-            report,
-            out,
-        } => {
-            let context: evidence::RunContext = read_json(context)?;
-            let report: evidence::CheckReport = read_json(report)?;
-            let receipt = evidence::new_check_receipt(context, &report)?;
-            write_canonical(out, &receipt)?;
-            emit(
-                cli,
-                &serde_json::json!({
-                    "receiptId": receipt.receipt_id,
-                    "receiptDigest": receipt.receipt_digest,
-                    "conclusion": receipt.conclusion,
-                    "inventory": receipt.inventory,
-                }),
-            )
-        }
         EvidenceCommand::Attach {
             receipt,
             kind,
             file,
             uri,
             out,
-        } => run_evidence_attach(cli, receipt, kind, file, uri, out.as_ref()),
-        EvidenceCommand::BindArtifact {
-            receipt,
-            envelope,
-            out,
-        } => run_evidence_bind_artifact(cli, receipt, envelope, out.as_ref()),
+        } => {
+            let loaded: Receipt = read_json(receipt)?;
+            let attached = evidence::attach(loaded, kind, file, uri)?;
+            write_canonical(out.as_deref().unwrap_or(receipt.as_path()), &attached)?;
+            emit(
+                cli,
+                &serde_json::json!({
+                    "receiptId": attached.receipt_id,
+                    "receiptDigest": attached.receipt_digest,
+                    "attachments": attached.attachments,
+                }),
+            )
+        }
         EvidenceCommand::Verify { receipt } => {
             let receipt: Receipt = read_json(receipt)?;
             receipt.verify()?;
@@ -2150,7 +1103,7 @@ fn run_evidence(cli: &Cli, command: &EvidenceCommand) -> Result<()> {
                 .iter()
                 .map(|path| read_json(path))
                 .collect::<Result<_>>()?;
-            let declared: DeclaredProducers = read_json(expect)?;
+            let declared: DeclaredJobs = read_json(expect)?;
             let lane = evidence::aggregate(&receipts, &declared)?;
             if let Some(path) = out {
                 write_canonical(path, &lane)?;
@@ -2158,49 +1111,6 @@ fn run_evidence(cli: &Cli, command: &EvidenceCommand) -> Result<()> {
             emit(cli, &lane)
         }
     }
-}
-
-fn run_evidence_bind_artifact(
-    cli: &Cli,
-    receipt: &Path,
-    envelope: &Path,
-    out: Option<&PathBuf>,
-) -> Result<()> {
-    let loaded: Receipt = read_json(receipt)?;
-    let original_receipt_digest = loaded.receipt_digest.clone();
-    let envelope: ArtifactEnvelope = read_json(envelope)?;
-    let bound = evidence::bind_artifact(loaded, &envelope)?;
-    write_canonical(out.map_or(receipt, PathBuf::as_path), &bound)?;
-    emit(
-        cli,
-        &serde_json::json!({
-            "receiptId": bound.receipt_id,
-            "originalReceiptDigest": original_receipt_digest,
-            "receiptDigest": bound.receipt_digest,
-            "artifactSubjectDigest": bound.subject.artifact_subject_digest,
-        }),
-    )
-}
-
-fn run_evidence_attach(
-    cli: &Cli,
-    receipt: &Path,
-    kind: &str,
-    file: &Path,
-    uri: &str,
-    out: Option<&PathBuf>,
-) -> Result<()> {
-    let loaded: Receipt = read_json(receipt)?;
-    let attached = evidence::attach(loaded, kind, file, uri)?;
-    write_canonical(out.map_or(receipt, PathBuf::as_path), &attached)?;
-    emit(
-        cli,
-        &serde_json::json!({
-            "receiptId": attached.receipt_id,
-            "receiptDigest": attached.receipt_digest,
-            "attachments": attached.attachments,
-        }),
-    )
 }
 
 fn run_verification(cli: &Cli, command: &VerificationCommand) -> Result<()> {
@@ -2301,9 +1211,15 @@ fn run_admit(cli: &Cli, root: &Path, args: &AdmitArgs) -> Result<()> {
 fn required_receipts_by_kind(manifest: &CompositionManifest) -> BTreeMap<String, Vec<String>> {
     let mut required: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for entry in manifest.units.values() {
-        required
-            .entry(entry.kind.clone())
-            .or_insert_with(|| vec!["unit".to_owned(), "lint".to_owned()]);
+        required.entry(entry.kind.clone()).or_insert_with(|| {
+            vec![
+                "unit".to_owned(),
+                "lint".to_owned(),
+                "sbom".to_owned(),
+                "license".to_owned(),
+                "vulnerability".to_owned(),
+            ]
+        });
     }
     required
 }
@@ -2345,62 +1261,6 @@ fn run_plan(cli: &Cli, command: &PlanCommand) -> Result<()> {
                 policy::check_change_isolation(&summary, *manifest_only)?;
             }
             emit(cli, &summary)
-        }
-    }
-}
-
-fn run_contract(cli: &Cli, command: &ContractCommand) -> Result<()> {
-    match command {
-        ContractCommand::Validate {
-            kind,
-            file,
-            payload,
-            now,
-        } => {
-            let text = std::fs::read_to_string(file)
-                .map_err(|err| io(&file.display().to_string(), &err))?;
-            match kind {
-                ContractKind::EnvironmentBinding => {
-                    if payload.is_some() || now.is_some() {
-                        return Err(usage(
-                            "--payload and --now are valid only for saved-plan-envelope",
-                        ));
-                    }
-                    emit(cli, &release_contract::parse_environment_binding(&text)?)
-                }
-                ContractKind::ResolvedPlacement => {
-                    if payload.is_some() || now.is_some() {
-                        return Err(usage(
-                            "--payload and --now are valid only for saved-plan-envelope",
-                        ));
-                    }
-                    emit(cli, &release_contract::parse_resolved_placement(&text)?)
-                }
-                ContractKind::SavedPlanEnvelope => {
-                    let bytes =
-                        payload
-                            .as_deref()
-                            .map(std::fs::read)
-                            .transpose()
-                            .map_err(|err| {
-                                io(
-                                    &payload.as_deref().map_or_else(
-                                        || "saved plan".to_owned(),
-                                        |path| path.display().to_string(),
-                                    ),
-                                    &err,
-                                )
-                            })?;
-                    emit(
-                        cli,
-                        &release_contract::parse_saved_plan_envelope(
-                            &text,
-                            parse_now(now.as_deref())?,
-                            bytes.as_deref(),
-                        )?,
-                    )
-                }
-            }
         }
     }
 }
@@ -2574,6 +1434,25 @@ fn run_janitor(cli: &Cli, command: &JanitorCommand) -> Result<()> {
     }
 }
 
+/// The composition inputs no artifact envelope carries.
+///
+/// They are read from one document rather than from a dozen flags because they
+/// are a single decision — which contract, which migrations, which modules,
+/// which policy digests this release is — and splitting a decision across flags
+/// is how half of it gets forgotten.
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CompositionInputs {
+    contract_digest: String,
+    #[serde(default)]
+    packages: BTreeMap<String, BTreeMap<String, aex_release_tool::manifest::PackageRef>>,
+    migrations: aex_release_tool::manifest::Migrations,
+    infra: aex_release_tool::manifest::Infra,
+    #[serde(default)]
+    catalogs: BTreeMap<String, String>,
+    policy: aex_release_tool::manifest::Policy,
+}
+
 /// Which lockfile pins a unit kind's dependency versions.
 fn lockfile_for(kind: &str) -> &'static str {
     if kind == "ts-lambda" || kind == "build-output" {
@@ -2610,31 +1489,6 @@ fn git_output(root: &Path, args: &[&str]) -> Result<String> {
         )));
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
-}
-
-fn source_ref(root: &Path) -> Result<Option<String>> {
-    if let Some(value) = std::env::var_os("GITHUB_REF") {
-        let value = value.into_string().map_err(|_| {
-            usage("`GITHUB_REF` is not valid Unicode and cannot identify the source ref")
-        })?;
-        return Ok(Some(value));
-    }
-    let output = std::process::Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["symbolic-ref", "-q", "HEAD"])
-        .output()
-        .map_err(|err| {
-            usage(format!(
-                "`git symbolic-ref -q HEAD` could not be run: {err}"
-            ))
-        })?;
-    if output.status.success() {
-        return Ok(Some(
-            String::from_utf8_lossy(&output.stdout).trim().to_owned(),
-        ));
-    }
-    Ok(None)
 }
 
 /// The toolchain that produced the bytes, read from `rustc` rather than
@@ -2851,7 +1705,6 @@ mod tests {
             vec![
                 "admit",
                 "artifact",
-                "contract",
                 "evidence",
                 "graph",
                 "janitor",

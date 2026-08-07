@@ -15,54 +15,35 @@ use super::memory::{
     ProviderScript, Recorder, ScriptedProvider, ScriptedTools, fixture_authority, wake_for,
 };
 use super::{
-    Activation, ActivationError, ActivationPolicy, AdmissionControl, AdmissionDecision,
-    DispatchControl, DispatchDecision, DispatchLane, Outcome, Ports, Release, RestoreBudget,
-    RestoreSource, Stop, WakeLoop,
+    Activation, ActivationError, ActivationPolicy, Outcome, Ports, Release, Stop, WakeLoop,
 };
-use crate::kernel::{
-    ActivationRegistry, DrainGate, FoldCache, PermitKind, PermitSet, WarmCacheShard, WarmEntry,
-};
+use crate::kernel::{ActivationRegistry, DrainGate};
 use crate::ports::{
     BoxFuture, CancelToken, ClaimError, ClockPort as _, CommitError, ConditionFailure,
-    DetachedStatus, DispatchTicket, EffectStore as _, FenceGuard, FoldSnapshotStore as _,
-    JournalCursor, JournalPage, LeaseStore as _, PreviewSink, ProviderDispatchError,
-    ProviderFailureKind, ProviderOutcome, ProviderPort, RedactedDetail, ReleaseDisposition,
-    SnapshotDiagnostic, SnapshotPublishOutcome, StoreError, StreamBudget, ToolAdvertisement,
-    ToolDispatchError, ToolOutcome, ToolResultBody, ToolRoute, UnknownResolution, WakeQueue as _,
+    DispatchTicket, EffectStore as _, FenceGuard, LeaseStore as _, PreviewSink,
+    ProviderDispatchError, ProviderFailureClass, ProviderOutcome, ProviderPort, RedactedDetail,
+    ReleaseDisposition, StoreError, StreamBudget, UnknownResolution, WakeQueue as _,
 };
 use aex_brain_domain::budget::DimensionVector;
-use aex_brain_domain::child::QueuedReason;
 use aex_brain_domain::effect::{
-    DetachedOperationRef, DispatchProof, DispatchStage, DurableEffect, EffectClass, EffectKind,
-    EffectState,
+    DispatchProof, DispatchStage, DurableEffect, EffectClass, EffectKind, EffectState,
 };
-use aex_brain_domain::fold::fold;
 use aex_brain_domain::ids::{
-    AgentId, AgentKey, CatalogPin, ContentHash, DetachedOperationId, EffectId, JournalSeq,
-    ModelSlug, OwnerToken, SessionId, Timestamp, ToolCallId, ToolName, WakeId, WorkShard,
+    AgentId, AgentKey, CatalogPin, ContentHash, EffectId, JournalSeq, ModelSlug, OwnerToken,
+    SessionId, Timestamp, WakeId, WorkShard,
 };
 use aex_brain_domain::journal::{
-    ExecutorRoute, FinishReason, JournalEntry, JournalRecord, MessageOrigin, ParkReason,
+    FinishReason, JournalEntry, JournalRecord, MessageOrigin, ParkReason,
 };
-use aex_brain_domain::snapshot::{FoldSnapshotArtifact, JournalPoint, SnapshotReplay};
 use aex_brain_domain::wire_pending::{
-    AgentLimits, CanonicalBlock, CanonicalModelRequest, ContentBlockRef, NormalizedUsage,
-    ProviderId, ResolvedAgentConfig, Role, StopReason,
+    AgentLimits, CanonicalBlock, CanonicalModelRequest, CompleteAssistantMessage, CompleteProof,
+    ContentBlockRef, ModelCapability, NormalizedUsage, ProviderId, ProviderReceipt,
+    ResolvedAgentConfig, StopReason,
 };
-use aex_model_catalog::canonical::{
-    CanonicalToolDef, CredentialBindingRef, ProviderReceipt, ReceiptBounds, ToolChoice, seal,
-};
-use aex_model_catalog::document::{Capability, CapabilitySet};
-use aex_model_catalog::{BoundedString, QualifiedModel, fixture};
-use aex_wire::CanonicalJson;
-use aex_wire::ids::{
-    ContentHash as SnapshotDigest, GenerationId, PrefixedId as _, ProviderCredentialId, Uuid7,
-    WorkspaceId,
-};
+use aex_wire::ids::{GenerationId, PrefixedId as _, Uuid7};
 use core::future::Future as _;
-use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use uuid::Uuid;
 
 /// Drives a fixture future to completion.
@@ -79,17 +60,6 @@ fn block_on<F: core::future::Future>(future: F) -> F::Output {
     }
 }
 
-fn poll_until_ready<F: core::future::Future>(future: F) -> F::Output {
-    let mut future = Box::pin(future);
-    let mut context = core::task::Context::from_waker(core::task::Waker::noop());
-    for _ in 0..64 {
-        if let core::task::Poll::Ready(value) = future.as_mut().poll(&mut context) {
-            return value;
-        }
-    }
-    panic!("the instrumented activation did not complete after bounded cooperative polls");
-}
-
 const START: i64 = 1_767_225_600_000;
 
 fn key() -> AgentKey {
@@ -100,24 +70,17 @@ fn key() -> AgentKey {
 }
 
 fn pin() -> CatalogPin {
-    capability().catalog()
+    CatalogPin(ContentHash::of(b"catalog"))
 }
 
 fn model() -> ModelSlug {
-    ModelSlug::truncating("deepseek-chat")
+    ModelSlug("deepseek-chat".to_owned())
 }
 
 fn config() -> ResolvedAgentConfig {
     ResolvedAgentConfig {
         catalog_pin: pin(),
         provider: ProviderId::Deepseek,
-        credential: aex_brain_domain::wire_pending::SessionCredentialPin::new(
-            ProviderCredentialId::from_uuid7(Uuid7::compose(1, [8; 10])),
-            1,
-            1,
-            0,
-        )
-        .expect("non-zero fixture pin"),
         model: model(),
         system: None,
         tool_manifest_digests: Vec::new(),
@@ -130,16 +93,16 @@ fn config() -> ResolvedAgentConfig {
     }
 }
 
-fn capability() -> QualifiedModel {
-    let mut entry = fixture::entry(
-        ProviderId::Deepseek,
-        "deepseek-chat",
-        CapabilitySet::from_slice(&[Capability::Tools]),
-    );
-    entry.limits.context_window_tokens = 64_000;
-    entry.limits.max_output_tokens = 4_096;
-    entry.limits.min_cacheable_prefix_tokens = 0;
-    fixture::qualified(entry)
+fn capability() -> ModelCapability {
+    ModelCapability {
+        provider: ProviderId::Deepseek,
+        model: model(),
+        context_window_tokens: 64_000,
+        max_output_tokens: 4_096,
+        min_cacheable_prefix_tokens: None,
+        supports_tools: true,
+        admitted: true,
+    }
 }
 
 /// An agent that has been started and given one user message, so a model call is owed.
@@ -162,8 +125,7 @@ fn history() -> Vec<JournalEntry> {
         JournalRecord::UserMessage {
             content: vec![ContentBlockRef::Inline {
                 block: CanonicalBlock::Text {
-                    text: BoundedString::truncating("summarize this"),
-                    annotations: Vec::new(),
+                    text: "summarize this".to_owned(),
                 },
             }],
             origin: MessageOrigin::Submission,
@@ -173,166 +135,41 @@ fn history() -> Vec<JournalEntry> {
     vec![started, message]
 }
 
-fn journal_bytes(entries: &[JournalEntry]) -> usize {
-    entries
-        .iter()
-        .map(|entry| {
-            entry
-                .record
-                .canonical_bytes()
-                .expect("the fixture record remains canonical")
-                .len()
-        })
-        .sum()
-}
-
-fn journal_page(entries: Vec<JournalEntry>, next: Option<JournalSeq>) -> JournalPage {
-    let hydrated_bytes = journal_bytes(&entries);
-    JournalPage {
-        entries,
-        hydrated_bytes,
-        next: next.map(|seq| {
-            JournalCursor::new([("offset", seq.get().to_string())], JournalSeq::ZERO, seq)
-        }),
-    }
-}
-
 fn produced() -> ProviderOutcome {
-    let usage = NormalizedUsage {
-        input_tokens: 12,
-        output_tokens: 34,
-        ..NormalizedUsage::default()
-    };
-    let selected = capability();
-    let message = seal(
-        vec![CanonicalBlock::Text {
-            text: BoundedString::truncating("here is the summary"),
-            annotations: Vec::new(),
-        }],
-        StopReason::EndTurn,
-        &usage,
-        &selected,
-    )
-    .expect("a whole message");
-    let at = fixture::at(START);
-    let receipt = ProviderReceipt {
-        provider: message.provider,
-        model: message.model.clone(),
-        catalog: message.catalog,
-        dialect: selected.dialect(),
-        dialect_revision: selected.dialect_revision(),
-        credential: CredentialBindingRef {
-            id: ProviderCredentialId::from_uuid7(Uuid7::compose(1, [4; 10])),
-            revision: 1,
-            generation: 1,
-        },
-        provider_request_id: None,
-        gateway_route: None,
-        http_status: 200,
-        attempts: 1,
-        started_at: at,
-        first_frame_at: Some(at),
-        completed_at: at,
-        request_bytes: 1,
-        response_bytes: 1,
-        frames: 1,
-        rate_limit: None,
-        response_receipt: Some(message.proof.0),
-        bounds: ReceiptBounds {
-            max_frame_bytes: 1_024,
-            max_response_bytes: 1_024,
-            idle_frame_timeout_ms: 1_000,
-            total_deadline_ms: 10_000,
-        },
-    };
+    let blocks = vec![CanonicalBlock::Text {
+        text: "here is the summary".to_owned(),
+    }];
     ProviderOutcome {
-        message,
-        usage,
-        receipt,
+        message: CompleteAssistantMessage {
+            complete: CompleteProof::mint(StopReason::EndTurn, &blocks).expect("a whole message"),
+            blocks,
+            stop_reason: StopReason::EndTurn,
+        },
+        usage: NormalizedUsage {
+            input_tokens: 12,
+            output_tokens: 34,
+            ..NormalizedUsage::default()
+        },
+        receipt: ProviderReceipt {
+            provider: ProviderId::Deepseek,
+            model: model(),
+            request_id: None,
+            route_revision: 1,
+        },
     }
 }
 
-fn produced_tool_use() -> ProviderOutcome {
-    let mut outcome = produced();
-    let selected = capability();
-    let message = seal(
-        vec![CanonicalBlock::ToolUse {
-            id: ToolCallId::truncating("call-1"),
-            name: ToolName::parse("web_fetch").expect("tool name"),
-            input: CanonicalJson::parse("{}").expect("canonical tool input"),
-        }],
-        StopReason::ToolUse,
-        &outcome.usage,
-        &selected,
-    )
-    .expect("a whole tool-use message");
-    outcome.receipt.response_receipt = Some(message.proof.0);
-    outcome.message = message;
-    outcome
-}
-
-fn detached_route() -> ToolRoute {
-    ToolRoute {
-        name: ToolName::parse("web_fetch").expect("tool name"),
-        executor: ExecutorRoute::ManagedWeb,
-        class: EffectClass::DurableDetached,
-        timeout_ms: 60_000,
-        concurrency_weight: 1,
-        manifest_digest: ContentHash::of(b"tool manifest"),
-    }
-}
-
-fn detached_ref() -> DetachedOperationRef {
-    DetachedOperationRef {
-        id: DetachedOperationId("shared-operation-id".to_owned()),
-        executor: ExecutorRoute::ManagedWeb,
-    }
-}
-
-fn completed_detached_result() -> DetachedStatus {
-    DetachedStatus::Completed(Box::new(ToolResultBody {
-        content: Vec::new(),
-        is_error: false,
-        duration_ms: 10,
-        executed_on: ExecutorRoute::ManagedWeb,
-        checksum: ContentHash::of(b"detached result"),
-    }))
-}
-
-fn retryable_query_error() -> ToolDispatchError {
-    ToolDispatchError {
-        stage: DispatchStage::PreDispatch,
-        proof: DispatchProof::NotSent,
-        retryable: true,
-        detail: RedactedDetail::internal(
-            ProviderFailureKind::Transport,
-            "durable operation lookup is temporarily unavailable",
-        ),
-    }
-}
-
-fn failure(proof: DispatchProof, kind: ProviderFailureKind) -> ProviderDispatchError {
+fn failure(proof: DispatchProof, class: ProviderFailureClass) -> ProviderDispatchError {
     ProviderDispatchError {
         stage: match proof {
             DispatchProof::NotSent => DispatchStage::PreDispatch,
             _ => DispatchStage::Dispatched,
         },
         proof,
-        kind,
+        class,
         provider_request_id: None,
         retry_after: None,
-        detail: RedactedDetail::internal(kind, "the fixture refuses"),
-    }
-}
-
-fn terminal_failure(kind: ProviderFailureKind) -> ProviderDispatchError {
-    ProviderDispatchError {
-        stage: DispatchStage::Terminal,
-        proof: DispatchProof::ResponseStarted,
-        kind,
-        provider_request_id: None,
-        retry_after: None,
-        detail: RedactedDetail::internal(kind, "the provider refused definitively"),
+        detail: RedactedDetail::new("the fixture refuses"),
     }
 }
 
@@ -342,9 +179,7 @@ struct Harness {
     queue: Arc<MemoryQueue>,
     store: Arc<MemoryStore>,
     provider: Arc<ScriptedProvider>,
-    tools: Arc<ScriptedTools>,
     catalog: Arc<FixedCatalog>,
-    ids: Arc<CountingIds>,
     log: Arc<Recorder>,
     drain: Arc<DrainGate>,
     registry: Arc<ActivationRegistry>,
@@ -367,9 +202,7 @@ impl Harness {
             queue,
             store,
             provider: Arc::new(ScriptedProvider::new(script)),
-            tools: Arc::new(ScriptedTools::new(Vec::new(), Vec::new())),
             catalog: Arc::new(FixedCatalog::with_model(capability())),
-            ids: Arc::new(CountingIds::new()),
             log,
             drain: Arc::new(DrainGate::new()),
             registry: Arc::new(ActivationRegistry::new()),
@@ -380,16 +213,15 @@ impl Harness {
     fn ports(&self) -> Ports {
         Ports {
             journal: Arc::clone(&self.store) as Arc<_>,
-            snapshots: Arc::clone(&self.store) as Arc<_>,
             effects: Arc::clone(&self.store) as Arc<_>,
             leases: Arc::clone(&self.store) as Arc<_>,
             wakes: Arc::clone(&self.queue) as Arc<_>,
             provider: Arc::clone(&self.provider) as Arc<_>,
-            tools: Arc::clone(&self.tools) as Arc<_>,
+            tools: Arc::new(ScriptedTools::new(Vec::new(), Vec::new())) as Arc<_>,
             hands: Arc::new(AbsentHands) as Arc<_>,
             catalog: Arc::clone(&self.catalog) as Arc<_>,
             clock: Arc::clone(&self.clock) as Arc<_>,
-            ids: Arc::clone(&self.ids) as Arc<_>,
+            ids: Arc::new(CountingIds::new()) as Arc<_>,
         }
     }
 
@@ -400,15 +232,6 @@ impl Harness {
             Arc::clone(&self.registry),
             Arc::clone(&self.drain),
         )
-    }
-
-    fn with_tools(
-        mut self,
-        routes: impl IntoIterator<Item = ToolRoute>,
-        script: impl IntoIterator<Item = Result<ToolOutcome, ToolDispatchError>>,
-    ) -> Self {
-        self.tools = Arc::new(ScriptedTools::new(routes, script));
-        self
     }
 
     /// Projects the wake the session authority would have created, and drives it.
@@ -432,166 +255,6 @@ impl Harness {
             .map(|entry| entry.record.kind_name())
             .collect()
     }
-}
-
-#[derive(Debug)]
-struct DeferredDispatch {
-    lane: DispatchLane,
-    reason: QueuedReason,
-}
-
-#[derive(Debug)]
-struct DisabledFoldCache;
-
-impl FoldCache for DisabledFoldCache {
-    fn load(
-        &self,
-        _key: &AgentKey,
-        _revision: aex_brain_domain::ids::AgentRevision,
-        _tick: u64,
-    ) -> Option<WarmEntry> {
-        None
-    }
-
-    fn store(
-        &self,
-        _key: AgentKey,
-        _revision: aex_brain_domain::ids::AgentRevision,
-        _state: &aex_brain_domain::fold::FoldState,
-        _bytes: usize,
-        _tick: u64,
-    ) -> bool {
-        false
-    }
-
-    fn remove(&self, _key: &AgentKey, _revision: aex_brain_domain::ids::AgentRevision) {}
-}
-
-impl DispatchControl for DeferredDispatch {
-    fn admit(&self, lane: DispatchLane, _weight: u16) -> DispatchDecision {
-        assert_eq!(lane, self.lane);
-        DispatchDecision::Deferred(self.reason)
-    }
-}
-
-/// The two independent post-claim reads must both be polled before either fixture can
-/// complete. A sequential implementation deadlocks inside the bounded poll loop.
-#[test]
-fn restore_and_open_effect_reads_overlap_after_claim() {
-    let harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced()))]);
-    harness.store.require_restore_effect_overlap();
-    harness.wake();
-    let delivery = block_on(harness.queue.receive(1, core::time::Duration::ZERO))
-        .expect("the queue answers")
-        .deliveries
-        .pop()
-        .expect("a delivery is waiting");
-
-    poll_until_ready(harness.activation().run(delivery)).expect("the activation runs");
-    assert!(harness.store.restore_effect_overlap_observed());
-}
-
-/// A cache hit is usable only at the exact claimed revision and still proves the claimed
-/// tail/hash. The second terminal delivery therefore performs no journal page read.
-#[test]
-fn exact_revision_fold_cache_skips_replay_without_changing_outcome() {
-    let harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced()))]);
-    let cache = Arc::new(WarmCacheShard::new(64 * 1_024 * 1_024, 16 * 1_024 * 1_024));
-    let activation = harness
-        .activation()
-        .with_fold_cache(Arc::clone(&cache) as Arc<_>);
-    harness.wake();
-    let first = block_on(harness.queue.receive(1, core::time::Duration::ZERO))
-        .expect("the queue answers")
-        .deliveries
-        .pop()
-        .expect("a delivery is waiting");
-    block_on(activation.run(first)).expect("the first activation populates the cache");
-    let reads = harness.log.count("read_page");
-    assert_eq!(cache.len(), 1);
-
-    harness.queue.project(wake_for(key(), "wrk-cache-hit"));
-    let second = block_on(harness.queue.receive(1, core::time::Duration::ZERO))
-        .expect("the queue answers")
-        .deliveries
-        .pop()
-        .expect("a second delivery is waiting");
-    let outcome = block_on(activation.run(second)).expect("the cached activation runs");
-
-    assert_eq!(outcome, Outcome::Idle);
-    assert_eq!(harness.log.count("read_page"), reads);
-}
-
-/// Disabling the derived accelerator changes only latency. The same wake, authority and
-/// provider result produce the same durable records and activation outcome as no cache at all.
-#[test]
-fn disabled_fold_cache_is_semantically_equivalent_to_no_cache() {
-    let uncached = Harness::new(vec![ProviderScript::Produce(Box::new(produced()))]);
-    uncached.wake();
-    let uncached_outcome = uncached.run_next().expect("the uncached activation runs");
-
-    let disabled = Harness::new(vec![ProviderScript::Produce(Box::new(produced()))]);
-    let activation = disabled
-        .activation()
-        .with_fold_cache(Arc::new(DisabledFoldCache));
-    disabled.wake();
-    let delivery = block_on(disabled.queue.receive(1, core::time::Duration::ZERO))
-        .expect("the queue answers")
-        .deliveries
-        .pop()
-        .expect("a delivery is waiting");
-    let disabled_outcome =
-        block_on(activation.run(delivery)).expect("the disabled-cache activation runs");
-
-    assert_eq!(disabled_outcome, uncached_outcome);
-    assert_eq!(disabled.records(), uncached.records());
-    assert_eq!(
-        disabled.log.count("read_page"),
-        uncached.log.count("read_page"),
-        "the disabled cache follows the same authority path"
-    );
-}
-
-/// Dispatch pressure is observed only after durable preparation. The activation writes a
-/// typed continuation, never mints a pre-send ticket, and returns ownership immediately.
-#[test]
-fn provider_capacity_deferral_is_durable_and_never_crosses_pre_send() {
-    let harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced()))]);
-    let activation = harness
-        .activation()
-        .with_dispatch_control(Arc::new(DeferredDispatch {
-            lane: DispatchLane::Provider,
-            reason: QueuedReason::ProviderPermits,
-        }));
-    harness.wake();
-    let delivery = block_on(harness.queue.receive(1, core::time::Duration::ZERO))
-        .expect("the queue answers")
-        .deliveries
-        .pop()
-        .expect("a delivery is waiting");
-
-    let outcome = block_on(activation.run(delivery)).expect("capacity deferral is progress");
-    assert_eq!(
-        outcome,
-        Outcome::Progressed {
-            steps: 2,
-            stop: Stop::HandedBack,
-        }
-    );
-    assert_eq!(harness.log.count("mark_dispatch_started"), 0);
-    assert!(harness.provider.requests().is_empty());
-
-    let continuation = block_on(harness.queue.receive(1, core::time::Duration::ZERO))
-        .expect("the queue answers")
-        .deliveries
-        .pop()
-        .expect("the capacity continuation is projected");
-    assert_eq!(
-        continuation.wake.reason,
-        ParkReason::AwaitingCapacity {
-            reason: QueuedReason::ProviderPermits,
-        }
-    );
 }
 
 /// The whole vertical: one wake, one claim, one fold, one model call, one settlement, one
@@ -623,423 +286,8 @@ fn one_wake_drives_a_turn_from_claim_to_ack() {
     );
     assert_eq!(harness.store.finish(key()), Some(FinishReason::Completed));
     assert_eq!(harness.provider.dispatched().len(), 1);
-    assert_eq!(harness.provider.credentials(), vec![config().credential]);
-    let requests = harness.provider.requests();
-    assert_eq!(requests.len(), 1);
-    assert!(requests[0].hash_is_consistent().expect("canonical request"));
-    assert_eq!(requests[0].messages.len(), 1);
-    assert!(requests[0].tools.is_empty());
-    assert_eq!(requests[0].tool_choice, ToolChoice::None);
-    assert!(!requests[0].parallel_tools);
-    assert_eq!(requests[0].messages[0].role, Role::User);
-    assert!(matches!(
-        &requests[0].messages[0].blocks[..],
-        [CanonicalBlock::Text { text, .. }] if text.as_str() == "summarize this"
-    ));
     assert_eq!(harness.queue.acked().len(), 1);
     assert_eq!(harness.queue.depth(), 0, "nothing was left outstanding");
-}
-
-#[test]
-fn model_tool_fields_refuse_truncation_and_enable_only_declared_safe_parallelism() {
-    let definition = CanonicalToolDef {
-        name: aex_wire::ids::ResourceName::parse("todo_read").expect("name"),
-        description: BoundedString::new("Read todo state.").expect("description"),
-        input_schema: CanonicalJson::parse(
-            r#"{"type":"object","additionalProperties":false,"properties":{}}"#,
-        )
-        .expect("schema"),
-        strict: false,
-    };
-    let advertised = ToolAdvertisement {
-        definitions: vec![definition],
-        parallel_safe: true,
-    };
-
-    let mut capable_entry = fixture::entry(
-        ProviderId::Deepseek,
-        "deepseek-chat",
-        CapabilitySet::from_slice(&[Capability::Tools, Capability::ParallelTools]),
-    );
-    capable_entry.limits.max_tools = 1;
-    let capable = fixture::qualified(capable_entry);
-    let fields = super::run::model_tool_fields(&capable, advertised.clone())
-        .expect("one declared tool is within the model limit");
-    assert_eq!(fields.tools.len(), 1);
-    assert_eq!(fields.choice, ToolChoice::Auto);
-    assert!(fields.parallel);
-
-    let mut bounded_entry = fixture::entry(
-        ProviderId::Deepseek,
-        "deepseek-chat",
-        CapabilitySet::from_slice(&[Capability::Tools]),
-    );
-    bounded_entry.limits.max_tools = 0;
-    let bounded = fixture::qualified(bounded_entry);
-    assert!(matches!(
-        super::run::model_tool_fields(&bounded, advertised),
-        Err(ActivationError::ToolLimitExceeded {
-            advertised: 1,
-            max: 0
-        })
-    ));
-}
-
-#[test]
-fn a_new_activation_recovers_the_executor_from_durable_effect_and_journal_state() {
-    let harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced_tool_use()))])
-        .with_tools(
-            [detached_route()],
-            [Ok(ToolOutcome::Detached {
-                operation: detached_ref().id,
-                poll_after: core::time::Duration::from_secs(1),
-            })],
-        );
-    harness.tools.script_queries([Ok(DetachedStatus::Failed {
-        reason: "the managed fetch failed".to_owned(),
-    })]);
-    harness.wake();
-
-    let first = harness.run_next().expect("the invocation detaches");
-    assert!(matches!(
-        first,
-        Outcome::Progressed {
-            stop: Stop::Parked,
-            ..
-        }
-    ));
-    let tool_effect = harness
-        .store
-        .effects(key())
-        .into_iter()
-        .find(|effect| effect.kind == EffectKind::ToolCall)
-        .expect("the detached effect is durable");
-    assert_eq!(
-        tool_effect
-            .evidence
-            .as_ref()
-            .and_then(|evidence| evidence.detached_tool.clone()),
-        Some(detached_ref())
-    );
-    assert!(harness.store.entries(key()).iter().any(|entry| {
-        matches!(
-            &entry.record,
-            JournalRecord::WaitOpened {
-                reason: ParkReason::AwaitingToolResult { operation, .. },
-                ..
-            } if *operation == detached_ref()
-        )
-    }));
-
-    // `run_next` constructs a new Activation, modeling another mux owner after restart.
-    let second = harness
-        .run_next()
-        .expect("the successor resolves the operation");
-    assert!(matches!(
-        second,
-        Outcome::Progressed {
-            stop: Stop::HandedBack,
-            ..
-        }
-    ));
-    assert_eq!(harness.tools.queried(), vec![detached_ref()]);
-    assert!(harness.store.entries(key()).iter().any(|entry| {
-        matches!(
-            &entry.record,
-            JournalRecord::ToolResult {
-                is_error: true,
-                executed_on: ExecutorRoute::ManagedWeb,
-                ..
-            }
-        )
-    }));
-    assert_eq!(
-        harness.queue.depth(),
-        1,
-        "settlement atomically creates the continuation the next model call needs"
-    );
-}
-
-/// The detached operation identity and its wait are intentionally separate durable writes.
-/// If the process dies between them, the next owner must reconstruct the wait from the
-/// response-started effect rather than query early, dispatch twice, or wedge forever.
-#[test]
-fn a_crash_between_detached_operation_and_wait_is_repaired_without_redispatch() {
-    let harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced_tool_use()))])
-        .with_tools(
-            [detached_route()],
-            [Ok(ToolOutcome::Detached {
-                operation: detached_ref().id,
-                poll_after: core::time::Duration::from_secs(1),
-            })],
-        );
-    harness
-        .tools
-        .script_queries([Ok(completed_detached_result())]);
-    harness.wake();
-    // Model prepare, model settlement and tool prepare commit. The following wait commit
-    // dies after `mark_response_started` has already persisted the operation reference.
-    harness.store.pass_commits(3);
-    harness
-        .store
-        .fail_next_commit(CommitError::Store(StoreError::Transport {
-            reason: "the task died after persisting the detached operation".to_owned(),
-            retryable: true,
-        }));
-
-    let error = harness.run_next().expect_err("the wait did not commit");
-    assert!(
-        matches!(error, ActivationError::Commit(CommitError::Store(_))),
-        "{error:?}"
-    );
-    assert_eq!(harness.tools.invoked().len(), 1);
-    assert!(harness.tools.queried().is_empty());
-    assert!(
-        !harness
-            .store
-            .entries(key())
-            .iter()
-            .any(|entry| { matches!(entry.record, JournalRecord::WaitOpened { .. }) })
-    );
-    let tool_effect = harness
-        .store
-        .effects(key())
-        .into_iter()
-        .find(|effect| effect.kind == EffectKind::ToolCall)
-        .expect("the detached tool effect is durable");
-    assert_eq!(
-        tool_effect
-            .evidence
-            .as_ref()
-            .and_then(|evidence| evidence.detached_tool.clone()),
-        Some(detached_ref())
-    );
-
-    let repaired = harness
-        .run_next()
-        .expect("the next owner restores the wait");
-    assert!(matches!(
-        repaired,
-        Outcome::Progressed {
-            stop: Stop::Parked,
-            ..
-        }
-    ));
-    assert_eq!(
-        harness.tools.invoked().len(),
-        1,
-        "repair never dispatches a second tool call"
-    );
-    assert!(
-        harness.tools.queried().is_empty(),
-        "repair commits authority before external lookup"
-    );
-    assert_eq!(
-        harness
-            .store
-            .entries(key())
-            .iter()
-            .filter(|entry| matches!(entry.record, JournalRecord::WaitOpened { .. }))
-            .count(),
-        1
-    );
-
-    harness.clock.advance(5_000);
-    harness
-        .run_next()
-        .expect("ordinary recovery resolves the exact operation");
-    assert_eq!(harness.tools.queried(), vec![detached_ref()]);
-    assert_eq!(harness.tools.invoked().len(), 1);
-}
-
-#[test]
-fn an_expired_detached_inter_write_repair_opens_then_closes_the_wait_atomically() {
-    let harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced_tool_use()))])
-        .with_tools(
-            [detached_route()],
-            [Ok(ToolOutcome::Detached {
-                operation: detached_ref().id,
-                poll_after: core::time::Duration::from_secs(1),
-            })],
-        );
-    harness.wake();
-    harness.store.pass_commits(3);
-    harness
-        .store
-        .fail_next_commit(CommitError::Store(StoreError::Transport {
-            reason: "the task died after persisting the detached operation".to_owned(),
-            retryable: true,
-        }));
-    harness.run_next().expect_err("the wait did not commit");
-    harness.clock.advance(60_000);
-
-    let recovered = harness
-        .run_next()
-        .expect("expired repair settles without upstream I/O");
-    assert!(matches!(
-        recovered,
-        Outcome::Progressed {
-            stop: Stop::Finished(FinishReason::Interrupted),
-            ..
-        }
-    ));
-    assert!(harness.tools.queried().is_empty());
-    assert_eq!(harness.tools.invoked().len(), 1);
-    let entries = harness.store.entries(key());
-    assert!(entries.windows(3).any(|records| {
-        matches!(records[0].record, JournalRecord::WaitOpened { .. })
-            && matches!(
-                records[1].record,
-                JournalRecord::WaitResolved {
-                    resolution: aex_brain_domain::journal::WaitResolution::Cancelled,
-                    ..
-                }
-            )
-            && matches!(
-                records[2].record,
-                JournalRecord::EffectSettled {
-                    outcome: aex_brain_domain::effect::SettledOutcome::OutcomeUnknown { .. },
-                    ..
-                }
-            )
-    }));
-}
-
-#[test]
-fn retryable_detached_query_failure_rearms_without_settling_then_completes() {
-    let harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced_tool_use()))])
-        .with_tools(
-            [detached_route()],
-            [Ok(ToolOutcome::Detached {
-                operation: detached_ref().id,
-                poll_after: core::time::Duration::ZERO,
-            })],
-        );
-    harness.tools.script_queries([
-        Err(retryable_query_error()),
-        Ok(completed_detached_result()),
-    ]);
-    harness.wake();
-    harness.run_next().expect("the invocation detaches");
-
-    harness.clock.advance(250);
-    let retry = harness
-        .run_next()
-        .expect("propagation lag is retryable rather than unknown");
-    assert!(matches!(
-        retry,
-        Outcome::Progressed {
-            stop: Stop::Parked,
-            ..
-        }
-    ));
-    let entries = harness.store.entries(key());
-    assert_eq!(
-        entries
-            .iter()
-            .filter(|entry| matches!(entry.record, JournalRecord::WaitResolved { .. }))
-            .count(),
-        0,
-        "the original wait remains the sole authority while lookup is retryable"
-    );
-    let tool_effect = harness
-        .store
-        .effects(key())
-        .into_iter()
-        .find(|effect| effect.kind == EffectKind::ToolCall)
-        .expect("tool effect");
-    assert!(!tool_effect.state.is_settled());
-
-    harness.clock.advance(5_000);
-    harness
-        .run_next()
-        .expect("the next bounded query completes");
-    assert_eq!(
-        harness.tools.queried(),
-        vec![detached_ref(), detached_ref()]
-    );
-    assert!(
-        harness
-            .store
-            .entries(key())
-            .iter()
-            .any(|entry| { matches!(entry.record, JournalRecord::WaitResolved { .. }) })
-    );
-}
-
-#[test]
-fn detached_query_stops_at_the_persisted_effect_deadline_without_network_io() {
-    let harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced_tool_use()))])
-        .with_tools(
-            [detached_route()],
-            [Ok(ToolOutcome::Detached {
-                operation: detached_ref().id,
-                poll_after: core::time::Duration::from_secs(1),
-            })],
-        );
-    harness.tools.script_queries([Err(retryable_query_error())]);
-    harness.wake();
-    harness.run_next().expect("the invocation detaches");
-    harness.clock.advance(60_000);
-
-    let terminal = harness
-        .run_next()
-        .expect("the exact persisted deadline settles honestly unknown");
-    assert!(matches!(
-        terminal,
-        Outcome::Progressed {
-            stop: Stop::Finished(FinishReason::Interrupted),
-            ..
-        }
-    ));
-    assert!(
-        harness.tools.queried().is_empty(),
-        "expiry is checked before issuing another upstream query"
-    );
-    let entries = harness.store.entries(key());
-    assert!(entries.windows(2).any(|pair| {
-        matches!(
-            pair[0].record,
-            JournalRecord::WaitResolved {
-                resolution: aex_brain_domain::journal::WaitResolution::Cancelled,
-                ..
-            }
-        ) && matches!(
-            pair[1].record,
-            JournalRecord::EffectSettled {
-                outcome: aex_brain_domain::effect::SettledOutcome::OutcomeUnknown { .. },
-                ..
-            }
-        )
-    }));
-}
-
-#[test]
-fn authoritative_detached_absence_settles_unknown_immediately() {
-    let harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced_tool_use()))])
-        .with_tools(
-            [detached_route()],
-            [Ok(ToolOutcome::Detached {
-                operation: detached_ref().id,
-                poll_after: core::time::Duration::from_secs(1),
-            })],
-        );
-    harness.tools.script_queries([Ok(DetachedStatus::Unknown)]);
-    harness.wake();
-    harness.run_next().expect("the invocation detaches");
-
-    harness.clock.advance(1_000);
-    let terminal = harness
-        .run_next()
-        .expect("authoritative absence settles unknown");
-    assert!(matches!(
-        terminal,
-        Outcome::Progressed {
-            stop: Stop::Finished(FinishReason::Interrupted),
-            ..
-        }
-    ));
-    assert_eq!(harness.tools.queried(), vec![detached_ref()]);
 }
 
 /// A wake's tenant is a projection hint, never authority. A forged or stale projection is
@@ -1306,222 +554,6 @@ fn a_journal_gap_does_not_fold_does_not_act_and_does_not_ack() {
     assert_eq!(harness.queue.depth(), 1);
 }
 
-/// A service page can reach EOF before the control head it was claimed with. That is not a
-/// shorter valid history: recovery and planning must see the whole authoritative journal or
-/// neither may run.
-#[test]
-fn early_eof_is_refused_before_recovery_or_planning() {
-    let harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced()))]);
-    let entries = history();
-    harness
-        .store
-        .page_next_read(journal_page(vec![entries[0].clone()], None));
-    harness.wake();
-
-    let error = harness.run_next().expect_err("EOF before the claimed tail");
-    assert!(
-        matches!(
-            error,
-            ActivationError::Store(StoreError::JournalTailMismatch { .. })
-        ),
-        "{error:?}"
-    );
-    assert_eq!(harness.log.count("load_open"), 0, "recovery never ran");
-    assert_eq!(harness.log.count("commit"), 0, "planning never wrote");
-    assert!(harness.provider.dispatched().is_empty());
-    assert!(harness.queue.acked().is_empty());
-}
-
-/// Equal sequence counts are insufficient: the claimed head hash is the exact history
-/// identity, so a same-sequence fork is refused before any effect recovery.
-#[test]
-fn an_exact_sequence_with_the_wrong_tail_hash_is_refused() {
-    let harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced()))]);
-    harness.store.set_claimed_tail(
-        key(),
-        Some(JournalSeq(1)),
-        Some(ContentHash::of(b"another tail at the same sequence")),
-    );
-    harness.wake();
-
-    let error = harness
-        .run_next()
-        .expect_err("the hash must equal the claimed tail");
-    assert!(matches!(
-        error,
-        ActivationError::Store(StoreError::JournalTailMismatch {
-            claimed_seq: Some(JournalSeq(1)),
-            folded_seq: Some(JournalSeq(1)),
-            ..
-        })
-    ));
-    assert_eq!(harness.log.count("load_open"), 0);
-    assert_eq!(harness.log.count("commit"), 0);
-    assert!(harness.provider.dispatched().is_empty());
-}
-
-/// Native continuations, rather than a page's item count, carry a valid restore across as
-/// many short pages as the total budget permits.
-#[test]
-fn a_valid_multipage_restore_reaches_the_exact_claimed_tail() {
-    let mut harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced()))]);
-    harness.policy.read.max_entries = 1;
-    harness.wake();
-
-    harness
-        .run_next()
-        .expect("both pages restore and the turn runs");
-    assert_eq!(harness.log.count("read_page"), 2);
-    assert_eq!(harness.provider.dispatched().len(), 1);
-}
-
-/// Per-page limits are not an activation limit. Three one-entry pages exceed a two-entry
-/// restore ceiling even though each page is individually valid, and nothing downstream may
-/// plan or dispatch from the retained prefix.
-#[test]
-fn multiple_pages_cannot_exceed_the_total_restore_budget() {
-    let mut harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced()))]);
-    let id = EffectId([9; 16]);
-    let mut entries = history();
-    entries.push(
-        JournalEntry::seal(
-            JournalSeq(2),
-            Timestamp::from_millis(START),
-            JournalRecord::EffectPrepared {
-                effect: id,
-                kind: EffectKind::ModelCall,
-                class: EffectClass::NonReplayable,
-                request_hash: ContentHash::of(b"prepared but not recoverable under this cap"),
-                deadline: Timestamp::from_millis(START + 60_000),
-                attempt: 1,
-                reservation: Vec::new(),
-            },
-        )
-        .expect("the third record canonicalizes"),
-    );
-    harness.store.seed(key(), entries);
-    harness.policy.read.max_entries = 1;
-    harness.policy.restore = RestoreBudget {
-        max_entries: 2,
-        max_bytes: usize::MAX,
-    };
-    harness.wake();
-
-    let error = harness
-        .run_next()
-        .expect_err("the third page is beyond the activation ceiling");
-    assert!(matches!(
-        error,
-        ActivationError::Store(StoreError::RestoreBudgetExhausted { .. })
-    ));
-    assert_eq!(
-        harness.log.count("read_page"),
-        2,
-        "two bounded pages were read"
-    );
-    assert_eq!(harness.log.count("load_open"), 0);
-    assert_eq!(harness.log.count("commit"), 0);
-    assert!(harness.provider.dispatched().is_empty());
-    assert!(harness.queue.acked().is_empty());
-}
-
-/// The byte dimension is cumulative too. The second page is refused against the bytes left
-/// by the first, even though either page fits the ordinary per-page limit by itself.
-#[test]
-fn multiple_pages_cannot_exceed_the_total_restore_byte_budget() {
-    let mut harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced()))]);
-    let entries = history();
-    harness.policy.read.max_entries = 1;
-    harness.policy.restore = RestoreBudget {
-        max_entries: entries.len(),
-        max_bytes: journal_bytes(&entries).saturating_sub(1),
-    };
-    harness.wake();
-
-    let error = harness
-        .run_next()
-        .expect_err("the second page is one byte beyond the activation ceiling");
-    assert!(matches!(
-        error,
-        ActivationError::Store(StoreError::RestoreBudgetExhausted { .. })
-    ));
-    assert_eq!(harness.log.count("read_page"), 2);
-    assert_eq!(harness.log.count("load_open"), 0);
-    assert_eq!(harness.log.count("commit"), 0);
-    assert!(harness.provider.dispatched().is_empty());
-}
-
-/// The ceiling is inclusive. A two-page history whose measured bytes and entry count equal
-/// both limits is valid; using `>=` here would reject the largest safe restore.
-#[test]
-fn the_exact_total_restore_boundary_succeeds() {
-    let mut harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced()))]);
-    let entries = history();
-    harness.policy.read.max_entries = 1;
-    harness.policy.restore = RestoreBudget {
-        max_entries: entries.len(),
-        max_bytes: journal_bytes(&entries),
-    };
-    harness.wake();
-
-    harness.run_next().expect("the inclusive boundary restores");
-    assert_eq!(harness.log.count("read_page"), 2);
-    assert_eq!(harness.provider.dispatched().len(), 1);
-}
-
-#[derive(Debug)]
-struct ReservingAdmission {
-    permits: Arc<PermitSet>,
-    requested: AtomicU64,
-}
-
-impl AdmissionControl for ReservingAdmission {
-    fn should_receive(&self) -> bool {
-        true
-    }
-
-    fn admit(&self, restore_bytes: u64) -> AdmissionDecision {
-        self.requested.store(restore_bytes, Ordering::SeqCst);
-        let activation = self
-            .permits
-            .acquire(PermitKind::Activation, 1)
-            .expect("the activation permit is available");
-        let context = self
-            .permits
-            .acquire(PermitKind::ContextBytes, restore_bytes)
-            .expect("the restore reservation is available");
-        AdmissionDecision::Admitted(vec![activation, context])
-    }
-}
-
-/// Restore memory is an admission reservation, not a counter callers must remember to
-/// decrement. Both the activation and context permits return on every completed drive.
-#[test]
-fn the_restore_reservation_releases_with_the_activation() {
-    let harness = Harness::new(vec![ProviderScript::Produce(Box::new(produced()))]);
-    let restore_bytes = harness.policy.restore_resident_bytes;
-    let permits = Arc::new(PermitSet::new(BTreeMap::from([
-        (PermitKind::Activation, 1),
-        (PermitKind::ContextBytes, restore_bytes),
-    ])));
-    let admission = Arc::new(ReservingAdmission {
-        permits: Arc::clone(&permits),
-        requested: AtomicU64::new(0),
-    });
-    harness.wake();
-    let delivery = block_on(harness.queue.receive(1, core::time::Duration::from_secs(0)))
-        .expect("the queue answers")
-        .deliveries
-        .pop()
-        .expect("a delivery is waiting");
-    let loop_ = WakeLoop::new(harness.activation(), Arc::clone(&admission) as Arc<_>);
-
-    block_on(loop_.drive(delivery)).expect("the activation runs");
-    assert_eq!(admission.requested.load(Ordering::SeqCst), restore_bytes);
-    assert_eq!(permits.held(PermitKind::Activation), 0);
-    assert_eq!(permits.held(PermitKind::ContextBytes), 0);
-}
-
 /// Drain stops the loop taking new work. The delivery is released at zero visibility so a
 /// surviving task takes it immediately, rather than abandoned to a timeout.
 #[test]
@@ -1554,13 +586,13 @@ fn a_second_local_activation_for_one_agent_releases_rather_than_racing() {
     drop(held);
 }
 
-/// A non-terminal `PossiblySent` failure is indistinguishable from a served
-/// request, so it settles unknown and the run interrupts.
+/// The matrix is the `proof` field and nothing else. A `PossiblySent` failure is
+/// indistinguishable from a served request, so it settles unknown and the run interrupts.
 #[test]
 fn a_possibly_sent_request_settles_unknown_and_is_never_attempted_again() {
     let harness = Harness::new(vec![ProviderScript::Fail(Box::new(failure(
         DispatchProof::PossiblySent,
-        ProviderFailureKind::ServerError,
+        ProviderFailureClass::Transient,
     )))]);
     harness.wake();
 
@@ -1580,33 +612,6 @@ fn a_possibly_sent_request_settles_unknown_and_is_never_attempted_again() {
     assert_eq!(harness.store.finish(key()), Some(FinishReason::Interrupted));
 }
 
-/// A complete provider error response proves failure even though the request
-/// reached the upstream. It is terminal and non-retryable, not ambiguous.
-#[test]
-fn a_definitive_provider_refusal_settles_known_failure() {
-    let harness = Harness::new(vec![ProviderScript::Fail(Box::new(terminal_failure(
-        ProviderFailureKind::Authentication,
-    )))]);
-    harness.wake();
-
-    let outcome = harness.run_next().expect("the activation runs");
-    assert_eq!(
-        outcome,
-        Outcome::Progressed {
-            steps: 2,
-            stop: Stop::Finished(FinishReason::Failed)
-        }
-    );
-    assert_eq!(harness.provider.dispatched().len(), 1);
-    assert!(matches!(
-        harness.store.effects(key())[0].state,
-        EffectState::KnownFailure {
-            stage: DispatchStage::Terminal,
-            proof: DispatchProof::ResponseStarted,
-        }
-    ));
-}
-
 /// `NotSent` is the one value that permits another attempt, because it is the only one that
 /// says the upstream cannot have seen the request.
 #[test]
@@ -1614,7 +619,7 @@ fn only_a_provably_unsent_request_is_attempted_again() {
     let harness = Harness::new(vec![
         ProviderScript::Fail(Box::new(failure(
             DispatchProof::NotSent,
-            ProviderFailureKind::ServerError,
+            ProviderFailureClass::Transient,
         ))),
         ProviderScript::Produce(Box::new(produced())),
     ]);
@@ -1644,7 +649,7 @@ fn only_a_provably_unsent_request_is_attempted_again() {
 fn a_permanent_refusal_finishes_failed_rather_than_looping() {
     let harness = Harness::new(vec![ProviderScript::Fail(Box::new(failure(
         DispatchProof::NotSent,
-        ProviderFailureKind::InvalidRequest,
+        ProviderFailureClass::Permanent,
     )))]);
     harness.wake();
 
@@ -1842,7 +847,6 @@ impl ProviderPort for GatedProvider {
     fn dispatch<'a>(
         &'a self,
         _ticket: &'a DispatchTicket,
-        _credential: aex_brain_domain::wire_pending::SessionCredentialPin,
         _request: &'a CanonicalModelRequest,
         _budget: &'a StreamBudget,
         _preview: &'a dyn PreviewSink,
@@ -1853,7 +857,7 @@ impl ProviderPort for GatedProvider {
             if cancel.is_cancelled() {
                 return core::task::Poll::Ready(Err(failure(
                     DispatchProof::PossiblySent,
-                    ProviderFailureKind::ServerError,
+                    ProviderFailureClass::Transient,
                 )));
             }
             if self.released.load(Ordering::SeqCst) {
@@ -1892,7 +896,6 @@ impl ProviderPort for CancelAwareProvider {
     fn dispatch<'a>(
         &'a self,
         _ticket: &'a DispatchTicket,
-        _credential: aex_brain_domain::wire_pending::SessionCredentialPin,
         _request: &'a CanonicalModelRequest,
         _budget: &'a StreamBudget,
         _preview: &'a dyn PreviewSink,
@@ -1903,48 +906,12 @@ impl ProviderPort for CancelAwareProvider {
             if cancel.is_cancelled() {
                 return core::task::Poll::Ready(Err(failure(
                     self.proof,
-                    ProviderFailureKind::Transport,
+                    ProviderFailureClass::Transient,
                 )));
             }
             context.waker().wake_by_ref();
             core::task::Poll::Pending
         }))
-    }
-
-    fn resolve_unknown<'a>(
-        &'a self,
-        _identity: &'a DurableEffect,
-        _evidence: &'a aex_brain_domain::effect::DispatchEvidence,
-    ) -> BoxFuture<'a, Result<UnknownResolution, ProviderDispatchError>> {
-        Box::pin(async { Ok(UnknownResolution::NoDurableOperation) })
-    }
-}
-
-#[derive(Debug)]
-struct DrainOnFirstNotSent {
-    drain: Arc<DrainGate>,
-    dispatches: AtomicUsize,
-}
-
-impl ProviderPort for DrainOnFirstNotSent {
-    fn dispatch<'a>(
-        &'a self,
-        _ticket: &'a DispatchTicket,
-        _credential: aex_brain_domain::wire_pending::SessionCredentialPin,
-        _request: &'a CanonicalModelRequest,
-        _budget: &'a StreamBudget,
-        _preview: &'a dyn PreviewSink,
-        _cancel: &'a CancelToken,
-    ) -> BoxFuture<'a, Result<ProviderOutcome, ProviderDispatchError>> {
-        if self.dispatches.fetch_add(1, Ordering::SeqCst) == 0 {
-            self.drain.start_drain();
-        }
-        Box::pin(async {
-            Err(failure(
-                DispatchProof::NotSent,
-                ProviderFailureKind::Transport,
-            ))
-        })
     }
 
     fn resolve_unknown<'a>(
@@ -2043,51 +1010,6 @@ fn drain_rearms_only_a_proven_not_sent_effect_without_dispatching_the_replacemen
             .any(|effect| matches!(effect.state, EffectState::Prepared { attempt: 2 }))
     );
     assert_eq!(harness.queue.durable_depth(), 1);
-}
-
-/// A ready adapter can observe shutdown and return in the same poll, before the renewal
-/// supervisor gets control again. The session must observe the drain gate itself or it will
-/// immediately dispatch the replacement it just prepared during shutdown.
-#[test]
-fn drain_starting_inside_a_not_sent_dispatch_never_dispatches_its_replacement() {
-    let harness = Harness::new(Vec::new());
-    let provider = Arc::new(DrainOnFirstNotSent {
-        drain: Arc::clone(&harness.drain),
-        dispatches: AtomicUsize::new(0),
-    });
-    let mut ports = harness.ports();
-    ports.provider = Arc::clone(&provider) as Arc<_>;
-    let activation = Activation::new(
-        ports,
-        harness.policy.clone(),
-        Arc::clone(&harness.registry),
-        Arc::clone(&harness.drain),
-    );
-    harness.wake();
-    let delivery = block_on(harness.queue.receive(1, core::time::Duration::ZERO))
-        .expect("the queue answers")
-        .deliveries
-        .pop()
-        .expect("one delivery exists");
-
-    let outcome = block_on(activation.run(delivery)).expect("NotSent can be re-armed safely");
-    assert!(matches!(
-        outcome,
-        Outcome::Progressed {
-            stop: Stop::HandedBack,
-            ..
-        }
-    ));
-    assert_eq!(provider.dispatches.load(Ordering::SeqCst), 1);
-    assert!(
-        harness
-            .store
-            .effects(key())
-            .iter()
-            .any(|effect| matches!(effect.state, EffectState::Prepared { attempt: 2 }))
-    );
-    assert_eq!(harness.queue.durable_depth(), 1);
-    assert!(harness.drain.is_quiesced());
 }
 
 /// Two independent loops overlap for longer than both the original 15-second lease and the
@@ -2529,10 +1451,6 @@ fn every_completed_release_is_immediately_claimable_and_stale_release_is_harmles
 /// its predecessor. The stale and forged-owner guards fail; the live guard takes over the
 /// same effect identity and mints the only dispatch ticket.
 #[test]
-#[allow(
-    clippy::too_many_lines,
-    reason = "the takeover test keeps every stale/current authority assertion in one scenario"
-)]
 fn prepared_effect_takeover_requires_the_current_fence_and_owner() {
     let harness = Harness::new(Vec::new());
     let effect = EffectId([0x33; 16]);
@@ -2708,379 +1626,4 @@ fn a_redelivered_wake_against_a_parked_agent_appends_nothing() {
     let second = harness.run_next().expect("the redelivery runs");
     assert_eq!(second, Outcome::Idle);
     assert_eq!(harness.records().len(), 2, "nothing more was appended");
-}
-
-fn restore_fixture(
-    store: &MemoryStore,
-    entries: &[JournalEntry],
-    budget: RestoreBudget,
-) -> Result<super::RestoredFold, ActivationError> {
-    let tail = entries.last().map(|entry| entry.envelope.seq);
-    let tail_hash = entries.last().map(|entry| entry.envelope.content_hash);
-    block_on(super::restore::restore(
-        store,
-        store,
-        fixture_authority().workspace,
-        key(),
-        tail,
-        tail_hash,
-        crate::ports::ReadBudget {
-            max_entries: 64,
-            max_bytes: usize::MAX,
-        },
-        budget,
-        usize::MAX,
-    ))
-}
-
-fn snapshot_artifact(entries: &[JournalEntry]) -> FoldSnapshotArtifact {
-    let mut replay = SnapshotReplay::from_sequence_zero();
-    for entry in entries {
-        replay.apply(entry).expect("snapshot replay folds");
-    }
-    let tail = entries.last().expect("snapshot history is non-empty");
-    replay
-        .finish_exact(
-            key(),
-            JournalPoint {
-                seq: tail.envelope.seq,
-                hash: tail.envelope.content_hash,
-            },
-        )
-        .expect("snapshot replay finishes at its exact tail")
-}
-
-/// A snapshot is useful only if it can absorb old history while the authoritative journal
-/// continues moving. Publication therefore proves the historical row, not exact current head.
-#[test]
-fn stale_verified_snapshot_replays_only_the_bounded_suffix() {
-    let harness = Harness::new(Vec::new());
-    let entries = history();
-    let artifact = snapshot_artifact(&entries[..1]);
-    assert_eq!(
-        block_on(
-            harness
-                .store
-                .publish(fixture_authority().workspace, &artifact),
-        )
-        .expect("historical point is authoritative"),
-        SnapshotPublishOutcome::Published
-    );
-
-    let restored = restore_fixture(
-        &harness.store,
-        &entries,
-        RestoreBudget {
-            max_entries: 1,
-            max_bytes: artifact
-                .body()
-                .len()
-                .saturating_add(journal_bytes(&entries[1..])),
-        },
-    )
-    .expect("one-entry suffix fits while sequence-zero replay does not");
-
-    assert_eq!(restored.state, fold(&entries).expect("full history folds"));
-    assert_eq!(
-        restored.source,
-        RestoreSource::Snapshot {
-            absorbed: artifact.pointer().absorbed,
-            snapshot_bytes: artifact.body().len(),
-            suffix_entries: 1,
-            suffix_bytes: journal_bytes(&entries[1..]),
-        }
-    );
-
-    let one_byte_short = artifact
-        .body()
-        .len()
-        .saturating_add(journal_bytes(&entries[1..]))
-        .saturating_sub(1);
-    assert!(matches!(
-        restore_fixture(
-            &harness.store,
-            &entries,
-            RestoreBudget {
-                max_entries: 1,
-                max_bytes: one_byte_short,
-            },
-        ),
-        Err(ActivationError::Store(
-            StoreError::RestoreBudgetExhausted { .. }
-        ))
-    ));
-}
-
-/// Corrupt optimization bytes may degrade to bounded journal replay. If that replay is too
-/// large, the terminal error must retain both the snapshot rejection and the journal bound.
-#[test]
-fn corrupt_snapshot_falls_back_when_small_and_preserves_both_causes_when_large() {
-    let harness = Harness::new(Vec::new());
-    let entries = history();
-    let artifact = snapshot_artifact(&entries[..1]);
-    block_on(
-        harness
-            .store
-            .publish(fixture_authority().workspace, &artifact),
-    )
-    .expect("snapshot publishes");
-    let mut corrupt = artifact.body().to_vec();
-    corrupt[0] ^= 1;
-    harness
-        .store
-        .corrupt_snapshot_body(artifact.pointer().body_digest, corrupt);
-
-    let restored = restore_fixture(
-        &harness.store,
-        &entries,
-        RestoreBudget {
-            max_entries: entries.len(),
-            max_bytes: artifact
-                .body()
-                .len()
-                .saturating_add(journal_bytes(&entries)),
-        },
-    )
-    .expect("authoritative fallback fits");
-    assert!(
-        matches!(
-            restored.source,
-            RestoreSource::JournalFallback {
-                diagnostic: SnapshotDiagnostic::Rejected(_)
-            }
-        ),
-        "unexpected restore source: {:?}",
-        restored.source
-    );
-
-    let error = restore_fixture(
-        &harness.store,
-        &entries,
-        RestoreBudget {
-            max_entries: 1,
-            max_bytes: artifact
-                .body()
-                .len()
-                .saturating_add(journal_bytes(&entries)),
-        },
-    )
-    .expect_err("the same corrupt snapshot cannot hide an oversized fallback");
-    assert!(matches!(
-        error,
-        ActivationError::SnapshotFallbackFailed {
-            snapshot: SnapshotDiagnostic::Rejected(_),
-            fallback,
-        } if matches!(*fallback, ActivationError::Store(StoreError::RestoreBudgetExhausted { .. }))
-    ));
-}
-
-/// Two fresh restore calls against one durable fixture model process restart/horizontal
-/// handoff: neither call depends on mux-local state or a previous decoded `FoldState`.
-#[test]
-fn snapshot_restore_survives_process_handoff_without_local_authority() {
-    let harness = Harness::new(Vec::new());
-    let entries = history();
-    let artifact = snapshot_artifact(&entries[..1]);
-    block_on(
-        harness
-            .store
-            .publish(fixture_authority().workspace, &artifact),
-    )
-    .expect("snapshot publishes");
-    let budget = RestoreBudget {
-        max_entries: 1,
-        max_bytes: usize::MAX,
-    };
-
-    let first = restore_fixture(&harness.store, &entries, budget).expect("first process restores");
-    let second =
-        restore_fixture(&harness.store, &entries, budget).expect("successor process restores");
-    assert_eq!(first, second);
-    assert_eq!(harness.log.count("snapshot_load_latest"), 2);
-    assert_eq!(harness.log.count("snapshot_load_body"), 2);
-}
-
-/// Workspace authority is request-scoped but still mandatory. A mismatch is not treated as
-/// an unavailable optimization because sequence-zero fallback would hide an authorization bug.
-#[test]
-fn snapshot_body_workspace_mismatch_is_fatal_before_journal_fallback() {
-    let harness = Harness::new(Vec::new());
-    let entries = history();
-    let artifact = snapshot_artifact(&entries[..1]);
-    block_on(
-        harness
-            .store
-            .publish(fixture_authority().workspace, &artifact),
-    )
-    .expect("snapshot publishes");
-    let wrong_workspace = WorkspaceId::from_uuid7(Uuid7::compose(2, [7; 10]));
-    let tail = entries.last().expect("history is non-empty");
-
-    assert_eq!(
-        block_on(super::restore::restore(
-            harness.store.as_ref(),
-            harness.store.as_ref(),
-            wrong_workspace,
-            key(),
-            Some(tail.envelope.seq),
-            Some(tail.envelope.content_hash),
-            crate::ports::ReadBudget {
-                max_entries: 64,
-                max_bytes: usize::MAX,
-            },
-            RestoreBudget {
-                max_entries: entries.len(),
-                max_bytes: usize::MAX,
-            },
-            usize::MAX,
-        )),
-        Err(ActivationError::Store(StoreError::SessionWorkspaceMismatch))
-    );
-    assert_eq!(harness.log.count("read_page"), 0);
-}
-
-/// Pointer selection is monotonic. A slower publisher cannot roll back a newer cut, and an
-/// impossible second body at the same sequence is quarantined rather than selected.
-#[test]
-fn snapshot_publication_refuses_rollback_and_same_sequence_conflict() {
-    let harness = Harness::new(Vec::new());
-    let entries = history();
-    let old = snapshot_artifact(&entries[..1]);
-    let current = snapshot_artifact(&entries);
-    let wrong_workspace = WorkspaceId::from_uuid7(Uuid7::compose(2, [7; 10]));
-    assert_eq!(
-        block_on(harness.store.publish(wrong_workspace, &current)),
-        Err(StoreError::SessionWorkspaceMismatch)
-    );
-    assert_eq!(
-        block_on(
-            harness
-                .store
-                .publish(fixture_authority().workspace, &current),
-        )
-        .expect("current snapshot publishes"),
-        SnapshotPublishOutcome::Published
-    );
-    assert_eq!(
-        block_on(
-            harness
-                .store
-                .publish(fixture_authority().workspace, &current),
-        )
-        .expect("exact retry is idempotent"),
-        SnapshotPublishOutcome::AlreadyCurrent
-    );
-    assert_eq!(
-        block_on(harness.store.publish(fixture_authority().workspace, &old),)
-            .expect("rollback is a typed no-op"),
-        SnapshotPublishOutcome::Superseded {
-            current: current.pointer().absorbed,
-        }
-    );
-    assert_eq!(
-        harness.store.snapshot_pointer(key()),
-        Some(current.pointer().clone())
-    );
-
-    let mut hostile = current.pointer().clone();
-    hostile.body_digest = SnapshotDigest::of(b"different derived bytes");
-    harness
-        .store
-        .seed_snapshot_unchecked(hostile, b"different derived bytes".to_vec());
-    assert_eq!(
-        block_on(
-            harness
-                .store
-                .publish(fixture_authority().workspace, &current),
-        ),
-        Err(StoreError::SnapshotPointerConflict {
-            seq: current.pointer().absorbed.seq,
-        })
-    );
-}
-
-/// A valid body that is ahead of the fenced claim is never allowed to seed planning. If
-/// authoritative replay sees more rows than the claimed bound, both refusals remain typed.
-#[test]
-fn snapshot_ahead_of_claim_is_diagnostic_not_authority() {
-    let harness = Harness::new(Vec::new());
-    let entries = history();
-    let current = snapshot_artifact(&entries);
-    block_on(
-        harness
-            .store
-            .publish(fixture_authority().workspace, &current),
-    )
-    .expect("snapshot publishes");
-    let claimed = &entries[..1];
-
-    let restored = block_on(super::restore::restore(
-        harness.store.as_ref(),
-        harness.store.as_ref(),
-        fixture_authority().workspace,
-        key(),
-        claimed.last().map(|entry| entry.envelope.seq),
-        claimed.last().map(|entry| entry.envelope.content_hash),
-        crate::ports::ReadBudget {
-            max_entries: 64,
-            max_bytes: usize::MAX,
-        },
-        RestoreBudget {
-            max_entries: claimed.len(),
-            max_bytes: usize::MAX,
-        },
-        usize::MAX,
-    ))
-    .expect_err("the fixture journal still exposes rows beyond the historical claim");
-    assert!(
-        matches!(
-            restored,
-            ActivationError::SnapshotFallbackFailed {
-                snapshot: SnapshotDiagnostic::AheadOfClaim { .. },
-                ref fallback,
-            } if matches!(**fallback, ActivationError::Store(StoreError::RestoreBudgetExhausted { .. }))
-        ),
-        "unexpected restore error: {restored:?}"
-    );
-}
-
-/// Same sequence is insufficient authority: a claimed hash fork rejects the snapshot and
-/// preserves the authoritative replay's independent tail mismatch.
-#[test]
-fn snapshot_same_sequence_fork_never_reaches_planning() {
-    let harness = Harness::new(Vec::new());
-    let entries = history();
-    let snapshot = snapshot_artifact(&entries[..1]);
-    block_on(
-        harness
-            .store
-            .publish(fixture_authority().workspace, &snapshot),
-    )
-    .expect("snapshot publishes");
-
-    let error = block_on(super::restore::restore(
-        harness.store.as_ref(),
-        harness.store.as_ref(),
-        fixture_authority().workspace,
-        key(),
-        Some(snapshot.pointer().absorbed.seq),
-        Some(ContentHash([0xaa; 32])),
-        crate::ports::ReadBudget {
-            max_entries: 64,
-            max_bytes: usize::MAX,
-        },
-        RestoreBudget {
-            max_entries: entries.len(),
-            max_bytes: usize::MAX,
-        },
-        usize::MAX,
-    ))
-    .expect_err("same-sequence different-hash authority must refuse");
-    assert!(matches!(
-        error,
-        ActivationError::SnapshotFallbackFailed {
-            snapshot: SnapshotDiagnostic::ForkAtClaim { .. },
-            fallback,
-        } if matches!(*fallback, ActivationError::Store(StoreError::JournalTailMismatch { .. }))
-    ));
 }
