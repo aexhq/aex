@@ -88,6 +88,67 @@ pub fn replaying_client(responses: usize) -> (Client, StaticReplayClient) {
     (Client::from_conf(config), replay)
 }
 
+/// A client that answers the given response bodies in order and records every
+/// request. This is how a multi-service-page read is scripted: each body is one
+/// service page, and the recorded requests prove how the adapter resumed.
+#[must_use]
+pub fn scripted_client(bodies: Vec<serde_json::Value>) -> (Client, StaticReplayClient) {
+    let events: Vec<ReplayEvent> = bodies
+        .into_iter()
+        .map(|body| {
+            ReplayEvent::new(
+                http::Request::builder()
+                    .method("POST")
+                    .uri("https://dynamodb.eu-west-1.amazonaws.com/")
+                    .body(SdkBody::empty())
+                    .expect("a request"),
+                http::Response::builder()
+                    .status(200)
+                    .body(SdkBody::from(body.to_string()))
+                    .expect("a response"),
+            )
+        })
+        .collect();
+    let replay = StaticReplayClient::new(events);
+    let config = aws_sdk_dynamodb::Config::builder()
+        .behavior_version(BehaviorVersion::latest())
+        .region(Region::new("eu-west-1"))
+        .credentials_provider(Credentials::new(
+            "AKIDTESTTESTTESTTEST",
+            "test-secret",
+            None,
+            None,
+            "aex-tests",
+        ))
+        .http_client(replay.clone())
+        .build();
+    (Client::from_conf(config), replay)
+}
+
+/// One stored item as the service serializes it in a response body.
+#[must_use]
+pub fn dynamo_json(item: &aex_session_dynamodb::attr::Item) -> serde_json::Value {
+    serde_json::Value::Object(
+        item.iter()
+            .map(|(name, value)| {
+                let value = match value {
+                    aws_sdk_dynamodb::types::AttributeValue::S(value) => {
+                        serde_json::json!({"S": value})
+                    }
+                    aws_sdk_dynamodb::types::AttributeValue::N(value) => {
+                        serde_json::json!({"N": value})
+                    }
+                    aws_sdk_dynamodb::types::AttributeValue::Bool(value) => {
+                        serde_json::json!({"BOOL": value})
+                    }
+                    other => panic!("the custody fixtures use no {other:?} attribute"),
+                };
+                (name.clone(), value)
+            })
+            .collect(),
+    )
+}
+
 /// The captured request body, parsed as JSON.
 ///
 /// # Panics

@@ -58,9 +58,14 @@ pub trait SecretCustodyStore: Send + Sync + 'static {
 
     /// Lists one workspace's secrets. Never a ciphertext.
     ///
+    /// The list is complete: every service page behind the prefix is read, so a
+    /// caller can never mistake one service page for the whole collection.
+    ///
     /// # Errors
     ///
-    /// As [`SecretCustodyStore::load_secret`].
+    /// As [`SecretCustodyStore::load_secret`], plus a typed refusal when the
+    /// collection does not fit `budget` — resume through
+    /// [`SecretCustodyStore::page_secrets`] instead.
     async fn list_secrets(
         &self,
         workspace: WorkspaceId,
@@ -104,9 +109,13 @@ pub trait SecretCustodyStore: Send + Sync + 'static {
 
     /// Lists one workspace's provider-credential bindings.
     ///
+    /// Complete under `budget`, exactly as
+    /// [`SecretCustodyStore::list_secrets`].
+    ///
     /// # Errors
     ///
-    /// As [`SecretCustodyStore::load_secret`].
+    /// As [`SecretCustodyStore::list_secrets`], resuming through
+    /// [`SecretCustodyStore::page_provider_credentials`].
     async fn list_provider_credentials(
         &self,
         workspace: WorkspaceId,
@@ -290,13 +299,46 @@ impl CustodyStore {
         Ok(output.item)
     }
 
+    /// Reads the whole prefix under `budget`, walking every service page.
+    ///
+    /// A `Query` stops at the service's 1 MB boundary whatever `Limit` says, so
+    /// one request is not the collection. The bare-`Vec` listings built on this
+    /// have no continuation to hand back, so a collection that outgrows the
+    /// budget is a typed refusal — a silently short list would read as "these
+    /// are all your secrets" to a rotation sweep.
     async fn query_prefix(
         &self,
         partition: &str,
         prefix: &str,
         budget: PageBudget,
     ) -> Result<Vec<Item>, StoreError> {
-        Ok(self.query_page(partition, prefix, budget, None).await?.0)
+        let mut items: Vec<Item> = Vec::new();
+        let mut after: Option<PagePosition> = None;
+        loop {
+            let remaining = budget
+                .items()
+                .saturating_sub(u32::try_from(items.len()).unwrap_or(u32::MAX));
+            let page_budget = PageBudget::new(remaining).map_err(|error| StoreError::Invalid {
+                detail: error.to_string(),
+            })?;
+            let (page, next) = self
+                .query_page(partition, prefix, page_budget, after.as_ref())
+                .await?;
+            items.extend(page);
+            let Some(next) = next else {
+                return Ok(items);
+            };
+            if items.len() >= budget.items() as usize {
+                return Err(StoreError::Invalid {
+                    detail: format!(
+                        "more rows than the page budget of {} may exist; \
+                         resume through the paged listing instead",
+                        budget.items()
+                    ),
+                });
+            }
+            after = Some(next);
+        }
     }
 
     async fn query_page(

@@ -12,8 +12,8 @@ use aex_session_dynamodb::plan::Participant;
 
 use support::{
     DEFINITION, TABLE, authorization, captured_body, capturing_client, credential_id, custody_head,
-    generation, metadata, now, provider_credential, replaying_client, secret_name, session,
-    workspace,
+    dynamo_json, generation, metadata, now, provider_credential, replaying_client, scripted_client,
+    secret_name, session, workspace,
 };
 
 fn definition() -> serde_json::Value {
@@ -226,6 +226,104 @@ async fn a_list_reads_the_metadata_partition_and_never_the_generation_partition(
         body["ExpressionAttributeValues"][":prefix"]["S"].as_str(),
         Some(keys::secret_prefix())
     );
+}
+
+/// A `Query` stops at the service's 1 MB boundary whatever `Limit` says, so
+/// one request is not the collection. The bare list has no continuation to hand
+/// back and must walk every service page itself: a list that dropped the
+/// continuation would read as "these are all your secrets" to a rotation sweep.
+#[tokio::test]
+async fn a_list_walks_every_service_page_before_answering() {
+    let first = aex_secret_custody_dynamodb::codec::encode_secret(&metadata()).expect("encodes");
+    let mut renamed = metadata();
+    renamed.name =
+        aex_wire::ids::ResourceName::parse("anthropic-key").expect("an ASCII resource name");
+    let second = aex_secret_custody_dynamodb::codec::encode_secret(&renamed).expect("encodes");
+    let boundary = serde_json::json!({
+        "pk": dynamo_json(&first)["pk"],
+        "sk": dynamo_json(&first)["sk"],
+    });
+    let (client, replay) = scripted_client(vec![
+        serde_json::json!({"Items": [dynamo_json(&first)], "LastEvaluatedKey": boundary}),
+        serde_json::json!({"Items": [dynamo_json(&second)]}),
+    ]);
+    let store = CustodyStore::new(client, TABLE);
+
+    let listed = store
+        .list_secrets(workspace(), PageBudget::new(25).expect("a page"))
+        .await
+        .expect("both service pages answer");
+    assert_eq!(
+        listed
+            .iter()
+            .map(|secret| secret.name.as_str().to_owned())
+            .collect::<Vec<_>>(),
+        ["openai-key", "anthropic-key"],
+        "rows from every service page survive, in key order"
+    );
+
+    let requests: Vec<serde_json::Value> = replay
+        .actual_requests()
+        .map(|request| {
+            serde_json::from_slice(
+                request
+                    .body()
+                    .bytes()
+                    .expect("the DynamoDB request body is always in memory"),
+            )
+            .expect("the DynamoDB request body is JSON")
+        })
+        .collect();
+    assert_eq!(requests.len(), 2);
+    assert!(requests[0]["ExclusiveStartKey"].is_null());
+    assert_eq!(
+        requests[1]["ExclusiveStartKey"]["sk"],
+        dynamo_json(&first)["sk"],
+        "the resumed query starts from the service continuation"
+    );
+    assert_eq!(requests[0]["Limit"].as_u64(), Some(25));
+    assert_eq!(
+        requests[1]["Limit"].as_u64(),
+        Some(24),
+        "the resumed query spends only the remaining budget"
+    );
+    for request in &requests {
+        assert_eq!(request["ConsistentRead"].as_bool(), Some(true));
+    }
+}
+
+/// The bare list cannot resume, so a collection that outgrows its budget is a
+/// typed refusal — the caller's fix is the paged listing, and a silently short
+/// list would hide that a page of secrets was never considered.
+#[tokio::test]
+async fn a_collection_past_the_budget_is_refused_rather_than_truncated() {
+    let first = aex_secret_custody_dynamodb::codec::encode_secret(&metadata()).expect("encodes");
+    let mut renamed = metadata();
+    renamed.name =
+        aex_wire::ids::ResourceName::parse("anthropic-key").expect("an ASCII resource name");
+    let second = aex_secret_custody_dynamodb::codec::encode_secret(&renamed).expect("encodes");
+    let boundary = serde_json::json!({
+        "pk": dynamo_json(&second)["pk"],
+        "sk": dynamo_json(&second)["sk"],
+    });
+    let (client, _replay) = scripted_client(vec![serde_json::json!({
+        "Items": [dynamo_json(&first), dynamo_json(&second)],
+        "LastEvaluatedKey": boundary,
+    })]);
+    let store = CustodyStore::new(client, TABLE);
+
+    let error = store
+        .list_secrets(workspace(), PageBudget::new(2).expect("a page"))
+        .await
+        .expect_err("a full budget with rows still behind it cannot answer");
+    assert!(
+        matches!(
+            error,
+            aex_session_dynamodb::error::StoreError::Invalid { .. }
+        ),
+        "{error:?}"
+    );
+    assert!(format!("{error}").contains("paged listing"), "{error}");
 }
 
 #[tokio::test]
