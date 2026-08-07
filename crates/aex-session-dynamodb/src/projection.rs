@@ -31,16 +31,14 @@ use crate::wire_pending::{
 };
 
 pub use crate::projection_limit::{
-    WORKSPACE_LIMIT, decode_limit, decode_limit_at, decode_limit_bundle, decode_limit_bundle_head,
-    limit_bundle_head_key, limit_bundle_key, limit_key,
+    WORKSPACE_EDGE_LIMITS, WORKSPACE_LIMIT, decode_limit, decode_limit_at, decode_limit_bundle,
+    decode_limit_bundle_head, edge_limits_key, limit_bundle_head_key, limit_bundle_key, limit_key,
 };
 
 /// The `itemType` of a workspace placement.
 pub const WORKSPACE_PLACEMENT: &str = "workspace_placement";
 /// The `itemType` of a key authorization row.
 pub const KEY_AUTHORIZATION: &str = "key_authorization";
-/// The `itemType` of the hot admission limit subset.
-pub const WORKSPACE_EDGE_LIMITS: &str = "workspace_edge_limits";
 /// The `itemType` of the signed feed frontier.
 pub const FEED_FRONTIER: &str = "feed_frontier";
 /// The `itemType` of descriptive workspace facts.
@@ -56,18 +54,6 @@ pub fn placement_key(workspace: WorkspaceId) -> (String, String) {
 #[must_use]
 pub fn authorization_key(api_key: ApiKeyId) -> (String, String) {
     (format!("KEY#{api_key}"), "AUTHZ".to_owned())
-}
-
-/// `LIMIT#WS#{workspace_id}` / `EDGE_LIMITS`.
-///
-/// The partition is the capacity authority's, not the workspace's, because
-/// `dynamodb:LeadingKeys` is the only key this table's write fence can condition
-/// on. Filing the row under `WS#` would have handed the capacity authority the
-/// partition that holds placement, and "each row has one writer" is enforced
-/// here rather than asserted in prose.
-#[must_use]
-pub fn edge_limits_key(workspace: WorkspaceId) -> (String, String) {
-    (format!("LIMIT#WS#{workspace}"), "EDGE_LIMITS".to_owned())
 }
 
 /// `FEED` / `FRONTIER`.

@@ -4,13 +4,13 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, test } from "bun:test";
 
-import { AexConfigError, WorkspaceApiKey } from "../../src/index.js";
+import { AexConfigError, WorkspaceApiKey, type RegionCode } from "../../src/index.js";
 
 interface WorkspaceKeyCase {
   readonly reason: string;
   readonly accepted: boolean;
   readonly text: string;
-  readonly region?: string;
+  readonly region?: RegionCode;
   readonly workspace?: string;
   readonly key?: string;
 }
@@ -42,8 +42,12 @@ describe("workspace key grammar agreement", () => {
     let rejected = 0;
     for (const entry of cases()) {
       if (entry.accepted) {
+        const region = entry.region;
+        if (region === undefined) {
+          throw new Error(`accepted credential case ${entry.reason} has no region`);
+        }
         const key = WorkspaceApiKey.parse(entry.text);
-        expect(key.regionCode(), entry.reason).toBe(entry.region);
+        expect(key.regionCode(), entry.reason).toBe(region);
         expect(key.workspaceId(), entry.reason).toBe(`wsp_${entry.workspace}`);
         accepted += 1;
       } else {

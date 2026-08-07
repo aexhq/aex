@@ -54,4 +54,44 @@ ebb3f0688f3954a50e3a1be75dd2e36d88ea1ca2:packages/sdk/test/unit/fixtures-sanitiz
 13ce8748027f36fd750fc1a1186d7e55f122c79a:packages/shared/src/testing/fake-gcp-auth.ts:private-key:29
 # Deleted GCP redaction test: the matched test private key was the same intentionally invalid fixture.
 13ce8748027f36fd750fc1a1186d7e55f122c79a:packages/shared/test/redaction-gcp.test.ts:private-key:11
+# Public credential conformance corpus: deterministic fake workspace keys are test fixtures, not credentials (replayed by the recovery commit).
+f497946e13196cfc2398c8fe486a349cd51c761e:conformance/credentials/workspace-keys.jsonl:generic-api-key:9
+# Public credential conformance corpus: deterministic fake workspace keys are test fixtures, not credentials (replayed by the recovery commit).
+f497946e13196cfc2398c8fe486a349cd51c761e:conformance/credentials/workspace-keys.jsonl:generic-api-key:10
+# Public credential conformance corpus: deterministic fake workspace keys are test fixtures, not credentials (replayed by the recovery commit).
+f497946e13196cfc2398c8fe486a349cd51c761e:conformance/credentials/workspace-keys.jsonl:generic-api-key:11
+# Public credential conformance corpus: deterministic fake workspace keys are test fixtures, not credentials (replayed by the recovery commit).
+f497946e13196cfc2398c8fe486a349cd51c761e:conformance/credentials/workspace-keys.jsonl:generic-api-key:12
+# Public credential conformance corpus: deterministic fake workspace keys are test fixtures, not credentials (replayed by the recovery commit).
+01eea421ce4274b3f23d7972232fc90e00f28fee:conformance/credentials/workspace-keys.jsonl:generic-api-key:9
+# Public credential conformance corpus: deterministic fake workspace keys are test fixtures, not credentials (replayed by the recovery commit).
+01eea421ce4274b3f23d7972232fc90e00f28fee:conformance/credentials/workspace-keys.jsonl:generic-api-key:10
+# Public credential conformance corpus: deterministic fake workspace keys are test fixtures, not credentials (replayed by the recovery commit).
+01eea421ce4274b3f23d7972232fc90e00f28fee:conformance/credentials/workspace-keys.jsonl:generic-api-key:11
+# Public credential conformance corpus: deterministic fake workspace keys are test fixtures, not credentials (replayed by the recovery commit).
+01eea421ce4274b3f23d7972232fc90e00f28fee:conformance/credentials/workspace-keys.jsonl:generic-api-key:12
+# Public credential conformance corpus: deterministic fake workspace keys are test fixtures, not credentials (replayed by the recovery commit).
+cc81e5e73e159fff8153d6bb6369e09b891678a8:conformance/credentials/workspace-keys.jsonl:generic-api-key:9
+# Public credential conformance corpus: deterministic fake workspace keys are test fixtures, not credentials (replayed by the recovery commit).
+cc81e5e73e159fff8153d6bb6369e09b891678a8:conformance/credentials/workspace-keys.jsonl:generic-api-key:10
+# Public credential conformance corpus: deterministic fake workspace keys are test fixtures, not credentials (replayed by the recovery commit).
+cc81e5e73e159fff8153d6bb6369e09b891678a8:conformance/credentials/workspace-keys.jsonl:generic-api-key:11
+# Public credential conformance corpus: deterministic fake workspace keys are test fixtures, not credentials (replayed by the recovery commit).
+cc81e5e73e159fff8153d6bb6369e09b891678a8:conformance/credentials/workspace-keys.jsonl:generic-api-key:12
+# Public credential conformance corpus: deterministic fake workspace keys are test fixtures, not credentials (replayed by the recovery commit).
+3cdfff3241e477499114df6b9a01cf65431b8af0:conformance/credentials/workspace-keys.jsonl:generic-api-key:9
+# Public credential conformance corpus: deterministic fake workspace keys are test fixtures, not credentials (replayed by the recovery commit).
+3cdfff3241e477499114df6b9a01cf65431b8af0:conformance/credentials/workspace-keys.jsonl:generic-api-key:10
+# Public credential conformance corpus: deterministic fake workspace keys are test fixtures, not credentials (replayed by the recovery commit).
+3cdfff3241e477499114df6b9a01cf65431b8af0:conformance/credentials/workspace-keys.jsonl:generic-api-key:11
+# Public credential conformance corpus: deterministic fake workspace keys are test fixtures, not credentials (replayed by the recovery commit).
+3cdfff3241e477499114df6b9a01cf65431b8af0:conformance/credentials/workspace-keys.jsonl:generic-api-key:12
+# Public credential conformance corpus: deterministic fake workspace keys are test fixtures, not credentials (replayed by the recovery commit).
+d9f25a1b1ccc7dd36f3e1bcea81124db110e8c8f:conformance/credentials/workspace-keys.jsonl:generic-api-key:9
+# Public credential conformance corpus: deterministic fake workspace keys are test fixtures, not credentials (replayed by the recovery commit).
+d9f25a1b1ccc7dd36f3e1bcea81124db110e8c8f:conformance/credentials/workspace-keys.jsonl:generic-api-key:10
+# Public credential conformance corpus: deterministic fake workspace keys are test fixtures, not credentials (replayed by the recovery commit).
+d9f25a1b1ccc7dd36f3e1bcea81124db110e8c8f:conformance/credentials/workspace-keys.jsonl:generic-api-key:11
+# Public credential conformance corpus: deterministic fake workspace keys are test fixtures, not credentials (replayed by the recovery commit).
+d9f25a1b1ccc7dd36f3e1bcea81124db110e8c8f:conformance/credentials/workspace-keys.jsonl:generic-api-key:12
 
