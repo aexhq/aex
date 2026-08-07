@@ -83,6 +83,11 @@ pub const AEX_OPERATION: &str = "aex.operation";
 /// Cardinality: `unbounded`. Visibility: `internal`. Maximum length: 36 bytes.
 pub const AEX_ORGANIZATION_ID: &str = "aex.organization.id";
 
+/// `aex.otlp.counter` — Which OTLP admission counter one delta reports.
+///
+/// Cardinality: `fixed`. Visibility: `public`. Maximum length: 32 bytes.
+pub const AEX_OTLP_COUNTER: &str = "aex.otlp.counter";
+
 /// `aex.outcome` — Outcome class of an operation: ok, rejected, failed or unknown.
 ///
 /// Cardinality: `fixed`. Visibility: `public`. Maximum length: 8 bytes.
@@ -234,6 +239,12 @@ pub const ATTRIBUTES: &[AttributeSpec] = &[
         max_len: 36,
     },
     AttributeSpec {
+        name: AEX_OTLP_COUNTER,
+        cardinality: Cardinality::Fixed,
+        visibility: Visibility::Public,
+        max_len: 32,
+    },
+    AttributeSpec {
         name: AEX_OUTCOME,
         cardinality: Cardinality::Fixed,
         visibility: Visibility::Public,
@@ -331,6 +342,11 @@ pub const METRIC_AEX_ADMISSION_REJECTED: &str = "aex.admission.rejected";
 /// Instrument: `histogram`. Unit: `ms`.
 pub const METRIC_AEX_OPERATION_DURATION: &str = "aex.operation.duration";
 
+/// `aex.otlp.count` — Delta of one named OTLP admission counter.
+///
+/// Instrument: `counter`. Unit: `1`.
+pub const METRIC_AEX_OTLP_COUNT: &str = "aex.otlp.count";
+
 /// `aex.stream.bytes` — Aggregate delta of authority bytes returned to open stream sockets since the previous publication.
 ///
 /// Instrument: `counter`. Unit: `By`.
@@ -376,6 +392,12 @@ pub const METRICS: &[MetricSpec] = &[
             AEX_PLANE,
             AEX_REGION,
         ],
+    },
+    MetricSpec {
+        name: METRIC_AEX_OTLP_COUNT,
+        instrument: Instrument::Counter,
+        unit: "1",
+        attributes: &[AEX_DEPLOYABLE, AEX_OTLP_COUNTER, AEX_PLANE, AEX_REGION],
     },
     MetricSpec {
         name: METRIC_AEX_STREAM_BYTES,

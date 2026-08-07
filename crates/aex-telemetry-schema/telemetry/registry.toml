@@ -105,6 +105,15 @@ cardinality = "fixed"
 visibility = "public"
 max_len = 24
 
+# --- OTLP admission shape -------------------------------------------------------
+
+[[attribute]]
+name = "aex.otlp.counter"
+brief = "Which OTLP admission counter one delta reports."
+cardinality = "fixed"
+visibility = "public"
+max_len = 32
+
 # --- measured process pressure -------------------------------------------------
 
 [[attribute]]
@@ -275,6 +284,13 @@ brief = "Aggregate delta of authority bytes returned to open stream sockets sinc
 instrument = "counter"
 unit = "By"
 attributes = ["aex.plane", "aex.region", "aex.deployable"]
+
+[[metric]]
+name = "aex.otlp.count"
+brief = "Delta of one named OTLP admission counter."
+instrument = "counter"
+unit = "1"
+attributes = ["aex.plane", "aex.region", "aex.deployable", "aex.otlp.counter"]
 
 # --- spans --------------------------------------------------------------------
 

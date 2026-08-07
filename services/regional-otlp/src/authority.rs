@@ -100,6 +100,27 @@ pub enum AuthorityError {
         /// What the provider reported, without its own body.
         reason: String,
     },
+    /// A custody manifest entry could not be parsed.
+    ///
+    /// Fail closed: an unreadable entry might name a secret this batch
+    /// carries, so admitting the batch against a silently emptier redaction
+    /// set would let the secret reach storage unredacted. Retryable because
+    /// the custody stream owns the manifest row and rewrites it on its next
+    /// revision.
+    #[error("{malformed} custody manifest entries could not be parsed; the batch fails closed")]
+    CustodyMalformed {
+        /// How many entries were unreadable.
+        malformed: usize,
+    },
+    /// Materialization exhausted its bounded retries with items unprocessed.
+    ///
+    /// The commit is durable and the receipt idempotent, so an unchanged
+    /// retry resumes materialization from the receipt rather than re-admitting.
+    #[error("materialization exhausted {attempts} attempts with items still unprocessed")]
+    MaterializeExhausted {
+        /// How many attempts were made.
+        attempts: u32,
+    },
 }
 
 impl AuthorityError {
@@ -110,6 +131,8 @@ impl AuthorityError {
             self,
             Self::GateClosed { .. }
                 | Self::Provider { .. }
+                | Self::CustodyMalformed { .. }
+                | Self::MaterializeExhausted { .. }
                 | Self::Store(StoreError::Unavailable { .. })
         )
     }
@@ -340,17 +363,24 @@ impl AdmissionAuthority {
 
     /// Admits one batch through the whole nine-step protocol.
     ///
+    /// The caller reads the ingress gate once and passes the observed state in
+    /// — the edge needs the state itself to count a degraded admission, and a
+    /// second read here would double every request's gate cost. The refusal
+    /// still lives here, so no caller can admit through a closed gate.
+    ///
     /// # Errors
     ///
     /// Returns the typed failure of the first step that refused: the gate, the
     /// deletion fence, an intent conflict, clock skew beyond the bound the
-    /// settle window dominates, or a provider failure.
+    /// settle window dominates, exhausted materialization, or a provider
+    /// failure.
     pub async fn admit(
         &self,
         request: &AdmissionRequest,
         now: Timestamp,
+        gate: GateState,
     ) -> Result<AdmissionReceipt, AuthorityError> {
-        if self.ingress_gate().await?.refuses_customer_admission() {
+        if gate.refuses_customer_admission() {
             return Err(AuthorityError::GateClosed { state: "closed" });
         }
         let pinned_epoch = self.deletion_epoch(&request.scope).await?;
@@ -952,9 +982,7 @@ impl AdmissionAuthority {
                     .unwrap_or_default();
                 attempts += 1;
                 if attempts > limits::OBS_SPOOL_MAX_ATTEMPTS {
-                    return Err(AuthorityError::Store(StoreError::Unavailable {
-                        reason: "BatchWriteItem never drained its unprocessed items".into(),
-                    }));
+                    return Err(AuthorityError::MaterializeExhausted { attempts });
                 }
             }
         }
