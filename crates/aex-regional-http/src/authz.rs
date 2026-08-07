@@ -16,10 +16,11 @@
 //! | the assertion ([`LambdaAssertionSource`]) | per credential | once per 30 s |
 //! | the admission snapshot ([`RegionalProjection`]) | per request | always |
 //!
-//! The snapshot is the only per-request read — one `TransactGetItems` over the
-//! key authorization row, the placement and the hot limit ceilings — and it is
-//! deliberately never cached: it is what makes a revoked key or a paused account
-//! take effect inside the 30-second assertion window rather than after it.
+//! The snapshot is the only per-request read — three concurrent point reads
+//! over the key authorization row, the placement and the hot limit ceilings,
+//! reconciled after decode — and it is deliberately never cached: it is what
+//! makes a revoked key or a paused account take effect inside the 30-second
+//! assertion window rather than after it.
 
 use aex_control_domain::epoch::Epoch;
 use aex_identity_domain::assertion::{
@@ -553,8 +554,8 @@ impl AssertionSource for LambdaAssertionSource {
 ///
 /// Key authorization, placement and profile rows are written only by
 /// `central-control-worker` and limit rows only by the regional capacity
-/// authority; every serving regional role holds `GetItem`, `TransactGetItems`
-/// and `Query` on the table and nothing else.
+/// authority; every serving regional role holds read actions on the table and
+/// nothing else.
 #[derive(Debug, Clone)]
 pub struct RegionalProjection<P> {
     projection: P,

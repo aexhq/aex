@@ -232,6 +232,60 @@ async fn a_scoped_point_read_hides_foreign_tenants_and_refuses_deleted_parents()
 }
 
 #[tokio::test]
+async fn the_admission_snapshot_is_three_concurrent_eventual_point_reads() {
+    use aex_session_dynamodb::projection::AuthorizationProjection as _;
+
+    let (client, replay) = scripted_client(vec![
+        serde_json::json!({}).to_string(),
+        serde_json::json!({}).to_string(),
+        serde_json::json!({}).to_string(),
+    ]);
+    let reads = aex_session_dynamodb::projection::ProjectionReader::new(client, "projection");
+    let api_key = aex_wire::ids::ApiKeyId::from_uuid7(Uuid7::compose(1, [5; 10]));
+    let _refused = reads.read_admission_snapshot(api_key, workspace()).await;
+
+    let bodies = request_bodies(&replay);
+    assert_eq!(bodies.len(), 3, "key, placement and edge-limit point reads");
+    let mut partitions = Vec::new();
+    for body in &bodies {
+        assert!(
+            body["TransactItems"].is_null(),
+            "the hot admission path must not open a read transaction"
+        );
+        assert_eq!(
+            body["ConsistentRead"], false,
+            "admission rows change on operator-paced events; replica lag is accepted"
+        );
+        partitions.push(body["Key"]["pk"]["S"].as_str().expect("a partition"));
+    }
+    partitions.sort_unstable();
+    let expected = {
+        let mut expected = vec![
+            format!("KEY#{api_key}"),
+            format!("WS#{}", workspace()),
+            format!("LIMIT#WS#{}", workspace()),
+        ];
+        expected.sort_unstable();
+        expected
+    };
+    assert_eq!(partitions, expected);
+}
+
+#[tokio::test]
+async fn the_feed_frontier_fence_read_stays_strong() {
+    use aex_session_dynamodb::projection::AuthorizationProjection as _;
+
+    let (client, receiver) = capturing_client();
+    let reads = aex_session_dynamodb::projection::ProjectionReader::new(client, "projection");
+    let _ignored = reads.read_frontier().await;
+
+    let body = captured_body(receiver);
+    assert_eq!(body["ConsistentRead"], true);
+    assert_eq!(body["Key"]["pk"]["S"], "FEED");
+    assert_eq!(body["Key"]["sk"]["S"], "FRONTIER");
+}
+
+#[tokio::test]
 async fn an_operation_authority_read_is_strongly_consistent_and_targets_the_exact_key() {
     let (client, receiver) = capturing_client();
     let store = OperationStore::new(client, &tables().session_authority);

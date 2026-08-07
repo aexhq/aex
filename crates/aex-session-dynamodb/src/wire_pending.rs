@@ -502,10 +502,12 @@ impl EdgeLimits {
     }
 }
 
-/// One snapshot-consistent answer to every question request admission asks.
+/// One reconciled answer to every question request admission asks.
 ///
-/// The three rows are read in one `TransactGetItems`, so they cannot disagree
-/// about a revocation or a placement change that landed between two point reads.
+/// The three rows are read concurrently and then cross-checked by
+/// `reconcile`: a set torn by a concurrent revocation or placement change
+/// fails the identity checks and is refused, so a value of this type always
+/// names one consistent identity even though the reads were not one snapshot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdmissionSnapshot {
     /// The presented key's authorization row.
