@@ -291,7 +291,7 @@ mod tests {
         let error = compose(ROLE.granted(), &[]).expect_err("refused");
         match error {
             ObservationExportLauncherRunError::NotReady { probe } => {
-                assert_eq!(probe, first.as_str())
+                assert_eq!(probe, first.as_str());
             }
             other => panic!("expected a readiness failure, got {other:?}"),
         }
