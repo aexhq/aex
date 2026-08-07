@@ -12,7 +12,6 @@ use aex_brain_application::ports::{BoxFuture, CancelToken, PreviewSink};
 use aex_brain_domain::effect::DispatchProof;
 use aex_model_catalog::QualifiedModel;
 use aex_model_catalog::canonical::PreviewFrame;
-use aex_model_catalog::document::{Capability, Dialect, EndpointPin, EntryState, ModelEntry};
 use aex_model_catalog::primitives::ProviderRequestId;
 use bytes::Bytes;
 use futures::{Stream, StreamExt as _};
@@ -97,15 +96,6 @@ pub struct StreamConsumeError {
     pub response_started: bool,
     /// Provider correlation observed before the failure, where available.
     pub provider_request_id: Option<ProviderRequestId>,
-    /// Response-body bytes consumed before the failure.
-    pub response_bytes: u64,
-    /// Dialect frames decoded before the failure.
-    pub frames: u32,
-    /// Frames decoded after cooperative cancellation was observed.
-    ///
-    /// The consumer currently settles immediately at that observation, so a
-    /// cancellation failure must carry zero here.
-    pub frames_after_cancel: u32,
 }
 
 impl StreamConsumeError {
@@ -149,17 +139,6 @@ pub struct ConsumedStream {
     pub frames: u32,
 }
 
-/// Why the qualification-only staged-entry stream seam was refused or failed.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum QualificationStreamError {
-    /// The caller did not provide a staged direct `DeepSeek` streaming entry.
-    #[error("the qualification stream requires a staged direct DeepSeek streaming entry")]
-    Candidate,
-    /// The production stream consumer rejected or could not complete the body.
-    #[error(transparent)]
-    Consume(#[from] StreamConsumeError),
-}
-
 /// Consumes one already-dispatched provider body under the production bounds.
 ///
 /// `body` is generic so a live conformance runner can wrap a real provider
@@ -191,95 +170,9 @@ where
     S: Stream<Item = Result<Bytes, E>> + Send,
     E: Send,
 {
-    consume_provider_stream_core(
-        adapter,
-        adapter.new_state(model),
-        body,
-        headers,
-        budget,
-        preview,
-        cancel,
-        started,
-        response_start,
-    )
-    .await
-}
-
-/// Consumes a staged direct `DeepSeek` body through the production stream core.
-///
-/// This is the only seam that permits a not-yet-qualified [`ModelEntry`] to
-/// exercise runtime-equivalent decoding. It admits no free-form origin or
-/// dialect and cannot make the staged entry routable in production.
-///
-/// # Errors
-///
-/// Returns [`QualificationStreamError::Candidate`] unless the entry is a
-/// staged direct `DeepSeek` text-streaming candidate, and otherwise propagates
-/// the production consumer's typed failure and dispatch proof.
-#[allow(clippy::too_many_arguments)]
-pub async fn consume_deepseek_qualification_stream<S, E>(
-    entry: &ModelEntry,
-    body: S,
-    headers: HeaderView<'_>,
-    budget: &StreamBudget,
-    preview: &dyn PreviewSink,
-    cancel: &CancelToken,
-    started: Instant,
-    response_start: &dyn ResponseStartSink,
-) -> Result<ConsumedStream, QualificationStreamError>
-where
-    S: Stream<Item = Result<Bytes, E>> + Send,
-    E: Send,
-{
-    if entry.provider != aex_wire::provider::ProviderId::Deepseek
-        || entry.state != EntryState::Staged
-        || entry.dialect != Dialect::DeepSeekChat
-        || entry.endpoint != EndpointPin::DeepSeekApi
-        || !entry.capabilities.has(Capability::TextIn)
-        || !entry.capabilities.has(Capability::TextOut)
-        || !entry.capabilities.has(Capability::Streaming)
-        || entry.limits.context_window_tokens == 0
-        || entry.limits.max_output_tokens < entry.limits.min_output_tokens
-    {
-        return Err(QualificationStreamError::Candidate);
-    }
-    consume_provider_stream_core(
-        &crate::deepseek::DeepSeekAdapter,
-        crate::adapter::DialectState::new(),
-        body,
-        headers,
-        budget,
-        preview,
-        cancel,
-        started,
-        response_start,
-    )
-    .await
-    .map_err(Into::into)
-}
-
-#[allow(
-    clippy::too_many_arguments,
-    clippy::too_many_lines,
-    reason = "the post-send state machine keeps every bound, decoded frame, and proof transition in one auditable sequence"
-)]
-async fn consume_provider_stream_core<S, E>(
-    adapter: &dyn ProviderAdapter,
-    mut state: crate::adapter::DialectState,
-    body: S,
-    headers: HeaderView<'_>,
-    budget: &StreamBudget,
-    preview: &dyn PreviewSink,
-    cancel: &CancelToken,
-    started: Instant,
-    response_start: &dyn ResponseStartSink,
-) -> Result<ConsumedStream, StreamConsumeError>
-where
-    S: Stream<Item = Result<Bytes, E>> + Send,
-    E: Send,
-{
     let mut body = Box::pin(body);
     let mut decoder = SseDecoder::new(budget.max_frame_bytes);
+    let mut state = adapter.new_state(model);
     let mut response_bytes = 0_u64;
     let mut first_frame_after = None;
     let mut response_started = false;
@@ -291,7 +184,6 @@ where
                 adapter,
                 headers,
                 &state,
-                response_bytes,
                 StreamFailure::Cancelled,
             ));
         }
@@ -301,13 +193,7 @@ where
             budget.first_frame_timeout
         }
         .min(remaining(budget, started).map_err(|failure| {
-            stream_error(
-                adapter,
-                headers,
-                &state,
-                response_bytes,
-                StreamFailure::Budget(failure),
-            )
+            stream_error(adapter, headers, &state, StreamFailure::Budget(failure))
         })?);
         let chunk = tokio::time::timeout(timeout, body.next())
             .await
@@ -317,33 +203,19 @@ where
                 } else {
                     BudgetOverrun::FirstFrame { after: timeout }
                 };
-                stream_error(
-                    adapter,
-                    headers,
-                    &state,
-                    response_bytes,
-                    StreamFailure::Budget(failure),
-                )
+                stream_error(adapter, headers, &state, StreamFailure::Budget(failure))
             })?;
         let Some(chunk) = chunk else {
             break;
         };
-        let chunk = chunk.map_err(|_| {
-            stream_error(
-                adapter,
-                headers,
-                &state,
-                response_bytes,
-                StreamFailure::Transport,
-            )
-        })?;
+        let chunk =
+            chunk.map_err(|_| stream_error(adapter, headers, &state, StreamFailure::Transport))?;
         response_bytes = response_bytes.saturating_add(chunk.len() as u64);
         if response_bytes > budget.max_response_bytes {
             return Err(stream_error(
                 adapter,
                 headers,
                 &state,
-                response_bytes,
                 StreamFailure::Budget(BudgetOverrun::Response {
                     limit: budget.max_response_bytes,
                 }),
@@ -354,7 +226,6 @@ where
                 adapter,
                 headers,
                 &state,
-                response_bytes,
                 StreamFailure::Protocol(StreamProtocolError::Sse(failure)),
             )
         })?;
@@ -363,7 +234,6 @@ where
                 adapter,
                 headers,
                 &state,
-                response_bytes,
                 StreamFailure::Protocol(StreamProtocolError::Sse(failure)),
             )
         })? {
@@ -374,7 +244,6 @@ where
                         adapter,
                         headers,
                         &state,
-                        response_bytes,
                         StreamFailure::Protocol(StreamProtocolError::Frame(failure)),
                     )
                 })?;
@@ -387,19 +256,9 @@ where
                         adapter,
                         headers,
                         &state,
-                        response_bytes,
                         StreamFailure::ResponseStart(failure),
                     )
                 })?;
-            }
-            if cancel.is_cancelled() {
-                return Err(stream_error(
-                    adapter,
-                    headers,
-                    &state,
-                    response_bytes,
-                    StreamFailure::Cancelled,
-                ));
             }
             match outcome {
                 FrameOutcome::Ignored => {}
@@ -412,7 +271,6 @@ where
                         adapter,
                         headers,
                         &state,
-                        response_bytes,
                         StreamFailure::Provider(failure),
                     ));
                 }
@@ -426,7 +284,6 @@ where
                 adapter,
                 headers,
                 &state,
-                response_bytes,
                 StreamFailure::Protocol(StreamProtocolError::Sse(failure)),
             )
         })?;
@@ -439,9 +296,6 @@ where
             failure: StreamFailure::Protocol(StreamProtocolError::Frame(failure)),
             response_started,
             provider_request_id: provider_request_id.clone(),
-            response_bytes,
-            frames,
-            frames_after_cancel: 0,
         })?;
     Ok(ConsumedStream {
         response,
@@ -465,15 +319,11 @@ fn stream_error(
     adapter: &dyn ProviderAdapter,
     headers: HeaderView<'_>,
     state: &crate::adapter::DialectState,
-    response_bytes: u64,
     failure: StreamFailure,
 ) -> StreamConsumeError {
     StreamConsumeError {
         response_started: state.response_started,
         provider_request_id: adapter.request_id(&headers, state),
-        response_bytes,
-        frames: state.ledger.frames,
-        frames_after_cancel: 0,
         failure,
     }
 }
@@ -486,7 +336,7 @@ mod tests {
     use aex_brain_application::ports::{BoxFuture, CancelToken, NullPreviewSink};
     use aex_brain_domain::effect::DispatchProof;
     use aex_model_catalog::canonical::{CanonicalBlock, CanonicalModelRequest, StopReason};
-    use aex_model_catalog::document::{Capability, CapabilitySet, EntryState};
+    use aex_model_catalog::document::{Capability, CapabilitySet};
     use aex_model_catalog::fixture;
     use aex_model_catalog::primitives::{BoundedString, ProviderRequestId};
     use aex_model_catalog::{ProviderFailureKind, QualifiedModel, RedactedDetail};
@@ -495,9 +345,8 @@ mod tests {
     use futures::stream;
 
     use super::{
-        ConsumedStream, NullResponseStartSink, QualificationStreamError, ResponseStartSink,
-        ResponseStartSinkError, StreamFailure, consume_deepseek_qualification_stream,
-        consume_provider_stream,
+        ConsumedStream, NullResponseStartSink, ResponseStartSink, ResponseStartSinkError,
+        StreamFailure, consume_provider_stream,
     };
     use crate::adapter::{
         BoundedBody, DialectState, FrameDecodeError, FrameOutcome, HeaderView, ProviderAdapter,
@@ -615,19 +464,6 @@ mod tests {
         }
     }
 
-    #[derive(Debug, Clone)]
-    struct CancellingStartSink(CancelToken);
-
-    impl ResponseStartSink for CancellingStartSink {
-        fn mark(
-            &self,
-            _provider_request_id: Option<ProviderRequestId>,
-        ) -> BoxFuture<'_, Result<(), ResponseStartSinkError>> {
-            self.0.cancel();
-            Box::pin(async { Ok(()) })
-        }
-    }
-
     fn model() -> QualifiedModel {
         fixture::qualified_entry(
             ProviderId::Openai,
@@ -726,97 +562,6 @@ mod tests {
                 .map(ProviderRequestId::as_str),
             Some("req_fixture")
         );
-    }
-
-    #[tokio::test]
-    async fn cancellation_after_the_first_frame_stops_within_the_same_chunk() {
-        let cancel = CancelToken::new();
-        let sink = CancellingStartSink(cancel.clone());
-        let headers = headers();
-        let chunk = Bytes::from_static(b"data: start\n\ndata: done\n\n");
-        let error = consume_provider_stream(
-            &FixtureAdapter,
-            &model(),
-            stream::iter([Ok::<_, ()>(chunk.clone())]),
-            HeaderView::new(&headers),
-            &StreamBudget::default(),
-            &NullPreviewSink,
-            &cancel,
-            Instant::now(),
-            &sink,
-        )
-        .await
-        .expect_err("response-start cancellation settles immediately");
-        assert!(matches!(error.failure, StreamFailure::Cancelled));
-        assert_eq!(error.kind(), ProviderFailureKind::Cancelled);
-        assert_eq!(error.proof(), DispatchProof::ResponseStarted);
-        assert_eq!(error.response_bytes, chunk.len() as u64);
-        assert_eq!(error.frames, 1);
-        assert_eq!(error.frames_after_cancel, 0);
-    }
-
-    #[tokio::test]
-    async fn the_staged_deepseek_seam_uses_the_production_dialect() {
-        let entry = fixture::entry(
-            ProviderId::Deepseek,
-            "deepseek-qualification-fixture",
-            CapabilitySet::from_slice(&[
-                Capability::TextIn,
-                Capability::TextOut,
-                Capability::Streaming,
-            ]),
-        );
-        let headers = headers();
-        let result = consume_deepseek_qualification_stream(
-            &entry,
-            stream::iter([Ok::<_, ()>(Bytes::from_static(
-                concat!(
-                    "data: {\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,",
-                    "\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}],",
-                    "\"usage\":null}\n\n",
-                    "data: [DONE]\n\n"
-                )
-                .as_bytes(),
-            ))]),
-            HeaderView::new(&headers),
-            &StreamBudget::default(),
-            &NullPreviewSink,
-            &CancelToken::new(),
-            Instant::now(),
-            &NullResponseStartSink,
-        )
-        .await
-        .expect("the staged DeepSeek stream uses the production decoder");
-        assert_eq!(result.frames, 2);
-        assert_eq!(result.response.stop_reason, StopReason::EndTurn);
-    }
-
-    #[tokio::test]
-    async fn the_qualification_seam_refuses_an_active_entry() {
-        let mut entry = fixture::entry(
-            ProviderId::Deepseek,
-            "deepseek-qualification-fixture",
-            CapabilitySet::from_slice(&[
-                Capability::TextIn,
-                Capability::TextOut,
-                Capability::Streaming,
-            ]),
-        );
-        entry.state = EntryState::Active;
-        let headers = headers();
-        let error = consume_deepseek_qualification_stream(
-            &entry,
-            stream::empty::<Result<Bytes, ()>>(),
-            HeaderView::new(&headers),
-            &StreamBudget::default(),
-            &NullPreviewSink,
-            &CancelToken::new(),
-            Instant::now(),
-            &NullResponseStartSink,
-        )
-        .await
-        .expect_err("active entries must use the ordinary qualified-model path");
-        assert_eq!(error, QualificationStreamError::Candidate);
     }
 
     #[tokio::test(start_paused = true)]

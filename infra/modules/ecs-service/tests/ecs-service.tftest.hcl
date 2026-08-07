@@ -111,7 +111,7 @@ run "regional_stream_drains_for_thirty_seconds" {
   }
 }
 
-run "brain_mux_is_pinned_to_one_task_and_drains_for_two_minutes" {
+run "development_brain_mux_runs_one_task_and_drains_for_two_minutes" {
   command = plan
 
   variables {
@@ -128,7 +128,7 @@ run "brain_mux_is_pinned_to_one_task_and_drains_for_two_minutes" {
 
   assert {
     condition     = aws_ecs_service.this.desired_count == 1
-    error_message = "brain-mux must run exactly one task."
+    error_message = "Development brain-mux runs exactly one task."
   }
 
   assert {
@@ -138,8 +138,73 @@ run "brain_mux_is_pinned_to_one_task_and_drains_for_two_minutes" {
 
   assert {
     condition     = one(aws_appautoscaling_target.this).max_capacity == 1
-    error_message = "brain-mux must not be able to scale past a single task."
+    error_message = "brain-mux must not be able to scale past its declared task floor."
   }
+}
+
+run "production_brain_mux_runs_the_approved_two_task_floor" {
+  command = plan
+
+  variables {
+    name                   = "brain-mux"
+    task_definition_family = "aex-prd-eu-west-1-brain-mux"
+    stop_timeout           = 120
+    log_group_name         = "/aex/prd/brain-mux"
+    desired_count          = 2
+
+    autoscaling_bounds = {
+      min_capacity = 2
+      max_capacity = 2
+    }
+  }
+
+  assert {
+    condition     = aws_ecs_service.this.desired_count == 2
+    error_message = "Production brain-mux must run the approved two-task floor."
+  }
+
+  assert {
+    condition     = one(aws_appautoscaling_target.this).max_capacity == 2
+    error_message = "The production brain-mux floor is static: its ceiling is its desired count."
+  }
+}
+
+run "rejects_a_single_production_brain_mux_task" {
+  command = plan
+
+  variables {
+    name                   = "brain-mux"
+    task_definition_family = "aex-prd-eu-west-1-brain-mux"
+    stop_timeout           = 120
+    log_group_name         = "/aex/prd/brain-mux"
+    desired_count          = 1
+
+    autoscaling_bounds = {
+      min_capacity = 1
+      max_capacity = 1
+    }
+  }
+
+  expect_failures = [var.desired_count]
+}
+
+run "rejects_brain_mux_capacity_bounds_that_could_scale" {
+  command = plan
+
+  variables {
+    name                   = "brain-mux"
+    task_definition_family = "aex-prd-eu-west-1-brain-mux"
+    stop_timeout           = 120
+    log_group_name         = "/aex/prd/brain-mux"
+    desired_count          = 2
+
+    autoscaling_bounds = {
+      min_capacity = 2
+      max_capacity = 4
+    }
+  }
+
+  expect_failures = [var.autoscaling_bounds]
 }
 
 run "rejects_a_tag_reference" {
@@ -152,7 +217,7 @@ run "rejects_a_tag_reference" {
   expect_failures = [var.image]
 }
 
-run "rejects_a_second_brain_mux_task" {
+run "rejects_a_second_development_brain_mux_task" {
   command = plan
 
   variables {
@@ -162,8 +227,8 @@ run "rejects_a_second_brain_mux_task" {
     desired_count          = 2
 
     autoscaling_bounds = {
-      min_capacity = 1
-      max_capacity = 1
+      min_capacity = 2
+      max_capacity = 2
     }
   }
 

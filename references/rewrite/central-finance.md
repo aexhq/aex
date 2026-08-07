@@ -155,7 +155,13 @@ Temporary cross-stream types, all carrying the required replacement comment:
 
 - The binding's storage rate `5 / 940_597_837_824` micro-USD per byte-minute is authoritative. It
   rates 1 GiB-month to **250 micro-USD**, while plan test prose RT10 says `250000`. Tests assert 250;
-  changing it would violate the explicit quantum.
+  changing it would violate the explicit quantum. **Reversed 2026-08-06:** this resolved the
+  conflict the wrong way. `940_597_837_824 = 1 GiB x 876`, so a numerator of `5` rates a GiB-month
+  (43,800 minutes = 50 x 876) to 250 micro-USD, i.e. $0.00025 - a factor of 1000 below the accepted
+  A11-PRICING rate of $0.25/GiB-month. RT10's `250000` was right. The other three quanta were already
+  exact ($0.25/vCPU-hour, $0.03/GiB-hour, $0.30/GB), which is what makes this a typo rather than a
+  design disagreement. The numerator is now `5000`; the golden quanta table and the RT10 insta
+  snapshot are re-baselined. Tests that encode a defect are not evidence for it.
 - The binding's advisory lock hex is authoritative. It evaluates to
   `4703262552200136530`; a different decimal (`4703167197722708306`) in plan prose was not used.
 - The generated payment contract's six commands were implemented at the TypeScript boundary rather

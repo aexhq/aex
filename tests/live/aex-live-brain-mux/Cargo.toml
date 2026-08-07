@@ -32,7 +32,8 @@ aex-load-harness = { path = "../../load/aex-load-harness" }
 aex-test-harness = { path = "../../support/aex-test-harness" }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+reqwest.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 
 [[test]]
 name = "smoke"

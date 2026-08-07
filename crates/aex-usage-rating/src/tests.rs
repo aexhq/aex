@@ -37,7 +37,7 @@ fn exact_quanta_match_the_four_published_meters() {
     let expected = [
         (Meter::ComputeMillicpuMs, (1, 14_400)),
         (Meter::MemoryByteMs, (1, 128_849_018_880_i64)),
-        (Meter::StorageByteMin, (5, 940_597_837_824_i64)),
+        (Meter::StorageByteMin, (5000, 940_597_837_824_i64)),
         (Meter::DataTransferEgressByte, (3, 10_000)),
     ];
     for (index, (meter, (num, den))) in expected.into_iter().enumerate() {
@@ -164,15 +164,24 @@ fn rt10_golden_invoice_and_rt13_allocation_are_exact() {
         rate_quantity(&ctx, Meter::DataTransferEgressByte, 1_000_000_000, fact(4)).exact,
     )
     .expect("transfer");
-    insta::assert_json_snapshot!(json!({
-        "handsOneHourMicrousd": hands.rounded.get(),
-        "storageOneGibMonthMicrousd": storage.rounded.get(),
-        "egressOneGbMicrousd": transfer.rounded.get(),
-    }), @r###"
+    // A `BTreeMap`, not `json!`. The snapshot pins three invoice amounts, not a
+    // member order, but `serde_json::Map` serialises in insertion order once
+    // `preserve_order` is on -- and that feature is not this crate's to control:
+    // `aws-smithy-http-client` enables it, so a workspace-wide build flips it on
+    // for every member under feature unification while `cargo test -p
+    // aex-usage-rating` leaves it off. A `json!` literal therefore recorded an
+    // order the build does not fix. A `BTreeMap` iterates in key order under
+    // either map type, so the amounts are asserted and the ordering is not.
+    let invoice = BTreeMap::from([
+        ("handsOneHourMicrousd", hands.rounded.get()),
+        ("storageOneGibMonthMicrousd", storage.rounded.get()),
+        ("egressOneGbMicrousd", transfer.rounded.get()),
+    ]);
+    insta::assert_json_snapshot!(invoice, @r###"
     {
       "egressOneGbMicrousd": 300000,
       "handsOneHourMicrousd": 155000,
-      "storageOneGibMonthMicrousd": 250
+      "storageOneGibMonthMicrousd": 250000
     }
     "###);
 
@@ -317,7 +326,7 @@ fn book_with_rounding(rounding: &str) -> Value {
         BTreeMap::from([
             (Meter::ComputeMillicpuMs.as_str(), ("1", "14400")),
             (Meter::MemoryByteMs.as_str(), ("1", "128849018880")),
-            (Meter::StorageByteMin.as_str(), ("5", "940597837824")),
+            (Meter::StorageByteMin.as_str(), ("5000", "940597837824")),
             (Meter::DataTransferEgressByte.as_str(), ("3", "10000")),
         ]),
     )

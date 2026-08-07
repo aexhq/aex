@@ -18,8 +18,11 @@ use aex_wire::cursor::Cursor;
 use aex_wire::models::{ApiErrorBody, ObservationFrame, ObservationFrameRotate, RotateReason};
 use bytes::Bytes;
 use futures::stream::BoxStream;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
+
+use crate::counters::{ReadCounter, ReadCounters};
 
 /// How many frames may be buffered before the producer is back-pressured.
 pub const DEFAULT_CHANNEL_FRAMES: usize = 8;
@@ -44,6 +47,7 @@ pub struct FrameSender {
     sender: mpsc::Sender<Result<Bytes, FrameError>>,
     sent: Option<Cursor>,
     write_stall: Duration,
+    counters: Arc<ReadCounters>,
 }
 
 impl FrameSender {
@@ -62,16 +66,22 @@ impl FrameSender {
                 reason: error.to_string(),
             }),
         };
-        let ok = tokio::time::timeout(self.write_stall, self.sender.send(encoded))
-            .await
-            .is_ok_and(|result| result.is_ok());
-        if ok {
+        // A stalled transport and a departed reader both stop the producer, but
+        // only one of them is a capacity signal, so they are counted apart here
+        // rather than inferred from a shared `false`.
+        let Ok(accepted) = tokio::time::timeout(self.write_stall, self.sender.send(encoded)).await
+        else {
+            self.counters.record(ReadCounter::WriteStall);
+            return false;
+        };
+        if accepted.is_ok() {
             // The cursor is adopted only after the whole frame was accepted.
             if let Some(cursor) = cursor {
                 self.sent = Some(cursor);
             }
+            return true;
         }
-        ok
+        false
     }
 
     /// The cursor of the last fully written frame.
@@ -83,7 +93,11 @@ impl FrameSender {
 
 /// Opens one frame stream and its producer.
 #[must_use]
-pub fn channel(capacity: usize, write_stall: Duration) -> (FrameSender, FrameStream) {
+pub fn channel(
+    capacity: usize,
+    write_stall: Duration,
+    counters: Arc<ReadCounters>,
+) -> (FrameSender, FrameStream) {
     let (sender, receiver) = mpsc::channel(capacity.max(1));
     let stream = futures::StreamExt::boxed(tokio_stream_of(receiver));
     (
@@ -91,6 +105,7 @@ pub fn channel(capacity: usize, write_stall: Duration) -> (FrameSender, FrameStr
             sender,
             sent: None,
             write_stall,
+            counters,
         },
         stream,
     )
@@ -137,6 +152,8 @@ fn frame_cursor(frame: &ObservationFrame) -> Option<Cursor> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use aex_wire::cursor::Cursor;
     use aex_wire::models::{
         ObservationCoverage, ObservationFrame, ObservationFrameCursor, RotateReason,
@@ -145,9 +162,14 @@ mod tests {
     use futures::StreamExt as _;
 
     use super::{channel, rotate};
+    use crate::counters::{ReadCounter, ReadCounters};
 
     fn test_channel() -> (super::FrameSender, super::FrameStream) {
-        channel(8, std::time::Duration::from_secs(1))
+        channel(
+            8,
+            std::time::Duration::from_secs(1),
+            Arc::new(ReadCounters::default()),
+        )
     }
 
     #[tokio::test]
@@ -183,13 +205,41 @@ mod tests {
 
     #[tokio::test]
     async fn a_dropped_reader_stops_the_producer_rather_than_failing_it() {
-        let (mut sender, stream) = test_channel();
+        let counters = Arc::new(ReadCounters::default());
+        let (mut sender, stream) =
+            channel(8, std::time::Duration::from_secs(1), Arc::clone(&counters));
         drop(stream);
         let frame = rotate(None, RotateReason::ServerRotating, false);
         assert!(
             !sender.send(&frame).await,
             "a gone reader is a stop signal, not an error"
         );
+        assert_eq!(
+            counters.total(ReadCounter::WriteStall),
+            0,
+            "a reader that left is not a stalled transport"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_transport_that_never_accepts_a_frame_is_counted_as_a_stall() {
+        let counters = Arc::new(ReadCounters::default());
+        let (mut sender, _stream) = channel(
+            1,
+            std::time::Duration::from_millis(10),
+            Arc::clone(&counters),
+        );
+        let frame = rotate(None, RotateReason::ServerRotating, false);
+        assert!(
+            sender.send(&frame).await,
+            "the first frame fills the buffer"
+        );
+
+        assert!(
+            !sender.send(&frame).await,
+            "a full buffer past the stall budget stops the producer"
+        );
+        assert_eq!(counters.total(ReadCounter::WriteStall), 1);
     }
 
     #[test]

@@ -35,6 +35,9 @@ use aex_wire::server::{
 };
 use aex_wire::types::{DecimalU128, Region, Timestamp};
 
+use crate::counters::{ReadCounter, ReadCounters};
+use crate::frontier::{Frontier, ScopeDeletionState};
+use crate::gap_watch::{CycleTrigger, GapObservation, GapWatch};
 use crate::ndjson::{self, FrameStream};
 use crate::query;
 use crate::reader::{ObservationReader, ReadError};
@@ -75,6 +78,9 @@ pub struct StreamPolicy {
     pub heartbeat: Duration,
     /// Interval between mutable authorization projection checks.
     pub authorization_check: Duration,
+    /// How long a socket trusts an unchanged gap-change hint before reading the
+    /// gap ledger anyway.
+    pub gap_recovery: Duration,
     /// Whole frames admitted to one connection's bounded channel.
     pub buffered_frames: usize,
     /// Longest wait to hand one whole frame to the transport.
@@ -96,6 +102,7 @@ impl std::fmt::Debug for StreamPolicy {
             .field("poll_max", &self.poll_max)
             .field("heartbeat", &self.heartbeat)
             .field("authorization_check", &self.authorization_check)
+            .field("gap_recovery", &self.gap_recovery)
             .field("buffered_frames", &self.buffered_frames)
             .field("write_stall", &self.write_stall)
             .field("wakes", &self.wakes.is_some())
@@ -127,6 +134,7 @@ impl StreamPolicy {
             poll_max: LISTEN_POLL_MAX,
             heartbeat: LISTEN_HEARTBEAT,
             authorization_check: LISTEN_HEARTBEAT,
+            gap_recovery: crate::gap_watch::GAP_RECOVERY_INTERVAL,
             buffered_frames: crate::ndjson::DEFAULT_CHANNEL_FRAMES,
             write_stall: Duration::from_secs(10),
             draining: Arc::new(AtomicBool::new(false)),
@@ -419,6 +427,7 @@ impl ObservationRequest {
         let (sender, stream) = ndjson::channel(
             self.service.stream.buffered_frames,
             self.service.stream.write_stall,
+            Arc::clone(self.service.reader.counters()),
         );
         let service = Arc::clone(&self.service);
         let wake = service
@@ -984,11 +993,32 @@ struct Produce {
     follow: bool,
     after: Option<OrderTuple>,
     resume: Option<aex_observation_query::ObservationResume>,
-    frontier: crate::reader::Frontier,
+    frontier: Frontier,
     request_id: aex_wire::types::RequestId,
     wake: Option<crate::wake::WakeSubscription>,
     authorization: aex_regional_http::context::RegionalAuthorization,
     seen_gaps: std::collections::BTreeMap<TelemetryGapId, u64>,
+}
+
+/// Counts one producer's lifetime against the process's read accounting.
+///
+/// A producer returns from about a dozen places, and a disconnect is one of
+/// them. Binding the close to `Drop` is what makes "sockets opened" and "sockets
+/// closed" reconcile on every exit path rather than on the ones somebody
+/// remembered.
+struct SocketLifetime(Arc<ReadCounters>);
+
+impl SocketLifetime {
+    fn open(counters: &Arc<ReadCounters>) -> Self {
+        counters.record(ReadCounter::SocketOpened);
+        Self(Arc::clone(counters))
+    }
+}
+
+impl Drop for SocketLifetime {
+    fn drop(&mut self) {
+        self.0.record(ReadCounter::SocketClosed);
+    }
 }
 
 /// Streams pages as whole frames, then rotates.
@@ -1001,9 +1031,13 @@ struct Produce {
     reason = "one socket state machine keeps replay, renewal, heartbeat, wake and terminal-frame ordering auditable"
 )]
 async fn produce(mut task: Produce) {
+    let _socket = SocketLifetime::open(task.service.reader.counters());
     let deadline = std::time::Instant::now() + task.service.stream.connection_budget;
     let mut after = task.after;
     let mut resume = task.resume;
+    let mut gap_watch = GapWatch::new(task.service.stream.gap_recovery);
+    let mut trigger = CycleTrigger::Fallback;
+    let mut gaps = Vec::new();
     let mut poll_delay = task.service.stream.poll_min;
     let mut next_heartbeat = std::time::Instant::now() + task.service.stream.heartbeat;
     // Revalidate once before the first authoritative read, then periodically.
@@ -1032,6 +1066,10 @@ async fn produce(mut task: Produce) {
             return;
         }
         if std::time::Instant::now() >= next_authorization_check {
+            task.service
+                .reader
+                .counters()
+                .record(ReadCounter::AuthorizationRenewal);
             if let Err(error) = task
                 .service
                 .stream
@@ -1050,25 +1088,29 @@ async fn produce(mut task: Produce) {
             next_authorization_check =
                 std::time::Instant::now() + task.service.stream.authorization_check;
         }
+        // A cycle that does not refresh the frontier has no hint to consult:
+        // a finite walk pins one snapshot for all of its pages.
+        let mut gap_change = None;
         if task.follow {
             let refreshed = async {
                 let current = now()?;
-                let frontier = task
+                let bundle = task
                     .service
                     .reader
-                    .frontier(&task.scope, task.workspace, &task.normalized)
+                    .frontier_bundle(&task.scope, task.workspace, &task.normalized)
                     .await
                     .map_err(|error| read_error(&error))?;
+                let frontier = bundle.combine(&task.normalized);
                 ensure_queryable(&task.scope, frontier.deletion_state)?;
                 let snapshot = task
                     .service
                     .reader
                     .pin(frontier, current)
                     .ok_or_else(|| WireError::new(ErrorCode::ObservabilityUnavailable))?;
-                Ok::<_, WireError>((frontier, snapshot))
+                Ok::<_, WireError>((frontier, snapshot, bundle.gap_change))
             }
             .await;
-            let Ok((frontier, snapshot)) = refreshed else {
+            let Ok((frontier, snapshot, change)) = refreshed else {
                 let cursor = task.sender.sent().cloned();
                 let _ = task
                     .sender
@@ -1097,13 +1139,26 @@ async fn produce(mut task: Produce) {
                 return;
             };
             task.binding.snapshot = token;
+            gap_change = Some(change);
         }
-        let Ok(gaps) = task
-            .service
-            .reader
-            .gap_history(&task.scope, task.workspace, task.snapshot)
-            .await
-        else {
+        // The hint decides only whether the ledger is worth reading; the ledger
+        // it last returned still decides what the coverage and gap frames below
+        // say. A cycle that reuses is a cycle that proved nothing was appended.
+        let observation = gap_change.map_or(GapObservation::Pinned, |change| {
+            GapObservation::Observed { change, trigger }
+        });
+        let read = gap_watch
+            .gap_history(
+                observation,
+                task.service.reader.counters(),
+                std::time::Instant::now(),
+                gaps,
+                task.service
+                    .reader
+                    .gap_history(&task.scope, task.workspace, task.snapshot),
+            )
+            .await;
+        let Ok(current) = read else {
             let cursor = task.sender.sent().cloned();
             let _ = task
                 .sender
@@ -1115,6 +1170,7 @@ async fn produce(mut task: Produce) {
                 .await;
             return;
         };
+        gaps = current;
         let current_coverage = match query::coverage(
             task.snapshot,
             task.frontier.accepted_at,
@@ -1178,6 +1234,12 @@ async fn produce(mut task: Produce) {
                 .await;
             return;
         };
+        let counters = task.service.reader.counters();
+        counters.add(
+            ReadCounter::RecordsReturned,
+            page.items.len().try_into().unwrap_or(u64::MAX),
+        );
+        counters.add(ReadCounter::BytesReturned, page.spend.bytes_read);
         let more = page.more;
         let page_resume = page.resume.clone();
         let progressed = !page.items.is_empty();
@@ -1308,6 +1370,19 @@ async fn produce(mut task: Produce) {
             tokio::time::sleep(wait).await;
             false
         };
+        // A wake is a latency hint and never authority, so both paths run the
+        // same authoritative cycle next. They are counted apart only so the
+        // hint's contribution to the cycle rate is measurable.
+        task.service.reader.counters().record(if woke {
+            ReadCounter::WakePoll
+        } else {
+            ReadCounter::FallbackPoll
+        });
+        trigger = if woke {
+            CycleTrigger::Wake
+        } else {
+            CycleTrigger::Fallback
+        };
         if woke {
             poll_delay = task.service.stream.poll_min;
         }
@@ -1378,9 +1453,7 @@ fn unreachable_timestamp() -> Timestamp {
 }
 
 /// Applies the authoritative deletion fence after any cursor epoch comparison.
-fn ensure_queryable(scope: &ScopeKey, state: crate::reader::ScopeDeletionState) -> WireResult<()> {
-    use crate::reader::ScopeDeletionState;
-
+fn ensure_queryable(scope: &ScopeKey, state: ScopeDeletionState) -> WireResult<()> {
     match (scope, state) {
         (_, ScopeDeletionState::Open) => Ok(()),
         (ScopeKey::Session(_), ScopeDeletionState::Deleting) => {
@@ -1908,9 +1981,24 @@ mod tests {
     use aex_wire::types::Timestamp;
 
     use super::{
-        GRANT_LIFETIME, LISTEN_BUDGET, bind_metric_selection, export_status, gap_to_wire,
-        listen_window, unseen_gaps, window_for,
+        GRANT_LIFETIME, LISTEN_BUDGET, SocketLifetime, bind_metric_selection, export_status,
+        gap_to_wire, listen_window, unseen_gaps, window_for,
     };
+    use crate::counters::{ReadCounter, ReadCounters};
+
+    #[test]
+    fn a_producer_that_ends_for_any_reason_closes_exactly_one_socket() {
+        // A producer returns from a dozen places, disconnect included. Binding
+        // the close to the guard's `Drop` is what makes the two counters
+        // reconcile without every exit path remembering to.
+        let counters = std::sync::Arc::new(ReadCounters::default());
+        {
+            let _socket = SocketLifetime::open(&counters);
+            assert_eq!(counters.total(ReadCounter::SocketOpened), 1);
+            assert_eq!(counters.total(ReadCounter::SocketClosed), 0);
+        }
+        assert_eq!(counters.total(ReadCounter::SocketClosed), 1);
+    }
 
     fn gap() -> GapRecord {
         let workspace =

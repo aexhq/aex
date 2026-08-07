@@ -13,6 +13,7 @@ mod admission;
 mod authority;
 mod config;
 mod mount;
+mod staging;
 
 use std::sync::Arc;
 

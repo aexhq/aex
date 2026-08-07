@@ -868,9 +868,13 @@ mod tests {
             ),
             (
                 "session-authority",
+                // `BatchGetItem` is the batched frontier bundle: one follow cycle
+                // reads the session head beside every signal frontier in one
+                // request, which spans both authorities.
                 strings(&[
                     "dynamodb:DescribeTable",
                     "dynamodb:GetItem",
+                    "dynamodb:BatchGetItem",
                     "dynamodb:Query",
                 ]),
                 strings(&["table", "index/*"]),
@@ -940,9 +944,13 @@ mod tests {
             ),
             (
                 "session-authority",
+                // `BatchGetItem` is the batched frontier bundle: a session-scoped
+                // query reads the session head beside every signal frontier in
+                // one request, which spans both authorities.
                 strings(&[
                     "dynamodb:DescribeTable",
                     "dynamodb:GetItem",
+                    "dynamodb:BatchGetItem",
                     "dynamodb:Query",
                 ]),
                 strings(&["table", "index/*"]),

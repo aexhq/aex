@@ -474,14 +474,26 @@ fn projection_error(failure: ProjectionError) -> WireError {
 ///
 /// Every cryptographic and semantic refusal collapses into one
 /// `unauthenticated`, so a caller cannot distinguish "wrong key" from "expired"
-/// from "revoked" by probing. Only the two conditions a caller should retry are
+/// from "revoked" by probing. Only the conditions a caller should retry are
 /// separated out.
+///
+/// The match is exhaustive rather than defaulted: a new failure that nobody
+/// classified would otherwise reach a caller as `unauthenticated`, which tells a
+/// customer their credential is bad when the truth may be that this process was
+/// busy. A new variant breaks this function instead.
 fn auth_error(failure: AuthFailure) -> WireError {
     match failure {
-        AuthFailure::SourceUnavailable => WireError::new(ErrorCode::AuthenticationUnavailable),
+        // Transient and retryable: identity could not be established right now,
+        // and nothing was decided about the credential itself.
+        AuthFailure::SourceUnavailable
+        | AuthFailure::FlightCapacity
+        | AuthFailure::FlightCancelled => WireError::new(ErrorCode::AuthenticationUnavailable),
         AuthFailure::AccountStateUnavailable => WireError::new(ErrorCode::AccountStateUnavailable),
         AuthFailure::CacheBudget => WireError::new(ErrorCode::InternalError),
-        _ => WireError::new(ErrorCode::Unauthenticated),
+        AuthFailure::MalformedCredential
+        | AuthFailure::MalformedAssertion
+        | AuthFailure::Refused
+        | AuthFailure::Verification(_) => WireError::new(ErrorCode::Unauthenticated),
     }
 }
 

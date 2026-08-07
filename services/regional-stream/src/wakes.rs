@@ -12,10 +12,6 @@ use std::time::Duration;
 use aex_observation_domain::keys::ScopeKey;
 use aex_wire::ids::{SessionId, WorkspaceId};
 use aws_sdk_dynamodb::types::AttributeValue as TableAttribute;
-// The bare `Display` of an SDK error is the outermost frame only, which reads as
-// "service error" and names neither the operation nor the cause. Every one of
-// these sites is the only record that a wake reader is failing.
-use aws_sdk_dynamodbstreams::error::DisplayErrorContext;
 use aws_sdk_dynamodbstreams::types::{
     AttributeValue, Record, Shard, ShardIteratorType, StreamStatus, StreamViewType,
 };
@@ -214,7 +210,7 @@ async fn read_shard(
             eprintln!(
                 "regional-stream: cannot acquire {:?} shard iterator: {}",
                 spec.authority,
-                DisplayErrorContext(&iterator.expect_err("the result is known to be an error"))
+                iterator.expect_err("the result is known to be an error")
             );
             tokio::time::sleep(retry).await;
             retry = retry.saturating_mul(2).min(RETRY_MAX);
@@ -241,7 +237,7 @@ async fn read_shard(
                 eprintln!(
                     "regional-stream: {:?} wake read degraded: {}",
                     spec.authority,
-                    DisplayErrorContext(&result.expect_err("the result is known to be an error"))
+                    result.expect_err("the result is known to be an error")
                 );
                 break;
             };

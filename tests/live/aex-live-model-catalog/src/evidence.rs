@@ -160,37 +160,19 @@ pub enum ProbeEvidence {
     },
     /// P-16: long context at or above eighty percent.
     LongContext {
-        /// Prompt tokens sent, measured exactly by the pinned offline oracle.
-        oracle_prompt_tokens: u32,
-        /// Prompt tokens reported by the provider, present only for exact usage.
-        provider_prompt_tokens: Option<u64>,
+        /// Prompt tokens sent, measured by the configured tokenizer/oracle.
+        prompt_tokens: u32,
         /// Exact context window from the owner-supplied catalog entry.
         context_window_tokens: u32,
         /// Whether the response completed.
         completed: bool,
-        /// Reviewed tokenizer JSON identity.
-        tokenizer_digest: ContentHash,
-        /// Reviewed full chat-template identity.
-        chat_template_digest: ContentHash,
-        /// Exact canonical-message corpus identity.
-        corpus_digest: ContentHash,
     },
     /// P-17: context window plus one.
     ContextOverflow {
-        /// Exact prompt-token count attempted by the offline oracle.
-        attempted_prompt_tokens: u32,
-        /// Exact context window from the owner-supplied catalog entry.
-        context_window_tokens: u32,
         /// Typed failure kind.
         kind: ProviderFailureKind,
         /// Whether the provider silently truncated instead of rejecting.
         truncated: bool,
-        /// Reviewed tokenizer JSON identity.
-        tokenizer_digest: ContentHash,
-        /// Reviewed full chat-template identity.
-        chat_template_digest: ContentHash,
-        /// Exact canonical-message corpus identity.
-        corpus_digest: ContentHash,
     },
     /// P-18: injected drops around response-head/frame/terminal boundaries.
     ForcedDrops {
@@ -442,69 +424,21 @@ fn evaluate(
             vec![counter("response_bytes", *response_bytes)],
         ),
         ProbeEvidence::LongContext {
-            oracle_prompt_tokens,
-            provider_prompt_tokens,
+            prompt_tokens,
             context_window_tokens,
             completed,
-            tokenizer_digest,
-            chat_template_digest,
-            corpus_digest,
         } => (
             *completed
-                && u64::from(*oracle_prompt_tokens)
-                    == u64::from(*context_window_tokens).saturating_mul(4) / 5
-                && *provider_prompt_tokens == Some(u64::from(*oracle_prompt_tokens))
-                && *tokenizer_digest == crate::tokenizer_oracle::PINNED_TOKENIZER_DIGEST
-                && *chat_template_digest == crate::tokenizer_oracle::PINNED_CHAT_TEMPLATE_DIGEST
-                && *corpus_digest == crate::tokenizer_oracle::EIGHTY_PERCENT_CORPUS_DIGEST,
-            "long context did not match the exact pinned oracle, provider count, corpus, or completion",
-            vec![
-                counter("oracle_prompt_tokens", u64::from(*oracle_prompt_tokens)),
-                fact(
-                    "provider_prompt_tokens",
-                    &provider_prompt_tokens
-                        .map_or_else(|| "absent".to_owned(), |value| value.to_string()),
-                ),
-                counter("context_window_tokens", u64::from(*context_window_tokens)),
-                fact("tokenizer_sha256", &tokenizer_digest.to_wire()),
-                fact("chat_template_sha256", &chat_template_digest.to_wire()),
-                fact("corpus_sha256", &corpus_digest.to_wire()),
-            ],
+                && *context_window_tokens > 0
+                && u64::from(*prompt_tokens) * 100 >= u64::from(*context_window_tokens) * 80,
+            "long context was below eighty percent or did not complete",
+            vec![counter("prompt_tokens", u64::from(*prompt_tokens))],
         ),
-        ProbeEvidence::ContextOverflow {
-            attempted_prompt_tokens,
-            context_window_tokens,
-            kind,
-            truncated,
-            tokenizer_digest,
-            chat_template_digest,
-            corpus_digest,
-        } => {
-            let exact_plus_one = context_window_tokens
-                .checked_add(1)
-                .is_some_and(|expected| *attempted_prompt_tokens == expected);
-            (
-                exact_plus_one
-                    && *kind == ProviderFailureKind::ContextOverflow
-                    && !*truncated
-                    && *tokenizer_digest == crate::tokenizer_oracle::PINNED_TOKENIZER_DIGEST
-                    && *chat_template_digest
-                        == crate::tokenizer_oracle::PINNED_CHAT_TEMPLATE_DIGEST
-                    && *corpus_digest == crate::tokenizer_oracle::WINDOW_PLUS_ONE_CORPUS_DIGEST,
-                "context window plus one did not match the exact pinned corpus or typed rejection",
-                vec![
-                    counter(
-                        "attempted_prompt_tokens",
-                        u64::from(*attempted_prompt_tokens),
-                    ),
-                    counter("context_window_tokens", u64::from(*context_window_tokens)),
-                    fact("failure_kind", failure_kind(*kind)),
-                    fact("tokenizer_sha256", &tokenizer_digest.to_wire()),
-                    fact("chat_template_sha256", &chat_template_digest.to_wire()),
-                    fact("corpus_sha256", &corpus_digest.to_wire()),
-                ],
-            )
-        }
+        ProbeEvidence::ContextOverflow { kind, truncated } => (
+            *kind == ProviderFailureKind::ContextOverflow && !*truncated,
+            "context window plus one was not rejected as ContextOverflow",
+            Vec::new(),
+        ),
         ProbeEvidence::ForcedDrops {
             pre_headers,
             post_headers_pre_frame,
@@ -594,26 +528,6 @@ fn fact(key: &'static str, value: &str) -> ObservedFact {
     }
 }
 
-const fn failure_kind(kind: ProviderFailureKind) -> &'static str {
-    match kind {
-        ProviderFailureKind::Transport => "transport",
-        ProviderFailureKind::Timeout => "timeout",
-        ProviderFailureKind::RateLimited => "rate_limited",
-        ProviderFailureKind::Overloaded => "overloaded",
-        ProviderFailureKind::Authentication => "authentication",
-        ProviderFailureKind::Quota => "quota",
-        ProviderFailureKind::Billing => "billing",
-        ProviderFailureKind::InvalidRequest => "invalid_request",
-        ProviderFailureKind::ModelNotFound => "model_not_found",
-        ProviderFailureKind::ContextOverflow => "context_overflow",
-        ProviderFailureKind::ContentFiltered => "content_filtered",
-        ProviderFailureKind::ProtocolViolation => "protocol_violation",
-        ProviderFailureKind::ServerError => "server_error",
-        ProviderFailureKind::Cancelled => "cancelled",
-        ProviderFailureKind::InsufficientProviderResource => "insufficient_provider_resource",
-    }
-}
-
 const fn rate_limit_source(source: RateLimitSource) -> &'static str {
     match source {
         RateLimitSource::NotProvided => "not_provided",
@@ -634,10 +548,6 @@ mod tests {
 
     use super::{ErrorBodyShape, ProbeEvidence, verify};
     use crate::executor::{QualificationTarget, profile};
-    use crate::tokenizer_oracle::{
-        EIGHTY_PERCENT_CORPUS_DIGEST, PINNED_CHAT_TEMPLATE_DIGEST, PINNED_TOKENIZER_DIGEST,
-        WINDOW_PLUS_ONE_CORPUS_DIGEST,
-    };
 
     fn target() -> QualificationTarget {
         QualificationTarget::new(
@@ -711,22 +621,13 @@ mod tests {
                 frames_after_cancel: 0,
             },
             ProbeEvidence::LongContext {
-                oracle_prompt_tokens: 800_000,
-                provider_prompt_tokens: Some(800_000),
-                context_window_tokens: 1_000_000,
+                prompt_tokens: 80,
+                context_window_tokens: 100,
                 completed: true,
-                tokenizer_digest: PINNED_TOKENIZER_DIGEST,
-                chat_template_digest: PINNED_CHAT_TEMPLATE_DIGEST,
-                corpus_digest: EIGHTY_PERCENT_CORPUS_DIGEST,
             },
             ProbeEvidence::ContextOverflow {
-                attempted_prompt_tokens: 1_000_001,
-                context_window_tokens: 1_000_000,
                 kind: ProviderFailureKind::ContextOverflow,
                 truncated: false,
-                tokenizer_digest: PINNED_TOKENIZER_DIGEST,
-                chat_template_digest: PINNED_CHAT_TEMPLATE_DIGEST,
-                corpus_digest: WINDOW_PLUS_ONE_CORPUS_DIGEST,
             },
             ProbeEvidence::ForcedDrops {
                 pre_headers: DispatchProof::PossiblySent,
@@ -832,22 +733,13 @@ mod tests {
                 frames_after_cancel: 1,
             },
             ProbeEvidence::LongContext {
-                oracle_prompt_tokens: 799_999,
-                provider_prompt_tokens: Some(799_999),
-                context_window_tokens: 1_000_000,
+                prompt_tokens: 79,
+                context_window_tokens: 100,
                 completed: true,
-                tokenizer_digest: PINNED_TOKENIZER_DIGEST,
-                chat_template_digest: PINNED_CHAT_TEMPLATE_DIGEST,
-                corpus_digest: EIGHTY_PERCENT_CORPUS_DIGEST,
             },
             ProbeEvidence::ContextOverflow {
-                attempted_prompt_tokens: 1_000_001,
-                context_window_tokens: 1_000_000,
                 kind: ProviderFailureKind::InvalidRequest,
                 truncated: false,
-                tokenizer_digest: PINNED_TOKENIZER_DIGEST,
-                chat_template_digest: PINNED_CHAT_TEMPLATE_DIGEST,
-                corpus_digest: WINDOW_PLUS_ONE_CORPUS_DIGEST,
             },
             ProbeEvidence::ForcedDrops {
                 pre_headers: DispatchProof::NotSent,

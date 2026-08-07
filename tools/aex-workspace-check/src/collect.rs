@@ -115,14 +115,22 @@ impl Collected {
                 let meta = package.raw_meta.as_ref()?;
                 let targets = meta.get("targets")?.as_object()?;
                 let enabled = self.default_test_targets.get(&package.name)?;
-                Some((
-                    package.name.clone(),
-                    targets
-                        .keys()
-                        .filter(|target| include_feature_gated || enabled.contains(target.as_str()))
-                        .cloned()
-                        .collect::<Vec<String>>(),
-                ))
+                // Sorted explicitly. A `serde_json::Map` iterates in key order
+                // only while `preserve_order` is off, and that feature is not
+                // ours to control: `aws-smithy-http-client` enables it, as does
+                // `serde_with` via `aws_lambda_events`. A workspace-wide build
+                // therefore hands us an insertion-ordered `IndexMap` and yields
+                // manifest order, while `cargo test -p aex-workspace-check`
+                // yields key order. Without this sort the `flake-empty-target`
+                // violations built from this list come out in an order that
+                // depends on which crates happen to share the build.
+                let mut names = targets
+                    .keys()
+                    .filter(|target| include_feature_gated || enabled.contains(target.as_str()))
+                    .cloned()
+                    .collect::<Vec<String>>();
+                names.sort();
+                Some((package.name.clone(), names))
             })
             .filter(|(_, targets): &(String, Vec<String>)| !targets.is_empty())
             .collect()

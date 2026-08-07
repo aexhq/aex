@@ -91,7 +91,7 @@ variable "runtime_platform" {
 variable "desired_count" {
   type        = number
   default     = 1
-  description = "Number of tasks. `brain-mux` is pinned to 1 until the multi-task session-affinity decision lands: a second task would take sessions it holds no state for."
+  description = "Number of tasks. `brain-mux` runs at least two in the production plane and exactly one in development. Session state is not held by the task: the journal, the lease/fence and the work and wake state are the authority, so a second task takes work it can serve. Stable task affinity is an accelerator over that authority, never a correctness condition."
 
   validation {
     condition     = var.desired_count >= 1 && var.desired_count <= 100
@@ -99,8 +99,13 @@ variable "desired_count" {
   }
 
   validation {
-    condition     = var.name != "brain-mux" || var.desired_count == 1
-    error_message = "`brain-mux` is pinned to a single task until the multi-task session-affinity decision lands."
+    condition     = var.name != "brain-mux" || !startswith(var.task_definition_family, "aex-prd-") || var.desired_count >= 2
+    error_message = "Production `brain-mux` must run at least two tasks. A single task is one point of loss for a workload whose state authority is already durable."
+  }
+
+  validation {
+    condition     = var.name != "brain-mux" || !startswith(var.task_definition_family, "aex-dev-") || var.desired_count == 1
+    error_message = "Development `brain-mux` runs exactly one task."
   }
 }
 
@@ -194,8 +199,11 @@ variable "autoscaling_bounds" {
   }
 
   validation {
-    condition     = var.name != "brain-mux" || var.autoscaling_bounds.max_capacity == 1
-    error_message = "`brain-mux` is pinned to a single task, so its autoscaling ceiling must also be 1."
+    condition = var.name != "brain-mux" || (
+      var.autoscaling_bounds.min_capacity == var.desired_count
+      && var.autoscaling_bounds.max_capacity == var.desired_count
+    )
+    error_message = "`brain-mux` runs a static task floor for the first alpha, so both capacity bounds must equal its desired count. Concurrency is raised on measured evidence, never by a scaling policy."
   }
 
   validation {
