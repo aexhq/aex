@@ -72,7 +72,7 @@ pub use pause::{
     pause_gate, project_account,
 };
 pub use run::{
-    DomainError, InterruptReason, QueueRun, Run, RunCommit, RunError, RunOutcome, RunStatus, queue,
+    DomainError, InterruptReason, QueueRun, Run, RunCommit, SessionDomainRunError, RunOutcome, RunStatus, queue,
     start,
 };
 pub use session::{

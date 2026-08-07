@@ -31,7 +31,7 @@ use aex_hands_protocol::operation::GuestRoot;
 
 /// Why `hands-agent` refused to start.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ConfigError {
+pub enum HandsAgentConfigError {
     /// A required variable was absent or empty.
     #[error("required environment variable `{name}` is missing")]
     Missing {
@@ -50,10 +50,10 @@ pub enum ConfigError {
 
 /// Why `hands-agent` stopped.
 #[derive(Debug, thiserror::Error)]
-pub enum RunError {
+pub enum HandsAgentRunError {
     /// Start-up configuration was rejected.
     #[error(transparent)]
-    Config(#[from] ConfigError),
+    Config(#[from] HandsAgentConfigError),
     /// The journal could not be opened or replayed.
     #[error("the operation journal is unusable: {0}")]
     Journal(#[from] aex_hands_agent::journal::JournalError),
@@ -85,8 +85,8 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// See [`ConfigError`].
-    pub fn from_env() -> Result<Self, ConfigError> {
+    /// See [`HandsAgentConfigError`].
+    pub fn from_env() -> Result<Self, HandsAgentConfigError> {
         Self::from_lookup(|name| std::env::var(name).ok())
     }
 
@@ -94,22 +94,22 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// See [`ConfigError`].
-    pub fn from_lookup<F>(lookup: F) -> Result<Self, ConfigError>
+    /// See [`HandsAgentConfigError`].
+    pub fn from_lookup<F>(lookup: F) -> Result<Self, HandsAgentConfigError>
     where
         F: Fn(&str) -> Option<String>,
     {
         let raw_listen = required(&lookup, LISTEN_ADDR_VAR)?;
         let listen = raw_listen
             .parse::<std::net::SocketAddr>()
-            .map_err(|error| ConfigError::Invalid {
+            .map_err(|error| HandsAgentConfigError::Invalid {
                 name: LISTEN_ADDR_VAR,
                 reason: format!("`{raw_listen}` is not a socket address: {error}"),
             })?;
         let journal_root = required(&lookup, JOURNAL_ROOT_VAR)?;
         let guest_root = required(&lookup, GUEST_ROOT_VAR)?;
         if !guest_root.starts_with('/') {
-            return Err(ConfigError::Invalid {
+            return Err(HandsAgentConfigError::Invalid {
                 name: GUEST_ROOT_VAR,
                 reason: format!("`{guest_root}` is not an absolute path"),
             });
@@ -123,13 +123,13 @@ impl Config {
 }
 
 /// A required, non-blank value.
-fn required<F>(lookup: &F, name: &'static str) -> Result<String, ConfigError>
+fn required<F>(lookup: &F, name: &'static str) -> Result<String, HandsAgentConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     match lookup(name) {
         Some(value) if !value.trim().is_empty() => Ok(value),
-        _ => Err(ConfigError::Missing { name }),
+        _ => Err(HandsAgentConfigError::Missing { name }),
     }
 }
 
@@ -152,8 +152,8 @@ fn agent_build() -> [u8; 8] {
 ///
 /// # Errors
 ///
-/// Returns [`RunError::Journal`] when the journal tree cannot be created.
-pub fn compose(config: &Config) -> Result<Arc<serve::Guest>, RunError> {
+/// Returns [`HandsAgentRunError::Journal`] when the journal tree cannot be created.
+pub fn compose(config: &Config) -> Result<Arc<serve::Guest>, HandsAgentRunError> {
     let journal = Journal::open(&config.journal_root)?;
     let executor = execute::Executor::new(Arc::new(host::HostRunner), config.guest_root.clone());
     Ok(Arc::new(serve::Guest::new(
@@ -168,11 +168,11 @@ pub fn compose(config: &Config) -> Result<Arc<serve::Guest>, RunError> {
 ///
 /// # Errors
 ///
-/// See [`RunError`].
+/// See [`HandsAgentRunError`].
 pub async fn run(
     config: &Config,
     telemetry: &aex_platform_telemetry::Handle,
-) -> Result<(), RunError> {
+) -> Result<(), HandsAgentRunError> {
     telemetry.emit(
         aex_platform_telemetry::Record::event(
             aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
@@ -185,12 +185,12 @@ pub async fn run(
     let guest = compose(config)?;
     let listener = tokio::net::TcpListener::bind(config.listen)
         .await
-        .map_err(|error| RunError::Listener {
+        .map_err(|error| HandsAgentRunError::Listener {
             reason: format!("cannot bind {}: {error}", config.listen),
         })?;
     axum::serve(listener, serve::router(guest))
         .await
-        .map_err(|error| RunError::Listener {
+        .map_err(|error| HandsAgentRunError::Listener {
             reason: error.to_string(),
         })
 }
@@ -227,7 +227,7 @@ async fn main() -> std::process::ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{Config, ConfigError, agent_build, compose};
+    use super::{Config, HandsAgentConfigError, agent_build, compose};
     use aex_hands_agent::boot::{
         GUEST_ROOT, GUEST_ROOT_VAR, JOURNAL_ROOT_VAR, LISTEN_ADDR, LISTEN_ADDR_VAR, REQUIRED_VARS,
     };
@@ -241,7 +241,7 @@ mod tests {
         ])
     }
 
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
+    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, HandsAgentConfigError> {
         Config::from_lookup(|name| vars.get(name).cloned())
     }
 
@@ -254,7 +254,7 @@ mod tests {
         for name in REQUIRED_VARS {
             let mut vars = complete("/var/lib/aex/hands");
             vars.remove(name);
-            assert_eq!(read(&vars), Err(ConfigError::Missing { name }));
+            assert_eq!(read(&vars), Err(HandsAgentConfigError::Missing { name }));
         }
     }
 
@@ -279,7 +279,7 @@ mod tests {
         relative.insert(GUEST_ROOT_VAR, "workspace".to_owned());
         assert!(matches!(
             read(&relative),
-            Err(ConfigError::Invalid {
+            Err(HandsAgentConfigError::Invalid {
                 name: GUEST_ROOT_VAR,
                 ..
             })
@@ -289,7 +289,7 @@ mod tests {
         listen.insert(LISTEN_ADDR_VAR, "not-an-address".to_owned());
         assert!(matches!(
             read(&listen),
-            Err(ConfigError::Invalid {
+            Err(HandsAgentConfigError::Invalid {
                 name: LISTEN_ADDR_VAR,
                 ..
             })

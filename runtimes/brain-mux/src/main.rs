@@ -75,7 +75,7 @@ pub struct Config {
 
 /// Why `brain-mux` refused to start.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ConfigError {
+pub enum BrainMuxConfigError {
     /// A required variable was absent or empty.
     #[error("required environment variable `{name}` is missing")]
     Missing {
@@ -94,10 +94,10 @@ pub enum ConfigError {
 
 /// Why `brain-mux` stopped.
 #[derive(Debug, thiserror::Error)]
-pub enum RunError {
+pub enum BrainMuxRunError {
     /// Start-up configuration was rejected.
     #[error(transparent)]
-    Config(#[from] ConfigError),
+    Config(#[from] BrainMuxConfigError),
     /// The configuration does not compose into a usable process.
     #[error(transparent)]
     Composition(#[from] compose::CompositionError),
@@ -169,10 +169,10 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError::Missing`] when a required variable is absent or
-    /// empty, and [`ConfigError::Invalid`] when a variable is present but does
+    /// Returns [`BrainMuxConfigError::Missing`] when a required variable is absent or
+    /// empty, and [`BrainMuxConfigError::Invalid`] when a variable is present but does
     /// not parse or is outside its permitted set.
-    pub fn from_env() -> Result<Self, ConfigError> {
+    pub fn from_env() -> Result<Self, BrainMuxConfigError> {
         Self::from_lookup(|name| std::env::var(name).ok())
     }
 
@@ -184,13 +184,13 @@ impl Config {
     /// # Errors
     ///
     /// Identical to [`Config::from_env`].
-    pub fn from_lookup<F>(lookup: F) -> Result<Self, ConfigError>
+    pub fn from_lookup<F>(lookup: F) -> Result<Self, BrainMuxConfigError>
     where
         F: Fn(&str) -> Option<String>,
     {
         let plane = required(&lookup, PLANE_VAR)?;
         if !PLANES.contains(&plane.as_str()) {
-            return Err(ConfigError::Invalid {
+            return Err(BrainMuxConfigError::Invalid {
                 name: PLANE_VAR,
                 reason: format!("expected one of {PLANES:?}, got `{plane}`"),
             });
@@ -200,7 +200,7 @@ impl Config {
             .iter()
             .any(|candidate| candidate.as_str() == region)
         {
-            return Err(ConfigError::Invalid {
+            return Err(BrainMuxConfigError::Invalid {
                 name: REGION_VAR,
                 reason: format!("unsupported regional placement `{region}`"),
             });
@@ -220,7 +220,7 @@ impl Config {
         let usage_compute_queue_url = endpoint(&lookup, USAGE_COMPUTE_QUEUE_VAR, &region)?;
         let usage_storage_queue_url = endpoint(&lookup, USAGE_STORAGE_QUEUE_VAR, &region)?;
         if usage_compute_queue_url == usage_storage_queue_url {
-            return Err(ConfigError::Invalid {
+            return Err(BrainMuxConfigError::Invalid {
                 name: USAGE_STORAGE_QUEUE_VAR,
                 reason: "compute and storage usage authorities cannot share one queue".to_owned(),
             });
@@ -228,7 +228,7 @@ impl Config {
         let runtime_due_shards = positive(&lookup, RUNTIME_DUE_SHARDS_VAR)?;
         let runtime_due_page_items = positive(&lookup, RUNTIME_DUE_PAGE_ITEMS_VAR)?;
         if runtime_due_page_items > 32 {
-            return Err(ConfigError::Invalid {
+            return Err(BrainMuxConfigError::Invalid {
                 name: RUNTIME_DUE_PAGE_ITEMS_VAR,
                 reason: "must be at most 32 so one due page fits one provider-await wave"
                     .to_owned(),
@@ -239,12 +239,12 @@ impl Config {
         let raw_budget = required(&lookup, BUDGET_VAR)?;
         let budget = raw_budget
             .parse::<u32>()
-            .map_err(|error| ConfigError::Invalid {
+            .map_err(|error| BrainMuxConfigError::Invalid {
                 name: BUDGET_VAR,
                 reason: format!("expected a positive integer, got `{raw_budget}`: {error}"),
             })?;
         if budget == 0 {
-            return Err(ConfigError::Invalid {
+            return Err(BrainMuxConfigError::Invalid {
                 name: BUDGET_VAR,
                 reason: "expected a positive integer, got `0`".to_owned(),
             });
@@ -304,7 +304,7 @@ impl Config {
     }
 }
 
-fn validate_kms_arn(name: &'static str, value: &str, region: &str) -> Result<(), ConfigError> {
+fn validate_kms_arn(name: &'static str, value: &str, region: &str) -> Result<(), BrainMuxConfigError> {
     let parts = value.splitn(6, ':').collect::<Vec<_>>();
     let expected_partition = if region.starts_with("cn-") {
         "aws-cn"
@@ -323,31 +323,31 @@ fn validate_kms_arn(name: &'static str, value: &str, region: &str) -> Result<(),
     if valid {
         Ok(())
     } else {
-        Err(ConfigError::Invalid {
+        Err(BrainMuxConfigError::Invalid {
             name,
             reason: format!("expected a KMS key ARN in `{region}`"),
         })
     }
 }
 
-fn validate_account_id(name: &'static str, value: &str) -> Result<(), ConfigError> {
+fn validate_account_id(name: &'static str, value: &str) -> Result<(), BrainMuxConfigError> {
     if value.len() == 12 && value.bytes().all(|byte| byte.is_ascii_digit()) {
         Ok(())
     } else {
-        Err(ConfigError::Invalid {
+        Err(BrainMuxConfigError::Invalid {
             name,
             reason: "expected a 12-digit AWS account id".to_owned(),
         })
     }
 }
 
-fn endpoint<F>(lookup: &F, name: &'static str, region: &str) -> Result<String, ConfigError>
+fn endpoint<F>(lookup: &F, name: &'static str, region: &str) -> Result<String, BrainMuxConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     let value = required(lookup, name)?;
     if !value.starts_with("https://") || !value.contains(region) {
-        return Err(ConfigError::Invalid {
+        return Err(BrainMuxConfigError::Invalid {
             name,
             reason: format!("expected an https endpoint in `{region}`, got `{value}`"),
         });
@@ -355,19 +355,19 @@ where
     Ok(value)
 }
 
-fn positive<F, T>(lookup: &F, name: &'static str) -> Result<T, ConfigError>
+fn positive<F, T>(lookup: &F, name: &'static str) -> Result<T, BrainMuxConfigError>
 where
     F: Fn(&str) -> Option<String>,
     T: core::str::FromStr + PartialEq + Default,
     T::Err: core::fmt::Display,
 {
     let raw = required(lookup, name)?;
-    let value = raw.parse::<T>().map_err(|error| ConfigError::Invalid {
+    let value = raw.parse::<T>().map_err(|error| BrainMuxConfigError::Invalid {
         name,
         reason: format!("expected a positive integer, got `{raw}`: {error}"),
     })?;
     if value == T::default() {
-        return Err(ConfigError::Invalid {
+        return Err(BrainMuxConfigError::Invalid {
             name,
             reason: "expected a positive integer, got `0`".to_owned(),
         });
@@ -375,13 +375,13 @@ where
     Ok(value)
 }
 
-fn required<F>(lookup: &F, name: &'static str) -> Result<String, ConfigError>
+fn required<F>(lookup: &F, name: &'static str) -> Result<String, BrainMuxConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     match lookup(name) {
         Some(value) if !value.trim().is_empty() => Ok(value),
-        _ => Err(ConfigError::Missing { name }),
+        _ => Err(BrainMuxConfigError::Missing { name }),
     }
 }
 
@@ -389,10 +389,10 @@ where
 ///
 /// # Errors
 ///
-/// [`RunError::Composition`] when the admission bands or the memory split do not hold
+/// [`BrainMuxRunError::Composition`] when the admission bands or the memory split do not hold
 /// together. Both fail startup rather than at the moment the over-commitment matters, which
 /// is always the worst moment.
-pub fn compose(config: &Config) -> Result<compose::Composition, RunError> {
+pub fn compose(config: &Config) -> Result<compose::Composition, BrainMuxRunError> {
     let bounds = admission::AdmissionBounds {
         target: config.budget,
         safety_cap: config.budget.saturating_mul(2),
@@ -418,7 +418,7 @@ pub fn compose(config: &Config) -> Result<compose::Composition, RunError> {
         runtime::RuntimeShape::for_parallelism(task_shape::task_parallelism()),
         policy,
     )
-    .map_err(RunError::Composition)
+    .map_err(BrainMuxRunError::Composition)
 }
 
 /// Runs `brain-mux` until it stops.
@@ -429,9 +429,9 @@ pub fn compose(config: &Config) -> Result<compose::Composition, RunError> {
 ///
 /// # Errors
 ///
-/// [`RunError::Composition`] when the configuration does not compose, and
-/// [`RunError::Runtime`] when a runtime or the health listener cannot be created.
-pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Result<(), RunError> {
+/// [`BrainMuxRunError::Composition`] when the configuration does not compose, and
+/// [`BrainMuxRunError::Runtime`] when a runtime or the health listener cannot be created.
+pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Result<(), BrainMuxRunError> {
     // Readiness starts false and is never defaulted true: a process that reported ready
     // before validating its bindings would admit work it cannot serve.
     let composition = std::sync::Arc::new(compose(config)?);
@@ -455,7 +455,7 @@ pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Resul
         .enable_all()
         .thread_name("brain-mux-worker")
         .build()
-        .map_err(|error| RunError::Runtime {
+        .map_err(|error| BrainMuxRunError::Runtime {
             reason: format!("the main runtime could not start: {error}"),
         })?;
 
@@ -492,7 +492,7 @@ pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Resul
     let control = std::thread::Builder::new()
         .name("brain-mux-control".to_owned())
         .spawn(move || serve_health(&health))
-        .map_err(|error| RunError::Runtime {
+        .map_err(|error| BrainMuxRunError::Runtime {
             reason: format!("the control thread could not start: {error}"),
         })?;
 
@@ -530,7 +530,7 @@ pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Resul
 fn resolve_production_ports(
     config: &Config,
     runtime: &tokio::runtime::Runtime,
-) -> Result<ProductionBindings, RunError> {
+) -> Result<ProductionBindings, BrainMuxRunError> {
     // One SDK configuration feeds every AWS client. Per-request tenant authority still comes
     // from each durable ticket; no workspace state is installed on the process.
     let aws = runtime.block_on(wake::aws_bindings(
@@ -563,7 +563,7 @@ fn resolve_production_ports(
             region: config.region.clone(),
         },
     )
-    .map_err(|error| RunError::Runtime {
+    .map_err(|error| BrainMuxRunError::Runtime {
         reason: format!("production fold-snapshot binding failed: {error}"),
     })?;
     let hands = wake::hands_binding(
@@ -579,7 +579,7 @@ fn resolve_production_ports(
             pricing_version: config.pricing_version.clone(),
         },
     )
-    .map_err(|error| RunError::Runtime {
+    .map_err(|error| BrainMuxRunError::Runtime {
         reason: format!("production Hands binding failed: {error}"),
     })?;
 
@@ -617,17 +617,17 @@ fn resolve_production_ports(
 }
 
 fn bind_release_catalog()
--> Result<std::sync::Arc<aex_brain_provider_gateway::catalog_port::VerifiedCatalogPort>, RunError> {
+-> Result<std::sync::Arc<aex_brain_provider_gateway::catalog_port::VerifiedCatalogPort>, BrainMuxRunError> {
     // Catalog authority is build/release scoped, never tenant or runtime-env
     // scoped. The exact collection and bounded publisher trust-root set are
     // compiled together and the entire retained chain verifies before lookup.
     let now = aex_wire::types::Timestamp::from_datetime_trunc_ms(time::OffsetDateTime::now_utc())
-        .map_err(|error| RunError::Runtime {
+        .map_err(|error| BrainMuxRunError::Runtime {
         reason: format!("the startup clock is outside the catalog timestamp range: {error}"),
     })?;
     release_catalog::load(now)
         .map(std::sync::Arc::new)
-        .map_err(|error| RunError::Runtime {
+        .map_err(|error| BrainMuxRunError::Runtime {
             reason: format!("production model-catalog binding failed: {error}"),
         })
 }
@@ -1030,7 +1030,7 @@ fn main() -> std::process::ExitCode {
 mod tests {
     use super::{
         BUDGET_VAR, CONTENT_BUCKET_VAR, CONTENT_EXPECTED_OWNER_VAR, CONTENT_KMS_KEY_ARN_VAR,
-        Config, ConfigError, PLANE_VAR, PRICING_VERSION_VAR, REGION_VAR, RESOURCE_VAR,
+        Config, BrainMuxConfigError, PLANE_VAR, PRICING_VERSION_VAR, REGION_VAR, RESOURCE_VAR,
         RUNTIME_ACTIVITY_TABLE_VAR, RUNTIME_DUE_PAGE_ITEMS_VAR, RUNTIME_DUE_PAGE_READS_VAR,
         RUNTIME_DUE_SHARDS_VAR, SECRET_CUSTODY_TABLE_VAR, SECRET_KMS_KEY_ARN_VAR,
         USAGE_COMPUTE_QUEUE_VAR, USAGE_STORAGE_QUEUE_VAR, WAKE_QUEUE_VAR, WORK_TABLE_VAR, compose,
@@ -1086,7 +1086,7 @@ mod tests {
         ])
     }
 
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
+    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, BrainMuxConfigError> {
         Config::from_lookup(|name| vars.get(name).cloned())
     }
 
@@ -1197,7 +1197,7 @@ mod tests {
             vars.remove(name);
             assert_eq!(
                 read(&vars),
-                Err(ConfigError::Missing { name }),
+                Err(BrainMuxConfigError::Missing { name }),
                 "removing {name}"
             );
         }
@@ -1209,7 +1209,7 @@ mod tests {
         vars.insert(RESOURCE_VAR, "   ".to_owned());
         assert_eq!(
             read(&vars),
-            Err(ConfigError::Missing { name: RESOURCE_VAR })
+            Err(BrainMuxConfigError::Missing { name: RESOURCE_VAR })
         );
     }
 
@@ -1221,7 +1221,7 @@ mod tests {
         assert!(
             matches!(
                 error,
-                ConfigError::Invalid {
+                BrainMuxConfigError::Invalid {
                     name: PLANE_VAR,
                     ..
                 }
@@ -1236,7 +1236,7 @@ mod tests {
         vars.insert(REGION_VAR, "eu-central-1".to_owned());
         assert!(matches!(
             read(&vars),
-            Err(ConfigError::Invalid {
+            Err(BrainMuxConfigError::Invalid {
                 name: REGION_VAR,
                 ..
             })
@@ -1252,7 +1252,7 @@ mod tests {
         );
         assert!(matches!(
             read(&vars),
-            Err(ConfigError::Invalid {
+            Err(BrainMuxConfigError::Invalid {
                 name: SECRET_KMS_KEY_ARN_VAR,
                 ..
             })
@@ -1267,7 +1267,7 @@ mod tests {
         assert!(
             matches!(
                 error,
-                ConfigError::Invalid {
+                BrainMuxConfigError::Invalid {
                     name: BUDGET_VAR,
                     ..
                 }
@@ -1284,7 +1284,7 @@ mod tests {
         assert!(
             matches!(
                 error,
-                ConfigError::Invalid {
+                BrainMuxConfigError::Invalid {
                     name: BUDGET_VAR,
                     ..
                 }

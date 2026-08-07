@@ -1,7 +1,7 @@
 //! Validated start-up configuration for `session-operation-worker`.
 
 use aex_regional_http::config::{
-    ConfigError, Lookup, bounded_u64, bounded_usize, forbidden, plane_name, queue_url, region,
+    RegionalHttpConfigError, Lookup, bounded_u64, bounded_usize, forbidden, plane_name, queue_url, region,
     required,
 };
 use aex_wire::types::Region;
@@ -119,8 +119,8 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// Returns the first [`ConfigError`], naming the offending variable.
-    pub fn from_env() -> Result<Self, ConfigError> {
+    /// Returns the first [`RegionalHttpConfigError`], naming the offending variable.
+    pub fn from_env() -> Result<Self, RegionalHttpConfigError> {
         Self::read(&aex_regional_http::config::Environment)
     }
 
@@ -129,7 +129,7 @@ impl Config {
     /// # Errors
     ///
     /// Identical to [`Config::from_env`].
-    pub fn read<L: Lookup + ?Sized>(lookup: &L) -> Result<Self, ConfigError> {
+    pub fn read<L: Lookup + ?Sized>(lookup: &L) -> Result<Self, RegionalHttpConfigError> {
         for (name, reason) in FORBIDDEN {
             forbidden(lookup, name, DEPLOYABLE, reason)?;
         }
@@ -137,12 +137,12 @@ impl Config {
         let region = region(lookup, REGION)?;
         let max_attempts = bounded_usize(lookup, MAX_ATTEMPTS, 1, 64)?;
         let strict_max_attempts =
-            usize::try_from(crate::MAX_ATTEMPTS).map_err(|_| ConfigError::Invalid {
+            usize::try_from(crate::MAX_ATTEMPTS).map_err(|_| RegionalHttpConfigError::Invalid {
                 name: MAX_ATTEMPTS,
                 reason: "the strict-v1 poison boundary does not fit this target".to_owned(),
             })?;
         if max_attempts != strict_max_attempts {
-            return Err(ConfigError::Invalid {
+            return Err(RegionalHttpConfigError::Invalid {
                 name: MAX_ATTEMPTS,
                 reason: format!(
                     "must equal the strict-v1 poison boundary ({})",
@@ -152,7 +152,7 @@ impl Config {
         }
         let due_scan_shards = bounded_u64(lookup, DUE_SCAN_SHARDS, 1, 4_096)?;
         if due_scan_shards != aex_work_dynamodb::keys::DUE_SHARDS {
-            return Err(ConfigError::Invalid {
+            return Err(RegionalHttpConfigError::Invalid {
                 name: DUE_SCAN_SHARDS,
                 reason: format!(
                     "must equal the regional-work contract ({})",
@@ -178,13 +178,13 @@ impl Config {
             denial_projection_table: required(lookup, DENIAL_PROJECTION_TABLE)?,
             due_scan_shards,
             lease_ms: i64::try_from(bounded_u64(lookup, LEASE_MS, 1_000, 900_000)?).map_err(
-                |_| ConfigError::Invalid {
+                |_| RegionalHttpConfigError::Invalid {
                     name: LEASE_MS,
                     reason: "lease does not fit a signed millisecond clock".to_owned(),
                 },
             )?,
             step_deadline_ms: bounded_u64(lookup, STEP_DEADLINE_MS, 1_000, 900_000)?,
-            max_attempts: u32::try_from(max_attempts).map_err(|_| ConfigError::Invalid {
+            max_attempts: u32::try_from(max_attempts).map_err(|_| RegionalHttpConfigError::Invalid {
                 name: MAX_ATTEMPTS,
                 reason: "attempt ceiling does not fit a 32-bit counter".to_owned(),
             })?,

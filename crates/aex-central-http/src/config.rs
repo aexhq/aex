@@ -139,7 +139,7 @@ pub fn central_groups() -> Vec<RouteGroup> {
 
 /// Why a composition refused to start.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ConfigError {
+pub enum CentralHttpConfigError {
     /// The deployment plane was not `dev` or `prd`.
     #[error("`{0}` is not a deployment plane")]
     UnknownPlane(String),
@@ -191,7 +191,7 @@ impl HttpConfig {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError`] naming the first value it refused. There is no
+    /// Returns [`CentralHttpConfigError`] naming the first value it refused. There is no
     /// partially valid configuration: a process either has every value or does
     /// not start.
     pub fn resolve(
@@ -200,23 +200,23 @@ impl HttpConfig {
         service: &str,
         max_json_body_bytes: u64,
         request_deadline_ms: u64,
-    ) -> Result<Self, ConfigError> {
+    ) -> Result<Self, CentralHttpConfigError> {
         let plane = DeploymentPlane::parse(plane)
-            .ok_or_else(|| ConfigError::UnknownPlane(plane.to_owned()))?;
+            .ok_or_else(|| CentralHttpConfigError::UnknownPlane(plane.to_owned()))?;
         let region = Region::from_name(region)
-            .ok_or_else(|| ConfigError::UnknownRegion(region.to_owned()))?;
+            .ok_or_else(|| CentralHttpConfigError::UnknownRegion(region.to_owned()))?;
         let service = CentralServiceId::parse(service)
-            .ok_or_else(|| ConfigError::UnknownService(service.to_owned()))?;
+            .ok_or_else(|| CentralHttpConfigError::UnknownService(service.to_owned()))?;
         let max = u64::try_from(Self::MAX_JSON_BODY_BYTES).unwrap_or(u64::MAX);
         if max_json_body_bytes == 0 || max_json_body_bytes > max {
-            return Err(ConfigError::OutOfRange {
+            return Err(CentralHttpConfigError::OutOfRange {
                 key: "max_json_body_bytes",
                 found: max_json_body_bytes,
                 max,
             });
         }
         if request_deadline_ms == 0 || request_deadline_ms > Self::MAX_REQUEST_DEADLINE_MS {
-            return Err(ConfigError::OutOfRange {
+            return Err(CentralHttpConfigError::OutOfRange {
                 key: "request_deadline_ms",
                 found: request_deadline_ms,
                 max: Self::MAX_REQUEST_DEADLINE_MS,
@@ -238,7 +238,7 @@ impl HttpConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::{CentralServiceId, ConfigError, DeploymentPlane, HttpConfig, central_groups};
+    use super::{CentralServiceId, CentralHttpConfigError, DeploymentPlane, HttpConfig, central_groups};
     use aex_wire::routes::{Plane, ROUTES, RouteId};
     use aex_wire::server::RouteGroup;
     use std::collections::BTreeSet;
@@ -331,26 +331,26 @@ mod tests {
         );
         assert_eq!(
             HttpConfig::resolve("staging", "eu-west-1", "central-control-api", 1, 1),
-            Err(ConfigError::UnknownPlane("staging".to_owned()))
+            Err(CentralHttpConfigError::UnknownPlane("staging".to_owned()))
         );
         assert_eq!(
             HttpConfig::resolve("dev", "mars-central-1", "central-control-api", 1, 1),
-            Err(ConfigError::UnknownRegion("mars-central-1".to_owned()))
+            Err(CentralHttpConfigError::UnknownRegion("mars-central-1".to_owned()))
         );
         assert_eq!(
             HttpConfig::resolve("dev", "eu-west-1", "brain-mux", 1, 1),
-            Err(ConfigError::UnknownService("brain-mux".to_owned()))
+            Err(CentralHttpConfigError::UnknownService("brain-mux".to_owned()))
         );
         assert!(matches!(
             HttpConfig::resolve("dev", "eu-west-1", "central-authz", 0, 1),
-            Err(ConfigError::OutOfRange {
+            Err(CentralHttpConfigError::OutOfRange {
                 key: "max_json_body_bytes",
                 ..
             })
         ));
         assert!(matches!(
             HttpConfig::resolve("dev", "eu-west-1", "central-authz", 1, 60_000),
-            Err(ConfigError::OutOfRange {
+            Err(CentralHttpConfigError::OutOfRange {
                 key: "request_deadline_ms",
                 ..
             })

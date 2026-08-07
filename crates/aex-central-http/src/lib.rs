@@ -27,7 +27,7 @@ pub mod target;
 
 pub use authorizer::{CentralAuthorizerContext, ContextError, ContextPrincipalKind};
 pub use capability::{CompositionError, CompositionManifest, ResolvedConfig, admit};
-pub use config::{CentralServiceId, ConfigError, DeploymentPlane, HttpConfig, central_groups};
+pub use config::{CentralServiceId, CentralHttpConfigError, DeploymentPlane, HttpConfig, central_groups};
 pub use cursor::{PageBinding, next_cursor, page_request};
 pub use error::EdgeError;
 pub use headers::DeclaredHeaders;

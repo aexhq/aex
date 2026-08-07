@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use aex_regional_http::config::ConfigError;
+use aex_regional_http::config::RegionalHttpConfigError;
 use aex_regional_http::router::RouteOwner;
 use aex_wire::routes::{Plane, TransportKind, route};
 use regional_stream::config::{self, Config, WakeMode};
@@ -82,7 +82,7 @@ fn streaming() -> BTreeMap<&'static str, String> {
     vars
 }
 
-fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
+fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, RegionalHttpConfigError> {
     Config::read(&|name: &str| vars.get(name).cloned())
 }
 
@@ -108,7 +108,7 @@ fn every_required_variable_is_required() {
         missing.remove(name);
         let error = read(&missing).expect_err("a missing variable refuses the process");
         assert!(
-            matches!(error, ConfigError::Missing { name: reported } if reported == name),
+            matches!(error, RegionalHttpConfigError::Missing { name: reported } if reported == name),
             "removing {name} reported {error:?}"
         );
     }
@@ -119,7 +119,7 @@ fn ddb_streams_refuses_a_third_reader_task() {
     let mut vars = streaming();
     vars.insert(config::STREAM_MAX_TASKS, "3".to_owned());
     let error = read(&vars).expect_err("a third shard reader is refused");
-    let ConfigError::Invalid { name, reason } = error else {
+    let RegionalHttpConfigError::Invalid { name, reason } = error else {
         panic!("expected an invalid-value refusal");
     };
     assert_eq!(name, config::STREAM_MAX_TASKS);
@@ -136,7 +136,7 @@ fn ddb_streams_requires_both_authority_streams() {
     vars.remove(config::SESSION_TABLE_STREAM_ARN);
     assert!(matches!(
         read(&vars),
-        Err(ConfigError::Missing { name }) if name == config::SESSION_TABLE_STREAM_ARN
+        Err(RegionalHttpConfigError::Missing { name }) if name == config::SESSION_TABLE_STREAM_ARN
     ));
 }
 
@@ -146,7 +146,7 @@ fn ddb_streams_requires_an_endpoint_specific_private_origin() {
     missing.remove(config::DYNAMODB_STREAMS_ENDPOINT_URL);
     assert!(matches!(
         read(&missing),
-        Err(ConfigError::Missing { name }) if name == config::DYNAMODB_STREAMS_ENDPOINT_URL
+        Err(RegionalHttpConfigError::Missing { name }) if name == config::DYNAMODB_STREAMS_ENDPOINT_URL
     ));
 
     let mut public = streaming();
@@ -156,7 +156,7 @@ fn ddb_streams_requires_an_endpoint_specific_private_origin() {
     );
     assert!(matches!(
         read(&public),
-        Err(ConfigError::Invalid { name, .. }) if name == config::DYNAMODB_STREAMS_ENDPOINT_URL
+        Err(RegionalHttpConfigError::Invalid { name, .. }) if name == config::DYNAMODB_STREAMS_ENDPOINT_URL
     ));
 }
 
@@ -166,7 +166,7 @@ fn a_total_below_a_class_budget_refuses_the_process() {
     vars.insert(config::STREAM_MAX_CONNECTIONS, "500".to_owned());
     assert!(matches!(
         read(&vars),
-        Err(ConfigError::Invalid { name, .. }) if name == config::STREAM_MAX_CONNECTIONS
+        Err(RegionalHttpConfigError::Invalid { name, .. }) if name == config::STREAM_MAX_CONNECTIONS
     ));
 }
 
@@ -179,7 +179,7 @@ fn the_stream_cannot_be_bound_to_a_queue_a_work_table_or_a_secret_key() {
         assert!(
             matches!(
                 error,
-                ConfigError::Forbidden { name: reported, deployable, .. }
+                RegionalHttpConfigError::Forbidden { name: reported, deployable, .. }
                     if reported == name && deployable == config::DEPLOYABLE
             ),
             "binding {name} reported {error:?}"

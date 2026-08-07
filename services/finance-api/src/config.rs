@@ -88,7 +88,7 @@ pub struct Config {
 
 /// Why `finance-api` refused to start.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ConfigError {
+pub enum FinanceApiConfigError {
     /// A required variable was absent or blank.
     #[error("required environment variable `{name}` is missing")]
     Missing {
@@ -110,10 +110,10 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError::Missing`] naming the first absent or blank
-    /// variable, and [`ConfigError::Invalid`] naming the first variable whose
+    /// Returns [`FinanceApiConfigError::Missing`] naming the first absent or blank
+    /// variable, and [`FinanceApiConfigError::Invalid`] naming the first variable whose
     /// value does not parse or is outside its permitted set.
-    pub fn from_env() -> Result<Self, ConfigError> {
+    pub fn from_env() -> Result<Self, FinanceApiConfigError> {
         Self::from_lookup(|name| std::env::var(name).ok())
     }
 
@@ -125,7 +125,7 @@ impl Config {
     /// # Errors
     ///
     /// Identical to [`Config::from_env`].
-    pub fn from_lookup<F>(lookup: F) -> Result<Self, ConfigError>
+    pub fn from_lookup<F>(lookup: F) -> Result<Self, FinanceApiConfigError>
     where
         F: Fn(&str) -> Option<String>,
     {
@@ -139,14 +139,14 @@ impl Config {
             .map_err(|error| invalid(DATABASE_NAME_VAR, &error))?;
         let database_role = required(&lookup, DATABASE_ROLE_VAR)?;
         if database_role != REQUIRED_ROLE {
-            return Err(ConfigError::Invalid {
+            return Err(FinanceApiConfigError::Invalid {
                 name: DATABASE_ROLE_VAR,
                 reason: format!("expected `{REQUIRED_ROLE}`, got `{database_role}`"),
             });
         }
         let command_edge_arn = required(&lookup, COMMAND_EDGE_ARN_VAR)?;
         if !command_edge_arn.starts_with("arn:") {
-            return Err(ConfigError::Invalid {
+            return Err(FinanceApiConfigError::Invalid {
                 name: COMMAND_EDGE_ARN_VAR,
                 reason: format!("expected a function ARN, got `{command_edge_arn}`"),
             });
@@ -155,19 +155,19 @@ impl Config {
         let statement_bucket = required(&lookup, STATEMENT_BUCKET_VAR)?;
         let transaction_deadline_ms = positive(&lookup, TX_DEADLINE_VAR)?;
         let page_limit = positive(&lookup, PAGE_LIMIT_VAR)?;
-        let page_limit = u32::try_from(page_limit).map_err(|_| ConfigError::Invalid {
+        let page_limit = u32::try_from(page_limit).map_err(|_| FinanceApiConfigError::Invalid {
             name: PAGE_LIMIT_VAR,
             reason: format!("expected 1..=1000, got `{page_limit}`"),
         })?;
         if page_limit > 1000 {
-            return Err(ConfigError::Invalid {
+            return Err(FinanceApiConfigError::Invalid {
                 name: PAGE_LIMIT_VAR,
                 reason: format!("the route table bounds `limit` at 1000, got `{page_limit}`"),
             });
         }
         let download_grant_ttl_ms = positive(&lookup, DOWNLOAD_GRANT_TTL_VAR)?;
         if download_grant_ttl_ms > MAX_DOWNLOAD_GRANT_TTL_MS {
-            return Err(ConfigError::Invalid {
+            return Err(FinanceApiConfigError::Invalid {
                 name: DOWNLOAD_GRANT_TTL_VAR,
                 reason: format!(
                     "OD-17 bounds a grant and its signature at {MAX_DOWNLOAD_GRANT_TTL_MS} ms, \
@@ -198,18 +198,18 @@ impl Config {
 }
 
 /// Reads a variable, treating blank as absent.
-fn required<F>(lookup: &F, name: &'static str) -> Result<String, ConfigError>
+fn required<F>(lookup: &F, name: &'static str) -> Result<String, FinanceApiConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     match lookup(name) {
         Some(value) if !value.trim().is_empty() => Ok(value.trim().to_owned()),
-        _ => Err(ConfigError::Missing { name }),
+        _ => Err(FinanceApiConfigError::Missing { name }),
     }
 }
 
 /// Reads a variable that must be one of a closed set.
-fn one_of<F>(lookup: &F, name: &'static str, permitted: &[&str]) -> Result<String, ConfigError>
+fn one_of<F>(lookup: &F, name: &'static str, permitted: &[&str]) -> Result<String, FinanceApiConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
@@ -217,7 +217,7 @@ where
     if permitted.contains(&value.as_str()) {
         Ok(value)
     } else {
-        Err(ConfigError::Invalid {
+        Err(FinanceApiConfigError::Invalid {
             name,
             reason: format!("expected one of {permitted:?}, got `{value}`"),
         })
@@ -225,17 +225,17 @@ where
 }
 
 /// Reads a variable that must be a positive integer.
-fn positive<F>(lookup: &F, name: &'static str) -> Result<u64, ConfigError>
+fn positive<F>(lookup: &F, name: &'static str) -> Result<u64, FinanceApiConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     let raw = required(lookup, name)?;
-    let parsed = raw.parse::<u64>().map_err(|error| ConfigError::Invalid {
+    let parsed = raw.parse::<u64>().map_err(|error| FinanceApiConfigError::Invalid {
         name,
         reason: format!("expected a positive integer, got `{raw}`: {error}"),
     })?;
     if parsed == 0 {
-        return Err(ConfigError::Invalid {
+        return Err(FinanceApiConfigError::Invalid {
             name,
             reason: "expected a positive integer, got `0`".to_owned(),
         });
@@ -244,8 +244,8 @@ where
 }
 
 /// Renders a peer validation failure as this deployable's own refusal.
-fn invalid(name: &'static str, error: &impl std::fmt::Display) -> ConfigError {
-    ConfigError::Invalid {
+fn invalid(name: &'static str, error: &impl std::fmt::Display) -> FinanceApiConfigError {
+    FinanceApiConfigError::Invalid {
         name,
         reason: error.to_string(),
     }
@@ -256,7 +256,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        CLUSTER_ARN_VAR, Config, ConfigError, DATABASE_ROLE_VAR, DOWNLOAD_GRANT_TTL_VAR, NAMESPACE,
+        CLUSTER_ARN_VAR, Config, FinanceApiConfigError, DATABASE_ROLE_VAR, DOWNLOAD_GRANT_TTL_VAR, NAMESPACE,
         PAGE_LIMIT_VAR, PLANE_VAR, REQUIRED_VARS,
     };
 
@@ -287,7 +287,7 @@ mod tests {
         ])
     }
 
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
+    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, FinanceApiConfigError> {
         Config::from_lookup(|name| vars.get(name).cloned())
     }
 
@@ -316,7 +316,7 @@ mod tests {
             vars.remove(name);
             assert_eq!(
                 read(&vars),
-                Err(ConfigError::Missing { name }),
+                Err(FinanceApiConfigError::Missing { name }),
                 "removing {name}"
             );
         }
@@ -328,7 +328,7 @@ mod tests {
         vars.insert(CLUSTER_ARN_VAR, "   ".to_owned());
         assert_eq!(
             read(&vars),
-            Err(ConfigError::Missing {
+            Err(FinanceApiConfigError::Missing {
                 name: CLUSTER_ARN_VAR
             })
         );
@@ -340,7 +340,7 @@ mod tests {
         vars.insert(CLUSTER_ARN_VAR, "aex-central".to_owned());
         let error = read(&vars).expect_err("a bare cluster name is not an ARN");
         assert!(
-            matches!(error, ConfigError::Invalid { name, .. } if name == CLUSTER_ARN_VAR),
+            matches!(error, FinanceApiConfigError::Invalid { name, .. } if name == CLUSTER_ARN_VAR),
             "{error:?}"
         );
     }
@@ -351,7 +351,7 @@ mod tests {
         vars.insert(DATABASE_ROLE_VAR, "aex_finance_settlement".to_owned());
         let error = read(&vars).expect_err("finance-api may only be aex_finance_api");
         assert!(
-            matches!(error, ConfigError::Invalid { name, .. } if name == DATABASE_ROLE_VAR),
+            matches!(error, FinanceApiConfigError::Invalid { name, .. } if name == DATABASE_ROLE_VAR),
             "{error:?}"
         );
     }
@@ -362,7 +362,7 @@ mod tests {
         vars.insert(PLANE_VAR, "staging".to_owned());
         let error = read(&vars).expect_err("an unknown plane is refused");
         assert!(
-            matches!(error, ConfigError::Invalid { name, .. } if name == PLANE_VAR),
+            matches!(error, FinanceApiConfigError::Invalid { name, .. } if name == PLANE_VAR),
             "{error:?}"
         );
     }
@@ -373,7 +373,7 @@ mod tests {
         vars.insert(PAGE_LIMIT_VAR, "1001".to_owned());
         let error = read(&vars).expect_err("the route table bounds `limit` at 1000");
         assert!(
-            matches!(error, ConfigError::Invalid { name, .. } if name == PAGE_LIMIT_VAR),
+            matches!(error, FinanceApiConfigError::Invalid { name, .. } if name == PAGE_LIMIT_VAR),
             "{error:?}"
         );
     }
@@ -384,7 +384,7 @@ mod tests {
         vars.insert(DOWNLOAD_GRANT_TTL_VAR, "300001".to_owned());
         let error = read(&vars).expect_err("OD-17 bounds the grant at five minutes");
         assert!(
-            matches!(error, ConfigError::Invalid { name, .. } if name == DOWNLOAD_GRANT_TTL_VAR),
+            matches!(error, FinanceApiConfigError::Invalid { name, .. } if name == DOWNLOAD_GRANT_TTL_VAR),
             "{error:?}"
         );
     }
@@ -395,7 +395,7 @@ mod tests {
         vars.insert(super::TX_DEADLINE_VAR, "0".to_owned());
         let error = read(&vars).expect_err("a zero transaction deadline is refused");
         assert!(
-            matches!(error, ConfigError::Invalid { name, .. } if name == super::TX_DEADLINE_VAR),
+            matches!(error, FinanceApiConfigError::Invalid { name, .. } if name == super::TX_DEADLINE_VAR),
             "{error:?}"
         );
     }

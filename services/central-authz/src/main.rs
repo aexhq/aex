@@ -105,7 +105,7 @@ mod keys {
 
 /// Why `central-authz` refused to start.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ConfigError {
+pub enum CentralAuthzConfigError {
     /// A required variable was absent or blank.
     #[error("required environment variable `{0}` is missing")]
     Missing(&'static str),
@@ -152,8 +152,8 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError`] naming the first variable it refused.
-    pub fn from_env() -> Result<Self, ConfigError> {
+    /// Returns [`CentralAuthzConfigError`] naming the first variable it refused.
+    pub fn from_env() -> Result<Self, CentralAuthzConfigError> {
         Self::from_lookup(|name| std::env::var(name).ok())
     }
 
@@ -165,34 +165,34 @@ impl Config {
     /// # Errors
     ///
     /// Identical to [`Config::from_env`].
-    pub fn from_lookup<F>(lookup: F) -> Result<Self, ConfigError>
+    pub fn from_lookup<F>(lookup: F) -> Result<Self, CentralAuthzConfigError>
     where
         F: Fn(&str) -> Option<String>,
     {
         let plane_raw = required(&lookup, keys::PLANE)?;
-        let plane = DeploymentPlane::parse(&plane_raw).ok_or_else(|| ConfigError::Invalid {
+        let plane = DeploymentPlane::parse(&plane_raw).ok_or_else(|| CentralAuthzConfigError::Invalid {
             name: keys::PLANE,
             reason: format!("expected `dev` or `prd`, got `{plane_raw}`"),
         })?;
         let region_raw = required(&lookup, keys::REGION)?;
-        let region = Region::from_name(&region_raw).ok_or_else(|| ConfigError::Invalid {
+        let region = Region::from_name(&region_raw).ok_or_else(|| CentralAuthzConfigError::Invalid {
             name: keys::REGION,
             reason: format!("expected a launch region, got `{region_raw}`"),
         })?;
         let role = required(&lookup, keys::ROLE)?;
         if role != REQUIRED_ROLE {
-            return Err(ConfigError::Invalid {
+            return Err(CentralAuthzConfigError::Invalid {
                 name: keys::ROLE,
                 reason: format!("this binary connects only as `{REQUIRED_ROLE}`, got `{role}`"),
             });
         }
         let raw_ttl = required(&lookup, keys::ASSERTION_TTL_MS)?;
-        let assertion_ttl_ms = raw_ttl.parse::<u64>().map_err(|_| ConfigError::Invalid {
+        let assertion_ttl_ms = raw_ttl.parse::<u64>().map_err(|_| CentralAuthzConfigError::Invalid {
             name: keys::ASSERTION_TTL_MS,
             reason: format!("expected a positive integer, got `{raw_ttl}`"),
         })?;
         if assertion_ttl_ms == 0 || assertion_ttl_ms > ASSERTION_MAX_LIFETIME_MS {
-            return Err(ConfigError::Invalid {
+            return Err(CentralAuthzConfigError::Invalid {
                 name: keys::ASSERTION_TTL_MS,
                 reason: format!(
                     "expected 1..={ASSERTION_MAX_LIFETIME_MS}, got `{assertion_ttl_ms}`"
@@ -239,13 +239,13 @@ impl Config {
     }
 }
 
-fn required<F>(lookup: &F, name: &'static str) -> Result<String, ConfigError>
+fn required<F>(lookup: &F, name: &'static str) -> Result<String, CentralAuthzConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     match lookup(name) {
         Some(value) if !value.trim().is_empty() => Ok(value),
-        _ => Err(ConfigError::Missing(name)),
+        _ => Err(CentralAuthzConfigError::Missing(name)),
     }
 }
 
@@ -512,10 +512,10 @@ pub fn issue_for_actor(
 
 /// Why `central-authz` stopped.
 #[derive(Debug, thiserror::Error)]
-pub enum RunError {
+pub enum CentralAuthzRunError {
     /// Start-up configuration was rejected.
     #[error(transparent)]
-    Config(#[from] ConfigError),
+    Config(#[from] CentralAuthzConfigError),
     /// The composition was refused before any client was opened.
     #[error(transparent)]
     Composition(#[from] aex_central_http::capability::CompositionError),
@@ -545,11 +545,11 @@ pub enum RunError {
 ///
 /// # Errors
 ///
-/// Returns [`RunError`] naming the first stage that refused.
+/// Returns [`CentralAuthzRunError`] naming the first stage that refused.
 pub async fn run(
     config: &Config,
     telemetry: &aex_platform_telemetry::Handle,
-) -> Result<(), RunError> {
+) -> Result<(), CentralAuthzRunError> {
     aex_central_http::capability::admit(&manifest(), &config.resolved())?;
     telemetry.emit(
         aex_platform_telemetry::Record::event(
@@ -572,11 +572,11 @@ pub async fn run(
     let secrets = aws_sdk_secretsmanager::Client::new(&aws);
     let data_api = aex_rds_data::DataApiConfig::new(
         aex_rds_data::ResourceArn::parse(&config.aurora_cluster_arn)
-            .map_err(|error| RunError::Startup(error.to_string()))?,
+            .map_err(|error| CentralAuthzRunError::Startup(error.to_string()))?,
         aex_rds_data::SecretArn::parse(&config.aurora_secret_arn)
-            .map_err(|error| RunError::Startup(error.to_string()))?,
+            .map_err(|error| CentralAuthzRunError::Startup(error.to_string()))?,
         aex_rds_data::DatabaseName::parse(&config.database)
-            .map_err(|error| RunError::Startup(error.to_string()))?,
+            .map_err(|error| CentralAuthzRunError::Startup(error.to_string()))?,
     );
     let transport = aex_rds_data::AwsTransport::new(aws_sdk_rdsdata::Client::new(&aws), &data_api);
     let reader = aex_control_aurora::AuroraAuthorizationReader::new(
@@ -586,7 +586,7 @@ pub async fn run(
     let (authority, probes) = compose(config, reader, &secrets).await?;
     let readiness = readiness(probes);
     if !readiness.is_ready() {
-        return Err(RunError::NotReady {
+        return Err(CentralAuthzRunError::NotReady {
             probe: unresolved(probes),
         });
     }
@@ -601,7 +601,7 @@ pub async fn run(
         },
     ))
     .await
-    .map_err(|error| RunError::Listener(error.to_string()))
+    .map_err(|error| CentralAuthzRunError::Listener(error.to_string()))
 }
 
 /// The first probe that has not answered, for the start-up refusal.
@@ -632,16 +632,16 @@ const fn unresolved(probes: Probes) -> &'static str {
 ///
 /// # Errors
 ///
-/// Returns [`RunError`] naming the first input that refused.
+/// Returns [`CentralAuthzRunError`] naming the first input that refused.
 async fn compose<R: AuthorizationReader>(
     config: &Config,
     reader: R,
     secrets: &aws_sdk_secretsmanager::Client,
-) -> Result<(AssertionAuthority<R, LocalSigner>, Probes), RunError> {
+) -> Result<(AssertionAuthority<R, LocalSigner>, Probes), CentralAuthzRunError> {
     let mut probes = Probes::NONE;
 
     let active = reader.active_signing_key().await.map_err(|error| {
-        RunError::Startup(format!("the active signing key is unreadable: {error}"))
+        CentralAuthzRunError::Startup(format!("the active signing key is unreadable: {error}"))
     })?;
     probes.read = true;
     // The role holds `rds-data:ExecuteStatement` and no transaction call at all,
@@ -655,12 +655,12 @@ async fn compose<R: AuthorizationReader>(
         .any(|permission| permission.contains("Transaction"));
 
     let verification_keys = reader.verification_key_set().await.map_err(|error| {
-        RunError::Startup(format!("the verification key set is unreadable: {error}"))
+        CentralAuthzRunError::Startup(format!("the verification key set is unreadable: {error}"))
     })?;
     probes.verification_keys = !verification_keys.is_empty();
 
     if active.secret_ref != config.signing_secret_id {
-        return Err(RunError::Secret(SecretError::UndeclaredSigningSecret {
+        return Err(CentralAuthzRunError::Secret(SecretError::UndeclaredSigningSecret {
             found: active.secret_ref,
         }));
     }
@@ -674,7 +674,7 @@ async fn compose<R: AuthorizationReader>(
         material,
     );
     if signer.public_key() != active.public_key {
-        return Err(RunError::Secret(SecretError::SigningKeyMismatch));
+        return Err(CentralAuthzRunError::Secret(SecretError::SigningKeyMismatch));
     }
     probes.signing_key = true;
 
@@ -781,7 +781,7 @@ async fn main() -> std::process::ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        Composition, Config, ConfigError, IssueRefusal, PERMISSIONS, Probes, issue_for_key, keys,
+        Composition, Config, CentralAuthzConfigError, IssueRefusal, PERMISSIONS, Probes, issue_for_key, keys,
         manifest, readiness, signer, unresolved,
     };
     use aex_central_http::capability::{
@@ -823,7 +823,7 @@ mod tests {
         ])
     }
 
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
+    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, CentralAuthzConfigError> {
         Config::from_lookup(|name| vars.get(name).cloned())
     }
 
@@ -842,7 +842,7 @@ mod tests {
             vars.remove(name);
             assert_eq!(
                 read(&vars),
-                Err(ConfigError::Missing(name)),
+                Err(CentralAuthzConfigError::Missing(name)),
                 "removing {name}"
             );
         }
@@ -852,7 +852,7 @@ mod tests {
     fn a_blank_variable_is_missing_rather_than_empty() {
         let mut vars = complete();
         vars.insert(keys::DATABASE, "   ".to_owned());
-        assert_eq!(read(&vars), Err(ConfigError::Missing(keys::DATABASE)));
+        assert_eq!(read(&vars), Err(CentralAuthzConfigError::Missing(keys::DATABASE)));
     }
 
     #[test]
@@ -860,7 +860,7 @@ mod tests {
         let mut vars = complete();
         vars.insert(keys::ROLE, "aex_control_api".to_owned());
         let error = read(&vars).expect_err("a writing role is refused");
-        assert!(matches!(error, ConfigError::Invalid { name, .. } if name == keys::ROLE));
+        assert!(matches!(error, CentralAuthzConfigError::Invalid { name, .. } if name == keys::ROLE));
     }
 
     #[test]

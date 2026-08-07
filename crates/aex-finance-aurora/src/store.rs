@@ -49,15 +49,15 @@ impl FinanceDbConfig {
     ///
     /// # Errors
     /// Rejects an empty identity or zero deadline.
-    pub fn validate(&self) -> Result<(), ConfigError> {
+    pub fn validate(&self) -> Result<(), FinanceAuroraConfigError> {
         if self.cluster_arn.trim().is_empty()
             || self.secret_arn.trim().is_empty()
             || self.database.trim().is_empty()
         {
-            return Err(ConfigError::MissingResourceIdentity);
+            return Err(FinanceAuroraConfigError::MissingResourceIdentity);
         }
         if self.transaction_deadline_ms == 0 {
-            return Err(ConfigError::ZeroDeadline);
+            return Err(FinanceAuroraConfigError::ZeroDeadline);
         }
         Ok(())
     }
@@ -65,7 +65,7 @@ impl FinanceDbConfig {
 
 /// Invalid adapter configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum ConfigError {
+pub enum FinanceAuroraConfigError {
     /// Required resource identity was empty.
     #[error("finance database resource identity is missing")]
     MissingResourceIdentity,

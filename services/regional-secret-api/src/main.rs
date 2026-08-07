@@ -17,7 +17,7 @@ use aex_regional_http::assertion::AuthFailure;
 use aex_regional_http::authz::{
     LambdaAssertionSource, ParameterStore, RegionalProjection, TrustError,
 };
-use aex_regional_http::config::ConfigError;
+use aex_regional_http::config::RegionalHttpConfigError;
 use aex_regional_http::edge::{EdgeBinding, RegionalEdge, SystemClock};
 use aex_regional_http::health::Readiness;
 use aex_regional_http::mount::{MountError, mount_unary};
@@ -34,10 +34,10 @@ const AUDIENCE: AssertionAudience = AssertionAudience::RegionalSecret;
 
 /// Why `regional-secret-api` stopped.
 #[derive(Debug, thiserror::Error)]
-enum RunError {
+enum RegionalSecretApiRunError {
     /// Start-up configuration was rejected.
     #[error(transparent)]
-    Config(#[from] ConfigError),
+    Config(#[from] RegionalHttpConfigError),
     /// Start-up key material was rejected.
     #[error(transparent)]
     Trust(#[from] TrustError),
@@ -79,7 +79,7 @@ async fn main() -> ExitCode {
 }
 
 /// Builds the real adapters, assembles the router and serves it.
-async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Result<(), RunError> {
+async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Result<(), RegionalSecretApiRunError> {
     telemetry.emit(
         aex_platform_telemetry::Record::event(
             aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
@@ -120,7 +120,7 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
     let readiness = match edge.unresolved(config) {
         unresolved if unresolved.is_empty() => Readiness::ready(config.release_digest.clone()),
         unresolved => Readiness::not_ready(config.release_digest.clone(), unresolved)
-            .map_err(|error| RunError::Runtime(error.to_string()))?,
+            .map_err(|error| RegionalSecretApiRunError::Runtime(error.to_string()))?,
     };
 
     let anchors = parameters
@@ -142,7 +142,7 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
             .merge(aex_regional_http::health::router(readiness)),
     )
     .await
-    .map_err(|error| RunError::Runtime(error.to_string()))
+    .map_err(|error| RegionalSecretApiRunError::Runtime(error.to_string()))
 }
 
 /// The shared regional edge over its three resolved inputs.
@@ -157,7 +157,7 @@ fn build_edge(
     aws: &aws_config::SdkConfig,
     dynamodb: &aws_sdk_dynamodb::Client,
     anchors: aex_identity_domain::assertion::VerificationKeySet,
-) -> Result<Edge, RunError> {
+) -> Result<Edge, RegionalSecretApiRunError> {
     let projection = aex_session_dynamodb::projection::ProjectionReader::new(
         dynamodb.clone(),
         config.authz_projection_table.clone(),
@@ -179,7 +179,7 @@ fn build_edge(
             cache_budget_bytes: config.assertion_cache_bytes,
         },
     )
-    .map_err(RunError::Edge)
+    .map_err(RegionalSecretApiRunError::Edge)
 }
 
 /// The decode bounds the generated dispatchers enforce.

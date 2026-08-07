@@ -69,7 +69,7 @@ pub const LEASE_MS_RANGE: (u64, u64) = (1_000, 900_000);
 
 /// Why `observation-export-launcher` refused to start.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
-pub enum ConfigError {
+pub enum ObservationExportLauncherConfigError {
     /// A required variable was absent or empty.
     #[error("required environment variable `{name}` is missing")]
     Missing {
@@ -119,11 +119,11 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError::Missing`] when a required variable is absent or
-    /// empty, and [`ConfigError::Invalid`] when a variable is present but does
+    /// Returns [`ObservationExportLauncherConfigError::Missing`] when a required variable is absent or
+    /// empty, and [`ObservationExportLauncherConfigError::Invalid`] when a variable is present but does
     /// not parse, is outside its permitted range, or names a resource in a
     /// region other than the one this process is bound to.
-    pub fn from_env() -> Result<Self, ConfigError> {
+    pub fn from_env() -> Result<Self, ObservationExportLauncherConfigError> {
         Self::from_lookup(|name| std::env::var(name).ok())
     }
 
@@ -135,19 +135,19 @@ impl Config {
     /// # Errors
     ///
     /// Identical to [`Config::from_env`].
-    pub fn from_lookup<F>(lookup: F) -> Result<Self, ConfigError>
+    pub fn from_lookup<F>(lookup: F) -> Result<Self, ObservationExportLauncherConfigError>
     where
         F: Fn(&str) -> Option<String>,
     {
         let plane = required(&lookup, PLANE_VAR)?;
         if !PLANES.contains(&plane.as_str()) {
-            return Err(ConfigError::Invalid {
+            return Err(ObservationExportLauncherConfigError::Invalid {
                 name: PLANE_VAR,
                 reason: format!("expected one of {PLANES:?}, got `{plane}`"),
             });
         }
         let raw_region = required(&lookup, REGION_VAR)?;
-        let region = Region::from_name(&raw_region).ok_or_else(|| ConfigError::Invalid {
+        let region = Region::from_name(&raw_region).ok_or_else(|| ObservationExportLauncherConfigError::Invalid {
             name: REGION_VAR,
             reason: format!("`{raw_region}` is not a regional plane region"),
         })?;
@@ -161,7 +161,7 @@ impl Config {
             TASK_DEFINITION_RESOURCE,
         )?;
         let export_container = task_definition_family(&export_task_definition)
-            .ok_or_else(|| ConfigError::Invalid {
+            .ok_or_else(|| ObservationExportLauncherConfigError::Invalid {
                 name: EXPORT_TASK_DEFINITION_VAR,
                 reason: format!("`{export_task_definition}` names no task-definition family"),
             })?
@@ -203,13 +203,13 @@ impl Config {
 }
 
 /// Reads a required, non-blank variable.
-fn required<F>(lookup: &F, name: &'static str) -> Result<String, ConfigError>
+fn required<F>(lookup: &F, name: &'static str) -> Result<String, ObservationExportLauncherConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     match lookup(name) {
         Some(value) if !value.trim().is_empty() => Ok(value),
-        _ => Err(ConfigError::Missing { name }),
+        _ => Err(ObservationExportLauncherConfigError::Missing { name }),
     }
 }
 
@@ -217,18 +217,18 @@ where
 ///
 /// Both ends are named in the failure, because "out of range" without the range
 /// is a message an operator cannot act on.
-fn bounded<F, T>(lookup: &F, name: &'static str, low: T, high: T) -> Result<T, ConfigError>
+fn bounded<F, T>(lookup: &F, name: &'static str, low: T, high: T) -> Result<T, ObservationExportLauncherConfigError>
 where
     F: Fn(&str) -> Option<String>,
     T: std::str::FromStr + PartialOrd + std::fmt::Display + Copy,
 {
     let raw = required(lookup, name)?;
-    let value = raw.trim().parse::<T>().map_err(|_| ConfigError::Invalid {
+    let value = raw.trim().parse::<T>().map_err(|_| ObservationExportLauncherConfigError::Invalid {
         name,
         reason: format!("expected an integer in {low}..={high}, got `{raw}`"),
     })?;
     if value < low || value > high {
-        return Err(ConfigError::Invalid {
+        return Err(ObservationExportLauncherConfigError::Invalid {
             name,
             reason: format!("expected an integer in {low}..={high}, got `{value}`"),
         });
@@ -242,12 +242,12 @@ fn ecs_arn<F>(
     name: &'static str,
     region: Region,
     resource: &'static str,
-) -> Result<String, ConfigError>
+) -> Result<String, ObservationExportLauncherConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     let value = required(lookup, name)?;
-    let invalid = |reason: String| ConfigError::Invalid { name, reason };
+    let invalid = |reason: String| ObservationExportLauncherConfigError::Invalid { name, reason };
     let mut fields = value.splitn(6, ':');
     let scheme = fields.next().unwrap_or_default();
     let partition = fields.next().unwrap_or_default();
@@ -302,12 +302,12 @@ fn id_list<F>(
     lookup: &F,
     name: &'static str,
     prefix: &'static str,
-) -> Result<Vec<String>, ConfigError>
+) -> Result<Vec<String>, ObservationExportLauncherConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     let raw = required(lookup, name)?;
-    let invalid = |reason: String| ConfigError::Invalid { name, reason };
+    let invalid = |reason: String| ObservationExportLauncherConfigError::Invalid { name, reason };
     let mut ids = Vec::new();
     for entry in raw.split(',') {
         let entry = entry.trim();
@@ -338,7 +338,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        Config, ConfigError, EXPORT_CLUSTER_VAR, EXPORT_LAUNCH_SHARDS_VAR, EXPORT_LEASE_MS_VAR,
+        Config, ObservationExportLauncherConfigError, EXPORT_CLUSTER_VAR, EXPORT_LAUNCH_SHARDS_VAR, EXPORT_LEASE_MS_VAR,
         EXPORT_MAX_CONCURRENT_VAR, EXPORT_SECURITY_GROUPS_VAR, EXPORT_SUBNETS_VAR,
         EXPORT_TASK_DEFINITION_VAR, OBSERVATION_TABLE_VAR, PLANE_VAR, REGION_VAR, REQUIRED_VARS,
         task_definition_family,
@@ -369,7 +369,7 @@ mod tests {
         ])
     }
 
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
+    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ObservationExportLauncherConfigError> {
         Config::from_lookup(|name| vars.get(name).cloned())
     }
 
@@ -397,7 +397,7 @@ mod tests {
             vars.remove(*name);
             assert_eq!(
                 read(&vars),
-                Err(ConfigError::Missing { name }),
+                Err(ObservationExportLauncherConfigError::Missing { name }),
                 "removing {name}"
             );
         }
@@ -418,7 +418,7 @@ mod tests {
         vars.insert(OBSERVATION_TABLE_VAR, "   ".to_owned());
         assert_eq!(
             read(&vars),
-            Err(ConfigError::Missing {
+            Err(ObservationExportLauncherConfigError::Missing {
                 name: OBSERVATION_TABLE_VAR
             })
         );
@@ -433,12 +433,12 @@ mod tests {
         );
         let error = read(&vars).expect_err("a cross-region cluster is refused");
         match error {
-            ConfigError::Invalid { name, reason } => {
+            ObservationExportLauncherConfigError::Invalid { name, reason } => {
                 assert_eq!(name, EXPORT_CLUSTER_VAR);
                 assert!(reason.contains("us-east-1"), "{reason}");
                 assert!(reason.contains("eu-west-1"), "{reason}");
             }
-            other @ ConfigError::Missing { .. } => {
+            other @ ObservationExportLauncherConfigError::Missing { .. } => {
                 panic!("expected an invalid-cluster failure, got {other:?}")
             }
         }
@@ -454,7 +454,7 @@ mod tests {
         );
         assert!(matches!(
             read(&vars),
-            Err(ConfigError::Invalid {
+            Err(ObservationExportLauncherConfigError::Invalid {
                 name: EXPORT_TASK_DEFINITION_VAR,
                 ..
             })
@@ -475,7 +475,7 @@ mod tests {
             assert!(
                 matches!(
                     read(&vars),
-                    Err(ConfigError::Invalid {
+                    Err(ObservationExportLauncherConfigError::Invalid {
                         name: EXPORT_CLUSTER_VAR,
                         ..
                     })
@@ -500,7 +500,7 @@ mod tests {
             assert!(
                 matches!(
                     read(&vars),
-                    Err(ConfigError::Invalid {
+                    Err(ObservationExportLauncherConfigError::Invalid {
                         name: EXPORT_SUBNETS_VAR,
                         ..
                     })
@@ -519,7 +519,7 @@ mod tests {
         vars.insert(EXPORT_SECURITY_GROUPS_VAR, String::new());
         assert_eq!(
             read(&vars),
-            Err(ConfigError::Missing {
+            Err(ObservationExportLauncherConfigError::Missing {
                 name: EXPORT_SECURITY_GROUPS_VAR
             })
         );
@@ -528,7 +528,7 @@ mod tests {
         vars.insert(EXPORT_SECURITY_GROUPS_VAR, ",".to_owned());
         assert!(matches!(
             read(&vars),
-            Err(ConfigError::Invalid {
+            Err(ObservationExportLauncherConfigError::Invalid {
                 name: EXPORT_SECURITY_GROUPS_VAR,
                 ..
             })
@@ -547,7 +547,7 @@ mod tests {
                 vars.insert(name, value.to_owned());
                 let error = read(&vars).expect_err("out of range");
                 assert!(
-                    matches!(error, ConfigError::Invalid { name: named, .. } if named == name),
+                    matches!(error, ObservationExportLauncherConfigError::Invalid { name: named, .. } if named == name),
                     "`{name}` = `{value}` produced {error:?}"
                 );
             }
@@ -560,7 +560,7 @@ mod tests {
         vars.insert(PLANE_VAR, "staging".to_owned());
         assert!(matches!(
             read(&vars),
-            Err(ConfigError::Invalid {
+            Err(ObservationExportLauncherConfigError::Invalid {
                 name: PLANE_VAR,
                 ..
             })
@@ -569,7 +569,7 @@ mod tests {
         vars.insert(REGION_VAR, "eu-central-9".to_owned());
         assert!(matches!(
             read(&vars),
-            Err(ConfigError::Invalid {
+            Err(ObservationExportLauncherConfigError::Invalid {
                 name: REGION_VAR,
                 ..
             })

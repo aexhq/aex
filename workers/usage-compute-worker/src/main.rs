@@ -64,7 +64,7 @@ pub struct Config {
 
 /// Why `usage-compute-worker` refused to start.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ConfigError {
+pub enum UsageComputeWorkerConfigError {
     /// A required variable was absent or empty.
     #[error("required environment variable `{name}` is missing")]
     Missing {
@@ -98,10 +98,10 @@ pub enum ConfigError {
 
 /// Why `usage-compute-worker` stopped.
 #[derive(Debug, thiserror::Error)]
-pub enum RunError {
+pub enum UsageComputeWorkerRunError {
     /// Start-up configuration was rejected.
     #[error(transparent)]
-    Config(#[from] ConfigError),
+    Config(#[from] UsageComputeWorkerConfigError),
     /// An incoming event could not be classified.
     #[error(transparent)]
     Dispatch(#[from] DispatchError),
@@ -254,11 +254,11 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// [`ConfigError::Missing`] for an absent or blank variable,
-    /// [`ConfigError::Invalid`] for one that does not parse, and
-    /// [`ConfigError::ChargingGate`] when the billing mode and the rating queue
+    /// [`UsageComputeWorkerConfigError::Missing`] for an absent or blank variable,
+    /// [`UsageComputeWorkerConfigError::Invalid`] for one that does not parse, and
+    /// [`UsageComputeWorkerConfigError::ChargingGate`] when the billing mode and the rating queue
     /// disagree.
-    pub fn from_env() -> Result<Self, ConfigError> {
+    pub fn from_env() -> Result<Self, UsageComputeWorkerConfigError> {
         Self::from_lookup(|name| std::env::var(name).ok())
     }
 
@@ -270,19 +270,19 @@ impl Config {
     /// # Errors
     ///
     /// Identical to [`Config::from_env`].
-    pub fn from_lookup<F>(lookup: F) -> Result<Self, ConfigError>
+    pub fn from_lookup<F>(lookup: F) -> Result<Self, UsageComputeWorkerConfigError>
     where
         F: Fn(&str) -> Option<String>,
     {
         let plane = required(&lookup, PLANE_VAR)?;
         if !PLANES.contains(&plane.as_str()) {
-            return Err(ConfigError::Invalid {
+            return Err(UsageComputeWorkerConfigError::Invalid {
                 name: PLANE_VAR,
                 reason: format!("expected one of {PLANES:?}, got `{plane}`"),
             });
         }
         let region = RegionId::parse(&required(&lookup, REGION_VAR)?).map_err(|error| {
-            ConfigError::Invalid {
+            UsageComputeWorkerConfigError::Invalid {
                 name: REGION_VAR,
                 reason: error.to_string(),
             }
@@ -297,13 +297,13 @@ impl Config {
         let limits = WorkerLimits {
             outbox_republish_after_ms: positive(&lookup, REPUBLISH_AFTER_VAR)?,
             sweep_page: usize::try_from(positive(&lookup, SWEEP_PAGE_VAR)?).map_err(|error| {
-                ConfigError::Invalid {
+                UsageComputeWorkerConfigError::Invalid {
                     name: SWEEP_PAGE_VAR,
                     reason: error.to_string(),
                 }
             })?,
             outbox_attempt_alarm: u32::try_from(positive(&lookup, ATTEMPT_ALARM_VAR)?).map_err(
-                |error| ConfigError::Invalid {
+                |error| UsageComputeWorkerConfigError::Invalid {
                     name: ATTEMPT_ALARM_VAR,
                     reason: error.to_string(),
                 },
@@ -312,7 +312,7 @@ impl Config {
             outbox_backlog_ceiling: positive(&lookup, BACKLOG_CEILING_VAR)?,
         };
         let budget = u32::try_from(positive(&lookup, BUDGET_VAR)?).map_err(|error| {
-            ConfigError::Invalid {
+            UsageComputeWorkerConfigError::Invalid {
                 name: BUDGET_VAR,
                 reason: error.to_string(),
             }
@@ -333,11 +333,11 @@ impl Config {
 }
 
 /// Parses the charging gate.
-fn billing_mode(value: &str) -> Result<BillingMode, ConfigError> {
+fn billing_mode(value: &str) -> Result<BillingMode, UsageComputeWorkerConfigError> {
     match value {
         "shadow" => Ok(BillingMode::Shadow),
         "active" => Ok(BillingMode::Active),
-        other => Err(ConfigError::Invalid {
+        other => Err(UsageComputeWorkerConfigError::Invalid {
             name: BILLING_MODE_VAR,
             reason: format!("expected `shadow` or `active`, got `{other}`"),
         }),
@@ -345,16 +345,16 @@ fn billing_mode(value: &str) -> Result<BillingMode, ConfigError> {
 }
 
 /// Refuses a deployment whose declared mode and rating queue disagree.
-fn check_charging_gate(mode: BillingMode, queue: &str) -> Result<(), ConfigError> {
+fn check_charging_gate(mode: BillingMode, queue: &str) -> Result<(), UsageComputeWorkerConfigError> {
     let shadow_queue = queue.ends_with(SHADOW_QUEUE_SUFFIX);
     match (mode, shadow_queue) {
         (BillingMode::Shadow, true) | (BillingMode::Active, false) => Ok(()),
-        (BillingMode::Shadow, false) => Err(ConfigError::ChargingGate {
+        (BillingMode::Shadow, false) => Err(UsageComputeWorkerConfigError::ChargingGate {
             mode: mode.id(),
             queue: queue.to_owned(),
             reason: "a shadow deployment must publish to the shadow rating queue",
         }),
-        (BillingMode::Active, true) => Err(ConfigError::ChargingGate {
+        (BillingMode::Active, true) => Err(UsageComputeWorkerConfigError::ChargingGate {
             mode: mode.id(),
             queue: queue.to_owned(),
             reason: "an active deployment must not publish to the shadow rating queue",
@@ -362,27 +362,27 @@ fn check_charging_gate(mode: BillingMode, queue: &str) -> Result<(), ConfigError
     }
 }
 
-fn required<F>(lookup: &F, name: &'static str) -> Result<String, ConfigError>
+fn required<F>(lookup: &F, name: &'static str) -> Result<String, UsageComputeWorkerConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     match lookup(name) {
         Some(value) if !value.trim().is_empty() => Ok(value),
-        _ => Err(ConfigError::Missing { name }),
+        _ => Err(UsageComputeWorkerConfigError::Missing { name }),
     }
 }
 
-fn positive<F>(lookup: &F, name: &'static str) -> Result<u64, ConfigError>
+fn positive<F>(lookup: &F, name: &'static str) -> Result<u64, UsageComputeWorkerConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     let raw = required(lookup, name)?;
-    let value = raw.parse::<u64>().map_err(|error| ConfigError::Invalid {
+    let value = raw.parse::<u64>().map_err(|error| UsageComputeWorkerConfigError::Invalid {
         name,
         reason: format!("expected a positive integer, got `{raw}`: {error}"),
     })?;
     if value == 0 {
-        return Err(ConfigError::Invalid {
+        return Err(UsageComputeWorkerConfigError::Invalid {
             name,
             reason: "expected a positive integer, got `0`".to_owned(),
         });
@@ -398,11 +398,11 @@ where
 ///
 /// # Errors
 ///
-/// Returns [`RunError::Runtime`] when the Lambda runtime stops.
+/// Returns [`UsageComputeWorkerRunError::Runtime`] when the Lambda runtime stops.
 pub async fn run(
     config: &Config,
     telemetry: &aex_platform_telemetry::Handle,
-) -> Result<(), RunError> {
+) -> Result<(), UsageComputeWorkerRunError> {
     telemetry.emit(
         aex_platform_telemetry::Record::event(
             aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
@@ -447,7 +447,7 @@ pub async fn run(
         async move { handler.handle(event.payload).await }
     }))
     .await
-    .map_err(|error: LambdaError| RunError::Runtime(error.to_string()))
+    .map_err(|error: LambdaError| UsageComputeWorkerRunError::Runtime(error.to_string()))
 }
 
 /// The composition every trigger is served from.
@@ -652,7 +652,7 @@ async fn main() -> ExitCode {
 mod tests {
     use super::{
         AGE_ALARM_VAR, ATTEMPT_ALARM_VAR, AUTHORITY_TABLE_VAR, BACKLOG_CEILING_VAR,
-        BILLING_MODE_VAR, BUDGET_VAR, BillingMode, Config, ConfigError, DispatchError, EventMode,
+        BILLING_MODE_VAR, BUDGET_VAR, BillingMode, Config, UsageComputeWorkerConfigError, DispatchError, EventMode,
         PLANE_VAR, PROJECTION_TABLE_VAR, RATING_QUEUE_VAR, RECEIPT_QUEUE_VAR, REGION_VAR,
         REPUBLISH_AFTER_VAR, SWEEP_PAGE_VAR,
     };
@@ -691,7 +691,7 @@ mod tests {
         ])
     }
 
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
+    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, UsageComputeWorkerConfigError> {
         Config::from_lookup(|name| vars.get(name).cloned())
     }
 
@@ -714,7 +714,7 @@ mod tests {
             vars.remove(name);
             assert_eq!(
                 read(&vars),
-                Err(ConfigError::Missing { name }),
+                Err(UsageComputeWorkerConfigError::Missing { name }),
                 "removing {name}"
             );
         }
@@ -726,7 +726,7 @@ mod tests {
         vars.insert(AUTHORITY_TABLE_VAR, "   ".to_owned());
         assert_eq!(
             read(&vars),
-            Err(ConfigError::Missing {
+            Err(UsageComputeWorkerConfigError::Missing {
                 name: AUTHORITY_TABLE_VAR
             })
         );
@@ -738,7 +738,7 @@ mod tests {
         vars.insert(PLANE_VAR, "staging".to_owned());
         assert!(matches!(
             read(&vars),
-            Err(ConfigError::Invalid {
+            Err(UsageComputeWorkerConfigError::Invalid {
                 name: PLANE_VAR,
                 ..
             })
@@ -759,7 +759,7 @@ mod tests {
                 let mut vars = complete();
                 vars.insert(name, value.to_owned());
                 assert!(
-                    matches!(read(&vars), Err(ConfigError::Invalid { .. })),
+                    matches!(read(&vars), Err(UsageComputeWorkerConfigError::Invalid { .. })),
                     "`{name}` accepted `{value}`"
                 );
             }
@@ -774,7 +774,7 @@ mod tests {
         live_queue_shadow_mode.insert(RATING_QUEUE_VAR, "aex-dev-usage-rating.fifo".to_owned());
         assert!(matches!(
             read(&live_queue_shadow_mode),
-            Err(ConfigError::ChargingGate { .. })
+            Err(UsageComputeWorkerConfigError::ChargingGate { .. })
         ));
 
         // And active pointed at the shadow queue would silently bill nothing.
@@ -782,7 +782,7 @@ mod tests {
         shadow_queue_active_mode.insert(BILLING_MODE_VAR, "active".to_owned());
         assert!(matches!(
             read(&shadow_queue_active_mode),
-            Err(ConfigError::ChargingGate { .. })
+            Err(UsageComputeWorkerConfigError::ChargingGate { .. })
         ));
 
         // The two consistent combinations are the only ones that start.
@@ -805,7 +805,7 @@ mod tests {
         vars.insert(BILLING_MODE_VAR, "maybe".to_owned());
         assert!(matches!(
             read(&vars),
-            Err(ConfigError::Invalid {
+            Err(UsageComputeWorkerConfigError::Invalid {
                 name: BILLING_MODE_VAR,
                 ..
             })
@@ -821,7 +821,7 @@ mod tests {
         vars.insert(REGION_VAR, "eu#west#1".to_owned());
         assert!(matches!(
             read(&vars),
-            Err(ConfigError::Invalid {
+            Err(UsageComputeWorkerConfigError::Invalid {
                 name: REGION_VAR,
                 ..
             })

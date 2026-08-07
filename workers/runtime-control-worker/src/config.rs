@@ -85,7 +85,7 @@ pub const MAX_DUE_PAGE_ITEMS: u32 = 32;
 
 /// Why `runtime-control-worker` refused to start.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ConfigError {
+pub enum RuntimeControlWorkerConfigError {
     /// A required variable was absent or empty.
     #[error("required environment variable `{name}` is missing")]
     Missing {
@@ -148,8 +148,8 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// See [`ConfigError`].
-    pub fn from_env() -> Result<Self, ConfigError> {
+    /// See [`RuntimeControlWorkerConfigError`].
+    pub fn from_env() -> Result<Self, RuntimeControlWorkerConfigError> {
         Self::from_lookup(|name| std::env::var(name).ok())
     }
 
@@ -160,14 +160,14 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// See [`ConfigError`].
-    pub fn from_lookup<F>(lookup: F) -> Result<Self, ConfigError>
+    /// See [`RuntimeControlWorkerConfigError`].
+    pub fn from_lookup<F>(lookup: F) -> Result<Self, RuntimeControlWorkerConfigError>
     where
         F: Fn(&str) -> Option<String>,
     {
         for name in FORBIDDEN_VARS {
             if lookup(name).is_some() {
-                return Err(ConfigError::Forbidden {
+                return Err(RuntimeControlWorkerConfigError::Forbidden {
                     name,
                     reason: forbidden_reason(name),
                 });
@@ -175,19 +175,19 @@ impl Config {
         }
         let plane = required(&lookup, PLANE_VAR)?;
         if !PLANES.contains(&plane.as_str()) {
-            return Err(ConfigError::Invalid {
+            return Err(RuntimeControlWorkerConfigError::Invalid {
                 name: PLANE_VAR,
                 reason: format!("expected one of {PLANES:?}, got `{plane}`"),
             });
         }
         let raw_region = required(&lookup, REGION_VAR)?;
-        let region = Region::from_name(&raw_region).ok_or_else(|| ConfigError::Invalid {
+        let region = Region::from_name(&raw_region).ok_or_else(|| RuntimeControlWorkerConfigError::Invalid {
             name: REGION_VAR,
             reason: format!("`{raw_region}` is not one of the five offered regions"),
         })?;
         let account_id = required(&lookup, ACCOUNT_ID_VAR)?;
         if account_id.len() != 12 || !account_id.bytes().all(|byte| byte.is_ascii_digit()) {
-            return Err(ConfigError::Invalid {
+            return Err(RuntimeControlWorkerConfigError::Invalid {
                 name: ACCOUNT_ID_VAR,
                 reason: "expected exactly twelve decimal digits".to_owned(),
             });
@@ -195,7 +195,7 @@ impl Config {
         let image_catalog = catalog(&lookup, &plane, region, &account_id)?;
         let page_items = positive(&lookup, DUE_PAGE_ITEMS_VAR)?;
         if page_items > MAX_DUE_PAGE_ITEMS {
-            return Err(ConfigError::Invalid {
+            return Err(RuntimeControlWorkerConfigError::Invalid {
                 name: DUE_PAGE_ITEMS_VAR,
                 reason: format!(
                     "must be at most {MAX_DUE_PAGE_ITEMS} so one due page fits one provider-await wave"
@@ -223,7 +223,7 @@ impl Config {
             pricing_version: required(&lookup, PRICING_VERSION_VAR)?,
         };
         if config.compute_queue_url == config.storage_queue_url {
-            return Err(ConfigError::Invalid {
+            return Err(RuntimeControlWorkerConfigError::Invalid {
                 name: STORAGE_QUEUE_VAR,
                 reason: "the compute and storage ingresses are two authorities and cannot be one \
                          queue"
@@ -240,19 +240,19 @@ fn catalog<F>(
     plane: &str,
     region: Region,
     account_id: &str,
-) -> Result<HandsImageCatalog, ConfigError>
+) -> Result<HandsImageCatalog, RuntimeControlWorkerConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     let raw = required(lookup, IMAGE_CATALOG_VAR)?;
     let entries =
         serde_json::from_str::<std::collections::BTreeMap<String, HandsImageCatalogEntry>>(&raw)
-            .map_err(|error| ConfigError::Invalid {
+            .map_err(|error| RuntimeControlWorkerConfigError::Invalid {
                 name: IMAGE_CATALOG_VAR,
                 reason: format!("expected the closed release JSON catalog: {error}"),
             })?;
     let catalog =
-        HandsImageCatalog::from_entries(entries).map_err(|error| ConfigError::Invalid {
+        HandsImageCatalog::from_entries(entries).map_err(|error| RuntimeControlWorkerConfigError::Invalid {
             name: IMAGE_CATALOG_VAR,
             reason: error.to_string(),
         })?;
@@ -262,7 +262,7 @@ where
     );
     for identifier in catalog.image_identifiers() {
         let Some(suffix) = identifier.0.strip_prefix(&prefix) else {
-            return Err(ConfigError::Invalid {
+            return Err(RuntimeControlWorkerConfigError::Invalid {
                 name: IMAGE_CATALOG_VAR,
                 reason: format!(
                     "image ARN `{}` is outside plane `{plane}`, account `{account_id}` or region `{}`",
@@ -276,7 +276,7 @@ where
                 .bytes()
                 .all(|byte| byte.is_ascii_lowercase() || (b'2'..=b'7').contains(&byte))
         {
-            return Err(ConfigError::Invalid {
+            return Err(RuntimeControlWorkerConfigError::Invalid {
                 name: IMAGE_CATALOG_VAR,
                 reason: format!("image ARN `{}` is not content-addressed", identifier.0),
             });
@@ -296,13 +296,13 @@ const fn forbidden_reason(name: &str) -> &'static str {
 }
 
 /// A required, non-blank value.
-fn required<F>(lookup: &F, name: &'static str) -> Result<String, ConfigError>
+fn required<F>(lookup: &F, name: &'static str) -> Result<String, RuntimeControlWorkerConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     match lookup(name) {
         Some(value) if !value.trim().is_empty() => Ok(value),
-        _ => Err(ConfigError::Missing { name }),
+        _ => Err(RuntimeControlWorkerConfigError::Missing { name }),
     }
 }
 
@@ -310,19 +310,19 @@ where
 ///
 /// A queue or control endpoint in another region is a cross-region write nobody
 /// notices until the bill, so the region is checked here rather than assumed.
-fn endpoint<F>(lookup: &F, name: &'static str, region: Region) -> Result<String, ConfigError>
+fn endpoint<F>(lookup: &F, name: &'static str, region: Region) -> Result<String, RuntimeControlWorkerConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     let value = required(lookup, name)?;
     if !value.starts_with("https://") {
-        return Err(ConfigError::Invalid {
+        return Err(RuntimeControlWorkerConfigError::Invalid {
             name,
             reason: format!("expected an https:// endpoint, got `{value}`"),
         });
     }
     if !value.contains(region.as_str()) {
-        return Err(ConfigError::Invalid {
+        return Err(RuntimeControlWorkerConfigError::Invalid {
             name,
             reason: format!("`{value}` is not in region `{}`", region.as_str()),
         });
@@ -331,19 +331,19 @@ where
 }
 
 /// A required positive integer.
-fn positive<F, T>(lookup: &F, name: &'static str) -> Result<T, ConfigError>
+fn positive<F, T>(lookup: &F, name: &'static str) -> Result<T, RuntimeControlWorkerConfigError>
 where
     F: Fn(&str) -> Option<String>,
     T: core::str::FromStr + PartialEq + Default,
     T::Err: core::fmt::Display,
 {
     let raw = required(lookup, name)?;
-    let value = raw.parse::<T>().map_err(|error| ConfigError::Invalid {
+    let value = raw.parse::<T>().map_err(|error| RuntimeControlWorkerConfigError::Invalid {
         name,
         reason: format!("expected a positive integer, got `{raw}`: {error}"),
     })?;
     if value == T::default() {
-        return Err(ConfigError::Invalid {
+        return Err(RuntimeControlWorkerConfigError::Invalid {
             name,
             reason: "expected a positive integer, got `0`".to_owned(),
         });
@@ -354,7 +354,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        ACCOUNT_ID_VAR, COMPUTE_QUEUE_VAR, Config, ConfigError, DUE_PAGE_ITEMS_VAR, DUE_SHARDS_VAR,
+        ACCOUNT_ID_VAR, COMPUTE_QUEUE_VAR, Config, RuntimeControlWorkerConfigError, DUE_PAGE_ITEMS_VAR, DUE_SHARDS_VAR,
         FORBIDDEN_VARS, IMAGE_CATALOG_VAR, LIFECYCLE_QUEUE_VAR, PLANE_VAR, PROVIDER_ENDPOINT_VAR,
         REGION_VAR, REQUIRED_VARS, STORAGE_QUEUE_VAR,
     };
@@ -433,7 +433,7 @@ mod tests {
         serde_json::to_string(&rows).expect("catalog JSON")
     }
 
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
+    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, RuntimeControlWorkerConfigError> {
         Config::from_lookup(|name| vars.get(name).cloned())
     }
 
@@ -462,7 +462,7 @@ mod tests {
             vars.remove(name);
             assert_eq!(
                 read(&vars),
-                Err(ConfigError::Missing { name }),
+                Err(RuntimeControlWorkerConfigError::Missing { name }),
                 "removing {name}"
             );
         }
@@ -483,7 +483,7 @@ mod tests {
         vars.insert(super::RUNTIME_ACTIVITY_TABLE_VAR, "   ".to_owned());
         assert_eq!(
             read(&vars),
-            Err(ConfigError::Missing {
+            Err(RuntimeControlWorkerConfigError::Missing {
                 name: super::RUNTIME_ACTIVITY_TABLE_VAR
             })
         );
@@ -495,7 +495,7 @@ mod tests {
         plane.insert(PLANE_VAR, "staging".to_owned());
         assert!(matches!(
             read(&plane),
-            Err(ConfigError::Invalid {
+            Err(RuntimeControlWorkerConfigError::Invalid {
                 name: PLANE_VAR,
                 ..
             })
@@ -505,7 +505,7 @@ mod tests {
         region.insert(REGION_VAR, "eu-west-9".to_owned());
         assert!(matches!(
             read(&region),
-            Err(ConfigError::Invalid {
+            Err(RuntimeControlWorkerConfigError::Invalid {
                 name: REGION_VAR,
                 ..
             })
@@ -523,7 +523,7 @@ mod tests {
             vars.insert(name, replacement.to_owned());
             assert!(matches!(
                 read(&vars),
-                Err(ConfigError::Invalid {
+                Err(RuntimeControlWorkerConfigError::Invalid {
                     name: IMAGE_CATALOG_VAR,
                     ..
                 })
@@ -537,7 +537,7 @@ mod tests {
         partial.insert(IMAGE_CATALOG_VAR, catalog.to_string());
         assert!(matches!(
             read(&partial),
-            Err(ConfigError::Invalid {
+            Err(RuntimeControlWorkerConfigError::Invalid {
                 name: IMAGE_CATALOG_VAR,
                 ..
             })
@@ -558,14 +558,14 @@ mod tests {
                 "https://sqs.us-east-1.amazonaws.com/1/elsewhere".to_owned(),
             );
             assert!(
-                matches!(read(&vars), Err(ConfigError::Invalid { name: named, .. }) if named == name),
+                matches!(read(&vars), Err(RuntimeControlWorkerConfigError::Invalid { name: named, .. }) if named == name),
                 "a cross-region {name} is a write nobody notices until the bill"
             );
 
             let mut plain = complete();
             plain.insert(name, "http://sqs.eu-west-1.amazonaws.com/1/x".to_owned());
             assert!(
-                matches!(read(&plain), Err(ConfigError::Invalid { name: named, .. }) if named == name),
+                matches!(read(&plain), Err(RuntimeControlWorkerConfigError::Invalid { name: named, .. }) if named == name),
                 "{name} must be https"
             );
         }
@@ -582,7 +582,7 @@ mod tests {
                 let mut vars = complete();
                 vars.insert(name, value.to_owned());
                 assert!(
-                    matches!(read(&vars), Err(ConfigError::Invalid { name: named, .. }) if named == name),
+                    matches!(read(&vars), Err(RuntimeControlWorkerConfigError::Invalid { name: named, .. }) if named == name),
                     "{name} = {value}"
                 );
             }
@@ -600,7 +600,7 @@ mod tests {
         vars.insert(DUE_PAGE_ITEMS_VAR, "33".to_owned());
         assert!(matches!(
             read(&vars),
-            Err(ConfigError::Invalid {
+            Err(RuntimeControlWorkerConfigError::Invalid {
                 name: DUE_PAGE_ITEMS_VAR,
                 ..
             })
@@ -614,7 +614,7 @@ mod tests {
         vars.insert(STORAGE_QUEUE_VAR, compute);
         assert!(matches!(
             read(&vars),
-            Err(ConfigError::Invalid {
+            Err(RuntimeControlWorkerConfigError::Invalid {
                 name: STORAGE_QUEUE_VAR,
                 ..
             })
@@ -627,7 +627,7 @@ mod tests {
             let mut vars = complete();
             vars.insert(name, "anything".to_owned());
             assert!(
-                matches!(read(&vars), Err(ConfigError::Forbidden { name: named, .. }) if named == name),
+                matches!(read(&vars), Err(RuntimeControlWorkerConfigError::Forbidden { name: named, .. }) if named == name),
                 "{name} must refuse the start rather than be quietly ignored"
             );
         }

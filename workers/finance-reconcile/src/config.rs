@@ -82,7 +82,7 @@ pub struct Config {
 
 /// Why `finance-reconcile` refused to start.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ConfigError {
+pub enum FinanceReconcileConfigError {
     /// A required variable was absent or blank.
     #[error("required environment variable `{name}` is missing")]
     Missing {
@@ -104,9 +104,9 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError::Missing`] naming the first absent or blank
-    /// variable and [`ConfigError::Invalid`] naming the first unusable one.
-    pub fn from_env() -> Result<Self, ConfigError> {
+    /// Returns [`FinanceReconcileConfigError::Missing`] naming the first absent or blank
+    /// variable and [`FinanceReconcileConfigError::Invalid`] naming the first unusable one.
+    pub fn from_env() -> Result<Self, FinanceReconcileConfigError> {
         Self::from_lookup(|name| std::env::var(name).ok())
     }
 
@@ -115,13 +115,13 @@ impl Config {
     /// # Errors
     ///
     /// Identical to [`Config::from_env`].
-    pub fn from_lookup<F>(lookup: F) -> Result<Self, ConfigError>
+    pub fn from_lookup<F>(lookup: F) -> Result<Self, FinanceReconcileConfigError>
     where
         F: Fn(&str) -> Option<String>,
     {
         let plane = required(&lookup, PLANE_VAR)?;
         if !PLANES.contains(&plane.as_str()) {
-            return Err(ConfigError::Invalid {
+            return Err(FinanceReconcileConfigError::Invalid {
                 name: PLANE_VAR,
                 reason: format!("expected one of {PLANES:?}, got `{plane}`"),
             });
@@ -135,7 +135,7 @@ impl Config {
             .map_err(|error| invalid(DATABASE_NAME_VAR, &error))?;
         let database_role = required(&lookup, DATABASE_ROLE_VAR)?;
         if database_role != REQUIRED_ROLE {
-            return Err(ConfigError::Invalid {
+            return Err(FinanceReconcileConfigError::Invalid {
                 name: DATABASE_ROLE_VAR,
                 reason: format!("expected `{REQUIRED_ROLE}`, got `{database_role}`"),
             });
@@ -167,18 +167,18 @@ impl Config {
 }
 
 /// Reads a variable, treating blank as absent.
-fn required<F>(lookup: &F, name: &'static str) -> Result<String, ConfigError>
+fn required<F>(lookup: &F, name: &'static str) -> Result<String, FinanceReconcileConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     match lookup(name) {
         Some(value) if !value.trim().is_empty() => Ok(value.trim().to_owned()),
-        _ => Err(ConfigError::Missing { name }),
+        _ => Err(FinanceReconcileConfigError::Missing { name }),
     }
 }
 
 /// Reads a variable that must be an ARN.
-fn arn<F>(lookup: &F, name: &'static str) -> Result<String, ConfigError>
+fn arn<F>(lookup: &F, name: &'static str) -> Result<String, FinanceReconcileConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
@@ -186,7 +186,7 @@ where
     if value.starts_with("arn:") {
         Ok(value)
     } else {
-        Err(ConfigError::Invalid {
+        Err(FinanceReconcileConfigError::Invalid {
             name,
             reason: format!("expected an ARN, got `{value}`"),
         })
@@ -194,7 +194,7 @@ where
 }
 
 /// Reads a variable that must be an integer inside a closed range.
-fn bounded<F>(lookup: &F, name: &'static str, low: u32, high: u32) -> Result<u32, ConfigError>
+fn bounded<F>(lookup: &F, name: &'static str, low: u32, high: u32) -> Result<u32, FinanceReconcileConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
@@ -202,15 +202,15 @@ where
     raw.parse::<u32>()
         .ok()
         .filter(|value| (low..=high).contains(value))
-        .ok_or_else(|| ConfigError::Invalid {
+        .ok_or_else(|| FinanceReconcileConfigError::Invalid {
             name,
             reason: format!("expected {low}..={high}, got `{raw}`"),
         })
 }
 
 /// Renders a peer validation failure as this deployable's own refusal.
-fn invalid(name: &'static str, error: &impl std::fmt::Display) -> ConfigError {
-    ConfigError::Invalid {
+fn invalid(name: &'static str, error: &impl std::fmt::Display) -> FinanceReconcileConfigError {
+    FinanceReconcileConfigError::Invalid {
         name,
         reason: error.to_string(),
     }
@@ -221,7 +221,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        ALARM_TOPIC_VAR, Config, ConfigError, DATABASE_ROLE_VAR, NAMESPACE, REQUIRED_VARS,
+        ALARM_TOPIC_VAR, Config, FinanceReconcileConfigError, DATABASE_ROLE_VAR, NAMESPACE, REQUIRED_VARS,
         RETRY_WINDOW_VAR,
     };
 
@@ -255,7 +255,7 @@ mod tests {
         ])
     }
 
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
+    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, FinanceReconcileConfigError> {
         Config::from_lookup(|name| vars.get(name).cloned())
     }
 
@@ -283,7 +283,7 @@ mod tests {
             vars.remove(name);
             assert_eq!(
                 read(&vars),
-                Err(ConfigError::Missing { name }),
+                Err(FinanceReconcileConfigError::Missing { name }),
                 "removing {name}"
             );
         }
@@ -295,7 +295,7 @@ mod tests {
         vars.insert(RETRY_WINDOW_VAR, "48".to_owned());
         let error = read(&vars).expect_err("F-15 bounds exact-key replay at twelve hours");
         assert!(
-            matches!(error, ConfigError::Invalid { name, .. } if name == RETRY_WINDOW_VAR),
+            matches!(error, FinanceReconcileConfigError::Invalid { name, .. } if name == RETRY_WINDOW_VAR),
             "{error:?}"
         );
     }
@@ -306,7 +306,7 @@ mod tests {
         vars.insert(ALARM_TOPIC_VAR, "finance-ops".to_owned());
         let error = read(&vars).expect_err("a topic is named by ARN");
         assert!(
-            matches!(error, ConfigError::Invalid { name, .. } if name == ALARM_TOPIC_VAR),
+            matches!(error, FinanceReconcileConfigError::Invalid { name, .. } if name == ALARM_TOPIC_VAR),
             "{error:?}"
         );
     }
@@ -317,7 +317,7 @@ mod tests {
         vars.insert(DATABASE_ROLE_VAR, "aex_finance_api".to_owned());
         let error = read(&vars).expect_err("the reconciler has its own role");
         assert!(
-            matches!(error, ConfigError::Invalid { name, .. } if name == DATABASE_ROLE_VAR),
+            matches!(error, FinanceReconcileConfigError::Invalid { name, .. } if name == DATABASE_ROLE_VAR),
             "{error:?}"
         );
     }

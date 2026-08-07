@@ -68,7 +68,7 @@ pub const FOREIGN_DUTY_OWNER: &str = "observation-export-launcher";
 
 /// Why `observation-reconciler` refused to start.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
-pub enum ConfigError {
+pub enum ObservationReconcilerConfigError {
     /// A required variable was absent or empty.
     #[error("required environment variable `{name}` is missing")]
     Missing {
@@ -113,10 +113,10 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError::Missing`] when a required variable is absent or
-    /// empty, and [`ConfigError::Invalid`] when a variable is present but does
+    /// Returns [`ObservationReconcilerConfigError::Missing`] when a required variable is absent or
+    /// empty, and [`ObservationReconcilerConfigError::Invalid`] when a variable is present but does
     /// not parse or is outside its permitted range.
-    pub fn from_env() -> Result<Self, ConfigError> {
+    pub fn from_env() -> Result<Self, ObservationReconcilerConfigError> {
         Self::from_lookup(|name| std::env::var(name).ok())
     }
 
@@ -128,19 +128,19 @@ impl Config {
     /// # Errors
     ///
     /// Identical to [`Config::from_env`].
-    pub fn from_lookup<F>(lookup: F) -> Result<Self, ConfigError>
+    pub fn from_lookup<F>(lookup: F) -> Result<Self, ObservationReconcilerConfigError>
     where
         F: Fn(&str) -> Option<String>,
     {
         let plane = required(&lookup, PLANE_VAR)?;
         if !PLANES.contains(&plane.as_str()) {
-            return Err(ConfigError::Invalid {
+            return Err(ObservationReconcilerConfigError::Invalid {
                 name: PLANE_VAR,
                 reason: format!("expected one of {PLANES:?}, got `{plane}`"),
             });
         }
         let raw_region = required(&lookup, REGION_VAR)?;
-        let region = Region::from_name(&raw_region).ok_or_else(|| ConfigError::Invalid {
+        let region = Region::from_name(&raw_region).ok_or_else(|| ObservationReconcilerConfigError::Invalid {
             name: REGION_VAR,
             reason: format!("`{raw_region}` is not a regional plane region"),
         })?;
@@ -167,12 +167,12 @@ impl Config {
 }
 
 /// Reads the duty, refusing both an unknown word and the launcher's duty.
-fn duty<F>(lookup: &F) -> Result<ControlDomain, ConfigError>
+fn duty<F>(lookup: &F) -> Result<ControlDomain, ObservationReconcilerConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     let raw = required(lookup, DUTY_VAR)?;
-    let parsed = ControlDomain::parse(raw.trim()).ok_or_else(|| ConfigError::Invalid {
+    let parsed = ControlDomain::parse(raw.trim()).ok_or_else(|| ObservationReconcilerConfigError::Invalid {
         name: DUTY_VAR,
         reason: format!(
             "`{raw}` is not one of the {} control domains",
@@ -180,7 +180,7 @@ where
         ),
     })?;
     if parsed == FOREIGN_DUTY {
-        return Err(ConfigError::Invalid {
+        return Err(ObservationReconcilerConfigError::Invalid {
             name: DUTY_VAR,
             reason: format!(
                 "`{}` belongs to `{FOREIGN_DUTY_OWNER}`, which holds `ecs:RunTask` and no \
@@ -194,18 +194,18 @@ where
 }
 
 /// Reads a required, non-blank variable.
-fn required<F>(lookup: &F, name: &'static str) -> Result<String, ConfigError>
+fn required<F>(lookup: &F, name: &'static str) -> Result<String, ObservationReconcilerConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     match lookup(name) {
         Some(value) if !value.trim().is_empty() => Ok(value),
-        _ => Err(ConfigError::Missing { name }),
+        _ => Err(ObservationReconcilerConfigError::Missing { name }),
     }
 }
 
 /// Reads a count inside an inclusive range.
-fn bounded<F>(lookup: &F, name: &'static str, low: u32, high: u32) -> Result<u32, ConfigError>
+fn bounded<F>(lookup: &F, name: &'static str, low: u32, high: u32) -> Result<u32, ObservationReconcilerConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
@@ -213,12 +213,12 @@ where
     let value = raw
         .trim()
         .parse::<u32>()
-        .map_err(|error| ConfigError::Invalid {
+        .map_err(|error| ObservationReconcilerConfigError::Invalid {
             name,
             reason: format!("expected an integer in {low}..={high}, got `{raw}`: {error}"),
         })?;
     if value < low || value > high {
-        return Err(ConfigError::Invalid {
+        return Err(ObservationReconcilerConfigError::Invalid {
             name,
             reason: format!(
                 "{value} is outside the registered range {low}..={high}; the registry is the \
@@ -230,24 +230,24 @@ where
 }
 
 /// Narrows an already range-checked count to the width it is stored in.
-fn narrow<T>(value: u32, name: &'static str) -> Result<T, ConfigError>
+fn narrow<T>(value: u32, name: &'static str) -> Result<T, ObservationReconcilerConfigError>
 where
     T: TryFrom<u32>,
 {
-    T::try_from(value).map_err(|_| ConfigError::Invalid {
+    T::try_from(value).map_err(|_| ObservationReconcilerConfigError::Invalid {
         name,
         reason: format!("{value} does not fit the width this bound is stored in"),
     })
 }
 
 /// Reads a required `https` endpoint.
-fn url<F>(lookup: &F, name: &'static str) -> Result<String, ConfigError>
+fn url<F>(lookup: &F, name: &'static str) -> Result<String, ObservationReconcilerConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     let value = required(lookup, name)?;
     if !value.starts_with("https://") {
-        return Err(ConfigError::Invalid {
+        return Err(ObservationReconcilerConfigError::Invalid {
             name,
             reason: format!("expected an `https://` endpoint, got `{value}`"),
         });
@@ -264,7 +264,7 @@ mod tests {
     use aex_wire::types::Region;
 
     use super::{
-        Config, ConfigError, DUTY_SHARDS_VAR, DUTY_VAR, FOREIGN_DUTY, MAX_ATTEMPTS_VAR,
+        Config, ObservationReconcilerConfigError, DUTY_SHARDS_VAR, DUTY_VAR, FOREIGN_DUTY, MAX_ATTEMPTS_VAR,
         OBSERVATION_BUCKET_VAR, OBSERVATION_TABLE_VAR, PAGE_MAX, PLANE_VAR, RECONCILE_PAGE_VAR,
         REGION_VAR, REQUIRED_VARS, SHARDS_MAX, USAGE_QUEUE_URL_VAR,
     };
@@ -286,7 +286,7 @@ mod tests {
         ])
     }
 
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
+    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ObservationReconcilerConfigError> {
         Config::from_lookup(|name| vars.get(name).cloned())
     }
 
@@ -309,7 +309,7 @@ mod tests {
             vars.remove(*name);
             assert_eq!(
                 read(&vars),
-                Err(ConfigError::Missing { name }),
+                Err(ObservationReconcilerConfigError::Missing { name }),
                 "removing {name}"
             );
         }
@@ -332,7 +332,7 @@ mod tests {
                 vars.insert(name, value.to_string());
                 let error = read(&vars).expect_err("outside the range");
                 assert!(
-                    matches!(error, ConfigError::Invalid { name: got, .. } if got == name),
+                    matches!(error, ObservationReconcilerConfigError::Invalid { name: got, .. } if got == name),
                     "{name} = {value}: {error:?}"
                 );
             }
@@ -345,11 +345,11 @@ mod tests {
         vars.insert(DUTY_VAR, FOREIGN_DUTY.as_str().to_owned());
         let error = read(&vars).expect_err("the launcher's duty is refused");
         match error {
-            ConfigError::Invalid { name, reason } => {
+            ObservationReconcilerConfigError::Invalid { name, reason } => {
                 assert_eq!(name, DUTY_VAR);
                 assert!(reason.contains("observation-export-launcher"), "{reason}");
             }
-            other @ ConfigError::Missing { .. } => {
+            other @ ObservationReconcilerConfigError::Missing { .. } => {
                 panic!("expected an invalid duty, got {other:?}")
             }
         }
@@ -361,7 +361,7 @@ mod tests {
         vars.insert(RECONCILE_PAGE_VAR, "lots".to_owned());
         assert!(matches!(
             read(&vars),
-            Err(ConfigError::Invalid {
+            Err(ObservationReconcilerConfigError::Invalid {
                 name: RECONCILE_PAGE_VAR,
                 ..
             })

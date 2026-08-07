@@ -37,7 +37,7 @@ pub use authz::{
     LambdaAssertionSource, ParameterStore, RegionalProjection, TrustError, parse_trust_anchors,
 };
 pub use capability::{CompositionManifest, admit};
-pub use config::{ConfigError, Environment, Lookup};
+pub use config::{RegionalHttpConfigError, Environment, Lookup};
 pub use context::{EffectiveLimits, RegionalAuthorization, RequestContext};
 pub use cursor::{CursorBinding, decode, encode};
 pub use edge::{

@@ -29,7 +29,7 @@ use aex_runtime_control_aws::worker::{Pace, RuntimeControl, RuntimePorts, Runtim
 use aex_session_dynamodb::runtime_effects::OpenHandsEffectCounter;
 use aex_usage_domain::meter::Category;
 use aex_wire::types::Timestamp;
-use config::{Config, ConfigError};
+use config::{Config, RuntimeControlWorkerConfigError};
 use health::{Bindings, Dependency};
 
 /// Jitter added to an evaluation schedule.
@@ -43,10 +43,10 @@ const IMAGE_PROBE_CONCURRENCY: usize = 4;
 
 /// Why `runtime-control-worker` stopped.
 #[derive(Debug, thiserror::Error)]
-pub enum RunError {
+pub enum RuntimeControlWorkerRunError {
     /// Start-up configuration was rejected.
     #[error(transparent)]
-    Config(#[from] ConfigError),
+    Config(#[from] RuntimeControlWorkerConfigError),
     /// A declared port has no adapter bound.
     ///
     /// The worker refuses to start rather than serving with a port missing: a
@@ -137,13 +137,13 @@ impl Adapters {
     ///
     /// # Errors
     ///
-    /// Returns [`RunError::Unbound`] naming every missing port.
-    pub fn compose(self, config: &Config) -> Result<RuntimeControl, RunError> {
+    /// Returns [`RuntimeControlWorkerRunError::Unbound`] naming every missing port.
+    pub fn compose(self, config: &Config) -> Result<RuntimeControl, RuntimeControlWorkerRunError> {
         let health::Readiness::Ready = self.bindings().readiness() else {
             let health::Readiness::NotReady { missing } = self.bindings().readiness() else {
                 unreachable!("readiness is one of exactly two shapes");
             };
-            return Err(RunError::Unbound { missing });
+            return Err(RuntimeControlWorkerRunError::Unbound { missing });
         };
         let (Some(store), Some(effects), Some(provider), Some(compute), Some(storage)) = (
             self.store,
@@ -177,7 +177,7 @@ impl Adapters {
 }
 
 /// Resolves and probes every production adapter before Lambda begins polling.
-async fn resolve(config: &Config) -> Result<Adapters, RunError> {
+async fn resolve(config: &Config) -> Result<Adapters, RuntimeControlWorkerRunError> {
     let aws = aws_config::defaults(aws_config::BehaviorVersion::latest())
         .region(aws_types::region::Region::new(config.region.as_str()))
         .load()
@@ -197,7 +197,7 @@ async fn resolve(config: &Config) -> Result<Adapters, RunError> {
             .table_name(table)
             .send()
             .await
-            .map_err(|error| RunError::Startup {
+            .map_err(|error| RuntimeControlWorkerRunError::Startup {
                 dependency,
                 reason: error.to_string(),
             })?;
@@ -215,7 +215,7 @@ async fn resolve(config: &Config) -> Result<Adapters, RunError> {
             .attribute_names(aws_sdk_sqs::types::QueueAttributeName::QueueArn)
             .send()
             .await
-            .map_err(|error| RunError::Startup {
+            .map_err(|error| RuntimeControlWorkerRunError::Startup {
                 dependency,
                 reason: error.to_string(),
             })?;
@@ -261,7 +261,7 @@ async fn resolve(config: &Config) -> Result<Adapters, RunError> {
 async fn probe_image_catalog(
     provider: &AwsMicrovmControl,
     catalog: &aex_runtime_control::catalog::HandsImageCatalog,
-) -> Result<(), RunError> {
+) -> Result<(), RuntimeControlWorkerRunError> {
     let mut pending = tokio::task::JoinSet::new();
     for identifier in catalog.image_identifiers() {
         if pending.len() == IMAGE_PROBE_CONCURRENCY {
@@ -285,18 +285,18 @@ async fn probe_image_catalog(
 
 fn settle_image_probe(
     result: Option<Result<Result<(), String>, tokio::task::JoinError>>,
-) -> Result<(), RunError> {
+) -> Result<(), RuntimeControlWorkerRunError> {
     match result {
         Some(Ok(Ok(()))) => Ok(()),
-        Some(Ok(Err(reason))) => Err(RunError::Startup {
+        Some(Ok(Err(reason))) => Err(RuntimeControlWorkerRunError::Startup {
             dependency: "microvm-control",
             reason,
         }),
-        Some(Err(error)) => Err(RunError::Startup {
+        Some(Err(error)) => Err(RuntimeControlWorkerRunError::Startup {
             dependency: "microvm-control",
             reason: format!("catalog probe task failed: {error}"),
         }),
-        None => Err(RunError::Startup {
+        None => Err(RuntimeControlWorkerRunError::Startup {
             dependency: "microvm-control",
             reason: "catalog probe set ended before its bounded wave completed".to_owned(),
         }),
@@ -307,13 +307,13 @@ fn settle_image_probe(
 ///
 /// # Errors
 ///
-/// Returns [`RunError::Startup`] when a production dependency probe fails,
-/// [`RunError::Unbound`] when a declared port has no adapter, and
-/// [`RunError::Runtime`] when the Lambda runtime stops.
+/// Returns [`RuntimeControlWorkerRunError::Startup`] when a production dependency probe fails,
+/// [`RuntimeControlWorkerRunError::Unbound`] when a declared port has no adapter, and
+/// [`RuntimeControlWorkerRunError::Runtime`] when the Lambda runtime stops.
 pub async fn run(
     config: &Config,
     telemetry: &aex_platform_telemetry::Handle,
-) -> Result<(), RunError> {
+) -> Result<(), RuntimeControlWorkerRunError> {
     telemetry.emit(
         aex_platform_telemetry::Record::event(
             aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
@@ -342,7 +342,7 @@ pub async fn run(
         },
     ))
     .await
-    .map_err(|error| RunError::Runtime {
+    .map_err(|error| RuntimeControlWorkerRunError::Runtime {
         reason: error.to_string(),
     })
 }
@@ -425,7 +425,7 @@ async fn main() -> std::process::ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{Adapters, RunError, config::Config, health::Readiness, now};
+    use super::{Adapters, RuntimeControlWorkerRunError, config::Config, health::Readiness, now};
     use std::collections::BTreeMap;
 
     fn config() -> Config {
@@ -503,7 +503,7 @@ mod tests {
         let error = Adapters::default()
             .compose(&config())
             .expect_err("an empty composition is refused");
-        let RunError::Unbound { missing } = error else {
+        let RuntimeControlWorkerRunError::Unbound { missing } = error else {
             panic!("an unbound port is its own error class, not a generic failure");
         };
         assert_eq!(

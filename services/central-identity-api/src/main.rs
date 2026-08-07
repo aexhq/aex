@@ -83,7 +83,7 @@ mod keys {
 
 /// Why `central-identity-api` refused to start.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ConfigError {
+pub enum CentralIdentityApiConfigError {
     /// A required variable was absent or blank.
     #[error("required environment variable `{0}` is missing")]
     Missing(&'static str),
@@ -127,8 +127,8 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError`] naming the first variable it refused.
-    pub fn from_env() -> Result<Self, ConfigError> {
+    /// Returns [`CentralIdentityApiConfigError`] naming the first variable it refused.
+    pub fn from_env() -> Result<Self, CentralIdentityApiConfigError> {
         Self::from_lookup(|name| std::env::var(name).ok())
     }
 
@@ -140,13 +140,13 @@ impl Config {
     /// # Errors
     ///
     /// Identical to [`Config::from_env`].
-    pub fn from_lookup<F>(lookup: F) -> Result<Self, ConfigError>
+    pub fn from_lookup<F>(lookup: F) -> Result<Self, CentralIdentityApiConfigError>
     where
         F: Fn(&str) -> Option<String>,
     {
         let role = required(&lookup, keys::ROLE)?;
         if role != REQUIRED_ROLE {
-            return Err(ConfigError::Invalid {
+            return Err(CentralIdentityApiConfigError::Invalid {
                 name: keys::ROLE,
                 reason: format!("this binary connects only as `{REQUIRED_ROLE}`, got `{role}`"),
             });
@@ -158,7 +158,7 @@ impl Config {
             integer(&lookup, keys::MAX_BODY_BYTES)?,
             integer(&lookup, keys::REQUEST_DEADLINE_MS)?,
         )
-        .map_err(|reason| ConfigError::Invalid {
+        .map_err(|reason| CentralIdentityApiConfigError::Invalid {
             name: keys::PLANE,
             reason: reason.to_string(),
         })?;
@@ -198,22 +198,22 @@ impl Config {
     }
 }
 
-fn required<F>(lookup: &F, name: &'static str) -> Result<String, ConfigError>
+fn required<F>(lookup: &F, name: &'static str) -> Result<String, CentralIdentityApiConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     match lookup(name) {
         Some(value) if !value.trim().is_empty() => Ok(value),
-        _ => Err(ConfigError::Missing(name)),
+        _ => Err(CentralIdentityApiConfigError::Missing(name)),
     }
 }
 
-fn integer<F>(lookup: &F, name: &'static str) -> Result<u64, ConfigError>
+fn integer<F>(lookup: &F, name: &'static str) -> Result<u64, CentralIdentityApiConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     let raw = required(lookup, name)?;
-    raw.parse::<u64>().map_err(|_| ConfigError::Invalid {
+    raw.parse::<u64>().map_err(|_| CentralIdentityApiConfigError::Invalid {
         name,
         reason: format!("expected an integer, got `{raw}`"),
     })
@@ -297,10 +297,10 @@ pub fn readiness(probes: Probes) -> Readiness {
 
 /// Why `central-identity-api` stopped.
 #[derive(Debug, thiserror::Error)]
-pub enum RunError {
+pub enum CentralIdentityApiRunError {
     /// Start-up configuration was rejected.
     #[error(transparent)]
-    Config(#[from] ConfigError),
+    Config(#[from] CentralIdentityApiConfigError),
     /// The composition was refused before any client was opened.
     #[error(transparent)]
     Composition(#[from] CompositionError),
@@ -327,7 +327,7 @@ pub fn app<A: AuthApi>(api: Arc<A>, edge: EdgeStack, readiness: Readiness) -> ax
 ///
 /// # Errors
 ///
-/// Returns [`RunError`] when configuration or composition is refused, or when
+/// Returns [`CentralIdentityApiRunError`] when configuration or composition is refused, or when
 /// the listener stops.
 pub async fn run<A: AuthApi>(
     config: &Config,
@@ -335,7 +335,7 @@ pub async fn run<A: AuthApi>(
     edge: EdgeStack,
     probes: Probes,
     telemetry: &aex_platform_telemetry::Handle,
-) -> Result<(), RunError> {
+) -> Result<(), CentralIdentityApiRunError> {
     aex_central_http::capability::admit(&manifest(), &config.resolved())?;
     telemetry.emit(
         aex_platform_telemetry::Record::event(
@@ -352,7 +352,7 @@ pub async fn run<A: AuthApi>(
     );
     lambda_http::run(app(api, edge, readiness(probes)))
         .await
-        .map_err(|error| RunError::Listener(error.to_string()))
+        .map_err(|error| CentralIdentityApiRunError::Listener(error.to_string()))
 }
 
 /// Builds the real adapters, proves each one answers, and serves.
@@ -364,15 +364,15 @@ pub async fn run<A: AuthApi>(
 async fn compose(
     config: &Config,
     telemetry: &aex_platform_telemetry::Handle,
-) -> Result<(), RunError> {
+) -> Result<(), CentralIdentityApiRunError> {
     let aws = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
     let data_api = aex_rds_data::DataApiConfig::new(
         aex_rds_data::ResourceArn::parse(&config.aurora_cluster_arn)
-            .map_err(|error| RunError::Dependency("aurora", error.to_string()))?,
+            .map_err(|error| CentralIdentityApiRunError::Dependency("aurora", error.to_string()))?,
         aex_rds_data::SecretArn::parse(&config.aurora_secret_arn)
-            .map_err(|error| RunError::Dependency("aurora", error.to_string()))?,
+            .map_err(|error| CentralIdentityApiRunError::Dependency("aurora", error.to_string()))?,
         aex_rds_data::DatabaseName::parse(&config.database)
-            .map_err(|error| RunError::Dependency("aurora", error.to_string()))?,
+            .map_err(|error| CentralIdentityApiRunError::Dependency("aurora", error.to_string()))?,
     );
     let client = aex_rds_data::DataApiClient::new(
         Arc::new(aex_rds_data::AwsTransport::new(
@@ -390,7 +390,7 @@ async fn compose(
             aex_identity_aurora::sql::READINESS_PROBE,
         ))
         .await
-        .map_err(|error| RunError::Dependency("aurora", error.to_string()))?;
+        .map_err(|error| CentralIdentityApiRunError::Dependency("aurora", error.to_string()))?;
 
     let peppers = Arc::new(aex_central_aws::SecretsManagerPepperKeystore::new(
         aws_sdk_secretsmanager::Client::new(&aws),
@@ -410,7 +410,7 @@ async fn compose(
     peppers
         .probe(aex_identity_app::ports::PepperPurpose::Identity)
         .await
-        .map_err(|error| RunError::Dependency("identity-pepper", error.to_string()))?;
+        .map_err(|error| CentralIdentityApiRunError::Dependency("identity-pepper", error.to_string()))?;
 
     let clock: Arc<dyn aex_identity_app::ports::Clock> = Arc::new(aex_central_aws::SystemClock);
     let store = Arc::new(aex_identity_aurora::AuroraIdentityStore::new(
@@ -418,7 +418,7 @@ async fn compose(
         Arc::clone(&peppers) as Arc<dyn aex_identity_app::ports::PepperKeystore>,
     ));
     let verification_uri = aex_wire::types::HttpsUrl::parse(&config.device_verification_uri)
-        .map_err(|error| RunError::Dependency("device-verification-uri", error.to_string()))?;
+        .map_err(|error| CentralIdentityApiRunError::Dependency("device-verification-uri", error.to_string()))?;
     let api = Arc::new(api::AuthService::new(
         store,
         Arc::clone(&peppers) as Arc<dyn aex_identity_app::ports::PepperKeystore>,
@@ -488,7 +488,7 @@ async fn main() -> std::process::ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        Config, ConfigError, DEPLOYABLE, PERMISSIONS, Probes, app, keys, manifest, readiness,
+        Config, CentralIdentityApiConfigError, DEPLOYABLE, PERMISSIONS, Probes, app, keys, manifest, readiness,
     };
     use aex_central_http::capability::{
         AssertionSign, Capability as _, CapabilityBinding, CompositionError, ControlWrite,
@@ -547,7 +547,7 @@ mod tests {
         ])
     }
 
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
+    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, CentralIdentityApiConfigError> {
         Config::from_lookup(|name| vars.get(name).cloned())
     }
 

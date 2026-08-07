@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use regional_capacity_controller::{Config, ConfigError, keys};
+use regional_capacity_controller::{Config, RegionalCapacityControllerConfigError, keys};
 
 fn complete() -> BTreeMap<&'static str, String> {
     BTreeMap::from([
@@ -21,7 +21,7 @@ fn every_binding_is_required_and_tables_must_be_distinct() {
         vars.remove(key);
         assert_eq!(
             Config::from_lookup(|name| vars.get(name).cloned()),
-            Err(ConfigError::Missing(key))
+            Err(RegionalCapacityControllerConfigError::Missing(key))
         );
     }
     let mut vars = complete();

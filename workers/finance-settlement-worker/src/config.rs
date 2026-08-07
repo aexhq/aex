@@ -72,7 +72,7 @@ pub struct Config {
 
 /// Why `finance-settlement-worker` refused to start.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ConfigError {
+pub enum FinanceSettlementWorkerConfigError {
     /// A required variable was absent or blank.
     #[error("required environment variable `{name}` is missing")]
     Missing {
@@ -94,9 +94,9 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError::Missing`] naming the first absent or blank
-    /// variable and [`ConfigError::Invalid`] naming the first unusable one.
-    pub fn from_env() -> Result<Self, ConfigError> {
+    /// Returns [`FinanceSettlementWorkerConfigError::Missing`] naming the first absent or blank
+    /// variable and [`FinanceSettlementWorkerConfigError::Invalid`] naming the first unusable one.
+    pub fn from_env() -> Result<Self, FinanceSettlementWorkerConfigError> {
         Self::from_lookup(|name| std::env::var(name).ok())
     }
 
@@ -105,13 +105,13 @@ impl Config {
     /// # Errors
     ///
     /// Identical to [`Config::from_env`].
-    pub fn from_lookup<F>(lookup: F) -> Result<Self, ConfigError>
+    pub fn from_lookup<F>(lookup: F) -> Result<Self, FinanceSettlementWorkerConfigError>
     where
         F: Fn(&str) -> Option<String>,
     {
         let plane = required(&lookup, PLANE_VAR)?;
         if !PLANES.contains(&plane.as_str()) {
-            return Err(ConfigError::Invalid {
+            return Err(FinanceSettlementWorkerConfigError::Invalid {
                 name: PLANE_VAR,
                 reason: format!("expected one of {PLANES:?}, got `{plane}`"),
             });
@@ -125,14 +125,14 @@ impl Config {
             .map_err(|error| invalid(DATABASE_NAME_VAR, &error))?;
         let database_role = required(&lookup, DATABASE_ROLE_VAR)?;
         if database_role != REQUIRED_ROLE {
-            return Err(ConfigError::Invalid {
+            return Err(FinanceSettlementWorkerConfigError::Invalid {
                 name: DATABASE_ROLE_VAR,
                 reason: format!("expected `{REQUIRED_ROLE}`, got `{database_role}`"),
             });
         }
         let queue_url = required(&lookup, QUEUE_URL_VAR)?;
         if !queue_url.ends_with(FIFO_SUFFIX) {
-            return Err(ConfigError::Invalid {
+            return Err(FinanceSettlementWorkerConfigError::Invalid {
                 name: QUEUE_URL_VAR,
                 reason: format!(
                     "F-10 pins the rating queue to SQS FIFO; `{queue_url}` is not a `{FIFO_SUFFIX}` \
@@ -162,18 +162,18 @@ impl Config {
 }
 
 /// Reads a variable, treating blank as absent.
-fn required<F>(lookup: &F, name: &'static str) -> Result<String, ConfigError>
+fn required<F>(lookup: &F, name: &'static str) -> Result<String, FinanceSettlementWorkerConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     match lookup(name) {
         Some(value) if !value.trim().is_empty() => Ok(value.trim().to_owned()),
-        _ => Err(ConfigError::Missing { name }),
+        _ => Err(FinanceSettlementWorkerConfigError::Missing { name }),
     }
 }
 
 /// Reads a variable that must be an integer inside a closed range.
-fn bounded<F>(lookup: &F, name: &'static str, low: u32, high: u32) -> Result<u32, ConfigError>
+fn bounded<F>(lookup: &F, name: &'static str, low: u32, high: u32) -> Result<u32, FinanceSettlementWorkerConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
@@ -181,15 +181,15 @@ where
     raw.parse::<u32>()
         .ok()
         .filter(|value| (low..=high).contains(value))
-        .ok_or_else(|| ConfigError::Invalid {
+        .ok_or_else(|| FinanceSettlementWorkerConfigError::Invalid {
             name,
             reason: format!("expected {low}..={high}, got `{raw}`"),
         })
 }
 
 /// Renders a peer validation failure as this deployable's own refusal.
-fn invalid(name: &'static str, error: &impl std::fmt::Display) -> ConfigError {
-    ConfigError::Invalid {
+fn invalid(name: &'static str, error: &impl std::fmt::Display) -> FinanceSettlementWorkerConfigError {
+    FinanceSettlementWorkerConfigError::Invalid {
         name,
         reason: error.to_string(),
     }
@@ -200,7 +200,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        Config, ConfigError, DATABASE_ROLE_VAR, NAMESPACE, QUEUE_URL_VAR, REQUIRED_VARS,
+        Config, FinanceSettlementWorkerConfigError, DATABASE_ROLE_VAR, NAMESPACE, QUEUE_URL_VAR, REQUIRED_VARS,
         SERIALIZATION_RETRY_VAR,
     };
 
@@ -232,7 +232,7 @@ mod tests {
         ])
     }
 
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
+    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, FinanceSettlementWorkerConfigError> {
         Config::from_lookup(|name| vars.get(name).cloned())
     }
 
@@ -260,7 +260,7 @@ mod tests {
             vars.remove(name);
             assert_eq!(
                 read(&vars),
-                Err(ConfigError::Missing { name }),
+                Err(FinanceSettlementWorkerConfigError::Missing { name }),
                 "removing {name}"
             );
         }
@@ -275,7 +275,7 @@ mod tests {
         );
         let error = read(&vars).expect_err("F-10 pins the rating queue to FIFO");
         assert!(
-            matches!(error, ConfigError::Invalid { name, .. } if name == QUEUE_URL_VAR),
+            matches!(error, FinanceSettlementWorkerConfigError::Invalid { name, .. } if name == QUEUE_URL_VAR),
             "{error:?}"
         );
     }
@@ -286,7 +286,7 @@ mod tests {
         vars.insert(DATABASE_ROLE_VAR, "aex_finance_api".to_owned());
         let error = read(&vars).expect_err("the settlement worker has its own role");
         assert!(
-            matches!(error, ConfigError::Invalid { name, .. } if name == DATABASE_ROLE_VAR),
+            matches!(error, FinanceSettlementWorkerConfigError::Invalid { name, .. } if name == DATABASE_ROLE_VAR),
             "{error:?}"
         );
     }
@@ -297,7 +297,7 @@ mod tests {
         vars.insert(SERIALIZATION_RETRY_VAR, "50".to_owned());
         let error = read(&vars).expect_err("retries are bounded at three");
         assert!(
-            matches!(error, ConfigError::Invalid { name, .. } if name == SERIALIZATION_RETRY_VAR),
+            matches!(error, FinanceSettlementWorkerConfigError::Invalid { name, .. } if name == SERIALIZATION_RETRY_VAR),
             "{error:?}"
         );
     }

@@ -115,7 +115,7 @@ Every new Rust type intended as a peer surface is listed by exact path:
 - `aex_usage_rating::storage_close::{StorageCloseKind, ShadowStorageClose, StorageCloseError}`
 - `aex_finance_app::use_cases::{RatingRequest, FifoRatingMessage, FactFailure}`
 - `aex_finance_aurora::row::{RowPage, RowDecodeError}`
-- `aex_finance_aurora::store::{FinanceDbConfig, ConfigError}`
+- `aex_finance_aurora::store::{FinanceDbConfig, FinanceAuroraConfigError}`
 - `aex_finance_aurora::tx::{PostedReceipt, UnknownCommit, CommitDisposition, CommitProbe,
   CommitResolution, UnknownCommitError}`
 

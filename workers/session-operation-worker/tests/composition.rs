@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use aex_regional_http::config::ConfigError;
+use aex_regional_http::config::RegionalHttpConfigError;
 use session_operation_worker::config::{self, Config};
 use session_operation_worker::{
     BatchItem, DUE_SHARD_CONCURRENCY, Trigger, batch_response, due_shards,
@@ -40,7 +40,7 @@ fn complete() -> BTreeMap<&'static str, String> {
     ])
 }
 
-fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
+fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, RegionalHttpConfigError> {
     Config::read(&|name: &str| vars.get(name).cloned())
 }
 
@@ -61,7 +61,7 @@ fn every_required_variable_is_required() {
         missing.remove(name);
         let error = read(&missing).expect_err("a missing variable refuses the process");
         assert!(
-            matches!(error, ConfigError::Missing { name: reported } if reported == name),
+            matches!(error, RegionalHttpConfigError::Missing { name: reported } if reported == name),
             "removing {name} reported {error:?}"
         );
     }
@@ -76,7 +76,7 @@ fn a_queue_in_another_region_refuses_the_process() {
             .to_owned(),
     );
     let error = read(&vars).expect_err("a cross-region queue is refused");
-    let ConfigError::Invalid { name, reason } = error else {
+    let RegionalHttpConfigError::Invalid { name, reason } = error else {
         panic!("expected an invalid-value refusal");
     };
     assert_eq!(name, config::OPERATION_QUEUE_URL);
@@ -89,7 +89,7 @@ fn the_worker_cannot_be_bound_to_a_secret_key_or_the_content_queue() {
         let mut vars = complete();
         vars.insert(name, "bound".to_owned());
         assert!(
-            matches!(read(&vars), Err(ConfigError::Forbidden { name: reported, .. }) if reported == name),
+            matches!(read(&vars), Err(RegionalHttpConfigError::Forbidden { name: reported, .. }) if reported == name),
             "binding {name} was accepted"
         );
     }
@@ -101,7 +101,7 @@ fn a_zero_shard_count_refuses_the_process() {
     vars.insert(config::DUE_SCAN_SHARDS, "0".to_owned());
     assert!(matches!(
         read(&vars),
-        Err(ConfigError::Invalid { name, .. }) if name == config::DUE_SCAN_SHARDS
+        Err(RegionalHttpConfigError::Invalid { name, .. }) if name == config::DUE_SCAN_SHARDS
     ));
 }
 
@@ -138,7 +138,7 @@ fn a_shard_count_that_disagrees_with_the_table_contract_refuses_startup() {
     vars.insert(config::DUE_SCAN_SHARDS, "16".to_owned());
     assert!(matches!(
         read(&vars),
-        Err(ConfigError::Invalid { name, .. }) if name == config::DUE_SCAN_SHARDS
+        Err(RegionalHttpConfigError::Invalid { name, .. }) if name == config::DUE_SCAN_SHARDS
     ));
 }
 
@@ -148,7 +148,7 @@ fn an_attempt_boundary_that_disagrees_with_strict_v1_refuses_startup() {
     vars.insert(config::MAX_ATTEMPTS, "7".to_owned());
     assert!(matches!(
         read(&vars),
-        Err(ConfigError::Invalid { name, .. }) if name == config::MAX_ATTEMPTS
+        Err(RegionalHttpConfigError::Invalid { name, .. }) if name == config::MAX_ATTEMPTS
     ));
 }
 

@@ -77,7 +77,7 @@ canonicalizer, floating-point resource quantity, or cloud call.
 These items remain and are not represented as complete:
 
 - The six existing binary skeletons still fail fast with
-  `RunError::NotImplemented`. Generated `aex_wire` server traits/router
+  a `NotImplemented` run-error variant. Generated `aex_wire` server traits/router
   constructors and the peer command/store ports needed to compose real
   `lambda_http`/`hyper` entrypoints are absent on the branch base. Therefore the
   shared health router is implemented and tested but is not yet mounted by a
@@ -308,7 +308,7 @@ aex-workspace-check: wrote release/test-registry.json and release/unearned-evide
 
 Branch `rw/deploy-regional`, off `main` after the four-stream merge. This closes
 the largest tracked gap in "Deliberately deferred": the six binaries no longer
-return `RunError::NotImplemented`. Each one now validates its own configuration,
+return a `NotImplemented` run-error variant. Each one now validates its own configuration,
 builds its real adapters from it, and reaches its real entry point.
 
 ### The mount table is a projection of the route table

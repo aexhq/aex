@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 
-use aex_regional_http::config::ConfigError;
+use aex_regional_http::config::RegionalHttpConfigError;
 use aex_regional_http::router::{RouteOwner, route_owner};
 use aex_wire::routes::{RouteId, route};
 use regional_secret_api::config::{self, Config};
@@ -50,7 +50,7 @@ fn complete() -> BTreeMap<&'static str, String> {
     ])
 }
 
-fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
+fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, RegionalHttpConfigError> {
     Config::read(&|name: &str| vars.get(name).cloned())
 }
 
@@ -78,7 +78,7 @@ fn every_required_variable_is_required() {
         assert!(
             matches!(
                 error,
-                ConfigError::Missing { name: reported } if reported == name
+                RegionalHttpConfigError::Missing { name: reported } if reported == name
             ),
             "removing {name} reported {error:?}"
         );
@@ -89,7 +89,7 @@ fn every_required_variable_is_required() {
 fn a_blank_value_is_missing_rather_than_empty() {
     let mut vars = complete();
     vars.insert(config::SECRET_CUSTODY_TABLE, "   ".to_owned());
-    assert!(matches!(read(&vars), Err(ConfigError::Missing { .. })));
+    assert!(matches!(read(&vars), Err(RegionalHttpConfigError::Missing { .. })));
 }
 
 #[test]
@@ -100,7 +100,7 @@ fn a_resource_in_another_region_refuses_the_process() {
         "arn:aws:kms:us-east-1:000000000000:key/11111111-2222-3333-4444-555555555555".to_owned(),
     );
     let error = read(&vars).expect_err("a cross-region key is refused");
-    let ConfigError::Invalid { name, reason } = error else {
+    let RegionalHttpConfigError::Invalid { name, reason } = error else {
         panic!("expected an invalid-value refusal");
     };
     assert_eq!(name, config::SECRET_KMS_KEY_ARN);
@@ -114,7 +114,7 @@ fn an_unknown_plane_refuses_the_process() {
     vars.insert(config::PLANE, "staging".to_owned());
     assert!(matches!(
         read(&vars),
-        Err(ConfigError::Invalid { name, .. }) if name == config::PLANE
+        Err(RegionalHttpConfigError::Invalid { name, .. }) if name == config::PLANE
     ));
 }
 
@@ -127,7 +127,7 @@ fn the_secret_edge_cannot_be_bound_to_a_forbidden_resource() {
         assert!(
             matches!(
                 error,
-                ConfigError::Forbidden { name: reported, deployable, .. }
+                RegionalHttpConfigError::Forbidden { name: reported, deployable, .. }
                     if reported == name && deployable == config::DEPLOYABLE
             ),
             "binding {name} reported {error:?}"

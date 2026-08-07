@@ -18,7 +18,7 @@ use aex_secret_domain::{CustodyRejection, OwnerKeyEdgeId, SecretName, admit_cust
 use aex_secret_domain::{SessionCustody, WorkspaceSecret};
 use aex_session_domain::{
     CancelCause, CommandClass, DeletionRejection, Message, MessageRole, MessageState, PurgeCascade,
-    QueueRun, Run, RunError, Session, SessionStatus, TerminalAttempt, WorkAdmission,
+    QueueRun, Run, SessionDomainRunError, Session, SessionStatus, TerminalAttempt, WorkAdmission,
     acquire_mutation_guard, cancel_session_work, claim_terminal, pause_gate, purge, queue, restore,
     start as start_run_domain, trash,
 };
@@ -272,7 +272,7 @@ pub async fn start_run(
         .load_run(command.session, command.run)
         .await?;
     if snapshot.session.active_run != Some(command.run) {
-        return Err(AppError::Run(RunError::SessionBusy {
+        return Err(AppError::Run(SessionDomainRunError::SessionBusy {
             active: snapshot.session.active_run.unwrap_or(command.run),
         }));
     }

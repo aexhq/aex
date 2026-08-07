@@ -15,7 +15,7 @@ mod keys {
 
 /// Why this authority refused to start.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-enum ConfigError {
+enum RegionalControlConfigError {
     #[error("required environment variable `{0}` is missing")]
     Missing(&'static str),
     #[error("environment variable `{name}` is invalid: {reason}")]
@@ -29,16 +29,16 @@ struct Config {
 }
 
 impl Config {
-    fn from_env() -> Result<Self, ConfigError> {
+    fn from_env() -> Result<Self, RegionalControlConfigError> {
         Self::from_lookup(|name| std::env::var(name).ok())
     }
 
-    fn from_lookup<F>(lookup: F) -> Result<Self, ConfigError>
+    fn from_lookup<F>(lookup: F) -> Result<Self, RegionalControlConfigError>
     where
         F: Fn(&str) -> Option<String>,
     {
         let region_raw = required(&lookup, keys::REGION)?;
-        let region = Region::from_name(&region_raw).ok_or_else(|| ConfigError::Invalid {
+        let region = Region::from_name(&region_raw).ok_or_else(|| RegionalControlConfigError::Invalid {
             name: keys::REGION,
             reason: format!("`{region_raw}` is not a launch region"),
         })?;
@@ -49,13 +49,13 @@ impl Config {
     }
 }
 
-fn required<F>(lookup: &F, name: &'static str) -> Result<String, ConfigError>
+fn required<F>(lookup: &F, name: &'static str) -> Result<String, RegionalControlConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     match lookup(name) {
         Some(value) if !value.trim().is_empty() => Ok(value),
-        _ => Err(ConfigError::Missing(name)),
+        _ => Err(RegionalControlConfigError::Missing(name)),
     }
 }
 
@@ -114,7 +114,7 @@ async fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{Config, ConfigError, keys};
+    use super::{Config, RegionalControlConfigError, keys};
     use aex_wire::types::Region;
     use std::collections::BTreeMap;
 
@@ -140,7 +140,7 @@ mod tests {
             vars.remove(key);
             assert_eq!(
                 Config::from_lookup(|name| vars.get(name).cloned()),
-                Err(ConfigError::Missing(key))
+                Err(RegionalControlConfigError::Missing(key))
             );
         }
         let mut vars = complete();

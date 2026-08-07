@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 
 use aex_regional_http::capability::{Capability as _, ContentObjectDelete};
-use aex_regional_http::config::ConfigError;
+use aex_regional_http::config::RegionalHttpConfigError;
 use content_lifecycle_worker::config::{self, Config, Mode};
 
 fn base(mode: &str) -> BTreeMap<&'static str, String> {
@@ -71,7 +71,7 @@ fn delete() -> BTreeMap<&'static str, String> {
     vars
 }
 
-fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
+fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, RegionalHttpConfigError> {
     Config::read(&|name: &str| vars.get(name).cloned())
 }
 
@@ -92,8 +92,8 @@ fn every_common_variable_is_required_in_every_mode() {
             missing.remove(name);
             let error = read(&missing).expect_err("a missing variable refuses the process");
             assert!(
-                matches!(error, ConfigError::Missing { name: reported } if reported == name)
-                    || matches!(error, ConfigError::Invalid { name: reported, .. } if reported == name),
+                matches!(error, RegionalHttpConfigError::Missing { name: reported } if reported == name)
+                    || matches!(error, RegionalHttpConfigError::Invalid { name: reported, .. } if reported == name),
                 "removing {name} reported {error:?}"
             );
         }
@@ -108,7 +108,7 @@ fn delete_mode_cannot_start_without_the_object_delete_capability() {
         config::NO_CAPABILITIES.to_owned(),
     );
     let error = read(&vars).expect_err("delete without the capability is refused");
-    let ConfigError::Invalid { name, reason } = error else {
+    let RegionalHttpConfigError::Invalid { name, reason } = error else {
         panic!("expected an invalid-value refusal, got {error:?}");
     };
     assert_eq!(name, config::DECLARED_CAPABILITIES);
@@ -129,7 +129,7 @@ fn no_other_mode_may_hold_the_object_delete_capability() {
         );
         let error = read(&vars).expect_err("a non-delete role holding the capability is refused");
         assert!(
-            matches!(error, ConfigError::Forbidden { name, .. } if name == config::DECLARED_CAPABILITIES),
+            matches!(error, RegionalHttpConfigError::Forbidden { name, .. } if name == config::DECLARED_CAPABILITIES),
             "{mode} reported {error:?}"
         );
     }
@@ -141,7 +141,7 @@ fn delete_mode_requires_its_queue_and_the_others_do_not() {
     vars.remove(config::CONTENT_QUEUE_URL);
     assert!(matches!(
         read(&vars),
-        Err(ConfigError::Missing { name }) if name == config::CONTENT_QUEUE_URL
+        Err(RegionalHttpConfigError::Missing { name }) if name == config::CONTENT_QUEUE_URL
     ));
     // A scheduled role never needs the queue at all.
     assert!(read(&expiry()).expect("expiry").content_queue_url.is_none());
@@ -153,7 +153,7 @@ fn marksweep_requires_its_page_bounds() {
     vars.remove(config::MARK_PAGE_ITEMS);
     assert!(matches!(
         read(&vars),
-        Err(ConfigError::Missing { name }) if name == config::MARK_PAGE_ITEMS
+        Err(RegionalHttpConfigError::Missing { name }) if name == config::MARK_PAGE_ITEMS
     ));
 }
 
@@ -163,14 +163,14 @@ fn expiry_requires_bounded_shards_and_pages() {
     vars.remove(config::EXPIRY_SCAN_SHARDS);
     assert!(matches!(
         read(&vars),
-        Err(ConfigError::Missing { name }) if name == config::EXPIRY_SCAN_SHARDS
+        Err(RegionalHttpConfigError::Missing { name }) if name == config::EXPIRY_SCAN_SHARDS
     ));
 
     let mut vars = expiry();
     vars.insert(config::EXPIRY_PAGE_ITEMS, "101".to_owned());
     assert!(matches!(
         read(&vars),
-        Err(ConfigError::Invalid { name, .. }) if name == config::EXPIRY_PAGE_ITEMS
+        Err(RegionalHttpConfigError::Invalid { name, .. }) if name == config::EXPIRY_PAGE_ITEMS
     ));
 }
 
@@ -180,6 +180,6 @@ fn an_unknown_mode_refuses_the_process() {
     vars.insert(config::MODE, "sweepmark".to_owned());
     assert!(matches!(
         read(&vars),
-        Err(ConfigError::Invalid { name, .. }) if name == config::MODE
+        Err(RegionalHttpConfigError::Invalid { name, .. }) if name == config::MODE
     ));
 }

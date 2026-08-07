@@ -50,7 +50,7 @@ fn readiness_refuses_the_process_rather_than_answering_a_request() {
     let source = include_str!("../src/main.rs");
     assert!(source.contains("Probes::NONE"));
     let ready = source
-        .find("RunError::NotReady")
+        .find("CentralAuthzRunError::NotReady")
         .expect("an unproven probe must stop the process");
     let listen = source
         .find("lambda_runtime::run")

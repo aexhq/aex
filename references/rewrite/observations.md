@@ -312,7 +312,7 @@ retry-to-green anywhere in the stream; `cargo nextest` reports `0 skipped`.
 
 Branch `rw/deploy-observations`, off `main` after the four-stream merge. Every
 one of the five deployables now has a **real `run()`**: the typed
-`RunError::NotImplemented` is gone from all of them, and none was replaced by a
+`NotImplemented` run-error variant is gone from all of them, and none was replaced by a
 stub, a `todo!()` or a route that answers `503` because a port was never wired.
 
 Nothing here is deployed, credentialed or published. No AWS call was made and no

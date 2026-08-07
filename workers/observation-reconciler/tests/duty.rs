@@ -21,7 +21,7 @@ use aws_smithy_runtime_api::client::http::HttpClient;
 use aws_smithy_types::body::SdkBody;
 
 use observation_reconciler::config::{
-    Config, ConfigError, DUTY_SHARDS_VAR, DUTY_VAR, MAX_ATTEMPTS_VAR, OBSERVATION_BUCKET_VAR,
+    Config, ObservationReconcilerConfigError, DUTY_SHARDS_VAR, DUTY_VAR, MAX_ATTEMPTS_VAR, OBSERVATION_BUCKET_VAR,
     OBSERVATION_TABLE_VAR, PLANE_VAR, RECONCILE_PAGE_VAR, REGION_VAR, REQUIRED_VARS,
     USAGE_QUEUE_URL_VAR,
 };
@@ -30,7 +30,7 @@ use observation_reconciler::duty::{
 };
 use observation_reconciler::handler::{Invocation, classify, partial_batch_body};
 use observation_reconciler::health::{health_body, readiness_body};
-use observation_reconciler::{REQUIRED_PROBES, ROLE, RunError, compose, role_for};
+use observation_reconciler::{REQUIRED_PROBES, ROLE, ObservationReconcilerRunError, compose, role_for};
 
 // --- configuration ----------------------------------------------------------
 
@@ -51,7 +51,7 @@ fn complete() -> BTreeMap<&'static str, String> {
     ])
 }
 
-fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
+fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ObservationReconcilerConfigError> {
     Config::from_lookup(|name| vars.get(name).cloned())
 }
 
@@ -75,7 +75,7 @@ fn every_missing_variable_is_named() {
         vars.remove(*name);
         assert_eq!(
             read(&vars),
-            Err(ConfigError::Missing { name }),
+            Err(ObservationReconcilerConfigError::Missing { name }),
             "removing {name}"
         );
     }
@@ -95,7 +95,7 @@ fn a_blank_resource_identifier_is_missing_rather_than_empty() {
     for name in [OBSERVATION_TABLE_VAR, OBSERVATION_BUCKET_VAR] {
         let mut vars = complete();
         vars.insert(name, "   ".to_owned());
-        assert_eq!(read(&vars), Err(ConfigError::Missing { name }));
+        assert_eq!(read(&vars), Err(ObservationReconcilerConfigError::Missing { name }));
     }
 }
 
@@ -105,7 +105,7 @@ fn an_unknown_duty_is_refused_by_name() {
     vars.insert(DUTY_VAR, "materialize".to_owned());
     let error = read(&vars).expect_err("an unknown duty is refused");
     assert!(
-        matches!(error, ConfigError::Invalid { name: DUTY_VAR, .. }),
+        matches!(error, ObservationReconcilerConfigError::Invalid { name: DUTY_VAR, .. }),
         "{error:?}"
     );
 }
@@ -116,14 +116,14 @@ fn the_export_launch_duty_belongs_to_the_launcher_and_is_refused_here() {
     vars.insert(DUTY_VAR, ControlDomain::ExportLaunch.as_str().to_owned());
     let error = read(&vars).expect_err("`export.launch` is the launcher's duty");
     match error {
-        ConfigError::Invalid { name, reason } => {
+        ObservationReconcilerConfigError::Invalid { name, reason } => {
             assert_eq!(name, DUTY_VAR);
             assert!(
                 reason.contains("observation-export-launcher"),
                 "the refusal must name the deployable that owns it: {reason}"
             );
         }
-        other @ ConfigError::Missing { .. } => {
+        other @ ObservationReconcilerConfigError::Missing { .. } => {
             panic!("expected an invalid-duty refusal, got {other:?}")
         }
     }
@@ -158,7 +158,7 @@ fn the_page_shard_and_attempt_bounds_are_enforced_at_both_ends() {
             vars.insert(name, value.to_owned());
             let error = read(&vars).unwrap_err();
             assert!(
-                matches!(error, ConfigError::Invalid { name: reported, .. } if reported == name),
+                matches!(error, ObservationReconcilerConfigError::Invalid { name: reported, .. } if reported == name),
                 "{name} = {value} was not refused: {error:?}"
             );
         }
@@ -182,7 +182,7 @@ fn a_plaintext_usage_queue_is_refused() {
     );
     assert!(matches!(
         read(&vars),
-        Err(ConfigError::Invalid {
+        Err(ObservationReconcilerConfigError::Invalid {
             name: USAGE_QUEUE_URL_VAR,
             ..
         })
@@ -195,7 +195,7 @@ fn an_unknown_plane_and_an_unknown_region_are_both_refused() {
     vars.insert(PLANE_VAR, "staging".to_owned());
     assert!(matches!(
         read(&vars),
-        Err(ConfigError::Invalid {
+        Err(ObservationReconcilerConfigError::Invalid {
             name: PLANE_VAR,
             ..
         })
@@ -204,7 +204,7 @@ fn an_unknown_plane_and_an_unknown_region_are_both_refused() {
     vars.insert(REGION_VAR, "eu-central-9".to_owned());
     assert!(matches!(
         read(&vars),
-        Err(ConfigError::Invalid {
+        Err(ObservationReconcilerConfigError::Invalid {
             name: REGION_VAR,
             ..
         })
@@ -231,7 +231,7 @@ fn only_the_deletion_duty_deployment_may_delete_an_object() {
         assert_eq!(role, ROLE);
         let error = compose(role, &[Capability::DeleteBodies], REQUIRED_PROBES)
             .expect_err("a non-deletion duty must refuse the delete grant");
-        assert!(matches!(error, RunError::Capability { .. }), "{error:?}");
+        assert!(matches!(error, ObservationReconcilerRunError::Capability { .. }), "{error:?}");
     }
 }
 
@@ -251,7 +251,7 @@ fn no_duty_deployment_may_launch_an_export_task_or_write_an_export_object() {
             );
             let error =
                 compose(role, &[forbidden], REQUIRED_PROBES).expect_err("outside the grant");
-            assert!(matches!(error, RunError::Capability { .. }), "{error:?}");
+            assert!(matches!(error, ObservationReconcilerRunError::Capability { .. }), "{error:?}");
         }
     }
 }
@@ -276,11 +276,11 @@ fn an_unproven_probe_is_never_assumed() {
     let first = REQUIRED_PROBES.first().expect("a probe set is declared");
     let error = compose(ROLE, ROLE.granted(), &[]).expect_err("refused");
     match error {
-        RunError::NotReady { probe } => assert_eq!(probe, first.as_str()),
+        ObservationReconcilerRunError::NotReady { probe } => assert_eq!(probe, first.as_str()),
         other => panic!("expected a readiness failure, got {other:?}"),
     }
     let error = compose(ROLE, ROLE.granted(), &REQUIRED_PROBES[..1]).expect_err("refused");
-    assert!(matches!(error, RunError::NotReady { .. }), "{error:?}");
+    assert!(matches!(error, ObservationReconcilerRunError::NotReady { .. }), "{error:?}");
 }
 
 // --- the partial-batch response --------------------------------------------

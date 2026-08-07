@@ -233,7 +233,7 @@ use aex_control_domain::{
 
 // The transport, for every central request and worker Lambda including finance.
 use aex_rds_data::{
-    DataApiClient, DataApiConfig, ResourceArn, SecretArn, DatabaseName, ConfigError,
+    DataApiClient, DataApiConfig, ResourceArn, SecretArn, DatabaseName, RdsDataConfigError,
     Statement, SqlValue, sql, Record, Row, Transaction, TransactionId, Isolation,
     Committed, CommitFailure, DataApiError, DecodeError, SqlState, ExceptionKind,
     Transport, TransportError, ExecuteResponse, AwsTransport,
