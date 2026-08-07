@@ -456,7 +456,6 @@ dependencies = [
 name = "aex-finance-app"
 version = "0.1.0"
 dependencies = [
- "aex-finance-domain",
  "aex-internal-contracts",
  "aex-payment-contracts",
  "aex-wire",
@@ -1346,8 +1345,10 @@ dependencies = [
 name = "aex-usage-application"
 version = "0.1.0"
 dependencies = [
+ "aex-internal-contracts",
  "aex-usage-application",
  "aex-usage-domain",
+ "aex-wire",
  "async-trait",
  "bytes",
  "futures",
@@ -4148,11 +4149,12 @@ name = "finance-settlement-worker"
 version = "0.1.0"
 dependencies = [
  "aex-finance-app",
- "aex-finance-domain",
  "aex-internal-contracts",
  "aex-platform-telemetry",
  "aex-rds-data",
  "aex-telemetry-schema",
+ "aex-usage-application",
+ "aex-usage-domain",
  "aex-wire",
  "async-trait",
  "aws-config",

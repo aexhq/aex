@@ -239,14 +239,13 @@ fn org_uuid(organization: OrganizationId) -> uuid::Uuid {
 }
 
 /// The rating category one meter belongs to.
+///
+/// Delegates to the contract's own mapping: the same spelling appears in the
+/// inbox primary key and the producer's FIFO grammar, and a local copy is a
+/// second settlement authority waiting to drift.
 #[must_use]
 pub const fn category(meter: aex_internal_contracts::usage::Meter) -> &'static str {
-    use aex_internal_contracts::usage::Meter;
-    match meter {
-        Meter::ComputeMillicpuMs | Meter::MemoryByteMs => "compute",
-        Meter::StorageByteMin => "storage",
-        Meter::DataTransferEgressByte => "transfer",
-    }
+    meter.category()
 }
 
 /// The reservation scope one fact's authority names.

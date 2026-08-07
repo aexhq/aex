@@ -35,7 +35,6 @@ serde.workspace = true
 thiserror.workspace = true
 time.workspace = true
 uuid.workspace = true
-aex-finance-domain = { path = "../aex-finance-domain" }
 aex-internal-contracts = { path = "../aex-internal-contracts" }
 aex-payment-contracts = { path = "../aex-payment-contracts" }
 aex-wire = { path = "../aex-wire" }

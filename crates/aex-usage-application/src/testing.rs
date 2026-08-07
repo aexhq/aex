@@ -25,6 +25,7 @@ use aex_usage_domain::wire_pending::{
     ActorRef, CaseId, CredentialBindingId, ModelId, OrganizationId, PricingVersion, ProviderId,
     RegionId, ServiceId, Timestamp, WorkspaceId,
 };
+use aex_wire::ids::PrefixedId as _;
 use std::collections::BTreeMap;
 
 /// A canonical instant from whole milliseconds.
@@ -32,14 +33,20 @@ pub fn at(millis: i64) -> Timestamp {
     Timestamp::from_unix_millis(millis).expect("representable")
 }
 
-/// The fixture organization.
+/// The fixture organization, in the canonical `aex_wire` spelling.
+///
+/// Minted from the wire owner rather than hand-typed: the outbox boundary
+/// parses these strings into the central contract's identifier types, and a
+/// hand-written spelling would keep passing after the format changed.
 pub fn organization() -> OrganizationId {
-    OrganizationId::parse("org-1").expect("org")
+    let wire = aex_wire::ids::OrganizationId::from_uuid7(aex_wire::ids::Uuid7::compose(1, [7; 10]));
+    OrganizationId::parse(wire.encode().as_str()).expect("org")
 }
 
-/// The fixture workspace.
+/// The fixture workspace, in the canonical `aex_wire` spelling.
 pub fn workspace() -> WorkspaceId {
-    WorkspaceId::parse("ws-1").expect("workspace")
+    let wire = aex_wire::ids::WorkspaceId::from_uuid7(aex_wire::ids::Uuid7::compose(2, [9; 10]));
+    WorkspaceId::parse(wire.encode().as_str()).expect("workspace")
 }
 
 /// The fixture region.

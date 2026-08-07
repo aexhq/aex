@@ -1,10 +1,11 @@
 //! One SQS invocation, from the delivered batch to the partial-batch response.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use aex_finance_app::use_cases::RatingRequest;
 use aex_wire::ids::OrganizationId;
-use aws_lambda_events::sqs::{SqsBatchResponse, SqsEventObj};
+use aws_lambda_events::sqs::{SqsBatchResponse, SqsEvent};
 
 use crate::backlog::{Delivered, MESSAGE_GROUP_ATTRIBUTE, chunks, partition, uncommitted};
 use crate::settle::{SettleError, SettlementAuthority};
@@ -24,18 +25,34 @@ pub struct BatchReport {
     pub quarantined: usize,
     /// How many accounts did not reach a complete settlement receipt.
     pub failed_accounts: usize,
+    /// How many delivered messages could not be decoded or grouped.
+    pub undecodable: usize,
 }
 
-/// Decodes one delivered SQS batch.
+/// Decodes one delivered SQS batch, one record at a time.
 ///
-/// A message with no identity or no FIFO group is not silently dropped: it is
-/// returned as a failure so it goes back to the queue and is visible.
+/// The typed event layer once decoded the whole batch at the runtime boundary,
+/// so one undecodable body failed every message — including other accounts' —
+/// into the DLQ. Each body is decoded here instead, and only what actually
+/// failed is returned to the queue.
+///
+/// Two refusals are deliberate:
+///
+/// - a message with no identity or no FIFO group is not silently dropped: it
+///   is returned as a failure so it goes back to the queue and is visible;
+/// - an undecodable body fails **its own group's tail** as well. The queue is
+///   FIFO per account; settling an account's later facts ahead of an earlier
+///   one it cannot decode would reorder the ledger the grouping exists to
+///   protect. Other groups proceed untouched.
 #[must_use]
-pub fn decode(event: SqsEventObj<RatingRequest>) -> (Vec<Delivered>, Vec<String>) {
+pub fn decode(event: SqsEvent) -> (Vec<Delivered>, Vec<String>) {
     let mut delivered = Vec::with_capacity(event.records.len());
-    let mut undecodable = Vec::new();
+    let mut failed = Vec::new();
+    let mut poisoned_groups: BTreeSet<String> = BTreeSet::new();
     for record in event.records {
         let Some(message_id) = record.message_id.clone() else {
+            // With no identity there is nothing a partial-batch response could
+            // name; the runtime acknowledges it either way.
             continue;
         };
         let group = record
@@ -44,16 +61,26 @@ pub fn decode(event: SqsEventObj<RatingRequest>) -> (Vec<Delivered>, Vec<String>
             .cloned()
             .unwrap_or_default();
         if group.is_empty() {
-            undecodable.push(message_id);
+            failed.push(message_id);
             continue;
         }
-        delivered.push(Delivered {
-            message_id,
-            group,
-            request: record.body,
-        });
+        if poisoned_groups.contains(&group) {
+            failed.push(message_id);
+            continue;
+        }
+        match serde_json::from_str::<RatingRequest>(record.body.as_deref().unwrap_or_default()) {
+            Ok(request) => delivered.push(Delivered {
+                message_id,
+                group,
+                request,
+            }),
+            Err(_) => {
+                poisoned_groups.insert(group);
+                failed.push(message_id);
+            }
+        }
     }
-    (delivered, undecodable)
+    (delivered, failed)
 }
 
 /// Settles one delivered batch and reports which messages did not commit.
@@ -65,7 +92,7 @@ pub fn decode(event: SqsEventObj<RatingRequest>) -> (Vec<Delivered>, Vec<String>
 /// make SQS redeliver work that is already durable.
 pub async fn handle<A: SettlementAuthority>(
     authority: &Arc<A>,
-    event: SqsEventObj<RatingRequest>,
+    event: SqsEvent,
     max_group_batch: u32,
     serialization_retry_max: u32,
 ) -> (SqsBatchResponse, BatchReport) {
@@ -73,13 +100,24 @@ pub async fn handle<A: SettlementAuthority>(
     let mut report = BatchReport::default();
 
     let (delivered, undecodable) = decode(event);
+    report.undecodable = undecodable.len();
     for message_id in undecodable {
         response.add_failure(message_id);
     }
 
     // A batch whose grouping cannot be trusted is returned whole: the ordering
-    // guarantee is the reason this queue is FIFO at all.
+    // guarantee is the reason this queue is FIFO at all. "Whole" means every
+    // delivered message is named — a message the partial-batch response does
+    // not name is acknowledged and deleted, which would silently drop money.
+    let delivered_ids: Vec<String> = delivered
+        .iter()
+        .map(|message| message.message_id.clone())
+        .collect();
     let Ok(groups) = partition(delivered) else {
+        report.undecodable += delivered_ids.len();
+        for message_id in delivered_ids {
+            response.add_failure(message_id);
+        }
         return (response, report);
     };
     report.accounts = groups.len();
@@ -148,16 +186,16 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use aex_finance_app::use_cases::RatingRequest;
-    use aex_finance_domain::IntentHash;
     use aex_internal_contracts::usage::{
         Attribution, AuthorityKind, FactAuthority, FactBasis, FactId, FactIdempotency, Meter,
         ServiceTime, SourceReceipt, UsageFact,
     };
     use aex_internal_contracts::{PricingVersion, SchemaVersion};
     use aex_wire::PrefixedId as _;
+    use aex_wire::idempotency::IntentDigest;
     use aex_wire::ids::{OrganizationId, WorkspaceId};
     use aex_wire::types::{DecimalU128, Region, Timestamp};
-    use aws_lambda_events::sqs::{SqsEventObj, SqsMessageObj};
+    use aws_lambda_events::sqs::{SqsEvent, SqsMessage};
 
     use super::handle;
     use crate::backlog::{Delivered, MESSAGE_GROUP_ATTRIBUTE};
@@ -255,23 +293,25 @@ mod tests {
         organization: OrganizationId,
         ordinal: u128,
         group: Option<&str>,
-    ) -> SqsMessageObj<RatingRequest> {
+    ) -> SqsMessage {
+        let body = serde_json::to_string(&RatingRequest {
+            fact: fact(organization, ordinal),
+            intent_hash: IntentDigest::from_bytes([2u8; 32]),
+        })
+        .expect("the body encodes");
+        raw_message(message_id, &body, group)
+    }
+
+    /// A delivered message with an arbitrary body, exactly as Lambda shapes it.
+    ///
+    /// `SqsMessage` is `#[non_exhaustive]`, so the fixture is decoded from the
+    /// exact JSON Lambda delivers rather than built field by field.
+    fn raw_message(message_id: &str, body: &str, group: Option<&str>) -> SqsMessage {
         let mut attributes = HashMap::new();
         if let Some(group) = group {
             attributes.insert(MESSAGE_GROUP_ATTRIBUTE.to_owned(), group.to_owned());
         }
-        // `SqsMessageObj` is `#[non_exhaustive]`, so the fixture is decoded
-        // from the exact JSON Lambda delivers rather than built field by field.
-        // SQS delivers the body as a JSON *string*, which the typed record then
-        // parses, so the fixture nests it exactly the way Lambda does.
-        let body = serde_json::to_string(
-            &serde_json::to_string(&RatingRequest {
-                fact: fact(organization, ordinal),
-                intent_hash: IntentHash::new([2u8; 32]),
-            })
-            .expect("the body encodes"),
-        )
-        .expect("the body nests");
+        let body = serde_json::to_string(body).expect("the body nests");
         let attributes = serde_json::to_string(&attributes).expect("the attributes encode");
         serde_json::from_str(&format!(
             r#"{{"messageId":"{message_id}","body":{body},"attributes":{attributes},
@@ -282,7 +322,7 @@ mod tests {
         .expect("the delivered message decodes")
     }
 
-    fn event(records: &[SqsMessageObj<RatingRequest>]) -> SqsEventObj<RatingRequest> {
+    fn event(records: &[SqsMessage]) -> SqsEvent {
         let records = serde_json::to_string(records).expect("the records encode");
         serde_json::from_str(&format!(r#"{{"Records":{records}}}"#))
             .expect("the delivered batch decodes")
@@ -454,5 +494,91 @@ mod tests {
         assert_eq!(response.batch_item_failures[0].item_identifier, "m1");
         assert_eq!(report.pending, 1);
         assert_eq!(report.failed_accounts, 1);
+    }
+
+    #[tokio::test]
+    async fn one_undecodable_body_fails_its_own_group_tail_and_nothing_else() {
+        // The typed event layer used to fail the whole batch into the DLQ on
+        // one bad body. Decoding per record must keep other accounts settling,
+        // while the poisoned account's tail stays queued: FIFO per account is
+        // the ledger-ordering guarantee, so its later facts must not settle
+        // ahead of the one that failed.
+        let healthy = organization(1);
+        let poisoned = organization(2);
+        let authority = Arc::new(Scripted {
+            failing: None,
+            leaves_pending: false,
+            serialization_failures: AtomicUsize::new(0),
+            calls: AtomicUsize::new(0),
+        });
+        let (response, report) = handle(
+            &authority,
+            event(&[
+                message("m1", healthy, 0, Some(healthy.encode().as_str())),
+                raw_message(
+                    "m2",
+                    "{\"not\":\"a rating request\"}",
+                    Some(poisoned.encode().as_str()),
+                ),
+                message("m3", poisoned, 1, Some(poisoned.encode().as_str())),
+                message("m4", healthy, 2, Some(healthy.encode().as_str())),
+            ]),
+            100,
+            3,
+        )
+        .await;
+        let named: Vec<&str> = response
+            .batch_item_failures
+            .iter()
+            .map(|failure| failure.item_identifier.as_str())
+            .collect();
+        assert_eq!(
+            named,
+            vec!["m2", "m3"],
+            "the poisoned body and its group tail return; the healthy account settles"
+        );
+        assert_eq!(report.claimed, 2);
+        assert_eq!(report.undecodable, 2);
+        assert_eq!(report.accounts, 1);
+    }
+
+    #[tokio::test]
+    async fn a_batch_that_cannot_be_grouped_returns_every_delivered_message() {
+        // A partial-batch response acknowledges everything it does not name.
+        // When the grouping itself cannot be trusted, "return the batch whole"
+        // must therefore name every delivered message, or the refusal silently
+        // deletes money evidence.
+        let first = organization(1);
+        let second = organization(2);
+        let authority = Arc::new(Scripted {
+            failing: None,
+            leaves_pending: false,
+            serialization_failures: AtomicUsize::new(0),
+            calls: AtomicUsize::new(0),
+        });
+        let (response, report) = handle(
+            &authority,
+            event(&[
+                message("m1", first, 0, Some(first.encode().as_str())),
+                // Declares the wrong account for its fact, which refuses the
+                // whole grouping.
+                message("m2", second, 1, Some(first.encode().as_str())),
+            ]),
+            100,
+            3,
+        )
+        .await;
+        let named: Vec<&str> = response
+            .batch_item_failures
+            .iter()
+            .map(|failure| failure.item_identifier.as_str())
+            .collect();
+        assert_eq!(named, vec!["m1", "m2"]);
+        assert_eq!(
+            authority.calls.load(Ordering::Relaxed),
+            0,
+            "nothing settles out of a batch whose ordering cannot be trusted"
+        );
+        assert_eq!(report.undecodable, 2);
     }
 }

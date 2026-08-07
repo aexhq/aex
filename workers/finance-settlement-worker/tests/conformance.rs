@@ -1,14 +1,15 @@
 //! The producer contract this worker consumes, asserted against the peer that
-//! publishes it.
+//! publishes it — including one round trip through the regional producer's
+//! exact bytes.
 
 use aex_finance_app::use_cases::FifoRatingMessage;
-use aex_finance_domain::IntentHash;
 use aex_internal_contracts::usage::{
     Attribution, AuthorityKind, FactAuthority, FactBasis, FactId, FactIdempotency, Meter,
     ServiceTime, SourceReceipt, UsageFact,
 };
 use aex_internal_contracts::{PricingVersion, SchemaVersion};
 use aex_wire::PrefixedId as _;
+use aex_wire::idempotency::IntentDigest;
 use aex_wire::ids::{OrganizationId, WorkspaceId};
 use aex_wire::types::{DecimalU128, Region, Timestamp};
 use finance_settlement_worker::backlog::{
@@ -66,7 +67,7 @@ fn fact(meter: Meter) -> UsageFact {
 fn the_fifo_group_the_producer_mints_is_exactly_the_organization() {
     let fact = fact(Meter::ComputeMillicpuMs);
     let organization = fact.organization;
-    let message = FifoRatingMessage::new(fact, IntentHash::new([4u8; 32]));
+    let message = FifoRatingMessage::new(fact, IntentDigest::from_bytes([4u8; 32]));
     assert_eq!(
         message.message_group_id,
         organization.encode().as_str(),
@@ -78,7 +79,7 @@ fn the_fifo_group_the_producer_mints_is_exactly_the_organization() {
 fn the_producer_deduplication_hint_carries_region_category_and_fact() {
     let fact = fact(Meter::ComputeMillicpuMs);
     let fact_id = fact.fact_id.to_string();
-    let message = FifoRatingMessage::new(fact, IntentHash::new([4u8; 32]));
+    let message = FifoRatingMessage::new(fact, IntentDigest::from_bytes([4u8; 32]));
     let parts: Vec<&str> = message.message_deduplication_id.split(':').collect();
     assert_eq!(parts.len(), 3, "the hint is <region>:<category>:<factId>");
     assert_eq!(parts[0], "eu-west-1");
@@ -90,7 +91,7 @@ fn the_producer_deduplication_hint_carries_region_category_and_fact() {
 fn the_worker_and_the_producer_agree_on_the_rating_category_of_every_meter() {
     for meter in Meter::ALL {
         let fact = fact(meter);
-        let message = FifoRatingMessage::new(fact, IntentHash::new([4u8; 32]));
+        let message = FifoRatingMessage::new(fact, IntentDigest::from_bytes([4u8; 32]));
         let declared = message
             .message_deduplication_id
             .split(':')
@@ -118,4 +119,142 @@ fn an_interval_fact_projects_a_half_open_service_window() {
 fn the_two_fifo_attributes_are_named_exactly_as_sqs_spells_them() {
     assert_eq!(MESSAGE_GROUP_ATTRIBUTE, "MessageGroupId");
     assert_eq!(MESSAGE_DEDUPLICATION_ATTRIBUTE, "MessageDeduplicationId");
+}
+
+/// One regional fact, admitted by the regional domain exactly as a producer
+/// would admit it.
+fn regional_fact() -> aex_usage_domain::fact::UsageFact {
+    use aex_usage_domain::fact::{
+        Attribution as RegionalAttribution, FactDraft, FactKind, ResourceGeneration, ResourceKind,
+        SCHEMA_VERSION,
+    };
+    use aex_usage_domain::frontier::AcceptedSequence;
+    use aex_usage_domain::identity::{
+        AuthorityId, AuthorityKey, AuthorityKind as RegionalAuthorityKind, SegmentOrdinal,
+    };
+    use aex_usage_domain::measurement::{
+        BoundaryId, Evidence, FactBasis as RegionalBasis, Measurement, ReceiptKind,
+        ServiceTime as RegionalServiceTime, SourceReceipt as RegionalReceipt,
+    };
+    use aex_usage_domain::meter::{Category, Meter as RegionalMeter};
+    use aex_usage_domain::wire_pending as regional;
+
+    let region = regional::RegionId::parse("eu-west-1").expect("a region");
+    let organization = OrganizationId::from_uuid7(identity(1));
+    let workspace = WorkspaceId::from_uuid7(identity(9));
+    let session = aex_wire::ids::SessionId::from_uuid7(identity(3));
+    let draft = FactDraft {
+        schema_version: SCHEMA_VERSION,
+        organization: regional::OrganizationId::parse(organization.encode().as_str())
+            .expect("an org"),
+        workspace: regional::WorkspaceId::parse(workspace.encode().as_str()).expect("a workspace"),
+        region: region.clone(),
+        attribution: RegionalAttribution {
+            session: Some(
+                regional::SessionId::parse(session.encode().as_str()).expect("a session"),
+            ),
+            agent: None,
+            run: None,
+            operation: None,
+        },
+        service: regional::ServiceId::parse("usage-transfer-worker").expect("a service"),
+        resource: ResourceGeneration {
+            kind: ResourceKind::StreamConnection,
+            generation: Box::from("conn-7"),
+        },
+        authority: AuthorityKey {
+            region,
+            category: Category::Transfer,
+            kind: RegionalAuthorityKind::EgressCrossing,
+            authority_id: AuthorityId::parse("cross-7").expect("an id"),
+            segment_ordinal: SegmentOrdinal::FIRST,
+        },
+        pricing_version: regional::PricingVersion::parse("synthetic-zero-v1").expect("a version"),
+        reservation: None,
+        kind: FactKind::Measured(
+            Measurement::new(
+                RegionalMeter::DataTransferEgressByte,
+                RegionalBasis::Consumed,
+                RegionalServiceTime::Instant {
+                    at: regional::Timestamp::from_unix_millis(1_800_000_000_000)
+                        .expect("an instant"),
+                },
+                RegionalReceipt {
+                    kind: ReceiptKind::DeliveryLog,
+                    id: Box::from("d-7"),
+                    digest: None,
+                },
+                Evidence::DeliveryReceipt {
+                    boundary: BoundaryId::CONTENT_DOWNLOAD,
+                    receipt_id: Box::from("d-7"),
+                    bytes: 4_096,
+                },
+            )
+            .expect("a valid measurement"),
+        ),
+    };
+    draft
+        .admit(
+            AcceptedSequence::new(1).expect("one-based"),
+            regional::Timestamp::from_unix_millis(1_800_000_000_500).expect("an instant"),
+        )
+        .expect("admissible")
+}
+
+#[test]
+fn the_producers_exact_bytes_decode_through_this_workers_exact_path() {
+    // The defect this pins: the outbox once serialized the regional domain
+    // fact while this worker decoded the contracts fact, so the first real
+    // publish was 100% undecodable and whole batches died into the DLQ. The
+    // producer's serialization and the worker's per-record decode must round
+    // trip, cross-crate, forever.
+    let fact = regional_fact();
+    let message = aex_usage_application::outbox::OutboxMessage::for_fact(&fact)
+        .expect("a measured fact converts to the contract");
+
+    // Exactly the bytes `SettlementQueue::publish` puts on the queue.
+    let body = serde_json::to_string(&message.body).expect("the producer body encodes");
+
+    // Exactly the shape Lambda delivers, through the worker's own decoder.
+    let event: aws_lambda_events::sqs::SqsEvent = serde_json::from_str(&format!(
+        r#"{{"Records":[{{"messageId":"m1","body":{body},
+           "attributes":{{"{MESSAGE_GROUP_ATTRIBUTE}":"{group}"}},
+           "messageAttributes":{{}},"md5OfBody":"","eventSource":"aws:sqs",
+           "eventSourceARN":"arn:aws:sqs:eu-west-1:000000000000:aex-dev-usage-rating.fifo",
+           "awsRegion":"eu-west-1"}}]}}"#,
+        body = serde_json::to_string(&body).expect("the body nests"),
+        group = message.message_group_id,
+    ))
+    .expect("the delivered batch decodes");
+    let (delivered, failed) = finance_settlement_worker::handler::decode(event);
+    assert_eq!(failed, Vec::<String>::new(), "nothing may fail to decode");
+    assert_eq!(delivered.len(), 1);
+
+    // The decoded request is the producer's request, field for field.
+    let decoded = &delivered[0].request;
+    assert_eq!(decoded, &message.body);
+    assert_eq!(decoded.fact.meter, Meter::DataTransferEgressByte);
+    assert_eq!(decoded.fact.quantity.get(), 4_096);
+    assert_eq!(
+        decoded.fact.organization.encode().as_str(),
+        message.message_group_id
+    );
+    assert_eq!(
+        decoded.intent_hash.as_bytes(),
+        fact.idempotency.intent_hash.as_bytes(),
+        "the admission intent digest survives the wire"
+    );
+
+    // The grouping the producer minted is the one the partition accepts.
+    let groups = finance_settlement_worker::backlog::partition(delivered)
+        .expect("the producer's group is the account");
+    assert_eq!(groups.len(), 1);
+
+    // And both sides derive one deduplication identity from the fact.
+    let expected = FifoRatingMessage::new(message.body.fact.clone(), message.body.intent_hash);
+    assert_eq!(
+        expected.message_deduplication_id, message.message_deduplication_id,
+        "producer and consumer spell the FIFO dedupe identity identically"
+    );
+    assert_eq!(expected.message_group_id, message.message_group_id);
 }

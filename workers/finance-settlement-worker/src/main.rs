@@ -2,14 +2,13 @@
 
 use std::sync::Arc;
 
-use aex_finance_app::use_cases::RatingRequest;
 use aex_platform_telemetry::{FlushOutcome, Handle, Record, Settings};
 use aex_rds_data::{AwsTransport, DataApiClient};
 use aex_telemetry_schema::generated::{
     AEX_DEPLOYABLE, AEX_PLANE, AEX_REGION, EVENT_AEX_PROCESS_CONFIGURATION_REJECTED,
     EVENT_AEX_PROCESS_STARTED,
 };
-use aws_lambda_events::sqs::SqsEventObj;
+use aws_lambda_events::sqs::SqsEvent;
 use finance_settlement_worker::config::Config;
 use finance_settlement_worker::handler::handle;
 use finance_settlement_worker::settle::{AuroraSettlementAuthority, SettlementAuthority as _};
@@ -78,20 +77,21 @@ async fn run(config: Config) -> Result<(), lambda_runtime::Error> {
 
     let max_group_batch = config.max_group_batch;
     let serialization_retry_max = config.serialization_retry_max;
-    lambda_runtime::run(service_fn(
-        move |event: LambdaEvent<SqsEventObj<RatingRequest>>| {
-            let authority = Arc::clone(&authority);
-            async move {
-                let (response, _report) = handle(
-                    &authority,
-                    event.payload,
-                    max_group_batch,
-                    serialization_retry_max,
-                )
-                .await;
-                Ok::<_, lambda_runtime::Error>(response)
-            }
-        },
-    ))
+    // The event is decoded raw and each record's body is parsed individually
+    // inside the handler: a typed event layer here would fail the whole batch
+    // into the DLQ on one undecodable body.
+    lambda_runtime::run(service_fn(move |event: LambdaEvent<SqsEvent>| {
+        let authority = Arc::clone(&authority);
+        async move {
+            let (response, _report) = handle(
+                &authority,
+                event.payload,
+                max_group_batch,
+                serialization_retry_max,
+            )
+            .await;
+            Ok::<_, lambda_runtime::Error>(response)
+        }
+    }))
     .await
 }

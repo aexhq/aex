@@ -340,6 +340,7 @@ where
             total.republished += report.republished;
             total.deferred += report.deferred;
             total.alarming += report.alarming;
+            total.unpublishable += report.unpublishable;
             total.oldest_age_ms = total.oldest_age_ms.max(report.oldest_age_ms);
         }
         Ok(total)

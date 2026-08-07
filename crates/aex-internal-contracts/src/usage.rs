@@ -49,6 +49,20 @@ impl Meter {
             Self::DataTransferEgressByte => "data_transfer.egress_byte.v1",
         }
     }
+
+    /// The rating category this meter settles under.
+    ///
+    /// Declared once, here, because the same spelling appears in the central
+    /// inbox primary key, the FIFO deduplication grammar and the `business_key`
+    /// — a second copy of this mapping is a second settlement authority.
+    #[must_use]
+    pub const fn category(self) -> &'static str {
+        match self {
+            Self::ComputeMillicpuMs | Self::MemoryByteMs => "compute",
+            Self::StorageByteMin => "storage",
+            Self::DataTransferEgressByte => "transfer",
+        }
+    }
 }
 
 /// Whether a fact records consumption or a reservation.
@@ -116,6 +130,19 @@ pub struct FactAuthority {
 pub struct FactId([u8; 32]);
 
 impl FactId {
+    /// Wraps a digest the regional authority already derived.
+    ///
+    /// The regional usage domain hashes the canonical authority key at
+    /// admission; the outbox carries those exact bytes onto the wire rather
+    /// than deriving a second identity for one fact. The regional spelling
+    /// carries a `usage_` prefix over the same 64 hex characters; this contract
+    /// serializes the bare digest, which is the spelling the central inbox
+    /// keys on.
+    #[must_use]
+    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
     /// Derives the identity from the authority key.
     #[must_use]
     pub fn derive(region: Region, meter: Meter, authority: &FactAuthority) -> Self {
@@ -256,6 +283,22 @@ pub struct UsageFact {
     pub pricing_version: PricingVersion,
     /// The replay identity.
     pub idempotency: FactIdempotency,
+}
+
+/// The body of one message on the regional-to-central rating queue.
+///
+/// This is the one wire shape: the regional outbox serializes it and the
+/// settlement worker decodes it, both through this declaration. Before it
+/// existed each side declared its own `RatingRequest` — the producer's nested
+/// domain fact against this crate's flat fact — and the first published message
+/// would have been undecodable by its consumer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct RatingRequest {
+    /// The whole admitted fact. Central re-validates it rather than trusting it.
+    pub fact: UsageFact,
+    /// The admission-time intent digest, which decides replay from conflict.
+    pub intent_hash: IntentDigest,
 }
 
 /// The central inbox identity of a fact.

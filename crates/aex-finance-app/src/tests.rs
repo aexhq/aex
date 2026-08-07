@@ -1,9 +1,9 @@
-use aex_finance_domain::IntentHash;
 use aex_internal_contracts::usage::{
     Attribution, AuthorityKind, FactAuthority, FactBasis, FactId, FactIdempotency, Meter,
     ServiceTime, SourceReceipt, UsageFact,
 };
 use aex_internal_contracts::{PricingVersion, SchemaVersion};
+use aex_wire::idempotency::IntentDigest;
 use aex_wire::ids::{OrganizationId, PrefixedId as _, Uuid7, WorkspaceId};
 use aex_wire::types::{DecimalU128, Region, Timestamp};
 
@@ -12,7 +12,7 @@ use crate::use_cases::{FactFailure, FifoRatingMessage, partial_batch_failures};
 #[test]
 fn fifo_contract_partitions_by_organization_and_deduplicates_by_fact() {
     let fact = usage_fact(Meter::MemoryByteMs, 7, 1);
-    let message = FifoRatingMessage::new(fact.clone(), IntentHash::new([9; 32]));
+    let message = FifoRatingMessage::new(fact.clone(), IntentDigest::from_bytes([9; 32]));
     assert_eq!(
         message.message_group_id,
         fact.organization.encode().as_str()
