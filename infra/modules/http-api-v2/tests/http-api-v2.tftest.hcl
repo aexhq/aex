@@ -212,12 +212,13 @@ run "the_default_stage_logs_every_request" {
     condition = (
       aws_apigatewayv2_stage.default.name == "$default"
       && aws_apigatewayv2_stage.default.auto_deploy
+      && length(aws_apigatewayv2_stage.default.default_route_settings) == 0
       && one(aws_apigatewayv2_stage.default.access_log_settings).destination_arn == aws_cloudwatch_log_group.access.arn
       && strcontains(one(aws_apigatewayv2_stage.default.access_log_settings).format, "$context.requestId")
       && strcontains(one(aws_apigatewayv2_stage.default.access_log_settings).format, "$context.routeKey")
       && strcontains(one(aws_apigatewayv2_stage.default.access_log_settings).format, "$context.status")
     )
-    error_message = "The auto-deployed default stage must write access logs to the owned log group."
+    error_message = "The auto-deployed default stage must write access logs without installing an accidental 0/0 throttle."
   }
 
   assert {

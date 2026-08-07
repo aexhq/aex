@@ -100,9 +100,10 @@ resource "aws_apigatewayv2_stage" "default" {
     format          = local.access_log_format
   }
 
-  default_route_settings {
-    detailed_metrics_enabled = true
-  }
+  # Keep API Gateway's default route settings absent. With the AWS provider,
+  # declaring this block while omitting its throttle fields serializes a
+  # 0/0 stage throttle, which rejects every otherwise valid route with 429.
+  # The public API's application-level limits remain the source of truth.
 }
 
 resource "aws_apigatewayv2_domain_name" "this" {
