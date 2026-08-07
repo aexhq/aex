@@ -4,8 +4,7 @@
 //! **no observation read permission at all**, so a launcher bug cannot become a
 //! data path. That claim is only worth anything if linking a read, write or
 //! delete capability into this process refuses to start, which is what the
-//! capability cases below prove against the shared role table rather than a
-//! local copy.
+//! first two cases prove against the shared role table rather than a local copy.
 //!
 //! The reconciliation scenarios (a lost claim, an ambiguous `RunTask`) live in
 //! `src/launcher.rs`, next to the logic they constrain, over a hand-written fake
@@ -21,6 +20,18 @@ use aex_wire::types::Timestamp;
 /// The launcher's whole grant, restated so a widening is a test failure.
 const GRANT: &[Capability] = &[Capability::LaunchExportTasks];
 
+/// Every capability this deployable must refuse to hold.
+const FORBIDDEN: [Capability; 8] = [
+    Capability::ReadAuthority,
+    Capability::ReadBodies,
+    Capability::DeleteObservations,
+    Capability::DeleteBodies,
+    Capability::WriteAdmission,
+    Capability::WriteBodies,
+    Capability::WriteExportObjects,
+    Capability::DeliverUsage,
+];
+
 #[test]
 fn the_launcher_grant_is_exactly_launch_export_tasks() {
     assert_eq!(Role::ExportLauncher.granted(), GRANT);
@@ -28,8 +39,8 @@ fn the_launcher_grant_is_exactly_launch_export_tasks() {
 }
 
 #[test]
-fn cannot_link_any_capability_outside_the_exact_grant() {
-    for capability in Role::ExportLauncher.denied() {
+fn cannot_link_a_forbidden_capability() {
+    for capability in FORBIDDEN {
         assert!(
             !Role::ExportLauncher.holds(capability),
             "`{}` must not be in the launcher grant",
@@ -40,19 +51,18 @@ fn cannot_link_any_capability_outside_the_exact_grant() {
         assert_eq!(violation.capability, capability);
         assert_eq!(violation.role, Role::ExportLauncher);
     }
+    // The eight refusals plus the one grant are the whole vocabulary: a new
+    // capability that nobody classified would slip through otherwise.
+    assert_eq!(FORBIDDEN.len() + GRANT.len(), Capability::ALL.len());
 }
 
 #[test]
-fn every_capability_is_classified_as_granted_or_denied() {
+fn every_denied_capability_is_one_of_the_eight() {
     let denied = Role::ExportLauncher.denied();
-    for capability in Capability::ALL {
-        assert_ne!(
-            Role::ExportLauncher.holds(*capability),
-            denied.contains(capability),
-            "{capability:?} must appear on exactly one side of the grant"
-        );
+    assert_eq!(denied.len(), FORBIDDEN.len());
+    for capability in denied {
+        assert!(FORBIDDEN.contains(&capability), "{capability:?}");
     }
-    assert_eq!(denied.len() + GRANT.len(), Capability::ALL.len());
 }
 
 #[test]

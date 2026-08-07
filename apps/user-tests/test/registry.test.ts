@@ -5,9 +5,9 @@ import { resolve } from "node:path";
 import { resolveArtifactSelection } from "../artifacts.js";
 import { USER_SCENARIOS } from "../scenarios.js";
 
-test("the typed scenario registry has exactly 48 unique entries across six suites", () => {
-  expect(USER_SCENARIOS).toHaveLength(48);
-  expect(new Set(USER_SCENARIOS.map(({ id }) => id))).toHaveProperty("size", 48);
+test("the typed scenario registry has exactly 47 unique entries across six suites", () => {
+  expect(USER_SCENARIOS).toHaveLength(47);
+  expect(new Set(USER_SCENARIOS.map(({ id }) => id))).toHaveProperty("size", 47);
   expect(new Set(USER_SCENARIOS.map(({ suite }) => suite))).toEqual(
     new Set(["packed", "local", "live", "browser", "money", "operator"]),
   );

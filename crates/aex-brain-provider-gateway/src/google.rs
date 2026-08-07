@@ -1537,7 +1537,6 @@ impl ProviderAdapter for GoogleAdapter {
             stop_reason,
             usage: state.usage,
             provider_request_id: state.request_id,
-            gateway_route: None,
         })
     }
 

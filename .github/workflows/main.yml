@@ -23,131 +23,32 @@ permissions:
   contents: read
 
 jobs:
-  # The head of the graph. Every job below runs the exact bytes this one built
-  # and published the digest of.
-  #
-  # `gates` depends on this rather than on `route`, so a broken router cannot
-  # hide a policy finding. It does mean a broken `tools` hides all of them,
-  # including the secret scan, which needs no tool at all. That is a feedback
-  # narrowing, not a false green: `receipts` requires `gates` to have succeeded
-  # with `allowSkipped: false`, so a skipped `gates` fails the run. Splitting
-  # the two tool-independent steps into their own unblocked job is owed.
-  tools:
-    name: Tools
-    uses: ./.github/workflows/_tools.yml
-
   route:
     name: Route
-    needs: tools
     uses: ./.github/workflows/_route.yml
     with:
-      # Package checks use the affected reverse closure. Until immutable
-      # predecessor-manifest carry-forward exists, publication still rebuilds
-      # the complete registry so this source mints all 36 unit identities.
       mode: affected
-      artifact_mode: full
       lane: main
       base_sha: ${{ github.event.before }}
       head_sha: ${{ github.sha }}
       partitions: 8
-      release_tool_sha256: ${{ needs.tools.outputs.release_tool_sha256 }}
-      workspace_check_sha256: ${{ needs.tools.outputs.workspace_check_sha256 }}
-
-  gates:
-    name: Gates
-    needs: tools
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
-        with:
-          fetch-depth: 0
-
-      # No cargo cache: nothing here compiles since the tools arrive prebuilt,
-      # and the only cargo this job still runs is the `metadata --no-deps`
-      # behind `cargo fmt --all`, `aex-workspace-check` and `graph verify`,
-      # which resolves no dependency and reads no registry. The key it used to
-      # declare was never written by any workflow, so the step could only miss.
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
-        with:
-          toolchain: "1.97.1"
-          components: rustfmt, clippy
-
-      - name: Download the prepared workspace tools
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
-        with:
-          name: workspace-tools-${{ github.run_id }}
-          path: ${{ runner.temp }}/aex-tools
-
-      # The digests arrive through the job-output channel, not inside the
-      # artifact, so an artifact that lies about itself cannot self-certify.
-      - name: Use the prepared workspace tools
-        env:
-          RELEASE_TOOL_SHA256: ${{ needs.tools.outputs.release_tool_sha256 }}
-          WORKSPACE_CHECK_SHA256: ${{ needs.tools.outputs.workspace_check_sha256 }}
-        run: |
-          set -euo pipefail
-          cd "$RUNNER_TEMP/aex-tools"
-          [[ "$RELEASE_TOOL_SHA256" =~ ^[0-9a-f]{64}$ ]]
-          [[ "$WORKSPACE_CHECK_SHA256" =~ ^[0-9a-f]{64}$ ]]
-          printf '%s  %s\n' "$RELEASE_TOOL_SHA256" aex-release-tool > expected.sha256
-          printf '%s  %s\n' "$WORKSPACE_CHECK_SHA256" aex-workspace-check >> expected.sha256
-          sha256sum --check --strict expected.sha256
-          [[ "$(find . -maxdepth 1 -type f ! -name expected.sha256 | wc -l)" -eq 2 ]]
-          chmod 0755 aex-release-tool aex-workspace-check
-          ./aex-release-tool --version | grep -Eq '^aex-release-tool [0-9]+\.[0-9]+\.[0-9]+'
-          ./aex-workspace-check --version | grep -Eq '^aex-workspace-check [0-9]+\.[0-9]+\.[0-9]+'
-          echo "$RUNNER_TEMP/aex-tools" >> "$GITHUB_PATH"
-
-      - name: Format
-        run: cargo fmt --all -- --check
-
-      - name: Workspace structure
-        run: aex-workspace-check
-
-      - name: Delivery graph
-        run: aex-release-tool graph verify
-
-      - name: Router selftest
-        run: aex-release-tool selftest
-
-      - name: Workflow structure
-        run: aex-release-tool policy workflows
-
-      - name: Terraform packages no code
-        run: aex-release-tool policy terraform
-
-      - name: Secret scan
-        run: bash scripts/cicd/scan-secrets.sh
 
   verify:
     name: Verify
-    needs: [tools, route]
+    needs: route
     if: needs.route.outputs.has_test == 'true'
     uses: ./.github/workflows/_rust-lane.yml
     with:
       matrix: ${{ needs.route.outputs.test_matrix }}
       lane: main
-      job_name: verify
-      selection_mode: affected
       cache_mode: restore-save
-      release_tool_sha256: ${{ needs.tools.outputs.release_tool_sha256 }}
-      workspace_check_sha256: ${{ needs.tools.outputs.workspace_check_sha256 }}
 
   node:
     name: TypeScript
-    needs: [tools, route]
+    needs: route
     uses: ./.github/workflows/_node-lane.yml
     with:
-      matrix: ${{ needs.route.outputs.node_matrix }}
       lane: main
-      job_name: node
-      selection_mode: affected
-      release_tool_sha256: ${{ needs.tools.outputs.release_tool_sha256 }}
-      workspace_check_sha256: ${{ needs.tools.outputs.workspace_check_sha256 }}
 
   scenarios:
     name: Scenarios
@@ -160,26 +61,20 @@ jobs:
 
   terraform:
     name: Terraform
-    needs: [tools, route]
+    needs: route
     if: needs.route.outputs.has_terraform == 'true'
     uses: ./.github/workflows/_terraform-lane.yml
     with:
       matrix: ${{ needs.route.outputs.terraform_matrix }}
       mode: static
       lane: main
-      job_name: terraform
-      selection_mode: affected
-      release_tool_sha256: ${{ needs.tools.outputs.release_tool_sha256 }}
-      workspace_check_sha256: ${{ needs.tools.outputs.workspace_check_sha256 }}
 
   build:
     name: Build and publish
-    needs: [tools, route, gates, verify, node, scenarios, terraform]
+    needs: [route, verify, node, scenarios, terraform]
     if: >-
       always() &&
-      needs.tools.result == 'success' &&
       needs.route.result == 'success' &&
-      needs.gates.result == 'success' &&
       (needs.verify.result == 'success' || needs.verify.result == 'skipped') &&
       needs.node.result == 'success' &&
       (needs.scenarios.result == 'success' || needs.scenarios.result == 'skipped') &&
@@ -189,55 +84,20 @@ jobs:
       id-token: write
       attestations: write
       artifact-metadata: write
-      packages: write
     uses: ./.github/workflows/_build-artifacts.yml
     with:
       matrix: ${{ needs.route.outputs.artifact_matrix }}
       lane: main
       publish: true
-      bootstrap_oci_visibility: ${{ vars.AEX_GHCR_VISIBILITY_BOOTSTRAP == 'requested-v1' }}
-      release_tool_sha256: ${{ needs.tools.outputs.release_tool_sha256 }}
-      workspace_check_sha256: ${{ needs.tools.outputs.workspace_check_sha256 }}
-    secrets:
-      AEX_GHCR_VISIBILITY_BOOTSTRAP: ${{ secrets.AEX_GHCR_VISIBILITY_BOOTSTRAP }}
 
   manifest:
     name: Manifest
     needs: build
-    # Build may run with intentionally skipped scenario/Terraform ancestors;
-    # do not let the transitive default success() condition skip the manifest
-    # after the reusable build has itself passed.
-    if: always() && needs.build.result == 'success'
     runs-on: ubuntu-latest
-    outputs:
-      manifest_uri: ${{ steps.publish_handoff.outputs.manifest_uri }}
-      manifest_digest: ${{ steps.handoff_identities.outputs.manifest_digest }}
-      manifest_size_bytes: ${{ steps.handoff_identities.outputs.manifest_size_bytes }}
-      release_id: ${{ steps.handoff_identities.outputs.release_id }}
-      manifest_attestation_id: ${{ steps.attest_manifest.outputs['attestation-id'] }}
-      manifest_attestation_url: ${{ steps.attest_manifest.outputs['attestation-url'] }}
-      artifact_store_uri: ${{ steps.publish_handoff.outputs.artifact_store_uri }}
-      artifact_store_digest: ${{ steps.handoff_identities.outputs.artifact_store_digest }}
-      artifact_store_size_bytes: ${{ steps.handoff_identities.outputs.artifact_store_size_bytes }}
-      artifact_store_attestation_id: ${{ steps.attest_artifact_store.outputs['attestation-id'] }}
-      artifact_store_attestation_url: ${{ steps.attest_artifact_store.outputs['attestation-url'] }}
     permissions:
-      contents: write
-      id-token: write
-      attestations: write
-      artifact-metadata: write
+      contents: read
+      attestations: read
     steps:
-      - name: Check out the exact public source
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
-        with:
-          persist-credentials: false
-
-      - name: Download the exact certified artifact inventory
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
-        with:
-          name: certified-envelopes
-          path: handoff/certified
-
       - name: Re-acquire and verify public release inputs
         env:
           GH_TOKEN: ${{ github.token }}
@@ -251,11 +111,6 @@ jobs:
           MODULE_BUNDLE_DIGEST: ${{ needs.build.outputs.module_bundle_digest }}
           MODULE_BUNDLE_SIZE_BYTES: ${{ needs.build.outputs.module_bundle_size_bytes }}
           MODULE_BUNDLE_ATTESTATION_ID: ${{ needs.build.outputs.module_bundle_attestation_id }}
-          REGIONAL_TABLES_URI: ${{ needs.build.outputs.regional_tables_uri }}
-          REGIONAL_TABLES_DIGEST: ${{ needs.build.outputs.regional_tables_digest }}
-          REGIONAL_TABLES_SIZE_BYTES: ${{ needs.build.outputs.regional_tables_size_bytes }}
-          REGIONAL_TABLES_DEFINITIONS_DIGEST: ${{ needs.build.outputs.regional_tables_definitions_digest }}
-          REGIONAL_TABLES_ATTESTATION_ID: ${{ needs.build.outputs.regional_tables_attestation_id }}
         run: |
           set -euo pipefail
           expected_tag="main-${GITHUB_SHA}-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}"
@@ -263,27 +118,20 @@ jobs:
           base="https://github.com/${GITHUB_REPOSITORY}/releases/download/$expected_tag"
           [[ "$RELEASE_TOOL_URI" == "$base/aex-release-tool" ]]
           [[ "$MODULE_BUNDLE_URI" == "$base/terraform-modules.tar.gz" ]]
-          [[ "$REGIONAL_TABLES_URI" == "$base/regional-tables.json" ]]
           [[ "$RELEASE_TOOL_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
           [[ "$MODULE_BUNDLE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
-          [[ "$REGIONAL_TABLES_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
           [[ "$RELEASE_TOOL_SIZE_BYTES" =~ ^[1-9][0-9]*$ ]]
           [[ "$MODULE_BUNDLE_SIZE_BYTES" =~ ^[1-9][0-9]*$ ]]
-          [[ "$REGIONAL_TABLES_SIZE_BYTES" =~ ^[1-9][0-9]*$ ]]
-          [[ "$REGIONAL_TABLES_DEFINITIONS_DIGEST" =~ ^blake3:[0-9a-f]{64}$ ]]
           [[ "$RELEASE_TOOL_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]
           # Attestation IDs are audit locators, not admission identities. The
           # verifier below binds the exact subject digest and signer/source.
           test -n "$RELEASE_TOOL_ATTESTATION_ID"
           test -n "$MODULE_BUNDLE_ATTESTATION_ID"
-          test -n "$REGIONAL_TABLES_ATTESTATION_ID"
           mkdir public-inputs
           acquire() {
             local uri=$1 digest=$2 size=$3 destination=$4
-            local asset=${uri##*/}
-            [[ "$asset" == "$(basename "$destination")" ]]
-            gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-              --pattern "$asset" --dir "$(dirname "$destination")"
+            curl --fail --location --proto '=https' --tlsv1.2 --max-filesize "$size" \
+              --output "$destination" "$uri"
             [[ "$(stat -c '%s' "$destination")" == "$size" ]]
             [[ "sha256:$(sha256sum "$destination" | cut -d' ' -f1)" == "$digest" ]]
             # The source-policy scanner reserves the literal retired runner
@@ -299,180 +147,22 @@ jobs:
             "$RELEASE_TOOL_SIZE_BYTES" public-inputs/aex-release-tool
           acquire "$MODULE_BUNDLE_URI" "$MODULE_BUNDLE_DIGEST" \
             "$MODULE_BUNDLE_SIZE_BYTES" public-inputs/terraform-modules.tar.gz
-          acquire "$REGIONAL_TABLES_URI" "$REGIONAL_TABLES_DIGEST" \
-            "$REGIONAL_TABLES_SIZE_BYTES" public-inputs/regional-tables.json
-          [[ "$(jq -er .schema public-inputs/regional-tables.json)" == "aex.regional-tables.v1" ]]
-          [[ "$(jq -er .digest public-inputs/regional-tables.json)" == "$REGIONAL_TABLES_DEFINITIONS_DIGEST" ]]
-          [[ "$(jq -er '.tables | length' public-inputs/regional-tables.json)" -gt 0 ]]
           chmod 0755 public-inputs/aex-release-tool
           observed_tool_version=$(public-inputs/aex-release-tool --version | awk '{print $2}')
           [[ "$observed_tool_version" == "$RELEASE_TOOL_VERSION" ]]
 
-      - name: Require an exhaustive certified artifact inventory
+      - name: Refuse an incomplete composition
         run: |
           set -euo pipefail
-          shopt -s nullglob
-          certified_envelopes=(handoff/certified/*/certified-envelope.json)
-          args=()
-          for envelope in "${certified_envelopes[@]}"; do
-            args+=(--envelope "$envelope")
-          done
-          public-inputs/aex-release-tool --root "$GITHUB_WORKSPACE" --json \
-            artifact certification-inventory "${args[@]}" \
-            --repository "$GITHUB_REPOSITORY" \
-            --commit-sha "$GITHUB_SHA" \
-            --workflow-run-id "$GITHUB_RUN_ID" \
-            --workflow-run-attempt "$GITHUB_RUN_ATTEMPT" \
-            --out public-inputs/certification-inventory.json
-
-      - name: Derive authoritative composition inputs
-        env:
-          RELEASE_TOOL_VERSION: ${{ needs.build.outputs.release_tool_version }}
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          envelope_files=(handoff/certified/*/certified-envelope.json)
-          envelope_args=()
-          for envelope in "${envelope_files[@]}"; do
-            envelope_args+=(--envelope "$envelope")
-          done
-          public-inputs/aex-release-tool --root "$GITHUB_WORKSPACE" --json \
-            manifest inputs "${envelope_args[@]}" \
-            --release-tool public-inputs/aex-release-tool \
-            --module-bundle public-inputs/terraform-modules.tar.gz \
-            --regional-tables public-inputs/regional-tables.json \
-            --repository "$GITHUB_REPOSITORY" \
-            --commit-sha "$GITHUB_SHA" \
-            --workflow-run-id "$GITHUB_RUN_ID" \
-            --workflow-run-attempt "$GITHUB_RUN_ATTEMPT" \
-            --release-tool-version "$RELEASE_TOOL_VERSION" \
-            --out public-inputs/composition-inputs.json
-
-      - name: Assemble the complete composition handoff
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          envelope_files=(handoff/certified/*/certified-envelope.json)
-          envelope_args=()
-          for envelope in "${envelope_files[@]}"; do
-            envelope_args+=(--envelope "$envelope")
-          done
-          public-inputs/aex-release-tool --root "$GITHUB_WORKSPACE" --json \
-            manifest handoff "${envelope_args[@]}" \
-            --composition public-inputs/composition-inputs.json \
-            --manifest-out public-inputs/composition-manifest.json \
-            --store-out public-inputs/artifact-store.json
-
-      - name: Record exact composition handoff identities
-        id: handoff_identities
-        run: |
-          set -euo pipefail
-          manifest=public-inputs/composition-manifest.json
-          store=public-inputs/artifact-store.json
-          release_id=$(jq -er '.releaseId | select(test("^sha256:[0-9a-f]{64}$"))' "$manifest")
-          manifest_digest="sha256:$(sha256sum "$manifest" | cut -d' ' -f1)"
-          store_digest="sha256:$(sha256sum "$store" | cut -d' ' -f1)"
-          manifest_size=$(stat -c '%s' "$manifest")
-          store_size=$(stat -c '%s' "$store")
-          [[ "$manifest_size" =~ ^[1-9][0-9]*$ ]]
-          [[ "$store_size" =~ ^[1-9][0-9]*$ ]]
-          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
-          echo "manifest_digest=$manifest_digest" >> "$GITHUB_OUTPUT"
-          echo "manifest_size_bytes=$manifest_size" >> "$GITHUB_OUTPUT"
-          echo "artifact_store_digest=$store_digest" >> "$GITHUB_OUTPUT"
-          echo "artifact_store_size_bytes=$store_size" >> "$GITHUB_OUTPUT"
-
-      - name: Attest the composition manifest
-        id: attest_manifest
-        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26  # v4.1.0
-        with:
-          subject-path: public-inputs/composition-manifest.json
-
-      - name: Attest the artifact store
-        id: attest_artifact_store
-        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26  # v4.1.0
-        with:
-          subject-path: public-inputs/artifact-store.json
-
-      - name: Publish the complete immutable prerelease
-        id: publish_handoff
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
-          MANIFEST_BUNDLE: ${{ steps.attest_manifest.outputs.bundle-path }}
-          ARTIFACT_STORE_BUNDLE: ${{ steps.attest_artifact_store.outputs.bundle-path }}
-          MANIFEST_DIGEST: ${{ steps.handoff_identities.outputs.manifest_digest }}
-          MANIFEST_SIZE_BYTES: ${{ steps.handoff_identities.outputs.manifest_size_bytes }}
-          ARTIFACT_STORE_DIGEST: ${{ steps.handoff_identities.outputs.artifact_store_digest }}
-          ARTIFACT_STORE_SIZE_BYTES: ${{ steps.handoff_identities.outputs.artifact_store_size_bytes }}
-        run: |
-          set -euo pipefail
-          expected_tag="main-${GITHUB_SHA}-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}"
-          [[ "$RELEASE_TAG" == "$expected_tag" ]]
-          release=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-            --json isDraft,isPrerelease,assets)
-          [[ "$(jq -r .isDraft <<<"$release")" == "true" ]]
-          [[ "$(jq -r .isPrerelease <<<"$release")" == "true" ]]
-          for name in composition-manifest.json artifact-store.json; do
-            if jq -e --arg name "$name" '.assets[] | select(.name == $name)' <<<"$release" >/dev/null; then
-              echo "release asset $name already exists; published identities are never replaced" >&2
-              exit 21
-            fi
-          done
-          before=$(jq '.assets | length' <<<"$release")
-          gh release upload "$RELEASE_TAG" \
-            public-inputs/composition-manifest.json \
-            public-inputs/artifact-store.json \
-            --repo "$GITHUB_REPOSITORY"
-          after=$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-            --json assets --jq '.assets | length')
-          [[ "$after" -eq $((before + 2)) ]]
-          mkdir public-readback
-          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-            --pattern composition-manifest.json --pattern artifact-store.json \
-            --dir public-readback
-          cmp --silent public-inputs/composition-manifest.json \
-            public-readback/composition-manifest.json
-          cmp --silent public-inputs/artifact-store.json \
-            public-readback/artifact-store.json
-          [[ "sha256:$(sha256sum public-readback/composition-manifest.json | cut -d' ' -f1)" == "$MANIFEST_DIGEST" ]]
-          [[ "$(stat -c '%s' public-readback/composition-manifest.json)" == "$MANIFEST_SIZE_BYTES" ]]
-          [[ "sha256:$(sha256sum public-readback/artifact-store.json | cut -d' ' -f1)" == "$ARTIFACT_STORE_DIGEST" ]]
-          [[ "$(stat -c '%s' public-readback/artifact-store.json)" == "$ARTIFACT_STORE_SIZE_BYTES" ]]
-          public-inputs/aex-release-tool --root "$GITHUB_WORKSPACE" --quiet \
-            manifest validate --file public-readback/composition-manifest.json \
-            --strict-environment-scan
-          denied_runner_class=self
-          denied_runner_class+="-hosted"
-          gh attestation verify public-readback/composition-manifest.json \
-            --repo "$GITHUB_REPOSITORY" --bundle "$MANIFEST_BUNDLE" \
-            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/main.yml" \
-            --source-ref refs/heads/main --source-digest "$GITHUB_SHA" \
-            "--deny-${denied_runner_class}-runners"
-          gh attestation verify public-readback/artifact-store.json \
-            --repo "$GITHUB_REPOSITORY" --bundle "$ARTIFACT_STORE_BUNDLE" \
-            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/main.yml" \
-            --source-ref refs/heads/main --source-digest "$GITHUB_SHA" \
-            "--deny-${denied_runner_class}-runners"
-          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-            --draft=false --prerelease
-          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/$RELEASE_TAG"
-          echo "manifest_uri=$base/composition-manifest.json" >> "$GITHUB_OUTPUT"
-          echo "artifact_store_uri=$base/artifact-store.json" >> "$GITHUB_OUTPUT"
+          echo "complete unit envelopes are not yet published; refusing to invent"
+          echo "composition-manifest.json or an immutable unit artifact store"
+          exit 40
 
   receipts:
     name: Checks
-    needs: [tools, route, gates, verify, node, scenarios, terraform, build, manifest]
+    needs: [route, verify, node, scenarios, terraform, build, manifest]
     if: always()
     uses: ./.github/workflows/_receipts.yml
     with:
       lane: main
-      release_tool_sha256: ${{ needs.tools.outputs.release_tool_sha256 }}
-      workspace_check_sha256: ${{ needs.tools.outputs.workspace_check_sha256 }}
-      receipt_jobs: >-
-        {"rust":{"job":"verify","selected":"${{ needs.route.outputs.has_test }}"},"node":{"job":"node","selected":"${{ needs.route.outputs.has_node }}"},"terraform":{"job":"terraform","selected":"${{ needs.route.outputs.has_terraform }}"}}
-      rust_matrix: ${{ needs.route.outputs.test_matrix }}
-      node_matrix: ${{ needs.route.outputs.node_matrix }}
-      terraform_matrix: ${{ needs.route.outputs.terraform_matrix }}
-      required_job_results: >-
-        {"tools":{"result":"${{ needs.tools.result }}","allowSkipped":false},"route":{"result":"${{ needs.route.result }}","allowSkipped":false},"gates":{"result":"${{ needs.gates.result }}","allowSkipped":false},"verify":{"result":"${{ needs.verify.result }}","allowSkipped":true},"node":{"result":"${{ needs.node.result }}","allowSkipped":false},"scenarios":{"result":"${{ needs.scenarios.result }}","allowSkipped":true},"terraform":{"result":"${{ needs.terraform.result }}","allowSkipped":true},"build":{"result":"${{ needs.build.result }}","allowSkipped":false},"manifest":{"result":"${{ needs.manifest.result }}","allowSkipped":false}}
+      declared_jobs: '["route","verify","node","scenarios","terraform","build","manifest"]'

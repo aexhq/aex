@@ -7,9 +7,9 @@
 //! # What this binary does, and what it does not
 //!
 //! It writes a build context and can run a **local** container build. It publishes
-//! nothing: no registry push, no `CreateMicrovmImage`, no credential. A typed,
-//! plane-neutral registration descriptor is packaged for the private release lane;
-//! image-mutation IAM actions live in a separate role no runtime deployable holds.
+//! nothing: no registry push, no `CreateMicrovmImage`, no credential. The publish
+//! inputs are printed so a release job can use them, and the image-mutation IAM
+//! actions live in a separate release role no runtime deployable holds.
 
 mod build;
 mod image;
@@ -35,7 +35,7 @@ struct Cli {
 enum Command {
     /// Writes the build context for one variant.
     Context {
-        /// Which non-browser variant, such as `1gb` or `4gb`.
+        /// Which variant, such as `1gb` or `4gb-browser`.
         #[arg(long)]
         variant: String,
         /// Where to write it.
@@ -70,7 +70,7 @@ enum Command {
     /// This is the release recipe. Its child build argv and SBOM projection are
     /// fixed in source, so CI has no unrecorded shell pre-step.
     Artifact {
-        /// Which of the five non-browser image variants to produce.
+        /// Which of the eight image variants to produce.
         #[arg(long)]
         variant: String,
         /// An empty directory that becomes the root of the service ZIP.
@@ -102,7 +102,7 @@ enum Command {
 /// Why `hands-image` stopped.
 #[derive(Debug, thiserror::Error)]
 enum RunError {
-    /// A variant name was not one of the five published variants.
+    /// A variant name was not one of the eight.
     #[error("{0}")]
     Variant(String),
     /// A file could not be read or written.
@@ -138,9 +138,6 @@ enum RunError {
     /// The shipped dependency inventory could not be generated.
     #[error("the agent SBOM could not be generated: {0}")]
     Sbom(String),
-    /// The fixed registration descriptor could not be encoded.
-    #[error("the MicroVM image registration descriptor could not be encoded: {0}")]
-    Registration(String),
 }
 
 /// Wraps an I/O error with the path that produced it.
@@ -178,10 +175,6 @@ fn write_context_bytes(
     std::fs::copy(agent, out.join("hands-agent")).map_err(io_at(agent))?;
     let sbom_path = out.join("agent.cdx.json");
     std::fs::write(&sbom_path, agent_sbom).map_err(io_at(&sbom_path))?;
-    let registration_path = out.join(build::REGISTRATION_DESCRIPTOR_FILENAME);
-    let registration = serde_json::to_vec(&build::registration_descriptor(variant))
-        .map_err(|error| RunError::Registration(error.to_string()))?;
-    std::fs::write(&registration_path, registration).map_err(io_at(&registration_path))?;
     Ok(dockerfile)
 }
 
@@ -281,15 +274,17 @@ fn run(cli: &Cli) -> Result<(), RunError> {
         }
         Command::Publish { variant, region } => {
             let variant = Variant::parse(variant).map_err(RunError::Variant)?;
-            let mut registration = build::registration_descriptor(&variant);
-            registration.base_image_arn_template = registration
-                .base_image_arn_template
-                .replace("{region}", region);
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&registration)
-                    .map_err(|error| RunError::Registration(error.to_string()))?
-            );
+            let memory = image::variants()
+                .into_iter()
+                .find(|published| {
+                    published.size == variant.size
+                        && published.capabilities.contains(&image::Capability::Browser)
+                            == variant.browser
+                })
+                .map_or(1_024, |published| published.minimum_memory_mib);
+            for input in build::create_image_inputs(&variant, region, memory) {
+                println!("{input}");
+            }
             Ok(())
         }
         Command::Validate { lock, observed } => validate(lock, observed),
@@ -375,7 +370,7 @@ mod tests {
     #[test]
     fn the_context_carries_the_dockerfile_agent_and_source_sbom() {
         let dir = tempfile::tempdir().expect("a temporary directory");
-        let variant = Variant::parse("2gb").expect("an offered variant");
+        let variant = Variant::parse("2gb-browser").expect("an offered variant");
         let (agent, sbom) = inputs(dir.path());
         let context = dir.path().join("context");
         let written =
@@ -386,17 +381,9 @@ mod tests {
             Some("Dockerfile")
         );
         let generated = std::fs::read_to_string(&written).expect("it reads back");
-        assert!(!generated.contains("chromium-headless"));
+        assert!(generated.contains("chromium-headless"));
         assert!(context.join("hands-agent").is_file());
         assert!(context.join("agent.cdx.json").is_file());
-        let registration =
-            std::fs::read_to_string(context.join(crate::build::REGISTRATION_DESCRIPTOR_FILENAME))
-                .expect("the registration descriptor reads back");
-        let registration: crate::build::MicrovmImageRegistration =
-            serde_json::from_str(&registration).expect("the registration descriptor decodes");
-        assert_eq!(registration.variant, "2gb");
-        assert_eq!(registration.resources[0].minimum_memory_in_mi_b, 2_048);
-        assert!(!registration.browser);
         assert!(generated.contains("image.lock.json"));
         assert!(generated.contains("rpm-nevra.txt"));
     }
@@ -534,15 +521,15 @@ mod tests {
             "hands-image",
             "artifact",
             "--variant",
-            "4gb",
+            "4gb-browser",
             "--out",
-            "target/microvm/hands-image-4gb",
+            "target/microvm/hands-image-4gb-browser",
         ]);
         assert!(matches!(
             cli.command,
             Command::Artifact { variant, out }
-                if variant == "4gb"
-                    && out == std::path::Path::new("target/microvm/hands-image-4gb")
+                if variant == "4gb-browser"
+                    && out == std::path::Path::new("target/microvm/hands-image-4gb-browser")
         ));
     }
 }

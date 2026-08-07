@@ -39,8 +39,8 @@ pub use budget::{BudgetDelta, BudgetError, BudgetGrant, BudgetNode, Dimension, S
 pub use child::{CancelCause, ChildOutcome, ChildRecord, ChildState, QueuedReason};
 pub use commit::{DecisionCommit, EnvelopeViolation, FenceGuardRef};
 pub use effect::{
-    DetachedOperationRef, DispatchEvidence, DispatchProof, DispatchStage, DurableEffect,
-    EffectClass, EffectKind, EffectState, RecoveryDecision, SettledOutcome, recover,
+    DispatchEvidence, DispatchProof, DispatchStage, DurableEffect, EffectClass, EffectKind,
+    EffectState, RecoveryDecision, SettledOutcome, recover,
 };
 pub use fold::{FoldError, FoldState, Phase, apply, fold};
 pub use ids::{

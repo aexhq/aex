@@ -389,9 +389,6 @@ struct LimitEntry {
     id: String,
     /// `scalar` or `map`.
     shape: String,
-    /// Complete ordered dimension vocabulary for a map limit.
-    #[serde(default)]
-    dimensions: Vec<String>,
     /// One-line documentation.
     doc: String,
 }
@@ -408,7 +405,6 @@ fn build_limits(file: &LimitsFile) -> Vec<LimitRow> {
             } else {
                 LimitShape::Scalar
             },
-            dimensions: entry.dimensions.clone(),
             doc: entry.doc.clone(),
         })
         .collect()
@@ -469,11 +465,6 @@ struct RoutesMetaFile {
     /// release artifact. An operation absent here is deliberately unserved.
     #[serde(default)]
     served_operations: BTreeMap<String, Vec<String>>,
-    /// Operations whose production composition is intentionally incomplete,
-    /// keyed by exact `operationId` with a non-empty architectural reason.
-    /// A deferred operation may not also appear in `servedOperations`.
-    #[serde(default)]
-    deferred_operations: BTreeMap<String, String>,
 }
 
 /// Release-selection metadata for one mounted API fragment.
@@ -942,7 +933,6 @@ fn load_planes(
     sources: &mut BTreeMap<String, String>,
 ) -> Result<Vec<PlaneIr>, GenError> {
     let actual_owners = actual_route_owners(meta)?;
-    let deferred_operations = deferred_operations(meta, &actual_owners)?;
     let mut planes = Vec::new();
     let mut seen_operations: BTreeSet<String> = BTreeSet::new();
     let mut used_scenario_owners = BTreeSet::new();
@@ -989,7 +979,6 @@ fn load_planes(
                     scope_names,
                     id_keys,
                     &actual_owners,
-                    &deferred_operations,
                 )?);
             }
         }
@@ -1052,19 +1041,6 @@ fn load_planes(
             registry: "routes-meta",
             detail: format!(
                 "servedOperations names unknown operations: {stale_served_operations:?}"
-            ),
-        });
-    }
-    let stale_deferred_operations = deferred_operations
-        .keys()
-        .filter(|operation| !seen_operations.contains(*operation))
-        .cloned()
-        .collect::<Vec<_>>();
-    if !stale_deferred_operations.is_empty() {
-        return Err(GenError::Registry {
-            registry: "routes-meta",
-            detail: format!(
-                "deferredOperations names unknown operations: {stale_deferred_operations:?}"
             ),
         });
     }
@@ -1135,34 +1111,6 @@ fn actual_route_owners(meta: &RoutesMetaFile) -> Result<BTreeMap<String, String>
     Ok(owners)
 }
 
-/// Validates the explicit incomplete-composition ledger.
-fn deferred_operations(
-    meta: &RoutesMetaFile,
-    actual_owners: &BTreeMap<String, String>,
-) -> Result<BTreeMap<String, String>, GenError> {
-    let mut deferred = BTreeMap::new();
-    for (operation, reason) in &meta.deferred_operations {
-        if reason.trim().is_empty() {
-            return Err(GenError::Registry {
-                registry: "routes-meta",
-                detail: format!(
-                    "deferredOperations.{operation} must carry a non-empty architectural reason"
-                ),
-            });
-        }
-        if actual_owners.contains_key(operation) {
-            return Err(GenError::Registry {
-                registry: "routes-meta",
-                detail: format!(
-                    "operation `{operation}` cannot be both served and explicitly deferred"
-                ),
-            });
-        }
-        deferred.insert(operation.clone(), reason.trim().to_owned());
-    }
-    Ok(deferred)
-}
-
 fn validate_artifact_id(artifact: &str) -> Result<(), GenError> {
     let valid = !artifact.is_empty()
         && artifact
@@ -1202,7 +1150,6 @@ fn build_operation(
     scope_names: &BTreeSet<&str>,
     id_keys: &BTreeSet<&str>,
     actual_owners: &BTreeMap<String, String>,
-    deferred_operations: &BTreeMap<String, String>,
 ) -> Result<OperationIr, GenError> {
     let bad = |detail: String| GenError::Operation {
         id: entry.id.clone(),
@@ -1242,7 +1189,6 @@ fn build_operation(
         )));
     }
     let served_artifact = actual_owners.get(&entry.id).cloned();
-    let deferred_reason = deferred_operations.get(&entry.id).cloned();
     if let Some(actual) = &served_artifact {
         let actual_plane = meta
             .serving_artifacts
@@ -1403,7 +1349,6 @@ fn build_operation(
         fragment: fragment.to_owned(),
         serving_artifact: owner.serving_artifact.clone(),
         served_artifact,
-        deferred_reason,
         scenarios: owner.scenarios.clone(),
         method: entry.method.clone(),
         path: entry.path.clone(),

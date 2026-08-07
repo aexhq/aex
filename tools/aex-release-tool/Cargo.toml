@@ -40,8 +40,6 @@ janitor = "unit"
 failing_fixtures = "unit"
 contracts = "unit"
 publication = "unit"
-certify = "unit"
-oci = "unit"
 
 [package.metadata.aex.not_applicable]
 live_suite = "workspace tool; it observes releases and is never itself deployed"
@@ -114,9 +112,3 @@ name = "contracts"
 
 [[test]]
 name = "publication"
-
-[[test]]
-name = "certify"
-
-[[test]]
-name = "oci"

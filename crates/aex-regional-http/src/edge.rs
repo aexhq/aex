@@ -12,7 +12,7 @@ use aex_internal_contracts::assertion::AssertionAudience;
 use aex_wire::error::{ErrorCode, WireError};
 use aex_wire::idempotency::{IdempotencyKey, IdempotencyKind, PrincipalScope};
 use aex_wire::ids::{ApiKeyId, OrganizationId, PrefixedId as _, Uuid7, WorkspaceId};
-use aex_wire::routes::{BodyClass, route};
+use aex_wire::routes::route;
 use aex_wire::types::{ETag, Region, Timestamp};
 use http::HeaderMap;
 use sha2::Digest as _;
@@ -22,8 +22,9 @@ use crate::assertion::{
     AssertionSource, AuthFailure, CredentialFloors, PresentedCredential, ProjectedEpochs,
     RegionalFloors, VerifiedAuthorization, VerifyingAssertionCache,
 };
-use crate::capacity::{LimitProjectionError, LimitResolver};
-use crate::context::{AccountState, AuthorizationEpochs, RegionalAuthorization, RequestContext};
+use crate::context::{
+    AccountState, AuthorizationEpochs, EffectiveLimits, RegionalAuthorization, RequestContext,
+};
 use crate::idempotency::{IdentityContext, identity, operation_id};
 use crate::mount::{AdmissionRequest, EdgeAdmission};
 
@@ -141,6 +142,8 @@ pub struct EdgeBinding {
     pub region: Region,
     /// The assertion cache byte budget.
     pub cache_budget_bytes: usize,
+    /// The effective workspace limits this deployable enforces.
+    pub limits: EffectiveLimits,
 }
 
 impl EdgeBinding {
@@ -156,19 +159,18 @@ impl EdgeBinding {
 }
 
 /// The shared fail-closed regional edge.
-pub struct RegionalEdge<S, P, L, C> {
+pub struct RegionalEdge<S, P, C> {
     assertions: VerifyingAssertionCache<S>,
     projection: P,
-    limit_resolver: L,
     clock: C,
     region: Region,
+    limits: EffectiveLimits,
 }
 
-impl<S, P, L, C> RegionalEdge<S, P, L, C>
+impl<S, P, C> RegionalEdge<S, P, C>
 where
     S: AssertionSource,
     P: ProjectionReader,
-    L: LimitResolver,
     C: EdgeClock,
 {
     /// Binds an edge to its verified assertion cache and regional projection.
@@ -181,7 +183,6 @@ where
         source: S,
         keys: VerificationKeySet,
         projection: P,
-        limit_resolver: L,
         clock: C,
         binding: EdgeBinding,
     ) -> Result<Self, AuthFailure> {
@@ -193,9 +194,9 @@ where
                 binding.cache_budget_bytes,
             )?,
             projection,
-            limit_resolver,
             clock,
             region: binding.region,
+            limits: binding.limits,
         })
     }
 
@@ -248,11 +249,10 @@ where
 }
 
 #[async_trait::async_trait]
-impl<S, P, L, C> EdgeAdmission for RegionalEdge<S, P, L, C>
+impl<S, P, C> EdgeAdmission for RegionalEdge<S, P, C>
 where
     S: AssertionSource,
     P: ProjectionReader,
-    L: LimitResolver,
     C: EdgeClock,
 {
     async fn admit(&self, request: &AdmissionRequest<'_>) -> Result<RequestContext, WireError> {
@@ -342,19 +342,8 @@ where
             return Err(WireError::new(ErrorCode::AccountPaused));
         }
 
-        // 10: strongly fence the complete effective-limit revision, then apply
-        // the body bound before anything parses the body.
-        let limits = self
-            .limit_resolver
-            .resolve(workspace)
-            .await
-            .map_err(limit_projection_error)?;
-        let body_limit = match descriptor.body_class {
-            BodyClass::None => None,
-            BodyClass::AexJson => Some(limits.json_body_bytes),
-            BodyClass::Otlp => Some(limits.otlp_body_bytes),
-        };
-        if body_limit.is_some_and(|limit| request.body.len() > limit) {
+        // 10: the effective body bound, before anything parses the body.
+        if request.body.len() > self.limits.json_body_bytes {
             return Err(WireError::new(ErrorCode::PayloadTooLarge));
         }
 
@@ -365,17 +354,13 @@ where
             request_id: request.request_id.clone(),
             route: request.route,
             auth: authorization(&credential, &verified, workspace, projected)?,
-            limits,
+            limits: self.limits,
             operation_id: durable,
             idempotency,
             if_match: if_match(request.headers)?,
             received_at: offset(now),
         })
     }
-}
-
-fn limit_projection_error(_failure: LimitProjectionError) -> WireError {
-    WireError::new(ErrorCode::AccountStateUnavailable)
 }
 
 fn authorization(
@@ -582,26 +567,4 @@ fn hex_lower(bytes: &[u8]) -> String {
         output.push(char::from(HEX[usize::from(byte & 0x0f)]));
     }
     output
-}
-
-#[cfg(test)]
-mod capacity_error_tests {
-    use aex_wire::error::ErrorCode;
-
-    use super::limit_projection_error;
-    use crate::capacity::LimitProjectionError;
-
-    #[test]
-    fn every_capacity_projection_failure_is_a_retryable_unavailable_response() {
-        for failure in [
-            LimitProjectionError::Unavailable,
-            LimitProjectionError::Incomplete,
-            LimitProjectionError::InvalidCapacity,
-        ] {
-            assert_eq!(
-                limit_projection_error(failure).code,
-                ErrorCode::AccountStateUnavailable
-            );
-        }
-    }
 }

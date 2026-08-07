@@ -99,13 +99,6 @@ pub struct FoldState {
     pub resolved_calls: BTreeMap<ToolCallId, ResolvedCall>,
     /// Calls already resolved in this turn, so a duplicate result is refused.
     pub retired_calls: BTreeSet<ToolCallId>,
-    /// Canonical arguments of the last successful `todo_write`.
-    ///
-    /// This is derived from the durable assistant tool call plus its matching
-    /// successful result. It is process-independent fold state, not an
-    /// executor cache, and survives journal compaction and snapshots.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub todo_state: Option<aex_wire::CanonicalJson>,
     /// Effects opened and not yet settled.
     #[serde(with = "ordered_map_entries")]
     pub open_effects: BTreeMap<EffectId, EffectState>,
@@ -338,49 +331,6 @@ impl FoldState {
     }
 }
 
-#[cfg(test)]
-mod control_projection_tests {
-    use super::{FoldState, PendingCall, project_control_state};
-    use crate::ids::{ToolCallId, ToolName};
-    use crate::journal::ExecutorRoute;
-    use aex_wire::CanonicalJson;
-
-    fn todo_write(input: &str) -> PendingCall {
-        PendingCall {
-            call: ToolCallId::truncating("todo-call"),
-            name: ToolName::parse("todo_write").expect("tool name"),
-            order: 0,
-            input: CanonicalJson::parse(input).expect("canonical input"),
-        }
-    }
-
-    #[test]
-    fn only_a_successful_todo_write_replaces_the_folded_control_state() {
-        let first = todo_write(
-            r#"{"todos":[{"activeForm":"Doing","content":"First","status":"in_progress"}]}"#,
-        );
-        let failed = todo_write(
-            r#"{"todos":[{"activeForm":"Doing","content":"Failed","status":"completed"}]}"#,
-        );
-        let mut state = FoldState::empty();
-
-        project_control_state(&mut state, &first, false, ExecutorRoute::BrainInline);
-        assert_eq!(state.todo_state.as_ref(), Some(&first.input));
-        project_control_state(&mut state, &failed, true, ExecutorRoute::BrainInline);
-        assert_eq!(
-            state.todo_state.as_ref(),
-            Some(&first.input),
-            "a tool-level failure cannot mutate the folded replacement"
-        );
-        project_control_state(&mut state, &failed, false, ExecutorRoute::Hands);
-        assert_eq!(
-            state.todo_state.as_ref(),
-            Some(&first.input),
-            "a result attributed to another executor cannot mutate Brain control state"
-        );
-    }
-}
-
 /// Folds `entries` into a state.
 ///
 /// # Errors
@@ -564,7 +514,6 @@ fn apply_record(state: &mut FoldState, entry: &JournalEntry) -> Result<(), FoldE
                     .ok_or_else(|| FoldError::UnknownCall {
                         call: call.as_str().to_owned(),
                     })?;
-            project_control_state(state, &pending, *is_error, *executed_on);
             state.resolved_calls.insert(
                 call.clone(),
                 ResolvedCall {
@@ -809,20 +758,6 @@ fn emit_tool_result_turn(state: &mut FoldState) {
         role: Role::User,
         blocks,
     });
-}
-
-fn project_control_state(
-    state: &mut FoldState,
-    pending: &PendingCall,
-    is_error: bool,
-    executed_on: ExecutorRoute,
-) {
-    if pending.name.as_str() == "todo_write"
-        && !is_error
-        && executed_on == ExecutorRoute::BrainInline
-    {
-        state.todo_state = Some(pending.input.clone());
-    }
 }
 
 fn apply_compaction(

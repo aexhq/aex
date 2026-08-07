@@ -3,29 +3,16 @@
 
 use super::BoxFuture;
 use super::proof::{CancelToken, DispatchTicket};
-use aex_brain_domain::effect::{DetachedOperationRef, DispatchProof, DispatchStage, EffectClass};
+use aex_brain_domain::effect::{DispatchProof, DispatchStage, EffectClass};
 use aex_brain_domain::ids::{
     CatalogPin, ContentHash, DetachedOperationId, Fence, ToolCallId, ToolName,
 };
 use aex_brain_domain::journal::ExecutorRoute;
-use aex_model_catalog::canonical::{CanonicalToolDef, ToolResultPart};
+use aex_model_catalog::canonical::ToolResultPart;
 use aex_wire::CanonicalJson;
-use aex_wire::ids::GenerationId;
 
 /// One tool invocation, whichever executor actually runs it.
 pub trait ToolPort: Send + Sync + 'static {
-    /// Returns the deterministic provider-visible tools for one immutable pin.
-    ///
-    /// The returned definitions are already filtered through exact executor,
-    /// credential and capability readiness. An absent implementation is never
-    /// represented as a tool the provider may call.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ToolRoutingError::UnknownPin`] when this process did not hydrate
-    /// the exact catalog revision.
-    fn advertise(&self, pin: &CatalogPin) -> Result<ToolAdvertisement, ToolRoutingError>;
-
     /// Resolves `name` against the pinned catalog.
     ///
     /// Synchronous because the catalog is a signed immutable artifact already in memory:
@@ -48,21 +35,16 @@ pub trait ToolPort: Send + Sync + 'static {
     ) -> BoxFuture<'a, Result<ToolOutcome, ToolDispatchError>>;
 
     /// Asks about a detached operation. Never creates a second one.
-    ///
-    /// [`DetachedStatus::Unknown`] is reserved for an authoritative durable-absence
-    /// response from the selected executor. Read-after-accept propagation lag must be a
-    /// retryable [`ToolDispatchError`], so the activation can retry until the persisted
-    /// effect deadline instead of prematurely settling an unknown outcome.
     fn query<'a>(
         &'a self,
-        operation: &'a DetachedOperationRef,
+        operation: &'a DetachedOperationId,
     ) -> BoxFuture<'a, Result<DetachedStatus, ToolDispatchError>>;
 
     /// Best-effort cancellation of a detached operation, fenced by the caller's ownership
     /// generation so a stale owner cannot cancel the new owner's work.
     fn cancel<'a>(
         &'a self,
-        operation: &'a DetachedOperationRef,
+        operation: &'a DetachedOperationId,
         fence: Fence,
     ) -> BoxFuture<'a, Result<(), ToolDispatchError>>;
 }
@@ -79,23 +61,8 @@ pub struct ToolRoute {
     pub class: EffectClass,
     /// The wall-clock ceiling for one invocation.
     pub timeout_ms: u32,
-    /// Weighted units acquired from the selected dispatch lane.
-    ///
-    /// Zero is valid only for Brain-inline work. Every external route is
-    /// refused before pre-send unless it reserves at least one unit.
-    pub concurrency_weight: u16,
     /// The manifest digest the route was resolved from, so a receipt can name it.
     pub manifest_digest: ContentHash,
-}
-
-/// One immutable provider-facing tool surface.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ToolAdvertisement {
-    /// Definitions in canonical tool-name order.
-    pub definitions: Vec<CanonicalToolDef>,
-    /// Whether every definition explicitly declares the pure, deterministic,
-    /// zero-external-weight contract required for provider parallel calls.
-    pub parallel_safe: bool,
 }
 
 /// Why a tool could not be routed.
@@ -119,12 +86,6 @@ pub enum ToolRoutingError {
         /// The pin.
         pin: CatalogPin,
     },
-    /// An external route attempted to bypass weighted resource admission.
-    #[error("external tool `{name}` declares zero concurrency weight")]
-    InvalidConcurrencyWeight {
-        /// The tool whose manifest bound is invalid for its executor route.
-        name: String,
-    },
 }
 
 /// A tool call validated against its manifest and ready to invoke.
@@ -138,12 +99,6 @@ pub struct PreparedToolCall {
     pub input: CanonicalJson,
     /// The most bytes the result may carry.
     pub max_result_bytes: usize,
-    /// The immutable session Hands generation this call must use.
-    ///
-    /// Non-Hands executors ignore this value. Carrying it on the prepared call keeps the
-    /// tenant-scoped generation out of the process-global router and gives detached Hands
-    /// recovery an exact generation to persist in its operation reference.
-    pub hands_generation: GenerationId,
     /// A read-only view of the agent's control state.
     ///
     /// Carried on the call so a control-reading tool such as `todo_read` stays a pure
@@ -155,15 +110,32 @@ pub struct PreparedToolCall {
 /// The read-only control state a tool may see.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ControlStateView {
-    /// Canonical arguments of the last successful `todo_write`, when present.
-    ///
-    /// The executor reads this fold projection rather than reaching back into
-    /// the activation or a second storage authority.
-    pub todo_state: Option<CanonicalJson>,
+    /// The agent's todo list, in order.
+    pub todos: Vec<TodoEntry>,
     /// How many assistant turns have committed.
     pub assistant_turns: u32,
     /// Lineage depth, root at zero.
     pub depth: u16,
+}
+
+/// One todo entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TodoEntry {
+    /// What the entry says.
+    pub text: String,
+    /// Where it stands.
+    pub state: TodoState,
+}
+
+/// Where a todo entry stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TodoState {
+    /// Not started.
+    Pending,
+    /// Being worked on.
+    InProgress,
+    /// Done.
+    Completed,
 }
 
 /// What an invocation produced.
@@ -213,13 +185,12 @@ pub enum DetachedStatus {
         /// A redacted reason.
         reason: String,
     },
-    /// The selected executor authoritatively reports that the accepted durable operation
-    /// does not exist. The effect settles `OutcomeUnknown`.
+    /// The transport dropped before an operation id could settle, so nothing can be
+    /// proved. The effect settles `OutcomeUnknown`.
     ///
     /// This arm exists on the status response rather than in a shared enum because these
     /// are the responses that can settle a dropped connection, and a caller must be forced
-    /// to handle it rather than being able to reach for a default. Eventual-consistency lag
-    /// is not `Unknown`; it is a retryable [`ToolDispatchError`].
+    /// to handle it rather than being able to reach for a default.
     Unknown,
 }
 

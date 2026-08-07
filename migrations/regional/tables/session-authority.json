@@ -28,9 +28,39 @@
       "partition": "wsIndexPk",
       "sort": "wsIndexSk",
       "sparse": true,
-      "projectsRecordBody": false,
-      "rationale": "Only session heads and operation states carry the index attributes, so a list query can never surface a prompt, a journal entry or an idempotency receipt. KEYS_ONLY keeps this shared sparse index a cheap ordered locator: callers hydrate selected authority rows before filtering or returning them, which also prevents an eventually consistent index projection from becoming session or operation truth. lifecycle sits inside the index partition key so trash moves the item and purge removes it entirely, which makes ordinary list filter-free.",
-      "projection": { "type": "KEYS_ONLY", "attributes": [] }
+      "projectsRecordBody": true,
+      "rationale": "Only session heads and operation states carry the index attributes, so a list query can never surface a prompt, a journal entry or an idempotency receipt. Session heads project their versioned authority document so a complete public session page needs no N+1 base-table hydration. lifecycle sits inside the index partition key so trash moves the item and purge removes it entirely, which makes ordinary list filter-free.",
+      "projection": {
+        "type": "INCLUDE",
+        "attributes": [
+          "sessionId",
+          "operationId",
+          "itemType",
+          "workspaceId",
+          "organizationId",
+          "status",
+          "lifecycle",
+          "workAdmission",
+          "kind",
+          "createdAt",
+          "updatedAt",
+          "revision",
+          "deletionEpoch",
+          "cancelEpoch",
+          "activeRunId",
+          "rootAgentId",
+          "mutationGuardOperationId",
+          "resolvedConfigDigest",
+          "provider",
+          "model",
+          "custodyRevision",
+          "persistedRootDigest",
+          "persistRevision",
+          "sessionRefId",
+          "authoritySchemaVersion",
+          "authorityDocument"
+        ]
+      }
     },
     {
       "name": "gsi_workspace_events",

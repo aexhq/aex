@@ -16,9 +16,6 @@
 pub mod admit;
 pub mod artifact;
 pub mod canon;
-pub mod certification;
-pub mod certify;
-pub mod composition_inputs;
 pub mod describe;
 pub mod error;
 pub mod evidence;
@@ -28,7 +25,6 @@ pub mod ledger;
 pub mod manifest;
 pub mod meta;
 pub mod migration;
-pub mod oci;
 pub mod pack;
 pub mod policy;
 pub mod private_path;

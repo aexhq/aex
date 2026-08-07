@@ -23,15 +23,13 @@ use crate::ports::{
     JournalPage, JournalStore, LeaseStore, MAX_DUE_ROW_ISOLATIONS, MalformedWakeDelivery,
     MalformedWakeReason, PreparedToolCall, PreviewSink, ProviderDispatchError, ProviderOutcome,
     ProviderPort, ReadBudget, RedactedDetail, ReleaseDisposition, ResultBounds, SessionAuthority,
-    SnapshotPublishOutcome, SteadyInstant, StoreError, StreamBudget, ToolAdvertisement,
-    ToolDispatchError, ToolOutcome, ToolPort, ToolRoute, ToolRoutingError, WakeBatch, WakeDelivery,
-    WakeOrigin, WakeQueue, WakeState,
+    SnapshotPublishOutcome, SteadyInstant, StoreError, StreamBudget, ToolDispatchError,
+    ToolOutcome, ToolPort, ToolRoute, ToolRoutingError, WakeBatch, WakeDelivery, WakeOrigin,
+    WakeQueue, WakeState,
 };
 use aex_brain_domain::budget::BudgetNode;
 use aex_brain_domain::commit::{DecisionCommit, EffectWrite};
-use aex_brain_domain::effect::{
-    DetachedOperationRef, DispatchEvidence, DurableEffect, EffectState, SettledOutcome,
-};
+use aex_brain_domain::effect::{DispatchEvidence, DurableEffect, EffectState, SettledOutcome};
 use aex_brain_domain::ids::{
     AgentId, AgentKey, AgentRevision, CancelEpoch, CatalogPin, ContentHash, DetachedOperationId,
     EffectId, Fence, HandsOperationId, JournalSeq, ModelSlug, OwnerToken, SessionId, Timestamp,
@@ -43,7 +41,7 @@ use aex_brain_domain::wire_pending::{CanonicalModelRequest, DurableOperationSupp
 use aex_model_catalog::{CatalogError as ModelCatalogError, QualifiedModel};
 use aex_wire::ids::{ContentHash as BodyDigest, GenerationId, PrefixedId, Uuid7};
 use std::collections::{BTreeMap, VecDeque};
-use std::sync::atomic::{AtomicI64, AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
@@ -374,12 +372,9 @@ impl ProviderPort for ScriptedProvider {
 #[derive(Debug, Default)]
 pub struct ScriptedTools {
     routes: Mutex<BTreeMap<String, ToolRoute>>,
-    advertisement: ToolAdvertisement,
     invocations: Mutex<VecDeque<Result<ToolOutcome, ToolDispatchError>>>,
-    queries: Mutex<VecDeque<Result<DetachedStatus, ToolDispatchError>>>,
+    queries: Mutex<VecDeque<DetachedStatus>>,
     invoked: Mutex<Vec<String>>,
-    queried: Mutex<Vec<DetachedOperationRef>>,
-    cancelled: Mutex<Vec<(DetachedOperationRef, Fence)>>,
 }
 
 impl ScriptedTools {
@@ -389,21 +384,6 @@ impl ScriptedTools {
         routes: impl IntoIterator<Item = ToolRoute>,
         script: impl IntoIterator<Item = Result<ToolOutcome, ToolDispatchError>>,
     ) -> Self {
-        let routes = routes.into_iter().collect::<Vec<_>>();
-        let mut definitions = routes
-            .iter()
-            .map(|route| aex_model_catalog::canonical::CanonicalToolDef {
-                name: route.name.clone(),
-                description: aex_model_catalog::BoundedString::new("activation fixture tool")
-                    .expect("bounded fixture description"),
-                input_schema: aex_wire::CanonicalJson::parse(
-                    r#"{"type":"object","additionalProperties":true}"#,
-                )
-                .expect("canonical fixture schema"),
-                strict: false,
-            })
-            .collect::<Vec<_>>();
-        definitions.sort_by(|left, right| left.name.cmp(&right.name));
         Self {
             routes: Mutex::new(
                 routes
@@ -411,23 +391,14 @@ impl ScriptedTools {
                     .map(|route| (route.name.as_str().to_owned(), route))
                     .collect(),
             ),
-            advertisement: ToolAdvertisement {
-                definitions,
-                parallel_safe: false,
-            },
             invocations: Mutex::new(script.into_iter().collect()),
             queries: Mutex::new(VecDeque::new()),
             invoked: Mutex::new(Vec::new()),
-            queried: Mutex::new(Vec::new()),
-            cancelled: Mutex::new(Vec::new()),
         }
     }
 
     /// Scripts what a durable-operation query answers, in order.
-    pub fn script_queries(
-        &self,
-        script: impl IntoIterator<Item = Result<DetachedStatus, ToolDispatchError>>,
-    ) {
+    pub fn script_queries(&self, script: impl IntoIterator<Item = DetachedStatus>) {
         *self.queries.lock().expect("not poisoned") = script.into_iter().collect();
     }
 
@@ -436,25 +407,9 @@ impl ScriptedTools {
     pub fn invoked(&self) -> Vec<String> {
         self.invoked.lock().expect("not poisoned").clone()
     }
-
-    /// Every executor-bound durable operation it was asked to query.
-    #[must_use]
-    pub fn queried(&self) -> Vec<DetachedOperationRef> {
-        self.queried.lock().expect("not poisoned").clone()
-    }
-
-    /// Every executor-bound durable operation it was asked to cancel.
-    #[must_use]
-    pub fn cancelled(&self) -> Vec<(DetachedOperationRef, Fence)> {
-        self.cancelled.lock().expect("not poisoned").clone()
-    }
 }
 
 impl ToolPort for ScriptedTools {
-    fn advertise(&self, _pin: &CatalogPin) -> Result<ToolAdvertisement, ToolRoutingError> {
-        Ok(self.advertisement.clone())
-    }
-
     fn route(&self, pin: &CatalogPin, name: &ToolName) -> Result<ToolRoute, ToolRoutingError> {
         self.routes
             .lock()
@@ -500,33 +455,24 @@ impl ToolPort for ScriptedTools {
 
     fn query<'a>(
         &'a self,
-        operation: &'a DetachedOperationRef,
+        _operation: &'a DetachedOperationId,
     ) -> BoxFuture<'a, Result<DetachedStatus, ToolDispatchError>> {
         Box::pin(async move {
-            self.queried
-                .lock()
-                .expect("not poisoned")
-                .push(operation.clone());
-            self.queries
+            Ok(self
+                .queries
                 .lock()
                 .expect("not poisoned")
                 .pop_front()
-                .unwrap_or(Ok(DetachedStatus::Unknown))
+                .unwrap_or(DetachedStatus::Unknown))
         })
     }
 
     fn cancel<'a>(
         &'a self,
-        operation: &'a DetachedOperationRef,
-        fence: Fence,
+        _operation: &'a DetachedOperationId,
+        _fence: Fence,
     ) -> BoxFuture<'a, Result<(), ToolDispatchError>> {
-        Box::pin(async move {
-            self.cancelled
-                .lock()
-                .expect("not poisoned")
-                .push((operation.clone(), fence));
-            Ok(())
-        })
+        Box::pin(async { Ok(()) })
     }
 }
 
@@ -654,7 +600,6 @@ pub struct MemoryStore {
     clock: Arc<FixedClock>,
     queue: Arc<MemoryQueue>,
     log: Arc<Recorder>,
-    restore_effect_overlap: AtomicU8,
 }
 
 impl MemoryStore {
@@ -674,40 +619,7 @@ impl MemoryStore {
             clock,
             queue,
             log,
-            restore_effect_overlap: AtomicU8::new(0),
         }
-    }
-
-    /// Makes journal hydration and open-effect loading rendezvous on their first poll.
-    ///
-    /// This is opt-in test instrumentation. Without concurrent polling neither future can
-    /// complete, so the activation regression test proves overlap rather than merely call
-    /// order.
-    pub fn require_restore_effect_overlap(&self) {
-        self.restore_effect_overlap
-            .store(0b1000_0000, Ordering::SeqCst);
-    }
-
-    /// Whether both independent reads reached the rendezvous.
-    #[must_use]
-    pub fn restore_effect_overlap_observed(&self) -> bool {
-        self.restore_effect_overlap.load(Ordering::SeqCst) & 0b11 == 0b11
-    }
-
-    async fn rendezvous_restore_effect(&self, bit: u8) {
-        if self.restore_effect_overlap.load(Ordering::SeqCst) & 0b1000_0000 == 0 {
-            return;
-        }
-        core::future::poll_fn(|context| {
-            let observed = self.restore_effect_overlap.fetch_or(bit, Ordering::SeqCst) | bit;
-            if observed & 0b11 == 0b11 {
-                core::task::Poll::Ready(())
-            } else {
-                context.waker().wake_by_ref();
-                core::task::Poll::Pending
-            }
-        })
-        .await;
     }
 
     /// Creates an agent whose journal is `entries`.
@@ -1018,7 +930,6 @@ impl JournalStore for MemoryStore {
     ) -> BoxFuture<'a, Result<JournalPage, StoreError>> {
         Box::pin(async move {
             self.log.note("read_page");
-            self.rendezvous_restore_effect(0b01).await;
             if let Some(fault) = self.read_faults.lock().expect("not poisoned").pop_front() {
                 return Err(fault);
             }
@@ -1329,58 +1240,61 @@ impl FoldSnapshotStore for MemoryStore {
     ) -> BoxFuture<'a, Result<SnapshotPublishOutcome, StoreError>> {
         Box::pin(async move {
             self.log.note("snapshot_publish");
-            let pointer = artifact.pointer();
-            let body = artifact.body();
             if self
                 .authorities
                 .lock()
                 .expect("not poisoned")
-                .get(&pointer.agent.session)
+                .get(&artifact.pointer.agent.session)
                 .is_none_or(|authority| authority.workspace != workspace)
             {
                 return Err(StoreError::SessionWorkspaceMismatch);
             }
-            pointer
-                .verify(pointer.agent, body, body.len())
+            artifact
+                .pointer
+                .verify(artifact.pointer.agent, &artifact.body, artifact.body.len())
                 .map_err(|diagnostic| StoreError::SnapshotRejected {
                     diagnostic: diagnostic.into(),
                 })?;
 
             let agents = self.agents.lock().expect("not poisoned");
             let row = agents
-                .get(&pointer.agent)
+                .get(&artifact.pointer.agent)
                 .ok_or(StoreError::SnapshotHistoricalMismatch)?;
             let historical = row.entries.iter().find(|entry| {
-                entry.envelope.seq == pointer.absorbed.seq
-                    && entry.envelope.content_hash == pointer.absorbed.hash
+                entry.envelope.seq == artifact.pointer.absorbed.seq
+                    && entry.envelope.content_hash == artifact.pointer.absorbed.hash
             });
-            if historical.is_none() || row.tail.is_none_or(|tail| tail < pointer.absorbed.seq) {
+            if historical.is_none()
+                || row
+                    .tail
+                    .is_none_or(|tail| tail < artifact.pointer.absorbed.seq)
+            {
                 return Err(StoreError::SnapshotHistoricalMismatch);
             }
             drop(agents);
 
             let mut bodies = self.snapshot_bodies.lock().expect("not poisoned");
-            if let Some(existing) = bodies.get(&pointer.body_digest) {
-                if existing != body {
+            if let Some(existing) = bodies.get(&artifact.pointer.body_digest) {
+                if existing != &artifact.body {
                     return Err(StoreError::Undecodable {
                         location: "snapshot content address".to_owned(),
                         reason: "two bodies claimed one SHA-256 digest".to_owned(),
                     });
                 }
             } else {
-                bodies.insert(pointer.body_digest, body.to_vec());
+                bodies.insert(artifact.pointer.body_digest, artifact.body.clone());
             }
             drop(bodies);
 
             let mut pointers = self.snapshot_pointers.lock().expect("not poisoned");
-            if let Some(current) = pointers.get(&pointer.agent) {
-                if current.absorbed.seq > pointer.absorbed.seq {
+            if let Some(current) = pointers.get(&artifact.pointer.agent) {
+                if current.absorbed.seq > artifact.pointer.absorbed.seq {
                     return Ok(SnapshotPublishOutcome::Superseded {
                         current: current.absorbed,
                     });
                 }
-                if current.absorbed.seq == pointer.absorbed.seq {
-                    if current == pointer {
+                if current.absorbed.seq == artifact.pointer.absorbed.seq {
+                    if current == &artifact.pointer {
                         return Ok(SnapshotPublishOutcome::AlreadyCurrent);
                     }
                     return Err(StoreError::SnapshotPointerConflict {
@@ -1388,7 +1302,7 @@ impl FoldSnapshotStore for MemoryStore {
                     });
                 }
             }
-            pointers.insert(pointer.agent, pointer.clone());
+            pointers.insert(artifact.pointer.agent, artifact.pointer.clone());
             Ok(SnapshotPublishOutcome::Published)
         })
     }
@@ -1514,7 +1428,6 @@ impl EffectStore for MemoryStore {
     ) -> BoxFuture<'a, Result<Vec<DurableEffect>, StoreError>> {
         Box::pin(async move {
             self.log.note("load_open");
-            self.rendezvous_restore_effect(0b10).await;
             Ok(self
                 .agents
                 .lock()

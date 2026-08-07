@@ -23,5 +23,14 @@ security_tier = "authority"
 risk = ["iam", "concurrency"]
 scenarios = []
 
-[package.metadata.aex.not_applicable]
-targets = "regional-services owns this live companion; live evidence requires the private regional deployment composition"
+[package.metadata.aex.targets]
+direct_invoke = "e2e"
+
+[dev-dependencies]
+aex-internal-contracts = { path = "../../../crates/aex-internal-contracts" }
+aex-wire = { path = "../../../crates/aex-wire" }
+serde_json.workspace = true
+
+[[test]]
+name = "direct_invoke"
+path = "tests/direct_invoke.rs"

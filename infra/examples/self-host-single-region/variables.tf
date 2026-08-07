@@ -13,11 +13,6 @@ variable "account_id" {
   description = "Account the deployment lives in."
 }
 
-variable "permissions_boundary_policy_arn" {
-  type        = string
-  description = "Owner-managed permissions boundary required on every deployable execution role."
-}
-
 variable "name_prefix" {
   type        = string
   description = "Physical name prefix for the regional tables."

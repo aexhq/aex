@@ -12,7 +12,6 @@ const oldBrand = new RegExp(
 const ignoredDirs = new Set([
   ".git",
   "node_modules",
-  "target",
   "dist",
   "coverage",
   ".next",

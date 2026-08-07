@@ -20,7 +20,6 @@ use aex_regional_http::assertion::AuthFailure;
 use aex_regional_http::authz::{
     LambdaAssertionSource, ParameterStore, RegionalProjection, TrustError,
 };
-use aex_regional_http::capacity::CapacityProjection;
 use aex_regional_http::config::ConfigError;
 use aex_regional_http::edge::{EdgeBinding, RegionalEdge, SystemClock};
 use aex_regional_http::health::Readiness;
@@ -138,14 +137,13 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
     }));
     let mounted = mount_unary(Arc::new(dispatcher), Arc::new(edge), limits(config))?;
 
-    // The health surfaces are merged rather than layered: they are not generated
-    // routes and must answer without an assertion. The public release identity
-    // is mounted only by this deployable; the internal paths remain private.
+    // The health surface is merged rather than layered: `/internal/healthz` and
+    // `/internal/readyz` are not generated routes and must answer without an
+    // assertion, which is exactly why they are not in the mounted partition.
     lambda_http::run(
         mounted
             .router
-            .merge(aex_regional_http::health::router(readiness.clone()))
-            .merge(aex_regional_http::release_health::router(readiness)),
+            .merge(aex_regional_http::health::router(readiness)),
     )
     .await
     .map_err(|error| RunError::Runtime(error.to_string()))
@@ -155,7 +153,6 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
 type Edge = RegionalEdge<
     LambdaAssertionSource,
     RegionalProjection<aex_session_dynamodb::projection::ProjectionReader>,
-    CapacityProjection<aex_session_dynamodb::projection::ProjectionReader>,
     SystemClock,
 >;
 
@@ -165,10 +162,6 @@ fn build_edge(
     dynamodb: &aws_sdk_dynamodb::Client,
     anchors: aex_identity_domain::assertion::VerificationKeySet,
 ) -> Result<Edge, RunError> {
-    let projection = aex_session_dynamodb::projection::ProjectionReader::new(
-        dynamodb.clone(),
-        config.authz_projection_table.clone(),
-    );
     RegionalEdge::new(
         LambdaAssertionSource::new(
             aws_sdk_lambda::Client::new(aws),
@@ -177,14 +170,20 @@ fn build_edge(
             config.region,
         ),
         anchors,
-        RegionalProjection::new(projection.clone(), config.region),
-        CapacityProjection::new(projection),
+        RegionalProjection::new(
+            aex_session_dynamodb::projection::ProjectionReader::new(
+                dynamodb.clone(),
+                config.authz_projection_table.clone(),
+            ),
+            config.region,
+        ),
         SystemClock,
         EdgeBinding {
             plane: config.plane,
             audience: AUDIENCE,
             region: config.region,
             cache_budget_bytes: config.assertion_cache_bytes,
+            limits: config.limits(),
         },
     )
     .map_err(RunError::Edge)
