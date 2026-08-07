@@ -72,6 +72,9 @@ tokio.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+# `ServiceExt::oneshot`, so the mount's body-limit contract is provable without
+# a live edge.
+tower.workspace = true
 
 [[test]]
 name = "admission"
