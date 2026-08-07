@@ -25,8 +25,6 @@ scenarios = []
 
 [package.metadata.aex.targets]
 facade = "unit"
-json = "unit"
-pump = "unit"
 
 [package.metadata.aex.not_applicable]
 integration = "awaiting the observations-usage stream; the real-collector integration target lands with the OTLP pipeline"
@@ -36,9 +34,3 @@ aex-telemetry-schema = { path = "../aex-telemetry-schema" }
 parking_lot.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
-
-# The exporter renders JSON by hand so the ceiling can be enforced without a
-# serialiser in the dependency graph. `serde_json` is the independent parser the
-# tests hold that rendering to; it must not become a production dependency.
-[dev-dependencies]
-serde_json.workspace = true

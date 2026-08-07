@@ -91,7 +91,7 @@ variable "runtime_platform" {
 variable "desired_count" {
   type        = number
   default     = 1
-  description = "Number of tasks. `brain-mux` runs at least two in the production plane and exactly one in development. Session state is not held by the task: the journal, the lease/fence and the work and wake state are the authority, so a second task takes work it can serve. Stable task affinity is an accelerator over that authority, never a correctness condition."
+  description = "Number of tasks. `brain-mux` is pinned to 1 until the multi-task session-affinity decision lands: a second task would take sessions it holds no state for."
 
   validation {
     condition     = var.desired_count >= 1 && var.desired_count <= 100
@@ -99,13 +99,8 @@ variable "desired_count" {
   }
 
   validation {
-    condition     = var.name != "brain-mux" || !startswith(var.task_definition_family, "aex-prd-") || var.desired_count >= 2
-    error_message = "Production `brain-mux` must run at least two tasks. A single task is one point of loss for a workload whose state authority is already durable."
-  }
-
-  validation {
-    condition     = var.name != "brain-mux" || !startswith(var.task_definition_family, "aex-dev-") || var.desired_count == 1
-    error_message = "Development `brain-mux` runs exactly one task."
+    condition     = var.name != "brain-mux" || var.desired_count == 1
+    error_message = "`brain-mux` is pinned to a single task until the multi-task session-affinity decision lands."
   }
 }
 
@@ -199,11 +194,8 @@ variable "autoscaling_bounds" {
   }
 
   validation {
-    condition = var.name != "brain-mux" || (
-      var.autoscaling_bounds.min_capacity == var.desired_count
-      && var.autoscaling_bounds.max_capacity == var.desired_count
-    )
-    error_message = "`brain-mux` runs a static task floor for the first alpha, so both capacity bounds must equal its desired count. Concurrency is raised on measured evidence, never by a scaling policy."
+    condition     = var.name != "brain-mux" || var.autoscaling_bounds.max_capacity == 1
+    error_message = "`brain-mux` is pinned to a single task, so its autoscaling ceiling must also be 1."
   }
 
   validation {
@@ -221,16 +213,11 @@ variable "autoscaling_bounds" {
 variable "env" {
   type        = map(string)
   default     = {}
-  description = "Environment variables. Every key is namespaced. `brain-mux` must also carry `AEX_MAX_ACTIVE_ACTIVATIONS`, the approved launch profile: the binary requires that variable and supplies no default, so a task definition that omits it deploys a container that refuses to start."
+  description = "Environment variables. Every key is namespaced."
 
   validation {
     condition     = alltrue([for k in keys(var.env) : can(regex("^AEX_[A-Z0-9_]+$", k))])
     error_message = "Every environment variable key must match `^AEX_[A-Z0-9_]+$`."
-  }
-
-  validation {
-    condition     = var.name != "brain-mux" || lookup(var.env, "AEX_MAX_ACTIVE_ACTIVATIONS", "") == "16"
-    error_message = "`brain-mux` must be given the approved launch profile `AEX_MAX_ACTIVE_ACTIVATIONS = \"16\"`. Sixteen active activations per task is a decision to observe before raising concurrency rather than a capacity finding, and the binary has no default to fall back to: an omitted value is a task that never starts, and a different one is a plane running bands nobody approved."
   }
 }
 

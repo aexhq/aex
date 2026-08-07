@@ -102,11 +102,9 @@ fn generate_task_shape(out: &std::path::Path) {
          pub const TASK_CPU_UNITS: u32 = {};\n\
          /// Memory in MiB declared by the brain-mux Fargate release row.\n\
          pub const TASK_MEMORY_MIB: u32 = {};\n\
-         /// The TCP port declared by the brain-mux Fargate release row.\n\
-         pub const TASK_PORT: u16 = {};\n\
          const TASK_PARALLELISM: usize = {parallelism};\n\
          const TASK_MEMORY_BYTES: u64 = {}_u64 * 1_024 * 1_024;\n",
-        shape.cpu, shape.memory_mb, shape.port, shape.memory_mb,
+        shape.cpu, shape.memory_mb, shape.memory_mb,
     );
     fs::write(out.join("brain_mux_task_shape.rs"), generated)
         .expect("write build-bound brain-mux task shape");

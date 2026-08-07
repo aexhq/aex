@@ -7,12 +7,10 @@ const BRAIN_MUX_UNIT: &str = "brain-mux";
 const REQUIRED_CPU: u32 = 2_048;
 const REQUIRED_MEMORY_MIB: u32 = 4_096;
 
-/// The launch shape the release registry declares for `brain-mux`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub(crate) struct FargateShape {
     pub(crate) cpu: u32,
     pub(crate) memory_mb: u32,
-    pub(crate) port: u16,
 }
 
 #[derive(Deserialize)]
@@ -26,20 +24,7 @@ struct ReleaseUnit {
     id: String,
     kind: String,
     package: String,
-    fargate: Option<FargateRow>,
-}
-
-/// The `[unit.fargate]` table exactly as the registry writes it.
-///
-/// `port` is optional here and required below, so an absent declaration is refused by name
-/// rather than as an anonymous decode failure. A value outside `u16` or of the wrong type is
-/// still a decode failure, because `u16` is the whole domain of a TCP port and there is no
-/// clearer thing to say about `port = 70000` than that it is not a port.
-#[derive(Deserialize)]
-struct FargateRow {
-    cpu: u32,
-    memory_mb: u32,
-    port: Option<u16>,
+    fargate: Option<FargateShape>,
 }
 
 pub(crate) fn parse_brain_mux_shape(source: &str) -> Result<FargateShape, String> {
@@ -64,33 +49,19 @@ pub(crate) fn parse_brain_mux_shape(source: &str) -> Result<FargateShape, String
     if unit.package != BRAIN_MUX_UNIT {
         return Err("brain-mux release unit must build the brain-mux package".to_owned());
     }
-    let row = unit
+    let shape = unit
         .fargate
         .ok_or_else(|| "brain-mux release unit must declare a Fargate shape".to_owned())?;
-    if !valid_fargate_memory(row.cpu, row.memory_mb) {
+    if !valid_fargate_memory(shape.cpu, shape.memory_mb) {
         return Err("brain-mux CPU/memory is not a valid Fargate task shape".to_owned());
     }
-    if row.cpu != REQUIRED_CPU || row.memory_mb != REQUIRED_MEMORY_MIB {
+    if shape.cpu != REQUIRED_CPU || shape.memory_mb != REQUIRED_MEMORY_MIB {
         return Err(format!(
             "brain-mux launch shape must remain exactly {REQUIRED_CPU} CPU units and \
              {REQUIRED_MEMORY_MIB} MiB until a measured capacity redesign lands"
         ));
     }
-    let port = row.port.ok_or_else(|| {
-        "brain-mux release unit must declare the Fargate port its target group probes".to_owned()
-    })?;
-    if port == 0 {
-        return Err(
-            "brain-mux Fargate port 0 asks the kernel to choose, which no target group can \
-             probe"
-                .to_owned(),
-        );
-    }
-    Ok(FargateShape {
-        cpu: row.cpu,
-        memory_mb: row.memory_mb,
-        port,
-    })
+    Ok(shape)
 }
 
 const fn valid_fargate_memory(cpu: u32, memory_mib: u32) -> bool {
@@ -113,10 +84,6 @@ mod tests {
     }
 
     fn row(cpu: u32, memory_mib: u32) -> String {
-        format!("{}port = 8080\n", shapeless_row(cpu, memory_mib))
-    }
-
-    fn shapeless_row(cpu: u32, memory_mib: u32) -> String {
         format!(
             "[[unit]]\n\
              id = \"brain-mux\"\n\
@@ -135,25 +102,6 @@ mod tests {
             Ok(FargateShape {
                 cpu: 2_048,
                 memory_mb: 4_096,
-                port: 8_080,
-            })
-        );
-    }
-
-    /// The registry row the release actually ships is what the binary must compile against,
-    /// so it is parsed here rather than a fixture that resembles it.
-    #[test]
-    fn the_shipped_release_registry_declares_the_port_the_binary_binds() {
-        let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../release/units.toml"),
-        )
-        .expect("the release registry is readable from the brain-mux manifest directory");
-        assert_eq!(
-            parse_brain_mux_shape(&source),
-            Ok(FargateShape {
-                cpu: 2_048,
-                memory_mb: 4_096,
-                port: 8_080,
             })
         );
     }
@@ -184,42 +132,5 @@ mod tests {
                 .expect_err("invalid Fargate shape")
                 .contains("not a valid Fargate")
         );
-    }
-
-    /// The whole defect this constant closes is a binary and a target group disagreeing
-    /// about one number, so every way of failing to state that number exactly once has to
-    /// fail the build rather than fall back to a default.
-    #[test]
-    fn a_port_that_is_absent_zero_duplicated_or_unreadable_fails_the_build() {
-        assert!(
-            parse_brain_mux_shape(&registry(&shapeless_row(2_048, 4_096)))
-                .expect_err("an absent port cannot inherit a default")
-                .contains("must declare the Fargate port"),
-        );
-        assert!(
-            parse_brain_mux_shape(&registry(&format!(
-                "{}port = 0\n",
-                shapeless_row(2_048, 4_096)
-            )))
-            .expect_err("port 0 is the kernel's choice, not a declaration")
-            .contains("port 0"),
-        );
-        let duplicated = format!("{}port = 8080\nport = 9090\n", shapeless_row(2_048, 4_096));
-        assert!(
-            parse_brain_mux_shape(&registry(&duplicated))
-                .expect_err("two spellings of one port is exactly the drift being closed")
-                .contains("cannot parse release registry"),
-        );
-        for incompatible in ["70000", "-1", "\"8080\""] {
-            assert!(
-                parse_brain_mux_shape(&registry(&format!(
-                    "{}port = {incompatible}\n",
-                    shapeless_row(2_048, 4_096)
-                )))
-                .expect_err("a value outside the port domain is not a port")
-                .contains("cannot parse release registry"),
-                "{incompatible}"
-            );
-        }
     }
 }

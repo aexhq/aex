@@ -29,6 +29,9 @@ pub type Edge = RegionalEdge<
     aex_regional_http::authz::RegionalProjection<
         aex_session_dynamodb::projection::ProjectionReader,
     >,
+    aex_regional_http::capacity::CapacityProjection<
+        aex_session_dynamodb::projection::ProjectionReader,
+    >,
     SystemClock,
 >;
 
@@ -238,56 +241,11 @@ async fn readyz(State(state): State<Arc<AppState>>) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use std::time::Duration;
-
     use aex_regional_http::router::RouteOwner;
-    use aex_wire::models::RotateReason;
     use aex_wire::routes::RouteId;
-    use regional_observation_api::counters::{ReadCounter, ReadCounters};
-    use regional_observation_api::ndjson;
 
-    use super::{connection_class, render_frames};
-    use crate::{ConnectionClass, QuotaLimits, QuotaManager};
-
-    #[tokio::test]
-    async fn a_disconnect_releases_the_socket_quota_and_the_producer() {
-        let counters = Arc::new(ReadCounters::default());
-        let quotas = QuotaManager::new(QuotaLimits {
-            total: 2,
-            session: 2,
-            observation: 2,
-            per_workspace: 2,
-        })
-        .expect("consistent limits");
-        let reservation = quotas
-            .reserve("ws_one", ConnectionClass::Observation)
-            .expect("capacity");
-        assert_eq!(quotas.counts(), (1, 0, 1));
-        let (mut sender, stream) =
-            ndjson::channel(8, Duration::from_millis(50), Arc::clone(&counters));
-
-        // The reader disconnects: the response body, the unfold state it holds
-        // and the reservation inside that state are dropped together.
-        drop(render_frames(stream, reservation));
-
-        assert_eq!(
-            quotas.counts(),
-            (0, 0, 0),
-            "a disconnect releases every class the socket charged"
-        );
-        assert!(
-            !sender
-                .send(&ndjson::rotate(None, RotateReason::ServerRotating, false))
-                .await,
-            "the producer is told to stop rather than left blocking on a gone reader"
-        );
-        assert_eq!(
-            counters.total(ReadCounter::WriteStall),
-            0,
-            "a disconnect is not a stalled transport"
-        );
-    }
+    use super::connection_class;
+    use crate::ConnectionClass;
 
     #[test]
     fn every_owned_route_has_one_bounded_connection_class() {

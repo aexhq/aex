@@ -27,24 +27,6 @@ pub const BASE_VISIBILITY: core::time::Duration = core::time::Duration::from_sec
 /// The most deliveries one receive returns.
 pub const MAX_BATCH: usize = 10;
 
-/// The exact `SQS` action set the Brain task role needs on the wake queue.
-///
-/// Every entry is an operation [`SqsWakeQueue`] actually invokes, and the test below holds
-/// the list and the call sites to the same set, so a queue call added without a grant fails
-/// here rather than in a plane. `sqs:GetQueueAttributes` is in it because of
-/// [`SqsWakeQueue::probe`]: readiness is a real signed request, so a role allowed to drain
-/// the queue but not to describe it reports a perfectly healthy queue as unreachable for as
-/// long as the task lives.
-///
-/// Actions only. The queue ARN is a plane-specific value the deployment root that creates
-/// the queue owns; a crate that guessed one would scope the grant to the wrong queue.
-pub const WAKE_QUEUE_IAM_ACTIONS: [&str; 4] = [
-    "sqs:ChangeMessageVisibility",
-    "sqs:DeleteMessage",
-    "sqs:GetQueueAttributes",
-    "sqs:ReceiveMessage",
-];
-
 /// The `SQS` wake queue.
 #[derive(Debug, Clone)]
 pub struct SqsWakeQueue {
@@ -86,32 +68,6 @@ impl SqsWakeQueue {
     #[must_use]
     pub fn queue_url(&self) -> &str {
         &self.queue_url
-    }
-
-    /// Proves the configured queue exists and this task may address it.
-    ///
-    /// `GetQueueAttributes` rather than `ReceiveMessage`: a probe that received would take a
-    /// delivery out of the queue, start its visibility timeout and race the pump for the very
-    /// work it is meant to be reporting on. Reading one attribute costs a signed round trip
-    /// and moves nothing.
-    ///
-    /// Requires `sqs:GetQueueAttributes` on the Brain task role, declared with the rest of
-    /// this adapter's queue grant in [`WAKE_QUEUE_IAM_ACTIONS`]. Attaching that grant is an
-    /// infrastructure change this crate cannot make; without it a task whose queue is
-    /// perfectly reachable stays unready, and the refusal names the operation.
-    ///
-    /// # Errors
-    ///
-    /// [`StoreError::Transport`] when the queue does not answer or the role may not ask.
-    pub async fn probe(&self) -> Result<(), StoreError> {
-        self.client
-            .get_queue_attributes()
-            .queue_url(&self.queue_url)
-            .attribute_names(aws_sdk_sqs::types::QueueAttributeName::QueueArn)
-            .send()
-            .await
-            .map_err(|error| sqs_error("probe", &error))?;
-        Ok(())
     }
 }
 
@@ -744,102 +700,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        WAKE_QUEUE_IAM_ACTIONS, cursor_from_key, cursor_key, decode_body, decode_due_entries,
-        decode_due_entry, decode_message, decode_messages,
+        cursor_from_key, cursor_key, decode_body, decode_due_entries, decode_due_entry,
+        decode_message, decode_messages,
     };
     use aex_brain_application::ports::{DueRowIsolationReason, MAX_DUE_ROW_ISOLATIONS};
     use aex_session_dynamodb::attr::{Item, n, s, stamp};
     use aex_wire::ids::{PrefixedId, Uuid7};
-    use std::collections::BTreeSet;
-
-    /// Every `SQS` operation this adapter invokes, read out of its own source.
-    ///
-    /// Comments are dropped and whitespace removed first, so the multi-line builder style
-    /// the call sites are formatted in still reduces to one receiver token. The due-scan
-    /// reads go through `self.due.client`, which is deliberately a different token: they are
-    /// `DynamoDB` calls and belong to the table grant, not this one.
-    fn called_queue_operations() -> BTreeSet<String> {
-        // Assembled rather than written out, because the scan reads this very file and a
-        // verbatim receiver literal would match its own definition.
-        let receiver = format!("self.{}.", "client");
-        let dense: String = include_str!("wake.rs")
-            .lines()
-            .map(|line| line.split_once("//").map_or(line, |(code, _)| code))
-            .flat_map(str::chars)
-            .filter(|character| !character.is_whitespace())
-            .collect();
-        let mut found = BTreeSet::new();
-        let mut rest = dense.as_str();
-        while let Some(index) = rest.find(receiver.as_str()) {
-            rest = &rest[index + receiver.len()..];
-            let end = rest.find('(').expect("a queue client access is a call");
-            let operation = &rest[..end];
-            assert!(
-                operation
-                    .bytes()
-                    .all(|byte| byte.is_ascii_lowercase() || byte == b'_'),
-                "`{operation}` is not a queue operation; the grant scan cannot classify it"
-            );
-            found.insert(operation.to_owned());
-        }
-        found
-    }
-
-    /// `sqs:GetQueueAttributes` becomes `get_queue_attributes`.
-    fn operation_of(action: &str) -> String {
-        let mut operation = String::new();
-        for character in action
-            .strip_prefix("sqs:")
-            .expect("every declared action is an SQS action")
-            .chars()
-        {
-            if character.is_ascii_uppercase() && !operation.is_empty() {
-                operation.push('_');
-            }
-            operation.push(character.to_ascii_lowercase());
-        }
-        operation
-    }
-
-    /// The declaration is a fact about the code rather than a comment beside it. A queue
-    /// call added without a grant fails here, not in a plane whose only symptom is a task
-    /// that never becomes ready.
-    #[test]
-    fn the_declared_queue_grant_is_exactly_the_set_of_calls_this_adapter_makes() {
-        let declared: BTreeSet<String> = WAKE_QUEUE_IAM_ACTIONS
-            .iter()
-            .copied()
-            .map(operation_of)
-            .collect();
-        assert_eq!(
-            declared.len(),
-            WAKE_QUEUE_IAM_ACTIONS.len(),
-            "the declared grant repeats an action"
-        );
-        assert_eq!(called_queue_operations(), declared);
-    }
-
-    /// The readiness probe costs a signed round trip against the real queue, so the action
-    /// it needs is part of the grant rather than an assumption about it.
-    #[test]
-    fn the_probe_action_is_granted_and_no_entry_is_widened_to_a_wildcard() {
-        assert!(
-            WAKE_QUEUE_IAM_ACTIONS.contains(&"sqs:GetQueueAttributes"),
-            "readiness probes the queue and cannot pass without the action it calls"
-        );
-        assert!(
-            WAKE_QUEUE_IAM_ACTIONS
-                .iter()
-                .all(|action| action.starts_with("sqs:") && !action.contains('*')),
-            "the wake-queue grant reaches one service and names every action"
-        );
-        assert!(
-            WAKE_QUEUE_IAM_ACTIONS
-                .windows(2)
-                .all(|pair| pair[0] < pair[1]),
-            "the grant is sorted so review sees an ordering, not a history"
-        );
-    }
 
     fn body() -> String {
         let session =

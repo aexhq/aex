@@ -39,8 +39,8 @@ Branch: `rw/central-finance`
 - `aex-finance-aurora`: strict integer/string Data API row decoding, no floating-value accessor,
   64 KiB row and 1 MiB response rejection, database config validation, finance SQL constants, and
   business-key resolution for a lost commit response.
-- `migrations/central`: one linear ten-file chain from `20260801000000` through
-  `20260801000900`, preserving the merged peer bootstrap/identity/control/control-functions bodies
+- `migrations/central`: one linear nine-file chain from `20260801000000` through
+  `20260801000800`, preserving the merged peer bootstrap/identity/control/control-functions bodies
   before the finance roles/schema/DDL/seed bodies,
   declarative `grants.toml`, immutable journal tables, a deferred balanced-transaction constraint
   trigger, reversal-only mutation guard, customer prepaid balance fence, finance inbox/outbox/effect,
@@ -155,28 +155,7 @@ Temporary cross-stream types, all carrying the required replacement comment:
 
 - The binding's storage rate `5 / 940_597_837_824` micro-USD per byte-minute is authoritative. It
   rates 1 GiB-month to **250 micro-USD**, while plan test prose RT10 says `250000`. Tests assert 250;
-  changing it would violate the explicit quantum. **Reversed 2026-08-06:** this resolved the
-  conflict the wrong way. `940_597_837_824 = 1 GiB x 876`, so a numerator of `5` rates a GiB-month
-  (43,800 minutes = 50 x 876) to 250 micro-USD, i.e. $0.00025 - a factor of 1000 below the accepted
-  A11-PRICING rate of $0.25/GiB-month. RT10's `250000` was right. The other three quanta were already
-  exact ($0.25/vCPU-hour, $0.03/GiB-hour, $0.30/GB), which is what makes this a typo rather than a
-  design disagreement. The numerator is now `5000`; the golden quanta table and the RT10 insta
-  snapshot are re-baselined. Tests that encode a defect are not evidence for it.
-- `finance.pricing_context` was declared and never populated, so its two foreign keys —
-  `finance.reservation.pricing_version` and `finance.usage_inbox.pricing_version` — pointed at an
-  empty table and no reservation or usage fact could be stored at all. `20260801000900` seeds one
-  row and one only: `synthetic-zero-v1`, all four meters at zero, `billingActive = false`, rounding
-  `half_even`, effective from the epoch and unbounded. A migration is the declared writer because
-  `grants.toml` gives no role `INSERT` on the table.
-  The priced launch card is deliberately **not** seeded and cannot be seeded from this repository.
-  OD-09 keeps commercial values out of public source; a central migration applies byte-identically
-  to dev and prd, so it cannot express a plane-specific card; and `pricing_context.signature` has no
-  producer, because no rate-book signing key and no production `BookVerifier` exist. The seeded row
-  therefore carries the text `unsigned:synthetic-zero-v1`, which states the absence rather than
-  standing in for a signature, and `aex-usage-rating` asserts that a verifier which rejects it still
-  fails the open and that an active plane refuses the book outright. Installing a priced context
-  needs three decisions this repository cannot make: the accepted rate values, a signing key and its
-  binding, and the mechanism by which a private book reaches a plane's database.
+  changing it would violate the explicit quantum.
 - The binding's advisory lock hex is authoritative. It evaluates to
   `4703262552200136530`; a different decimal (`4703167197722708306`) in plan prose was not used.
 - The generated payment contract's six commands were implemented at the TypeScript boundary rather
@@ -378,9 +357,9 @@ that produces the work they exist to repair (F-29).
 | --- | --- | --- |
 | `aex-central-http` has no router, so `finance-api` composes `UnresolvedPrincipalEdge` and answers `401` on every billing route | central identity/control | The seam is one method, `CentralEdge::admit`. Swapping it in is a wrapper, not a translation. |
 | No billing route declares an unavailability error code, so an unreachable Aurora renders as `internal_error` through `dispatch::declared` | contracts | `finance-api` emits `account_state_unavailable` honestly; the gap closes the moment the route table admits it. |
-| `finance-settlement-worker` durably claims inbox facts but cannot yet rate or post them | central finance plus admission/usage contracts | The missing authority is larger than a `RateContext` query: no production `BookVerifier` or trusted signing-key binding exists; `20260801000900` now seeds the shadow `pricing_context`, but no writer or seed creates a `reservation`, and `grants.toml` gives no role `INSERT` on `finance.reservation` to create one with; no durable exact segment accumulator or closure writer says when once-only rounding is complete; `UsageFact` carries no correction head; and a zero-book receipt requires a transaction id while zero journal postings are forbidden. The worker now keeps every `pending` or `quarantined` group in the SQS partial-batch response, so an intermediate inbox commit is never acknowledged as settlement. It will redrive and eventually DLQ while blocked; the pending row remains durable, but no central due-scan authority exists to wake it after the queue notification is gone. |
+| `finance-settlement-worker` durably claims inbox facts but cannot yet rate or post them | central finance plus admission/usage contracts | The missing authority is larger than a `RateContext` query: no production `BookVerifier` or trusted signing-key binding exists; no writer or seed creates `pricing_context` or `reservation`; no durable exact segment accumulator or closure writer says when once-only rounding is complete; `UsageFact` carries no correction head; and a zero-book receipt requires a transaction id while zero journal postings are forbidden. The worker now keeps every `pending` or `quarantined` group in the SQS partial-batch response, so an intermediate inbox commit is never acknowledged as settlement. It will redrive and eventually DLQ while blocked; the pending row remains durable, but no central due-scan authority exists to wake it after the queue notification is gone. |
 | `finance-reconcile` cannot yet invoke the command edge to resolve an unknown effect | central finance plus payment contracts | Exact-key replay is impossible from the current durable row: `request_json` stores only kind and amount, not the admitted command. The TypeScript edge still returns its temporary result shape rather than Rust `PaymentResult`; lookup searches PaymentIntents only and currently labels any found status successful. The reconciler therefore reports replayable, lookup-required and prepared/dispatched stranded effects instead of silently calling the sweep clean; it uses the configured replay window and escalates only paths for which no supported lookup exists. Its bounded unresolved-effect page has no durable cursor, so a permanent first page can still starve later effects until the recovery authority also owns cursor state. |
-| The planned cross-plane schema-head release document is absent, so aex-release-tool migration verify has no declared cross-plane head to consume | central finance and regional stores | The central bundle is reproducible at `20260801000900`; the regional table document has a digest but no authoritative generation, so the head cannot be invented locally. |
+| The planned cross-plane schema-head release document is absent, so aex-release-tool migration verify has no declared cross-plane head to consume | central finance and regional stores | The central bundle is reproducible at `20260801000800`; the regional table document has a digest but no authoritative generation, so the head cannot be invented locally. |
 | `migrations/central/20260801000000_bootstrap.sql` is the renamed central bootstrap, while the integration-only migration test still points at the former unversioned filename | central identity | The suite is behind `required-features = ["integration-engines"]`, so `cargo check --all-targets` does not build it and the breakage is invisible in the default lane. |
 | `graph verify` reports 147 workspace-wide gaps: one live-companion metadata gap and 146 uncovered routes | test architecture and route owners | The finance composition does not add a new graph violation; these are the current global scenario-ownership debts. |
 | Every `tests/live/aex-live-*` companion is still an unearned-evidence row | central finance | No live evidence can be earned before deployment (OD-07). |

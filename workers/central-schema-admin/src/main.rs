@@ -521,7 +521,7 @@ mod tests {
         let bundle = MigrationBundle::load(&path).expect("committed bundle is valid");
         let embedded =
             MigrationBundle::embedded().expect("the executable embeds the canonical lock");
-        assert_eq!(bundle.head(), 20_260_801_000_900);
+        assert_eq!(bundle.head(), 20_260_801_000_800);
         assert_eq!(
             bundle.versions(),
             vec![
@@ -534,7 +534,6 @@ mod tests {
                 20_260_801_000_600,
                 20_260_801_000_700,
                 20_260_801_000_800,
-                20_260_801_000_900,
             ]
         );
         assert_eq!(embedded.versions(), bundle.versions());

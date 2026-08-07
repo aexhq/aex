@@ -730,24 +730,6 @@ reading the exact key strongly. `append_action` publishes the same codec and
 immutability condition to transactions that must terminalize a source atomically
 with its gaps.
 
-Every append also advances one counter row per workspace, in its own partition so
-that no gap query can decode it as a revision:
-
-```text
-pk = GAPV#{workspaceId}
-sk = CHANGE
-itemType = gap_change_hint
-gapAppends
-```
-
-It is an `ADD`, so concurrent appends are both counted, and it is the only row a
-follow socket needs in order to decide whether reading gap history is worth a
-query this cycle. It is never authority: it can run ahead of durable history,
-never behind, and a socket that cannot read it, or that sees it move backwards,
-reads the ledger. A socket also reads the ledger on its first cycle, on any wake,
-and once a minute regardless, so an append whose counter never landed delays a
-gap by at most that interval.
-
 ### 10.2 Loss production
 
 `regional-otlp` no longer collapses several signal allocations into one lossy
@@ -758,9 +740,8 @@ range that covers that signal. If the exclusive end cannot be represented, the
 candidate honestly omits `timeRange` and later becomes unbounded.
 
 Both spool-attempt exhaustion and a proven persistent index hole pass those
-candidates through the canonical codec. The reconciler writes every gap revision,
-advances the workspace gap-change counter, and updates the source to its terminal
-state in one `TransactWriteItems`. The
+candidates through the canonical codec. The reconciler writes every gap revision
+and updates the source to its terminal state in one `TransactWriteItems`. The
 source update is fenced on key existence and the observed attempt/claim. A
 conditional or transport failure is success only when strongly consistent reads
 prove the exact terminal source and every exact gap row already exist.

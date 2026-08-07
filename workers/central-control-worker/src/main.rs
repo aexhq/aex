@@ -374,8 +374,6 @@ pub enum Handler {
     AccountStateProject,
     /// Send one invitation notification.
     InvitationEmailDeliver,
-    /// Project a newly minted key's authorization row to its region.
-    ApiKeyAuthorizationProject,
     /// Project an advanced revocation epoch to every region.
     AuthorizationEpochProject,
     /// Publish a rotated assertion signing key.
@@ -392,12 +390,11 @@ pub enum Handler {
 
 impl Handler {
     /// Every duty.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 10] = [
         Self::WorkspaceProvisionReconcile,
         Self::WorkspaceDeleteDispatch,
         Self::AccountStateProject,
         Self::InvitationEmailDeliver,
-        Self::ApiKeyAuthorizationProject,
         Self::AuthorizationEpochProject,
         Self::AuthorizationSigningKeyRotate,
         Self::OperationDueScan,
@@ -414,7 +411,6 @@ impl Handler {
             Self::WorkspaceDeleteDispatch => "workspace.delete.dispatch",
             Self::AccountStateProject => "account.state.project",
             Self::InvitationEmailDeliver => "invitation.email.deliver",
-            Self::ApiKeyAuthorizationProject => "api_key.authorization.project",
             Self::AuthorizationEpochProject => "authorization.epoch.project",
             Self::AuthorizationSigningKeyRotate => "authorization.signing_key.rotate",
             Self::OperationDueScan => "operation.due.scan",
@@ -435,10 +431,6 @@ impl Handler {
             Topic::WorkspaceDeleteRequested => Self::WorkspaceDeleteDispatch,
             Topic::AccountStateChanged => Self::AccountStateProject,
             Topic::InvitationEmailRequested => Self::InvitationEmailDeliver,
-            // Creation and revocation publish the same row, but they stay
-            // separate duties: one duty per topic is what makes a failing
-            // publication attributable to the event that caused it.
-            Topic::ApiKeyCreated => Self::ApiKeyAuthorizationProject,
             Topic::AuthorizationEpochChanged => Self::AuthorizationEpochProject,
             Topic::AuthorizationSigningKeyPublished => Self::AuthorizationSigningKeyRotate,
         }

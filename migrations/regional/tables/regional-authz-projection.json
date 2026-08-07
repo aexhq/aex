@@ -2,7 +2,7 @@
   "schema": "aex.regional-table.v1",
   "table": "regional-authz-projection",
   "owner": "regional-stores",
-  "purpose": "Read-only regional projection of workspace placement, descriptive profiles, effective limits, API key authorization and the signed feed frontier. Central control owns placement, profile, key authorization and frontier rows; regional capacity alone owns effective-limit rows, including the hot admission subset a request edge reads. Partition-key-scoped IAM keeps those write capabilities disjoint, while every serving regional role reads only: GetItem, Query, and TransactGetItems for the one-request admission snapshot.",
+  "purpose": "Read-only regional projection of workspace placement, descriptive profiles, effective limits, API key revocation and the signed feed frontier. Central control owns placement, profile, revocation and frontier rows; regional capacity alone owns effective-limit rows. Partition-key-scoped IAM keeps those write capabilities disjoint, while every serving regional role holds GetItem and Query only.",
   "billingMode": "PAY_PER_REQUEST",
   "deletionProtection": true,
   "pointInTimeRecovery": { "enabled": true, "retentionDays": 35 },
@@ -27,9 +27,9 @@
     "enabled": false,
     "attribute": "",
     "appliesTo": [],
-    "rationale": "A key authorization row that silently disappeared would take a live key with it, and an expired one would be indistinguishable from a forged key id. Neither direction is acceptable, so nothing here expires."
+    "rationale": "A revocation row that silently disappeared would fail open, which is the one direction this table must never fail."
   },
-  "itemTypes": ["workspace_placement", "workspace_profile", "workspace_limit", "workspace_limit_bundle_head", "workspace_limit_bundle", "workspace_edge_limits", "key_authorization", "feed_frontier"],
+  "itemTypes": ["workspace_placement", "workspace_profile", "workspace_limit", "workspace_limit_bundle_head", "workspace_limit_bundle", "key_revocation", "feed_frontier"],
   "iam": [
     {
       "role": "central-control-worker",
@@ -40,7 +40,7 @@
       "role": "central-control-worker",
       "actions": ["dynamodb:PutItem"],
       "resources": ["table"],
-      "itemTypes": ["workspace_placement", "workspace_profile", "key_authorization", "feed_frontier"],
+      "itemTypes": ["workspace_placement", "workspace_profile", "key_revocation", "feed_frontier"],
       "condition": {
         "operator": "ForAllValues:StringLike",
         "key": "dynamodb:LeadingKeys",
@@ -51,7 +51,7 @@
       "role": "regional-capacity-controller",
       "actions": ["dynamodb:TransactWriteItems"],
       "resources": ["table"],
-      "itemTypes": ["workspace_limit", "workspace_limit_bundle_head", "workspace_limit_bundle", "workspace_edge_limits"],
+      "itemTypes": ["workspace_limit", "workspace_limit_bundle_head", "workspace_limit_bundle"],
       "condition": {
         "operator": "ForAllValues:StringLike",
         "key": "dynamodb:LeadingKeys",
@@ -60,27 +60,27 @@
     },
     {
       "role": "regional-session-api",
-      "actions": ["dynamodb:GetItem", "dynamodb:TransactGetItems", "dynamodb:Query", "dynamodb:ConditionCheckItem"],
+      "actions": ["dynamodb:GetItem", "dynamodb:Query", "dynamodb:ConditionCheckItem"],
       "resources": ["table"]
     },
     {
       "role": "regional-secret-api",
-      "actions": ["dynamodb:GetItem", "dynamodb:TransactGetItems", "dynamodb:Query"],
+      "actions": ["dynamodb:GetItem", "dynamodb:Query"],
       "resources": ["table"]
     },
     {
       "role": "regional-observation-api",
-      "actions": ["dynamodb:GetItem", "dynamodb:TransactGetItems", "dynamodb:Query"],
+      "actions": ["dynamodb:GetItem", "dynamodb:Query"],
       "resources": ["table"]
     },
     {
       "role": "regional-stream",
-      "actions": ["dynamodb:GetItem", "dynamodb:TransactGetItems", "dynamodb:Query"],
+      "actions": ["dynamodb:GetItem", "dynamodb:Query"],
       "resources": ["table"]
     },
     {
       "role": "regional-otlp",
-      "actions": ["dynamodb:GetItem", "dynamodb:TransactGetItems", "dynamodb:Query"],
+      "actions": ["dynamodb:GetItem", "dynamodb:Query"],
       "resources": ["table"]
     },
     {

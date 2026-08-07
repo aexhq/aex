@@ -11,20 +11,10 @@ use aex_wire::types::{Region, Timestamp};
 use aws_sdk_dynamodb::Client;
 
 use crate::attr::{Item, ItemBuilder, n, s, stamp};
-use crate::wire_pending::KeyAuthorizationState;
 
 const WORKSPACE_PLACEMENT: &str = "workspace_placement";
 const WORKSPACE_PROFILE: &str = "workspace_profile";
-const KEY_AUTHORIZATION: &str = "key_authorization";
-
-/// The monotone fence a key authorization publication must satisfy.
-///
-/// `(keyEpoch, projectionSequence)`, in that order, rather than either alone:
-/// creation and revocation arrive as separate outbox messages, so a delayed
-/// creation must lose to a revocation that already raised the epoch, and two
-/// publications at the same epoch must still order by position.
-const KEY_AUTHORIZATION_CONDITION: &str = "attribute_not_exists(#pk) OR #epoch < :epoch \
-     OR (#epoch = :epoch AND #sequence <= :sequence)";
+const KEY_REVOCATION: &str = "key_revocation";
 
 /// A complete workspace placement projection.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,30 +52,15 @@ pub struct ProfileWrite {
     pub created_at: Timestamp,
 }
 
-/// A monotone API-key authorization projection.
-///
-/// The same row is published when the key is created and again when it is
-/// revoked. A revocation therefore raises an existing row rather than creating
-/// the only row a region ever had for that key, which is what lets an absent row
-/// mean "no such key here" instead of "not revoked yet".
+/// A monotone API-key revocation projection.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct KeyAuthorizationWrite {
-    /// The key.
+pub struct RevocationWrite {
+    /// Revoked key.
     pub api_key: ApiKeyId,
-    /// The workspace it authorizes.
-    pub workspace: WorkspaceId,
-    /// The organization that owns that workspace.
-    pub organization: OrganizationId,
-    /// The region it is pinned to.
-    pub region: Region,
-    /// Whether it may still authorize.
-    pub state: KeyAuthorizationState,
+    /// Revocation instant.
+    pub revoked_at: Timestamp,
     /// Monotone key epoch.
-    pub key_epoch: u64,
-    /// Monotone projection position.
-    pub projection_sequence: u64,
-    /// Projection timestamp.
-    pub updated_at: Timestamp,
+    pub epoch: u64,
 }
 
 /// One region's projection writer.
@@ -168,28 +143,21 @@ impl ProjectionWriter {
             .map_err(|error| error.to_string())
     }
 
-    /// Publishes a key authorization row if it does not move the row backwards.
-    ///
-    /// The fence is `(keyEpoch, projectionSequence)` rather than either alone:
-    /// creation and revocation are published from different outbox messages, and
-    /// a delayed creation must never overwrite a revocation that already raised
-    /// the epoch.
+    /// Publishes a revocation if its epoch does not move the floor backwards.
     ///
     /// # Errors
     ///
     /// Returns a redacted transport diagnostic when the write fails.
-    pub async fn put_key_authorization(&self, write: &KeyAuthorizationWrite) -> Result<(), String> {
+    pub async fn put_revocation(&self, write: &RevocationWrite) -> Result<(), String> {
         let result = self
             .client
             .put_item()
             .table_name(&self.table)
-            .set_item(Some(key_authorization_item(write)))
-            .condition_expression(KEY_AUTHORIZATION_CONDITION)
+            .set_item(Some(revocation_item(write)))
+            .condition_expression("attribute_not_exists(#pk) OR #epoch <= :epoch")
             .expression_attribute_names("#pk", "pk")
-            .expression_attribute_names("#epoch", "keyEpoch")
-            .expression_attribute_names("#sequence", "projectionSequence")
-            .expression_attribute_values(":epoch", n(write.key_epoch))
-            .expression_attribute_values(":sequence", n(write.projection_sequence))
+            .expression_attribute_names("#epoch", "revokedEpoch")
+            .expression_attribute_values(":epoch", n(write.epoch))
             .send()
             .await;
         match result {
@@ -242,29 +210,23 @@ fn profile_item(write: &ProfileWrite) -> Item {
         .build()
 }
 
-fn key_authorization_item(write: &KeyAuthorizationWrite) -> Item {
-    ItemBuilder::new(KEY_AUTHORIZATION)
+fn revocation_item(write: &RevocationWrite) -> Item {
+    ItemBuilder::new(KEY_REVOCATION)
         .set("pk", s(format!("KEY#{}", write.api_key)))
-        .set("sk", s("AUTHZ"))
+        .set("sk", s("REVOCATION"))
         .set("apiKeyId", s(write.api_key.to_string()))
-        .set("workspaceId", s(write.workspace.to_string()))
-        .set("organizationId", s(write.organization.to_string()))
-        .set("region", s(write.region.as_str()))
-        .set("state", s(write.state.as_str()))
-        .set("keyEpoch", n(write.key_epoch))
-        .set("projectionSequence", n(write.projection_sequence))
-        .set("updatedAt", stamp(write.updated_at))
+        .set("revokedAt", stamp(write.revoked_at))
+        .set("revokedEpoch", n(write.epoch))
         .build()
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        KEY_AUTHORIZATION_CONDITION, KeyAuthorizationWrite, PlacementWrite, ProfileWrite,
-        key_authorization_item, placement_item, profile_item,
+        PlacementWrite, ProfileWrite, RevocationWrite, placement_item, profile_item,
+        revocation_item,
     };
-    use crate::projection::{decode_key_authorization, decode_placement, decode_profile};
-    use crate::wire_pending::KeyAuthorizationState;
+    use crate::projection::{decode_placement, decode_profile, decode_revocation};
     use aex_wire::ids::{ApiKeyId, OrganizationId, PrefixedId as _, Uuid7, WorkspaceId};
     use aex_wire::types::{Region, Timestamp};
 
@@ -298,58 +260,13 @@ mod tests {
         assert_eq!(decoded.name, "Production");
 
         let api_key = ApiKeyId::from_uuid7(Uuid7::compose(1, [3; 10]));
-        for state in KeyAuthorizationState::ALL {
-            let authorization = KeyAuthorizationWrite {
-                api_key,
-                workspace,
-                organization,
-                region: Region::EuWest1,
-                state,
-                key_epoch: 7,
-                projection_sequence: 8,
-                updated_at: now,
-            };
-            let decoded =
-                decode_key_authorization(&key_authorization_item(&authorization), api_key)
-                    .expect("reader");
-            assert_eq!(decoded.workspace, workspace);
-            assert_eq!(decoded.organization, organization);
-            assert_eq!(decoded.state, state);
-            assert_eq!(decoded.key_epoch, 7);
-            assert_eq!(decoded.projection_sequence, 8);
-        }
-
-        // A row published for one key never decodes as another's.
-        let other = ApiKeyId::from_uuid7(Uuid7::compose(1, [4; 10]));
-        let authorization = KeyAuthorizationWrite {
+        let revocation = RevocationWrite {
             api_key,
-            workspace,
-            organization,
-            region: Region::EuWest1,
-            state: KeyAuthorizationState::Active,
-            key_epoch: 1,
-            projection_sequence: 1,
-            updated_at: now,
+            revoked_at: now,
+            epoch: 7,
         };
-        assert!(
-            decode_key_authorization(&key_authorization_item(&authorization), other).is_err(),
-            "a key authorization row is bound to the key it names"
-        );
-    }
-
-    #[test]
-    fn a_key_authorization_publication_can_only_move_the_row_forward() {
-        // A delayed creation must never overwrite a revocation that already
-        // raised the epoch, so the fence names both ordering terms.
-        for required in [
-            "attribute_not_exists(#pk)",
-            "#epoch < :epoch",
-            "#epoch = :epoch AND #sequence <= :sequence",
-        ] {
-            assert!(
-                KEY_AUTHORIZATION_CONDITION.contains(required),
-                "the fence omitted `{required}`: {KEY_AUTHORIZATION_CONDITION}"
-            );
-        }
+        let decoded = decode_revocation(&revocation_item(&revocation)).expect("reader");
+        assert_eq!(decoded.api_key, api_key);
+        assert_eq!(decoded.revoked_epoch, 7);
     }
 }

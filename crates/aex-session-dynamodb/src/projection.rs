@@ -1,15 +1,11 @@
 //! The read-only `regional-authz-projection` reader.
 //!
-//! Placement, profile and key authorization rows are written by
-//! `central-control-worker`; effective-limit rows, including the hot admission
-//! subset, are reserved for the regional capacity authority. Every serving
-//! regional role holds `dynamodb:GetItem`, `dynamodb:TransactGetItems` and
-//! `dynamodb:Query` on the table and nothing else, and this module contains no
-//! write operation at all — a source conformance test asserts that, because
+//! Placement, profile and revocation rows are written by
+//! `central-control-worker`; effective-limit rows are reserved for the regional
+//! capacity authority. Every serving regional role holds `dynamodb:GetItem`
+//! and `dynamodb:Query` on the table and nothing else, and this module contains
+//! no write operation at all — a source conformance test asserts that, because
 //! "read-only by convention" is not a property.
-//!
-//! [`AuthorizationProjection::read_admission_snapshot`] is the request path.
-//! Everything else here is a cold or diagnostic read.
 //!
 //! It lives behind the `authz-projection` feature so `regional-secret-api` and
 //! `regional-otlp` can read a placement without linking the session row codec
@@ -25,9 +21,8 @@ use crate::error::{Idempotence, StoreError, classify};
 use crate::paging::{PageBudget, PagePosition};
 use crate::plan::key;
 use crate::wire_pending::{
-    AdmissionSnapshot, EdgeLimits, FeedFrontier, KeyAuthorization, KeyAuthorizationState,
-    ProjectedLimitBundle, ProjectedLimitBundleHead, ProjectedWorkspaceLimit, WorkspacePlacement,
-    WorkspaceProfile,
+    FeedFrontier, KeyRevocation, ProjectedLimitBundle, ProjectedLimitBundleHead,
+    ProjectedWorkspaceLimit, WorkspacePlacement, WorkspaceProfile,
 };
 
 pub use crate::projection_limit::{
@@ -37,10 +32,8 @@ pub use crate::projection_limit::{
 
 /// The `itemType` of a workspace placement.
 pub const WORKSPACE_PLACEMENT: &str = "workspace_placement";
-/// The `itemType` of a key authorization row.
-pub const KEY_AUTHORIZATION: &str = "key_authorization";
-/// The `itemType` of the hot admission limit subset.
-pub const WORKSPACE_EDGE_LIMITS: &str = "workspace_edge_limits";
+/// The `itemType` of a key revocation.
+pub const KEY_REVOCATION: &str = "key_revocation";
 /// The `itemType` of the signed feed frontier.
 pub const FEED_FRONTIER: &str = "feed_frontier";
 /// The `itemType` of descriptive workspace facts.
@@ -52,22 +45,10 @@ pub fn placement_key(workspace: WorkspaceId) -> (String, String) {
     (format!("WS#{workspace}"), "PLACEMENT".to_owned())
 }
 
-/// `KEY#{api_key_id}` / `AUTHZ`.
+/// `KEY#{api_key_id}` / `REVOCATION`.
 #[must_use]
-pub fn authorization_key(api_key: ApiKeyId) -> (String, String) {
-    (format!("KEY#{api_key}"), "AUTHZ".to_owned())
-}
-
-/// `LIMIT#WS#{workspace_id}` / `EDGE_LIMITS`.
-///
-/// The partition is the capacity authority's, not the workspace's, because
-/// `dynamodb:LeadingKeys` is the only key this table's write fence can condition
-/// on. Filing the row under `WS#` would have handed the capacity authority the
-/// partition that holds placement, and "each row has one writer" is enforced
-/// here rather than asserted in prose.
-#[must_use]
-pub fn edge_limits_key(workspace: WorkspaceId) -> (String, String) {
-    (format!("LIMIT#WS#{workspace}"), "EDGE_LIMITS".to_owned())
+pub fn revocation_key(api_key: ApiKeyId) -> (String, String) {
+    (format!("KEY#{api_key}"), "REVOCATION".to_owned())
 }
 
 /// `FEED` / `FRONTIER`.
@@ -113,42 +94,15 @@ pub trait AuthorizationProjection: Send + Sync + 'static {
         workspace: WorkspaceId,
     ) -> Result<WorkspacePlacement, StoreError>;
 
-    /// Reads one key's authorization row.
+    /// Reads one key's revocation, when it has one.
     ///
     /// # Errors
     ///
-    /// [`StoreError::Misconfigured`] when this region projects no row for the
-    /// key — which is what a forged or foreign key id looks like — and any other
-    /// [`StoreError`] for a transport or decode failure. The two are different
-    /// to a caller: the first is a refusal, the second an outage.
-    async fn read_key_authorization(
+    /// [`StoreError`] for any transport or decode failure.
+    async fn read_key_revocation(
         &self,
         api_key: ApiKeyId,
-    ) -> Result<KeyAuthorization, StoreError>;
-
-    /// Reads the key, placement and edge-limit rows in one request.
-    ///
-    /// One `TransactGetItems` rather than three point reads, so the three
-    /// answers describe the same instant. A revocation that lands between two
-    /// separate reads is the failure this closes: the old sequence could see an
-    /// un-revoked key beside a placement written after the revocation.
-    ///
-    /// `workspace` is the identity the presented credential *claims*. It selects
-    /// which placement and limit rows are read; whether the claim is true is
-    /// decided by comparing it against the key row this returns, which no
-    /// caller may skip.
-    ///
-    /// # Errors
-    ///
-    /// [`StoreError::Misconfigured`] when a row the snapshot needs is absent, or
-    /// when the three rows do not describe one consistent identity — both are
-    /// refusals, never optimistic admissions. Any other [`StoreError`] for a
-    /// transport or decode failure.
-    async fn read_admission_snapshot(
-        &self,
-        api_key: ApiKeyId,
-        workspace: WorkspaceId,
-    ) -> Result<AdmissionSnapshot, StoreError>;
+    ) -> Result<Option<KeyRevocation>, StoreError>;
 
     /// Reads how far the projection is proved current.
     ///
@@ -251,17 +205,6 @@ impl ProjectionReader {
             .map_err(|error| classify(&error, Idempotence::Read))?;
         Ok(output.item)
     }
-
-    /// "This region holds no usable record of that."
-    ///
-    /// One constructor for the whole fail-closed family so an absent row and a
-    /// row that contradicts its siblings are indistinguishable to a caller —
-    /// which is what stops the difference from being probeable.
-    fn absent(&self) -> StoreError {
-        StoreError::Misconfigured {
-            table: self.table.clone(),
-        }
-    }
 }
 
 #[async_trait]
@@ -280,73 +223,15 @@ impl AuthorizationProjection for ProjectionReader {
         Ok(decode_placement(&item, workspace)?)
     }
 
-    async fn read_key_authorization(
+    async fn read_key_revocation(
         &self,
         api_key: ApiKeyId,
-    ) -> Result<KeyAuthorization, StoreError> {
-        let (pk, sk) = authorization_key(api_key);
-        let item = self.get(&pk, &sk).await?.ok_or_else(|| self.absent())?;
-        Ok(decode_key_authorization(&item, api_key)?)
-    }
-
-    async fn read_admission_snapshot(
-        &self,
-        api_key: ApiKeyId,
-        workspace: WorkspaceId,
-    ) -> Result<AdmissionSnapshot, StoreError> {
-        let keys = [
-            authorization_key(api_key),
-            placement_key(workspace),
-            edge_limits_key(workspace),
-        ];
-        let mut request = self.client.transact_get_items();
-        for (pk, sk) in &keys {
-            request = request.transact_items(
-                aws_sdk_dynamodb::types::TransactGetItem::builder()
-                    .get(
-                        aws_sdk_dynamodb::types::Get::builder()
-                            .table_name(&self.table)
-                            .set_key(Some(key(pk, sk)))
-                            .build()
-                            .map_err(|error| StoreError::Invalid {
-                                detail: error.to_string(),
-                            })?,
-                    )
-                    .build(),
-            );
+    ) -> Result<Option<KeyRevocation>, StoreError> {
+        let (pk, sk) = revocation_key(api_key);
+        match self.get(&pk, &sk).await? {
+            None => Ok(None),
+            Some(item) => Ok(Some(decode_revocation(&item)?)),
         }
-        let output = request
-            .send()
-            .await
-            .map_err(|error| classify(&error, Idempotence::Read))?;
-        // `TransactGetItems` answers positionally, one response per request
-        // item, with an absent item rendered as an empty map. Reading by index
-        // is therefore exact, and a short list is a protocol violation rather
-        // than a missing row.
-        let responses = output.responses.unwrap_or_default();
-        let [key_row, placement_row, limits_row] = responses.as_slice() else {
-            return Err(StoreError::Invalid {
-                detail: format!(
-                    "the snapshot transaction answered {} of 3 items",
-                    responses.len()
-                ),
-            });
-        };
-        let present = |response: &aws_sdk_dynamodb::types::ItemResponse| {
-            response
-                .item
-                .as_ref()
-                .filter(|item| !item.is_empty())
-                .cloned()
-        };
-        let key_item = present(key_row).ok_or_else(|| self.absent())?;
-        let placement_item = present(placement_row).ok_or_else(|| self.absent())?;
-        let limits_item = present(limits_row).ok_or_else(|| self.absent())?;
-
-        let key = decode_key_authorization(&key_item, api_key)?;
-        let placement = decode_placement(&placement_item, workspace)?;
-        let limits = decode_edge_limits(&limits_item, workspace)?;
-        reconcile(key, placement, limits, workspace).ok_or_else(|| self.absent())
     }
 
     async fn read_frontier(&self) -> Result<FeedFrontier, StoreError> {
@@ -497,89 +382,17 @@ pub fn decode_placement(
     })
 }
 
-/// Every key authorization state value, spelled by the type that owns them.
-pub const KEY_AUTHORIZATION_STATES: &[&str] = &[
-    KeyAuthorizationState::Active.as_str(),
-    KeyAuthorizationState::Revoked.as_str(),
-];
-
-/// Decodes a key authorization row.
+/// Decodes a key revocation.
 ///
 /// # Errors
 ///
-/// [`CodecError`] for any missing, mistyped or out-of-vocabulary attribute, and
-/// [`CodecError::WrongTenant`] when the row names a different key than the one
-/// that was read.
-pub fn decode_key_authorization(
-    item: &Item,
-    asserted: ApiKeyId,
-) -> Result<KeyAuthorization, CodecError> {
-    let row = Row::bind(item, KEY_AUTHORIZATION)?;
-    row.owned_by("apiKeyId", &asserted.to_string())?;
-    let stored = row.enumerated("state", KEY_AUTHORIZATION_STATES)?;
-    let state = KeyAuthorizationState::parse(stored).ok_or_else(|| CodecError::Malformed {
-        item_type: KEY_AUTHORIZATION,
-        attribute: "state",
-        reason: format!("`{stored}` is outside the key authorization vocabulary"),
-    })?;
-    Ok(KeyAuthorization {
-        api_key: asserted,
-        workspace: row.id("workspaceId")?,
-        organization: row.id("organizationId")?,
-        region: row.string("region")?.to_owned(),
-        state,
-        key_epoch: row.u64("keyEpoch")?,
-        projection_sequence: row.u64("projectionSequence")?,
-        updated_at: row.timestamp("updatedAt")?,
-    })
-}
-
-/// Proves three separately-decoded rows describe one consistent identity.
-///
-/// `None` is the whole fail-closed family. Every check here is a refusal rather
-/// than a store fault: the workspace a credential names is a *claim* that
-/// selected which rows were read, so a key row naming a different workspace, or
-/// a placement naming a different organization, means the claim was wrong — not
-/// that the region is sick. Collapsing them all to one answer is deliberate, so
-/// which of them failed is not probeable.
-///
-/// Split out of the transaction so the safety-critical part is a pure function
-/// with no client in the way.
-#[must_use]
-pub fn reconcile(
-    key: KeyAuthorization,
-    placement: WorkspacePlacement,
-    limits: EdgeLimits,
-    workspace: WorkspaceId,
-) -> Option<AdmissionSnapshot> {
-    let consistent = key.workspace == workspace
-        && placement.workspace == workspace
-        && limits.workspace == workspace
-        && key.organization == placement.organization
-        && limits.is_complete();
-    consistent.then_some(AdmissionSnapshot {
-        key,
-        placement,
-        limits,
-    })
-}
-
-/// Decodes the hot admission limit subset.
-///
-/// # Errors
-///
-/// [`CodecError`] for any missing, mistyped or foreign-tenant attribute.
-pub fn decode_edge_limits(item: &Item, asserted: WorkspaceId) -> Result<EdgeLimits, CodecError> {
-    let row = Row::bind(item, WORKSPACE_EDGE_LIMITS)?;
-    row.owned_by("workspaceId", &asserted.to_string())?;
-    Ok(EdgeLimits {
-        workspace: asserted,
-        revision: row.u64("revision")?,
-        json_body_bytes: row.u64("jsonBodyBytes")?,
-        otlp_body_bytes: row.u64("otlpBodyBytes")?,
-        query_page_items: row.u64("queryPageItems")?,
-        query_page_bytes: row.u64("queryPageBytes")?,
-        changed_at: row.timestamp("changedAt")?,
+/// [`CodecError`] as above.
+pub fn decode_revocation(item: &Item) -> Result<KeyRevocation, CodecError> {
+    let row = Row::bind(item, KEY_REVOCATION)?;
+    Ok(KeyRevocation {
+        api_key: row.id::<ApiKeyId>("apiKeyId")?,
+        revoked_at: row.timestamp("revokedAt")?,
+        revoked_epoch: row.u64("revokedEpoch")?,
     })
 }
 
@@ -626,14 +439,12 @@ mod tests {
     use aex_wire::types::DecimalU128;
 
     use super::{
-        FEED_FRONTIER, KEY_AUTHORIZATION, WORKSPACE_EDGE_LIMITS, WORKSPACE_LIMIT,
-        WORKSPACE_PLACEMENT, WORKSPACE_PROFILE, admits_execution, authorization_key,
-        decode_edge_limits, decode_frontier, decode_key_authorization, decode_limit,
-        decode_limit_at, decode_placement, decode_profile, edge_limits_key, frontier_key, guard,
-        limit_key, placement_key, profile_key,
+        FEED_FRONTIER, KEY_REVOCATION, WORKSPACE_LIMIT, WORKSPACE_PLACEMENT, WORKSPACE_PROFILE,
+        admits_execution, decode_frontier, decode_limit, decode_limit_at, decode_placement,
+        decode_profile, decode_revocation, frontier_key, guard, limit_key, placement_key,
+        profile_key, revocation_key,
     };
     use crate::attr::{CodecError, ItemBuilder, n, s};
-    use crate::wire_pending::KeyAuthorizationState;
 
     fn workspace(byte: u8) -> WorkspaceId {
         WorkspaceId::from_uuid7(Uuid7::compose(1, [byte; 10]))
@@ -691,50 +502,14 @@ mod tests {
     }
 
     #[test]
-    fn a_key_authorization_and_a_frontier_decode() {
+    fn a_revocation_and_a_frontier_decode() {
         let api_key = ApiKeyId::from_uuid7(Uuid7::compose(1, [3; 10]));
-        let item = ItemBuilder::new(KEY_AUTHORIZATION)
+        let item = ItemBuilder::new(KEY_REVOCATION)
             .set("apiKeyId", s(api_key.to_string()))
-            .set("workspaceId", s(workspace(1).to_string()))
-            .set(
-                "organizationId",
-                s(
-                    aex_wire::ids::OrganizationId::from_uuid7(Uuid7::compose(1, [2; 10]))
-                        .to_string(),
-                ),
-            )
-            .set("region", s("eu-west-1"))
-            .set("state", s("revoked"))
-            .set("keyEpoch", n(2))
-            .set("projectionSequence", n(9))
-            .set("updatedAt", s("2026-08-01T00:00:00.000Z"))
+            .set("revokedAt", s("2026-08-01T00:00:00.000Z"))
+            .set("revokedEpoch", n(2))
             .build();
-        let decoded = decode_key_authorization(&item, api_key).expect("decodes");
-        assert_eq!(decoded.api_key, api_key);
-        assert_eq!(decoded.workspace, workspace(1));
-        assert_eq!(decoded.state, KeyAuthorizationState::Revoked);
-        assert_eq!(decoded.key_epoch, 2);
-
-        let corrupt = ItemBuilder::new(KEY_AUTHORIZATION)
-            .set("apiKeyId", s(api_key.to_string()))
-            .set("workspaceId", s(workspace(1).to_string()))
-            .set(
-                "organizationId",
-                s(
-                    aex_wire::ids::OrganizationId::from_uuid7(Uuid7::compose(1, [2; 10]))
-                        .to_string(),
-                ),
-            )
-            .set("region", s("eu-west-1"))
-            .set("state", s("suspended"))
-            .set("keyEpoch", n(2))
-            .set("projectionSequence", n(9))
-            .set("updatedAt", s("2026-08-01T00:00:00.000Z"))
-            .build();
-        assert!(matches!(
-            decode_key_authorization(&corrupt, api_key),
-            Err(CodecError::Malformed { .. })
-        ));
+        assert_eq!(decode_revocation(&item).expect("decodes").api_key, api_key);
 
         let item = ItemBuilder::new(FEED_FRONTIER)
             .set("sequence", n(9))
@@ -818,145 +593,16 @@ mod tests {
         let (placement_pk, _) = placement_key(workspace(1));
         let profile = profile_key(workspace(1));
         let limit = limit_key(workspace(1), LimitId::QueryPage);
-        let edge = edge_limits_key(workspace(1));
-        let authorization = authorization_key(ApiKeyId::from_uuid7(Uuid7::compose(1, [3; 10])));
+        let (revocation_pk, _) = revocation_key(ApiKeyId::from_uuid7(Uuid7::compose(1, [3; 10])));
         let (frontier_pk, _) = frontier_key();
         assert_eq!(placement_pk, profile.0);
         assert_ne!(placement_pk, limit.0);
         assert!(limit.0.starts_with("LIMIT#"));
         assert_eq!(profile.1, "PROFILE");
         assert_eq!(limit.1, "LIMIT#query.page");
-        assert_ne!(placement_pk, authorization.0);
-        assert_eq!(authorization.1, "AUTHZ");
+        assert_ne!(placement_pk, revocation_pk);
         assert_ne!(placement_pk, frontier_pk);
-        assert_ne!(authorization.0, frontier_pk);
-        // The hot limit subset stays inside the capacity authority's partition
-        // fence, which is what keeps it out of the placement writer's reach.
-        assert!(edge.0.starts_with("LIMIT#"));
-        assert_ne!(edge.0, placement_pk);
-        assert_eq!(edge.1, "EDGE_LIMITS");
-    }
-
-    #[test]
-    fn every_cross_row_identity_mismatch_fails_the_snapshot_closed() {
-        let api_key = ApiKeyId::from_uuid7(Uuid7::compose(1, [3; 10]));
-        let organization = aex_wire::ids::OrganizationId::from_uuid7(Uuid7::compose(1, [2; 10]));
-        let stamp = aex_wire::types::Timestamp::from_unix_millis(1_000).expect("timestamp");
-        let key = |workspace, organization| crate::wire_pending::KeyAuthorization {
-            api_key,
-            workspace,
-            organization,
-            region: "eu-west-1".to_owned(),
-            state: KeyAuthorizationState::Active,
-            key_epoch: 1,
-            projection_sequence: 1,
-            updated_at: stamp,
-        };
-        let placement = |workspace, organization| crate::wire_pending::WorkspacePlacement {
-            workspace,
-            organization,
-            plane: "regional".to_owned(),
-            region: "eu-west-1".to_owned(),
-            status: "active".to_owned(),
-            key_epoch: 1,
-            account_epoch: 1,
-            revocation_epoch: 1,
-            feed_sequence: 1,
-            updated_at: stamp,
-        };
-        let limits = |workspace, json| crate::wire_pending::EdgeLimits {
-            workspace,
-            revision: 1,
-            json_body_bytes: json,
-            otlp_body_bytes: 1,
-            query_page_items: 1,
-            query_page_bytes: 1,
-            changed_at: stamp,
-        };
-        let mine = workspace(1);
-        let theirs = workspace(9);
-        let other_org = aex_wire::ids::OrganizationId::from_uuid7(Uuid7::compose(1, [5; 10]));
-
-        assert!(
-            super::reconcile(
-                key(mine, organization),
-                placement(mine, organization),
-                limits(mine, 1),
-                mine
-            )
-            .is_some(),
-            "a consistent set is the only accepted one"
-        );
-
-        for (name, key, placement, limits) in [
-            (
-                "the key row names another workspace",
-                key(theirs, organization),
-                placement(mine, organization),
-                limits(mine, 1),
-            ),
-            (
-                "the placement names another workspace",
-                key(mine, organization),
-                placement(theirs, organization),
-                limits(mine, 1),
-            ),
-            (
-                "the limits name another workspace",
-                key(mine, organization),
-                placement(mine, organization),
-                limits(theirs, 1),
-            ),
-            (
-                "the key row and the placement disagree about the organization",
-                key(mine, other_org),
-                placement(mine, organization),
-                limits(mine, 1),
-            ),
-            (
-                "a ceiling is zero",
-                key(mine, organization),
-                placement(mine, organization),
-                limits(mine, 0),
-            ),
-        ] {
-            assert!(
-                super::reconcile(key, placement, limits, mine).is_none(),
-                "{name} was admitted"
-            );
-        }
-    }
-
-    #[test]
-    fn the_hot_limit_subset_decodes_and_a_zero_ceiling_is_incomplete() {
-        let row = |json: u64| {
-            ItemBuilder::new(WORKSPACE_EDGE_LIMITS)
-                .set("pk", s(format!("LIMIT#WS#{}", workspace(1))))
-                .set("sk", s("EDGE_LIMITS"))
-                .set("workspaceId", s(workspace(1).to_string()))
-                .set("revision", n(4))
-                .set("jsonBodyBytes", n(json))
-                .set("otlpBodyBytes", n(4 * 1_024 * 1_024))
-                .set("queryPageItems", n(1_000))
-                .set("queryPageBytes", n(8 * 1_024 * 1_024))
-                .set("changedAt", s("2026-08-01T00:00:00.000Z"))
-                .build()
-        };
-        let decoded = decode_edge_limits(&row(65_536), workspace(1)).expect("decodes");
-        assert_eq!(decoded.revision, 4);
-        assert_eq!(decoded.json_body_bytes, 65_536);
-        assert!(decoded.is_complete());
-
-        assert!(
-            !decode_edge_limits(&row(0), workspace(1))
-                .expect("decodes")
-                .is_complete(),
-            "a zero ceiling admits nothing and is refused rather than enforced"
-        );
-        assert!(matches!(
-            decode_edge_limits(&row(65_536), workspace(9)),
-            Err(CodecError::WrongTenant { .. })
-        ));
+        assert_ne!(revocation_pk, frontier_pk);
     }
 
     #[test]

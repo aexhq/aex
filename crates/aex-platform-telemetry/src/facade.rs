@@ -37,45 +37,8 @@ pub enum FlushOutcome {
     },
 }
 
-/// A point-in-time view of one [`Handle`]'s queue and counters.
-///
-/// Copyable so an observer can take it and let go of the handle. Each counter
-/// is read independently, so a concurrent emit can land between two reads: this
-/// is evidence for a human reading a log, never an input to a decision.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TelemetryStats {
-    /// Records queued for export right now.
-    pub pending: usize,
-    /// The queue bound emitting past which drops.
-    pub queue_capacity: usize,
-    /// Records that entered the queue.
-    pub accepted: u64,
-    /// Records an exporter accepted.
-    pub exported: u64,
-    /// Records discarded: a full queue, a failing exporter, or no exporter.
-    pub dropped: u64,
-    /// Attributes removed because their visibility class is not public.
-    pub redacted_attributes: u64,
-    /// Flushes that stopped at their deadline with records still pending.
-    pub flush_deadline_exceeded: u64,
-}
-
-impl TelemetryStats {
-    /// Records handed to [`Handle::emit`], whether they were queued or dropped.
-    ///
-    /// Derived rather than counted separately, so the two numbers cannot
-    /// disagree.
-    #[must_use]
-    pub const fn emitted(&self) -> u64 {
-        self.accepted.saturating_add(self.dropped)
-    }
-}
-
-/// Every counter is monotonic: each one only ever moves by `fetch_add`, so two
-/// snapshots can be compared without knowing what happened between them.
 #[derive(Debug, Default)]
 struct Counters {
-    accepted: AtomicU64,
     dropped: AtomicU64,
     exported: AtomicU64,
     redacted: AtomicU64,
@@ -148,8 +111,6 @@ impl Handle {
             return;
         }
         queue.push_back(record);
-        drop(queue);
-        self.inner.counters.accepted.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Delivers queued diagnostics, stopping at `deadline`.
@@ -206,26 +167,6 @@ impl Handle {
     #[must_use]
     pub fn pending(&self) -> usize {
         self.inner.queue.lock().len()
-    }
-
-    /// Records that entered the queue.
-    #[must_use]
-    pub fn accepted(&self) -> u64 {
-        self.inner.counters.accepted.load(Ordering::Relaxed)
-    }
-
-    /// One snapshot of the queue and every counter.
-    #[must_use]
-    pub fn stats(&self) -> TelemetryStats {
-        TelemetryStats {
-            pending: self.pending(),
-            queue_capacity: self.inner.settings.queue_capacity,
-            accepted: self.accepted(),
-            exported: self.exported(),
-            dropped: self.dropped(),
-            redacted_attributes: self.redacted_attributes(),
-            flush_deadline_exceeded: self.deadline_exceeded(),
-        }
     }
 
     /// Records discarded because the queue was full, the exporter failed, or no

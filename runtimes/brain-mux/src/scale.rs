@@ -34,11 +34,8 @@ pub struct ScaleSignals {
     pub reserved_bytes: u64,
     /// The envelope itself.
     pub envelope_bytes: u64,
-    /// The reactor's rolling p99 scheduling lateness, over the published window.
-    ///
-    /// The window's percentile, never the newest sample: a scale decision costs nearly a
-    /// minute of capacity each way, and one late tick is not a reason to spend it.
-    pub reactor_delay_rolling_p99_ms: u32,
+    /// The reactor's observed p99 scheduling lateness.
+    pub reactor_delay_p99_ms: u32,
     /// Jobs waiting for a compute-lane slot.
     pub compute_lane_queue_depth: usize,
     /// The compute lane's utilization, in hundredths.
@@ -64,7 +61,7 @@ impl ScaleSignals {
         "active_activations",
         "active_provider_streams",
         "reserved_bytes_ratio",
-        "reactor_delay_rolling_p99_ms",
+        "reactor_delay_p99_ms",
         "compute_lane_queue_depth",
         "compute_lane_utilization",
         "provider_permit_saturation",
@@ -173,7 +170,7 @@ mod tests {
             active_provider_streams: 0,
             reserved_bytes: 0,
             envelope_bytes: 1_000,
-            reactor_delay_rolling_p99_ms: 0,
+            reactor_delay_p99_ms: 0,
             compute_lane_queue_depth: 0,
             compute_lane_utilization: 0,
             warm_cache_bytes: 0,

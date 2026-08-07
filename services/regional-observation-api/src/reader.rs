@@ -11,7 +11,6 @@
 //! domain already validated.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
-use std::sync::Arc;
 
 use aex_observation_domain::canonical::CanonicalValue;
 use aex_observation_domain::gap::GapRecord;
@@ -33,9 +32,6 @@ use aex_wire::types::{DecimalU128, Timestamp};
 use aws_sdk_dynamodb::types::{AttributeValue, KeysAndAttributes};
 use futures::StreamExt as _;
 
-use crate::counters::{ReadCounter, ReadCounters};
-use crate::frontier::{BundleRequest, Frontier, FrontierBundle, ScopeDeletionState};
-
 /// The shard count one bucket is written across, matching the admission edge.
 ///
 /// Fixed for the life of a bucket, so a reader never has to guess how many
@@ -43,7 +39,7 @@ use crate::frontier::{BundleRequest, Frontier, FrontierBundle, ScopeDeletionStat
 pub const BUCKET_SHARDS: u8 = 4;
 
 /// `DynamoDB` accepts at most one hundred keys in one `BatchGetItem` request.
-pub(crate) const BATCH_GET_MAX_KEYS: usize = 100;
+const BATCH_GET_MAX_KEYS: usize = 100;
 /// Unprocessed keys are retried a small, bounded number of times in addition
 /// to the SDK's transport retry policy.
 const BATCH_GET_UNPROCESSED_RETRIES: u8 = 3;
@@ -98,59 +94,11 @@ pub enum ReadError {
 
 impl ReadError {
     /// Builds a provider failure without carrying an upstream body.
-    pub(crate) fn provider(operation: &'static str, reason: impl std::fmt::Display) -> Self {
+    fn provider(operation: &'static str, reason: impl std::fmt::Display) -> Self {
         Self::Provider {
             operation,
             reason: reason.to_string(),
         }
-    }
-}
-
-/// Drains one `BatchGetItem` request set, retrying only the unprocessed keys.
-///
-/// `DynamoDB` reports a throttled key by returning it in `UnprocessedKeys`
-/// rather than by failing, and it omits that key's row from `Responses` exactly
-/// as it omits a row that does not exist. Every caller therefore decodes only
-/// after this returns: until the unprocessed set is empty, a missing row is not
-/// evidence of anything.
-///
-/// # Errors
-///
-/// Returns [`ReadError::Provider`] when the provider call fails, and when keys
-/// are still unprocessed after [`BATCH_GET_UNPROCESSED_RETRIES`] retries.
-pub(crate) async fn drain_batch_get(
-    dynamodb: &aws_sdk_dynamodb::Client,
-    request_items: HashMap<String, KeysAndAttributes>,
-    unprocessed_reason: &'static str,
-) -> Result<Vec<(String, HashMap<String, AttributeValue>)>, ReadError> {
-    let mut pending = request_items;
-    let mut returned = Vec::new();
-    let mut retries = 0_u8;
-    loop {
-        let response = dynamodb
-            .batch_get_item()
-            .set_request_items(Some(pending))
-            .send()
-            .await
-            .map_err(|error| ReadError::provider("BatchGetItem", error))?;
-        for (table, items) in response.responses.unwrap_or_default() {
-            returned.extend(items.into_iter().map(|item| (table.clone(), item)));
-        }
-        pending = response.unprocessed_keys.unwrap_or_default();
-        if pending.values().all(|keys| keys.keys().is_empty()) {
-            return Ok(returned);
-        }
-        if retries >= BATCH_GET_UNPROCESSED_RETRIES {
-            return Err(ReadError::Provider {
-                operation: "BatchGetItem",
-                reason: unprocessed_reason.to_owned(),
-            });
-        }
-        retries = retries.saturating_add(1);
-        tokio::time::sleep(std::time::Duration::from_millis(
-            5_u64 << u32::from(retries),
-        ))
-        .await;
     }
 }
 
@@ -336,6 +284,30 @@ fn segment_needs_hydration(
         || (plan.needs_base_fetch && descriptor.access.index_name().is_some())
 }
 
+/// The safe complete and retained frontiers of one query selection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Frontier {
+    /// Every selected signal is complete through this instant.
+    pub accepted_at: Timestamp,
+    /// Every selected signal is retained from this instant, which is `earliestReplay`.
+    pub earliest_accepted_at: Timestamp,
+    /// The authoritative deletion epoch bound into every cursor.
+    pub deletion_epoch: u64,
+    /// Whether the scope remains queryable at that epoch.
+    pub deletion_state: ScopeDeletionState,
+}
+
+/// The query-visible state of the authoritative scope deletion fence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ScopeDeletionState {
+    /// Reads may proceed.
+    Open,
+    /// A deletion is fenced and still in progress.
+    Deleting,
+    /// Deletion has been proven complete (or the session head is gone).
+    Deleted,
+}
+
 /// The bounded reader over the observation authority.
 #[derive(Clone, Debug)]
 pub struct ObservationReader {
@@ -345,15 +317,10 @@ pub struct ObservationReader {
     session_table: String,
     bucket: String,
     settle_ms: i64,
-    counters: Arc<ReadCounters>,
 }
 
 impl ObservationReader {
-    /// Binds the reader to its resolved resources and the process's accounting.
-    ///
-    /// The counters are a constructor argument rather than an optional setter so
-    /// a composition that forgets them fails to compile instead of reporting a
-    /// silent zero for every read this process makes.
+    /// Binds the reader to its resolved resources.
     #[must_use]
     pub fn new(
         dynamodb: aws_sdk_dynamodb::Client,
@@ -362,7 +329,6 @@ impl ObservationReader {
         session_table: impl Into<String>,
         bucket: impl Into<String>,
         settle_ms: i64,
-        counters: Arc<ReadCounters>,
     ) -> Self {
         Self {
             dynamodb,
@@ -371,7 +337,6 @@ impl ObservationReader {
             session_table: session_table.into(),
             bucket: bucket.into(),
             settle_ms,
-            counters,
         }
     }
 
@@ -379,12 +344,6 @@ impl ObservationReader {
     #[must_use]
     pub fn table(&self) -> &str {
         &self.table
-    }
-
-    /// The process-local read accounting every socket shares.
-    #[must_use]
-    pub fn counters(&self) -> &Arc<ReadCounters> {
-        &self.counters
     }
 
     /// The bound bucket name.
@@ -428,30 +387,6 @@ impl ObservationReader {
         Ok(())
     }
 
-    /// Reads the deletion fence, every selected signal frontier and the
-    /// gap-change hint in one request.
-    ///
-    /// This is the read an idle follow cycle repeats. It is one `BatchGetItem`
-    /// whatever the signal selection is, so a socket's idle cost stops scaling
-    /// with the number of signals it follows.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ReadError::Provider`] when the batch cannot be completed and
-    /// [`ReadError::Malformed`] when a returned row cannot be decoded. A row the
-    /// provider left unprocessed is never mistaken for a row that is absent.
-    pub async fn frontier_bundle(
-        &self,
-        scope: &ScopeKey,
-        workspace: WorkspaceId,
-        query: &NormalizedQuery,
-    ) -> Result<FrontierBundle, ReadError> {
-        let request =
-            BundleRequest::plan(scope, workspace, query, &self.table, &self.session_table);
-        self.counters.record(ReadCounter::FrontierBatch);
-        request.read(&self.dynamodb).await?.decode(scope, workspace)
-    }
-
     /// Reads the accepted frontier of one scope across the queried signals.
     ///
     /// # Errors
@@ -463,16 +398,32 @@ impl ObservationReader {
         workspace: WorkspaceId,
         query: &NormalizedQuery,
     ) -> Result<Frontier, ReadError> {
-        Ok(self
-            .frontier_bundle(scope, workspace, query)
-            .await?
-            .combine(query))
+        let (deletion_epoch, deletion_state) = self.deletion_fence(scope, workspace).await?;
+        let mut frontiers = Vec::new();
+        for signal in query.signals.in_authority().iter() {
+            let Some(item) = self
+                .get(&keys::frontier_pk(scope), &keys::frontier_sk(signal))
+                .await?
+            else {
+                continue;
+            };
+            let accepted_at = timestamp(&item, "acceptedAt").ok_or(ReadError::Malformed {
+                attribute: "acceptedAt",
+            })?;
+            frontiers.push(Frontier {
+                accepted_at,
+                earliest_accepted_at: timestamp(&item, "earliestAcceptedAt").unwrap_or(accepted_at),
+                deletion_epoch,
+                deletion_state,
+            });
+        }
+        let mut combined = combine_frontiers(query, frontiers);
+        combined.deletion_epoch = deletion_epoch;
+        combined.deletion_state = deletion_state;
+        Ok(combined)
     }
 
     /// Reads the deletion fence from the authority that owns the queried scope.
-    ///
-    /// Finite routes need the fence alone. A follow socket needs it beside every
-    /// signal frontier and reads [`Self::frontier_bundle`] instead.
     ///
     /// # Errors
     ///
@@ -485,13 +436,45 @@ impl ObservationReader {
     ) -> Result<(u64, ScopeDeletionState), ReadError> {
         if let ScopeKey::Session(session) = scope {
             let (pk, sk) = aex_session_dynamodb::stream_keys::head(*session);
-            let item = self.get_session(&pk, sk).await?;
-            return crate::frontier::decode_session_fence(item.as_ref(), workspace);
+            let Some(item) = self.get_session(&pk, sk).await? else {
+                return Ok((0, ScopeDeletionState::Deleted));
+            };
+            let state = aex_session_dynamodb::stream_keys::session_read_state(&item, workspace)
+                .map_err(|attribute| ReadError::Malformed { attribute })?;
+            let epoch = aex_session_dynamodb::stream_keys::session_deletion_epoch(&item, workspace)
+                .map_err(|attribute| ReadError::Malformed { attribute })?;
+            return Ok((
+                epoch,
+                match state {
+                    aex_session_dynamodb::stream_keys::SessionReadState::Active => {
+                        ScopeDeletionState::Open
+                    }
+                    aex_session_dynamodb::stream_keys::SessionReadState::Deleting => {
+                        ScopeDeletionState::Deleting
+                    }
+                    aex_session_dynamodb::stream_keys::SessionReadState::Deleted => {
+                        ScopeDeletionState::Deleted
+                    }
+                },
+            ));
         }
-        let item = self
+        let Some(item) = self
             .get(&keys::frontier_pk(scope), keys::DELETION_SK)
-            .await?;
-        crate::frontier::decode_workspace_fence(item.as_ref())
+            .await?
+        else {
+            return Ok((0, ScopeDeletionState::Open));
+        };
+        let epoch = number(&item, "deletionEpoch").ok_or(ReadError::Malformed {
+            attribute: "deletionEpoch",
+        })?;
+        let state = string(&item, "state").ok_or(ReadError::Malformed { attribute: "state" })?;
+        let state = match state.as_str() {
+            "none" => ScopeDeletionState::Open,
+            "fencing" | "deleting" | "verifying" => ScopeDeletionState::Deleting,
+            "complete" => ScopeDeletionState::Deleted,
+            _ => return Err(ReadError::Malformed { attribute: "state" }),
+        };
+        Ok((epoch, state))
     }
 
     /// Pins the snapshot every page of one query reads at.
@@ -979,14 +962,40 @@ impl ObservationReader {
                 .consistent_read(true)
                 .build()
                 .map_err(|error| ReadError::provider("BatchGetItem", error))?;
-            let returned = drain_batch_get(
-                &self.dynamodb,
-                HashMap::from([(self.table.clone(), request)]),
-                "provider repeatedly returned unprocessed base-row keys",
-            )
-            .await?;
-            for (_, item) in returned {
-                hydrated.insert(primary_key_pair(&item)?, item);
+            let mut request_items = HashMap::from([(self.table.clone(), request)]);
+            let mut retries = 0_u8;
+            loop {
+                let response = self
+                    .dynamodb
+                    .batch_get_item()
+                    .set_request_items(Some(request_items))
+                    .send()
+                    .await
+                    .map_err(|error| ReadError::provider("BatchGetItem", error))?;
+                if let Some(items) = response
+                    .responses
+                    .as_ref()
+                    .and_then(|responses| responses.get(&self.table))
+                {
+                    for item in items {
+                        hydrated.insert(primary_key_pair(item)?, item.clone());
+                    }
+                }
+                request_items = response.unprocessed_keys.unwrap_or_default();
+                if request_items.is_empty() {
+                    break;
+                }
+                if retries >= BATCH_GET_UNPROCESSED_RETRIES {
+                    return Err(ReadError::Provider {
+                        operation: "BatchGetItem",
+                        reason: "provider repeatedly returned unprocessed base-row keys".to_owned(),
+                    });
+                }
+                retries = retries.saturating_add(1);
+                tokio::time::sleep(std::time::Duration::from_millis(
+                    5_u64 << u32::from(retries),
+                ))
+                .await;
             }
         }
 
@@ -1080,7 +1089,6 @@ impl ObservationReader {
 
         let names = builder.names();
         let values = builder.values();
-        self.counters.record(ReadCounter::ObservationPage);
         let mut request = self
             .dynamodb
             .query()
@@ -1146,7 +1154,6 @@ impl ObservationReader {
             format!("{pk_name} = {pk_value} AND {sk_name} >= {lo} AND {sk_name} < {hi}");
         let names = builder.names();
         let values = builder.values();
-        self.counters.record(ReadCounter::ObservationPage);
         let response = self
             .dynamodb
             .query()
@@ -1318,7 +1325,6 @@ impl ObservationReader {
         pk: &str,
         sk: &str,
     ) -> Result<Option<HashMap<String, AttributeValue>>, ReadError> {
-        self.counters.record(ReadCounter::SessionHead);
         let response = self
             .dynamodb
             .get_item()
@@ -1458,7 +1464,6 @@ impl ObservationReader {
         let mut start = None;
         let mut rows = Vec::new();
         loop {
-            self.counters.record(ReadCounter::GapHistory);
             let mut request = self
                 .dynamodb
                 .query()
@@ -1783,6 +1788,51 @@ pub fn segment_key(
     ))
 }
 
+/// Combines per-signal completeness and retention facts for one query.
+///
+/// Native session events are synchronous authority rows rather than observation
+/// frontier rows. For the requested half-open range they therefore contribute
+/// its upper bound as the complete point and its lower bound as the retained
+/// floor. Observation signals narrow those facts: completeness is the minimum
+/// frontier, while replay safety begins at the maximum retained floor.
+fn combine_frontiers(
+    query: &NormalizedQuery,
+    frontiers: impl IntoIterator<Item = Frontier>,
+) -> Frontier {
+    let mut combined = if query.signals.contains(Signal::Events) {
+        Some(Frontier {
+            accepted_at: query.time_lt,
+            earliest_accepted_at: query.time_gte,
+            deletion_epoch: 0,
+            deletion_state: ScopeDeletionState::Open,
+        })
+    } else {
+        None
+    };
+    for frontier in frontiers {
+        combined = Some(combined.map_or(frontier, |current| {
+            Frontier {
+                accepted_at: current.accepted_at.min(frontier.accepted_at),
+                earliest_accepted_at: current
+                    .earliest_accepted_at
+                    .max(frontier.earliest_accepted_at),
+                deletion_epoch: current.deletion_epoch.max(frontier.deletion_epoch),
+                deletion_state: if current.deletion_state == ScopeDeletionState::Open {
+                    frontier.deletion_state
+                } else {
+                    current.deletion_state
+                },
+            }
+        }));
+    }
+    combined.unwrap_or(Frontier {
+        accepted_at: query.time_lt,
+        earliest_accepted_at: query.time_gte,
+        deletion_epoch: 0,
+        deletion_state: ScopeDeletionState::Open,
+    })
+}
+
 fn page_resume(
     bucket: BucketHour,
     last: OrderTuple,
@@ -2077,9 +2127,7 @@ fn primary_key(
 }
 
 /// Extracts a stable lookup key while proving both key attributes are strings.
-pub(crate) fn primary_key_pair(
-    item: &HashMap<String, AttributeValue>,
-) -> Result<(String, String), ReadError> {
+fn primary_key_pair(item: &HashMap<String, AttributeValue>) -> Result<(String, String), ReadError> {
     let pk = string(item, PK).ok_or(ReadError::Malformed { attribute: PK })?;
     let sk = string(item, SK).ok_or(ReadError::Malformed { attribute: SK })?;
     Ok((pk, sk))
@@ -2150,14 +2198,11 @@ mod tests {
     use aws_smithy_types::body::SdkBody;
 
     use super::{
-        BUCKET_SHARDS, MAX_PARALLEL_SEGMENT_READS, ObservationReader, ReadError, SegmentDescriptor,
-        filter_row, is_export_control_key, item_resume_key, provider_read_reservation,
-        reserve_refill_wave, resume_key_map, segment_key, settle_refills,
-        validate_export_control_item,
+        BUCKET_SHARDS, Frontier, MAX_PARALLEL_SEGMENT_READS, ObservationReader, ReadError,
+        ScopeDeletionState, SegmentDescriptor, combine_frontiers, filter_row,
+        is_export_control_key, item_resume_key, provider_read_reservation, reserve_refill_wave,
+        resume_key_map, segment_key, settle_refills, validate_export_control_item,
     };
-    use crate::counters::{ReadCounter, ReadCounters};
-    use crate::frontier::{GapChange, ScopeDeletionState};
-    use crate::gap_watch::{CycleTrigger, GAP_RECOVERY_INTERVAL, GapObservation, GapWatch};
 
     fn workspace() -> WorkspaceId {
         WorkspaceId::from_uuid7(aex_wire::Uuid7::compose(1, [2; 10]))
@@ -2244,7 +2289,6 @@ mod tests {
                 "session-authority",
                 "observations",
                 2_000,
-                std::sync::Arc::new(ReadCounters::default()),
             ),
             replay,
         )
@@ -2403,483 +2447,6 @@ mod tests {
         assert!(page.last.is_none());
         assert!(page.resume.is_none());
         assert!(!page.more);
-    }
-
-    /// One `BatchGetItem` reply carrying the rows a workspace bundle requested.
-    fn workspace_bundle_response(scope: &ScopeKey, signals: &[(Signal, &str)]) -> String {
-        bundle_response_with_hint(scope, signals, None)
-    }
-
-    /// A workspace bundle reply, optionally carrying a published hint row.
-    ///
-    /// `None` is the reply of a workspace that has never had a gap, which is the
-    /// common case and the one the hint has to make cheap.
-    fn bundle_response_with_hint(
-        scope: &ScopeKey,
-        signals: &[(Signal, &str)],
-        appends: Option<u64>,
-    ) -> String {
-        let rows = std::iter::once(format!(
-            r#"{{"pk":{{"S":"{}"}},"sk":{{"S":"{}"}},"deletionEpoch":{{"N":"4"}},"state":{{"S":"none"}}}}"#,
-            keys::frontier_pk(scope),
-            keys::DELETION_SK,
-        ))
-        .chain(signals.iter().map(|(signal, accepted)| {
-            format!(
-                r#"{{"pk":{{"S":"{}"}},"sk":{{"S":"{}"}},"acceptedAt":{{"S":"{accepted}"}}}}"#,
-                keys::frontier_pk(scope),
-                keys::frontier_sk(*signal),
-            )
-        }))
-        .chain(appends.map(|appends| {
-            format!(
-                r#"{{"pk":{{"S":"{}"}},"sk":{{"S":"{}"}},"itemType":{{"S":"gap_change_hint"}},"gapAppends":{{"N":"{appends}"}}}}"#,
-                keys::gap_hint_pk(workspace()),
-                keys::GAP_HINT_SK,
-            )
-        }))
-        .collect::<Vec<_>>()
-        .join(",");
-        format!(r#"{{"Responses":{{"observation-authority":[{rows}]}},"UnprocessedKeys":{{}}}}"#)
-    }
-
-    fn provider_requests(replay: &StaticReplayClient) -> usize {
-        replay.actual_requests().count()
-    }
-
-    #[tokio::test]
-    async fn a_workspace_frontier_bundle_uses_exactly_one_provider_request() {
-        let scope = ScopeKey::Workspace(workspace());
-        let mut query = normalized_query();
-        query.signals = SignalSet::from_signal(Signal::Logs)
-            .with(Signal::Spans)
-            .with(Signal::Metrics)
-            .with(Signal::Traces);
-        let response = workspace_bundle_response(
-            &scope,
-            &[
-                (Signal::Logs, "2026-08-01T09:05:00.000Z"),
-                (Signal::Spans, "2026-08-01T09:04:00.000Z"),
-                (Signal::Metrics, "2026-08-01T09:06:00.000Z"),
-                (Signal::Traces, "2026-08-01T09:07:00.000Z"),
-            ],
-        );
-        let (reader, replay) = replaying_reader(&response);
-
-        let bundle = reader
-            .frontier_bundle(&scope, workspace(), &query)
-            .await
-            .expect("the bundle reads");
-
-        assert_eq!(
-            provider_requests(&replay),
-            1,
-            "four signals and a fence are one request, not five"
-        );
-        assert_eq!(bundle.signals.len(), 4);
-        assert_eq!(bundle.deletion_epoch, 4);
-        assert_eq!(bundle.deletion_state, ScopeDeletionState::Open);
-        assert_eq!(
-            bundle.combine(&query).accepted_at,
-            Timestamp::parse("2026-08-01T09:04:00.000Z").expect("the minimum frontier")
-        );
-        assert_eq!(reader.counters().total(ReadCounter::FrontierBatch), 1);
-        assert_eq!(
-            reader.counters().total(ReadCounter::SessionHead),
-            0,
-            "a workspace fence is not a session head read"
-        );
-    }
-
-    #[tokio::test]
-    async fn a_session_frontier_bundle_uses_exactly_one_multi_table_provider_request() {
-        let scope = ScopeKey::Session(session());
-        let mut query = normalized_query();
-        query.signals = SignalSet::from_signal(Signal::Logs).with(Signal::Spans);
-        let (partition, sort) = aex_session_dynamodb::stream_keys::head(session());
-        let response = format!(
-            r#"{{"Responses":{{"session-authority":[{{"pk":{{"S":"{partition}"}},"sk":{{"S":"{sort}"}},"itemType":{{"S":"session_head"}},"workspaceId":{{"S":"{}"}},"lifecycle":{{"S":"active"}},"deletionEpoch":{{"N":"11"}}}}],"observation-authority":[{{"pk":{{"S":"{}"}},"sk":{{"S":"{}"}},"acceptedAt":{{"S":"2026-08-01T09:05:00.000Z"}}}},{{"pk":{{"S":"{}"}},"sk":{{"S":"{}"}},"acceptedAt":{{"S":"2026-08-01T09:03:00.000Z"}}}}]}},"UnprocessedKeys":{{}}}}"#,
-            workspace(),
-            keys::frontier_pk(&scope),
-            keys::frontier_sk(Signal::Logs),
-            keys::frontier_pk(&scope),
-            keys::frontier_sk(Signal::Spans),
-        );
-        let (reader, replay) = replaying_reader(&response);
-
-        let bundle = reader
-            .frontier_bundle(&scope, workspace(), &query)
-            .await
-            .expect("the bundle reads");
-
-        assert_eq!(
-            provider_requests(&replay),
-            1,
-            "two authorities are one BatchGetItem, not one call each"
-        );
-        assert_eq!(bundle.deletion_epoch, 11);
-        assert_eq!(bundle.deletion_state, ScopeDeletionState::Open);
-        assert_eq!(bundle.signals.len(), 2);
-        assert_eq!(
-            reader.counters().total(ReadCounter::SessionHead),
-            0,
-            "the session head rides in the batch rather than costing its own read"
-        );
-    }
-
-    #[tokio::test]
-    async fn unprocessed_frontier_keys_are_retried_and_then_fail_closed() {
-        let scope = ScopeKey::Workspace(workspace());
-        let mut query = normalized_query();
-        query.signals = SignalSet::from_signal(Signal::Logs);
-        let throttled = format!(
-            r#"{{"Responses":{{}},"UnprocessedKeys":{{"observation-authority":{{"Keys":[{{"pk":{{"S":"{}"}},"sk":{{"S":"{}"}}}}],"ConsistentRead":true}}}}}}"#,
-            keys::frontier_pk(&scope),
-            keys::frontier_sk(Signal::Logs),
-        );
-        let (reader, replay) =
-            replaying_reader_responses(&[&throttled, &throttled, &throttled, &throttled]);
-
-        let error = reader
-            .frontier_bundle(&scope, workspace(), &query)
-            .await
-            .expect_err("an undrained batch is never a complete bundle");
-
-        assert!(
-            matches!(&error, ReadError::Provider { operation, reason }
-                if *operation == "BatchGetItem"
-                    && reason.contains("unprocessed frontier keys")),
-            "{error}"
-        );
-        assert_eq!(
-            provider_requests(&replay),
-            4,
-            "one attempt plus three bounded retries"
-        );
-    }
-
-    #[tokio::test]
-    async fn the_gap_change_hint_rides_the_bundle_rather_than_costing_a_request() {
-        let scope = ScopeKey::Workspace(workspace());
-        let mut query = normalized_query();
-        query.signals = SignalSet::from_signal(Signal::Logs);
-        let response = bundle_response_with_hint(
-            &scope,
-            &[(Signal::Logs, "2026-08-01T09:05:00.000Z")],
-            Some(12),
-        );
-        let (reader, replay) = replaying_reader(&response);
-
-        let bundle = reader
-            .frontier_bundle(&scope, workspace(), &query)
-            .await
-            .expect("the bundle reads");
-
-        assert_eq!(
-            provider_requests(&replay),
-            1,
-            "detecting `unchanged` must cost nothing beyond the read already made"
-        );
-        assert!(
-            matches!(bundle.gap_change, GapChange::Counted(count) if count.get() == 12),
-            "{:?}",
-            bundle.gap_change
-        );
-        assert_eq!(reader.counters().total(ReadCounter::FrontierBatch), 1);
-    }
-
-    #[tokio::test]
-    async fn a_workspace_with_no_hint_row_reports_absence_rather_than_a_count() {
-        let scope = ScopeKey::Workspace(workspace());
-        let mut query = normalized_query();
-        query.signals = SignalSet::from_signal(Signal::Logs);
-        let response =
-            bundle_response_with_hint(&scope, &[(Signal::Logs, "2026-08-01T09:05:00.000Z")], None);
-        let (reader, _replay) = replaying_reader(&response);
-
-        let bundle = reader
-            .frontier_bundle(&scope, workspace(), &query)
-            .await
-            .expect("the bundle reads");
-
-        assert_eq!(bundle.gap_change, GapChange::Unpublished);
-    }
-
-    #[tokio::test]
-    async fn a_throttled_hint_row_never_becomes_an_unchanged_one() {
-        // The hint obeys the rule the rest of the bundle obeys: a row the
-        // provider left unprocessed comes back looking exactly like a row that
-        // does not exist, and absence is a value the reader acts on. Decoding
-        // before the batch drained would turn a throttle into "nothing was
-        // appended", which is the one answer that suppresses a ledger read.
-        let scope = ScopeKey::Workspace(workspace());
-        let mut query = normalized_query();
-        query.signals = SignalSet::from_signal(Signal::Logs);
-        let partial = format!(
-            r#"{{"Responses":{{"observation-authority":[{{"pk":{{"S":"{}"}},"sk":{{"S":"{}"}},"deletionEpoch":{{"N":"4"}},"state":{{"S":"none"}}}},{{"pk":{{"S":"{}"}},"sk":{{"S":"{}"}},"acceptedAt":{{"S":"2026-08-01T09:05:00.000Z"}}}}]}},"UnprocessedKeys":{{"observation-authority":{{"Keys":[{{"pk":{{"S":"{}"}},"sk":{{"S":"{}"}}}}],"ConsistentRead":true}}}}}}"#,
-            keys::frontier_pk(&scope),
-            keys::DELETION_SK,
-            keys::frontier_pk(&scope),
-            keys::frontier_sk(Signal::Logs),
-            keys::gap_hint_pk(workspace()),
-            keys::GAP_HINT_SK,
-        );
-        let (reader, replay) =
-            replaying_reader_responses(&[&partial, &partial, &partial, &partial]);
-
-        let error = reader
-            .frontier_bundle(&scope, workspace(), &query)
-            .await
-            .expect_err("an undrained hint key is not an absent hint row");
-
-        assert!(
-            matches!(&error, ReadError::Provider { operation, .. } if *operation == "BatchGetItem"),
-            "{error}"
-        );
-        assert_eq!(
-            provider_requests(&replay),
-            4,
-            "one attempt plus three bounded retries"
-        );
-    }
-
-    #[tokio::test]
-    async fn an_unchanged_hint_stops_an_idle_cycle_from_querying_gap_history() {
-        // Four idle follow cycles over a workspace whose hint stands still. Every
-        // cycle still reads its bundle; only the first reads the ledger.
-        let scope = ScopeKey::Workspace(workspace());
-        let mut query = normalized_query();
-        query.signals = SignalSet::from_signal(Signal::Logs);
-        let bundle = bundle_response_with_hint(
-            &scope,
-            &[(Signal::Logs, "2026-08-01T09:05:00.000Z")],
-            Some(3),
-        );
-        let empty_ledger = r#"{"Items":[],"Count":0,"ScannedCount":0}"#.to_owned();
-        let (reader, replay) =
-            replaying_reader_responses(&[&bundle, &empty_ledger, &bundle, &bundle, &bundle]);
-        let snapshot = aex_observation_query::coverage::Snapshot::at(
-            Timestamp::parse("2026-08-01T09:02:00.000Z").expect("snapshot"),
-        );
-        let mut watch = GapWatch::new(GAP_RECOVERY_INTERVAL);
-        let start = std::time::Instant::now();
-        let mut gaps = Vec::new();
-
-        for cycle in 0..4 {
-            let read = reader
-                .frontier_bundle(&scope, workspace(), &query)
-                .await
-                .expect("the bundle reads");
-            gaps = watch
-                .gap_history(
-                    GapObservation::Observed {
-                        change: read.gap_change,
-                        trigger: CycleTrigger::Fallback,
-                    },
-                    reader.counters(),
-                    start + std::time::Duration::from_secs(15) * cycle,
-                    gaps,
-                    reader.gap_history(&scope, workspace(), snapshot),
-                )
-                .await
-                .expect("the ledger reads when it is asked to");
-        }
-
-        assert_eq!(reader.counters().total(ReadCounter::FrontierBatch), 4);
-        assert_eq!(
-            reader.counters().total(ReadCounter::GapHistory),
-            1,
-            "four idle cycles read the ledger once, not four times"
-        );
-        assert_eq!(
-            reader.counters().total(ReadCounter::GapHintUnreadable),
-            0,
-            "a readable hint is not a defect"
-        );
-        assert_eq!(
-            provider_requests(&replay),
-            5,
-            "four bundles and the one ledger read they scheduled"
-        );
-    }
-
-    #[tokio::test]
-    async fn an_unreadable_hint_costs_the_ledger_read_it_exists_to_avoid_and_is_counted() {
-        let scope = ScopeKey::Workspace(workspace());
-        let mut query = normalized_query();
-        query.signals = SignalSet::from_signal(Signal::Logs);
-        let corrupt = format!(
-            r#"{{"Responses":{{"observation-authority":[{{"pk":{{"S":"{}"}},"sk":{{"S":"{}"}},"deletionEpoch":{{"N":"4"}},"state":{{"S":"none"}}}},{{"pk":{{"S":"{}"}},"sk":{{"S":"{}"}},"acceptedAt":{{"S":"2026-08-01T09:05:00.000Z"}}}},{{"pk":{{"S":"{}"}},"sk":{{"S":"{}"}},"itemType":{{"S":"gap_change_hint"}},"gapAppends":{{"S":"three"}}}}]}},"UnprocessedKeys":{{}}}}"#,
-            keys::frontier_pk(&scope),
-            keys::DELETION_SK,
-            keys::frontier_pk(&scope),
-            keys::frontier_sk(Signal::Logs),
-            keys::gap_hint_pk(workspace()),
-            keys::GAP_HINT_SK,
-        );
-        let empty_ledger = r#"{"Items":[],"Count":0,"ScannedCount":0}"#.to_owned();
-        let (reader, replay) =
-            replaying_reader_responses(&[&corrupt, &empty_ledger, &corrupt, &empty_ledger]);
-        let snapshot = aex_observation_query::coverage::Snapshot::at(
-            Timestamp::parse("2026-08-01T09:02:00.000Z").expect("snapshot"),
-        );
-        let mut watch = GapWatch::new(GAP_RECOVERY_INTERVAL);
-        let start = std::time::Instant::now();
-        let mut gaps = Vec::new();
-
-        for cycle in 0..2 {
-            let read = reader
-                .frontier_bundle(&scope, workspace(), &query)
-                .await
-                .expect("a corrupt hint never fails the bundle every socket shares");
-            assert_eq!(read.gap_change, GapChange::Unreadable);
-            gaps = watch
-                .gap_history(
-                    GapObservation::Observed {
-                        change: read.gap_change,
-                        trigger: CycleTrigger::Fallback,
-                    },
-                    reader.counters(),
-                    start + std::time::Duration::from_secs(15) * cycle,
-                    gaps,
-                    reader.gap_history(&scope, workspace(), snapshot),
-                )
-                .await
-                .expect("the ledger reads");
-        }
-
-        assert_eq!(
-            reader.counters().total(ReadCounter::GapHistory),
-            2,
-            "an unreadable hint never means unchanged"
-        );
-        assert_eq!(reader.counters().total(ReadCounter::GapHintUnreadable), 2);
-        assert_eq!(provider_requests(&replay), 4);
-    }
-
-    #[tokio::test]
-    async fn a_throttled_frontier_row_never_becomes_an_absent_one() {
-        // The same reply shape means "this row does not exist" and "this row was
-        // not read". Only the drained unprocessed set separates them, so a
-        // partial batch must not decode into a scope with no deletion fence.
-        let scope = ScopeKey::Workspace(workspace());
-        let mut query = normalized_query();
-        query.signals = SignalSet::from_signal(Signal::Logs);
-        let partial = format!(
-            r#"{{"Responses":{{"observation-authority":[{{"pk":{{"S":"{}"}},"sk":{{"S":"{}"}},"acceptedAt":{{"S":"2026-08-01T09:05:00.000Z"}}}}]}},"UnprocessedKeys":{{"observation-authority":{{"Keys":[{{"pk":{{"S":"{}"}},"sk":{{"S":"{}"}}}}],"ConsistentRead":true}}}}}}"#,
-            keys::frontier_pk(&scope),
-            keys::frontier_sk(Signal::Logs),
-            keys::frontier_pk(&scope),
-            keys::DELETION_SK,
-        );
-        let (reader, _replay) =
-            replaying_reader_responses(&[&partial, &partial, &partial, &partial]);
-
-        assert!(matches!(
-            reader.frontier_bundle(&scope, workspace(), &query).await,
-            Err(ReadError::Provider { .. })
-        ));
-    }
-
-    #[tokio::test]
-    async fn a_malformed_frontier_row_is_refused_rather_than_defaulted() {
-        let scope = ScopeKey::Workspace(workspace());
-        let mut query = normalized_query();
-        query.signals = SignalSet::from_signal(Signal::Logs);
-        let response = format!(
-            r#"{{"Responses":{{"observation-authority":[{{"pk":{{"S":"{}"}},"sk":{{"S":"{}"}},"deletionEpoch":{{"N":"1"}},"state":{{"S":"none"}}}},{{"pk":{{"S":"{}"}},"sk":{{"S":"{}"}},"earliestAcceptedAt":{{"S":"2026-08-01T09:00:00.000Z"}}}}]}},"UnprocessedKeys":{{}}}}"#,
-            keys::frontier_pk(&scope),
-            keys::DELETION_SK,
-            keys::frontier_pk(&scope),
-            keys::frontier_sk(Signal::Logs),
-        );
-        let (reader, _replay) = replaying_reader(&response);
-
-        assert!(matches!(
-            reader.frontier_bundle(&scope, workspace(), &query).await,
-            Err(ReadError::Malformed {
-                attribute: "acceptedAt"
-            })
-        ));
-    }
-
-    #[tokio::test]
-    async fn a_frontier_bundle_refuses_a_row_it_did_not_request() {
-        let scope = ScopeKey::Workspace(workspace());
-        let mut query = normalized_query();
-        query.signals = SignalSet::from_signal(Signal::Logs);
-        let response = format!(
-            r#"{{"Responses":{{"observation-authority":[{{"pk":{{"S":"{}"}},"sk":{{"S":"{}"}},"acceptedAt":{{"S":"2026-08-01T09:05:00.000Z"}}}}]}},"UnprocessedKeys":{{}}}}"#,
-            keys::frontier_pk(&ScopeKey::Session(session())),
-            keys::frontier_sk(Signal::Logs),
-        );
-        let (reader, _replay) = replaying_reader(&response);
-
-        let error = reader
-            .frontier_bundle(&scope, workspace(), &query)
-            .await
-            .expect_err("a foreign row is never decoded into this scope");
-
-        assert!(
-            matches!(&error, ReadError::Provider { reason, .. } if reason.contains("did not request")),
-            "{error}"
-        );
-    }
-
-    #[tokio::test]
-    async fn a_representative_idle_cycle_reports_the_reads_it_actually_made() {
-        let scope = ScopeKey::Workspace(workspace());
-        let mut query = normalized_query();
-        query.trace_id = None;
-        query.metric_name = None;
-        query.order_by = OrderBy::Accepted;
-        query.time_gte = Timestamp::parse("2026-08-01T09:00:00.000Z").expect("range");
-        query.time_lt = Timestamp::parse("2026-08-01T10:00:00.000Z").expect("range");
-        let bundle =
-            workspace_bundle_response(&scope, &[(Signal::Logs, "2026-08-01T09:30:00.000Z")]);
-        let empty = r#"{"Items":[],"Count":0,"ScannedCount":0}"#;
-        let (reader, replay) =
-            replaying_reader_responses(&[&bundle, empty, empty, empty, empty, empty]);
-        let snapshot = aex_observation_query::coverage::Snapshot::at(
-            Timestamp::parse("2026-08-01T09:02:00.000Z").expect("snapshot"),
-        );
-        let planned = plan(&query, Budget::default()).expect("plans");
-
-        reader
-            .frontier_bundle(&scope, workspace(), &query)
-            .await
-            .expect("the bundle reads");
-        reader
-            .gap_history(&scope, workspace(), snapshot)
-            .await
-            .expect("the gap ledger reads");
-        reader
-            .read_page(
-                &scope,
-                workspace(),
-                &query,
-                &planned,
-                snapshot,
-                None,
-                None,
-                true,
-            )
-            .await
-            .expect("the page reads");
-
-        let counters = reader.counters();
-        assert_eq!(counters.total(ReadCounter::FrontierBatch), 1);
-        assert_eq!(counters.total(ReadCounter::GapHistory), 1);
-        assert_eq!(
-            counters.total(ReadCounter::ObservationPage),
-            u64::from(BUCKET_SHARDS)
-        );
-        assert_eq!(counters.total(ReadCounter::SessionHead), 0);
-        assert_eq!(
-            provider_requests(&replay),
-            2 + usize::from(BUCKET_SHARDS),
-            "the counters account for every request the cycle actually made"
-        );
     }
 
     #[test]
@@ -3427,6 +2994,52 @@ mod tests {
         assert_eq!(observation.session_id, Some(session()));
         assert_eq!(observation.sequence.get(), 7);
         assert_eq!(observation.observed_at, occurred);
+    }
+
+    #[test]
+    fn events_seed_a_complete_frontier_for_the_requested_range() {
+        let mut query = normalized_query();
+        query.signals = SignalSet::from_signal(Signal::Events);
+
+        assert_eq!(
+            combine_frontiers(&query, []),
+            Frontier {
+                accepted_at: query.time_lt,
+                earliest_accepted_at: query.time_gte,
+                deletion_epoch: 0,
+                deletion_state: ScopeDeletionState::Open,
+            }
+        );
+    }
+
+    #[test]
+    fn mixed_frontiers_use_the_minimum_complete_point_and_maximum_retained_floor() {
+        let mut query = normalized_query();
+        query.signals = SignalSet::all();
+        query.time_gte = Timestamp::from_unix_millis(0).expect("bounded");
+        query.time_lt = Timestamp::from_unix_millis(1_000).expect("bounded");
+        let complete_later = Frontier {
+            accepted_at: Timestamp::from_unix_millis(800).expect("bounded"),
+            earliest_accepted_at: Timestamp::from_unix_millis(100).expect("bounded"),
+            deletion_epoch: 0,
+            deletion_state: ScopeDeletionState::Open,
+        };
+        let retained_later = Frontier {
+            accepted_at: Timestamp::from_unix_millis(600).expect("bounded"),
+            earliest_accepted_at: Timestamp::from_unix_millis(300).expect("bounded"),
+            deletion_epoch: 0,
+            deletion_state: ScopeDeletionState::Open,
+        };
+
+        assert_eq!(
+            combine_frontiers(&query, [complete_later, retained_later]),
+            Frontier {
+                accepted_at: retained_later.accepted_at,
+                earliest_accepted_at: retained_later.earliest_accepted_at,
+                deletion_epoch: 0,
+                deletion_state: ScopeDeletionState::Open,
+            }
+        );
     }
 
     #[test]

@@ -23,6 +23,7 @@ use aex_regional_http::authz::{
     MAX_PARAMETER_BYTES, MAX_TRUST_ANCHORS, RegionalProjection, TrustError, decode_response,
     issued_assertion, parse_cursor_key_ring, parse_trust_anchors, resolve_request,
 };
+use aex_regional_http::capacity::{LimitProjectionError, LimitResolver};
 use aex_regional_http::context::{AccountState, EffectiveLimits};
 use aex_regional_http::cursor::{CursorBinding, Order, SnapshotToken, SortTuple, decode, encode};
 use aex_regional_http::edge::{
@@ -31,10 +32,7 @@ use aex_regional_http::edge::{
 use aex_regional_http::mount::{AdmissionRequest, EdgeAdmission};
 use aex_session_dynamodb::error::StoreError;
 use aex_session_dynamodb::projection::AuthorizationProjection;
-use aex_session_dynamodb::wire_pending::{
-    AdmissionSnapshot, EdgeLimits, FeedFrontier, KeyAuthorization, KeyAuthorizationState,
-    WorkspacePlacement,
-};
+use aex_session_dynamodb::wire_pending::{FeedFrontier, KeyRevocation, WorkspacePlacement};
 use aex_wire::error::ErrorCode;
 use aex_wire::idempotency::IdempotencyKind;
 use aex_wire::ids::{ApiKeyId, OrganizationId, PrefixedId, Uuid7, WorkspaceId};
@@ -76,23 +74,12 @@ fn moment(millis: i64) -> Timestamp {
     Timestamp::from_unix_millis(millis).expect("a representable instant")
 }
 
-/// The Crockford suffix a workspace-key segment spells an id as.
-fn key_suffix<I: PrefixedId>(id: I) -> String {
-    String::from_utf8(id.uuid7().encode_suffix().to_vec()).expect("Crockford is ASCII")
-}
-
 /// A syntactically complete workspace API key, and the identity it embeds.
 fn workspace_key(region: Region, seed: u8) -> (String, ApiKeyId) {
     let uuid = Uuid7::compose(1_754_051_696_789, [seed; 10]);
-    let key = ApiKeyId::from_uuid7(uuid);
-    let token = format!(
-        "aex_wk_{}_{}_{}_{}",
-        region.code(),
-        key_suffix(workspace()),
-        key_suffix(key),
-        b64(&[seed; 32])
-    );
-    (token, key)
+    let suffix = String::from_utf8(uuid.encode_suffix().to_vec()).expect("Crockford is ASCII");
+    let token = format!("aex_wk_{}_{suffix}_{}", region.code(), b64(&[seed; 32]));
+    (token, ApiKeyId::from_uuid7(uuid))
 }
 
 fn credential_pair(region: Region, seed: u8) -> (PresentedCredential, ApiKeyId) {
@@ -406,47 +393,36 @@ fn a_cursor_document_with_an_unknown_member_is_refused() {
 
 // --- the regional authorization projection ---------------------------------------
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct StubProjection {
-    snapshot: Result<AdmissionSnapshot, StoreError>,
-}
-
-impl Default for StubProjection {
-    fn default() -> Self {
-        Self {
-            snapshot: Ok(snapshot("active", KeyAuthorizationState::Active)),
-        }
-    }
+    placement: Option<Result<WorkspacePlacement, StoreError>>,
+    revocation: Option<KeyRevocation>,
+    revocation_fails: bool,
 }
 
 #[async_trait]
 impl AuthorizationProjection for StubProjection {
     async fn read_placement(
         &self,
-        _workspace: WorkspaceId,
+        workspace: WorkspaceId,
     ) -> Result<WorkspacePlacement, StoreError> {
-        self.snapshot
-            .as_ref()
-            .map(|snapshot| snapshot.placement.clone())
-            .map_err(Clone::clone)
+        match &self.placement {
+            Some(Ok(placement)) => Ok(placement.clone()),
+            Some(Err(error)) => Err(error.clone()),
+            None => Err(StoreError::Misconfigured {
+                table: format!("no placement for {workspace}"),
+            }),
+        }
     }
 
-    async fn read_key_authorization(
+    async fn read_key_revocation(
         &self,
         _api_key: ApiKeyId,
-    ) -> Result<KeyAuthorization, StoreError> {
-        self.snapshot
-            .as_ref()
-            .map(|snapshot| snapshot.key.clone())
-            .map_err(Clone::clone)
-    }
-
-    async fn read_admission_snapshot(
-        &self,
-        _api_key: ApiKeyId,
-        _workspace: WorkspaceId,
-    ) -> Result<AdmissionSnapshot, StoreError> {
-        self.snapshot.clone()
+    ) -> Result<Option<KeyRevocation>, StoreError> {
+        if self.revocation_fails {
+            return Err(StoreError::Contended);
+        }
+        Ok(self.revocation.clone())
     }
 
     async fn read_frontier(&self) -> Result<FeedFrontier, StoreError> {
@@ -469,33 +445,68 @@ fn placement(status: &str) -> WorkspacePlacement {
     }
 }
 
-fn snapshot(status: &str, state: KeyAuthorizationState) -> AdmissionSnapshot {
-    AdmissionSnapshot {
-        key: KeyAuthorization {
-            api_key: sample::<ApiKeyId>(5),
-            workspace: workspace(),
-            organization: organization(),
-            region: "eu-west-1".to_owned(),
-            state,
-            key_epoch: 10,
-            projection_sequence: 3,
-            updated_at: moment(1_000),
-        },
-        placement: placement(status),
-        limits: EdgeLimits {
-            workspace: workspace(),
-            revision: 4,
-            json_body_bytes: 1_048_576,
-            otlp_body_bytes: 4 * 1_024 * 1_024,
-            query_page_items: 1_000,
-            query_page_bytes: 8 * 1_024 * 1_024,
-            changed_at: moment(1_000),
-        },
-    }
+#[tokio::test]
+async fn a_key_with_no_revocation_row_projects_the_zero_floor() {
+    let projection = RegionalProjection::new(StubProjection::default(), Region::EuWest1);
+    let (credential, _) = credential_pair(Region::EuWest1, 5);
+    assert_eq!(
+        projection.project(&credential).await.expect("it answers"),
+        ProjectedEpochs::default()
+    );
 }
 
 #[tokio::test]
-async fn a_snapshot_projects_its_floors_its_region_its_account_policy_and_its_ceilings() {
+async fn a_published_revocation_raises_the_key_floor_above_every_earlier_assertion() {
+    let projection = RegionalProjection::new(
+        StubProjection {
+            revocation: Some(KeyRevocation {
+                api_key: sample::<ApiKeyId>(5),
+                revoked_at: moment(1_000),
+                revoked_epoch: 11,
+            }),
+            ..StubProjection::default()
+        },
+        Region::EuWest1,
+    );
+    let (credential, _) = credential_pair(Region::EuWest1, 5);
+    assert_eq!(
+        projection
+            .project(&credential)
+            .await
+            .expect("it answers")
+            .key,
+        Epoch::new(11)
+    );
+}
+
+#[tokio::test]
+async fn a_credential_for_another_region_is_not_projected_here() {
+    let projection = RegionalProjection::new(StubProjection::default(), Region::EuWest1);
+    let (credential, _) = credential_pair(Region::UsEast1, 5);
+    assert_eq!(
+        projection.project(&credential).await,
+        Err(ProjectionError::Unknown)
+    );
+}
+
+#[tokio::test]
+async fn an_unreadable_revocation_fails_the_request_closed() {
+    let projection = RegionalProjection::new(
+        StubProjection {
+            revocation_fails: true,
+            ..StubProjection::default()
+        },
+        Region::EuWest1,
+    );
+    let (credential, _) = credential_pair(Region::EuWest1, 5);
+    assert_eq!(
+        projection.project(&credential).await,
+        Err(ProjectionError::Unavailable)
+    );
+}
+
+#[tokio::test]
+async fn a_placement_projects_its_floors_its_region_and_its_account_policy() {
     for (status, expected) in [
         ("active", AccountState::Active),
         ("paused", AccountState::Paused),
@@ -503,18 +514,17 @@ async fn a_snapshot_projects_its_floors_its_region_its_account_policy_and_its_ce
     ] {
         let projection = RegionalProjection::new(
             StubProjection {
-                snapshot: Ok(snapshot(status, KeyAuthorizationState::Active)),
+                placement: Some(Ok(placement(status))),
+                ..StubProjection::default()
             },
             Region::EuWest1,
         );
         let state = projection
-            .snapshot(sample::<ApiKeyId>(5), workspace())
+            .placement(workspace())
             .await
-            .expect("a projected snapshot");
+            .expect("a projected placement");
         assert_eq!(state.account_state, expected, "{status}");
         assert_eq!(state.region, Region::EuWest1);
-        assert!(!state.key_revoked);
-        assert_eq!(state.workspace_id, workspace());
         assert_eq!(
             state.epochs,
             ProjectedEpochs {
@@ -526,109 +536,41 @@ async fn a_snapshot_projects_its_floors_its_region_its_account_policy_and_its_ce
         // The organization is read from the placement rather than taken from the
         // assertion, because the assertion is what is being checked.
         assert_eq!(state.organization_id, raw(organization()));
-        assert_eq!(state.limits.json_body_bytes, 1_048_576);
-        assert_eq!(state.limits.query_page_items, 1_000);
     }
-}
-
-#[tokio::test]
-async fn a_revoked_key_row_raises_the_floor_and_reports_the_revocation() {
-    let mut revoked = snapshot("active", KeyAuthorizationState::Revoked);
-    revoked.key.key_epoch = 11;
-    let projection = RegionalProjection::new(
-        StubProjection {
-            snapshot: Ok(revoked),
-        },
-        Region::EuWest1,
-    );
-    let state = projection
-        .snapshot(sample::<ApiKeyId>(5), workspace())
-        .await
-        .expect("it answers");
-    assert!(state.key_revoked);
-    // The key row's own epoch wins over the placement's when it is higher: it is
-    // the one a revocation raises.
-    assert_eq!(state.epochs.key, Epoch::new(11));
-}
-
-#[tokio::test]
-async fn a_snapshot_placed_in_another_region_is_not_projected_here() {
-    let mut foreign = snapshot("active", KeyAuthorizationState::Active);
-    foreign.key.region = "us-east-1".to_owned();
-    foreign.placement.region = "us-east-1".to_owned();
-    let projection = RegionalProjection::new(
-        StubProjection {
-            snapshot: Ok(foreign),
-        },
-        Region::EuWest1,
-    );
-    assert_eq!(
-        projection
-            .snapshot(sample::<ApiKeyId>(5), workspace())
-            .await,
-        Err(ProjectionError::Unknown)
-    );
-}
-
-#[tokio::test]
-async fn a_key_row_and_a_placement_that_disagree_about_region_fail_closed() {
-    let mut split = snapshot("active", KeyAuthorizationState::Active);
-    split.key.region = "us-east-1".to_owned();
-    let projection = RegionalProjection::new(
-        StubProjection {
-            snapshot: Ok(split),
-        },
-        Region::EuWest1,
-    );
-    assert_eq!(
-        projection
-            .snapshot(sample::<ApiKeyId>(5), workspace())
-            .await,
-        Err(ProjectionError::Unknown)
-    );
 }
 
 #[tokio::test]
 async fn a_placement_status_outside_the_vocabulary_is_never_guessed_at() {
     let projection = RegionalProjection::new(
         StubProjection {
-            snapshot: Ok(snapshot("teleported", KeyAuthorizationState::Active)),
+            placement: Some(Ok(placement("teleported"))),
+            ..StubProjection::default()
         },
         Region::EuWest1,
     );
     assert_eq!(
-        projection
-            .snapshot(sample::<ApiKeyId>(5), workspace())
-            .await,
+        projection.placement(workspace()).await,
         Err(ProjectionError::Unavailable)
     );
 }
 
 #[tokio::test]
-async fn an_absent_snapshot_is_unknown_and_an_unreadable_one_is_unavailable() {
-    let absent = RegionalProjection::new(
-        StubProjection {
-            snapshot: Err(StoreError::Misconfigured {
-                table: "regional-authz-projection".to_owned(),
-            }),
-        },
-        Region::EuWest1,
-    );
+async fn an_absent_placement_is_unknown_and_an_unreadable_one_is_unavailable() {
+    let absent = RegionalProjection::new(StubProjection::default(), Region::EuWest1);
     assert_eq!(
-        absent.snapshot(sample::<ApiKeyId>(5), workspace()).await,
+        absent.placement(workspace()).await,
         Err(ProjectionError::Unknown)
     );
 
     let unreadable = RegionalProjection::new(
         StubProjection {
-            snapshot: Err(StoreError::Contended),
+            placement: Some(Err(StoreError::Contended)),
+            ..StubProjection::default()
         },
         Region::EuWest1,
     );
     assert_eq!(
-        unreadable
-            .snapshot(sample::<ApiKeyId>(5), workspace())
-            .await,
+        unreadable.placement(workspace()).await,
         Err(ProjectionError::Unavailable)
     );
 }
@@ -772,17 +714,28 @@ impl AssertionSource for StubSource {
 }
 
 struct StubProjectionReader {
-    snapshot: Result<ProjectedState, ProjectionError>,
+    credential_floor: ProjectedEpochs,
+    placement: Result<ProjectedState, ProjectionError>,
 }
 
 #[async_trait]
 impl ProjectionReader for StubProjectionReader {
-    async fn snapshot(
+    async fn project_key(
         &self,
-        _key: ApiKeyId,
-        _workspace: WorkspaceId,
-    ) -> Result<ProjectedState, ProjectionError> {
-        self.snapshot
+        _key: aex_wire::ids::ApiKeyId,
+    ) -> Result<ProjectedEpochs, ProjectionError> {
+        Ok(self.credential_floor)
+    }
+
+    async fn project(
+        &self,
+        _credential: &PresentedCredential,
+    ) -> Result<ProjectedEpochs, ProjectionError> {
+        Ok(self.credential_floor)
+    }
+
+    async fn placement(&self, _workspace: WorkspaceId) -> Result<ProjectedState, ProjectionError> {
+        self.placement
     }
 }
 
@@ -794,6 +747,23 @@ impl EdgeClock for FixedClock {
     }
 }
 
+struct StubLimitResolver;
+
+#[async_trait]
+impl LimitResolver for StubLimitResolver {
+    async fn resolve(
+        &self,
+        _workspace: WorkspaceId,
+    ) -> Result<EffectiveLimits, LimitProjectionError> {
+        Ok(EffectiveLimits {
+            json_body_bytes: 65_536,
+            otlp_body_bytes: 4 * 1_024 * 1_024,
+            query_page_items: 100,
+            query_page_bytes: 1_048_576,
+        })
+    }
+}
+
 fn projected(account_state: AccountState, region: Region) -> ProjectedState {
     ProjectedState {
         epochs: ProjectedEpochs {
@@ -801,17 +771,9 @@ fn projected(account_state: AccountState, region: Region) -> ProjectedState {
             workspace: Epoch::new(30),
             account: Epoch::new(20),
         },
-        workspace_id: workspace(),
         organization_id: raw(organization()),
-        key_revoked: false,
         account_state,
         region,
-        limits: EffectiveLimits {
-            json_body_bytes: 65_536,
-            otlp_body_bytes: 4 * 1_024 * 1_024,
-            query_page_items: 100,
-            query_page_bytes: 1_048_576,
-        },
     }
 }
 
@@ -832,7 +794,7 @@ fn plain_route() -> RouteId {
         .expect("the regional table declares a scoped, non-exempt read")
 }
 
-type Edge = RegionalEdge<StubSource, StubProjectionReader, FixedClock>;
+type Edge = RegionalEdge<StubSource, StubProjectionReader, StubLimitResolver, FixedClock>;
 
 fn binding() -> EdgeBinding {
     EdgeBinding {
@@ -843,27 +805,22 @@ fn binding() -> EdgeBinding {
     }
 }
 
-/// Builds an edge over one snapshot answer.
-///
-/// `floor` is the key floor a revocation would have raised. There is no longer a
-/// separate credential-floor read, so it is folded into the snapshot the edge
-/// reads — which is exactly what the projection does in production.
 fn edge_over(
     assertion: &Assertion,
     floor: ProjectedEpochs,
-    snapshot: Result<ProjectedState, ProjectionError>,
+    placement: Result<ProjectedState, ProjectionError>,
 ) -> Edge {
-    let snapshot = snapshot.map(|mut state| {
-        state.epochs.key = Epoch::new(state.epochs.key.get().max(floor.key.get()));
-        state
-    });
     RegionalEdge::new(
         StubSource {
             assertion: *assertion,
             calls: Mutex::new(0),
         },
         keys(),
-        StubProjectionReader { snapshot },
+        StubProjectionReader {
+            credential_floor: floor,
+            placement,
+        },
+        StubLimitResolver,
         FixedClock(NOW_MS + 2_000),
         binding(),
     )
@@ -874,7 +831,7 @@ fn edge(
     credential: &PresentedCredential,
     scopes: aex_control_domain::ScopeSet,
     floor: ProjectedEpochs,
-    snapshot: Result<ProjectedState, ProjectionError>,
+    placement: Result<ProjectedState, ProjectionError>,
 ) -> Edge {
     let claims = claims(
         credential,
@@ -882,7 +839,7 @@ fn edge(
         scopes,
         u64::try_from(NOW_MS).expect("positive"),
     );
-    edge_over(&envelope(&claims), floor, snapshot)
+    edge_over(&envelope(&claims), floor, placement)
 }
 
 fn headers(credential: &str) -> HeaderMap {
@@ -1276,17 +1233,28 @@ async fn a_request_with_no_credential_never_reaches_the_projection() {
 
 #[derive(Clone)]
 struct MutableProjection {
-    snapshot: std::sync::Arc<Mutex<Result<ProjectedState, ProjectionError>>>,
+    key_floor: std::sync::Arc<Mutex<ProjectedEpochs>>,
+    placement: std::sync::Arc<Mutex<Result<ProjectedState, ProjectionError>>>,
 }
 
 #[async_trait]
 impl ProjectionReader for MutableProjection {
-    async fn snapshot(
+    async fn project_key(
         &self,
-        _key: ApiKeyId,
-        _workspace: WorkspaceId,
-    ) -> Result<ProjectedState, ProjectionError> {
-        *self.snapshot.lock().expect("an uncontended fixture")
+        _key: aex_wire::ids::ApiKeyId,
+    ) -> Result<ProjectedEpochs, ProjectionError> {
+        Ok(*self.key_floor.lock().expect("an uncontended fixture"))
+    }
+
+    async fn project(
+        &self,
+        _credential: &PresentedCredential,
+    ) -> Result<ProjectedEpochs, ProjectionError> {
+        Ok(*self.key_floor.lock().expect("an uncontended fixture"))
+    }
+
+    async fn placement(&self, _workspace: WorkspaceId) -> Result<ProjectedState, ProjectionError> {
+        *self.placement.lock().expect("an uncontended fixture")
     }
 }
 
@@ -1295,7 +1263,8 @@ async fn a_long_lived_lease_observes_revocation_pause_and_placement_change() {
     let (token, _) = workspace_key(Region::EuWest1, 5);
     let credential = PresentedCredential::new(token.clone().into_bytes()).expect("a credential");
     let id = plain_route();
-    let snapshot = std::sync::Arc::new(Mutex::new(Ok(projected(
+    let key_floor = std::sync::Arc::new(Mutex::new(ProjectedEpochs::default()));
+    let placement = std::sync::Arc::new(Mutex::new(Ok(projected(
         AccountState::Active,
         Region::EuWest1,
     ))));
@@ -1312,8 +1281,10 @@ async fn a_long_lived_lease_observes_revocation_pause_and_placement_change() {
         },
         keys(),
         MutableProjection {
-            snapshot: std::sync::Arc::clone(&snapshot),
+            key_floor: std::sync::Arc::clone(&key_floor),
+            placement: std::sync::Arc::clone(&placement),
         },
+        StubLimitResolver,
         FixedClock(NOW_MS + 2_000),
         binding(),
     )
@@ -1336,10 +1307,10 @@ async fn a_long_lived_lease_observes_revocation_pause_and_placement_change() {
         .await
         .expect("unchanged authority renews the lease");
 
-    // A revocation raises the key floor above the assertion's.
-    let mut revoked = projected(AccountState::Active, Region::EuWest1);
-    revoked.epochs.key = Epoch::new(11);
-    *snapshot.lock().expect("an uncontended fixture") = Ok(revoked);
+    *key_floor.lock().expect("an uncontended fixture") = ProjectedEpochs {
+        key: Epoch::new(11),
+        ..ProjectedEpochs::default()
+    };
     assert_eq!(
         edge.revalidate(&authorization)
             .await
@@ -1348,19 +1319,8 @@ async fn a_long_lived_lease_observes_revocation_pause_and_placement_change() {
         Some(ErrorCode::TokenRevoked)
     );
 
-    // And so does a revoked key row, without moving any epoch.
-    let mut flagged = projected(AccountState::Active, Region::EuWest1);
-    flagged.key_revoked = true;
-    *snapshot.lock().expect("an uncontended fixture") = Ok(flagged);
-    assert_eq!(
-        edge.revalidate(&authorization)
-            .await
-            .err()
-            .map(|error| error.code),
-        Some(ErrorCode::TokenRevoked)
-    );
-
-    *snapshot.lock().expect("an uncontended fixture") =
+    *key_floor.lock().expect("an uncontended fixture") = ProjectedEpochs::default();
+    *placement.lock().expect("an uncontended fixture") =
         Ok(projected(AccountState::Paused, Region::EuWest1));
     assert_eq!(
         edge.revalidate(&authorization)
@@ -1370,7 +1330,7 @@ async fn a_long_lived_lease_observes_revocation_pause_and_placement_change() {
         Some(ErrorCode::AccountPaused)
     );
 
-    *snapshot.lock().expect("an uncontended fixture") =
+    *placement.lock().expect("an uncontended fixture") =
         Ok(projected(AccountState::Active, Region::UsEast1));
     assert_eq!(
         edge.revalidate(&authorization)
@@ -1380,7 +1340,7 @@ async fn a_long_lived_lease_observes_revocation_pause_and_placement_change() {
         Some(ErrorCode::WrongWorkspaceRegion)
     );
 
-    *snapshot.lock().expect("an uncontended fixture") = Err(ProjectionError::Unavailable);
+    *placement.lock().expect("an uncontended fixture") = Err(ProjectionError::Unavailable);
     assert_eq!(
         edge.revalidate(&authorization)
             .await
@@ -1390,7 +1350,7 @@ async fn a_long_lived_lease_observes_revocation_pause_and_placement_change() {
     );
 }
 
-/// A projection reader that counts how often the snapshot is consulted.
+/// A projection reader that counts how often the placement is consulted.
 struct CountingProjection {
     reads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     state: ProjectedState,
@@ -1398,18 +1358,28 @@ struct CountingProjection {
 
 #[async_trait]
 impl ProjectionReader for CountingProjection {
-    async fn snapshot(
+    async fn project_key(
         &self,
-        _key: ApiKeyId,
-        _workspace: WorkspaceId,
-    ) -> Result<ProjectedState, ProjectionError> {
+        _key: aex_wire::ids::ApiKeyId,
+    ) -> Result<ProjectedEpochs, ProjectionError> {
+        Ok(ProjectedEpochs::default())
+    }
+
+    async fn project(
+        &self,
+        _credential: &PresentedCredential,
+    ) -> Result<ProjectedEpochs, ProjectionError> {
+        Ok(ProjectedEpochs::default())
+    }
+
+    async fn placement(&self, _workspace: WorkspaceId) -> Result<ProjectedState, ProjectionError> {
         self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(self.state)
     }
 }
 
 #[tokio::test]
-async fn one_snapshot_is_read_per_request_even_when_the_assertion_is_cached() {
+async fn the_placement_is_read_on_every_request_even_when_the_assertion_is_cached() {
     let (token, _) = workspace_key(Region::EuWest1, 5);
     let credential = PresentedCredential::new(token.clone().into_bytes()).expect("a credential");
     let id = plain_route();
@@ -1432,6 +1402,7 @@ async fn one_snapshot_is_read_per_request_even_when_the_assertion_is_cached() {
             reads: std::sync::Arc::clone(&reads),
             state: projected(AccountState::Active, Region::EuWest1),
         },
+        StubLimitResolver,
         FixedClock(NOW_MS + 2_000),
         binding(),
     )

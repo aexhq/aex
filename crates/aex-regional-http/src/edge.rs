@@ -22,9 +22,8 @@ use crate::assertion::{
     AssertionSource, AuthFailure, CredentialFloors, PresentedCredential, ProjectedEpochs,
     RegionalFloors, VerifiedAuthorization, VerifyingAssertionCache,
 };
-use crate::context::{
-    AccountState, AuthorizationEpochs, EffectiveLimits, RegionalAuthorization, RequestContext,
-};
+use crate::capacity::{LimitProjectionError, LimitResolver};
+use crate::context::{AccountState, AuthorizationEpochs, RegionalAuthorization, RequestContext};
 use crate::idempotency::{IdentityContext, identity, operation_id};
 use crate::mount::{AdmissionRequest, EdgeAdmission};
 
@@ -34,65 +33,66 @@ use crate::mount::{AdmissionRequest, EdgeAdmission};
 /// regionally before the 30-second assertion expires, which is the only reason
 /// a 30-second lifetime is safe.
 ///
-/// # Why it is one read rather than three
+/// # Why it takes two reads rather than one
 ///
-/// The credential names its own workspace as well as its own key, so every row
-/// admission needs is addressable before anything has been verified. All three
-/// are therefore read in one snapshot-consistent transaction rather than at the
-/// three points in the pipeline where they used to become knowable. Reading them
-/// separately was not merely slower: a revocation landing between two point
-/// reads could be missed by both.
+/// The projection is keyed the way its writer keys it: revocation by API key,
+/// placement by workspace. A credential names its own key and nothing else — the
+/// workspace it belongs to is a fact only the assertion carries — so the two
+/// facts become available at two different points and are read at those two
+/// points. The alternative is a credential-to-workspace index nothing writes.
 ///
-/// The read happens on **every** request and is never cached, which is what
+/// Both reads happen on **every** request. Neither is cached, which is what
 /// keeps the 30-second assertion cache safe: a cached assertion still loses to a
 /// revocation or a pause published a moment ago.
 #[async_trait::async_trait]
 pub trait ProjectionReader: Send + Sync + 'static {
-    /// Reads the whole admission state for a known key and workspace identity.
+    /// Reads the current revocation floor for a known workspace-key identity.
     ///
-    /// Long-lived transports retain the projected identities rather than the
-    /// credential plaintext, so a socket revalidates through the same operation
-    /// without holding a bearer token for its lifetime.
+    /// Long-lived transports no longer retain credential plaintext after
+    /// admission. The projected key identity is sufficient for every later
+    /// revocation check and avoids retaining a bearer token for the socket life.
+    async fn project_key(&self, key: ApiKeyId) -> Result<ProjectedEpochs, ProjectionError>;
+
+    /// Reads the revocation floors bound to the presented credential alone.
+    ///
+    /// This runs before any assertion exists, so it can only speak for the
+    /// credential: an absent revocation row is the zero floor, not a missing
+    /// answer.
     ///
     /// # Errors
     ///
-    /// Returns [`ProjectionError::Unknown`] when this region holds no usable
-    /// record of that key and workspace — an absent row and a row that
-    /// contradicts its siblings are the same answer — and
-    /// [`ProjectionError::Unavailable`] when it could not answer at all. Neither
-    /// is ever downgraded to an optimistic admission.
-    async fn snapshot(
+    /// Returns [`ProjectionError`] rather than a stale answer: an unavailable
+    /// projection fails the request closed.
+    async fn project(
         &self,
-        key: ApiKeyId,
-        workspace: WorkspaceId,
-    ) -> Result<ProjectedState, ProjectionError>;
+        credential: &PresentedCredential,
+    ) -> Result<ProjectedEpochs, ProjectionError>;
+
+    /// Reads the placement of the workspace a verified assertion names.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProjectionError::Unknown`] when this region holds no placement
+    /// for the workspace, and [`ProjectionError::Unavailable`] when it could not
+    /// answer. Neither is ever downgraded to an optimistic `active`.
+    async fn placement(&self, workspace: WorkspaceId) -> Result<ProjectedState, ProjectionError>;
 }
 
-/// What the regional projection says about one key and its workspace right now.
+/// What the regional projection says about one workspace right now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProjectedState {
     /// The monotonic epochs an assertion must not predate.
     pub epochs: ProjectedEpochs,
-    /// The workspace the key row itself names.
-    ///
-    /// Taken from the key row rather than from the credential, because the
-    /// credential's workspace segment is a claim that selected which rows were
-    /// read. This is the answer the store gave.
-    pub workspace_id: WorkspaceId,
     /// The organization the workspace belongs to.
     ///
     /// The account epoch is keyed by organization, so the floors cannot be bound
     /// to their subjects without it. Taking it from the placement rather than
     /// from the assertion is deliberate: the assertion is what is being checked.
     pub organization_id: Uuid,
-    /// Whether the key itself has been revoked.
-    pub key_revoked: bool,
     /// Whether paid work is admitted.
     pub account_state: AccountState,
     /// The region the workspace is placed in.
     pub region: Region,
-    /// The hot admission ceilings, at the capacity revision they were cut at.
-    pub limits: EffectiveLimits,
 }
 
 /// Why the regional projection could not answer.
@@ -156,17 +156,19 @@ impl EdgeBinding {
 }
 
 /// The shared fail-closed regional edge.
-pub struct RegionalEdge<S, P, C> {
+pub struct RegionalEdge<S, P, L, C> {
     assertions: VerifyingAssertionCache<S>,
     projection: P,
+    limit_resolver: L,
     clock: C,
     region: Region,
 }
 
-impl<S, P, C> RegionalEdge<S, P, C>
+impl<S, P, L, C> RegionalEdge<S, P, L, C>
 where
     S: AssertionSource,
     P: ProjectionReader,
+    L: LimitResolver,
     C: EdgeClock,
 {
     /// Binds an edge to its verified assertion cache and regional projection.
@@ -179,6 +181,7 @@ where
         source: S,
         keys: VerificationKeySet,
         projection: P,
+        limit_resolver: L,
         clock: C,
         binding: EdgeBinding,
     ) -> Result<Self, AuthFailure> {
@@ -190,6 +193,7 @@ where
                 binding.cache_budget_bytes,
             )?,
             projection,
+            limit_resolver,
             clock,
             region: binding.region,
         })
@@ -197,10 +201,10 @@ where
 
     /// Re-checks mutable regional authorization facts for a long-lived request.
     ///
-    /// This deliberately uses the identities retained in the principal, not the
-    /// credential plaintext. Revocation, workspace/account epoch advance, pause,
-    /// ownership drift, and placement change all terminate the lease; an
-    /// unavailable projection fails closed.
+    /// This deliberately uses the key identity retained in the principal, not
+    /// the credential plaintext. Revocation, workspace/account epoch advance,
+    /// pause, ownership drift, and placement change all terminate the lease;
+    /// an unavailable projection fails closed.
     ///
     /// # Errors
     ///
@@ -215,20 +219,22 @@ where
         else {
             return Err(WireError::new(ErrorCode::Unauthenticated));
         };
+        let key_floor = self
+            .projection
+            .project_key(key)
+            .await
+            .map_err(projection_error)?;
         let projected = self
             .projection
-            .snapshot(key, workspace)
+            .placement(workspace)
             .await
             .map_err(projection_error)?;
         let organization_raw = Uuid::from_bytes(*organization.uuid7().as_bytes());
-        let stale = projected.key_revoked
+        let stale = key_floor.key.get() > auth.epochs.key
             || projected.epochs.key.get() > auth.epochs.key
             || projected.epochs.workspace.get() > auth.epochs.workspace
             || projected.epochs.account.get() > auth.epochs.account;
-        if stale
-            || projected.organization_id != organization_raw
-            || projected.workspace_id != workspace
-        {
+        if stale || projected.organization_id != organization_raw {
             return Err(WireError::new(ErrorCode::TokenRevoked));
         }
         if projected.region != self.region || auth.placement != self.region {
@@ -242,51 +248,40 @@ where
 }
 
 #[async_trait::async_trait]
-impl<S, P, C> EdgeAdmission for RegionalEdge<S, P, C>
+impl<S, P, L, C> EdgeAdmission for RegionalEdge<S, P, L, C>
 where
     S: AssertionSource,
     P: ProjectionReader,
+    L: LimitResolver,
     C: EdgeClock,
 {
     async fn admit(&self, request: &AdmissionRequest<'_>) -> Result<RequestContext, WireError> {
         let descriptor = route(request.route);
         let now = self.clock.now();
 
-        // 1–2: a credential must be present and well formed. It names its own
-        // key, workspace and region, which is what makes stage 3 addressable.
+        // 1–2: a credential must be present and well formed.
         let credential = presented(request.headers)?;
-        if credential.region() != self.region {
-            return Err(WireError::new(ErrorCode::WrongWorkspaceRegion));
-        }
 
-        // 3: one snapshot-consistent read of the key row, the placement and the
-        // hot limit ceilings. It runs before the assertion, so a revoked
-        // credential loses even while its assertion is still inside its
-        // 30-second lifetime, and the three answers cannot disagree about an
-        // instant the way three separate point reads could.
-        //
-        // The workspace here is the credential's *claim*. It only selects which
-        // rows are read; `read_admission_snapshot` refuses any set whose
-        // identities disagree, so a forged segment costs one miss.
-        let workspace = credential.workspace_id();
-        let projected = self
+        // 3: the credential's own revocation floor is consulted before the
+        // assertion, so a revoked credential loses even while its assertion is
+        // still inside its 30-second lifetime.
+        let credential_floor = self
             .projection
-            .snapshot(credential.key_id(), workspace)
+            .project(&credential)
             .await
             .map_err(projection_error)?;
-        if projected.key_revoked {
-            return Err(WireError::new(ErrorCode::TokenRevoked));
-        }
 
-        // 4: verify the credential-bound envelope against the key floor the
-        // snapshot proved. `CredentialFloors` still defers the other subjects:
-        // they are checked at stage 6 against the same snapshot, on every
-        // request, cache hit or not.
+        // 4: verify the credential-bound envelope against that floor. Only the
+        // key subject can be checked yet — the workspace an assertion names is a
+        // fact the assertion itself carries, and an unverified claim must not
+        // choose which projection row is read. `CredentialFloors` therefore
+        // defers the other subjects rather than admitting them, and stage 7
+        // below applies all of them on every request, cache hit or not.
         let verified = self
             .assertions
             .resolve(
                 &credential,
-                &CredentialFloors::new(projected.epochs.key, credential.key_id_raw()),
+                &CredentialFloors::new(credential_floor.key, credential.key_id_raw()),
                 now,
             )
             .await
@@ -299,17 +294,21 @@ where
         if verified.claims.principal_kind != PrincipalKind::WorkspaceKey {
             return Err(WireError::new(ErrorCode::Unauthenticated));
         }
-        // The assertion must name the same workspace the key row does. The two
-        // are independent authorities and either could be the stale one, so a
-        // disagreement is a refusal rather than a choice between them.
-        if workspace_id(verified.claims.workspace_id)? != projected.workspace_id {
-            return Err(WireError::new(ErrorCode::Unauthenticated));
-        }
+
+        // 6: immutable placement. The assertion names a workspace; the regional
+        // projection is what decides whether that workspace lives here, what its
+        // current floors are, and whether it is paused. None of those three come
+        // from the assertion, because all three can change inside its lifetime.
+        let workspace = workspace_id(verified.claims.workspace_id)?;
+        let projected = self
+            .projection
+            .placement(workspace)
+            .await
+            .map_err(projection_error)?;
         if projected.region != self.region || verified.claims.audience.region != self.region {
             return Err(WireError::new(ErrorCode::WrongWorkspaceRegion));
         }
-
-        // 6: the full subject-bound epoch check, now that every subject id is
+        // 7: the full subject-bound epoch check, now that every subject id is
         // known. The floors are re-applied on every request, so a revocation or a
         // pause published a moment ago beats a cached assertion.
         let floors = RegionalFloors::new(
@@ -324,14 +323,14 @@ where
             return Err(WireError::new(ErrorCode::Unauthenticated));
         }
 
-        // 7: the scope the table declares for this route.
+        // 8: the scope the table declares for this route.
         if let Some(required) = descriptor.required_scope
             && !verified.claims.scopes.contains(required)
         {
             return Err(WireError::new(ErrorCode::InsufficientScope));
         }
 
-        // 8: the pause gate, exempt only where the table says so. The assertion
+        // 9: the pause gate, exempt only where the table says so. The assertion
         // carries the account state it was minted under and the placement carries
         // the current one; either saying "paused" pauses, because the two differ
         // only when one of them is stale and the safe reading of a stale state is
@@ -343,9 +342,13 @@ where
             return Err(WireError::new(ErrorCode::AccountPaused));
         }
 
-        // 9: the body bound, from the same snapshot, applied before anything
-        // parses the body.
-        let limits = projected.limits;
+        // 10: strongly fence the complete effective-limit revision, then apply
+        // the body bound before anything parses the body.
+        let limits = self
+            .limit_resolver
+            .resolve(workspace)
+            .await
+            .map_err(limit_projection_error)?;
         let body_limit = match descriptor.body_class {
             BodyClass::None => None,
             BodyClass::AexJson => Some(limits.json_body_bytes),
@@ -355,7 +358,7 @@ where
             return Err(WireError::new(ErrorCode::PayloadTooLarge));
         }
 
-        // 10: replay identity, strict in both directions.
+        // 11: replay identity, strict in both directions.
         let (idempotency, durable) = replay_identity(descriptor.idempotency, request, workspace)?;
 
         Ok(RequestContext {
@@ -369,6 +372,10 @@ where
             received_at: offset(now),
         })
     }
+}
+
+fn limit_projection_error(_failure: LimitProjectionError) -> WireError {
+    WireError::new(ErrorCode::AccountStateUnavailable)
 }
 
 fn authorization(
@@ -467,26 +474,14 @@ fn projection_error(failure: ProjectionError) -> WireError {
 ///
 /// Every cryptographic and semantic refusal collapses into one
 /// `unauthenticated`, so a caller cannot distinguish "wrong key" from "expired"
-/// from "revoked" by probing. Only the conditions a caller should retry are
+/// from "revoked" by probing. Only the two conditions a caller should retry are
 /// separated out.
-///
-/// The match is exhaustive rather than defaulted: a new failure that nobody
-/// classified would otherwise reach a caller as `unauthenticated`, which tells a
-/// customer their credential is bad when the truth may be that this process was
-/// busy. A new variant breaks this function instead.
 fn auth_error(failure: AuthFailure) -> WireError {
     match failure {
-        // Transient and retryable: identity could not be established right now,
-        // and nothing was decided about the credential itself.
-        AuthFailure::SourceUnavailable
-        | AuthFailure::FlightCapacity
-        | AuthFailure::FlightCancelled => WireError::new(ErrorCode::AuthenticationUnavailable),
+        AuthFailure::SourceUnavailable => WireError::new(ErrorCode::AuthenticationUnavailable),
         AuthFailure::AccountStateUnavailable => WireError::new(ErrorCode::AccountStateUnavailable),
         AuthFailure::CacheBudget => WireError::new(ErrorCode::InternalError),
-        AuthFailure::MalformedCredential
-        | AuthFailure::MalformedAssertion
-        | AuthFailure::Refused
-        | AuthFailure::Verification(_) => WireError::new(ErrorCode::Unauthenticated),
+        _ => WireError::new(ErrorCode::Unauthenticated),
     }
 }
 
@@ -590,21 +585,23 @@ fn hex_lower(bytes: &[u8]) -> String {
 }
 
 #[cfg(test)]
-mod projection_error_tests {
+mod capacity_error_tests {
     use aex_wire::error::ErrorCode;
 
-    use super::projection_error;
-    use crate::edge::ProjectionError;
+    use super::limit_projection_error;
+    use crate::capacity::LimitProjectionError;
 
     #[test]
-    fn an_unknown_snapshot_refuses_and_an_unavailable_one_is_retryable() {
-        assert_eq!(
-            projection_error(ProjectionError::Unknown).code,
-            ErrorCode::Unauthenticated
-        );
-        assert_eq!(
-            projection_error(ProjectionError::Unavailable).code,
-            ErrorCode::AccountStateUnavailable
-        );
+    fn every_capacity_projection_failure_is_a_retryable_unavailable_response() {
+        for failure in [
+            LimitProjectionError::Unavailable,
+            LimitProjectionError::Incomplete,
+            LimitProjectionError::InvalidCapacity,
+        ] {
+            assert_eq!(
+                limit_projection_error(failure).code,
+                ErrorCode::AccountStateUnavailable
+            );
+        }
     }
 }

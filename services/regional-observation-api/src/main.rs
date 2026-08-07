@@ -120,9 +120,6 @@ pub async fn run(config: Config) -> Result<(), RunError> {
     let dynamodb = aws_sdk_dynamodb::Client::new(&aws);
     let s3 = aws_sdk_s3::Client::new(&aws);
 
-    // This deployable serves only the finite observation routes; every NDJSON
-    // operation belongs to `regional-stream`. Its counters therefore have no
-    // long-lived producer to aggregate, and the publisher runs there.
     let reader = ObservationReader::new(
         dynamodb.clone(),
         s3,
@@ -130,7 +127,6 @@ pub async fn run(config: Config) -> Result<(), RunError> {
         config.session_table.clone(),
         config.observation_bucket.clone(),
         config.index_settle_ms,
-        Arc::new(regional_observation_api::counters::ReadCounters::default()),
     );
 
     let parameters = aex_regional_http::authz::ParameterStore::new(aws_sdk_ssm::Client::new(&aws));
@@ -178,7 +174,8 @@ pub async fn run(config: Config) -> Result<(), RunError> {
                 config.region,
             ),
             anchors,
-            aex_regional_http::authz::RegionalProjection::new(projection, config.region),
+            aex_regional_http::authz::RegionalProjection::new(projection.clone(), config.region),
+            aex_regional_http::capacity::CapacityProjection::new(projection),
             aex_regional_http::edge::SystemClock,
             aex_regional_http::edge::EdgeBinding {
                 plane: config.plane,

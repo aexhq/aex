@@ -3,8 +3,8 @@
 use aex_control_domain::Revision;
 use aex_identity_domain::challenge::{ChallengeState, EMAIL_CHALLENGE_TTL, EmailChallenge};
 use aex_identity_domain::credential::{
-    CredentialKind, PepperVersion, RegionCode, SecretRng, WorkspacePin, decode_id, encode_id, mint,
-    parse, verifier, verify,
+    CredentialKind, PepperVersion, RegionCode, SecretRng, decode_id, encode_id, mint, parse,
+    verifier, verify,
 };
 use aex_identity_domain::device::{
     DEVICE_TTL, DeviceAuthorization, DeviceState, USER_CODE_ALPHABET, UserCode,
@@ -233,12 +233,9 @@ proptest! {
         seed in proptest::collection::vec(any::<u8>(), 1..64),
     ) {
         let id = Uuid::from_u128(bits);
-        let pin = kind.carries_workspace_pin().then(|| WorkspacePin {
-            region: RegionCode::ALL[4],
-            workspace: Uuid::from_u128(0x0192_3f2a_1c00_7000_8000_0000_0000_0002),
-        });
+        let region = kind.carries_region().then(|| RegionCode::ALL[4]);
         let rng = Recorded::new(seed);
-        let (secret, digest) = mint(kind, pin, id, &rng);
+        let (secret, digest) = mint(kind, region, id, &rng);
         let parsed = parse(kind, secret.expose()).expect("a minted token parses");
         prop_assert_eq!(parsed.id, id);
         prop_assert_eq!(parsed.digest, digest);
@@ -254,11 +251,8 @@ proptest! {
         index in 0_usize..77,
     ) {
         let id = Uuid::from_u128(bits);
-        let pin = kind.carries_workspace_pin().then(|| WorkspacePin {
-            region: RegionCode::ALL[4],
-            workspace: Uuid::from_u128(0x0192_3f2a_1c00_7000_8000_0000_0000_0002),
-        });
-        let (secret, digest) = mint(kind, pin, id, &Recorded::new(vec![4]));
+        let region = kind.carries_region().then(|| RegionCode::ALL[4]);
+        let (secret, digest) = mint(kind, region, id, &Recorded::new(vec![4]));
         let token = secret.expose().to_owned();
         let index = index % token.len();
         let mut mutated: Vec<u8> = token.clone().into_bytes();

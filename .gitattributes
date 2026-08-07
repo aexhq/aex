@@ -24,13 +24,6 @@ api/openapi/** text eol=lf
 api/schemas/** text eol=lf
 conformance/** text eol=lf
 
-# The generated TypeScript wire models are compared byte-for-byte by the same
-# generator, but through `aex-release-tool graph verify` rather than the contract
-# check, so the pin above did not cover them. Left unpinned, `graph verify`
-# reports `generated-contract-stale` on a clean Windows checkout — the exact wolf
-# this file exists to stop crying.
-packages/wire/src/generated/** text eol=lf
-
 # The derived test registry and the unearned-evidence ledger are rewritten by
 # `aex-workspace-check registry build` on every manifest change and are meant to
 # be regenerated on conflict, like `Cargo.lock`. Without this, the tool writes LF,

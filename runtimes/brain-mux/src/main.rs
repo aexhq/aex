@@ -11,13 +11,10 @@ pub mod admission;
 pub mod cache;
 pub mod compose;
 pub mod control;
-pub mod dependencies;
 pub mod drain;
 pub mod health;
 pub mod inline_tools;
 pub mod measure;
-pub mod pressure;
-pub mod reactor;
 pub mod release_catalog;
 pub mod runtime;
 pub mod scale;
@@ -157,12 +154,6 @@ pub const BUDGET_VAR: &str = "AEX_MAX_ACTIVE_ACTIVATIONS";
 
 /// Planes this deployable may be bound to.
 const PLANES: [&str; 2] = ["dev", "prd"];
-
-/// The name every record this process emits is attributed to.
-///
-/// One declaration: the release registry, the task definition and every telemetry attribute
-/// have to agree, and a second literal is how they come to disagree.
-pub const DEPLOYABLE: &str = "brain-mux";
 
 impl Config {
     /// Reads and validates the configuration of `brain-mux` from the process environment.
@@ -385,6 +376,13 @@ where
     }
 }
 
+/// The port the health responder listens on.
+///
+/// Part of the image contract rather than configuration: the ALB target group and the task
+/// definition both name it, and a defaulted-but-configurable port is a value two places can
+/// disagree about with no symptom until a deploy.
+pub const HEALTH_PORT: u16 = 9_090;
+
 /// Builds the composition this configuration describes.
 ///
 /// # Errors
@@ -459,32 +457,11 @@ pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Resul
             reason: format!("the main runtime could not start: {error}"),
         })?;
 
-    let ProductionBindings { pump_ports, probes } =
-        resolve_production_ports(config, &main_runtime)?;
+    let PumpPorts { ports, bindings } = resolve_production_ports(config, &main_runtime)?;
 
     composition.health.schema_matched();
     composition.health.catalog_verified();
     composition.health.bindings_validated();
-    // Reachability is deliberately not asserted here. Binding a client proves nothing about
-    // the table behind it, so readiness stays false until the probe loop below has had a
-    // real request answered.
-    let dependencies = std::sync::Arc::new(dependencies::DependencyProbe::new(
-        std::sync::Arc::clone(&composition.health),
-        probes,
-    ));
-    // The gate the admission controller minted, not a second one: what the sampler measures
-    // has to be what receipt and readiness read.
-    let pressure_sampler =
-        std::sync::Arc::new(pressure::PressureSampler::new(pressure::PressureBindings {
-            health: std::sync::Arc::clone(&composition.health),
-            gate: std::sync::Arc::clone(composition.admission.pressure()),
-            files: std::sync::Arc::new(pressure::HostMemoryFiles),
-            telemetry: telemetry.clone(),
-            identity: pressure::ProcessIdentity {
-                plane: config.plane.clone(),
-                region: config.region.clone(),
-            },
-        }));
 
     // The control thread starts only after production composition succeeded. This prevents a
     // startup error from detaching a health thread that can never observe drain.
@@ -498,25 +475,16 @@ pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Resul
 
     let drain_result = main_runtime.block_on(async {
         let sampler = tokio::spawn(sample_reactor_delay(std::sync::Arc::clone(&composition)));
-        let reachability = tokio::spawn(std::sync::Arc::clone(&dependencies).run());
-        let pressure = tokio::spawn(std::sync::Arc::clone(&pressure_sampler).run());
         let pump = tokio::spawn(pump(
             std::sync::Arc::clone(&composition),
             config.clone(),
             telemetry.clone(),
-            pump_ports,
+            PumpPorts { ports, bindings },
         ));
         wait_for_shutdown().await;
         let stages = drain_sequence(&composition, pump).await;
-        // The two samplers and the reachability probe are children of this scope, not detached
-        // background tasks: each is aborted and joined here, so none can still be publishing to
-        // health after the process has reported it stopped answering.
         sampler.abort();
         let _ = sampler.await;
-        reachability.abort();
-        let _ = reachability.await;
-        pressure.abort();
-        let _ = pressure.await;
         stages
     });
 
@@ -530,7 +498,7 @@ pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Resul
 fn resolve_production_ports(
     config: &Config,
     runtime: &tokio::runtime::Runtime,
-) -> Result<ProductionBindings, RunError> {
+) -> Result<PumpPorts, RunError> {
     // One SDK configuration feeds every AWS client. Per-request tenant authority still comes
     // from each durable ticket; no workspace state is installed on the process.
     let aws = runtime.block_on(wake::aws_bindings(
@@ -600,19 +568,10 @@ fn resolve_production_ports(
         std::sync::Arc::clone(&catalog) as std::sync::Arc<_>,
         snapshots,
     );
-    // Cloned before the adapters are handed to the activation ports: the probe addresses the
-    // same two clients the serving path uses, so what it proves is what the pump needs.
-    let probes: Vec<std::sync::Arc<dyn dependencies::Reachable>> = vec![
-        std::sync::Arc::clone(&aws.store) as std::sync::Arc<_>,
-        std::sync::Arc::clone(&aws.queue) as std::sync::Arc<_>,
-    ];
     let ports = wake::production_ports(aws.store, aws.queue, peers);
-    Ok(ProductionBindings {
-        pump_ports: PumpPorts {
-            ports,
-            bindings: wake::Bindings::production(),
-        },
-        probes,
+    Ok(PumpPorts {
+        ports,
+        bindings: wake::Bindings::production(),
     })
 }
 
@@ -635,13 +594,6 @@ fn bind_release_catalog()
 struct PumpPorts {
     ports: aex_brain_application::activation::Ports,
     bindings: wake::Bindings,
-}
-
-/// Everything production composition resolved: what the pump serves through, and what the
-/// readiness probe proves reachable.
-struct ProductionBindings {
-    pump_ports: PumpPorts,
-    probes: Vec<std::sync::Arc<dyn dependencies::Reachable>>,
 }
 
 /// Receives wakes and drives them until drain starts.
@@ -792,7 +744,7 @@ fn emit_due_isolations(
                 aex_telemetry_schema::generated::AEX_REGION,
                 config.region.clone(),
             )
-            .with(aex_telemetry_schema::generated::AEX_DEPLOYABLE, DEPLOYABLE)
+            .with(aex_telemetry_schema::generated::AEX_DEPLOYABLE, "brain-mux")
             .with(aex_telemetry_schema::generated::AEX_ERROR_CLASS, reason)
             .with(aex_telemetry_schema::generated::AEX_ISOLATION_COUNT, count)
             .with(
@@ -897,12 +849,8 @@ fn serve_health(health: &std::sync::Arc<control::HealthState>) {
         return;
     };
     runtime.block_on(async {
-        // The release row is the only authority for this number. The task definition and the
-        // target group are generated from the same row, so binding anything else is how a
-        // task that works perfectly never becomes healthy.
-        let port = task_shape::task_port();
-        let Ok(listener) = tokio::net::TcpListener::bind(("0.0.0.0", port)).await else {
-            eprintln!("brain-mux: the health listener could not bind port {port}");
+        let Ok(listener) = tokio::net::TcpListener::bind(("0.0.0.0", HEALTH_PORT)).await else {
+            eprintln!("brain-mux: the health listener could not bind port {HEALTH_PORT}");
             return;
         };
         loop {
@@ -942,34 +890,21 @@ async fn answer(mut stream: tokio::net::TcpStream, health: &std::sync::Arc<contr
     let _ = stream.shutdown().await;
 }
 
-/// Samples the reactor's scheduling lateness into a rolling window.
+/// Samples the reactor's scheduling lateness.
 ///
 /// A 100 ms tick that records how late it actually ran. It is the only way to observe the
 /// reactor from inside it, and it is what makes "the reactor is wedged" a measurement rather
 /// than an inference from unrelated symptoms.
-///
-/// Each observation goes into [`reactor::ReactorWindow`] and only the once-a-second summary
-/// reaches health. Publishing the sample itself, which is what this did before, meant a
-/// single late tick could take a working task out of service and a single punctual one could
-/// erase a thirty-second stall.
 async fn sample_reactor_delay(composition: std::sync::Arc<compose::Composition>) {
-    let mut window = reactor::ReactorWindow::new(
-        compose::REACTOR_TICK,
-        composition.health.reactor_delay_bound_ms(),
-    );
     let mut ticker = tokio::time::interval(compose::REACTOR_TICK);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         let expected = tokio::time::Instant::now() + compose::REACTOR_TICK;
         ticker.tick().await;
-        let observed = tokio::time::Instant::now();
-        window.observe(
-            observed.into_std(),
-            observed.saturating_duration_since(expected),
-        );
-        if let Some(summary) = window.publish_due(observed.into_std()) {
-            composition.health.publish_reactor_summary(&summary);
-        }
+        let lateness = tokio::time::Instant::now().saturating_duration_since(expected);
+        composition
+            .health
+            .observe_reactor_delay(u32::try_from(lateness.as_millis()).unwrap_or(u32::MAX));
         composition
             .health
             .observe_active(composition.admission.active());
@@ -1005,15 +940,11 @@ fn main() -> std::process::ExitCode {
             return std::process::ExitCode::FAILURE;
         }
     };
-    let telemetry = match aex_platform_telemetry::LongLivedTelemetry::install() {
-        Ok(telemetry) => telemetry,
-        Err(error) => {
-            eprintln!("brain-mux: refusing to start: {error}");
-            return std::process::ExitCode::FAILURE;
-        }
-    };
-    let outcome = run(&config, telemetry.handle());
-    if let aex_platform_telemetry::FlushOutcome::DeadlineExceeded { pending } = telemetry.shutdown()
+    let settings = aex_platform_telemetry::Settings::default();
+    let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
+    let outcome = run(&config, &telemetry);
+    if let aex_platform_telemetry::FlushOutcome::DeadlineExceeded { pending } =
+        telemetry.flush(settings.flush_deadline)
     {
         eprintln!("brain-mux: telemetry flush left {pending} record(s) undelivered");
     }
@@ -1102,44 +1033,6 @@ mod tests {
         );
         assert_eq!(config.work_table, "aex-regional-work-fixture");
         assert_eq!(config.budget, 8);
-    }
-
-    /// The approved first-launch profile, end to end: the deployment root supplies 16 and the
-    /// composition root derives the bands from it. The 2-vCPU / 4-GiB artifact shape is
-    /// unchanged, and the second production task is a placement decision that never reaches
-    /// this binary.
-    #[test]
-    fn the_approved_launch_budget_derives_the_alpha_bands() {
-        let mut vars = complete();
-        vars.insert(
-            BUDGET_VAR,
-            crate::admission::AdmissionBounds::default()
-                .target
-                .to_string(),
-        );
-        let config = read(&vars).expect("the approved budget parses");
-        let composition = compose(&config).expect("the approved budget composes");
-
-        let bounds = composition.admission.bounds();
-        assert_eq!(bounds.target, 16, "16 active activations per task");
-        assert_eq!(bounds.safety_cap, 32);
-        assert_eq!(bounds.offered_ceiling, 80);
-        assert_eq!(
-            bounds,
-            crate::admission::AdmissionBounds::default(),
-            "the declared alpha profile and the derived one are the same bands"
-        );
-        assert_eq!(composition.policy.max_concurrent_drives, 16);
-        assert_eq!(
-            composition.envelope.task_memory_bytes,
-            4_096 * 1_024 * 1_024
-        );
-        assert_eq!(composition.shape.worker_threads, 2);
-        assert_eq!(
-            composition.admission.pressure().state(),
-            crate::pressure::PressureState::Normal,
-            "a task that has measured nothing yet is not a task under pressure"
-        );
     }
 
     /// The deployed target is executable capacity, not a tuning hint. The scheduler width

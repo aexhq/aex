@@ -275,15 +275,12 @@ pub async fn answer<R: AuthorizationReader>(
             else {
                 return Ok(None);
             };
-            // The token names its own region and workspace. Both are compared
-            // against the key's row rather than trusted: a token whose pin
-            // disagrees with the key it names is refused outright, so the
-            // segments a regional edge reads to address its rows can never
-            // describe a key that lives somewhere else.
-            let pin = request.credential.pin;
             if state.key_id != request.credential.id
-                || pin.map(|pin| pin.region.region()) != Some(state.region)
-                || pin.map(|pin| pin.workspace) != Some(state.workspace_id)
+                || request
+                    .credential
+                    .region
+                    .map(aex_identity_domain::credential::RegionCode::region)
+                    != Some(state.region)
                 || state.key_revoked
                 || state.workspace_status != WorkspaceStatus::Active
                 || state.organization_status != OrganizationStatus::Active
@@ -451,7 +448,7 @@ mod tests {
     };
     use aex_control_domain::{AccountState, Epoch, OrganizationStatus, ScopeSet, WorkspaceStatus};
     use aex_identity_domain::credential::{
-        CredentialKind, Pepper, RegionCode, SecretRng, WorkspacePin, mint, verifier,
+        CredentialKind, Pepper, RegionCode, SecretRng, mint, verifier,
     };
     use aex_wire::types::Region;
     use async_trait::async_trait;
@@ -682,10 +679,7 @@ mod tests {
         let id = Uuid::from_u128(0x31);
         let (secret, digest) = mint(
             CredentialKind::WorkspaceKey,
-            Some(WorkspacePin {
-                region: RegionCode::new(Region::EuWest1),
-                workspace: Uuid::from_u128(0x32),
-            }),
+            Some(RegionCode::new(Region::EuWest1)),
             id,
             &FixedRng,
         );

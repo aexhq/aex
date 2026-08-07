@@ -863,25 +863,14 @@ mod tests {
             ),
             (
                 "regional-authz-projection",
-                // `TransactGetItems` is the one-request admission snapshot: the
-                // key authorization row, the placement and the hot limit subset
-                // are read together so they cannot describe different instants.
-                strings(&[
-                    "dynamodb:GetItem",
-                    "dynamodb:TransactGetItems",
-                    "dynamodb:Query",
-                ]),
+                strings(&["dynamodb:GetItem", "dynamodb:Query"]),
                 strings(&["table"]),
             ),
             (
                 "session-authority",
-                // `BatchGetItem` is the batched frontier bundle: one follow cycle
-                // reads the session head beside every signal frontier in one
-                // request, which spans both authorities.
                 strings(&[
                     "dynamodb:DescribeTable",
                     "dynamodb:GetItem",
-                    "dynamodb:BatchGetItem",
                     "dynamodb:Query",
                 ]),
                 strings(&["table", "index/*"]),
@@ -946,25 +935,14 @@ mod tests {
             ),
             (
                 "regional-authz-projection",
-                // `TransactGetItems` is the one-request admission snapshot: the
-                // key authorization row, the placement and the hot limit subset
-                // are read together so they cannot describe different instants.
-                strings(&[
-                    "dynamodb:GetItem",
-                    "dynamodb:TransactGetItems",
-                    "dynamodb:Query",
-                ]),
+                strings(&["dynamodb:GetItem", "dynamodb:Query"]),
                 strings(&["table"]),
             ),
             (
                 "session-authority",
-                // `BatchGetItem` is the batched frontier bundle: a session-scoped
-                // query reads the session head beside every signal frontier in
-                // one request, which spans both authorities.
                 strings(&[
                     "dynamodb:DescribeTable",
                     "dynamodb:GetItem",
-                    "dynamodb:BatchGetItem",
                     "dynamodb:Query",
                 ]),
                 strings(&["table", "index/*"]),
@@ -1080,14 +1058,9 @@ mod tests {
             [
                 "workspace_limit",
                 "workspace_limit_bundle_head",
-                "workspace_limit_bundle",
-                "workspace_edge_limits"
+                "workspace_limit_bundle"
             ]
         );
-        // The hot admission subset is filed under the capacity partition rather
-        // than the workspace's. `dynamodb:LeadingKeys` is the only key this
-        // fence can condition on, so a `WS#` spelling would have handed the
-        // capacity authority the partition that holds placement.
         assert_eq!(
             capacity
                 .condition

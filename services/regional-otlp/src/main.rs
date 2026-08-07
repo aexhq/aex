@@ -13,7 +13,6 @@ mod admission;
 mod authority;
 mod config;
 mod mount;
-mod staging;
 
 use std::sync::Arc;
 
@@ -161,7 +160,8 @@ pub async fn run(config: Config) -> Result<(), RunError> {
             config.region,
         ),
         anchors,
-        aex_regional_http::authz::RegionalProjection::new(projection, config.region),
+        aex_regional_http::authz::RegionalProjection::new(projection.clone(), config.region),
+        aex_regional_http::capacity::CapacityProjection::new(projection),
         aex_regional_http::edge::SystemClock,
         aex_regional_http::edge::EdgeBinding {
             plane: config.plane,

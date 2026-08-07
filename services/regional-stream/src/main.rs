@@ -28,9 +28,6 @@ use aex_session_dynamodb::stream_keys::SessionReadState;
 use aex_wire::dispatch::RequestLimits;
 use aex_wire::error::{ErrorCode, WireError};
 use regional_observation_api::api::{ObservationService, StreamPolicy, StreamRevalidator};
-use regional_observation_api::counters::{
-    CounterResource, PUBLISH_INTERVAL, ReadCounter, ReadCounters,
-};
 use regional_observation_api::reader::ObservationReader;
 use regional_observation_api::wake::WakeHub;
 use regional_stream::config::{Config, WakeMode};
@@ -45,7 +42,6 @@ struct EdgeRevalidator {
     edge: Arc<Edge>,
     dynamodb: aws_sdk_dynamodb::Client,
     session_table: String,
-    counters: Arc<ReadCounters>,
 }
 
 #[async_trait::async_trait]
@@ -60,7 +56,6 @@ impl StreamRevalidator for EdgeRevalidator {
             return Ok(());
         };
         let (pk, sk) = aex_session_dynamodb::stream_keys::head(*session);
-        self.counters.record(ReadCounter::SessionHead);
         let response = self
             .dynamodb
             .get_item()
@@ -119,15 +114,11 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let telemetry = match aex_platform_telemetry::LongLivedTelemetry::install() {
-        Ok(telemetry) => telemetry,
-        Err(error) => {
-            eprintln!("regional-stream: refusing to start: {error}");
-            return ExitCode::FAILURE;
-        }
-    };
-    let outcome = Box::pin(run(&config, telemetry.handle())).await;
-    if let aex_platform_telemetry::FlushOutcome::DeadlineExceeded { pending } = telemetry.shutdown()
+    let settings = aex_platform_telemetry::Settings::default();
+    let telemetry = aex_platform_telemetry::Handle::install(&settings, None);
+    let outcome = Box::pin(run(&config, &telemetry)).await;
+    if let aex_platform_telemetry::FlushOutcome::DeadlineExceeded { pending } =
+        telemetry.flush(settings.flush_deadline)
     {
         eprintln!("regional-stream: telemetry flush left {pending} record(s) undelivered");
     }
@@ -165,7 +156,6 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
     let objects = aws_sdk_s3::Client::new(&aws);
     let parameters = ParameterStore::new(aws_sdk_ssm::Client::new(&aws));
 
-    let counters = Arc::new(ReadCounters::default());
     let reader = ObservationReader::new(
         dynamodb.clone(),
         objects,
@@ -173,7 +163,6 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
         config.session_table.clone(),
         config.content_bucket.clone(),
         config.observation_index_settle_ms,
-        Arc::clone(&counters),
     );
     Box::pin(reader.probe())
         .await
@@ -195,19 +184,6 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
         .await?;
 
     let draining = Arc::new(AtomicBool::new(false));
-    // Aggregate deltas only: the read path increments atomics, and this is the
-    // one task that turns them into records.
-    tokio::spawn(regional_observation_api::counters::publish(
-        Arc::clone(&counters),
-        telemetry.clone(),
-        CounterResource {
-            plane: config.plane.as_str().to_owned(),
-            region: config.region.as_str().to_owned(),
-            deployable: "regional-stream",
-        },
-        PUBLISH_INTERVAL,
-        Arc::clone(&draining),
-    ));
     let wake_hub = WakeHub::default();
     let _wake_readers = if config.wake_mode == WakeMode::DdbStreams {
         let session = config.session_stream.as_ref().ok_or_else(|| {
@@ -264,7 +240,6 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
             edge: Arc::clone(&edge),
             dynamodb: dynamodb.clone(),
             session_table: config.session_table.clone(),
-            counters: Arc::clone(&counters),
         }))
     };
     let service = ObservationService::new(
@@ -352,7 +327,8 @@ fn build_edge(
             config.region,
         ),
         anchors,
-        RegionalProjection::new(projection, config.region),
+        RegionalProjection::new(projection.clone(), config.region),
+        aex_regional_http::capacity::CapacityProjection::new(projection),
         SystemClock,
         EdgeBinding {
             plane: config.plane,

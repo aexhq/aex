@@ -68,48 +68,6 @@ fn the_registered_ceilings_are_the_ones_this_binary_enforces() {
 }
 
 #[test]
-fn admission_and_committed_replay_stage_bodies_through_the_one_bounded_helper() {
-    // Body staging is the step whose cost scales with the caller's record count.
-    // Both paths that stage must reach it by the same call, and neither may go
-    // back to awaiting one observation at a time.
-    let authority = include_str!("../src/authority.rs");
-    assert_eq!(
-        authority.matches("self.stage_bodies(").count(),
-        2,
-        "admission and committed replay are the two staging call sites"
-    );
-    assert!(
-        !authority.contains("self.stage_body("),
-        "a per-observation staging call is the serial loop coming back"
-    );
-    assert!(
-        !authority.contains("placements.push("),
-        "placements are collected by the bounded helper, never appended in a loop"
-    );
-}
-
-#[test]
-fn the_staging_bounds_are_declared_and_derived_from_the_registry() {
-    let staging = include_str!("../src/staging.rs");
-    assert!(
-        staging.contains("MAX_CONCURRENT_BODY_PUTS: usize = 8"),
-        "the concurrent-write bound is declared once"
-    );
-    assert!(
-        staging.contains("STAGING_BYTE_QUANTUM: usize = 1024"),
-        "the byte-permit quantum is declared once"
-    );
-    assert!(
-        staging.contains("STAGING_BYTE_BUDGET: usize = OtlpLimits::REGISTERED.decoded_max"),
-        "the in-flight byte budget is read from the registry, never restated"
-    );
-    assert!(
-        !staging.contains("join_all"),
-        "a whole-batch fan-out is exactly what the bound exists to prevent"
-    );
-}
-
-#[test]
 fn no_clickhouse_or_kinesis_dependency_can_reach_this_binary() {
     let manifest = include_str!("../Cargo.toml");
     for banned in ["clickhouse", "kinesis"] {

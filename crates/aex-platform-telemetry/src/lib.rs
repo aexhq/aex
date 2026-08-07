@@ -23,23 +23,15 @@
 //!   `aex-observation-application` and obey its durable admission and gap contract
 //! - naming: attribute, instrument, span and event names and their classes belong
 //!   to `aex-telemetry-schema`
-//! - transport choice: the host binary selects the profile — [`LongLivedTelemetry`]
-//!   for a process that runs until it is drained, [`Settings::lambda`] plus an
-//!   invocation-bound flush for a Lambda — and that is configuration rather than
-//!   instrumentation
+//! - transport choice: the host binary selects the exporter adapter, and that is
+//!   configuration rather than instrumentation
 
 pub mod exporter;
 pub mod facade;
-pub mod host;
-pub mod json;
-pub mod pump;
 pub mod record;
 pub mod settings;
 
 pub use exporter::{ExportError, Exporter, FailingExporter, InMemoryExporter};
-pub use facade::{FlushOutcome, Handle, TelemetryStats};
-pub use host::LongLivedTelemetry;
-pub use json::{JsonLinesExporter, LineCeilingTooSmall, LineSink, LogStream};
-pub use pump::{PumpStartError, StatsSink, TelemetryPump};
+pub use facade::{FlushOutcome, Handle};
 pub use record::{Attribute, AttributeValue, Record, RecordKind};
 pub use settings::Settings;

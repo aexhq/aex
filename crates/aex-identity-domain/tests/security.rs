@@ -4,8 +4,7 @@
 use aex_control_domain::CursorSecret;
 use aex_identity_domain::assertion::{KeyId, LocalSigner};
 use aex_identity_domain::credential::{
-    CredentialKind, PresentedDigest, RegionCode, SecretRng, WorkspacePin, mint, parse, verifier,
-    verify,
+    CredentialKind, PresentedDigest, RegionCode, SecretRng, mint, parse, verifier, verify,
 };
 use aex_identity_domain::{NormalizedEmail, Pepper};
 use std::time::Instant;
@@ -25,18 +24,11 @@ fn id() -> Uuid {
     Uuid::from_u128(0x0192_3f2a_1c00_7000_8000_0000_0000_0001)
 }
 
-fn pin() -> WorkspacePin {
-    WorkspacePin {
-        region: RegionCode::ALL[4],
-        workspace: Uuid::from_u128(0x0192_3f2a_1c00_7000_8000_0000_0000_0002),
-    }
-}
-
 #[test]
 fn no_secret_carrying_type_renders_its_contents() {
     let (secret, digest) = mint(
         CredentialKind::WorkspaceKey,
-        Some(pin()),
+        Some(RegionCode::ALL[4]),
         id(),
         &Fixed(0x11),
     );
@@ -145,7 +137,12 @@ fn verification_is_constant_time_within_measurement_noise() {
 
 #[test]
 fn a_wrong_kind_prefix_is_refused_before_anything_else_is_examined() {
-    let (secret, _) = mint(CredentialKind::WorkspaceKey, Some(pin()), id(), &Fixed(1));
+    let (secret, _) = mint(
+        CredentialKind::WorkspaceKey,
+        Some(RegionCode::ALL[4]),
+        id(),
+        &Fixed(1),
+    );
     // Truncated to just the prefix: the parser must refuse on the prefix rather
     // than reach a length or encoding check that could reveal the shape.
     assert!(parse(CredentialKind::AccountToken, secret.expose()).is_err());
@@ -154,7 +151,12 @@ fn a_wrong_kind_prefix_is_refused_before_anything_else_is_examined() {
 
 #[test]
 fn the_transmitted_digest_carries_no_recoverable_secret() {
-    let (secret, digest) = mint(CredentialKind::WorkspaceKey, Some(pin()), id(), &Fixed(2));
+    let (secret, digest) = mint(
+        CredentialKind::WorkspaceKey,
+        Some(RegionCode::ALL[4]),
+        id(),
+        &Fixed(2),
+    );
     let transmitted = digest.to_base64url();
     assert!(!transmitted.contains(secret.expose()));
     assert_eq!(

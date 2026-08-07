@@ -111,7 +111,7 @@ run "regional_stream_drains_for_thirty_seconds" {
   }
 }
 
-run "development_brain_mux_runs_one_task_and_drains_for_two_minutes" {
+run "brain_mux_is_pinned_to_one_task_and_drains_for_two_minutes" {
   command = plan
 
   variables {
@@ -119,7 +119,6 @@ run "development_brain_mux_runs_one_task_and_drains_for_two_minutes" {
     task_definition_family = "aex-dev-eu-west-1-brain-mux"
     stop_timeout           = 120
     log_group_name         = "/aex/dev/brain-mux"
-    env                    = { AEX_MAX_ACTIVE_ACTIVATIONS = "16" }
 
     autoscaling_bounds = {
       min_capacity = 1
@@ -129,7 +128,7 @@ run "development_brain_mux_runs_one_task_and_drains_for_two_minutes" {
 
   assert {
     condition     = aws_ecs_service.this.desired_count == 1
-    error_message = "Development brain-mux runs exactly one task."
+    error_message = "brain-mux must run exactly one task."
   }
 
   assert {
@@ -139,130 +138,8 @@ run "development_brain_mux_runs_one_task_and_drains_for_two_minutes" {
 
   assert {
     condition     = one(aws_appautoscaling_target.this).max_capacity == 1
-    error_message = "brain-mux must not be able to scale past its declared task floor."
+    error_message = "brain-mux must not be able to scale past a single task."
   }
-
-  assert {
-    condition = length([
-      for entry in jsondecode(aws_ecs_task_definition.this.container_definitions)[0].environment :
-      entry if entry.name == "AEX_MAX_ACTIVE_ACTIVATIONS" && entry.value == "16"
-    ]) == 1
-    error_message = "The approved 16-activation launch profile must reach the container exactly once. The variable has no default in the binary, so an absent one is a task that refuses to start."
-  }
-}
-
-run "production_brain_mux_runs_the_approved_two_task_floor" {
-  command = plan
-
-  variables {
-    name                   = "brain-mux"
-    task_definition_family = "aex-prd-eu-west-1-brain-mux"
-    stop_timeout           = 120
-    log_group_name         = "/aex/prd/brain-mux"
-    desired_count          = 2
-    env                    = { AEX_MAX_ACTIVE_ACTIVATIONS = "16" }
-
-    autoscaling_bounds = {
-      min_capacity = 2
-      max_capacity = 2
-    }
-  }
-
-  assert {
-    condition     = aws_ecs_service.this.desired_count == 2
-    error_message = "Production brain-mux must run the approved two-task floor."
-  }
-
-  assert {
-    condition = length([
-      for entry in jsondecode(aws_ecs_task_definition.this.container_definitions)[0].environment :
-      entry if entry.name == "AEX_MAX_ACTIVE_ACTIVATIONS" && entry.value == "16"
-    ]) == 1
-    error_message = "The launch profile is the same 16 activations per task in both planes; the second production task is a placement decision, not a bigger budget."
-  }
-
-  assert {
-    condition     = one(aws_appautoscaling_target.this).max_capacity == 2
-    error_message = "The production brain-mux floor is static: its ceiling is its desired count."
-  }
-}
-
-run "rejects_a_single_production_brain_mux_task" {
-  command = plan
-
-  variables {
-    name                   = "brain-mux"
-    task_definition_family = "aex-prd-eu-west-1-brain-mux"
-    stop_timeout           = 120
-    log_group_name         = "/aex/prd/brain-mux"
-    desired_count          = 1
-    env                    = { AEX_MAX_ACTIVE_ACTIVATIONS = "16" }
-
-    autoscaling_bounds = {
-      min_capacity = 1
-      max_capacity = 1
-    }
-  }
-
-  expect_failures = [var.desired_count]
-}
-
-run "rejects_brain_mux_capacity_bounds_that_could_scale" {
-  command = plan
-
-  variables {
-    name                   = "brain-mux"
-    task_definition_family = "aex-prd-eu-west-1-brain-mux"
-    stop_timeout           = 120
-    log_group_name         = "/aex/prd/brain-mux"
-    desired_count          = 2
-    env                    = { AEX_MAX_ACTIVE_ACTIVATIONS = "16" }
-
-    autoscaling_bounds = {
-      min_capacity = 2
-      max_capacity = 4
-    }
-  }
-
-  expect_failures = [var.autoscaling_bounds]
-}
-
-run "rejects_a_brain_mux_without_the_approved_activation_budget" {
-  command = plan
-
-  variables {
-    name                   = "brain-mux"
-    task_definition_family = "aex-dev-eu-west-1-brain-mux"
-    stop_timeout           = 120
-    log_group_name         = "/aex/dev/brain-mux"
-
-    autoscaling_bounds = {
-      min_capacity = 1
-      max_capacity = 1
-    }
-  }
-
-  expect_failures = [var.env]
-}
-
-run "rejects_a_brain_mux_activation_budget_that_is_not_the_approved_profile" {
-  command = plan
-
-  variables {
-    name                   = "brain-mux"
-    task_definition_family = "aex-prd-eu-west-1-brain-mux"
-    stop_timeout           = 120
-    log_group_name         = "/aex/prd/brain-mux"
-    desired_count          = 2
-    env                    = { AEX_MAX_ACTIVE_ACTIVATIONS = "48" }
-
-    autoscaling_bounds = {
-      min_capacity = 2
-      max_capacity = 2
-    }
-  }
-
-  expect_failures = [var.env]
 }
 
 run "rejects_a_tag_reference" {
@@ -275,7 +152,7 @@ run "rejects_a_tag_reference" {
   expect_failures = [var.image]
 }
 
-run "rejects_a_second_development_brain_mux_task" {
+run "rejects_a_second_brain_mux_task" {
   command = plan
 
   variables {
@@ -283,11 +160,10 @@ run "rejects_a_second_development_brain_mux_task" {
     task_definition_family = "aex-dev-eu-west-1-brain-mux"
     stop_timeout           = 120
     desired_count          = 2
-    env                    = { AEX_MAX_ACTIVE_ACTIVATIONS = "16" }
 
     autoscaling_bounds = {
-      min_capacity = 2
-      max_capacity = 2
+      min_capacity = 1
+      max_capacity = 1
     }
   }
 
@@ -301,7 +177,6 @@ run "rejects_a_brain_mux_stop_timeout_that_is_not_two_minutes" {
     name                   = "brain-mux"
     task_definition_family = "aex-dev-eu-west-1-brain-mux"
     stop_timeout           = 30
-    env                    = { AEX_MAX_ACTIVE_ACTIVATIONS = "16" }
 
     autoscaling_bounds = {
       min_capacity = 1

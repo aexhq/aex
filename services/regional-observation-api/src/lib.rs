@@ -7,9 +7,6 @@
 
 pub mod api;
 pub mod config;
-pub mod counters;
-pub mod frontier;
-pub mod gap_watch;
 pub mod ndjson;
 pub mod query;
 pub mod reader;

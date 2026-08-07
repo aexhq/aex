@@ -34,17 +34,11 @@ use aex_wire::ids::{
 use aex_wire::types::{Region, Timestamp};
 use aws_sdk_dynamodb::types::{AttributeValue, Put, TransactWriteItem, Update, WriteRequest};
 
-use crate::staging::{BodyPlacement, BodyStager, S3BodySink, STAGING_BYTE_BUDGET};
+/// The `S3` object prefix immutable observation bodies live under.
+pub const BODY_PREFIX: &str = "observations";
 
 /// How many observations one materialization write carries.
 pub const MATERIALIZE_CHUNK: usize = 25;
-
-/// How many accepted-frontier point reads one batch may hold open at once.
-///
-/// The signal vocabulary is closed, so every read a batch could need can be
-/// open together and the bound is the vocabulary's own size rather than a
-/// tuning number somebody chose.
-pub const MAX_CONCURRENT_FRONTIER_READS: usize = Signal::ALL.len();
 
 /// The shard count one accepted-time bucket is written across.
 ///
@@ -115,7 +109,7 @@ impl AuthorityError {
     }
 
     /// Builds a provider failure without carrying an upstream body.
-    pub(crate) fn provider(operation: &'static str, reason: impl std::fmt::Display) -> Self {
+    fn provider(operation: &'static str, reason: impl std::fmt::Display) -> Self {
         Self::Provider {
             operation,
             reason: reason.to_string(),
@@ -380,11 +374,28 @@ impl AdmissionAuthority {
 
         // Step 7 — stage bodies and pages. Nothing here is reachable or billed
         // until the commit publishes the accepted range.
-        let placements = self.stage_bodies(request).await?;
+        let mut placements = Vec::with_capacity(request.observations.len());
+        for observation in &request.observations {
+            placements.push(self.stage_body(request.workspace, observation).await?);
+        }
         let page_digests = self.stage_pages(request, &pages, &staged).await?;
 
         // Step 8 — transaction C.
-        let allocations = self.allocate(request, signals).await?;
+        let mut allocations = Vec::new();
+        for signal in signals.iter() {
+            let row = self.frontier(&request.scope, signal).await?;
+            let count = request
+                .observations
+                .iter()
+                .filter(|observation| observation.signal == signal)
+                .count() as u64;
+            allocations.push(Allocation {
+                signal,
+                lo: row.accepted,
+                hi: row.accepted + count,
+                revision: row.revision,
+            });
+        }
         let skew = (now.unix_millis()
             - Timestamp::from_datetime_trunc_ms(time::OffsetDateTime::now_utc())
                 .map_or(now.unix_millis(), Timestamp::unix_millis))
@@ -461,7 +472,10 @@ impl AdmissionAuthority {
             .collect::<Vec<_>>();
         let pages = pack_pages(&staged)?;
         confirm_page_manifest(&staged_page_digests(&pages, &staged), &receipt.page_digests)?;
-        let placements = self.stage_bodies(request).await?;
+        let mut placements = Vec::with_capacity(request.observations.len());
+        for observation in &request.observations {
+            placements.push(self.stage_body(request.workspace, observation).await?);
+        }
         self.materialize(
             request,
             &receipt.allocations,
@@ -590,44 +604,47 @@ impl AdmissionAuthority {
         }))
     }
 
-    /// Stages every immutable body of one batch, in observation order.
-    ///
-    /// This one call is the whole of step 7 for a fresh admission **and** for a
-    /// committed replay. A replay that staged by another route could place a
-    /// body where the first attempt did not, and the receipt it replays from
-    /// would then describe a batch nobody wrote.
-    async fn stage_bodies(
+    /// Stages one immutable body, inline or in `S3`.
+    async fn stage_body(
         &self,
-        request: &AdmissionRequest,
-    ) -> Result<Vec<BodyPlacement>, AuthorityError> {
-        let sink = S3BodySink::new(&self.s3, &self.bucket);
-        BodyStager::new(&sink, request.workspace, STAGING_BYTE_BUDGET)
-            .stage_all(&request.observations)
-            .await
-    }
-
-    /// Reads every frontier the batch touches at once, then allocates in order.
-    ///
-    /// The reads are independent point reads over a closed vocabulary, so they
-    /// are issued together; the allocation vector they produce is sorted back
-    /// into signal rank order before transaction C sees it.
-    async fn allocate(
-        &self,
-        request: &AdmissionRequest,
-        signals: SignalSet,
-    ) -> Result<Vec<Allocation>, AuthorityError> {
-        let ordered: Vec<Signal> = signals.iter().collect();
-        let reads: Vec<_> = ordered
-            .iter()
-            .map(|signal| self.frontier(&request.scope, *signal))
-            .collect();
-        let rows =
-            crate::staging::settle_bounded_ordered(reads, MAX_CONCURRENT_FRONTIER_READS).await?;
-        Ok(allocate_in_signal_order(
-            &ordered,
-            &rows,
-            &request.observations,
-        ))
+        workspace: WorkspaceId,
+        observation: &PreparedObservation,
+    ) -> Result<BodyPlacement, AuthorityError> {
+        if observation.canonical.len() <= limits::OBS_INLINE_MAX {
+            return Ok(BodyPlacement::Inline);
+        }
+        let digest = sha256_hex(&observation.canonical);
+        let key = format!(
+            "{BODY_PREFIX}/{workspace}/{}/{}/{digest}",
+            &digest[0..2],
+            &digest[2..4]
+        );
+        let outcome = self
+            .s3
+            .put_object()
+            .bucket(&self.bucket)
+            .key(&key)
+            .if_none_match("*")
+            .content_length(i64::try_from(observation.canonical.len()).unwrap_or(i64::MAX))
+            .body(observation.canonical.clone().into())
+            .send()
+            .await;
+        match outcome {
+            Ok(_) => Ok(BodyPlacement::Object { key, digest }),
+            Err(error) => {
+                // A `412` means the content-addressed object already exists.
+                // Equal digests are idempotent success; the key *is* the digest,
+                // so an unequal one cannot be addressed here at all.
+                let service = error
+                    .raw_response()
+                    .map(|response| response.status().as_u16());
+                if service == Some(412) {
+                    Ok(BodyPlacement::Object { key, digest })
+                } else {
+                    Err(AuthorityError::provider("PutObject", error))
+                }
+            }
+        }
     }
 
     /// Stages the page items that make step 9 replayable.
@@ -979,34 +996,6 @@ impl AdmissionAuthority {
             .map_err(|error| AuthorityError::provider("GetItem", error))?;
         Ok(response.item)
     }
-}
-
-/// Pairs each signal with its own frontier row, in stable signal rank order.
-///
-/// Which point read answered first is a scheduling detail. The allocation
-/// vector transaction C publishes — and the receipt every later replay
-/// materializes from — must not be able to depend on it.
-fn allocate_in_signal_order(
-    signals: &[Signal],
-    rows: &[FrontierRow],
-    observations: &[PreparedObservation],
-) -> Vec<Allocation> {
-    signals
-        .iter()
-        .zip(rows)
-        .map(|(signal, row)| {
-            let count = observations
-                .iter()
-                .filter(|observation| observation.signal == *signal)
-                .count() as u64;
-            Allocation {
-                signal: *signal,
-                lo: row.accepted,
-                hi: row.accepted + count,
-                revision: row.revision,
-            }
-        })
-        .collect()
 }
 
 /// Serializes one staged page exactly as its immutable `DynamoDB` row stores it.
@@ -1591,6 +1580,20 @@ pub struct FrontierRow {
     pub revision: u64,
 }
 
+/// Where one observation's canonical body was placed.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum BodyPlacement {
+    /// Small enough to live on the item.
+    Inline,
+    /// Content-addressed in the observation bucket.
+    Object {
+        /// The object key.
+        key: String,
+        /// The content digest.
+        digest: String,
+    },
+}
+
 /// Reads a string attribute.
 fn string<'a>(item: &'a HashMap<String, AttributeValue>, name: &str) -> Option<&'a str> {
     item.get(name)
@@ -1812,16 +1815,14 @@ impl StoredReceipt {
 #[cfg(test)]
 mod tests {
     use super::{
-        AdmissionRequest, Allocation, AuthorityError, BUCKET_SHARDS, FrontierRow,
-        MATERIALIZE_CHUNK, MAX_CONCURRENT_FRONTIER_READS, PreparedObservation,
-        allocate_in_signal_order, confirm_page_manifest, decode_allocations, decode_page_digests,
-        encode_allocations, gap_id_for, spool_item, spool_shard, stable_observation_id,
-        staged_page_digests,
+        AdmissionRequest, Allocation, AuthorityError, BODY_PREFIX, BUCKET_SHARDS,
+        MATERIALIZE_CHUNK, PreparedObservation, confirm_page_manifest, decode_allocations,
+        decode_page_digests, encode_allocations, gap_id_for, spool_item, spool_shard,
+        stable_observation_id, staged_page_digests,
     };
-    use crate::staging::BODY_PREFIX;
     use aex_observation_domain::canonical::CanonicalValue;
     use aex_observation_domain::keys::ScopeKey;
-    use aex_observation_domain::signal::{Signal, SignalSet};
+    use aex_observation_domain::signal::Signal;
     use aex_observation_store_aws::store::{PageSpan, StagedRecord, StoreError};
     use aex_wire::ids::{OrganizationId, PrefixedId as _, TelemetryBatchId, Uuid7, WorkspaceId};
     use aex_wire::types::Timestamp;
@@ -2101,64 +2102,6 @@ mod tests {
 
         item.insert("allocations".to_owned(), AttributeValue::L(Vec::new()));
         assert!(decode_allocations(&request, &item).is_err());
-    }
-
-    #[test]
-    fn allocations_are_paired_with_their_own_frontier_row_in_stable_signal_order() {
-        // The point reads behind these rows are issued together. The vector
-        // transaction C publishes must still be the one a serial read produced,
-        // whichever read answered first.
-        let signals: Vec<Signal> = SignalSet::EMPTY
-            .with(Signal::Metrics)
-            .with(Signal::Logs)
-            .iter()
-            .collect();
-        assert_eq!(
-            signals,
-            vec![Signal::Logs, Signal::Metrics],
-            "the allocation order is signal rank order, not arrival order"
-        );
-        let rows = [
-            FrontierRow {
-                accepted: 10,
-                revision: 4,
-            },
-            FrontierRow {
-                accepted: 20,
-                revision: 7,
-            },
-        ];
-        let observations = vec![
-            observation(Signal::Metrics, 1, 1),
-            observation(Signal::Logs, 2, 1),
-            observation(Signal::Logs, 3, 1),
-        ];
-        assert_eq!(
-            allocate_in_signal_order(&signals, &rows, &observations),
-            vec![
-                Allocation {
-                    signal: Signal::Logs,
-                    lo: 10,
-                    hi: 12,
-                    revision: 4,
-                },
-                Allocation {
-                    signal: Signal::Metrics,
-                    lo: 20,
-                    hi: 21,
-                    revision: 7,
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn every_frontier_read_one_batch_can_need_may_be_open_together() {
-        assert_eq!(MAX_CONCURRENT_FRONTIER_READS, Signal::ALL.len());
-        assert!(
-            SignalSet::all().len() <= MAX_CONCURRENT_FRONTIER_READS,
-            "the bound is the closed vocabulary's own size, so no read ever queues"
-        );
     }
 
     fn prepared(signal: Signal) -> PreparedObservation {

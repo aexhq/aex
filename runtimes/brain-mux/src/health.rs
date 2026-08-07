@@ -81,13 +81,9 @@ pub struct LivenessInputs {
     pub supervisors: Dependency,
     /// Whether the dedicated control runtime answered its last probe.
     pub control_runtime: Dependency,
-    /// The last whole rolling summary the reactor sampler published, if there is one.
-    ///
-    /// Absent until the sampler has published its first window. No summary is no evidence,
-    /// and liveness passes on no evidence: an unmeasured reactor must never be the reason a
-    /// task carrying non-replayable effects is killed.
-    pub reactor: Option<crate::reactor::ReactorSummary>,
-    /// The bound above which the rolling p99 is considered a wedge.
+    /// The reactor's observed p99 scheduling lateness.
+    pub reactor_delay_p99_ms: u32,
+    /// The bound above which the reactor is considered wedged.
     pub reactor_delay_bound_ms: u32,
 }
 
@@ -108,11 +104,6 @@ pub struct ReadinessInputs {
     pub active_activations: u32,
     /// The safety cap above which no further work is admitted.
     pub safety_cap: u32,
-    /// The last measured memory-pressure state.
-    ///
-    /// Readiness only: a task under memory pressure is still alive, still settling effects it
-    /// owns, and must not be killed for it.
-    pub pressure: crate::pressure::PressureState,
 }
 
 /// Why a probe failed.
@@ -125,16 +116,12 @@ pub enum Unhealthy {
     SupervisorLost,
     /// The control runtime stopped answering.
     ControlRuntimeStalled,
-    /// The reactor's rolling p99 has been above its lateness bound for consecutive windows.
+    /// The reactor is above its lateness bound.
     ReactorWedged {
-        /// The 99th percentile over the published window, never the latest sample.
-        rolling_p99_ms: u32,
+        /// The observed p99.
+        observed_ms: u32,
         /// The bound.
         bound_ms: u32,
-        /// How many samples that percentile was computed from.
-        window_samples: u32,
-        /// How many consecutive one-second summaries were above the bound.
-        consecutive_summaries: u32,
     },
     /// Configuration or a secret binding did not validate.
     BindingsUnvalidated,
@@ -153,13 +140,6 @@ pub enum Unhealthy {
         /// The cap.
         cap: u32,
     },
-    /// Measured memory pressure has stopped new receipt.
-    UnderMemoryPressure {
-        /// The state measurement put the task in.
-        state: crate::pressure::PressureState,
-        /// The percentage of the task's memory limit that state is entered at.
-        threshold_percent: u32,
-    },
 }
 
 impl fmt::Display for Unhealthy {
@@ -168,15 +148,11 @@ impl fmt::Display for Unhealthy {
             Self::SupervisorLost => formatter.write_str("a supervised task is not running"),
             Self::ControlRuntimeStalled => formatter.write_str("the control runtime is stalled"),
             Self::ReactorWedged {
-                rolling_p99_ms,
+                observed_ms,
                 bound_ms,
-                window_samples,
-                consecutive_summaries,
             } => write!(
                 formatter,
-                "rolling reactor delay p99 {rolling_p99_ms} ms over {window_samples} windowed \
-                 samples exceeded the {bound_ms} ms bound in {consecutive_summaries} \
-                 consecutive one-second summaries"
+                "reactor delay p99 {observed_ms} ms exceeds the {bound_ms} ms bound"
             ),
             Self::BindingsUnvalidated => {
                 formatter.write_str("configuration bindings not validated")
@@ -188,15 +164,6 @@ impl fmt::Display for Unhealthy {
             Self::AtSafetyCap { active, cap } => {
                 write!(formatter, "{active} activations at the {cap} safety cap")
             }
-            Self::UnderMemoryPressure {
-                state,
-                threshold_percent,
-            } => write!(
-                formatter,
-                "memory pressure {}: measured task memory at or above {threshold_percent}% of \
-                 the declared limit stops new receipt",
-                state.as_str()
-            ),
         }
     }
 }
@@ -245,16 +212,10 @@ pub fn liveness(inputs: &LivenessInputs) -> Probe {
     if !inputs.control_runtime.is_satisfied() {
         reasons.push(Unhealthy::ControlRuntimeStalled);
     }
-    // The window owns the policy — minimum sample count, then consecutive breaching
-    // summaries — so this is one threshold rather than a second place it could drift.
-    if let Some(reactor) = inputs.reactor
-        && reactor.is_wedged()
-    {
+    if inputs.reactor_delay_p99_ms > inputs.reactor_delay_bound_ms {
         reasons.push(Unhealthy::ReactorWedged {
-            rolling_p99_ms: reactor.rolling_p99_ms,
+            observed_ms: inputs.reactor_delay_p99_ms,
             bound_ms: inputs.reactor_delay_bound_ms,
-            window_samples: reactor.samples,
-            consecutive_summaries: reactor.consecutive_breaches,
         });
     }
     Probe {
@@ -288,14 +249,6 @@ pub fn readiness(inputs: &ReadinessInputs) -> Probe {
             cap: inputs.safety_cap,
         });
     }
-    // The state owns its own threshold, so the number a 503 names and the number the gate
-    // acted on are one value rather than two that agree today.
-    if inputs.pressure.stops_receiving() {
-        reasons.push(Unhealthy::UnderMemoryPressure {
-            state: inputs.pressure,
-            threshold_percent: inputs.pressure.entry_percent(),
-        });
-    }
     Probe {
         status: if reasons.is_empty() { 200 } else { 503 },
         reasons,
@@ -308,30 +261,13 @@ mod tests {
         Dependency, HealthRoute, LIVE_PATH, LivenessInputs, READY_PATH, ReadinessInputs, Unhealthy,
         liveness, readiness,
     };
-    use crate::pressure::PressureState;
-    use crate::reactor::{ReactorSummary, SUSTAINED_BREACH_SUMMARIES};
 
     fn healthy_liveness() -> LivenessInputs {
         LivenessInputs {
             supervisors: Dependency::Satisfied,
             control_runtime: Dependency::Satisfied,
-            reactor: Some(summary(12, 0)),
+            reactor_delay_p99_ms: 12,
             reactor_delay_bound_ms: 50,
-        }
-    }
-
-    /// A published window whose rolling p99 is `rolling_p99_ms` and which has breached for
-    /// `consecutive_breaches` consecutive summaries.
-    fn summary(rolling_p99_ms: u32, consecutive_breaches: u32) -> ReactorSummary {
-        ReactorSummary {
-            p50_ms: 1,
-            p95_ms: rolling_p99_ms,
-            rolling_p99_ms,
-            maximum_ms: rolling_p99_ms,
-            samples: 300,
-            missed_ticks: 0,
-            window_age_ms: 29_900,
-            consecutive_breaches,
         }
     }
 
@@ -344,7 +280,6 @@ mod tests {
             draining: false,
             active_activations: 40,
             safety_cap: 200,
-            pressure: PressureState::Normal,
         }
     }
 
@@ -396,51 +331,15 @@ mod tests {
         );
 
         let mut inputs = healthy_liveness();
-        inputs.reactor = Some(summary(51, SUSTAINED_BREACH_SUMMARIES));
+        inputs.reactor_delay_p99_ms = 51;
         assert_eq!(
             liveness(&inputs).reasons,
             vec![Unhealthy::ReactorWedged {
-                rolling_p99_ms: 51,
-                bound_ms: 50,
-                window_samples: 300,
-                consecutive_summaries: SUSTAINED_BREACH_SUMMARIES,
+                observed_ms: 51,
+                bound_ms: 50
             }]
         );
         assert_eq!(liveness(&inputs).status, 503);
-    }
-
-    /// The whole point of the rename. A reader of a 503 body has to be able to tell a
-    /// windowed percentile from the one sample that happened to be latest, because the two
-    /// mean completely different things about whether to replace the task.
-    #[test]
-    fn a_wedge_is_reported_as_a_rolling_percentile_rather_than_an_instantaneous_delay() {
-        let mut inputs = healthy_liveness();
-        inputs.reactor = Some(summary(51, SUSTAINED_BREACH_SUMMARIES));
-        let body = liveness(&inputs).body();
-        assert!(body.contains("rolling reactor delay p99 51 ms"), "{body}");
-        assert!(body.contains("over 300 windowed samples"), "{body}");
-        assert!(
-            body.contains("2 consecutive one-second summaries"),
-            "{body}"
-        );
-    }
-
-    /// One breaching summary is one second of evidence. Liveness that flapped on it would
-    /// have the orchestrator replace a task for a single allocator pause.
-    #[test]
-    fn a_single_breaching_summary_does_not_wedge_the_reactor() {
-        let mut inputs = healthy_liveness();
-        inputs.reactor = Some(summary(5_000, 1));
-        assert!(liveness(&inputs).is_healthy());
-    }
-
-    /// An unmeasured reactor is not a wedged one. A task whose sampler has not published yet
-    /// still owns non-replayable effects.
-    #[test]
-    fn no_published_summary_is_no_evidence_rather_than_a_failure() {
-        let mut inputs = healthy_liveness();
-        inputs.reactor = None;
-        assert!(liveness(&inputs).is_healthy());
     }
 
     /// Drain fails readiness while liveness still passes. Reversing this would have the
@@ -485,46 +384,6 @@ mod tests {
         assert!(liveness(&healthy_liveness()).is_healthy());
     }
 
-    /// Measured memory pressure is a readiness concern and never a liveness one. Failing
-    /// liveness here would have the orchestrator kill a task precisely because it is holding
-    /// memory for effects it is trying to settle.
-    #[test]
-    fn memory_pressure_fails_readiness_only_and_names_its_threshold() {
-        for (state, threshold_percent) in [
-            (PressureState::AdmissionStop, 80),
-            (PressureState::Critical, 90),
-        ] {
-            let mut inputs = ready();
-            inputs.pressure = state;
-            let probe = readiness(&inputs);
-            assert_eq!(probe.status, 503);
-            assert!(probe.reasons.contains(&Unhealthy::UnderMemoryPressure {
-                state,
-                threshold_percent
-            }));
-            assert!(
-                probe
-                    .body()
-                    .contains(&format!("above {threshold_percent}%")),
-                "{}",
-                probe.body()
-            );
-            assert!(
-                liveness(&healthy_liveness()).is_healthy(),
-                "a task under memory pressure is still alive"
-            );
-        }
-    }
-
-    /// The warning watermark is an observation, not a refusal. Readiness must not fail at 70 %,
-    /// or the first alpha would take tasks out of service for a state that does nothing.
-    #[test]
-    fn the_warning_watermark_does_not_fail_readiness() {
-        let mut inputs = ready();
-        inputs.pressure = PressureState::Warning;
-        assert!(readiness(&inputs).is_healthy());
-    }
-
     #[test]
     fn every_readiness_dependency_is_reported_not_just_the_first() {
         let inputs = ReadinessInputs {
@@ -535,10 +394,9 @@ mod tests {
             draining: true,
             active_activations: 300,
             safety_cap: 200,
-            pressure: PressureState::Critical,
         };
         let probe = readiness(&inputs);
-        assert_eq!(probe.reasons.len(), 7, "{:?}", probe.reasons);
-        assert_eq!(probe.body().lines().count(), 7);
+        assert_eq!(probe.reasons.len(), 6, "{:?}", probe.reasons);
+        assert_eq!(probe.body().lines().count(), 6);
     }
 }

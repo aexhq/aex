@@ -25,10 +25,6 @@ use zeroize::Zeroizing;
 pub use aex_brain_domain::wire_pending::SessionCredentialPin;
 pub use aex_model_catalog::canonical::CredentialBindingRef;
 
-use crate::credential_flight::{
-    FlightAdmission, FlightJoin, FlightLease, FlightOutcome, FlightRegistry, FlightValidity,
-    MAX_FLIGHT_ELECTIONS,
-};
 use crate::transport::AuthScheme;
 use crate::wire_pending::{
     BoxFuture, CiphertextRef, EncryptionContext, RevocationEpoch, SourceGeneration,
@@ -264,14 +260,6 @@ impl ProviderApiKey {
         Self(plaintext)
     }
 
-    /// Hands the shared allocation to the cache and to a flight's waiters.
-    ///
-    /// Not a plaintext accessor: it moves the same reference-counted zeroizing
-    /// allocation, and nothing can read the string through what it returns.
-    fn into_shared(self) -> Arc<Zeroizing<String>> {
-        self.0
-    }
-
     /// Builds the one header the transport attaches, already marked sensitive
     /// so `reqwest` and `tracing` both redact it.
     ///
@@ -356,19 +344,16 @@ struct CacheShard {
     capacity: usize,
 }
 
-/// A bounded, expiring cache of decrypted keys with keyed single-flight.
+/// A bounded, expiring cache of decrypted keys.
 ///
 /// Decryption happens immediately before dispatch and the plaintext exists only
 /// in one reference-counted, zeroizing allocation plus the sensitive
-/// `HeaderValue` used by transport. Concurrent cold misses for one identity
-/// share one decrypt and that one allocation rather than each calling the
-/// authority. Revocation calls [`CredentialCache::invalidate`], which drops
-/// every matching cache reference and retires every matching running decrypt.
+/// `HeaderValue` used by transport. Revocation calls
+/// [`CredentialCache::invalidate`], which drops every matching cache reference.
 /// An already in-flight dispatch may keep its private reference until that
 /// attempt ends; the last reference drop zeroizes the allocation.
 pub struct CredentialCache {
     shards: Vec<CacheShard>,
-    flights: FlightRegistry,
     ttl: Duration,
 }
 
@@ -388,17 +373,6 @@ impl Default for CredentialCache {
 
 impl CredentialCache {
     /// Builds a cache with an explicit capacity and TTL.
-    ///
-    /// `capacity` bounds both the decrypted keys held and the decrypts running
-    /// at once, so there is one number to reason about: the cache never tracks
-    /// more distinct credentials than it could hold results for. The live
-    /// flight count is really bounded far below that by admission — a flight
-    /// exists only while a caller sits inside [`CredentialCache::decrypt`], and
-    /// the Brain admits sixteen concurrent activations — so at the default
-    /// capacity of [`CACHE_CAPACITY`] the ceiling is a memory backstop rather
-    /// than a limit a workload reaches. A caller past it decrypts alone and
-    /// does not cache, because a decrypt no flight covers cannot observe a
-    /// revocation that lands while it runs.
     #[must_use]
     pub fn new(capacity: usize, ttl: Duration) -> Self {
         let shard_count = capacity.clamp(1, CACHE_SHARDS);
@@ -411,27 +385,20 @@ impl CredentialCache {
                     capacity: base_capacity + usize::from(index < remainder),
                 })
                 .collect(),
-            flights: FlightRegistry::new(capacity),
             ttl,
         }
     }
 
-    /// Decrypts a binding, reusing a fresh entry where one exists and joining a
-    /// decrypt already running for the same identity where there is one.
+    /// Decrypts a binding, reusing a fresh entry where one exists.
     ///
     /// A hit clones only a private `Arc`, not the plaintext string, while the
-    /// shard lock is held. Concurrent cold misses for one identity produce one
-    /// decryptor call and one zeroizing allocation, shared by every caller. A
-    /// concurrent [`CredentialCache::invalidate`] removes future hits, retires
-    /// the running decrypt and keeps its result out of the cache, but does not
-    /// invalidate memory held by an in-flight caller; the shared allocation is
-    /// zeroized when its final owner drops.
+    /// shard lock is held. A concurrent [`CredentialCache::invalidate`] removes
+    /// future hits but does not invalidate memory held by an in-flight caller;
+    /// the shared allocation is zeroized when its final owner drops.
     ///
     /// # Errors
     ///
-    /// Propagates the decryptor's own [`CredentialResolveError`], to the caller
-    /// that ran it and to every caller that was waiting on it. A failure is
-    /// shared but never cached, so the next caller resolves it again.
+    /// Propagates the decryptor's own [`CredentialResolveError`].
     pub async fn decrypt(
         &self,
         binding: &ProviderCredentialBinding,
@@ -439,52 +406,15 @@ impl CredentialCache {
         now: aex_wire::types::Timestamp,
     ) -> Result<ProviderApiKey, CredentialResolveError> {
         let key = CredentialCacheKey::from(binding);
-        for _ in 0..MAX_FLIGHT_ELECTIONS {
-            if let Some(fresh) = self.fresh(&key) {
-                return Ok(ProviderApiKey::from_shared(fresh));
-            }
-            match self.flights.admit(key) {
-                FlightAdmission::Leading(lease) => {
-                    let outcome: FlightOutcome = decryptor
-                        .decrypt(binding, now)
-                        .await
-                        .map(ProviderApiKey::into_shared);
-                    if let Ok(shared) = &outcome {
-                        self.insert(key, Arc::clone(shared), &lease);
-                    }
-                    lease.settle(outcome.clone());
-                    return outcome.map(ProviderApiKey::from_shared);
-                }
-                FlightAdmission::Following(follower) => match follower.joined().await {
-                    FlightJoin::Settled(outcome) => {
-                        return outcome.map(ProviderApiKey::from_shared);
-                    }
-                    // The leader ran out of deadline or was cancelled before it
-                    // published anything, so nobody will. Re-elect.
-                    FlightJoin::Abandoned => {}
-                },
-                FlightAdmission::Unregistered => break,
-            }
+        if let Some(cached) = self.take_fresh(&key) {
+            return Ok(cached);
         }
-        // Reached only when the registry is full, or when every leader this
-        // caller joined was abandoned. Decrypt alone, and do not cache: a
-        // decrypt no flight covers cannot show that a revocation did not land
-        // while it ran, and an entry that cannot be shown to be current is
-        // exactly the stale insertion revocation must never leave behind.
-        decryptor.decrypt(binding, now).await
+        let decrypted = decryptor.decrypt(binding, now).await?;
+        self.insert(key, Arc::clone(&decrypted.0));
+        Ok(decrypted)
     }
 
-    /// How many decrypts are running right now.
-    ///
-    /// A flight exists only while a caller is inside
-    /// [`CredentialCache::decrypt`], so this returns to zero once a burst
-    /// drains. It holds no plaintext of its own to leak: it is a count.
-    #[must_use]
-    pub fn active_flights(&self) -> usize {
-        self.flights.active()
-    }
-
-    fn fresh(&self, key: &CredentialCacheKey) -> Option<Arc<Zeroizing<String>>> {
+    fn take_fresh(&self, key: &CredentialCacheKey) -> Option<ProviderApiKey> {
         let shard = self.shard(key);
         let mut entries = shard.entries.lock().ok()?;
         let entry = entries.get(key)?;
@@ -492,10 +422,10 @@ impl CredentialCache {
             entries.remove(key);
             return None;
         }
-        Some(Arc::clone(&entry.key))
+        Some(ProviderApiKey::from_shared(Arc::clone(&entry.key)))
     }
 
-    fn insert(&self, key: CredentialCacheKey, value: Arc<Zeroizing<String>>, lease: &FlightLease) {
+    fn insert(&self, key: CredentialCacheKey, value: Arc<Zeroizing<String>>) {
         let shard = self.shard(&key);
         if shard.capacity == 0 {
             return;
@@ -503,15 +433,6 @@ impl CredentialCache {
         let Ok(mut entries) = shard.entries.lock() else {
             return;
         };
-        // Read while the shard lock is held. `invalidate` marks every matching
-        // flight before it touches a shard, so a mark landing after this read
-        // belongs to a revocation whose own removal pass must first wait for
-        // this lock and then takes the entry written below straight back out.
-        // Reading it any earlier leaves a window where a revoked key is cached
-        // after the revocation finished.
-        if lease.validity() == FlightValidity::Invalidated {
-            return;
-        }
         entries.retain(|_, entry| entry.inserted_at.elapsed() < self.ttl);
         if entries.len() >= shard.capacity {
             // Evict the oldest. Its allocation is zeroized now unless an
@@ -533,34 +454,16 @@ impl CredentialCache {
         );
     }
 
-    /// Drops every entry for a binding and retires every decrypt running for
-    /// it. Returns how many cached entries were removed.
-    ///
-    /// The count covers entries only. A running decrypt is marked instead:
-    /// its result never enters the cache, no later caller can join it, and the
-    /// caller already inside it keeps the reference it asked for until the
-    /// pre-send revalidation fence refuses the send.
+    /// Drops every entry for a binding. Returns how many were removed.
     #[must_use]
     pub fn invalidate(&self, workspace: WorkspaceId, binding: ProviderCredentialId) -> usize {
-        self.revoke(&|key| key.workspace == workspace && key.binding == binding)
+        self.retain_all(|key| !(key.workspace == workspace && key.binding == binding))
     }
 
-    /// Drops every entry for a workspace and retires its running decrypts.
-    ///
-    /// Returns how many cached entries were removed, on the same terms as
-    /// [`CredentialCache::invalidate`].
+    /// Drops every entry for a workspace.
     #[must_use]
     pub fn invalidate_workspace(&self, workspace: WorkspaceId) -> usize {
-        self.revoke(&|key| key.workspace == workspace)
-    }
-
-    fn revoke(&self, covered: &dyn Fn(&CredentialCacheKey) -> bool) -> usize {
-        // Flights are marked before any shard is touched. That order is what
-        // makes the guarded insert safe: an insert that has already passed its
-        // check still holds the shard lock this removal pass needs, so the
-        // entry it writes is taken back out on the next line.
-        self.flights.invalidate_matching(covered);
-        self.retain_all(|key| !covered(key))
+        self.retain_all(|key| key.workspace != workspace)
     }
 
     /// How many entries are held.
@@ -651,14 +554,9 @@ pub async fn resolve(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
-
     use aex_wire::ids::{OrganizationId, PrefixedId, ProviderCredentialId, WorkspaceId};
     use aex_wire::provider::ProviderId;
     use aex_wire::types::Region;
-    use tokio::sync::Notify;
-    use zeroize::Zeroizing;
 
     use super::{
         BindingState, CredentialCache, CredentialResolveError, CredentialRevision,
@@ -753,91 +651,6 @@ mod tests {
             let text = self.0.to_owned();
             Box::pin(async move { Ok(ProviderApiKey::new(text)) })
         }
-    }
-
-    /// What the gated fixture decryptor does once it is released.
-    #[derive(Clone, Copy)]
-    enum FixtureOutcome {
-        Succeeds(&'static str),
-        Refuses,
-    }
-
-    /// A decryptor that counts its calls and finishes only when told to.
-    ///
-    /// Holding every call open is what makes "exactly one decrypt" observable
-    /// rather than timing-dependent: the assertion is made while the whole
-    /// burst is parked, not after it has drained.
-    struct Gated {
-        outcome: FixtureOutcome,
-        calls: AtomicUsize,
-        release: Notify,
-    }
-
-    impl Gated {
-        fn new(outcome: FixtureOutcome) -> Self {
-            Self {
-                outcome,
-                calls: AtomicUsize::new(0),
-                release: Notify::new(),
-            }
-        }
-
-        fn calls(&self) -> usize {
-            self.calls.load(AtomicOrdering::Relaxed)
-        }
-
-        fn release(&self) {
-            self.release.notify_waiters();
-        }
-    }
-
-    impl ProviderCredentialDecryptor for Gated {
-        fn decrypt<'a>(
-            &'a self,
-            _binding: &'a ProviderCredentialBinding,
-            _now: aex_wire::types::Timestamp,
-        ) -> BoxFuture<'a, Result<ProviderApiKey, CredentialResolveError>> {
-            Box::pin(async move {
-                self.calls.fetch_add(1, AtomicOrdering::Relaxed);
-                self.release.notified().await;
-                match self.outcome {
-                    FixtureOutcome::Succeeds(text) => Ok(ProviderApiKey::new(text.to_owned())),
-                    FixtureOutcome::Refuses => Err(CredentialResolveError::DecryptFailed),
-                }
-            })
-        }
-    }
-
-    /// Whether a named type implements a named trait.
-    ///
-    /// Rust has no negative bound, so `ProviderApiKey: !Debug` cannot be
-    /// asserted directly. Item resolution can assert it: the inherent constant
-    /// is reachable only while the bound holds, and an unreachable inherent
-    /// constant falls back to the blanket trait constant. Every use below
-    /// asserts the same bound against a type that does implement it, which is
-    /// what shows the probe still detects an implementation that exists rather
-    /// than always answering no.
-    macro_rules! implements {
-        ($subject:ty: $($bound:tt)+) => {{
-            /// Exactly one of the two constants is reachable for any one
-            /// subject, and which one is reachable is the whole answer, so the
-            /// other is dead by construction rather than by oversight.
-            #[allow(dead_code, reason = "one of the two constants is dead by construction")]
-            trait Absent {
-                const IMPLEMENTS: bool = false;
-            }
-            impl<T: ?Sized> Absent for T {}
-
-            #[allow(dead_code, reason = "a type-level question is never constructed")]
-            struct Probe<T: ?Sized>(core::marker::PhantomData<T>);
-
-            #[allow(dead_code, reason = "one of the two constants is dead by construction")]
-            impl<T: ?Sized + $($bound)+> Probe<T> {
-                const IMPLEMENTS: bool = true;
-            }
-
-            <Probe<$subject>>::IMPLEMENTS
-        }};
     }
 
     fn now() -> aex_wire::types::Timestamp {
@@ -1113,241 +926,6 @@ mod tests {
     fn the_cache_debug_rendering_names_no_binding() {
         let cache = CredentialCache::default();
         assert_eq!(format!("{cache:?}"), "CredentialCache { .. }");
-    }
-
-    #[tokio::test]
-    async fn a_cold_burst_of_one_hundred_callers_decrypts_once_into_one_allocation() {
-        let cache = CredentialCache::default();
-        let binding = binding(ProviderId::Openai, BindingState::Ready, 0);
-        let decryptor = Gated::new(FixtureOutcome::Succeeds("sk-burst"));
-        let mut burst = Box::pin(futures::future::join_all(
-            (0..100).map(|_| cache.decrypt(&binding, &decryptor, now())),
-        ));
-
-        assert!(
-            futures::poll!(&mut burst).is_pending(),
-            "the whole burst must park behind one held-open decrypt"
-        );
-        assert_eq!(
-            decryptor.calls(),
-            1,
-            "one cold burst must reach the credential authority once"
-        );
-        assert_eq!(cache.active_flights(), 1);
-
-        decryptor.release();
-        let keys = burst.await;
-        let shared: Vec<&Arc<Zeroizing<String>>> = keys
-            .iter()
-            .map(|outcome| {
-                let key = outcome.as_ref().expect("every caller receives the decrypt");
-                assert_eq!(key.expose_for_redaction(), "sk-burst");
-                &key.0
-            })
-            .collect();
-        let first = shared[0];
-        assert!(
-            shared
-                .iter()
-                .all(|candidate| Arc::ptr_eq(*candidate, first)),
-            "a burst must share one zeroizing allocation, not copy plaintext per caller"
-        );
-        assert_eq!(
-            Arc::strong_count(first),
-            101,
-            "one hundred callers plus the single cache entry"
-        );
-        assert_eq!(cache.len(), 1);
-        assert_eq!(
-            cache.active_flights(),
-            0,
-            "a settled flight must not be left behind"
-        );
-    }
-
-    #[tokio::test]
-    async fn a_different_revision_or_generation_never_shares_a_flight() {
-        let cache = CredentialCache::default();
-        let base = binding(ProviderId::Openai, BindingState::Ready, 0);
-        let mut rotated = base.clone();
-        rotated.revision = CredentialRevision(2);
-        let mut regenerated = base.clone();
-        regenerated.generation = SourceGeneration(2);
-        regenerated.context.generation = SourceGeneration(2);
-        regenerated.context_digest = regenerated.context.digest();
-
-        let decryptor = Gated::new(FixtureOutcome::Succeeds("sk-distinct"));
-        let mut burst = Box::pin(futures::future::join_all((0..30).flat_map(|_| {
-            [
-                cache.decrypt(&base, &decryptor, now()),
-                cache.decrypt(&rotated, &decryptor, now()),
-                cache.decrypt(&regenerated, &decryptor, now()),
-            ]
-        })));
-
-        assert!(futures::poll!(&mut burst).is_pending());
-        assert_eq!(
-            decryptor.calls(),
-            3,
-            "one flight per exact cache identity, never one for the binding"
-        );
-        assert_eq!(cache.active_flights(), 3);
-
-        decryptor.release();
-        assert!(burst.await.iter().all(Result::is_ok));
-        assert_eq!(cache.len(), 3);
-        assert_eq!(cache.active_flights(), 0);
-    }
-
-    #[tokio::test]
-    async fn a_failed_flight_is_shared_by_every_waiter_and_never_positively_cached() {
-        let cache = CredentialCache::default();
-        let binding = binding(ProviderId::Openai, BindingState::Ready, 0);
-        let decryptor = Gated::new(FixtureOutcome::Refuses);
-        let mut burst = Box::pin(futures::future::join_all(
-            (0..16).map(|_| cache.decrypt(&binding, &decryptor, now())),
-        ));
-
-        assert!(futures::poll!(&mut burst).is_pending());
-        assert_eq!(decryptor.calls(), 1);
-
-        decryptor.release();
-        for outcome in burst.await {
-            match outcome {
-                Ok(_) => panic!("a refused decrypt must not produce a key"),
-                Err(error) => assert_eq!(error, CredentialResolveError::DecryptFailed),
-            }
-        }
-        assert!(
-            cache.is_empty(),
-            "a failure must never enter the positive cache"
-        );
-        assert_eq!(cache.active_flights(), 0);
-
-        let recovered = cache
-            .decrypt(&binding, &Constant("sk-after-failure"), now())
-            .await
-            .expect("nothing negative was kept, so the next caller resolves again");
-        assert_eq!(recovered.expose_for_redaction(), "sk-after-failure");
-    }
-
-    #[tokio::test]
-    async fn an_invalidation_during_a_flight_keeps_its_result_out_of_the_cache() {
-        let cache = CredentialCache::default();
-        let binding = binding(ProviderId::Openai, BindingState::Ready, 0);
-        let decryptor = Gated::new(FixtureOutcome::Succeeds("sk-revoked"));
-        let mut burst = Box::pin(futures::future::join_all(
-            (0..4).map(|_| cache.decrypt(&binding, &decryptor, now())),
-        ));
-
-        assert!(futures::poll!(&mut burst).is_pending());
-        assert_eq!(cache.active_flights(), 1);
-        assert_eq!(
-            cache.invalidate(workspace(), binding.id),
-            0,
-            "nothing was cached yet, so only the flight is affected"
-        );
-        assert_eq!(
-            cache.active_flights(),
-            0,
-            "a revocation retires the decrypt that is still running"
-        );
-
-        decryptor.release();
-        for outcome in burst.await {
-            // The callers already inside the decrypt keep the reference they
-            // asked for. Erasing it is not attempted; the pre-send
-            // revalidation fence is what refuses their send.
-            let key = outcome.expect("a retired flight still settles its own waiters");
-            assert_eq!(key.expose_for_redaction(), "sk-revoked");
-        }
-        assert!(
-            cache.is_empty(),
-            "a revoked flight must never be positively cached"
-        );
-
-        let refreshed = cache
-            .decrypt(&binding, &Constant("sk-fresh"), now())
-            .await
-            .expect("a later caller resolves and decrypts again");
-        assert_eq!(refreshed.expose_for_redaction(), "sk-fresh");
-        assert_eq!(decryptor.calls(), 1);
-    }
-
-    #[tokio::test]
-    async fn a_cancelled_leader_hands_its_identity_to_the_next_caller() {
-        let cache = CredentialCache::default();
-        let binding = binding(ProviderId::Openai, BindingState::Ready, 0);
-        let decryptor = Gated::new(FixtureOutcome::Succeeds("sk-re-elected"));
-        let mut leader = Box::pin(cache.decrypt(&binding, &decryptor, now()));
-        let mut follower = Box::pin(cache.decrypt(&binding, &decryptor, now()));
-
-        assert!(futures::poll!(&mut leader).is_pending());
-        assert!(futures::poll!(&mut follower).is_pending());
-        assert_eq!(cache.active_flights(), 1);
-        assert_eq!(decryptor.calls(), 1);
-
-        // Exactly what an effect deadline or a cancellation does to the leader.
-        drop(leader);
-        assert_eq!(cache.active_flights(), 0);
-
-        assert!(futures::poll!(&mut follower).is_pending());
-        assert_eq!(
-            decryptor.calls(),
-            2,
-            "the follower must re-elect rather than wait on a leader that is gone"
-        );
-        assert_eq!(cache.active_flights(), 1);
-
-        decryptor.release();
-        let key = follower.await.expect("the re-elected caller completes");
-        assert_eq!(key.expose_for_redaction(), "sk-re-elected");
-    }
-
-    #[tokio::test]
-    async fn a_concurrent_burst_of_distinct_identities_stays_inside_its_capacity() {
-        let cache = CredentialCache::new(2, core::time::Duration::from_mins(1));
-        let bindings: Vec<ProviderCredentialBinding> = (0..8u8)
-            .map(|seed| {
-                let mut entry = binding(ProviderId::Openai, BindingState::Ready, 0);
-                entry.revision = CredentialRevision(u64::from(seed));
-                entry
-            })
-            .collect();
-        let decryptor = Gated::new(FixtureOutcome::Succeeds("sk-capped"));
-        let mut burst = Box::pin(futures::future::join_all(
-            bindings
-                .iter()
-                .map(|entry| cache.decrypt(entry, &decryptor, now())),
-        ));
-
-        assert!(futures::poll!(&mut burst).is_pending());
-        assert!(
-            cache.active_flights() <= 2,
-            "flights grew to {}",
-            cache.active_flights()
-        );
-
-        decryptor.release();
-        assert!(burst.await.iter().all(Result::is_ok));
-        assert!(cache.len() <= 2, "cache grew to {}", cache.len());
-        assert_eq!(cache.active_flights(), 0);
-    }
-
-    #[test]
-    fn the_decrypted_key_gained_no_render_or_copy_interface() {
-        // Sharing one allocation between a flight's waiters must not have
-        // widened the one way plaintext is allowed to leave this type.
-        assert!(!implements!(ProviderApiKey: core::fmt::Debug));
-        assert!(implements!(String: core::fmt::Debug));
-        assert!(!implements!(ProviderApiKey: core::fmt::Display));
-        assert!(implements!(String: core::fmt::Display));
-        assert!(!implements!(ProviderApiKey: Clone));
-        assert!(implements!(String: Clone));
-        assert!(!implements!(ProviderApiKey: serde::Serialize));
-        assert!(implements!(String: serde::Serialize));
-        assert!(!implements!(ProviderApiKey: core::ops::Deref<Target = str>));
-        assert!(implements!(String: core::ops::Deref<Target = str>));
     }
 
     #[test]

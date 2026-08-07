@@ -53,16 +53,6 @@ pub const AEX_ISOLATION_COUNT: &str = "aex.isolation.count";
 /// Cardinality: `bounded`. Visibility: `public`. Maximum length: 16 bytes.
 pub const AEX_ISOLATION_FINGERPRINT: &str = "aex.isolation.fingerprint";
 
-/// `aex.memory.source` — Interface a memory reading came from, or `unavailable` when none declared a limit.
-///
-/// Cardinality: `fixed`. Visibility: `public`. Maximum length: 16 bytes.
-pub const AEX_MEMORY_SOURCE: &str = "aex.memory.source";
-
-/// `aex.memory.used_percent` — Measured percentage of the task memory limit in use. Absent when no limit is declared.
-///
-/// Cardinality: `bounded`. Visibility: `public`. Maximum length: 10 bytes.
-pub const AEX_MEMORY_USED_PERCENT: &str = "aex.memory.used_percent";
-
 /// `aex.meter` — Usage meter identity, one of the four launch meters.
 ///
 /// Cardinality: `fixed`. Visibility: `public`. Maximum length: 32 bytes.
@@ -98,16 +88,6 @@ pub const AEX_PAYMENT_INSTRUMENT: &str = "aex.payment.instrument";
 /// Cardinality: `fixed`. Visibility: `public`. Maximum length: 8 bytes.
 pub const AEX_PLANE: &str = "aex.plane";
 
-/// `aex.pressure.previous_state` — Measured memory-pressure state a task left.
-///
-/// Cardinality: `fixed`. Visibility: `public`. Maximum length: 16 bytes.
-pub const AEX_PRESSURE_PREVIOUS_STATE: &str = "aex.pressure.previous_state";
-
-/// `aex.pressure.state` — Measured memory-pressure state a task entered: normal, warning, admission-stop or critical.
-///
-/// Cardinality: `fixed`. Visibility: `public`. Maximum length: 16 bytes.
-pub const AEX_PRESSURE_STATE: &str = "aex.pressure.state";
-
 /// `aex.provider` — Model provider, one of the six admitted BYOK providers.
 ///
 /// Cardinality: `fixed`. Visibility: `public`. Maximum length: 16 bytes.
@@ -142,11 +122,6 @@ pub const AEX_SECRET_PLAINTEXT: &str = "aex.secret.plaintext";
 ///
 /// Cardinality: `unbounded`. Visibility: `internal`. Maximum length: 36 bytes.
 pub const AEX_SESSION_ID: &str = "aex.session.id";
-
-/// `aex.stream.counter` — Which per-socket stream counter one aggregate delta reports.
-///
-/// Cardinality: `fixed`. Visibility: `public`. Maximum length: 24 bytes.
-pub const AEX_STREAM_COUNTER: &str = "aex.stream.counter";
 
 /// `aex.workspace.id` — Workspace identifier. Internal only: never a metric dimension.
 ///
@@ -198,18 +173,6 @@ pub const ATTRIBUTES: &[AttributeSpec] = &[
         max_len: 16,
     },
     AttributeSpec {
-        name: AEX_MEMORY_SOURCE,
-        cardinality: Cardinality::Fixed,
-        visibility: Visibility::Public,
-        max_len: 16,
-    },
-    AttributeSpec {
-        name: AEX_MEMORY_USED_PERCENT,
-        cardinality: Cardinality::Bounded,
-        visibility: Visibility::Public,
-        max_len: 10,
-    },
-    AttributeSpec {
         name: AEX_METER,
         cardinality: Cardinality::Fixed,
         visibility: Visibility::Public,
@@ -250,18 +213,6 @@ pub const ATTRIBUTES: &[AttributeSpec] = &[
         cardinality: Cardinality::Fixed,
         visibility: Visibility::Public,
         max_len: 8,
-    },
-    AttributeSpec {
-        name: AEX_PRESSURE_PREVIOUS_STATE,
-        cardinality: Cardinality::Fixed,
-        visibility: Visibility::Public,
-        max_len: 16,
-    },
-    AttributeSpec {
-        name: AEX_PRESSURE_STATE,
-        cardinality: Cardinality::Fixed,
-        visibility: Visibility::Public,
-        max_len: 16,
     },
     AttributeSpec {
         name: AEX_PROVIDER,
@@ -306,12 +257,6 @@ pub const ATTRIBUTES: &[AttributeSpec] = &[
         max_len: 36,
     },
     AttributeSpec {
-        name: AEX_STREAM_COUNTER,
-        cardinality: Cardinality::Fixed,
-        visibility: Visibility::Public,
-        max_len: 24,
-    },
-    AttributeSpec {
         name: AEX_WORKSPACE_ID,
         cardinality: Cardinality::Unbounded,
         visibility: Visibility::Internal,
@@ -330,16 +275,6 @@ pub const METRIC_AEX_ADMISSION_REJECTED: &str = "aex.admission.rejected";
 ///
 /// Instrument: `histogram`. Unit: `ms`.
 pub const METRIC_AEX_OPERATION_DURATION: &str = "aex.operation.duration";
-
-/// `aex.stream.bytes` — Aggregate delta of authority bytes returned to open stream sockets since the previous publication.
-///
-/// Instrument: `counter`. Unit: `By`.
-pub const METRIC_AEX_STREAM_BYTES: &str = "aex.stream.bytes";
-
-/// `aex.stream.count` — Aggregate delta of one named per-socket stream counter since the previous publication.
-///
-/// Instrument: `counter`. Unit: `1`.
-pub const METRIC_AEX_STREAM_COUNT: &str = "aex.stream.count";
 
 /// `aex.telemetry.flush.deadline.exceeded` — Flush attempts that stopped at their deadline with records still pending.
 ///
@@ -376,18 +311,6 @@ pub const METRICS: &[MetricSpec] = &[
             AEX_PLANE,
             AEX_REGION,
         ],
-    },
-    MetricSpec {
-        name: METRIC_AEX_STREAM_BYTES,
-        instrument: Instrument::Counter,
-        unit: "By",
-        attributes: &[AEX_DEPLOYABLE, AEX_PLANE, AEX_REGION],
-    },
-    MetricSpec {
-        name: METRIC_AEX_STREAM_COUNT,
-        instrument: Instrument::Counter,
-        unit: "1",
-        attributes: &[AEX_DEPLOYABLE, AEX_PLANE, AEX_REGION, AEX_STREAM_COUNTER],
     },
     MetricSpec {
         name: METRIC_AEX_TELEMETRY_FLUSH_DEADLINE_EXCEEDED,
@@ -441,10 +364,6 @@ pub const SPANS: &[SpanSpec] = &[
 /// `aex.brain.due_row.isolated` — Brain isolated a malformed due-index row while valid siblings continued.
 pub const EVENT_AEX_BRAIN_DUE_ROW_ISOLATED: &str = "aex.brain.due_row.isolated";
 
-/// `aex.brain.memory_pressure.transitioned` — Brain crossed a measured memory watermark, or lost or regained the ability to measure one.
-pub const EVENT_AEX_BRAIN_MEMORY_PRESSURE_TRANSITIONED: &str =
-    "aex.brain.memory_pressure.transitioned";
-
 /// `aex.process.configuration.rejected` — A deployable refused to start because its configuration was invalid.
 pub const EVENT_AEX_PROCESS_CONFIGURATION_REJECTED: &str = "aex.process.configuration.rejected";
 
@@ -464,18 +383,6 @@ pub const EVENTS: &[EventSpec] = &[
             AEX_ISOLATION_COUNT,
             AEX_ISOLATION_FINGERPRINT,
             AEX_PLANE,
-            AEX_REGION,
-        ],
-    },
-    EventSpec {
-        name: EVENT_AEX_BRAIN_MEMORY_PRESSURE_TRANSITIONED,
-        attributes: &[
-            AEX_DEPLOYABLE,
-            AEX_MEMORY_SOURCE,
-            AEX_MEMORY_USED_PERCENT,
-            AEX_PLANE,
-            AEX_PRESSURE_PREVIOUS_STATE,
-            AEX_PRESSURE_STATE,
             AEX_REGION,
         ],
     },

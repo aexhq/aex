@@ -25,7 +25,6 @@ pub mod budget;
 pub mod build_identity;
 pub mod catalog_port;
 pub mod credential;
-pub(crate) mod credential_flight;
 pub mod deepseek;
 pub mod error;
 pub mod google;

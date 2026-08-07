@@ -15,19 +15,17 @@ use aws_sdk_dynamodb::Client;
 use crate::attr::{Item, ItemBuilder, n, s, stamp};
 use crate::error::{Idempotence, Resolution, StoreError, classify};
 use crate::plan::Participant;
-use crate::projection::{WORKSPACE_EDGE_LIMITS, edge_limits_key};
 use crate::projection_limit::{
     WORKSPACE_LIMIT, WORKSPACE_LIMIT_BUNDLE, WORKSPACE_LIMIT_BUNDLE_HEAD, decode_limit_at,
     limit_bundle_head_key, limit_bundle_key, limit_key,
 };
-use crate::wire_pending::{EdgeLimits, ProjectedWorkspaceLimit};
+use crate::wire_pending::ProjectedWorkspaceLimit;
 
 const LIMIT_PARTICIPANT: Participant = Participant::new("authz.limit");
 
 const LIMIT_WRITE_CONDITION: &str = "attribute_not_exists(#pk) OR (#item_type = :item_type AND #workspace_id = :workspace_id AND #limit_id = :limit_id AND (#revision < :revision OR (#revision = :revision AND #value = :value AND #source = :source AND #changed_at = :changed_at)))";
 const BUNDLE_HEAD_CONDITION: &str = "attribute_not_exists(#pk) OR (#item_type = :item_type AND #workspace_id = :workspace_id AND (#revision < :revision OR (#revision = :revision AND #defaults_revision = :defaults_revision AND #changed_at = :changed_at)))";
 const BUNDLE_CONDITION: &str = "attribute_not_exists(#pk) OR (#item_type = :item_type AND #workspace_id = :workspace_id AND (#revision < :revision OR (#revision = :revision AND #limits = :limits)))";
-const EDGE_LIMITS_CONDITION: &str = "attribute_not_exists(#pk) OR (#item_type = :item_type AND #workspace_id = :workspace_id AND #revision <= :revision)";
 
 /// One complete effective-limit projection selected by regional capacity.
 ///
@@ -175,92 +173,6 @@ pub fn limit_bundle_put(
         .expression_attribute_values(":workspace_id", s(write.workspace.to_string()))
         .expression_attribute_values(":revision", n(write.revision))
         .expression_attribute_values(":limits", s(limits)))
-}
-
-/// Builds the hot admission-limit action.
-///
-/// The four ceilings are cut from the same bundle, in the same transaction, at
-/// the same revision as every member row. There is therefore no window in which
-/// the edge row and the bundle describe different revisions — which is the whole
-/// reason a request edge can read one row instead of fencing two.
-///
-/// # Errors
-///
-/// [`StoreError::Invalid`] when the bundle is incomplete or inconsistent, or
-/// when a ceiling admission needs is absent or not positive.
-pub fn edge_limits_put(
-    table: &str,
-    write: &LimitBundleWrite,
-) -> Result<aws_sdk_dynamodb::types::builders::PutBuilder, StoreError> {
-    validate_bundle(write)?;
-    let edge = EdgeLimits {
-        workspace: write.workspace,
-        revision: write.revision,
-        json_body_bytes: scalar(write, LimitId::ApiJsonBody)?,
-        otlp_body_bytes: dimension(write, LimitId::TelemetryBatch, "encoded_bytes")?,
-        query_page_items: dimension(write, LimitId::QueryPage, "items")?,
-        query_page_bytes: dimension(write, LimitId::QueryPage, "serialized_bytes")?,
-        changed_at: write.changed_at,
-    };
-    if !edge.is_complete() {
-        return Err(StoreError::Invalid {
-            detail: "the admission limit subset carries a zero ceiling".to_owned(),
-        });
-    }
-    let (pk, sk) = edge_limits_key(write.workspace);
-    let item = ItemBuilder::new(WORKSPACE_EDGE_LIMITS)
-        .set("pk", s(pk))
-        .set("sk", s(sk))
-        .set("workspaceId", s(write.workspace.to_string()))
-        .set("revision", n(edge.revision))
-        .set("jsonBodyBytes", n(edge.json_body_bytes))
-        .set("otlpBodyBytes", n(edge.otlp_body_bytes))
-        .set("queryPageItems", n(edge.query_page_items))
-        .set("queryPageBytes", n(edge.query_page_bytes))
-        .set("changedAt", stamp(edge.changed_at))
-        .build();
-    Ok(aws_sdk_dynamodb::types::Put::builder()
-        .table_name(table)
-        .set_item(Some(item))
-        .condition_expression(EDGE_LIMITS_CONDITION)
-        .expression_attribute_names("#pk", "pk")
-        .expression_attribute_names("#item_type", "itemType")
-        .expression_attribute_names("#workspace_id", "workspaceId")
-        .expression_attribute_names("#revision", "revision")
-        .expression_attribute_values(":item_type", s(WORKSPACE_EDGE_LIMITS))
-        .expression_attribute_values(":workspace_id", s(write.workspace.to_string()))
-        .expression_attribute_values(":revision", n(edge.revision)))
-}
-
-/// One registered scalar ceiling, as a `u64`.
-fn scalar(write: &LimitBundleWrite, id: LimitId) -> Result<u64, StoreError> {
-    let value = write
-        .limits
-        .iter()
-        .find(|limit| limit.id == id)
-        .and_then(|limit| limit.effective_value.scalar())
-        .ok_or_else(|| missing(id, "value"))?;
-    u64::try_from(value.get()).map_err(|_| missing(id, "value"))
-}
-
-/// One registered map dimension, as a `u64`.
-fn dimension(write: &LimitBundleWrite, id: LimitId, name: &'static str) -> Result<u64, StoreError> {
-    let value = write
-        .limits
-        .iter()
-        .find(|limit| limit.id == id)
-        .and_then(|limit| limit.effective_value.dimension(name))
-        .ok_or_else(|| missing(id, name))?;
-    u64::try_from(value.get()).map_err(|_| missing(id, name))
-}
-
-fn missing(id: LimitId, dimension: &str) -> StoreError {
-    StoreError::Invalid {
-        detail: format!(
-            "the admission limit subset needs `{}`.`{dimension}`",
-            id.as_str()
-        ),
-    }
 }
 
 fn validate_bundle(write: &LimitBundleWrite) -> Result<(), StoreError> {
