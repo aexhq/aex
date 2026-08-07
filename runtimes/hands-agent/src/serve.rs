@@ -996,6 +996,9 @@ mod tests {
         assert!(chunk.last);
     }
 
+    // This end-to-end cancellation fixture intentionally keeps the complete
+    // request/terminal sequence together so the race remains executable.
+    #[allow(clippy::too_many_lines)]
     #[tokio::test]
     async fn a_cancelled_detached_exec_is_escalated_and_terminalizes_cancelled() {
         use std::sync::atomic::{AtomicBool, Ordering};
