@@ -23,6 +23,13 @@ pub enum Topic {
     AccountStateChanged,
     /// An invitation notification must be sent.
     InvitationEmailRequested,
+    /// A workspace API key was minted and every region must learn it exists.
+    ///
+    /// A region cannot admit a request against a key it has never heard of, so
+    /// this is committed in the same transaction as the key itself. Without it
+    /// the projection could only ever record revocations, and "no row" would
+    /// have to mean "not revoked" rather than "no such key".
+    ApiKeyCreated,
     /// A revocation epoch advanced and every region must learn it.
     AuthorizationEpochChanged,
     /// A new assertion signing key must be projected to every region.
@@ -31,11 +38,12 @@ pub enum Topic {
 
 impl Topic {
     /// Every topic.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::WorkspaceProvisionRequested,
         Self::WorkspaceDeleteRequested,
         Self::AccountStateChanged,
         Self::InvitationEmailRequested,
+        Self::ApiKeyCreated,
         Self::AuthorizationEpochChanged,
         Self::AuthorizationSigningKeyPublished,
     ];
@@ -48,6 +56,7 @@ impl Topic {
             Self::WorkspaceDeleteRequested => "workspace.delete.requested",
             Self::AccountStateChanged => "account.state.changed",
             Self::InvitationEmailRequested => "invitation.email.requested",
+            Self::ApiKeyCreated => "api_key.created",
             Self::AuthorizationEpochChanged => "authorization.epoch.changed",
             Self::AuthorizationSigningKeyPublished => "authorization.signing_key.published",
         }
@@ -284,6 +293,6 @@ mod tests {
             assert_eq!(Topic::parse(topic.as_str()), Some(topic));
         }
         assert_eq!(Topic::parse("workspace.provision.done"), None);
-        assert_eq!(Topic::ALL.len(), 6);
+        assert_eq!(Topic::ALL.len(), 7);
     }
 }

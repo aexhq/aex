@@ -751,7 +751,11 @@ async fn a_quarantined_spool_chunk_escalates_to_a_durable_gap_rather_than_vanish
     let actions = transaction["TransactItems"]
         .as_array()
         .expect("transaction actions");
-    assert_eq!(actions.len(), 2, "one gap Put and one source Update");
+    assert_eq!(
+        actions.len(),
+        3,
+        "one gap Put, one gap-change hint Update and one source Update"
+    );
     let gap = &actions[0]["Put"];
     let item = &gap["Item"];
     assert_eq!(item["itemType"]["S"].as_str(), Some("telemetry_gap"));
@@ -787,13 +791,32 @@ async fn a_quarantined_spool_chunk_escalates_to_a_durable_gap_rather_than_vanish
         Some("attribute_not_exists(#n0) AND attribute_not_exists(#n1)".to_owned()),
         "a gap revision is immutable"
     );
+    let hint = &actions[1]["Update"];
+    assert_eq!(
+        hint["Key"]["pk"]["S"].as_str(),
+        Some("GAPV#wsp_0000000001e40r2081040g2081"),
+        "the hint the follow sockets read is advanced by the same transaction"
+    );
+    assert_eq!(hint["Key"]["sk"]["S"].as_str(), Some("CHANGE"));
+    let published = hint["UpdateExpression"]
+        .as_str()
+        .expect("the hint carries an update");
     assert!(
-        actions[1]["Update"]["UpdateExpression"]
+        published.contains("ADD "),
+        "a hint that is set rather than added would lose a concurrent append: {published}"
+    );
+    assert!(
+        hint.get("ConditionExpression").is_none(),
+        "the hint may never be the reason a proven gap fails to land: {hint}"
+    );
+
+    assert!(
+        actions[2]["Update"]["UpdateExpression"]
             .as_str()
             .is_some_and(|update| update.contains("REMOVE ")),
         "the same transaction removes the source from the due index"
     );
-    let condition = actions[1]["Update"]["ConditionExpression"]
+    let condition = actions[2]["Update"]["ConditionExpression"]
         .as_str()
         .expect("the source update is fenced");
     assert!(condition.contains("attribute_exists"), "{condition}");

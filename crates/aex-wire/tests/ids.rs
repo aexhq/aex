@@ -178,28 +178,126 @@ fn encoding_round_trips_and_prefixes_stay_short() {
     }
 }
 
+/// The Crockford suffix of a `UUIDv7`, as a workspace key segment spells it.
+fn suffix(value: Uuid7) -> String {
+    String::from_utf8(value.encode_suffix().to_vec()).expect("Crockford is ASCII")
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct WorkspaceKeyCase {
+    /// What the case exercises.
+    reason: String,
+    /// Whether the grammar accepts it.
+    accepted: bool,
+    /// The token.
+    text: String,
+    /// The region code, for an accepted case.
+    #[serde(default)]
+    region: Option<String>,
+    /// The workspace suffix, for an accepted case.
+    #[serde(default)]
+    workspace: Option<String>,
+    /// The key suffix, for an accepted case.
+    #[serde(default)]
+    key: Option<String>,
+}
+
 #[test]
-fn a_workspace_api_key_never_renders_its_secret() {
+fn the_workspace_key_grammar_matches_the_shared_corpus() {
     use aex_wire::ids::WorkspaceApiKey;
+    let cases: Vec<WorkspaceKeyCase> = corpus::read_jsonl("credentials/workspace-keys.jsonl");
+    let mut accepted = 0_usize;
+    let mut rejected = 0_usize;
+    for case in &cases {
+        let parsed = WorkspaceApiKey::parse(&case.text);
+        assert_eq!(
+            parsed.is_ok(),
+            case.accepted,
+            "`{}` disagrees with the corpus",
+            case.reason
+        );
+        if let Ok(key) = parsed {
+            accepted += 1;
+            // The identities are asserted, not just the verdict: two parsers
+            // that both "accept" while reading different segments would be a
+            // cross-plane authorization bug, not a style difference.
+            assert_eq!(
+                Some(key.region().code()),
+                case.region.as_deref(),
+                "{}",
+                case.reason
+            );
+            assert_eq!(
+                Some(suffix(key.workspace_id().uuid7())),
+                case.workspace.clone(),
+                "{}",
+                case.reason
+            );
+            assert_eq!(
+                Some(suffix(key.key_id().uuid7())),
+                case.key.clone(),
+                "{}",
+                case.reason
+            );
+        } else {
+            rejected += 1;
+        }
+    }
+    assert!(accepted >= 3 && rejected >= 10, "the corpus has shrunk");
+}
+
+#[test]
+fn a_workspace_api_key_names_its_workspace_and_never_renders_its_secret() {
+    use aex_wire::ids::{ApiKeyId, WorkspaceApiKey, WorkspaceId};
+    let workspace = Uuid7::compose(1_785_501_296_789, [1; 10]);
+    let key = Uuid7::compose(1_785_501_296_790, [2; 10]);
     let secret = "A".repeat(43);
-    let text = format!("aex_wk_euw1_01kyw2qa4ne00r40r40m30e209_{secret}");
-    let key = WorkspaceApiKey::parse(&text).expect("a well-formed key parses");
-    assert_eq!(key.region().code(), "euw1");
-    let rendered = format!("{key:?}");
+    let text = format!("aex_wk_euw1_{}_{}_{secret}", suffix(workspace), suffix(key));
+    let parsed = WorkspaceApiKey::parse(&text).expect("a well-formed key parses");
+    assert_eq!(parsed.region().code(), "euw1");
+    assert_eq!(parsed.workspace_id(), WorkspaceId::from_uuid7(workspace));
+    assert_eq!(parsed.key_id(), ApiKeyId::from_uuid7(key));
+    let rendered = format!("{parsed:?}");
     assert!(rendered.contains("<redacted>"), "{rendered}");
     assert!(!rendered.contains(&secret), "the secret leaked into Debug");
     assert!(
-        !rendered.contains(std::str::from_utf8(key.secret()).unwrap_or("")),
+        !rendered.contains(std::str::from_utf8(parsed.secret()).unwrap_or("")),
         "the secret bytes leaked into Debug"
     );
 
+    // A canonical base64url secret legitimately contains `_`; it must never be
+    // read as a segment boundary.
+    let separated = format!("aex_wk_euw1_{}_{}_{}", suffix(workspace), suffix(key), {
+        let mut value = "_".repeat(42);
+        value.push('A');
+        value
+    });
+    assert_eq!(
+        WorkspaceApiKey::parse(&separated)
+            .expect("a secret full of separators parses")
+            .key_id(),
+        ApiKeyId::from_uuid7(key)
+    );
+
     for bad in [
-        "aex_wk_euw1_01kyw2qa4ne00r40r40m30e209",
-        "aex_wk_zzz9_01kyw2qa4ne00r40r40m30e209_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-        "aex_wk_euw1_notasuffix_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-        "aex_wk_euw1_01kyw2qa4ne00r40r40m30e209_short",
-        "01kyw2qa4ne00r40r40m30e209",
+        // No key segment at all.
+        format!("aex_wk_euw1_{}_{secret}", suffix(workspace)),
+        // Unknown region.
+        format!("aex_wk_zzz9_{}_{}_{secret}", suffix(workspace), suffix(key)),
+        // Workspace segment is not a Crockford suffix.
+        format!("aex_wk_euw1_notasuffix_{}_{secret}", suffix(key)),
+        // Key segment is not a Crockford suffix.
+        format!("aex_wk_euw1_{}_notasuffix_{secret}", suffix(workspace)),
+        // Secret is the wrong length.
+        format!("aex_wk_euw1_{}_{}_short", suffix(workspace), suffix(key)),
+        // The old prelaunch spelling, which named no workspace.
+        format!("aex_wk_euw1_{}_{secret}", suffix(key)),
+        suffix(key),
     ] {
-        assert!(WorkspaceApiKey::parse(bad).is_err(), "{bad} must not parse");
+        assert!(
+            WorkspaceApiKey::parse(&bad).is_err(),
+            "{bad} must not parse"
+        );
     }
 }

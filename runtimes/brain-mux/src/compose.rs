@@ -433,7 +433,11 @@ mod tests {
             );
         }
         let composition = composition();
-        assert_eq!(composition.admission.bounds().target, 48);
+        assert_eq!(
+            composition.admission.bounds().target,
+            AdmissionBounds::default().target,
+            "the composed target is the approved alpha profile, not the envelope's ceiling"
+        );
         assert_eq!(composition.policy.max_concurrent_drives, 48);
         assert_eq!(composition.policy.receive_batch, 1);
     }

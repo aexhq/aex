@@ -24,6 +24,7 @@
 pub mod composition;
 pub mod expressions;
 pub mod gap;
+pub mod gap_hint;
 pub mod health;
 pub mod segments;
 pub mod spool;
@@ -32,6 +33,7 @@ pub mod store;
 pub use composition::{Capability, CapabilityViolation, Role, assert_grant};
 pub use expressions::{DENSE_INDEX_PROJECTION, ExpressionBuilder, Index, is_safe_expression};
 pub use gap::{GAP_ITEM_TYPE, GapCodecError, GapStore, GapStoreError, append_action};
+pub use gap_hint::{GAP_HINT_ITEM_TYPE, GapAppendCount, hint_update, hint_update_action};
 pub use health::{HEALTHZ, Probe, READYZ, Readiness, readiness};
 pub use segments::{Segment, SegmentDirectory};
 pub use spool::{GateEvidence, GateState, Pending, SpoolChunk};

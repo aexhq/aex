@@ -31,4 +31,4 @@ pub use keys::{BRAIN_AGENT_PARTITION_PREFIX, BRAIN_PREFIX, BrainKeyError};
 pub use plan::{BrainTables, PlanError};
 pub use snapshot::{AwsFoldSnapshotStore, SnapshotBodyStore, SnapshotContentContext};
 pub use translate::TranslateError;
-pub use wake::{DueScan, SqsWakeQueue};
+pub use wake::{DueScan, SqsWakeQueue, WAKE_QUEUE_IAM_ACTIONS};
