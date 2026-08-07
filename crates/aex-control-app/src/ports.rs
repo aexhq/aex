@@ -48,6 +48,14 @@ pub struct Page<T> {
 /// The largest page any control read may return.
 pub const MAX_PAGE_LIMIT: u32 = 1_000;
 
+/// The page size a read uses when the caller states none.
+///
+/// The ceiling stays reachable on request; defaulting to it made every
+/// limit-less list read scan and serialize a thousand rows for callers that
+/// render a screenful. A default is not a ceiling: an explicit `limit` above
+/// this is honoured up to [`MAX_PAGE_LIMIT`].
+pub const DEFAULT_PAGE_LIMIT: u32 = 50;
+
 /// Why a cross-plane effect did not complete.
 ///
 /// `Unknown` is deliberately distinct from `Unavailable`: the first means the
