@@ -65,30 +65,10 @@ fn receipt(class: &str) -> Receipt {
     let mut value = valid_receipt();
     value["class"] = serde_json::json!(class);
     value["receiptId"] = serde_json::json!(format!("rc_{class}"));
-    let artifact_subject_digest = if class == "arch-qualification" {
-        let envelope: ArtifactEnvelope = serde_json::from_value(valid_envelope()).unwrap();
-        envelope.seal().unwrap().artifact_subject_digest
-    } else {
-        digest(1)
-    };
     value["subject"] = serde_json::json!({
-        "artifactSubjectDigest": artifact_subject_digest,
+        "artifactSubjectDigest": digest(1),
         "unitIds": [UNIT]
     });
-    if class == "arch-qualification" {
-        value["architectureQualification"] = serde_json::json!({
-            "artifactDigest": digest(5),
-            "target": "aarch64",
-            "hostIdentity": "arm64-test-host",
-            "executorIdentity": "arm64-test-executor",
-            "executorKind": "emulated",
-            "bootstrapResult": "passed",
-            "dependencyLoaderResult": "passed",
-            "observedAt": "2026-08-01T00:00:00Z",
-            "expiresAt": "2026-08-08T00:00:00Z",
-            "workloadSmokes": [{"id": "bootstrap-start", "result": "passed"}]
-        });
-    }
     serde_json::from_value::<Receipt>(value)
         .unwrap()
         .seal()
@@ -157,6 +137,16 @@ fn skipped_test_exits_41() {
     assert_eq!(err.exit.code(), 41, "{err}");
 }
 
+/// `retry-to-green/` — a second attempt with no preserved first failure.
+#[test]
+fn retry_to_green_exits_41() {
+    let mut receipt = receipt("unit");
+    receipt.source.run_attempt = 2;
+    let err = receipt.verify().unwrap_err();
+    assert_eq!(err.exit.code(), 41, "{err}");
+    assert!(err.rules().contains(&"flake-first-failure-lost"));
+}
+
 /// `stale-evidence/` — a release-bound receipt older than its class permits.
 #[test]
 fn stale_evidence_exits_42() {
@@ -217,7 +207,6 @@ fn unsigned_manifest_exits_43() {
         receipt("sbom"),
         receipt("license"),
         receipt("vulnerability"),
-        receipt("arch-qualification"),
     ];
     let err = run_admit(&receipts, None, Plane::Prd, &manifest()).unwrap_err();
     assert_eq!(err.exit.code(), 43, "{err}");
@@ -401,7 +390,6 @@ fn head_mismatch_exits_32() {
         receipt("sbom"),
         receipt("license"),
         receipt("vulnerability"),
-        receipt("arch-qualification"),
     ];
     let err = run_admit(&receipts, None, Plane::Dev, &manifest).unwrap_err();
     assert_eq!(err.exit.code(), 32, "{err}");
@@ -454,6 +442,7 @@ fn the_deliberate_failure_table_covers_every_declared_entry() {
     let entries = [
         "missing-receipt",
         "skipped-test",
+        "retry-to-green",
         "stale-evidence",
         "stale-graph-edge",
         "altered-artifact",
@@ -467,6 +456,6 @@ fn the_deliberate_failure_table_covers_every_declared_entry() {
         "head-mismatch",
         "nonmonotone-selector",
     ];
-    assert_eq!(entries.len(), 14);
+    assert_eq!(entries.len(), 15);
     let _ = SOUND_SCENARIOS;
 }

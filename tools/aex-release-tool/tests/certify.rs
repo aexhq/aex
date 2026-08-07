@@ -5,13 +5,11 @@ mod common;
 use std::collections::BTreeMap;
 
 use aex_release_tool::artifact::{
-    ArtifactEnvelope, Licenses, Location, Signature, Toolchain, Vulnerabilities, Workflow, plan,
+    Licenses, Location, Provenance, Signature, Toolchain, Vulnerabilities, Workflow, plan,
 };
 use aex_release_tool::canon;
 use aex_release_tool::certification::{ExpectedSource, defer, inventory};
-use aex_release_tool::certify::{
-    CertificationClaims, CertificationFiles, CertificationProvenance, certify,
-};
+use aex_release_tool::certify::{CertificationClaims, CertificationFiles, certify};
 use aex_release_tool::describe::{LocalBuild, UnearnedField, describe};
 use aex_release_tool::evidence::{FreshnessPolicy, Receipt};
 use aex_release_tool::graph::inputs::{Unit, Units};
@@ -145,8 +143,9 @@ impl Fixture {
                 unapproved_high: 0,
                 approved_exceptions: Vec::new(),
             },
-            provenance: CertificationProvenance {
+            provenance: Provenance {
                 predicate_type: "https://slsa.dev/provenance/v1".to_owned(),
+                bundle_digest: String::new(),
                 uri: Some("https://github.com/aexhq/aex/attestations/123".to_owned()),
                 builder_id: BUILDER.to_owned(),
                 attested: true,
@@ -254,148 +253,16 @@ impl Fixture {
             self.claims.clone(),
             CertificationFiles {
                 artifact: Some(&self.artifact),
-                sbom: Some(&self.sbom),
-                license_inventory: Some(&self.licenses),
-                vulnerability_verdict: Some(&self.vulnerabilities),
+                sbom: &self.sbom,
+                license_inventory: &self.licenses,
+                vulnerability_verdict: &self.vulnerabilities,
                 provenance_bundle: &self.provenance,
                 signature_bundle: None,
-                defer_supply_chain: false,
             },
             &self.receipts,
             &freshness(),
         )
     }
-}
-
-fn assert_envelope_rule(
-    envelope: ArtifactEnvelope,
-    artifact: &std::path::Path,
-    expected_rule: &str,
-) {
-    let error = envelope
-        .seal()
-        .unwrap()
-        .verify(Some(artifact), false)
-        .unwrap_err();
-    assert!(
-        error.rules().contains(&expected_rule),
-        "expected `{expected_rule}`, got {:?}",
-        error.rules()
-    );
-}
-
-#[test]
-fn certification_claims_omit_the_file_backed_provenance_digest() {
-    let fixture = Fixture::new();
-    let value = serde_json::to_value(&fixture.claims).unwrap();
-    assert!(value["provenance"].get("bundleDigest").is_none());
-    serde_json::from_value::<CertificationClaims>(value).unwrap();
-}
-
-#[test]
-fn startup_certification_defers_scanners_without_deferring_publication() {
-    let fixture = Fixture::new();
-    let mut claims = serde_json::to_value(&fixture.claims).unwrap();
-    let object = claims.as_object_mut().unwrap();
-    for field in ["sbomFormat", "sbomUri", "licenses", "vulnerabilities"] {
-        object.remove(field);
-    }
-    let claims = serde_json::from_value::<CertificationClaims>(claims).unwrap();
-    let envelope = certify(
-        fixture.draft.clone(),
-        &fixture.unit,
-        claims.clone(),
-        CertificationFiles {
-            artifact: Some(&fixture.artifact),
-            sbom: None,
-            license_inventory: None,
-            vulnerability_verdict: None,
-            provenance_bundle: &fixture.provenance,
-            signature_bundle: None,
-            defer_supply_chain: true,
-        },
-        &fixture.receipts,
-        &freshness(),
-    )
-    .unwrap();
-
-    assert!(envelope.supply_chain_deferred);
-    assert_eq!(envelope.sbom.format, "deferred-startup");
-    assert_eq!(envelope.licenses.verdict, "deferred-startup");
-    assert_eq!(envelope.vulnerabilities.scanner, "deferred-startup");
-    envelope.verify(Some(&fixture.artifact), false).unwrap();
-    let mut mixed = envelope.clone();
-    mixed.sbom.format = "cyclonedx-1.6".to_owned();
-    assert_envelope_rule(
-        mixed,
-        &fixture.artifact,
-        "envelope-deferred-supply-chain-shape",
-    );
-
-    let mut strict_with_flag = fixture.certify().unwrap();
-    strict_with_flag.supply_chain_deferred = true;
-    assert_envelope_rule(
-        strict_with_flag,
-        &fixture.artifact,
-        "envelope-deferred-supply-chain-shape",
-    );
-
-    let mut missing_flag = envelope.clone();
-    missing_flag.supply_chain_deferred = false;
-    assert_envelope_rule(
-        missing_flag,
-        &fixture.artifact,
-        "envelope-deferred-supply-chain-flag",
-    );
-
-    let mut absent_flag = serde_json::to_value(&envelope).unwrap();
-    absent_flag
-        .as_object_mut()
-        .unwrap()
-        .remove("supplyChainDeferred");
-    let absent_flag = serde_json::from_value::<ArtifactEnvelope>(absent_flag).unwrap();
-    assert_envelope_rule(
-        absent_flag,
-        &fixture.artifact,
-        "envelope-deferred-supply-chain-flag",
-    );
-
-    for class in ["deny", "sbom", "license", "vulnerability"] {
-        let mut with_scanner_receipt = envelope.clone();
-        let mut scanner_receipt = with_scanner_receipt.receipts[0].clone();
-        scanner_receipt.class = class.to_owned();
-        with_scanner_receipt.receipts.push(scanner_receipt);
-        assert_envelope_rule(
-            with_scanner_receipt,
-            &fixture.artifact,
-            "envelope-deferred-supply-chain-receipt",
-        );
-    }
-
-    let receipts = fixture
-        .receipts
-        .iter()
-        .filter(|receipt| receipt.class != "unit")
-        .cloned()
-        .collect::<Vec<_>>();
-    let error = certify(
-        fixture.draft,
-        &fixture.unit,
-        claims,
-        CertificationFiles {
-            artifact: Some(&fixture.artifact),
-            sbom: None,
-            license_inventory: None,
-            vulnerability_verdict: None,
-            provenance_bundle: &fixture.provenance,
-            signature_bundle: None,
-            defer_supply_chain: true,
-        },
-        &receipts,
-        &freshness(),
-    )
-    .unwrap_err();
-    assert!(error.rules().contains(&"certify-receipt-missing"));
 }
 
 #[test]
@@ -416,10 +283,6 @@ fn certification_derives_file_identities_and_required_receipt_refs() {
         )
     );
     assert_eq!(
-        envelope.provenance.bundle_digest,
-        aex_release_tool::canon::digest_bytes(&std::fs::read(&fixture.provenance).unwrap())
-    );
-    assert_eq!(
         envelope.receipts.len(),
         fixture.unit.required_receipts.len()
     );
@@ -428,38 +291,6 @@ fn certification_derives_file_identities_and_required_receipt_refs() {
         fixture.draft.artifact_subject_digest
     );
     assert_ne!(envelope.envelope_digest, fixture.draft.envelope_digest);
-}
-
-#[test]
-fn certification_counts_the_cyclonedx_metadata_subject_as_a_component() {
-    let mut fixture = Fixture::new();
-    let mut sbom: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&fixture.sbom).unwrap()).unwrap();
-    sbom.as_object_mut().unwrap().remove("components");
-    sbom["metadata"]["component"] = serde_json::json!({
-        "bom-ref": "subject",
-        "type": "file",
-        "name": "artifact.bin",
-        "version": digest(0x61),
-    });
-    std::fs::write(&fixture.sbom, serde_json::to_vec(&sbom).unwrap()).unwrap();
-    let sbom_digest = aex_release_tool::canon::digest_bytes(&std::fs::read(&fixture.sbom).unwrap());
-    fixture.claims.sbom_uri = aex_release_tool::publication::github_release_aux_uri(
-        "aexhq/aex",
-        &sha1(),
-        "123",
-        1,
-        &fixture.unit.id,
-        &sbom_digest,
-        aex_release_tool::publication::AuxiliaryAsset {
-            class: "sbom",
-            extension: "cdx.json",
-        },
-    )
-    .unwrap();
-
-    let envelope = fixture.certify().unwrap();
-    assert_eq!(envelope.sbom.component_count, 1);
 }
 
 #[test]
@@ -653,7 +484,7 @@ fn a_deferral_binds_exact_available_receipts_and_names_every_missing_class() {
             .collect::<Vec<_>>(),
         vec!["lint", "unit"]
     );
-    assert!(!deferral.missing_receipts.contains(&"sbom".to_owned()));
+    assert!(deferral.missing_receipts.contains(&"sbom".to_owned()));
     assert!(deferral.missing_receipts.contains(&"contract".to_owned()));
     assert!(!deferral.missing_receipts.contains(&"unit".to_owned()));
 }

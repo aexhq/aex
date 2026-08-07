@@ -74,14 +74,6 @@ impl core::fmt::Debug for HandsToolExecutor {
 }
 
 impl ToolExecutor for HandsToolExecutor {
-    fn supports(&self, _tool: &aex_brain_domain::ids::ToolName) -> bool {
-        // The current bridge encodes `RegisteredTool`, which the ARM64 guest
-        // deliberately refuses until its manifest resolver maps a catalog row
-        // to a typed guest operation. Claiming coverage here would advertise
-        // shell/filesystem tools that can only return capability_unavailable.
-        false
-    }
-
     fn invoke<'a>(
         &'a self,
         ticket: &'a DispatchTicket,
@@ -598,7 +590,6 @@ mod tests {
                 executor: ExecutorRoute::Hands,
                 class: EffectClass::NonReplayable,
                 timeout_ms: 60_000,
-                concurrency_weight: 1,
                 manifest_digest: ContentHash::of(b"manifest"),
             },
             input: aex_wire::CanonicalJson::from_value(&serde_json::json!({
@@ -719,11 +710,7 @@ mod tests {
             .cancel(&operation, Fence(11))
             .await
             .expect("cancelled");
-        {
-            let cancels = hands.cancels.lock().expect("cancels");
-            assert_eq!(cancels[0].0, generation());
-            assert_eq!(cancels[0].2, Fence(11));
-        }
+        assert_eq!(hands.cancels.lock().expect("cancels")[0].0, generation());
 
         let malformed = DetachedOperationId("hands.v1:wrong".to_owned());
         assert!(executor.query(&malformed).await.is_err());

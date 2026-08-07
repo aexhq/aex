@@ -155,7 +155,6 @@ fn produced() -> ProviderOutcome {
             generation: 1,
         },
         provider_request_id: None,
-        gateway_route: None,
         http_status: 200,
         attempts: 1,
         started_at: at,

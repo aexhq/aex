@@ -218,7 +218,7 @@ impl CustodyStore {
     ///
     /// Brain dispatch already knows the provider from its immutable session
     /// configuration. Preserving it here turns the hot-path lookup into one
-    /// strongly consistent point read instead of probing the eight-provider
+    /// strongly consistent point read instead of probing the six-provider
     /// directory.
     ///
     /// # Errors
@@ -436,8 +436,8 @@ impl SecretCustodyStore for CustodyStore {
         credential: ProviderCredentialId,
     ) -> Result<Option<ProviderCredential>, StoreError> {
         // The sort key is `CRED#{provider}#{credential}`, so the identity alone
-        // names a suffix rather than a key. Eight providers is a closed set, so the
-        // read is eight bounded point reads and never a scan.
+        // names a suffix rather than a key. Six providers is a closed set, so the
+        // read is six bounded point reads and never a scan.
         for provider in aex_wire::models::ProviderId::ALL {
             if let Some(binding) = self
                 .load_provider_credential_for_provider(workspace, *provider, credential)

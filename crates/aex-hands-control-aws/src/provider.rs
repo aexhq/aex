@@ -365,8 +365,7 @@ pub trait MicrovmControlApi: Send + Sync + 'static {
         ports: &'a [u16],
     ) -> ProviderFuture<'a, EndpointToken>;
 
-    /// `ListMicrovms`. Never on a request path; used only by bounded startup
-    /// validation and background reconciliation.
+    /// `ListMicrovms`. Never on a request path; the orphan sweep only.
     fn list<'a>(
         &'a self,
         image: Option<&'a ImageIdentifier>,

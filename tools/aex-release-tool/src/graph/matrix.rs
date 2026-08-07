@@ -106,31 +106,6 @@ pub fn build(
     units: &Units,
     npm: &[NpmPackage],
 ) -> Result<MatrixOutput> {
-    build_with_artifacts(
-        selection, None, kind, partitions, durations, scenarios, units, npm,
-    )
-}
-
-/// Build a matrix while retaining validation for every selected artifact owner.
-///
-/// A publication may narrow ordinary checks to the affected closure only when
-/// the packages that own its exhaustive artifact selection remain present to
-/// emit the same-run receipts required for certification.
-///
-/// # Errors
-/// Returns the same errors as [`build`], and rejects an artifact selection that
-/// names no registered unit.
-#[allow(clippy::too_many_arguments)]
-pub fn build_with_artifacts(
-    selection: &Selection,
-    artifact_selection: Option<&Selection>,
-    kind: MatrixKind,
-    partitions: usize,
-    durations: &BTreeMap<String, u64>,
-    scenarios: &ScenarioOwnership,
-    units: &Units,
-    npm: &[NpmPackage],
-) -> Result<MatrixOutput> {
     if partitions == 0 {
         return Err(ToolError::single(
             Exit::Usage,
@@ -141,7 +116,7 @@ pub fn build_with_artifacts(
     let candidates = if kind == MatrixKind::Scenario {
         scenario_candidates(selection, scenarios)?
     } else {
-        candidates(selection, artifact_selection, kind, units, npm)?
+        candidates(selection, kind, units)
     };
 
     let shards = partition(&candidates, partitions, durations);
@@ -220,14 +195,8 @@ pub fn build_with_artifacts(
     })
 }
 
-fn candidates(
-    selection: &Selection,
-    artifact_selection: Option<&Selection>,
-    kind: MatrixKind,
-    units: &Units,
-    npm: &[NpmPackage],
-) -> Result<Vec<(String, String)>> {
-    let selected: Vec<(String, String)> = match kind {
+fn candidates(selection: &Selection, kind: MatrixKind, units: &Units) -> Vec<(String, String)> {
+    match kind {
         MatrixKind::Test => selection
             .test
             .iter()
@@ -270,36 +239,7 @@ fn candidates(
             .iter()
             .map(|selected| (selected.id.to_string(), selected.id.local().to_owned()))
             .collect(),
-    };
-    let mut selected: BTreeMap<String, String> = selected.into_iter().collect();
-    if matches!(kind, MatrixKind::Test | MatrixKind::Node)
-        && let Some(artifact_selection) = artifact_selection
-    {
-        for artifact in &artifact_selection.deploy {
-            let unit = units
-                .units
-                .iter()
-                .find(|unit| unit.id == artifact.id.local())
-                .ok_or_else(|| {
-                    ToolError::single(
-                        Exit::GraphVerification,
-                        "artifact-unit-missing",
-                        format!(
-                            "selected artifact `{}` has no registered deployable unit",
-                            artifact.id
-                        ),
-                    )
-                })?;
-            let is_npm = npm.iter().any(|package| package.name == unit.package);
-            if (kind == MatrixKind::Node && is_npm) || (kind == MatrixKind::Test && !is_npm) {
-                let namespace = if is_npm { "npm" } else { "cargo" };
-                selected
-                    .entry(format!("{namespace}:{}", unit.package))
-                    .or_insert_with(|| unit.package.clone());
-            }
-        }
     }
-    Ok(selected.into_iter().collect())
 }
 
 fn scenario_candidates(
@@ -423,9 +363,7 @@ pub const fn source_kind(kind: MatrixKind) -> NodeKind {
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::{
-        MatrixKind, OUTPUT_KEYS, build, build_with_artifacts, degraded, partition, to_github_output,
-    };
+    use super::{MatrixKind, OUTPUT_KEYS, build, degraded, partition, to_github_output};
     use crate::graph::NodeId;
     use crate::graph::inputs::{ScenarioOwnership, Units};
     use crate::graph::select::{Lane, Mode, Selected, Selection, SelectionReason};
@@ -547,57 +485,6 @@ mod tests {
                 .iter()
                 .all(|entry| entry.id.starts_with("cargo:")),
             "the Rust lane must never receive an npm package"
-        );
-    }
-
-    #[test]
-    fn publication_validation_keeps_artifact_owners_and_skips_unrelated_packages() {
-        let affected = selection(&[NodeId::cargo("aex-changed")]);
-        let mut artifacts = selection(&[NodeId::cargo("demo-api"), NodeId::cargo("aex-unrelated")]);
-        artifacts.mode = Mode::Full;
-        artifacts.deploy = vec![Selected {
-            id: NodeId::artifact("demo-api"),
-            reason: SelectionReason::RouterChanged,
-        }];
-        let units: Units = toml::from_str(
-            r#"
-schema = "aex.units.v1"
-[[unit]]
-id = "demo-api"
-kind = "rust-lambda"
-plane = "regional"
-package = "demo-api"
-target = "aarch64-unknown-linux-gnu.2.34"
-profile = "release-lambda"
-form = "zip"
-config_env_namespace = "AEX_DEMO_"
-config_schema_version = 1
-required_receipts = ["unit", "lint"]
-alarm_spec = "demo-api"
-"#,
-        )
-        .unwrap();
-
-        let output = build_with_artifacts(
-            &affected,
-            Some(&artifacts),
-            MatrixKind::Test,
-            4,
-            &BTreeMap::new(),
-            &no_scenarios(),
-            &units,
-            &[],
-        )
-        .unwrap();
-        let names: Vec<&str> = output
-            .include
-            .iter()
-            .map(|entry| entry.name.as_str())
-            .collect();
-        assert_eq!(names, vec!["aex-changed", "demo-api"]);
-        assert!(
-            !names.contains(&"aex-unrelated"),
-            "an unchanged package that owns no selected artifact must not rerun"
         );
     }
 

@@ -190,13 +190,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-regional-control",
-    "owner": "regional-services",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "regional-services owns this live companion; live evidence requires the private regional deployment composition"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "tests/live/aex-live-regional-observation-api",
     "owner": "observations-usage",
     "blocking_rule": "aex-empty-unit",
@@ -219,6 +212,13 @@
   {
     "reason_class": "awaiting_owner",
     "subject": "tests/live/aex-live-regional-secret-key-admin",
+    "owner": "regional-services",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-regional-session-api",
     "owner": "regional-services",
     "blocking_rule": "aex-empty-unit",
     "detail": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
@@ -437,13 +437,6 @@
     "reason_class": "requires_deployment",
     "subject": "packages/sdk",
     "owner": "clients",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "layer `user` needs a deployed artifact (OD-07)"
-  },
-  {
-    "reason_class": "requires_deployment",
-    "subject": "packages/wire",
-    "owner": "contracts",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `user` needs a deployed artifact (OD-07)"
   },
@@ -1942,13 +1935,6 @@
     "reason_class": "requires_live_seam",
     "subject": "packages/sdk",
     "owner": "clients",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `npm.registry.publish` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "packages/wire",
-    "owner": "contracts",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `npm.registry.publish` cannot be satisfied by any local substitute"
   },

@@ -7,18 +7,17 @@ mock_provider "aws" {
 }
 
 variables {
-  plane                           = "dev"
-  region                          = "eu-west-1"
-  permissions_boundary_policy_arn = "arn:aws:iam::000000000000:policy/aex-dev-application-boundary"
-  vpc_id                          = "vpc-0123456789abcdef0"
-  private_subnet_ids              = ["subnet-0123456789abcdef0", "subnet-0123456789abcdef1"]
-  public_subnet_ids               = ["subnet-0123456789abcdef2", "subnet-0123456789abcdef3"]
-  service_security_group_ids      = ["sg-0123456789abcdef0"]
-  alb_security_group_ids          = ["sg-0123456789abcdef1"]
-  kms_key_arn                     = "arn:aws:kms:eu-west-1:000000000000:key/00000000-0000-4000-8000-000000000000"
-  session_journal_stream_arn      = "arn:aws:dynamodb:eu-west-1:000000000000:table/aex-dev-euw1-session-journal/stream/2026-08-01T00:00:00.000"
-  artifact_bucket                 = "aex-infra-artifacts-dev-0a1b2c3d"
-  cluster_name                    = "aex-dev-euw1"
+  plane                      = "dev"
+  region                     = "eu-west-1"
+  vpc_id                     = "vpc-0123456789abcdef0"
+  private_subnet_ids         = ["subnet-0123456789abcdef0", "subnet-0123456789abcdef1"]
+  public_subnet_ids          = ["subnet-0123456789abcdef2", "subnet-0123456789abcdef3"]
+  service_security_group_ids = ["sg-0123456789abcdef0"]
+  alb_security_group_ids     = ["sg-0123456789abcdef1"]
+  kms_key_arn                = "arn:aws:kms:eu-west-1:000000000000:key/00000000-0000-4000-8000-000000000000"
+  session_journal_stream_arn = "arn:aws:dynamodb:eu-west-1:000000000000:table/aex-dev-euw1-session-journal/stream/2026-08-01T00:00:00.000"
+  artifact_bucket            = "aex-infra-artifacts-dev-0a1b2c3d"
+  cluster_name               = "aex-dev-euw1"
 
   session_api = {
     function_name           = "aex-dev-regional-session-api"
@@ -54,7 +53,6 @@ variables {
     image              = "000000000000.dkr.ecr.eu-west-1.amazonaws.com/aex/regional-stream@sha256:0000000000000000000000000000000000000000000000000000000000000000"
     cpu                = 1024
     memory             = 2048
-    desired_count      = 2
     stop_timeout       = 30
     container_port     = 8080
     log_group_name     = "/aex/dev/regional-stream"
@@ -64,10 +62,17 @@ variables {
       AEX_PLANE = "dev"
     }
     autoscaling_bounds = {
-      min_capacity = 2
-      max_capacity = 2
+      min_capacity = 1
+      max_capacity = 6
     }
-    autoscaling_metrics = []
+    autoscaling_metrics = [
+      {
+        name         = "StreamBacklogSeconds"
+        namespace    = "AEX/RegionalStream"
+        statistic    = "Average"
+        target_value = 5
+      },
+    ]
   }
 
   alb = {
@@ -160,19 +165,5 @@ run "the_stream_service_runs_a_digest_pinned_image" {
   assert {
     condition     = can(regex("@sha256:[0-9a-f]{64}$", var.stream_service.image))
     error_message = "The stream service image must be digest-pinned."
-  }
-}
-
-run "the_stream_service_uses_reviewed_fixed_capacity_without_an_invented_metric" {
-  command = plan
-
-  assert {
-    condition = (
-      var.stream_service.desired_count == 2
-      && var.stream_service.autoscaling_bounds.min_capacity == var.stream_service.desired_count
-      && var.stream_service.autoscaling_bounds.max_capacity == var.stream_service.desired_count
-      && length(var.stream_service.autoscaling_metrics) == 0
-    )
-    error_message = "The regional stream example must use two fixed tasks without inventing a custom autoscaling metric."
   }
 }

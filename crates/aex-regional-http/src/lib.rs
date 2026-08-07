@@ -29,7 +29,6 @@ pub mod limits;
 pub mod mount;
 pub mod page;
 pub mod projection;
-pub mod release_health;
 pub mod router;
 pub mod stream;
 

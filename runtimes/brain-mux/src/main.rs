@@ -13,7 +13,6 @@ pub mod compose;
 pub mod control;
 pub mod drain;
 pub mod health;
-pub mod inline_tools;
 pub mod measure;
 pub mod release_catalog;
 pub mod runtime;
@@ -404,10 +403,7 @@ pub fn compose(config: &Config) -> Result<compose::Composition, RunError> {
     compose::Composition::build(
         bounds,
         compose::Envelope::candidate_launch(),
-        // Replay-body bytes are not an exact resident-size measurement for `FoldState`.
-        // Keep the production accelerator off until every retained heap byte can own a
-        // `WarmCacheBytes` reservation; authority always falls back to snapshot + journal.
-        cache::CachePolicy::disabled(),
+        cache::CachePolicy::default(),
         scale::ScaleBounds {
             min_tasks: 1,
             max_tasks: 32,
@@ -515,7 +511,10 @@ fn resolve_production_ports(
         config.secret_plane(),
         config.placement_region(),
         &config.credential_cache_partition(),
-    );
+    )
+    .map_err(|error| RunError::Runtime {
+        reason: format!("production provider binding failed: {error}"),
+    })?;
     let catalog = bind_release_catalog()?;
     let snapshots = wake::snapshot_binding(
         &aws.sdk,
@@ -551,11 +550,11 @@ fn resolve_production_ports(
         reason: format!("production Hands binding failed: {error}"),
     })?;
 
-    // The earned pure control subset is real, but catalog composition still
-    // refuses startup until every active BrainInline row and MCP authority has
-    // exact executor coverage. A partial executor can never make the task ready.
+    // BrainInline and MCP do not yet have safe production implementations. Their absence is
+    // a startup error, never a refusal executor installed behind a ready task. Managed web
+    // and Hands are bound to their real authorities even while those remaining routes block.
     let tools = wake::ProductionToolExecutors {
-        brain_inline: Some(std::sync::Arc::new(inline_tools::BrainControlExecutor)),
+        brain_inline: None,
         managed_web: Some(std::sync::Arc::clone(&credentials.managed_web)),
         mcp: None,
         hands: Some(std::sync::Arc::clone(&hands.executor)),
@@ -617,10 +616,6 @@ async fn pump(
         std::sync::Arc::clone(&composition.registry),
         std::sync::Arc::clone(&composition.drain),
         std::sync::Arc::clone(&composition.admission),
-        wake::ActivationAccelerators::new(
-            std::sync::Arc::clone(&composition.permits),
-            std::sync::Arc::clone(&composition.fold_cache) as std::sync::Arc<_>,
-        ),
         ports.bindings,
     );
     run_wake_scheduler(
@@ -968,7 +963,6 @@ mod tests {
         emit_due_isolations,
     };
     use aex_brain_application::activation::PollReport;
-    use aex_brain_application::kernel::PermitKind;
     use aex_brain_application::ports::{DueRowIsolation, DueRowIsolationReason};
     use aex_platform_telemetry::{AttributeValue, InMemoryExporter};
     use std::collections::BTreeMap;
@@ -1047,16 +1041,6 @@ mod tests {
         assert_eq!(composition.admission.bounds().target, 48);
         assert_eq!(composition.policy.max_concurrent_drives, 48);
         assert_eq!(composition.shape.worker_threads, 2);
-        assert!(
-            composition.cache.is_disabled(),
-            "production must not retain folds without exact resident-byte permits"
-        );
-        assert_eq!(composition.fold_cache.bytes(), 0);
-        assert_eq!(
-            composition.permits.held(PermitKind::WarmCacheBytes),
-            0,
-            "a disabled cache owns no byte reservation"
-        );
 
         vars.insert(BUDGET_VAR, "49".to_owned());
         let config = read(&vars).expect("capacity is a composition concern");
