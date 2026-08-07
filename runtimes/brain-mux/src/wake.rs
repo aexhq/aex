@@ -24,12 +24,9 @@
 
 use crate::admission::{Admission, AdmissionOutcome};
 use aex_brain_application::activation::{
-    Activation, ActivationPolicy, AdmissionControl, AdmissionDecision, DispatchControl,
-    DispatchDecision, DispatchLane, Ports, WakeLoop,
+    Activation, ActivationPolicy, AdmissionControl, AdmissionDecision, Ports, WakeLoop,
 };
-use aex_brain_application::kernel::{
-    ActivationRegistry, DrainGate, FoldCache, PermitKind, PermitSet,
-};
+use aex_brain_application::kernel::{ActivationRegistry, DrainGate};
 use aex_brain_application::ports::{
     AgentHead, BoxFuture, CancelToken, CatalogDigest, CatalogError, CatalogPort, Claim, ClaimError,
     ClockPort, CommitError, CommitReceipt, DecisionContext, DispatchTicket, EffectStore,
@@ -39,7 +36,6 @@ use aex_brain_application::ports::{
     ReleaseDisposition, ResultBounds, SessionAuthority, SnapshotPublishOutcome, SteadyInstant,
     StoreError, StreamBudget, ToolPort, UnknownResolution,
 };
-use aex_brain_domain::child::QueuedReason;
 use aex_brain_domain::commit::DecisionCommit;
 use aex_brain_domain::effect::{
     DispatchEvidence, DispatchProof, DispatchStage, DurableEffect, EffectKind,
@@ -55,12 +51,7 @@ use aex_model_catalog::{ProviderFailureKind, QualifiedModel};
 use aex_wire::ids::GenerationId;
 use std::sync::Arc;
 
-use aex_brain_tool_catalog::readiness::{
-    BuiltinSelection, CapabilitySet as ToolCapabilitySet, ExecutorRegistry, ReadinessInput,
-    ResolvedSecretNames, advertise,
-};
 use aex_brain_tool_catalog::router::{CompositeToolRouter, ToolExecutor};
-use aex_brain_tool_catalog::wire_pending::ExecutorRoute as CatalogExecutorRoute;
 use aex_runtime_control::store::{OpenEffectCounter, PageBudget, RuntimeActivityStore};
 use aex_runtime_control::usage::UsageFactSink;
 use aex_runtime_control_aws::worker::{Pace, RuntimeControl, RuntimePorts, RuntimeSettings};
@@ -155,59 +146,6 @@ impl AdmissionControl for MuxAdmission {
             AdmissionOutcome::Shed(_) => AdmissionDecision::Shed {
                 retry_after: core::time::Duration::from_millis(500),
             },
-        }
-    }
-}
-
-/// Phase-specific local dispatch permits over the process resource set.
-#[derive(Debug)]
-pub struct MuxDispatch {
-    permits: Arc<PermitSet>,
-    provider_streams: u64,
-    hands_rpcs: u64,
-}
-
-impl MuxDispatch {
-    /// Builds the non-blocking dispatch gate.
-    #[must_use]
-    pub const fn new(
-        permits: Arc<PermitSet>,
-        resources: crate::admission::ActivationResources,
-    ) -> Self {
-        Self {
-            permits,
-            provider_streams: resources.provider_streams,
-            hands_rpcs: resources.hands_rpcs,
-        }
-    }
-}
-
-impl DispatchControl for MuxDispatch {
-    fn admit(&self, lane: DispatchLane, weight: u16) -> DispatchDecision {
-        let (kind, base_units, reason) = match lane {
-            DispatchLane::Provider => (
-                PermitKind::ProviderStream,
-                self.provider_streams,
-                QueuedReason::ProviderPermits,
-            ),
-            // Managed web and MCP currently share the bounded outbound-I/O pool. This is a
-            // physical ceiling only; the durable tool route remains exact and a dedicated
-            // network lane can replace it without changing activation semantics.
-            DispatchLane::Network => (
-                PermitKind::ProviderStream,
-                self.provider_streams,
-                QueuedReason::RegionalCapacity,
-            ),
-            DispatchLane::Hands => (
-                PermitKind::HandsRpc,
-                self.hands_rpcs,
-                QueuedReason::HandsPermits,
-            ),
-        };
-        let units = base_units.saturating_mul(u64::from(weight));
-        match self.permits.acquire(kind, units) {
-            Ok(permit) => DispatchDecision::Admitted(Some(permit)),
-            Err(_) => DispatchDecision::Deferred(reason),
         }
     }
 }
@@ -712,11 +650,10 @@ impl core::fmt::Debug for ProductionPeers {
     }
 }
 
-/// Concrete executors available to the tool catalog.
+/// Concrete executors for every coarse tool route.
 ///
 /// The options exist only so startup diagnostics and tests can name every absent authority.
-/// [`ProductionToolExecutors::compose`] never substitutes a refusal executor or advertises a
-/// row that the exact linked executor does not implement.
+/// [`ProductionToolExecutors::compose`] never substitutes a refusal executor.
 #[derive(Default)]
 pub struct ProductionToolExecutors {
     /// Control, park, and subagent scheduling tools.
@@ -757,67 +694,39 @@ impl ProductionToolExecutors {
     ///
     /// # Errors
     ///
-    /// Returns [`ToolCompositionError::InvalidCatalog`] when the executable subset cannot be
-    /// hydrated exactly. Missing optional authorities produce a smaller immutable surface.
+    /// Returns [`ToolCompositionError::Unbound`] before constructing a router when any
+    /// route is absent, or [`ToolCompositionError::InvalidCatalog`] when the compiled tool
+    /// manifest cannot be installed exactly.
     pub fn compose(
         self,
         pins: impl IntoIterator<Item = CatalogPin>,
     ) -> Result<Arc<dyn ToolPort>, ToolCompositionError> {
+        let missing = self.missing();
+        if !missing.is_empty() {
+            return Err(ToolCompositionError::Unbound { missing });
+        }
+        let (Some(brain_inline), Some(managed_web), Some(mcp), Some(hands)) =
+            (self.brain_inline, self.managed_web, self.mcp, self.hands)
+        else {
+            unreachable!("the missing set is derived from exactly these four executors");
+        };
         let mut router = CompositeToolRouter::new();
-        let linked = [
-            (ExecutorRoute::BrainInline, self.brain_inline),
-            (ExecutorRoute::ManagedWeb, self.managed_web),
-            (ExecutorRoute::Mcp, self.mcp),
-            (ExecutorRoute::Hands, self.hands),
-        ]
-        .into_iter()
-        .filter_map(|(route, executor)| executor.map(|executor| (route, executor)))
-        .collect::<Vec<_>>();
-        for (route, executor) in &linked {
-            router
-                .register_executor(*route, Arc::clone(executor))
-                .map_err(|error| ToolCompositionError::InvalidCatalog {
+        for (route, executor) in [
+            (ExecutorRoute::BrainInline, brain_inline),
+            (ExecutorRoute::ManagedWeb, managed_web),
+            (ExecutorRoute::Mcp, mcp),
+            (ExecutorRoute::Hands, hands),
+        ] {
+            router.register_executor(route, executor).map_err(|error| {
+                ToolCompositionError::InvalidCatalog {
                     reason: error.to_string(),
-                })?;
+                }
+            })?;
         }
         let entries = aex_brain_tool_catalog::catalog::builtin_entries().map_err(|error| {
             ToolCompositionError::InvalidCatalog {
                 reason: error.to_string(),
             }
-        })?;
-        let executable = entries
-            .iter()
-            .filter(|entry| {
-                let route = coarse_tool_route(entry.descriptor.route);
-                let Ok(name) =
-                    aex_brain_domain::ids::ToolName::parse(entry.descriptor.name.as_str())
-                else {
-                    return false;
-                };
-                linked.iter().any(|(linked_route, executor)| {
-                    *linked_route == route && executor.supports(&name)
-                })
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        let executor_routes = executable
-            .iter()
-            .map(|entry| entry.descriptor.route)
-            .collect::<std::collections::BTreeSet<_>>();
-        let executor_registry = ExecutorRegistry::new(executor_routes);
-        let capabilities = ToolCapabilitySet::default();
-        let secrets = ResolvedSecretNames::default();
-        let selection = BuiltinSelection::Default;
-        let advertised = advertise(ReadinessInput {
-            entries: &executable,
-            executors: &executor_registry,
-            capabilities: &capabilities,
-            secrets: &secrets,
-            selection: &selection,
-            approval_required: &[],
-        })
-        .map_err(|error| ToolCompositionError::InvalidCatalog {
-            reason: error.to_string(),
         })?;
         let manifest = aex_brain_domain::ids::ContentHash::of(
             &aex_brain_tool_catalog::catalog::builtin_catalog_bytes().map_err(|error| {
@@ -829,7 +738,7 @@ impl ProductionToolExecutors {
         let mut installed = 0_usize;
         for pin in pins {
             router
-                .install_catalog(pin, manifest, &entries, &advertised)
+                .install_catalog(pin, manifest, &entries)
                 .map_err(|error| ToolCompositionError::InvalidCatalog {
                     reason: error.to_string(),
                 })?;
@@ -847,26 +756,18 @@ impl ProductionToolExecutors {
 /// Why the production tool router could not be composed.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ToolCompositionError {
+    /// Concrete executors are missing.
+    #[error("no production adapter is bound for: {}", .missing.join(", "))]
+    Unbound {
+        /// Every missing authority, in stable route order.
+        missing: Vec<&'static str>,
+    },
     /// The immutable catalog could not be installed.
     #[error("the production tool catalog could not be installed: {reason}")]
     InvalidCatalog {
         /// Exact build failure.
         reason: String,
     },
-}
-
-const fn coarse_tool_route(route: CatalogExecutorRoute) -> ExecutorRoute {
-    match route {
-        CatalogExecutorRoute::Control
-        | CatalogExecutorRoute::Park
-        | CatalogExecutorRoute::SubagentScheduler => ExecutorRoute::BrainInline,
-        CatalogExecutorRoute::ManagedWeb => ExecutorRoute::ManagedWeb,
-        CatalogExecutorRoute::Mcp => ExecutorRoute::Mcp,
-        CatalogExecutorRoute::HandsFilesystem
-        | CatalogExecutorRoute::HandsDevelopment
-        | CatalogExecutorRoute::HandsBrowser
-        | CatalogExecutorRoute::RegisteredCustom => ExecutorRoute::Hands,
-    }
 }
 
 /// Real snapshot adapter settings.
@@ -1091,7 +992,10 @@ impl core::fmt::Debug for CredentialBindings {
 
 /// Binds exact regional custody plus KMS reveal into provider and managed-web
 /// authorities without duplicating SDK pools or plaintext caches.
-#[must_use]
+///
+/// # Errors
+///
+/// The build-stamped adapter identity must be valid before this port can exist.
 pub fn credential_bindings(
     aws: &aws_config::SdkConfig,
     store: Arc<aex_brain_store_aws::BrainStore>,
@@ -1100,7 +1004,8 @@ pub fn credential_bindings(
     plane: aex_secret_domain::context::Plane,
     region: aex_wire::types::Region,
     cache_partition: &str,
-) -> CredentialBindings {
+) -> Result<CredentialBindings, aex_brain_provider_gateway::build_identity::AdapterBuildIdentityError>
+{
     let custody = Arc::new(aex_secret_custody_dynamodb::CustodyStore::new(
         aws_sdk_dynamodb::Client::new(aws),
         custody_table.to_owned(),
@@ -1122,7 +1027,7 @@ pub fn credential_bindings(
         Arc::clone(&provider_authority) as Arc<_>,
         provider_authority,
         store,
-    );
+    )?;
     let search_authority: Arc<dyn aex_brain_managed_web::executor::WebSearchCredentialSource> =
         Arc::new(
             aex_brain_managed_web::credential::SessionCredentialAuthority::new(
@@ -1131,10 +1036,10 @@ pub fn credential_bindings(
         );
     let managed_web: Arc<dyn ToolExecutor> =
         Arc::new(aex_brain_managed_web::executor::ManagedWebExecutor::production(search_authority));
-    CredentialBindings {
+    Ok(CredentialBindings {
         provider: Arc::new(router),
         managed_web,
-    }
+    })
 }
 
 /// Fail-closed ports for a task whose production peers are not composed yet.
@@ -1204,24 +1109,6 @@ pub fn production_ports(
     }
 }
 
-/// Process-local acceleration resources bound into activation.
-#[derive(Debug)]
-pub struct ActivationAccelerators {
-    permits: Arc<PermitSet>,
-    fold_cache: Arc<dyn FoldCache>,
-}
-
-impl ActivationAccelerators {
-    /// Groups resources that can change latency but never durable authority.
-    #[must_use]
-    pub const fn new(permits: Arc<PermitSet>, fold_cache: Arc<dyn FoldCache>) -> Self {
-        Self {
-            permits,
-            fold_cache,
-        }
-    }
-}
-
 /// Builds the loop one task runs.
 #[must_use]
 pub fn wake_loop(
@@ -1230,30 +1117,24 @@ pub fn wake_loop(
     registry: Arc<ActivationRegistry>,
     drain: Arc<DrainGate>,
     admission: Arc<Admission>,
-    accelerators: ActivationAccelerators,
     bindings: Bindings,
 ) -> WakeLoop {
-    let dispatch_resources = admission.resources();
-    let activation = Activation::new(ports, policy, registry, drain)
-        .with_fold_cache(accelerators.fold_cache)
-        .with_dispatch_control(Arc::new(MuxDispatch::new(
-            accelerators.permits,
-            dispatch_resources,
-        )));
-    WakeLoop::new(activation, Arc::new(MuxAdmission::new(admission, bindings)))
+    WakeLoop::new(
+        Activation::new(ports, policy, registry, drain),
+        Arc::new(MuxAdmission::new(admission, bindings)),
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        AbsentCatalog, AbsentProvider, Bindings, CATALOG_ABSENT, CATALOG_NO_ACTIVE_MODELS,
-        MuxAdmission, MuxDispatch, PROVIDER_ABSENT, ProcessIds, ProductionToolExecutors,
-        STORE_UNBOUND, SystemClock, UnboundStore,
+        AbsentCatalog, AbsentProvider, BRAIN_INLINE_EXECUTOR_ABSENT, Bindings, CATALOG_ABSENT,
+        CATALOG_NO_ACTIVE_MODELS, HANDS_TOOL_EXECUTOR_ABSENT, MANAGED_WEB_EXECUTOR_ABSENT,
+        MCP_EXECUTOR_ABSENT, MuxAdmission, PROVIDER_ABSENT, ProcessIds, ProductionToolExecutors,
+        STORE_UNBOUND, SystemClock, ToolCompositionError, UnboundStore,
     };
     use crate::admission::{ActivationResources, Admission, AdmissionBounds};
-    use aex_brain_application::activation::{
-        AdmissionControl, AdmissionDecision, DispatchControl, DispatchDecision, DispatchLane,
-    };
+    use aex_brain_application::activation::{AdmissionControl, AdmissionDecision};
     use aex_brain_application::kernel::{DrainGate, PermitKind, PermitSet};
     use aex_brain_application::ports::{
         BoxFuture, CancelToken, CatalogPort, ClockPort, DetachedStatus, DispatchTicket, IdPort,
@@ -1275,10 +1156,6 @@ mod tests {
     struct NeverExecutor;
 
     impl aex_brain_tool_catalog::router::ToolExecutor for NeverExecutor {
-        fn supports(&self, _tool: &ToolName) -> bool {
-            true
-        }
-
         fn invoke<'a>(
             &'a self,
             _ticket: &'a DispatchTicket,
@@ -1311,34 +1188,6 @@ mod tests {
             provider_streams: 1,
             hands_rpcs: 1,
         }
-    }
-
-    #[test]
-    fn phase_dispatch_permits_are_nonblocking_typed_and_raii_released() {
-        let permits = Arc::new(PermitSet::new(BTreeMap::from([
-            (PermitKind::ProviderStream, 4_u64),
-            (PermitKind::HandsRpc, 1_u64),
-        ])));
-        let dispatch = MuxDispatch::new(Arc::clone(&permits), activation_resources(1));
-
-        let DispatchDecision::Admitted(provider) = dispatch.admit(DispatchLane::Network, 4) else {
-            panic!("the weighted network lane has four slots");
-        };
-        assert!(matches!(
-            dispatch.admit(DispatchLane::Network, 1),
-            DispatchDecision::Deferred(aex_brain_domain::child::QueuedReason::RegionalCapacity)
-        ));
-        assert_eq!(permits.held(PermitKind::ProviderStream), 4);
-        assert_eq!(permits.held(PermitKind::HandsRpc), 0);
-        drop(provider);
-        assert_eq!(permits.held(PermitKind::ProviderStream), 0);
-
-        let DispatchDecision::Admitted(hands) = dispatch.admit(DispatchLane::Hands, 1) else {
-            panic!("the Hands lane has one slot");
-        };
-        assert_eq!(permits.held(PermitKind::HandsRpc), 1);
-        drop(hands);
-        assert_eq!(permits.held(PermitKind::HandsRpc), 0);
     }
 
     fn block_on<F: core::future::Future>(future: F) -> F::Output {
@@ -1424,63 +1273,47 @@ mod tests {
     }
 
     #[test]
-    fn catalog_hydration_advertises_only_exact_supported_rows_in_durable_order() {
-        let pin = CatalogPin(aex_model_catalog::Blake3Digest::of(b"catalog"));
-        let tools = ProductionToolExecutors {
-            brain_inline: Some(Arc::new(crate::inline_tools::BrainControlExecutor)),
-            managed_web: None,
-            mcp: None,
-            hands: None,
+    fn missing_tool_authorities_fail_startup_by_exact_name() {
+        let outcome = ProductionToolExecutors {
+            hands: Some(Arc::new(NeverExecutor)),
+            ..ProductionToolExecutors::default()
         }
-        .compose([
-            pin,
-            CatalogPin(aex_model_catalog::Blake3Digest::of(b"older")),
-        ])
-        .expect("the exact supported subset composes");
-        let advertised = tools.advertise(&pin).expect("the retained pin is hydrated");
+        .compose([CatalogPin(aex_model_catalog::Blake3Digest::of(b"catalog"))]);
+        let Err(error) = outcome else {
+            panic!("three missing production authorities refuse composition");
+        };
         assert_eq!(
-            advertised
-                .definitions
-                .iter()
-                .map(|tool| tool.name.as_str())
-                .collect::<Vec<_>>(),
-            vec!["todo_read", "todo_write"]
+            error,
+            ToolCompositionError::Unbound {
+                missing: vec![
+                    BRAIN_INLINE_EXECUTOR_ABSENT,
+                    MANAGED_WEB_EXECUTOR_ABSENT,
+                    MCP_EXECUTOR_ABSENT,
+                ]
+            }
         );
-        assert!(advertised.parallel_safe);
-        assert!(matches!(
-            tools.route(&pin, &ToolName::parse("wait").expect("name")),
-            Err(aex_brain_application::ports::ToolRoutingError::NotAdmitted { .. })
-        ));
-        assert!(matches!(
-            tools.route(&pin, &ToolName::parse("read_file").expect("name")),
-            Err(aex_brain_application::ports::ToolRoutingError::NotAdmitted { .. })
-        ));
+        assert!(!error.to_string().contains(HANDS_TOOL_EXECUTOR_ABSENT));
     }
 
     #[test]
-    fn optional_authority_never_becomes_an_advertised_call_time_fallback() {
+    fn a_fully_supplied_executor_set_installs_routes_for_the_retained_pin() {
+        let executor = Arc::new(NeverExecutor);
         let pin = CatalogPin(aex_model_catalog::Blake3Digest::of(b"catalog"));
         let tools = ProductionToolExecutors {
-            brain_inline: Some(Arc::new(crate::inline_tools::BrainControlExecutor)),
-            managed_web: Some(Arc::new(NeverExecutor)),
-            mcp: None,
-            hands: None,
+            brain_inline: Some(Arc::clone(&executor) as Arc<_>),
+            managed_web: Some(Arc::clone(&executor) as Arc<_>),
+            mcp: Some(Arc::clone(&executor) as Arc<_>),
+            hands: Some(executor),
         }
         .compose([pin])
-        .expect("optional authorities are filtered before installation");
-        let advertised = tools.advertise(&pin).expect("advertisement");
-        let names = advertised
-            .definitions
-            .iter()
-            .map(|tool| tool.name.as_str())
-            .collect::<Vec<_>>();
-        assert!(names.contains(&"web_fetch"));
-        assert!(!names.contains(&"web_search"), "no resolved tenant secret");
-        assert!(!names.iter().any(|name| name.starts_with("mcp__")));
-        assert!(!names.contains(&"read_file"), "Hands claims no typed tool");
-        assert!(
-            !advertised.parallel_safe,
-            "managed network work is not parallel-safe"
+        .expect("all four real route objects compose");
+        let first = aex_brain_tool_catalog::catalog::builtin_entries()
+            .expect("the build-time catalog is valid")
+            .remove(0);
+        let name = ToolName::parse(first.descriptor.name.as_str()).expect("built-in name is valid");
+        assert_eq!(
+            tools.route(&pin, &name).expect("route is installed").name,
+            name
         );
     }
 
@@ -1628,8 +1461,8 @@ mod tests {
         };
         assert_eq!(permits.held(PermitKind::ContextBytes), 512);
         assert_eq!(permits.held(PermitKind::StreamBufferBytes), 1);
-        assert_eq!(permits.held(PermitKind::ProviderStream), 0);
-        assert_eq!(permits.held(PermitKind::HandsRpc), 0);
+        assert_eq!(permits.held(PermitKind::ProviderStream), 1);
+        assert_eq!(permits.held(PermitKind::HandsRpc), 1);
         drop(held);
         assert_eq!(permits.held(PermitKind::ContextBytes), 0);
         assert_eq!(permits.held(PermitKind::Activation), 0);

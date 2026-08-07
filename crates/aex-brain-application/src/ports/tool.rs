@@ -8,24 +8,12 @@ use aex_brain_domain::ids::{
     CatalogPin, ContentHash, DetachedOperationId, Fence, ToolCallId, ToolName,
 };
 use aex_brain_domain::journal::ExecutorRoute;
-use aex_model_catalog::canonical::{CanonicalToolDef, ToolResultPart};
+use aex_model_catalog::canonical::ToolResultPart;
 use aex_wire::CanonicalJson;
 use aex_wire::ids::GenerationId;
 
 /// One tool invocation, whichever executor actually runs it.
 pub trait ToolPort: Send + Sync + 'static {
-    /// Returns the deterministic provider-visible tools for one immutable pin.
-    ///
-    /// The returned definitions are already filtered through exact executor,
-    /// credential and capability readiness. An absent implementation is never
-    /// represented as a tool the provider may call.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ToolRoutingError::UnknownPin`] when this process did not hydrate
-    /// the exact catalog revision.
-    fn advertise(&self, pin: &CatalogPin) -> Result<ToolAdvertisement, ToolRoutingError>;
-
     /// Resolves `name` against the pinned catalog.
     ///
     /// Synchronous because the catalog is a signed immutable artifact already in memory:
@@ -79,23 +67,8 @@ pub struct ToolRoute {
     pub class: EffectClass,
     /// The wall-clock ceiling for one invocation.
     pub timeout_ms: u32,
-    /// Weighted units acquired from the selected dispatch lane.
-    ///
-    /// Zero is valid only for Brain-inline work. Every external route is
-    /// refused before pre-send unless it reserves at least one unit.
-    pub concurrency_weight: u16,
     /// The manifest digest the route was resolved from, so a receipt can name it.
     pub manifest_digest: ContentHash,
-}
-
-/// One immutable provider-facing tool surface.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ToolAdvertisement {
-    /// Definitions in canonical tool-name order.
-    pub definitions: Vec<CanonicalToolDef>,
-    /// Whether every definition explicitly declares the pure, deterministic,
-    /// zero-external-weight contract required for provider parallel calls.
-    pub parallel_safe: bool,
 }
 
 /// Why a tool could not be routed.
@@ -118,12 +91,6 @@ pub enum ToolRoutingError {
     UnknownPin {
         /// The pin.
         pin: CatalogPin,
-    },
-    /// An external route attempted to bypass weighted resource admission.
-    #[error("external tool `{name}` declares zero concurrency weight")]
-    InvalidConcurrencyWeight {
-        /// The tool whose manifest bound is invalid for its executor route.
-        name: String,
     },
 }
 
@@ -155,15 +122,32 @@ pub struct PreparedToolCall {
 /// The read-only control state a tool may see.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ControlStateView {
-    /// Canonical arguments of the last successful `todo_write`, when present.
-    ///
-    /// The executor reads this fold projection rather than reaching back into
-    /// the activation or a second storage authority.
-    pub todo_state: Option<CanonicalJson>,
+    /// The agent's todo list, in order.
+    pub todos: Vec<TodoEntry>,
     /// How many assistant turns have committed.
     pub assistant_turns: u32,
     /// Lineage depth, root at zero.
     pub depth: u16,
+}
+
+/// One todo entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TodoEntry {
+    /// What the entry says.
+    pub text: String,
+    /// Where it stands.
+    pub state: TodoState,
+}
+
+/// Where a todo entry stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TodoState {
+    /// Not started.
+    Pending,
+    /// Being worked on.
+    InProgress,
+    /// Done.
+    Completed,
 }
 
 /// What an invocation produced.

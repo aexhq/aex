@@ -162,7 +162,7 @@ fn a_deployable_with_no_scenario_owner_fails() {
 fn observing_an_artifact_without_a_runnable_claim_is_not_scenario_coverage() {
     let scenarios = SOUND_SCENARIOS
         .replace("package = \"cargo:aex-live-demo-api\"\n", "")
-        .replace("target = \"e2e\"\n", "");
+        .replace("target = \"smoke\"\n", "");
     let root = Fixture::new()
         .add_crate(
             CratePlan::new("demo-api", "services/demo-api")
@@ -183,7 +183,7 @@ fn observing_an_artifact_without_a_runnable_claim_is_not_scenario_coverage() {
 fn an_explicit_scenario_deferral_is_valid_but_not_runnable_evidence() {
     let scenarios = SOUND_SCENARIOS
         .replace("package = \"cargo:aex-live-demo-api\"\n", "")
-        .replace("target = \"e2e\"\n", "")
+        .replace("target = \"smoke\"\n", "")
         .replace(
             "observes = [\"artifact:demo-api\"]\n",
             "observes = [\"artifact:demo-api\"]\ndeferred = \"live target waits for the production composition\"\n",
@@ -203,27 +203,13 @@ fn an_explicit_scenario_deferral_is_valid_but_not_runnable_evidence() {
     let built = verify_fixture(&root).expect("explicit deferral is structurally valid");
     assert_eq!(built.deferred.len(), 1);
     assert_eq!(built.deferred[0].id, "SC-DEMO");
-
-    let inputs = GraphInputs::load(&root).unwrap();
-    let err = verify::verify_release_candidate(&inputs)
-        .expect_err("a release cannot promote an all-deferred scenario registry");
-    assert_eq!(err.exit.code(), 10);
-    assert!(err.rules().contains(&"release-runnable-scenario-missing"));
-}
-
-#[test]
-fn a_release_candidate_with_a_runnable_scenario_verifies() {
-    let root = common::sound_fixture();
-    let inputs = GraphInputs::load(&root).unwrap();
-    verify::verify_release_candidate(&inputs)
-        .expect("the runnable package and target are release evidence");
 }
 
 #[test]
 fn a_scenario_cannot_claim_runnable_evidence_and_a_deferral() {
     let scenarios = SOUND_SCENARIOS.replace(
-        "target = \"e2e\"\n",
-        "target = \"e2e\"\ndeferred = \"not actually runnable\"\n",
+        "target = \"smoke\"\n",
+        "target = \"smoke\"\ndeferred = \"not actually runnable\"\n",
     );
     let root = Fixture::new()
         .add_crate(
@@ -253,40 +239,11 @@ fn a_scenario_package_must_claim_the_scenario_and_the_exact_target() {
                 .meta(live_meta_for("demo-api", "SC-SOMETHING-ELSE")),
         )
         .units(SOUND_UNITS)
-        .scenarios(&SOUND_SCENARIOS.replace("target = \"e2e\"", "target = \"ghost\""))
+        .scenarios(&SOUND_SCENARIOS.replace("target = \"smoke\"", "target = \"ghost\""))
         .build();
     let err = verify_fixture(&root).unwrap_err();
     assert!(err.rules().contains(&"scenario-package-disagreement"));
     assert!(err.rules().contains(&"scenario-target-unknown"));
-}
-
-#[test]
-fn a_unit_target_cannot_be_runnable_cross_service_evidence() {
-    let mut meta = live_meta("demo-api");
-    meta["layers"] = serde_json::json!(["unit", "smoke", "e2e"]);
-    meta["targets"] = serde_json::json!({ "direct_invoke": "unit" });
-    let scenarios = SOUND_SCENARIOS.replace("target = \"e2e\"", "target = \"direct_invoke\"");
-    let root = Fixture::new()
-        .add_crate(
-            CratePlan::new("demo-api", "services/demo-api")
-                .meta(deployable_meta("demo-api", "aex-live-demo-api")),
-        )
-        .add_crate(CratePlan::new("aex-live-demo-api", "tests/live/aex-live-demo-api").meta(meta))
-        .units(SOUND_UNITS)
-        .scenarios(&scenarios)
-        .build();
-
-    let err = verify_fixture(&root).expect_err("unit evidence cannot satisfy an e2e scenario");
-    assert_eq!(
-        err.violations
-            .iter()
-            .filter(|violation| violation.rule == "scenario-target-not-e2e")
-            .map(|violation| violation.detail.as_str())
-            .collect::<Vec<_>>(),
-        vec![
-            "scenario `SC-DEMO` names target `direct_invoke` in `tests/live/aex-live-demo-api`, but that target is layer `unit`; a runnable cross-service scenario requires `e2e` evidence"
-        ]
-    );
 }
 
 #[test]
@@ -350,7 +307,7 @@ id = "SC-EDGE"
 owner = "central-finance"
 observes = ["artifact:stripe-command-edge"]
 package = "cargo:aex-live-stripe-command-edge"
-target = "e2e"
+target = "smoke"
 "#;
 
 fn ts_edge_fixture(units: &str) -> std::path::PathBuf {

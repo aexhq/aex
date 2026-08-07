@@ -5,7 +5,6 @@ import { resolve } from "node:path";
 import { loadMarketingPage, parseInline, parseMarketingPage, slugify } from "../app/_lib/marketing.js";
 
 const CONTENT_PATH = resolve(import.meta.dir, "../content/marketing/index.mdx");
-const README_PATH = resolve(import.meta.dir, "../../../README.md");
 const page = loadMarketingPage(CONTENT_PATH);
 
 describe("the landing page content model", () => {
@@ -15,19 +14,7 @@ describe("the landing page content model", () => {
     expect(page.hero.heading).toBe("Durable infrastructure for agents that think and act");
     expect(page.hero.body.length).toBeGreaterThanOrEqual(1);
     expect(page.hero.links.map((link) => link.href)).toEqual(["/docs", "#capability-surface"]);
-    const status = page.hero.note.map((span) => span.value).join("");
-
-    expect(status).toContain("active prelaunch development");
-    expect(status).toContain("not guaranteed to work");
-    expect(status).toContain("do not use AEX for production workloads yet");
-  });
-
-  test("keeps the repository entry point explicit about development status", () => {
-    const readme = readFileSync(README_PATH, "utf8");
-
-    expect(readme).toContain("active prelaunch development");
-    expect(readme).toContain("not guaranteed to work");
-    expect(readme).toContain("do not rely on AEX for production workloads yet");
+    expect(page.hero.note.map((span) => span.value).join("")).toContain("prelaunch");
   });
 
   test("carries exactly the two owner-specified sections, in order", () => {

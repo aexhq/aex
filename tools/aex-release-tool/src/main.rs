@@ -120,11 +120,7 @@ enum GraphCommand {
         out: Option<PathBuf>,
     },
     /// Run every fail-closed verification rule.
-    Verify {
-        /// Also require executable cross-service evidence for a release route.
-        #[arg(long)]
-        release: bool,
-    },
+    Verify,
     /// Decide what runs.
     Select {
         /// Base commit of the diff.
@@ -175,9 +171,6 @@ enum GraphCommand {
         /// The selection document.
         #[arg(long)]
         selection: PathBuf,
-        /// Artifact selection whose owning packages must emit validation receipts.
-        #[arg(long)]
-        artifact_selection: Option<PathBuf>,
         /// Which slice.
         #[arg(long)]
         kind: MatrixKind,
@@ -440,16 +433,13 @@ enum ArtifactCommand {
         file: Option<PathBuf>,
         /// `CycloneDX` JSON SBOM.
         #[arg(long)]
-        sbom: Option<PathBuf>,
+        sbom: PathBuf,
         /// Complete licence inventory from the passing scan.
         #[arg(long)]
-        license_inventory: Option<PathBuf>,
+        license_inventory: PathBuf,
         /// Complete vulnerability verdict from the passing artifact scan.
         #[arg(long)]
-        vulnerability_verdict: Option<PathBuf>,
-        /// Defer scanner-derived supply-chain evidence outside the startup release path.
-        #[arg(long)]
-        defer_supply_chain: bool,
+        vulnerability_verdict: PathBuf,
         /// Official GitHub attestation bundle.
         #[arg(long)]
         provenance_bundle: PathBuf,
@@ -1099,12 +1089,8 @@ fn run_graph(cli: &Cli, root: &Path, command: &GraphCommand) -> Result<()> {
                 emit(cli, &summary)
             }
         }
-        GraphCommand::Verify { release } => {
-            let built = if *release {
-                verify::verify_release_candidate(&inputs)?
-            } else {
-                verify::verify(&inputs)?
-            };
+        GraphCommand::Verify => {
+            let built = verify::verify(&inputs)?;
             emit(cli, &verify::summarize(&built))
         }
         GraphCommand::Select {
@@ -1161,19 +1147,24 @@ fn run_graph(cli: &Cli, root: &Path, command: &GraphCommand) -> Result<()> {
         }
         GraphCommand::Matrix {
             selection,
-            artifact_selection,
             kind,
             partitions,
             shard_durations,
             github_output,
         } => {
-            let output = build_graph_matrix(
-                &inputs,
-                selection,
-                artifact_selection.as_deref(),
+            let selection: select::Selection = read_json(selection)?;
+            let durations: BTreeMap<String, u64> = match shard_durations {
+                Some(path) => read_json(path)?,
+                None => BTreeMap::new(),
+            };
+            let output = matrix::build(
+                &selection,
                 *kind,
                 *partitions,
-                shard_durations.as_deref(),
+                &durations,
+                &inputs.scenarios,
+                &inputs.units,
+                &inputs.npm,
             )?;
             if let Some(path) = github_output {
                 append_text(path, &matrix::to_github_output(&output)?)?;
@@ -1181,33 +1172,6 @@ fn run_graph(cli: &Cli, root: &Path, command: &GraphCommand) -> Result<()> {
             emit(cli, &output)
         }
     }
-}
-
-fn build_graph_matrix(
-    inputs: &GraphInputs,
-    selection: &Path,
-    artifact_selection: Option<&Path>,
-    kind: MatrixKind,
-    partitions: usize,
-    shard_durations: Option<&Path>,
-) -> Result<matrix::MatrixOutput> {
-    let selection: select::Selection = read_json(selection)?;
-    let artifact_selection: Option<select::Selection> =
-        artifact_selection.map(read_json).transpose()?;
-    let durations: BTreeMap<String, u64> = match shard_durations {
-        Some(path) => read_json(path)?,
-        None => BTreeMap::new(),
-    };
-    matrix::build_with_artifacts(
-        &selection,
-        artifact_selection.as_ref(),
-        kind,
-        partitions,
-        &durations,
-        &inputs.scenarios,
-        &inputs.units,
-        &inputs.npm,
-    )
 }
 
 fn run_artifact(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()> {
@@ -1504,7 +1468,6 @@ fn run_artifact_certify(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Re
         sbom,
         license_inventory,
         vulnerability_verdict,
-        defer_supply_chain,
         provenance_bundle,
         signature_bundle,
         receipts,
@@ -1532,12 +1495,11 @@ fn run_artifact_certify(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Re
         claims,
         aex_release_tool::certify::CertificationFiles {
             artifact: file.as_deref(),
-            sbom: sbom.as_deref(),
-            license_inventory: license_inventory.as_deref(),
-            vulnerability_verdict: vulnerability_verdict.as_deref(),
+            sbom,
+            license_inventory,
+            vulnerability_verdict,
             provenance_bundle,
             signature_bundle: signature_bundle.as_deref(),
-            defer_supply_chain: *defer_supply_chain,
         },
         &receipts,
         &freshness,
@@ -1831,7 +1793,7 @@ fn run_manifest_new(
     if !holes.is_empty() {
         return Err(ToolError::many(Exit::CompositionIncompatible, holes));
     }
-    let manifest = aex_release_tool::manifest::new_manifest(inputs, &described, &registry)?;
+    let manifest = aex_release_tool::manifest::new_manifest(inputs, &described)?;
     write_canonical(out, &manifest)?;
     emit(
         cli,
@@ -1879,7 +1841,7 @@ fn run_manifest_handoff(
         ));
     }
     let inputs: aex_release_tool::manifest::CompositionInputs = read_json(composition)?;
-    let manifest = aex_release_tool::manifest::new_handoff_manifest(inputs, &store, &registry)?;
+    let manifest = aex_release_tool::manifest::new_handoff_manifest(inputs, &store)?;
     let manifest_digest = canon::digest_bytes(&canon::to_file_bytes(&manifest)?);
     let store_digest = canon::digest_bytes(&canon::to_file_bytes(&store)?);
 
@@ -2301,9 +2263,15 @@ fn run_admit(cli: &Cli, root: &Path, args: &AdmitArgs) -> Result<()> {
 fn required_receipts_by_kind(manifest: &CompositionManifest) -> BTreeMap<String, Vec<String>> {
     let mut required: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for entry in manifest.units.values() {
-        required
-            .entry(entry.kind.clone())
-            .or_insert_with(|| vec!["unit".to_owned(), "lint".to_owned()]);
+        required.entry(entry.kind.clone()).or_insert_with(|| {
+            vec![
+                "unit".to_owned(),
+                "lint".to_owned(),
+                "sbom".to_owned(),
+                "license".to_owned(),
+                "vulnerability".to_owned(),
+            ]
+        });
     }
     required
 }

@@ -8,54 +8,54 @@ schema = "aex.artifact-policy.v1"
 
 [kind."rust-lambda"]
 required_receipts = [
-  "unit", "lint", "package-integrity",
+  "unit", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity",
 ]
 signature = "none"
 signature_rationale = "the Lambda ZIP is addressed by digest in an immutable S3 key and covered by build provenance; a second signature would add a key to rotate without adding a check"
 
 [kind."ts-lambda"]
 required_receipts = [
-  "unit", "lint", "package-integrity",
+  "unit", "lint", "sbom", "license", "vulnerability", "package-integrity",
 ]
 signature = "none"
 signature_rationale = "as rust-lambda"
 
 [kind."rust-oci-service"]
 required_receipts = [
-  "unit", "lint", "package-integrity",
+  "unit", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity",
 ]
 signature = "none"
 signature_rationale = "the image is pulled by digest from a tag-immutable repository"
 
 [kind."rust-oci-task"]
 required_receipts = [
-  "unit", "integration", "lint", "package-integrity",
+  "unit", "integration", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity",
 ]
 signature = "none"
 signature_rationale = "as rust-oci-service"
 
 [kind."rust-binary"]
 required_receipts = [
-  "unit", "lint", "determinism",
+  "unit", "lint", "deny", "sbom", "license", "vulnerability", "determinism",
 ]
 signature = "sigstore-cosign"
 signature_rationale = "a binary a customer downloads is verified outside our infrastructure, where a digest in our own metadata proves nothing"
 
 [kind."npm-package"]
 required_receipts = [
-  "unit", "contract", "lint", "package-integrity",
+  "unit", "contract", "lint", "sbom", "license", "vulnerability", "package-integrity",
 ]
 signature = "npm-provenance"
 signature_rationale = "the registry is the distribution boundary and publishes the attestation itself"
 
 [kind."build-output"]
-required_receipts = ["unit", "lint"]
+required_receipts = ["unit", "lint", "sbom", "license", "vulnerability"]
 signature = "none"
 signature_rationale = "the archive is deployed by digest to a project the binding names"
 
 [kind."microvm-image"]
 required_receipts = [
-  "unit", "lint", "package-integrity", "determinism",
+  "unit", "lint", "deny", "sbom", "license", "vulnerability", "package-integrity", "determinism",
 ]
 signature = "none"
 signature_rationale = "the service ZIP is content-addressed in versioned S3, covered by build provenance, and the resulting Lambda MicroVM image is bound by immutable ARN plus version"

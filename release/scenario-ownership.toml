@@ -6,8 +6,7 @@
 #
 # A deployable observed by no scenario fails `graph verify`. Observation alone
 # is not runnable evidence: each scenario must also declare `package` as a
-# namespaced Cargo/npm graph node and `target` as an exact `aex.targets` key
-# mapped to the `e2e` layer,
+# namespaced Cargo/npm graph node and `target` as an exact `aex.targets` key,
 # and that package must claim the scenario in `aex.scenarios`. A scenario whose
 # production composition is not runnable instead carries an exact non-empty
 # `deferred` reason. Deferral is architecture debt, never evidence: it is shown
@@ -135,14 +134,7 @@ observes = [
   "artifact:regional-session-api",
 ]
 
-# --- regional admission and session lifecycle ---------------------------------
-
-[[scenario]]
-id = "SC-REGIONAL-ADMISSION"
-owner = "regional-services"
-package = "cargo:aex-live-regional-session-api"
-target = "e2e"
-observes = ["artifact:regional-session-api"]
+# --- session lifecycle ---------------------------------------------------------
 
 [[scenario]]
 id = "SC-SESSION-ADMIT"
@@ -268,12 +260,15 @@ observes = ["artifact:brain-mux", "artifact:regional-session-api"]
 [[scenario]]
 id = "SC-HANDS-HOSTILE"
 owner = "hands"
-deferred = "The hostile-workload matrix across Hands agent and all published image variants has no executable target yet. Browser variants remain deferred until their pinned ARM64 browser layer exists."
+deferred = "The hostile-workload matrix across Hands agent and all image variants has no executable target yet."
 observes = [
   "artifact:hands-agent",
   "artifact:hands-image-512mb",
   "artifact:hands-image-1gb",
   "artifact:hands-image-2gb",
+  "artifact:hands-image-2gb-browser",
   "artifact:hands-image-4gb",
+  "artifact:hands-image-4gb-browser",
   "artifact:hands-image-8gb",
+  "artifact:hands-image-8gb-browser",
 ]

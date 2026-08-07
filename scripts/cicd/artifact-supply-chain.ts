@@ -33,7 +33,6 @@ type DenyPolicy = {
   readonly licenses?: {
     readonly allow?: readonly string[];
     readonly clarify?: readonly { readonly crate?: string; readonly expression?: string }[];
-    readonly exceptions?: readonly { readonly crate?: string; readonly allow?: readonly string[] }[];
   };
 };
 
@@ -61,18 +60,6 @@ const expressionAllowed = (
     .every((part) => allowed.has(part.trim()));
 };
 
-const exactPackageKey = (value: string): string => {
-  const separator = value.lastIndexOf("@");
-  if (separator <= 0 || separator === value.length - 1) {
-    throw new Error(`license exception ${value} must pin an exact crate version`);
-  }
-  const version = value.slice(separator + 1);
-  if (/[<>=*^~,\s]/u.test(version)) {
-    throw new Error(`license exception ${value} must pin an exact crate version`);
-  }
-  return value;
-};
-
 export type SupplyChainOutputs = {
   readonly sbom: ObjectJson;
   readonly licenseInventory: ObjectJson;
@@ -96,23 +83,12 @@ export const inspectSupplyChain = (inputs: {
   if (inputs.rawSbom.bomFormat !== "CycloneDX" || inputs.rawSbom.specVersion !== "1.6") {
     throw new Error("Syft must emit CycloneDX 1.6");
   }
-  const metadata = object(inputs.rawSbom.metadata ?? {}, "SBOM metadata");
-  const subjectComponent = metadata.component === undefined
-    ? null
-    : object(metadata.component, "SBOM metadata component");
-  const detectedComponents = inputs.rawSbom.components === undefined
-    ? []
-    : array(inputs.rawSbom.components, "SBOM components").map((entry, index) =>
-        object(entry, `component ${index}`)
-      );
-  const components = [
-    ...(subjectComponent === null
-      ? []
-      : [{ component: subjectComponent, source: "metadata.component" as const }]),
-    ...detectedComponents.map((component) => ({ component, source: "components" as const }))
-  ];
+  const components = array(inputs.rawSbom.components, "SBOM components").map((entry, index) =>
+    object(entry, `component ${index}`)
+  );
   if (components.length === 0) throw new Error("the exact artifact SBOM is empty");
 
+  const metadata = object(inputs.rawSbom.metadata ?? {}, "SBOM metadata");
   const properties = Array.isArray(metadata.properties) ? metadata.properties : [];
   metadata.properties = [
     ...properties.filter(
@@ -130,33 +106,14 @@ export const inspectSupplyChain = (inputs: {
       string(entry.expression, "clarified expression")
     ])
   );
-  const exceptions = new Map<string, Set<string>>();
-  for (const entry of inputs.denyPolicy.licenses?.exceptions ?? []) {
-    const key = exactPackageKey(string(entry.crate, "license exception crate"));
-    const licenses = new Set(
-      (entry.allow ?? []).map((license) => string(license, `license exception ${key}`))
-    );
-    if (licenses.size === 0) throw new Error(`license exception ${key} has no allow list`);
-    exceptions.set(key, licenses);
-  }
-  const inventory = components.map(({ component, source }) => {
+  const inventory = components.map((component) => {
     const name = string(component.name, "component name");
     const version = typeof component.version === "string" ? component.version : null;
-    const licenseEvidence = component.licenses === undefined ? "not-declared" : "declared";
-    if (source === "components" && licenseEvidence === "not-declared") {
-      throw new Error(`component ${name} licenses must be an array`);
-    }
-    const licenses = licenseEvidence === "declared" ? licensesOf(component) : [];
-    const componentAllowed = new Set(allowed);
-    if (version !== null) {
-      for (const license of exceptions.get(`${name}@${version}`) ?? []) {
-        componentAllowed.add(license);
-      }
-    }
+    const licenses = licensesOf(component);
     const denied = licenses.filter(
-      (expression) => !expressionAllowed(name, expression, componentAllowed, clarified)
+      (expression) => !expressionAllowed(name, expression, allowed, clarified)
     );
-    return { source, name, version, licenseEvidence, licenses, denied };
+    return { name, version, licenses, denied };
   });
   const denials = inventory.flatMap((component) =>
     component.denied.map((license) => `${component.name}: ${license}`)

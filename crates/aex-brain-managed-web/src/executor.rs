@@ -182,10 +182,6 @@ impl core::fmt::Debug for ManagedWebExecutor {
 }
 
 impl ToolExecutor for ManagedWebExecutor {
-    fn supports(&self, tool: &aex_brain_domain::ids::ToolName) -> bool {
-        matches!(tool.as_str(), "web_fetch" | "web_search")
-    }
-
     fn invoke<'a>(
         &'a self,
         ticket: &'a DispatchTicket,
@@ -527,7 +523,6 @@ mod tests {
                 executor: ExecutorRoute::ManagedWeb,
                 class: EffectClass::NonReplayable,
                 timeout_ms: 30_000,
-                concurrency_weight: 4,
                 manifest_digest: ContentHash::of(b"manifest"),
             },
             input: aex_wire::CanonicalJson::from_value(input).expect("canonical input"),
