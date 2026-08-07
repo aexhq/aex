@@ -40,7 +40,15 @@ pub const OTLP_MAX_RATIO: u64 = 200;
 pub const OTLP_RESERVE_WAIT_MS: u64 = 50;
 
 /// Bytes of canonical plaintext above which a body moves to `S3`.
-pub const OBS_INLINE_MAX: usize = 32_768;
+///
+/// Stopgap, lowered from 32 KiB (2026-08-07 triage): `bodyInline` rides three
+/// dense observation GSIs, and the designed per-index copy bound
+/// [`OBS_INDEX_INLINE_MAX`] is not enforced anywhere, so every inline byte was
+/// stored four times. Holding this at the index bound keeps each GSI copy
+/// small while 4-32 KiB bodies take one `S3` put instead. The full fix —
+/// a bounded index attribute distinct from the base body — stays backlogged;
+/// when it lands this ceiling can return to 32 KiB.
+pub const OBS_INLINE_MAX: usize = 4_096;
 
 /// Bytes of `bodyInline` above which the index copy stores an `S3` key instead.
 pub const OBS_INDEX_INLINE_MAX: usize = 4_096;
@@ -161,6 +169,17 @@ mod tests {
             assert!(
                 OBS_INDEX_SETTLE_MS > OBS_CLOCK_SKEW_MAX_MS,
                 "the snapshot contract requires the settle window to dominate skew"
+            );
+        }
+    }
+
+    #[test]
+    fn an_inline_body_never_exceeds_what_a_dense_index_copy_may_carry() {
+        const {
+            assert!(
+                super::OBS_INLINE_MAX <= super::OBS_INDEX_INLINE_MAX,
+                "bodyInline rides three dense GSIs; until the bounded index \
+                 attribute exists, the inline ceiling is the index copy bound"
             );
         }
     }
