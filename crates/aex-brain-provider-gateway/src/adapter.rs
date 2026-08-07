@@ -6,10 +6,10 @@
 
 use aex_model_catalog::QualifiedModel;
 use aex_model_catalog::canonical::{
-    CanonicalBlock, CanonicalModelRequest, GatewayRoute, NormalizedUsage, StopReason,
-    StructuredOutputRequest, ToolChoice,
+    CanonicalBlock, CanonicalModelRequest, NormalizedUsage, StopReason, StructuredOutputRequest,
+    ToolChoice,
 };
-use aex_model_catalog::document::Capability;
+use aex_model_catalog::document::{AdapterSourceDigest, Capability};
 use aex_model_catalog::primitives::{ProviderRequestId, ToolCallId, ToolName};
 use aex_wire::provider::ProviderId;
 
@@ -199,8 +199,6 @@ pub struct SealedResponse {
     pub usage: NormalizedUsage,
     /// The provider's own request id, where it published one.
     pub provider_request_id: Option<ProviderRequestId>,
-    /// Bounded gateway route metadata, absent for direct providers.
-    pub gateway_route: Option<GatewayRoute>,
 }
 
 /// A read-only view of response headers, so an adapter cannot mutate them.
@@ -228,20 +226,10 @@ impl<'a> HeaderView<'a> {
 }
 
 /// A bounded error body. Read to the budget's ceiling and no further.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoundedBody {
     bytes: Vec<u8>,
     truncated: bool,
-}
-
-impl core::fmt::Debug for BoundedBody {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        formatter
-            .debug_struct("BoundedBody")
-            .field("len", &self.bytes.len())
-            .field("truncated", &self.truncated)
-            .finish()
-    }
 }
 
 impl BoundedBody {
@@ -293,6 +281,10 @@ impl BoundedBody {
 pub trait ProviderAdapter: Send + Sync + 'static {
     /// Which provider this adapter speaks for.
     fn provider(&self) -> ProviderId;
+
+    /// The digest of the adapter source tree, which every conformance receipt
+    /// is bound to (D-06).
+    fn source_digest(&self) -> AdapterSourceDigest;
 
     /// Builds the wire request. Pure: no I/O, no clock, no credential.
     ///
@@ -354,7 +346,7 @@ pub trait ProviderAdapter: Send + Sync + 'static {
 /// Every dialect accumulates the same shapes — ordered blocks, per-index
 /// tool-argument fragments, a usage tally, a finish token — so the state lives
 /// here and each adapter drives it. That is what lets the block-assembly and
-/// budget rules be written once rather than eight times.
+/// budget rules be written once rather than six times.
 #[derive(Debug, Default)]
 pub struct DialectState {
     /// Blocks completed so far, in arrival order.
@@ -373,8 +365,6 @@ pub struct DialectState {
     pub usage: NormalizedUsage,
     /// The provider's own request id, where the body carries it.
     pub request_id: Option<ProviderRequestId>,
-    /// Bounded gateway route metadata accumulated from response frames.
-    pub gateway_route: Option<GatewayRoute>,
     /// Whether a terminal frame has been decoded.
     pub terminal: bool,
     /// Whether any dialect frame has been decoded, which is what proves the
@@ -435,15 +425,6 @@ mod tests {
         assert!(body.is_truncated());
         assert!(body.as_json().is_none(), "a cut body must not parse");
         assert_eq!(body.as_str(), Some("{\"error\":"));
-    }
-
-    #[test]
-    fn an_error_body_debug_rendering_never_carries_provider_bytes() {
-        let body = BoundedBody::new(b"echoed sk-012345678901234567890123456789".to_vec(), false);
-        let rendered = format!("{body:?}");
-        assert!(rendered.contains("len"));
-        assert!(rendered.contains("truncated: false"));
-        assert!(!rendered.contains("sk-"));
     }
 
     #[test]

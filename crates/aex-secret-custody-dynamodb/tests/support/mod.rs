@@ -190,7 +190,6 @@ pub fn entry() -> CustodyEntry {
     CustodyEntry {
         name: secret_name(),
         source_generation: SourceGeneration::FIRST,
-        source_revision: SecretRevision::FIRST,
         epoch_at_admission: RevocationEpoch::INITIAL,
         ciphertext: ciphertext(),
     }

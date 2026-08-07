@@ -82,20 +82,6 @@ cardinality = "bounded"
 visibility = "public"
 max_len = 3
 
-[[attribute]]
-name = "aex.isolation.count"
-brief = "Complete number of malformed rows isolated in one bounded recovery pass."
-cardinality = "bounded"
-visibility = "public"
-max_len = 10
-
-[[attribute]]
-name = "aex.isolation.fingerprint"
-brief = "Redacted sixteen-hex correlation digest for one isolated row."
-cardinality = "bounded"
-visibility = "public"
-max_len = 16
-
 # --- provider and meter shape -------------------------------------------------
 
 [[attribute]]
@@ -241,11 +227,6 @@ brief = "One durable storage transaction against a single authority."
 attributes = ["aex.operation", "aex.outcome", "aex.error.class", "aex.retry.count"]
 
 # --- events -------------------------------------------------------------------
-
-[[event]]
-name = "aex.brain.due_row.isolated"
-brief = "Brain isolated a malformed due-index row while valid siblings continued."
-attributes = ["aex.plane", "aex.region", "aex.deployable", "aex.error.class", "aex.isolation.count", "aex.isolation.fingerprint"]
 
 [[event]]
 name = "aex.process.started"

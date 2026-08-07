@@ -19,23 +19,6 @@ pub const STOP_TIMEOUT: core::time::Duration = core::time::Duration::from_mins(2
 /// How much of that is reserved for committing what is already finished.
 pub const COMMIT_MARGIN: core::time::Duration = core::time::Duration::from_secs(30);
 
-/// Why graceful drain refused to claim a clean exit.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum DrainError {
-    /// The receive supervisor panicked instead of completing or accepting cancellation.
-    #[error("the wake pump failed while draining: {reason}")]
-    PumpFailed {
-        /// Bounded join failure description.
-        reason: String,
-    },
-    /// The pump was joined, but an admitted activation remained registered.
-    #[error("the wake pump stopped with {in_flight} admitted activation(s) still in flight")]
-    ActivationsRemain {
-        /// Count observed after the pump join completed.
-        in_flight: usize,
-    },
-}
-
 /// The stages drain moves through, in order.
 ///
 /// Ordered and exhaustive so a shutdown that stalls can be reported as "stuck at stage N"
@@ -50,8 +33,7 @@ pub enum Stage {
     AbandonReplaySafe,
     /// Dispatched non-replayable effects run to their deadline or the commit margin.
     AwaitNonReplayable,
-    /// No activation future remains able to use a lease; cooperative paths released theirs,
-    /// while an explicitly aborted path is fenced by process exit and its bounded TTL.
+    /// Every remaining lease is released and every wake re-armed.
     ReleaseLeases,
     /// Caches are dropped and telemetry flushed.
     Flush,

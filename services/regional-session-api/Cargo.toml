@@ -69,7 +69,6 @@ thiserror.workspace = true
 
 [dev-dependencies]
 aex-secret-domain = { path = "../../crates/aex-secret-domain" }
-aex-session-domain = { path = "../../crates/aex-session-domain" }
 aex-workspace-domain = { path = "../../crates/aex-workspace-domain" }
 axum.workspace = true
 http-body-util.workspace = true

@@ -20,11 +20,11 @@ use aex_secret_domain::{
 };
 use aex_session_domain::{
     AccountRevision, AgentControl, AgentFence, AgentRevision, Approval, AuthorizationEpoch,
-    CancellationEpoch, IdempotencyReceipt, JournalPage, JournalSeq, Message, OutboxEvent,
-    ReservationId, Run, Session, SessionRevision, SessionTombstone, WorkAdmission,
+    CancellationEpoch, DeletionGuard, IdempotencyReceipt, JournalPage, JournalSeq, Message,
+    OutboxEvent, ReservationId, Run, Session, SessionRevision, SessionTombstone, WorkAdmission,
 };
 use aex_wire::ids::{
-    AgentId, OperationId, OrganizationId, RunId, SessionId, UploadId, WorkspaceId,
+    AgentId, MessageId, OperationId, OrganizationId, RunId, SessionId, UploadId, WorkspaceId,
 };
 use aex_wire::types::{ETag, Timestamp};
 use aex_workspace_domain::{DownloadGrant, RegistryPointer, RegistrySelector, Upload, UploadState};
@@ -170,8 +170,6 @@ pub enum Condition {
     },
     /// The agent control record is at this revision.
     AgentRevision {
-        /// The owning session, required to locate the physical agent partition.
-        session: SessionId,
         /// Which agent.
         agent: AgentId,
         /// The expected revision.
@@ -179,8 +177,6 @@ pub enum Condition {
     },
     /// The agent's fence is at least this.
     AgentFence {
-        /// The owning session, required to locate the physical agent partition.
-        session: SessionId,
         /// Which agent.
         agent: AgentId,
         /// The floor.
@@ -188,8 +184,6 @@ pub enum Condition {
     },
     /// The agent's journal tail is exactly this.
     JournalTail {
-        /// The owning session, required to locate the physical agent partition.
-        session: SessionId,
         /// Which agent.
         agent: AgentId,
         /// The expected tail.
@@ -197,8 +191,6 @@ pub enum Condition {
     },
     /// The run has not settled.
     RunNonTerminal {
-        /// The owning session, required to locate the physical run row.
-        session: SessionId,
         /// Which run.
         run: RunId,
     },
@@ -325,72 +317,6 @@ impl Condition {
             Self::ItemAbsent(key) | Self::ItemPresent(key) => key.family,
         }
     }
-
-    /// The logical item this guard reads.
-    ///
-    /// Conditions sharing this identity are joined into one physical
-    /// expression. If a write has the same identity, the expression belongs on
-    /// that `Put`/`Update`/`Delete`; `DynamoDB` rejects a separate
-    /// `ConditionCheck` against the same item.
-    #[must_use]
-    pub fn target(&self) -> ItemKey {
-        let (partition, sort) = match self {
-            Self::SessionRevision { session, .. }
-            | Self::SessionStatusIn { session, .. }
-            | Self::SessionActiveRun { session, .. }
-            | Self::WorkAdmission { session, .. }
-            | Self::DeletionState { session, .. }
-            | Self::CancellationEpoch { session, .. }
-            | Self::MutationGuardFree { session }
-            | Self::MutationGuardHeldBy { session, .. }
-            | Self::PersistRoot { session, .. } => (session.to_string(), "HEAD".to_owned()),
-            Self::AgentRevision { session, agent, .. }
-            | Self::AgentFence { session, agent, .. }
-            | Self::JournalTail { session, agent, .. } => {
-                (format!("{session}#{agent}"), "CONTROL".to_owned())
-            }
-            Self::RunNonTerminal { session, run } => (session.to_string(), format!("RUN#{run}")),
-            Self::AccountRevisionAtLeast { organization, .. } => {
-                (organization.to_string(), "ACCOUNT".to_owned())
-            }
-            Self::AuthorizationEpochAtLeast { workspace, .. } => {
-                (workspace.to_string(), "AUTHORIZATION".to_owned())
-            }
-            Self::RegistryEtag { selector, .. } => (
-                selector.workspace.to_string(),
-                format!(
-                    "REG#{}#{}",
-                    registry_kind_tag(selector.kind),
-                    selector.name.as_str()
-                ),
-            ),
-            Self::UploadState { upload, .. } => (upload.to_string(), "UPLOAD".to_owned()),
-            Self::ReservationOpen { reservation } => {
-                (reservation.0.to_string(), "RESERVATION".to_owned())
-            }
-            Self::ContentOwned { workspace, digest } => {
-                (workspace.to_string(), format!("CONTENT#{digest}"))
-            }
-            Self::RootPinPresent { root } => (format!("{:x?}", root.digest), "ROOT_PIN".to_owned()),
-            Self::GrantUnexpired { grant, .. } => (grant.0.to_string(), "GRANT".to_owned()),
-            Self::OperationFence { operation, .. } => {
-                (operation.to_string(), "OPERATION".to_owned())
-            }
-            Self::SecretRevocationEpoch {
-                workspace, name, ..
-            } => (
-                workspace.to_string(),
-                format!("SECRET_REVOCATION#{}", name.as_str()),
-            ),
-            Self::CustodyRevision { session, .. } => (session.to_string(), "CUSTODY".to_owned()),
-            Self::ItemAbsent(key) | Self::ItemPresent(key) => return key.clone(),
-        };
-        ItemKey {
-            family: self.family(),
-            partition,
-            sort,
-        }
-    }
 }
 
 /// One durable change the transaction makes.
@@ -398,19 +324,16 @@ impl Condition {
 pub enum Write {
     /// Replace the session head.
     PutSessionHead(Box<Session>),
-    /// Replace a complete message authority row.
-    PutMessage(Box<Message>),
+    /// Append a message.
+    AppendMessage(Box<Message>),
+    /// Seal a message.
+    SealMessage(MessageId),
     /// Replace a run record.
     PutRun(Box<Run>),
     /// Replace an agent control record.
     PutAgentControl(Box<AgentControl>),
     /// Append a journal page.
-    AppendJournalPage {
-        /// The owning session, required to locate the physical agent partition.
-        session: SessionId,
-        /// The complete immutable journal page.
-        page: Box<JournalPage>,
-    },
+    AppendJournalPage(Box<JournalPage>),
     /// Replace an approval.
     PutApproval(Box<Approval>),
     /// Write an idempotency receipt.
@@ -439,6 +362,8 @@ pub enum Write {
     PutCustody(Box<SessionCustody>),
     /// Replace a workspace secret.
     PutSecret(Box<WorkspaceSecret>),
+    /// Replace a session's deletion guard.
+    PutDeletionGuard(Box<DeletionGuard>),
     /// Write a session tombstone.
     PutTombstone(Box<SessionTombstone>),
     /// Delete an item outright.
@@ -451,11 +376,13 @@ impl Write {
     pub const fn family(&self) -> TableFamily {
         match self {
             Self::PutSessionHead(_)
-            | Self::PutMessage(_)
+            | Self::AppendMessage(_)
+            | Self::SealMessage(_)
             | Self::PutRun(_)
             | Self::PutAgentControl(_)
-            | Self::AppendJournalPage { .. }
+            | Self::AppendJournalPage(_)
             | Self::PutApproval(_)
+            | Self::PutDeletionGuard(_)
             | Self::PutTombstone(_) => TableFamily::SessionAuthority,
             Self::PutIdempotencyReceipt(_) => TableFamily::Idempotency,
             Self::PutOperation(_) | Self::RedactOperationResult(_) | Self::PutWorkItem(_) => {
@@ -476,19 +403,17 @@ impl Write {
     pub fn target(&self) -> ItemKey {
         let (partition, sort) = match self {
             Self::PutSessionHead(session) => (session.id.to_string(), "HEAD".to_owned()),
-            Self::PutMessage(message) => (
-                message.session.to_string(),
-                format!("MESSAGE#{}", message.id),
-            ),
+            Self::AppendMessage(message) => {
+                (message.session.to_string(), format!("MSG#{}", message.id))
+            }
+            Self::SealMessage(id) => (id.to_string(), "MSG#SEAL".to_owned()),
             Self::PutRun(run) => (run.session.to_string(), format!("RUN#{}", run.id)),
-            Self::PutAgentControl(agent) => (
-                format!("{}#{}", agent.session, agent.id),
-                "CONTROL".to_owned(),
-            ),
-            Self::AppendJournalPage { session, page } => (
-                format!("{session}#{}", page.agent),
-                format!("JOURNAL#{}", page.first.0),
-            ),
+            Self::PutAgentControl(agent) => {
+                (agent.session.to_string(), format!("AGENT#{}", agent.id))
+            }
+            Self::AppendJournalPage(page) => {
+                (page.agent.to_string(), format!("JOURNAL#{}", page.first.0))
+            }
             Self::PutApproval(approval) => (
                 approval.binding.session.to_string(),
                 format!("APPROVAL#{}", approval.id),
@@ -514,13 +439,17 @@ impl Write {
                     pointer.name.as_str()
                 ),
             ),
-            Self::PutUpload(upload) => (upload.id.to_string(), "UPLOAD".to_owned()),
-            Self::PutGrant(grant) => (grant.id.0.to_string(), "GRANT".to_owned()),
+            Self::PutUpload(upload) => (upload.workspace.to_string(), format!("UP#{}", upload.id)),
+            Self::PutGrant(grant) => (
+                grant.subject.workspace.to_string(),
+                format!("GRANT#{}", grant.id.0),
+            ),
             Self::PutCustody(custody) => (custody.session.to_string(), "CUSTODY".to_owned()),
             Self::PutSecret(secret) => (
                 secret.workspace.to_string(),
                 format!("SECRET#{}", secret.name.as_str()),
             ),
+            Self::PutDeletionGuard(guard) => (guard.session.to_string(), "DELETION".to_owned()),
             Self::PutTombstone(tombstone) => {
                 (tombstone.session.to_string(), "TOMBSTONE".to_owned())
             }
@@ -537,7 +466,7 @@ impl Write {
     #[must_use]
     pub fn estimated_bytes(&self) -> usize {
         match self {
-            Self::AppendJournalPage { page, .. } => page
+            Self::AppendJournalPage(page) => page
                 .entries
                 .iter()
                 .map(|entry| {
@@ -545,7 +474,7 @@ impl Write {
                         + 128
                 })
                 .sum(),
-            Self::PutMessage(message) => 256 + message.parts.len() * 256,
+            Self::AppendMessage(message) => 256 + message.parts.len() * 256,
             _ => 512,
         }
     }
@@ -604,7 +533,7 @@ pub struct SessionTransaction {
 /// What a validated plan looks like.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlanShape {
-    /// How many distinct physical item actions it carries after guard merging.
+    /// How many conditions and writes it carries.
     pub actions: usize,
     /// Its estimated byte size.
     pub bytes: usize,
@@ -613,15 +542,6 @@ pub struct PlanShape {
 /// Why a plan is not submittable.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PlanError {
-    /// A create plan omitted authorities that must be born atomically with the
-    /// session head.
-    ///
-    /// The current closed write vocabulary cannot yet express the sealed
-    /// registry manifest, native creation event, or exact Hands generation and
-    /// current pointer. Refusing the intent here prevents an adapter from
-    /// treating the already-supported head write as a complete session create.
-    #[error("session creation authority is incomplete")]
-    IncompleteCreateAuthority,
     /// The plan carries too many actions.
     #[error("plan carries {actions} actions, above the maximum of {max}")]
     TooManyActions {
@@ -659,13 +579,7 @@ impl SessionTransaction {
     ///
     /// Returns [`PlanError`] for an over-large plan or a duplicate write target.
     pub fn validate(&self) -> Result<PlanShape, PlanError> {
-        if self.intent == TransactionIntent::CreateSession {
-            return Err(PlanError::IncompleteCreateAuthority);
-        }
-        let mut action_targets = BTreeSet::new();
-        action_targets.extend(self.conditions.iter().map(Condition::target));
-        action_targets.extend(self.writes.iter().map(Write::target));
-        let actions = action_targets.len();
+        let actions = self.conditions.len() + self.writes.len();
         if actions > MAX_ACTIONS {
             return Err(PlanError::TooManyActions {
                 actions,
@@ -724,7 +638,7 @@ mod tests {
 
     fn plan(conditions: Vec<Condition>, writes: Vec<Write>) -> SessionTransaction {
         SessionTransaction {
-            intent: TransactionIntent::AdmitMessage,
+            intent: TransactionIntent::CreateSession,
             conditions,
             writes,
             after_commit: Vec::new(),
@@ -775,42 +689,5 @@ mod tests {
         let ids = value.condition_ids();
         assert_eq!(ids.len(), 2);
         assert_eq!(ids, value.condition_ids());
-    }
-
-    #[test]
-    fn session_create_fails_closed_until_every_authority_participant_is_expressible() {
-        let session = aex_session_domain::testing::session_fixture();
-        let value = SessionTransaction {
-            intent: TransactionIntent::CreateSession,
-            conditions: Vec::new(),
-            writes: vec![Write::PutSessionHead(Box::new(session))],
-            after_commit: Vec::new(),
-        };
-        assert_eq!(
-            value.validate(),
-            Err(PlanError::IncompleteCreateAuthority),
-            "a head-only transaction would orphan the session from its root agent, registry, custody, runtime generation, replay receipt and event"
-        );
-    }
-
-    #[test]
-    fn guards_on_a_written_item_count_as_one_physical_action() {
-        let session =
-            aex_wire::ids::PrefixedId::from_uuid7(aex_wire::ids::Uuid7::compose(1, [1; 10]));
-        let value = plan(
-            vec![
-                Condition::MutationGuardFree { session },
-                Condition::SessionActiveRun {
-                    session,
-                    expected: None,
-                },
-            ],
-            vec![Write::DeleteItem(ItemKey {
-                family: TableFamily::SessionAuthority,
-                partition: session.to_string(),
-                sort: "HEAD".to_owned(),
-            })],
-        );
-        assert_eq!(value.validate().expect("valid").actions, 1);
     }
 }

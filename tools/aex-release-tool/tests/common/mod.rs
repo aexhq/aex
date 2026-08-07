@@ -102,7 +102,7 @@ pub fn live_meta_for(deployable: &str, scenario: &str) -> Value {
         "security_tier": "internal",
         "risk": ["none"],
         "scenarios": [scenario],
-        "targets": { "e2e": "e2e" }
+        "targets": { "smoke": "smoke" }
     })
 }
 
@@ -432,5 +432,5 @@ id = "SC-DEMO"
 owner = "delivery"
 observes = ["artifact:demo-api"]
 package = "cargo:aex-live-demo-api"
-target = "e2e"
+target = "smoke"
 "#;

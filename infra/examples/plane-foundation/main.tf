@@ -29,13 +29,13 @@ module "repository" {
 module "deploy_role" {
   source = "../../modules/github-oidc-role"
 
-  role_name           = var.github_role_name
   repository          = var.github_repository
   oidc_provider_arn   = var.github_oidc_provider_arn
   allowed_refs        = var.github_allowed_refs
   allowed_workflows   = var.github_allowed_workflows
   permissions_profile = "deploy"
-  profile_statements  = var.profile_statements
+  permission_profiles = var.permission_profiles
+  profile_resources   = var.profile_resources
   tags                = var.tags
 }
 

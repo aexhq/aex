@@ -113,9 +113,8 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "artifactSubjectDigest": { "$ref": "#/$defs/sha256" },
+        "artifactEnvelopeDigest": { "$ref": "#/$defs/sha256" },
         "releaseId": { "$ref": "#/$defs/sha256" },
-        "deploymentContextDigest": { "$ref": "#/$defs/sha256" },
         "unitIds": { "type": "array", "items": { "type": "string" } }
       }
     },
@@ -195,53 +194,12 @@
               "coverage",
               "first-failure",
               "cleanup-ledger",
-              "deployment-health",
               "nextest-list"
             ]
           },
           "digest": { "$ref": "#/$defs/sha256" },
           "uri": { "type": "string" },
           "sizeBytes": { "type": "integer", "minimum": 0 }
-        }
-      }
-    },
-    "architectureQualification": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "artifactDigest",
-        "target",
-        "hostIdentity",
-        "executorIdentity",
-        "executorKind",
-        "bootstrapResult",
-        "dependencyLoaderResult",
-        "observedAt",
-        "expiresAt",
-        "workloadSmokes"
-      ],
-      "properties": {
-        "artifactDigest": { "$ref": "#/$defs/sha256" },
-        "target": { "const": "aarch64" },
-        "hostIdentity": { "type": "string", "minLength": 1 },
-        "executorIdentity": { "type": "string", "minLength": 1 },
-        "executorKind": { "enum": ["native", "emulated"] },
-        "bootstrapResult": { "enum": ["passed", "failed"] },
-        "dependencyLoaderResult": { "enum": ["passed", "failed"] },
-        "observedAt": { "type": "string", "format": "date-time" },
-        "expiresAt": { "type": "string", "format": "date-time" },
-        "workloadSmokes": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["id", "result"],
-            "properties": {
-              "id": { "type": "string", "minLength": 1 },
-              "result": { "enum": ["passed", "failed"] }
-            }
-          }
         }
       }
     },
@@ -262,28 +220,6 @@
     "completedAt": { "type": "string", "format": "date-time" },
     "conclusion": { "enum": ["passed", "failed", "infrastructure_failed", "incomplete"] }
   },
-  "allOf": [
-    {
-      "if": { "properties": { "class": { "const": "arch-qualification" } }, "required": ["class"] },
-      "then": { "required": ["architectureQualification"] },
-      "else": { "not": { "required": ["architectureQualification"] } }
-    },
-    {
-      "if": {
-        "properties": {
-          "class": { "enum": ["e2e", "user"] },
-          "lane": { "const": "release" }
-        },
-        "required": ["class", "lane"]
-      },
-      "then": {
-        "required": ["subject"],
-        "properties": {
-          "subject": { "required": ["releaseId", "deploymentContextDigest"] }
-        }
-      }
-    }
-  ],
   "$defs": {
     "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
     "sha1": { "type": "string", "pattern": "^[0-9a-f]{40}$" }

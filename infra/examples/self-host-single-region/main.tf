@@ -81,7 +81,6 @@ module "session_api_role" {
   assume_principal            = var.session_api_grants.assume_principal
   action_grants               = var.session_api_grants.action_grants
   wildcard_resource_allowlist = var.session_api_grants.wildcard_resource_allowlist
-  boundary_policy_arn         = var.permissions_boundary_policy_arn
   tags                        = var.tags
 }
 

@@ -32,15 +32,14 @@ pub mod fold;
 pub mod ids;
 pub mod journal;
 pub mod planner;
-pub mod snapshot;
 pub mod wire_pending;
 
 pub use budget::{BudgetDelta, BudgetError, BudgetGrant, BudgetNode, Dimension, StructuralLimits};
 pub use child::{CancelCause, ChildOutcome, ChildRecord, ChildState, QueuedReason};
 pub use commit::{DecisionCommit, EnvelopeViolation, FenceGuardRef};
 pub use effect::{
-    DetachedOperationRef, DispatchEvidence, DispatchProof, DispatchStage, DurableEffect,
-    EffectClass, EffectKind, EffectState, RecoveryDecision, SettledOutcome, recover,
+    DispatchEvidence, DispatchProof, DispatchStage, DurableEffect, EffectClass, EffectKind,
+    EffectState, RecoveryDecision, SettledOutcome, recover,
 };
 pub use fold::{FoldError, FoldState, Phase, apply, fold};
 pub use ids::{
@@ -49,7 +48,3 @@ pub use ids::{
 };
 pub use journal::{FinishReason, JournalDecodeError, JournalEntry, JournalRecord, ParkReason};
 pub use planner::{OwedStep, PlanPolicy, plan};
-pub use snapshot::{
-    FOLD_SNAPSHOT_SCHEMA, FoldSnapshotArtifact, FoldSnapshotError, FoldSnapshotPointer,
-    JournalPoint, VerifiedFoldSnapshot,
-};

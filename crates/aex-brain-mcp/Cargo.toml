@@ -35,17 +35,13 @@ aex-brain-managed-web = { path = "../aex-brain-managed-web" }
 aex-brain-tool-catalog = { path = "../aex-brain-tool-catalog" }
 aex-wire = { path = "../aex-wire" }
 base64.workspace = true
-reqwest.workspace = true
 rmcp.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-url.workspace = true
 
 [dev-dependencies]
-async-trait.workspace = true
 proptest.workspace = true
-tokio.workspace = true
 
 [[test]]
 name = "conformance"

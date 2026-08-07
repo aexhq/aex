@@ -209,13 +209,8 @@ pub fn build_bundle(root: &Path) -> Result<Bundle> {
             continue;
         }
         let path = central.join(name);
-        let source =
+        let body =
             std::fs::read_to_string(&path).map_err(|err| io(&path.display().to_string(), &err))?;
-        // Git publishes these files as LF (`.gitattributes`), but a stale
-        // Windows worktree can retain CRLF until it is refreshed. Hash the
-        // canonical Git representation so a local lock can never disagree
-        // with the protected Linux build solely because of checkout endings.
-        let body = source.replace("\r\n", "\n");
         let header = match parse_header(name, &body) {
             Ok(header) => header,
             Err(err) => {

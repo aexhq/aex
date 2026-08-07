@@ -124,18 +124,6 @@ RETURNING effect_id";
 SELECT pe.effect_id, pe.state FROM finance.provider_effect pe \
  WHERE pe.org_id = :org_id AND pe.kind = :kind AND pe.intent_hash = :intent_hash";
 
-    /// Replaces the preparation marker with the complete admitted command.
-    pub const BIND_EFFECT_COMMAND: &str = "\
-UPDATE finance.provider_effect \
-   SET request_json = :request_json, revision = revision + 1 \
- WHERE effect_id = :effect_id AND intent_hash = :intent_hash AND state = 'prepared' \
-   AND (request_json ->> 'schemaVersion') IS NULL";
-
-    /// Accepts an identical replay after a lost binding response.
-    pub const READ_BOUND_EFFECT_COMMAND: &str = "\
-SELECT request_json FROM finance.provider_effect \
- WHERE effect_id = :effect_id AND intent_hash = :intent_hash";
-
     /// Records what the provider actually did.
     ///
     /// `outcome_unknown` is a first-class terminal-for-now state: the row keeps
@@ -706,50 +694,6 @@ impl BillingAuthority for AuroraBillingAuthority {
         })
     }
 
-    async fn bind_effect_command(
-        &self,
-        effect: EffectId,
-        intent_hash: [u8; 32],
-        envelope: &aex_payment_contracts::PaymentCommandEnvelope,
-    ) -> Result<(), AuthorityError> {
-        let encoded = serde_json::to_value(envelope)
-            .map_err(|error| AuthorityError::Decode(error.to_string()))?;
-        let effect_id = uuid::Uuid::from_bytes(*effect.0.as_bytes());
-        let updated = self
-            .client
-            .execute(Statement::with(
-                sql::BIND_EFFECT_COMMAND,
-                vec![
-                    ("request_json", SqlValue::Json(encoded.clone())),
-                    ("effect_id", SqlValue::Uuid(effect_id)),
-                    ("intent_hash", SqlValue::Bytes(intent_hash.to_vec())),
-                ],
-            ))
-            .await
-            .map_err(store)?;
-        if updated == 1 {
-            return Ok(());
-        }
-        let stored: Option<JsonRow> = self
-            .client
-            .query_opt(Statement::with(
-                sql::READ_BOUND_EFFECT_COMMAND,
-                vec![
-                    ("effect_id", SqlValue::Uuid(effect_id)),
-                    ("intent_hash", SqlValue::Bytes(intent_hash.to_vec())),
-                ],
-            ))
-            .await
-            .map_err(store)?;
-        match stored {
-            Some(row) if row.0 == encoded => Ok(()),
-            Some(_) => Err(AuthorityError::Refused(
-                "the provider effect is already bound to another command".to_owned(),
-            )),
-            None => Err(AuthorityError::NotFound("provider effect")),
-        }
-    }
-
     async fn finalize_effect(
         &self,
         effect: EffectId,
@@ -798,17 +742,6 @@ impl BillingAuthority for AuroraBillingAuthority {
             return Err(AuthorityError::NotFound("provider effect"));
         }
         transaction.commit().await.map(|_| ()).map_err(commit)
-    }
-}
-
-/// One JSON document.
-#[derive(Debug)]
-struct JsonRow(serde_json::Value);
-
-impl Row for JsonRow {
-    fn from_record(record: &Record<'_>) -> Result<Self, DecodeError> {
-        record.expect_arity(1)?;
-        Ok(Self(record.json(0)?))
     }
 }
 
@@ -918,8 +851,6 @@ mod tests {
             sql::READ_PROVIDER_CUSTOMER,
             sql::PREPARE_EFFECT,
             sql::READ_EFFECT_BY_INTENT,
-            sql::BIND_EFFECT_COMMAND,
-            sql::READ_BOUND_EFFECT_COMMAND,
             sql::FINALIZE_EFFECT,
         ] {
             assert!(statement.contains(':'), "{statement} binds no parameter");
@@ -928,16 +859,6 @@ mod tests {
                 "a finance statement must never cast money to floating point"
             );
         }
-    }
-
-    #[test]
-    fn provider_dispatch_requires_one_immutable_complete_command() {
-        assert!(sql::BIND_EFFECT_COMMAND.contains("state = 'prepared'"));
-        assert!(
-            sql::BIND_EFFECT_COMMAND.contains("request_json ->> 'schemaVersion') IS NULL"),
-            "only the preparation marker may be replaced"
-        );
-        assert!(sql::READ_BOUND_EFFECT_COMMAND.contains("intent_hash = :intent_hash"));
     }
 
     #[test]

@@ -20,7 +20,6 @@
 {"class":"validation","code":"invalid_file_selection","precedenceStage":"body_limit_and_parse","retryable":false,"status":400}
 {"class":"validation","code":"invalid_range","precedenceStage":"body_limit_and_parse","retryable":false,"status":400}
 {"class":"validation","code":"payload_too_large","precedenceStage":"transport_envelope","retryable":false,"status":413}
-{"class":"validation","code":"unsupported_media_type","precedenceStage":"transport_envelope","retryable":false,"status":415}
 {"class":"quota","code":"limit_exceeded","precedenceStage":"domain_state","retryable":true,"status":429}
 {"class":"state","code":"session_not_idle","precedenceStage":"domain_state","retryable":true,"status":409}
 {"class":"state","code":"workspace_activation_required","precedenceStage":"domain_state","retryable":true,"status":409}
@@ -38,7 +37,6 @@
 {"class":"state","code":"content_missing","precedenceStage":"domain_state","retryable":false,"status":409}
 {"class":"not_found","code":"export_not_found","precedenceStage":"tombstone_and_parent","retryable":false,"status":404}
 {"class":"state","code":"export_not_ready","precedenceStage":"domain_state","retryable":true,"status":409}
-{"class":"unavailable","code":"export_capacity","precedenceStage":"domain_state","retryable":true,"status":503}
 {"class":"not_found","code":"export_expired","precedenceStage":"domain_state","retryable":false,"status":410}
 {"class":"not_found","code":"export_revoked","precedenceStage":"domain_state","retryable":false,"status":410}
 {"class":"not_found","code":"download_grant_expired","precedenceStage":"domain_state","retryable":false,"status":410}
@@ -48,7 +46,6 @@
 {"class":"state","code":"telemetry_incomplete","precedenceStage":"domain_state","retryable":true,"status":409}
 {"class":"validation","code":"unsupported_export_signal","precedenceStage":"body_limit_and_parse","retryable":false,"status":400}
 {"class":"validation","code":"invalid_query","precedenceStage":"body_limit_and_parse","retryable":false,"status":400}
-{"class":"quota","code":"telemetry_query_budget_exhausted","precedenceStage":"domain_state","retryable":false,"status":409}
 {"class":"validation","code":"invalid_metric_aggregation","precedenceStage":"body_limit_and_parse","retryable":false,"status":400}
 {"class":"validation","code":"invalid_network_policy","precedenceStage":"body_limit_and_parse","retryable":false,"status":400}
 {"class":"validation","code":"unsupported_package_ecosystem","precedenceStage":"body_limit_and_parse","retryable":false,"status":400}

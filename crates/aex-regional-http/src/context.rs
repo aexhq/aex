@@ -80,8 +80,6 @@ impl std::fmt::Debug for RegionalAuthorization {
 pub struct EffectiveLimits {
     /// Effective encoded JSON body bound.
     pub json_body_bytes: usize,
-    /// Effective encoded OTLP body bound from `telemetry.batch.encoded_bytes`.
-    pub otlp_body_bytes: usize,
     /// Effective list item bound.
     pub query_page_items: usize,
     /// Effective serialized page byte bound.

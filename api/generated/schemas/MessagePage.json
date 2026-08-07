@@ -9,7 +9,7 @@
       "items": {
         "$ref": "aex:schema:Message"
       },
-      "maxItems": 100,
+      "maxItems": 1000,
       "type": "array"
     },
     "nextCursor": {

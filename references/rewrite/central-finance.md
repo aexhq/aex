@@ -9,7 +9,7 @@ keywords:
   - stripe
   - schema administration
 audience: implementation agents and maintainers
-last_verified: 2026-08-03
+last_verified: 2026-08-02
 related:
   - references/rewrite/contracts.md
   - references/rewrite/usage.md
@@ -39,16 +39,15 @@ Branch: `rw/central-finance`
 - `aex-finance-aurora`: strict integer/string Data API row decoding, no floating-value accessor,
   64 KiB row and 1 MiB response rejection, database config validation, finance SQL constants, and
   business-key resolution for a lost commit response.
-- `migrations/central`: one linear nine-file chain from `20260801000000` through
-  `20260801000800`, preserving the merged peer bootstrap/identity/control/control-functions bodies
+- `migrations/central`: one linear eight-file chain from `20260801000000` through
+  `20260801000700`, preserving the merged peer bootstrap/identity/control/control-functions bodies
   before the finance roles/schema/DDL/seed bodies,
   declarative `grants.toml`, immutable journal tables, a deferred balanced-transaction constraint
   trigger, reversal-only mutation guard, customer prepaid balance fence, finance inbox/outbox/effect,
   usage/rating/statement/provider-cost tables, roles, and the public `synthetic-zero-v1` seed.
 - `central-schema-admin`: exact one-shot clap command tree, stable exit codes, native SQLx `Migrator`
-  configured for `schema_admin._sqlx_migrations`, compile-time embedded migration SQL, bundle lock,
-  and grants allowlist, migration header/linearity validation, declarative grant validation, and
-  local canonical plan receipts using advisory lock
+  configured for `schema_admin._sqlx_migrations`, migration header/linearity validation, declarative
+  grant validation, and local canonical plan receipts using advisory lock
   `0x4145585F4D494752` (`4703262552200136530`).
 - `finance-api`: total no-default configuration, role/plane validation, Lambda/axum composition, and
   distinct `/internal/healthz` and `/internal/readyz` behavior. Readiness remains false until the
@@ -58,13 +57,6 @@ Branch: `rw/central-finance`
   the finance-authored idempotency key, strict deadline/config validation, Secrets Manager loading,
   and total provider failure classification. A 5xx, timeout, reset, rate limit, or ambiguous failure
   is never a determinate rejection.
-- Payment recovery: `finance-api` binds the complete admitted `PaymentCommandEnvelope` to the
-  prepared effect before invoking Stripe. `finance-reconcile` keyset-pages unresolved effects using
-  a durable cursor, exact-key replays the original command inside the replay window, then performs a
-  direct-or-metadata PaymentIntent lookup outside it. Both recovery and escalation are fenced by the
-  effect revision, so a concurrent webhook wins instead of being overwritten. The command edge now
-  returns the Rust `PaymentResult` wire shape and treats only a succeeded PaymentIntent as success;
-  transport loss, provider 5xx, and nonterminal provider states remain `Unknown`.
 - `stripe-webhook-edge`: exact raw/base64 bytes, 256 KiB rejection before signature work, bounded
   current/previous secret rotation, SDK signature verification before payload interpretation, the
   exact eight-event allowlist, API-version quarantine, a scalar-only PII-free fact projection, raw
@@ -83,10 +75,9 @@ remaining implementation gaps are recorded in [Composition](#composition).
 
 The following work still depends on peers or deployment:
 
-- PaymentIntent recovery has exact direct-object and metadata-search authority. Customer, Checkout
-  Session, Portal Session, and Refund recovery remains deliberately unsupported: the reconciler
-  escalates these kinds after their exact replay window instead of calling an incompatible provider
-  API or guessing an outcome.
+- The Stripe command edge's unknown-effect lookup currently searches PaymentIntents only. Customer,
+  Checkout Session, Portal Session, and Refund lookup/search behavior still needs the exact generated
+  lookup vocabulary and reconciliation policy.
 - The webhook edge produces the accepted eight-event bounded envelope, but the landed generated Rust
   payment event contract represents only five events; it cannot yet be consumed byte-for-byte by
   `finance-ingest`.
@@ -359,8 +350,8 @@ that produces the work they exist to repair (F-29).
 | No billing route declares an unavailability error code, so an unreachable Aurora renders as `internal_error` through `dispatch::declared` | contracts | `finance-api` emits `account_state_unavailable` honestly; the gap closes the moment the route table admits it. |
 | `finance-settlement-worker` durably claims inbox facts but cannot yet rate or post them | central finance plus admission/usage contracts | The missing authority is larger than a `RateContext` query: no production `BookVerifier` or trusted signing-key binding exists; no writer or seed creates `pricing_context` or `reservation`; no durable exact segment accumulator or closure writer says when once-only rounding is complete; `UsageFact` carries no correction head; and a zero-book receipt requires a transaction id while zero journal postings are forbidden. The worker now keeps every `pending` or `quarantined` group in the SQS partial-batch response, so an intermediate inbox commit is never acknowledged as settlement. It will redrive and eventually DLQ while blocked; the pending row remains durable, but no central due-scan authority exists to wake it after the queue notification is gone. |
 | `finance-reconcile` cannot yet invoke the command edge to resolve an unknown effect | central finance plus payment contracts | Exact-key replay is impossible from the current durable row: `request_json` stores only kind and amount, not the admitted command. The TypeScript edge still returns its temporary result shape rather than Rust `PaymentResult`; lookup searches PaymentIntents only and currently labels any found status successful. The reconciler therefore reports replayable, lookup-required and prepared/dispatched stranded effects instead of silently calling the sweep clean; it uses the configured replay window and escalates only paths for which no supported lookup exists. Its bounded unresolved-effect page has no durable cursor, so a permanent first page can still starve later effects until the recovery authority also owns cursor state. |
-| The planned cross-plane schema-head release document is absent, so aex-release-tool migration verify has no declared cross-plane head to consume | central finance and regional stores | The central bundle is reproducible at `20260801000800`; the regional table document has a digest but no authoritative generation, so the head cannot be invented locally. |
-| `migrations/central/20260801000000_bootstrap.sql` is the renamed central bootstrap, while the integration-only migration test still points at the former unversioned filename | central identity | The suite is behind `required-features = ["integration-engines"]`, so `cargo check --all-targets` does not build it and the breakage is invisible in the default lane. |
+| `release/schema-head.json` is absent, so `aex-release-tool migration verify` has no declared cross-plane head to consume | central finance and regional stores | The central bundle is reproducible at `20260801000700`; the regional table document has a digest but no authoritative generation, so the head cannot be invented locally. |
+| `crates/aex-control-aurora/tests/migrations.rs` still `include_str!`s `migrations/central/0001_bootstrap.sql`, which this repository renamed to `20260801000000_bootstrap.sql` | central identity | The suite is behind `required-features = ["integration-engines"]`, so `cargo check --all-targets` does not build it and the breakage is invisible in the default lane. |
 | `graph verify` reports 147 workspace-wide gaps: one live-companion metadata gap and 146 uncovered routes | test architecture and route owners | The finance composition does not add a new graph violation; these are the current global scenario-ownership debts. |
 | Every `tests/live/aex-live-*` companion is still an unearned-evidence row | central finance | No live evidence can be earned before deployment (OD-07). |
 
@@ -374,33 +365,3 @@ that produces the work they exist to repair (F-29).
   — clean.
 - No live provider, Aurora, SQS, deployment or AWS operation was run. The blocked
   authority paths above therefore remain blocked rather than simulated or guessed.
-
-## 2026-08-03 payment-recovery authority
-
-- The prepared provider-effect row now contains the complete admitted payment command before the
-  provider call begins. A lost database response is safe: rebinding succeeds only when the durable
-  command is byte-for-byte equivalent under the same effect and intent hash.
-- The reconciliation cursor advances only after a page is processed and wraps after the final page.
-  An unresolved first page can therefore neither starve later effects nor be skipped after a failed
-  sweep.
-- Exact replay retains the effect id, intent, and provider idempotency key; only the transport
-  deadline is renewed. Outside the replay window, only PaymentIntent effects use provider lookup.
-  Unsupported object kinds escalate to `manual_review` rather than receiving guessed recovery.
-- Every terminal recovery update includes the previously read revision and unresolved-state guard.
-  A webhook or another sweep that commits first makes the recovery write a no-op.
-- Focused verification covers command binding, envelope corruption rejection, replay identity,
-  revision fences, cursor progression, exact TypeScript/Rust result parity, and failure ambiguity.
-  No live provider, Aurora, deployment, or AWS operation was used to earn this implementation
-  evidence.
-
-## 2026-08-03 schema-admin image authority
-
-- The production schema-admin path no longer resolves `CARGO_MANIFEST_DIR` at runtime. SQLx forward
-  migrations, the generated bundle lock, every future explicit repair, and `grants.toml` are
-  compile-time inputs to the ELF copied into the minimal OCI image.
-- The artifact graph declares `bundle:migration` as a direct schema-admin input. Artifact description
-  now fails closed if that closure lacks `migrations/central/bundle.lock.json`, and the emitted
-  envelope carries its exact SHA-256 as `identities.migration.centralBundleDigest`.
-- Central migration files are pinned to LF in `.gitattributes`. The bundle lock is therefore an
-  operating-system-independent identity rather than a digest of whichever line endings a release
-  runner checked out.

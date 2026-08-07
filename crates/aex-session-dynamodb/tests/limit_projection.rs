@@ -10,7 +10,7 @@ use aex_session_dynamodb::capacity_limit_projection_write::{
 };
 use aex_wire::ids::{PrefixedId as _, Uuid7, WorkspaceId};
 use aex_wire::limits::LimitId;
-use aex_wire::models::{LimitMapValue, LimitSource, LimitValue};
+use aex_wire::models::{LimitScalarValue, LimitSource, LimitValue};
 use aex_wire::types::{DecimalU128, Timestamp};
 use aws_sdk_dynamodb::Client;
 use aws_sdk_dynamodb::config::{BehaviorVersion, Credentials, Region};
@@ -64,14 +64,8 @@ fn write() -> LimitWrite {
     LimitWrite {
         workspace: WorkspaceId::from_uuid7(Uuid7::compose(1, [1; 10])),
         id: LimitId::QueryPage,
-        effective_value: LimitValue::Map(LimitMapValue {
-            values: std::collections::BTreeMap::from([
-                ("items".to_owned(), DecimalU128::new(1_000)),
-                (
-                    "serialized_bytes".to_owned(),
-                    DecimalU128::new(8 * 1_024 * 1_024),
-                ),
-            ]),
+        effective_value: LimitValue::Scalar(LimitScalarValue {
+            value: DecimalU128::new(1_000),
         }),
         source: LimitSource::Default,
         revision: 3,
@@ -179,44 +173,6 @@ async fn conditional_and_commit_ambiguous_outcomes_use_one_strong_resolution_rea
 }
 
 #[tokio::test]
-async fn a_provider_500_performs_one_strong_target_read_and_no_second_write() {
-    let write = write();
-    let (client, replay) = client(vec![
-        Answer {
-            status: 500,
-            code: Some("InternalServerError"),
-            body: serde_json::json!({
-                "__type": "com.amazonaws.dynamodb.v20120810#InternalServerError",
-                "message": "fixture"
-            })
-            .to_string(),
-        },
-        Answer {
-            status: 200,
-            code: None,
-            body: durable_item(&write, write.id),
-        },
-    ]);
-
-    CapacityLimitProjectionWriter::new(client, "projection")
-        .put_limit(&write)
-        .await
-        .expect("the strong target read observes the committed write");
-
-    let requests = requests(&replay);
-    assert_eq!(requests.len(), 2, "one write and one resolver read");
-    assert!(
-        requests[0].get("Item").is_some(),
-        "the first call is PutItem"
-    );
-    assert!(
-        requests[1].get("Item").is_none(),
-        "the second call is not another PutItem"
-    );
-    assert_eq!(requests[1]["ConsistentRead"].as_bool(), Some(true));
-}
-
-#[tokio::test]
 async fn denial_throttle_validation_and_missing_table_return_without_a_read() {
     for (code, expected) in [
         ("AccessDeniedException", "denied"),
@@ -261,7 +217,7 @@ async fn a_resolution_read_fails_closed_on_stored_identity_corruption() {
         Answer {
             status: 200,
             code: None,
-            body: durable_item(&write, LimitId::ApiJsonBody),
+            body: durable_item(&write, LimitId::RequestBodyBytes),
         },
     ]);
     let error = CapacityLimitProjectionWriter::new(client, "projection")

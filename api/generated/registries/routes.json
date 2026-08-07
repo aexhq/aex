@@ -3,7 +3,6 @@
     {
       "altPrincipal": "workspace_key",
       "bodyClass": "none",
-      "deferredReason": "The central identity composition does not yet mount an authoritative account operational-state read.",
       "errors": [
         "unauthenticated",
         "forbidden",
@@ -768,7 +767,6 @@
         "invalid_request",
         "invalid_cursor",
         "invalid_query",
-        "telemetry_query_budget_exhausted",
         "account_paused",
         "wrong_workspace_region",
         "observability_unavailable"
@@ -875,7 +873,6 @@
         "invalid_request",
         "invalid_cursor",
         "invalid_query",
-        "telemetry_query_budget_exhausted",
         "account_paused",
         "wrong_workspace_region",
         "observability_unavailable"
@@ -947,7 +944,6 @@
         "invalid_request",
         "invalid_cursor",
         "invalid_query",
-        "telemetry_query_budget_exhausted",
         "invalid_metric_aggregation",
         "account_paused",
         "wrong_workspace_region",
@@ -1020,7 +1016,6 @@
         "invalid_request",
         "invalid_cursor",
         "invalid_query",
-        "telemetry_query_budget_exhausted",
         "account_paused",
         "wrong_workspace_region",
         "observability_unavailable"
@@ -1127,7 +1122,6 @@
         "invalid_request",
         "invalid_cursor",
         "invalid_query",
-        "telemetry_query_budget_exhausted",
         "account_paused",
         "wrong_workspace_region",
         "observability_unavailable"
@@ -1234,7 +1228,6 @@
         "invalid_request",
         "invalid_cursor",
         "invalid_query",
-        "telemetry_query_budget_exhausted",
         "account_paused",
         "wrong_workspace_region",
         "observability_unavailable"
@@ -1341,7 +1334,6 @@
         "invalid_request",
         "invalid_cursor",
         "invalid_query",
-        "telemetry_query_budget_exhausted",
         "account_paused",
         "wrong_workspace_region",
         "observability_unavailable"
@@ -1515,7 +1507,6 @@
         "unauthenticated",
         "insufficient_scope",
         "idempotency_conflict",
-        "unsupported_media_type",
         "telemetry_payload_too_large",
         "invalid_telemetry",
         "telemetry_quota_exceeded",
@@ -1552,7 +1543,6 @@
         "unauthenticated",
         "insufficient_scope",
         "idempotency_conflict",
-        "unsupported_media_type",
         "telemetry_payload_too_large",
         "invalid_telemetry",
         "telemetry_quota_exceeded",
@@ -1589,7 +1579,6 @@
         "unauthenticated",
         "insufficient_scope",
         "idempotency_conflict",
-        "unsupported_media_type",
         "telemetry_payload_too_large",
         "invalid_telemetry",
         "telemetry_quota_exceeded",
@@ -1657,7 +1646,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "First-seal custody and the atomic credential-binding replay transaction are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -1873,7 +1861,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "Registry mutation and content-lifecycle composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -1907,7 +1894,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "No composed content grant and presigning authority exists yet.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -1946,7 +1932,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "The registry pointer composition has no plaintext content hydration path.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2017,7 +2002,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "Registry mutation and sealed-content composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2056,7 +2040,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "Registry mutation and content-lifecycle composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2090,7 +2073,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "The registry pointer composition has no plaintext content hydration path.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2161,7 +2143,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "Registry mutation and sealed-content composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2200,7 +2181,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "Registry mutation and content-lifecycle composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2234,7 +2214,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "The registry pointer composition has no plaintext content hydration path.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2305,7 +2284,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "Registry mutation and sealed-content composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2344,7 +2322,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "Registry mutation and content-lifecycle composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2378,7 +2355,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "The registry pointer composition has no plaintext content hydration path.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2449,7 +2425,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "Registry mutation and sealed-content composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2488,7 +2463,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "Registry mutation and content-lifecycle composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2522,7 +2496,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "The registry pointer composition has no plaintext content hydration path.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2593,7 +2566,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "Registry mutation and sealed-content composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2701,7 +2673,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "First-seal custody and durable idempotent replay are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2848,7 +2819,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The atomic bound-call approval writer is not composed into the regional service.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2930,7 +2900,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The complete session authority and command transaction are not implemented.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2973,7 +2942,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The complete session authority and create use case are not implemented.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -3017,7 +2985,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The credential-rebind authority and durable command transaction are not implemented.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -3057,7 +3024,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The session root, content decryption, and presigning composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -3101,7 +3067,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The session root and plaintext content projection are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -3142,7 +3107,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The session root and plaintext content projection are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -3183,7 +3147,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The persisted root, content decryption, and presigning composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -3224,7 +3187,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The persisted root and plaintext content projection are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -3262,7 +3224,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The persisted root and plaintext content projection are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -3300,7 +3261,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "The stored session head cannot yet produce the complete public session resource.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -3337,7 +3297,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The wire and domain message vocabularies and durable command path are not reconciled.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -3380,7 +3339,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "The wire and domain message vocabularies and exact paged read authority are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -3468,7 +3426,6 @@
         "invalid_cursor",
         "session_deleted",
         "invalid_query",
-        "telemetry_query_budget_exhausted",
         "account_paused",
         "wrong_workspace_region",
         "observability_unavailable"
@@ -3587,7 +3544,6 @@
         "invalid_cursor",
         "session_deleted",
         "invalid_query",
-        "telemetry_query_budget_exhausted",
         "account_paused",
         "wrong_workspace_region",
         "observability_unavailable"
@@ -3667,7 +3623,6 @@
         "invalid_cursor",
         "session_deleted",
         "invalid_query",
-        "telemetry_query_budget_exhausted",
         "invalid_metric_aggregation",
         "account_paused",
         "wrong_workspace_region",
@@ -3748,7 +3703,6 @@
         "invalid_cursor",
         "session_deleted",
         "invalid_query",
-        "telemetry_query_budget_exhausted",
         "account_paused",
         "wrong_workspace_region",
         "observability_unavailable"
@@ -3867,7 +3821,6 @@
         "invalid_cursor",
         "session_deleted",
         "invalid_query",
-        "telemetry_query_budget_exhausted",
         "account_paused",
         "wrong_workspace_region",
         "observability_unavailable"
@@ -3986,7 +3939,6 @@
         "invalid_cursor",
         "session_deleted",
         "invalid_query",
-        "telemetry_query_budget_exhausted",
         "account_paused",
         "wrong_workspace_region",
         "observability_unavailable"
@@ -4143,7 +4095,6 @@
         "invalid_cursor",
         "session_deleted",
         "invalid_query",
-        "telemetry_query_budget_exhausted",
         "account_paused",
         "wrong_workspace_region",
         "observability_unavailable"
@@ -4215,7 +4166,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The paged persist operation and commit latch are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -4258,7 +4208,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The paged purge operation and commit latch are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -4297,7 +4246,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The complete session restore authority and command transaction are not implemented.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -4367,7 +4315,6 @@
         "SC-SESSION-ADMIT",
         "SC-SESSION-TERMINAL"
       ],
-      "servedArtifact": "regional-session-api",
       "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "Read one run.",
@@ -4408,7 +4355,6 @@
         "SC-SESSION-ADMIT",
         "SC-SESSION-TERMINAL"
       ],
-      "servedArtifact": "regional-session-api",
       "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "List the runs of a session.",
@@ -4417,7 +4363,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The complete session stop authority and command transaction are not implemented.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -4455,7 +4400,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The durable session export-admission composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -4697,7 +4641,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The complete session trash authority and command transaction are not implemented.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -4737,7 +4680,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The workspace-discard operation and commit latch are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -4777,7 +4719,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "The sparse session head cannot yet produce the complete public collection item.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -4815,7 +4756,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The durable workspace export-admission composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -5038,7 +4978,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "The staged-upload authority and durable abort transaction are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -5072,7 +5011,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The staged-upload authority and durable completion transaction are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -5111,7 +5049,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The staged-upload authority and multipart presigning composition are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -5146,7 +5083,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The multipart grant and presigning composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -5184,7 +5120,6 @@
     {
       "altPrincipal": "account",
       "bodyClass": "aex_json",
-      "deferredReason": "The store lacks the exact multi-category, arbitrary-range query planner and continuation contract.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -5260,7 +5195,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "The signed and projected facts do not supply the complete account operational state.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -5368,7 +5302,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "No authoritative regional capacity default and override producer exists yet.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -5402,7 +5335,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "No authoritative regional capacity default and override producer exists yet.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",

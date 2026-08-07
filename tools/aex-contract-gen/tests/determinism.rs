@@ -198,13 +198,6 @@ fn actual_mounts_are_explicit_and_do_not_pollute_the_wire_bundle() {
         None,
         "an owned but unmounted admission must stay honestly absent"
     );
-    assert!(
-        by_id["session_telemetry_export_create"]
-            .get("deferredReason")
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|reason| !reason.is_empty()),
-        "an unmounted admission must carry its explicit architecture debt"
-    );
     let regional_session: BTreeSet<_> = rows
         .iter()
         .filter(|route| route["servedArtifact"] == "regional-session-api")
@@ -228,8 +221,6 @@ fn actual_mounts_are_explicit_and_do_not_pollute_the_wire_bundle() {
             "secrets_list",
             "session_approval_get",
             "session_approvals_list",
-            "session_run_get",
-            "session_runs_list",
         ]),
     );
 
@@ -299,26 +290,6 @@ fn cross_plane_actual_owners_are_rejected() {
     let error = load::load(temp.path()).expect_err("cross-plane actual owner must fail");
     assert!(error.to_string().contains("operation is on `central`"));
     assert!(error.to_string().contains("declared on `regional`"));
-}
-
-#[test]
-fn one_operation_cannot_be_both_served_and_deferred() {
-    let temp = tempfile::tempdir().expect("temporary contract root");
-    copy_authored_contract(temp.path());
-    let path = temp.path().join("api/schemas/registries/routes-meta.yaml");
-    let text = std::fs::read_to_string(&path)
-        .expect("routes metadata")
-        .replace(
-            "deferredOperations:\n",
-            "deferredOperations:\n  api_key_create: \"contradictory state\"\n",
-        );
-    std::fs::write(path, text).expect("mutate fixture metadata");
-    let error = load::load(temp.path()).expect_err("conflicting route state must fail");
-    assert!(
-        error
-            .to_string()
-            .contains("both served and explicitly deferred")
-    );
 }
 
 #[test]

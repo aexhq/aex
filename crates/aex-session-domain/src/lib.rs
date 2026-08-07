@@ -76,9 +76,8 @@ pub use run::{
     start,
 };
 pub use session::{
-    MutationGuard, ResolvedConfigAuthority, ResolvedConfigDigest, ResolvedConfigError, Session,
-    SessionError, SessionMetadata, SessionMetadataError, SessionStatus, WorkAdmission,
-    acquire_mutation_guard, public_root_hash, release_mutation_guard,
+    MutationGuard, ResolvedConfigDigest, Session, SessionError, SessionStatus, WorkAdmission,
+    acquire_mutation_guard, release_mutation_guard,
 };
 pub use terminal::{
     OutboxEvent, TerminalAttempt, TerminalCommit, TerminalRejection, claim_terminal, sealed_ids,

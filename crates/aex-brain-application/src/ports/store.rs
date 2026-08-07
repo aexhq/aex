@@ -1,8 +1,4 @@
-//! Brain's durable store ports.
-//!
-//! Production implementations live in `aex-brain-store-aws` plus the regional content
-//! authority. Snapshot body composition remains fail-closed until that content adapter is
-//! wired; the journal/effect/lease/wake adapters are independent of it.
+//! The four store ports — implemented by `aex-brain-store-aws`.
 //!
 //! Two rules shape every signature here.
 //!
@@ -24,9 +20,6 @@ use aex_brain_domain::ids::{
     Timestamp, WakeId, WorkShard,
 };
 use aex_brain_domain::journal::{FinishReason, JournalEntry, ParkReason};
-use aex_brain_domain::snapshot::{
-    FoldSnapshotArtifact, FoldSnapshotError, FoldSnapshotPointer, JournalPoint,
-};
 use aex_wire::ids::{GenerationId, OrganizationId, WorkspaceId};
 use std::collections::BTreeMap;
 
@@ -69,13 +62,6 @@ pub struct AgentHead {
     pub fence: Fence,
     /// The last committed sequence.
     pub journal_tail: Option<JournalSeq>,
-    /// The content hash at `journal_tail`.
-    ///
-    /// Sequence alone cannot prove a restored journal is the history the control authority
-    /// claimed: a fork at the same tail has the same count. The two values are therefore
-    /// either both present or both absent, and activation verifies both before recovery or
-    /// planning.
-    pub journal_tail_hash: Option<ContentHash>,
     /// The session cancellation epoch.
     pub cancel_epoch: CancelEpoch,
     /// The terminal reason, once the agent has one.
@@ -92,69 +78,13 @@ pub struct AgentHead {
     pub lease_expires_at: Timestamp,
 }
 
-/// An opaque native continuation for one journal query.
-///
-/// The application reads only `next`; the adapter owns `parts` and must validate the whole
-/// tuple before using it. Keeping the native key prevents a short `DynamoDB` page from being
-/// mistaken for EOF merely because it returned fewer than the caller's entry limit.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct JournalCursor {
-    parts: BTreeMap<String, String>,
-    start: JournalSeq,
-    next: JournalSeq,
-}
-
-impl JournalCursor {
-    /// Builds an adapter-owned cursor.
-    #[must_use]
-    pub fn new<I, K, V>(parts: I, start: JournalSeq, next: JournalSeq) -> Self
-    where
-        I: IntoIterator<Item = (K, V)>,
-        K: Into<String>,
-        V: Into<String>,
-    {
-        Self {
-            parts: parts
-                .into_iter()
-                .map(|(name, value)| (name.into(), value.into()))
-                .collect(),
-            start,
-            next,
-        }
-    }
-
-    /// Returns the complete adapter-owned native key.
-    #[must_use]
-    pub fn parts(&self) -> &BTreeMap<String, String> {
-        &self.parts
-    }
-
-    /// The first sequence in the original query whose native key produced this cursor.
-    #[must_use]
-    pub const fn start(&self) -> JournalSeq {
-        self.start
-    }
-
-    /// The sequence the next page must begin with.
-    #[must_use]
-    pub const fn next(&self) -> JournalSeq {
-        self.next
-    }
-}
-
 /// One page of an agent's journal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JournalPage {
     /// The entries, contiguous and in order.
     pub entries: Vec<JournalEntry>,
-    /// Canonical inline journal-body bytes decoded from this page.
-    ///
-    /// This is the exact payload bound enforced by the current Brain store. It does not
-    /// claim to measure `DynamoDB` response overhead or the heap footprint of decoded Rust
-    /// values, and Brain does not currently place journal bodies out of line.
-    pub hydrated_bytes: usize,
-    /// The native continuation when the service did not reach EOF.
-    pub next: Option<JournalCursor>,
+    /// The sequence to resume from, when the page did not reach the tail.
+    pub next: Option<JournalSeq>,
 }
 
 /// The bounds one page read runs under.
@@ -162,10 +92,10 @@ pub struct JournalPage {
 pub struct ReadBudget {
     /// The most entries one page returns.
     pub max_entries: usize,
-    /// The most canonical inline journal-body bytes one page decodes.
+    /// The most bytes one page hydrates, including placed bodies.
     ///
-    /// This bounds retained payload, not `DynamoDB`'s encoded response size or exact heap
-    /// allocation. `DynamoDB`'s own 1 MiB service page can stop the query first.
+    /// Bounded on purpose: an unbounded read is how one large agent takes the whole task's
+    /// memory envelope with it.
     pub max_bytes: usize,
 }
 
@@ -199,7 +129,6 @@ pub trait JournalStore: Send + Sync + 'static {
         key: &'a AgentKey,
         from: JournalSeq,
         budget: ReadBudget,
-        after: Option<JournalCursor>,
     ) -> BoxFuture<'a, Result<JournalPage, StoreError>>;
 
     /// Commits one decision as one transaction.
@@ -212,94 +141,6 @@ pub trait JournalStore: Send + Sync + 'static {
         context: &'a DecisionContext,
         commit: &'a DecisionCommit,
     ) -> BoxFuture<'a, Result<CommitReceipt, CommitError>>;
-}
-
-/// Immutable fold bodies plus the strongly selected per-agent pointer.
-///
-/// This is an acceleration port, not journal authority. Implementations publish the body
-/// conditionally through the regional content authority, then advance a pointer only after
-/// proving the immutable journal row at `artifact.pointer().absorbed` has the exact hash and
-/// the current control tail is not behind it. The current head may be ahead: requiring an
-/// exact current head would starve snapshots for a continuously active agent.
-pub trait FoldSnapshotStore: Send + Sync + 'static {
-    /// Strongly reads the latest selected pointer for `key`.
-    fn load_latest<'a>(
-        &'a self,
-        key: &'a AgentKey,
-    ) -> BoxFuture<'a, Result<Option<FoldSnapshotPointer>, StoreError>>;
-
-    /// Fetches the exact workspace-scoped immutable body, refusing its declared length
-    /// before allocation.
-    ///
-    /// `workspace` comes from the claimed session authority for this activation; it is not
-    /// process configuration or mux-local tenant state.
-    fn load_body<'a>(
-        &'a self,
-        workspace: WorkspaceId,
-        pointer: &'a FoldSnapshotPointer,
-        max_bytes: usize,
-    ) -> BoxFuture<'a, Result<Vec<u8>, StoreError>>;
-
-    /// Conditionally publishes one opaque workspace-scoped fold produced only by a
-    /// sequence-zero [`SnapshotReplay`](aex_brain_domain::snapshot::SnapshotReplay) using
-    /// the same domain [`apply`](aex_brain_domain::fold::apply) as restore.
-    fn publish<'a>(
-        &'a self,
-        workspace: WorkspaceId,
-        artifact: &'a FoldSnapshotArtifact,
-    ) -> BoxFuture<'a, Result<SnapshotPublishOutcome, StoreError>>;
-}
-
-/// What a monotonic snapshot publication established.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SnapshotPublishOutcome {
-    /// This artifact advanced the selected pointer.
-    Published,
-    /// The exact same sequence/body was already selected.
-    AlreadyCurrent,
-    /// A later absorbed sequence was already selected; rollback was refused.
-    Superseded {
-        /// The selected later point.
-        current: JournalPoint,
-    },
-}
-
-/// Why restore did not use the selected snapshot.
-///
-/// This survives a bounded fallback in [`crate::activation::restore::RestoreSource`]. If a
-/// present/unavailable snapshot and fallback both fail,
-/// [`crate::activation::ActivationError::SnapshotFallbackFailed`] preserves both causes;
-/// ordinary absence leaves the original authoritative replay error unchanged.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum SnapshotDiagnostic {
-    /// No pointer has been published for this agent.
-    #[error("no fold snapshot pointer exists")]
-    Missing,
-    /// Pointer or body transport failed.
-    #[error("fold snapshot store unavailable: {reason}")]
-    Unavailable {
-        /// Redacted adapter detail.
-        reason: String,
-        /// Whether retry could help.
-        retryable: bool,
-    },
-    /// The pointer/body/state failed closed validation.
-    #[error(transparent)]
-    Rejected(#[from] FoldSnapshotError),
-    /// A pointer claims a sequence beyond the head returned with the fenced claim.
-    #[error("fold snapshot sequence {snapshot} is ahead of claimed journal tail {claimed:?}")]
-    AheadOfClaim {
-        /// Snapshot sequence.
-        snapshot: JournalSeq,
-        /// Claimed tail.
-        claimed: Option<JournalSeq>,
-    },
-    /// A same-sequence snapshot and claimed head carry different journal hashes.
-    #[error("fold snapshot and claimed head disagree at sequence {seq}")]
-    ForkAtClaim {
-        /// The shared sequence.
-        seq: JournalSeq,
-    },
 }
 
 /// The durable effect record's two pre-settlement transitions.
@@ -432,47 +273,6 @@ pub struct WakeDelivery {
     pub wake: DurableWake,
     /// Whether this came from the queue projection or the durable due backstop.
     pub origin: WakeOrigin,
-}
-
-/// One queue record that could not be decoded into a durable wake.
-///
-/// The body and receipt are never exposed as diagnostics. The adapter retains only the
-/// receipt needed to apply the poison policy, the approximate receive count, a closed reason
-/// class and a short digest suitable for bounded correlation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MalformedWakeDelivery {
-    /// Queue receipt, when the transport supplied one.
-    pub receipt: Option<String>,
-    /// Approximate number of times the queue has delivered this record.
-    pub receive_count: u32,
-    /// Closed decode failure class.
-    pub reason: MalformedWakeReason,
-    /// Sixteen lowercase hexadecimal characters derived from the body, never the body.
-    pub fingerprint: String,
-}
-
-/// Why a queue record could not become a wake.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MalformedWakeReason {
-    /// The transport supplied no receipt, so the record cannot be released or acknowledged.
-    MissingReceipt,
-    /// The transport supplied no message body.
-    MissingBody,
-    /// The body was present but was not a valid durable-wake projection.
-    InvalidProjection,
-}
-
-/// One isolated queue receive.
-///
-/// Malformed records are siblings of valid deliveries, not an error for the whole receive.
-/// The application applies the configured max-receive policy to each malformed record while
-/// valid siblings continue through admission.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct WakeBatch {
-    /// Valid decoded deliveries.
-    pub deliveries: Vec<WakeDelivery>,
-    /// Invalid records retained only for release or poison acknowledgement.
-    pub malformed: Vec<MalformedWakeDelivery>,
 }
 
 impl WakeDelivery {
@@ -625,23 +425,7 @@ pub trait WakeQueue: Send + Sync + 'static {
         &self,
         max: usize,
         wait: core::time::Duration,
-    ) -> BoxFuture<'_, Result<WakeBatch, StoreError>>;
-
-    /// Returns one malformed queue record to visibility.
-    ///
-    /// This is intentionally separate from [`WakeQueue::release`]: an undecodable body has
-    /// no [`DurableWake`] and must never be padded with an invented identity.
-    fn release_malformed(
-        &self,
-        delivery: MalformedWakeDelivery,
-        after: core::time::Duration,
-    ) -> BoxFuture<'_, Result<(), StoreError>>;
-
-    /// Acknowledges one malformed record after its max-receive threshold is reached.
-    fn ack_malformed(
-        &self,
-        delivery: MalformedWakeDelivery,
-    ) -> BoxFuture<'_, Result<(), StoreError>>;
+    ) -> BoxFuture<'_, Result<Vec<WakeDelivery>, StoreError>>;
 
     /// Strongly verifies the source row and reports whether it remains outstanding.
     ///
@@ -747,9 +531,6 @@ pub enum CommitError {
 /// Why a store operation failed.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum StoreError {
-    /// A request-scoped workspace disagreed with the claimed session authority.
-    #[error("request workspace does not match session authority")]
-    SessionWorkspaceMismatch,
     /// A queue projection asserted a different tenant from the session head.
     #[error("wake tenant does not match session authority")]
     WakeTenantMismatch,
@@ -792,57 +573,6 @@ pub enum StoreError {
         entries: usize,
         /// How many bytes were read.
         bytes: usize,
-    },
-    /// The whole activation restore ceiling was exhausted.
-    #[error(
-        "restore budget exhausted after {entries} entries and {bytes} bytes (limits: {max_entries} entries, {max_bytes} bytes)"
-    )]
-    RestoreBudgetExhausted {
-        /// How many entries would be retained.
-        entries: usize,
-        /// How many bytes would be retained.
-        bytes: usize,
-        /// The activation-wide entry ceiling.
-        max_entries: usize,
-        /// The activation-wide byte ceiling.
-        max_bytes: usize,
-    },
-    /// The completely folded journal did not equal the tail claimed with the lease.
-    #[error(
-        "folded journal tail {folded_seq:?}/{folded_hash:?} does not match claimed tail {claimed_seq:?}/{claimed_hash:?}"
-    )]
-    JournalTailMismatch {
-        /// The sequence claimed by the agent head.
-        claimed_seq: Option<JournalSeq>,
-        /// The hash claimed by the agent head.
-        claimed_hash: Option<ContentHash>,
-        /// The sequence reached by the complete fold.
-        folded_seq: Option<JournalSeq>,
-        /// The hash reached by the complete fold.
-        folded_hash: Option<ContentHash>,
-    },
-    /// The selected pointer and body could not seed restore.
-    #[error("fold snapshot was rejected: {diagnostic}")]
-    SnapshotRejected {
-        /// Typed reason retained for diagnostics and policy.
-        diagnostic: SnapshotDiagnostic,
-    },
-    /// Publication could not prove the absorbed append-only journal row.
-    #[error("fold snapshot historical journal point does not exist with the claimed hash")]
-    SnapshotHistoricalMismatch,
-    /// A different body was offered at the already-selected sequence.
-    #[error("fold snapshot pointer conflict at sequence {seq}")]
-    SnapshotPointerConflict {
-        /// The sequence with two proposed derived states.
-        seq: JournalSeq,
-    },
-    /// The immutable snapshot body exceeded the pre-allocation read bound.
-    #[error("fold snapshot body length {declared} exceeds the {max} byte read bound")]
-    SnapshotBodyTooLarge {
-        /// Stored/declared bytes.
-        declared: u64,
-        /// Caller ceiling.
-        max: usize,
     },
     /// The underlying service failed.
     #[error("store transport failed: {reason}")]
