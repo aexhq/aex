@@ -22,8 +22,8 @@ use aex_observation_query::ast::MapRow;
 use aex_observation_query::coverage::Snapshot;
 use aex_observation_query::plan::{Access, NormalizedQuery, Spend};
 use aex_observation_query::{ObservationResume, ResumeKey, SegmentResume, SegmentState};
-use aex_observation_store_aws::expressions::{ExpressionBuilder, Index, PK, SK};
-use aex_observation_store_aws::gap::decode as decode_gap;
+use aex_observation_store_dynamodb::expressions::{ExpressionBuilder, Index, PK, SK};
+use aex_observation_store_dynamodb::gap::decode as decode_gap;
 use aex_session_dynamodb::measure::DYNAMODB_ITEM_CEILING;
 use aex_wire::ids::{
     ObservationId, RunId, SessionId, SpanId, TelemetryGapId, TraceId, WorkspaceId,
@@ -914,7 +914,7 @@ impl ObservationReader {
         let mut bytes_read = batch
             .items
             .iter()
-            .map(|item| aex_observation_store_aws::store::item_size(item) as u64)
+            .map(|item| aex_observation_store_dynamodb::store::item_size(item) as u64)
             .sum::<u64>();
         let resume_keys = batch
             .items
@@ -927,7 +927,7 @@ impl ObservationReader {
             bytes_read = bytes_read.saturating_add(
                 hydrated
                     .iter()
-                    .map(|item| aex_observation_store_aws::store::item_size(item) as u64)
+                    .map(|item| aex_observation_store_dynamodb::store::item_size(item) as u64)
                     .sum::<u64>(),
             );
             hydrated

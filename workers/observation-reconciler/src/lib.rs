@@ -7,10 +7,10 @@
 //!
 //! The duty is configuration, and the capability grant follows from it: the
 //! `deletion.execute` deployment runs as
-//! [`Role::ReconcilerDeletion`](aex_observation_store_aws::composition::Role::ReconcilerDeletion)
+//! [`Role::ReconcilerDeletion`](aex_observation_store_dynamodb::composition::Role::ReconcilerDeletion)
 //! and is the only role in the whole stream that may delete an object; every
 //! other duty runs as
-//! [`Role::Reconciler`](aex_observation_store_aws::composition::Role::Reconciler)
+//! [`Role::Reconciler`](aex_observation_store_dynamodb::composition::Role::Reconciler)
 //! and its start-up assertion refuses `delete_bodies` by name. That is what
 //! makes "only the deletion deployment may delete" structural rather than a
 //! deployment convention.
@@ -25,8 +25,8 @@ pub mod handler;
 pub mod health;
 
 use aex_observation_domain::keys::ControlDomain;
-use aex_observation_store_aws::composition::{Capability, Role, assert_grant};
-use aex_observation_store_aws::health::{Probe, Readiness, readiness};
+use aex_observation_store_dynamodb::composition::{Capability, Role, assert_grant};
+use aex_observation_store_dynamodb::health::{Probe, Readiness, readiness};
 use aex_wire::types::Timestamp;
 
 use crate::config::{Config, ConfigError, REQUIRED_VARS};
@@ -216,8 +216,8 @@ pub fn refusal(error: &ConfigError) -> String {
 #[cfg(test)]
 mod tests {
     use aex_observation_domain::keys::ControlDomain;
-    use aex_observation_store_aws::composition::{Capability, Role};
-    use aex_observation_store_aws::health::Probe;
+    use aex_observation_store_dynamodb::composition::{Capability, Role};
+    use aex_observation_store_dynamodb::health::Probe;
 
     use super::{
         DELETION_ROLE, REQUIRED_PROBES, ROLE, RunError, UNRELEASED, compose, refusal, role_for,

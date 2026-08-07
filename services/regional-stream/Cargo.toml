@@ -51,7 +51,7 @@ aex-identity-domain = { path = "../../crates/aex-identity-domain" }
 aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }
 aex-observation-domain = { path = "../../crates/aex-observation-domain" }
 aex-observation-query = { path = "../../crates/aex-observation-query" }
-aex-observation-store-aws = { path = "../../crates/aex-observation-store-aws" }
+aex-observation-store-dynamodb = { path = "../../crates/aex-observation-store-dynamodb" }
 aex-regional-http = { path = "../../crates/aex-regional-http" }
 aex-session-dynamodb = { path = "../../crates/aex-session-dynamodb", default-features = false, features = [
     "authz-projection",

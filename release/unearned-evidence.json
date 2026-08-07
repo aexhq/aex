@@ -1499,14 +1499,14 @@
   },
   {
     "reason_class": "requires_live_seam",
-    "subject": "crates/aex-brain-store-aws",
+    "subject": "crates/aex-brain-store-dynamodb",
     "owner": "brain-core",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
-    "subject": "crates/aex-brain-store-aws",
+    "subject": "crates/aex-brain-store-dynamodb",
     "owner": "brain-core",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.dynamodb.transact_write` cannot be satisfied by any local substitute"
@@ -1723,28 +1723,28 @@
   },
   {
     "reason_class": "requires_live_seam",
-    "subject": "crates/aex-observation-store-aws",
+    "subject": "crates/aex-observation-store-dynamodb",
     "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
-    "subject": "crates/aex-observation-store-aws",
+    "subject": "crates/aex-observation-store-dynamodb",
     "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.dynamodb.streams` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
-    "subject": "crates/aex-observation-store-aws",
+    "subject": "crates/aex-observation-store-dynamodb",
     "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.dynamodb.transact_write` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
-    "subject": "crates/aex-observation-store-aws",
+    "subject": "crates/aex-observation-store-dynamodb",
     "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.s3.conditional_put` cannot be satisfied by any local substitute"
@@ -1870,42 +1870,42 @@
   },
   {
     "reason_class": "requires_live_seam",
-    "subject": "crates/aex-usage-compute-aws",
+    "subject": "crates/aex-usage-compute-dynamodb",
     "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
-    "subject": "crates/aex-usage-compute-aws",
+    "subject": "crates/aex-usage-compute-dynamodb",
     "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.dynamodb.streams` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
-    "subject": "crates/aex-usage-query-aws",
+    "subject": "crates/aex-usage-query-dynamodb",
     "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
-    "subject": "crates/aex-usage-storage-aws",
+    "subject": "crates/aex-usage-storage-dynamodb",
     "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
-    "subject": "crates/aex-usage-storage-aws",
+    "subject": "crates/aex-usage-storage-dynamodb",
     "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.s3.conditional_put` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
-    "subject": "crates/aex-usage-transfer-aws",
+    "subject": "crates/aex-usage-transfer-dynamodb",
     "owner": "observations-usage",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"

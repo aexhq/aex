@@ -574,7 +574,7 @@ impl ObservationRequest {
             .service
             .reader
             .read_hydrated_range(
-                aex_observation_store_aws::expressions::Index::Trace,
+                aex_observation_store_dynamodb::expressions::Index::Trace,
                 &crate::reader::KeyBinding {
                     attribute: "trPk".to_owned(),
                     value: format!("TRC#{}#{trace_id}", scope.to_key()),
@@ -836,8 +836,8 @@ impl ObservationRequest {
             "deletionEpochPinned".to_owned(),
             aws_sdk_dynamodb::types::AttributeValue::N(deletion_epoch.to_string()),
         );
-        let mut builder = aex_observation_store_aws::expressions::ExpressionBuilder::new();
-        let condition = aex_observation_store_aws::expressions::immutable_condition(&mut builder);
+        let mut builder = aex_observation_store_dynamodb::expressions::ExpressionBuilder::new();
+        let condition = aex_observation_store_dynamodb::expressions::immutable_condition(&mut builder);
         self.service
             .reader
             .put_export_control(item, &condition, builder.names(), builder.values())
@@ -884,7 +884,7 @@ impl ObservationRequest {
         session: Option<SessionId>,
         export: ExportId,
     ) -> WireResult<TelemetryExport> {
-        let mut builder = aex_observation_store_aws::expressions::ExpressionBuilder::new();
+        let mut builder = aex_observation_store_dynamodb::expressions::ExpressionBuilder::new();
         let state = builder.name("state");
         let revoked = builder.string("revoked");
         let revoked_at = builder.name("revokedAt");

@@ -42,6 +42,6 @@ aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
 aex-usage-app = { path = "../../crates/aex-usage-app" }
 aex-usage-domain = { path = "../../crates/aex-usage-domain" }
-aex-usage-transfer-aws = { path = "../../crates/aex-usage-transfer-aws" }
+aex-usage-transfer-dynamodb = { path = "../../crates/aex-usage-transfer-dynamodb" }
 serde_json.workspace = true
 thiserror.workspace = true

@@ -1,0 +1,45 @@
+[package]
+name = "aex-usage-query-dynamodb"
+version = "0.1.0"
+description = "`aex-usage-query-dynamodb` owns the read-only `usage-query-projection` adapter: bounded aggregate and detail queries plus the cursor codec."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[package.metadata.aex]
+owner = "observations-usage"
+role = "adapter"
+artifact = "none"
+live_suite = "aex-live-regional-observation-api"
+layers = ["unit", "integration"]
+concerns = ["contract", "property", "fault", "security"]
+seams = ["aws.dynamodb.condition"]
+security_tier = "authority"
+risk = ["concurrency"]
+scenarios = []
+
+
+[package.metadata.aex.not_applicable]
+integration = "DEFERRED, not inapplicable: the DynamoDB Local suite (keyset paging under a scan budget, cursor expiry across a generation flip) is unwritten. The key grammar and the write-incapability proofs are covered at the unit layer."
+
+[package.metadata.aex.targets]
+write_incapability = "unit"
+
+[dependencies]
+async-trait.workspace = true
+aws-config.workspace = true
+aws-sdk-dynamodb.workspace = true
+aws-smithy-types.workspace = true
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+time.workspace = true
+uuid.workspace = true
+aex-usage-domain = { path = "../aex-usage-domain" }

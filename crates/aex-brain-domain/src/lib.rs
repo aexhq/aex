@@ -15,7 +15,7 @@
 //! # Not this crate's job
 //!
 //! - providers, tools, `MCP` or Hands transport
-//! - `DynamoDB`, `S3` or `SQS` (`aex-brain-store-aws`)
+//! - `DynamoDB`, `S3` or `SQS` (`aex-brain-store-dynamodb`)
 //! - clock, randomness and identifier generation: all arrive as parameters
 //!
 //! There is deliberately no dependency on `tokio`, an AWS SDK, or a time-of-day source. A

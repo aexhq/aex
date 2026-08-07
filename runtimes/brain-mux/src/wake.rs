@@ -8,8 +8,8 @@
 //!
 //! | Port | Bound to | Note |
 //! | --- | --- | --- |
-//! | `WakeQueue` | `aex_brain_store_aws::SqsWakeQueue` | real, over the configured queue and the `regional-work` due index |
-//! | `JournalStore`, `EffectStore`, `LeaseStore` | `aex_brain_store_aws::BrainStore` | real; each claim derives tenant and deletion authority from its session head |
+//! | `WakeQueue` | `aex_brain_store_dynamodb::SqsWakeQueue` | real, over the configured queue and the `regional-work` due index |
+//! | `JournalStore`, `EffectStore`, `LeaseStore` | `aex_brain_store_dynamodb::BrainStore` | real; each claim derives tenant and deletion authority from its session head |
 //! | `FoldSnapshotStore` | `AwsFoldSnapshotStore` over the regional content bucket | immutable bodies and the monotonic pointer use the same session/content authorities as the activation |
 //! | `ToolPort` | injected production router | startup refuses unless all four coarse routes have concrete executors |
 //! | `ClockPort`, `IdPort` | this module | composition facts, not a peer's |
@@ -70,7 +70,7 @@ use aex_runtime_control_aws::worker::{Pace, RuntimeControl, RuntimePorts, Runtim
 /// Deployed composition no longer uses it: `BrainStore` now derives these facts from each
 /// claimed session. Keeping the refusal fixture proves an accidentally unbound store remains
 /// fail closed.
-pub const STORE_UNBOUND: &str = "aex-brain-store-aws is not bound into this composition";
+pub const STORE_UNBOUND: &str = "aex-brain-store-dynamodb is not bound into this composition";
 
 /// Why verified fold snapshots are not yet bound.
 pub const SNAPSHOT_ABSENT: &str = "the regional content-authority fold snapshot reader and \
@@ -891,7 +891,7 @@ pub struct SnapshotBinding {
 /// Returns a store composition error when deployment placement is invalid.
 pub fn snapshot_binding(
     aws: &aws_config::SdkConfig,
-    tables: aex_brain_store_aws::BrainTables,
+    tables: aex_brain_store_dynamodb::BrainTables,
     binding: SnapshotBinding,
 ) -> Result<Arc<dyn FoldSnapshotStore>, StoreError> {
     let bodies = aex_content_aws::S3ContentObjects::new(
@@ -903,8 +903,8 @@ pub fn snapshot_binding(
         },
     );
     let context =
-        aex_brain_store_aws::SnapshotContentContext::new(&binding.plane, &binding.region)?;
-    Ok(Arc::new(aex_brain_store_aws::AwsFoldSnapshotStore::new(
+        aex_brain_store_dynamodb::SnapshotContentContext::new(&binding.plane, &binding.region)?;
+    Ok(Arc::new(aex_brain_store_dynamodb::AwsFoldSnapshotStore::new(
         aws_sdk_dynamodb::Client::new(aws),
         tables,
         bodies,
@@ -1034,9 +1034,9 @@ pub fn hands_binding(
 /// Real AWS clients shared by store, queue, provider custody, and KMS composition.
 pub struct AwsBindings {
     /// Session-authority store.
-    pub store: Arc<aex_brain_store_aws::BrainStore>,
+    pub store: Arc<aex_brain_store_dynamodb::BrainStore>,
     /// Wake delivery and due backstop.
-    pub queue: Arc<aex_brain_store_aws::SqsWakeQueue>,
+    pub queue: Arc<aex_brain_store_dynamodb::SqsWakeQueue>,
     /// The one SDK configuration all clients in this task derive from.
     pub sdk: aws_config::SdkConfig,
 }
@@ -1053,17 +1053,17 @@ pub async fn aws_bindings(
         .load()
         .await;
     let dynamodb = aws_sdk_dynamodb::Client::new(&aws);
-    let store = Arc::new(aex_brain_store_aws::BrainStore::new(
+    let store = Arc::new(aex_brain_store_dynamodb::BrainStore::new(
         dynamodb.clone(),
-        aex_brain_store_aws::BrainTables {
+        aex_brain_store_dynamodb::BrainTables {
             session_authority: session_table.to_owned(),
             regional_work: work_table.to_owned(),
         },
     ));
-    let queue = Arc::new(aex_brain_store_aws::SqsWakeQueue::new(
+    let queue = Arc::new(aex_brain_store_dynamodb::SqsWakeQueue::new(
         aws_sdk_sqs::Client::new(&aws),
         queue_url.to_owned(),
-        aex_brain_store_aws::DueScan::new(dynamodb, work_table.to_owned()),
+        aex_brain_store_dynamodb::DueScan::new(dynamodb, work_table.to_owned()),
     ));
     AwsBindings {
         store,
@@ -1094,7 +1094,7 @@ impl core::fmt::Debug for CredentialBindings {
 #[must_use]
 pub fn credential_bindings(
     aws: &aws_config::SdkConfig,
-    store: Arc<aex_brain_store_aws::BrainStore>,
+    store: Arc<aex_brain_store_dynamodb::BrainStore>,
     custody_table: &str,
     kms_key_arn: &str,
     plane: aex_secret_domain::context::Plane,
@@ -1140,7 +1140,7 @@ pub fn credential_bindings(
 /// Fail-closed ports for a task whose production peers are not composed yet.
 #[must_use]
 pub fn unavailable_ports(
-    store: Arc<aex_brain_store_aws::BrainStore>,
+    store: Arc<aex_brain_store_dynamodb::BrainStore>,
     wakes: Arc<dyn aex_brain_app::ports::WakeQueue>,
 ) -> Ports {
     partial_ports(store, wakes, Arc::new(AbsentProvider))
@@ -1149,7 +1149,7 @@ pub fn unavailable_ports(
 /// Composes a real provider while unrelated peer ports remain explicitly absent.
 #[must_use]
 pub fn partial_ports(
-    store: Arc<aex_brain_store_aws::BrainStore>,
+    store: Arc<aex_brain_store_dynamodb::BrainStore>,
     wakes: Arc<dyn aex_brain_app::ports::WakeQueue>,
     provider: Arc<dyn ProviderPort>,
 ) -> Ports {
@@ -1160,7 +1160,7 @@ pub fn partial_ports(
 /// peer ports remain explicitly absent.
 #[must_use]
 pub fn partial_ports_with_catalog(
-    store: Arc<aex_brain_store_aws::BrainStore>,
+    store: Arc<aex_brain_store_dynamodb::BrainStore>,
     wakes: Arc<dyn aex_brain_app::ports::WakeQueue>,
     provider: Arc<dyn ProviderPort>,
     catalog: Arc<dyn CatalogPort>,
@@ -1185,7 +1185,7 @@ pub fn partial_ports_with_catalog(
 /// Composes the store/queue authorities with fully supplied production peers.
 #[must_use]
 pub fn production_ports(
-    store: Arc<aex_brain_store_aws::BrainStore>,
+    store: Arc<aex_brain_store_dynamodb::BrainStore>,
     wakes: Arc<dyn aex_brain_app::ports::WakeQueue>,
     peers: ProductionPeers,
 ) -> Ports {

@@ -9,7 +9,7 @@
 //!
 //! # Not this crate's job
 //!
-//! - concrete clients or `SQL` strings (`aex-observation-store-aws`)
+//! - concrete clients or `SQL` strings (`aex-observation-store-dynamodb`)
 //! - the authority invariants themselves (`aex-observation-domain`)
 //! - customer `HTTP` admission (`regional-otlp`)
 

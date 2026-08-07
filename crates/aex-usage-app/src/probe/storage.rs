@@ -30,7 +30,7 @@ pub struct FencedCursor {
 
 /// The durable home of a `(owner, generation)` minute cursor.
 ///
-/// The implementation lives in `aex-usage-storage-aws`; the port exists so the
+/// The implementation lives in `aex-usage-storage-dynamodb`; the port exists so the
 /// accrual logic is testable without a table.
 #[async_trait::async_trait]
 pub trait StorageCursorStore: std::fmt::Debug + Send + Sync + 'static {

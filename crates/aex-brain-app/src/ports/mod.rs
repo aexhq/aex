@@ -2,7 +2,7 @@
 //!
 //! These signatures are the cross-stream contract. `aex-brain-provider-gateway`,
 //! `aex-model-catalog`, `aex-brain-tool-catalog`, `aex-brain-managed-web`, `aex-brain-mcp`,
-//! `aex-brain-hands` and `aex-brain-store-aws` each implement one or more of them; nothing
+//! `aex-brain-hands` and `aex-brain-store-dynamodb` each implement one or more of them; nothing
 //! in this crate knows a vendor.
 //!
 //! # Why every future is boxed

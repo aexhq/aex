@@ -17,8 +17,8 @@ mod staging;
 
 use std::sync::Arc;
 
-use aex_observation_store_aws::composition::{Capability, Role, assert_grant};
-use aex_observation_store_aws::health::{Probe, Readiness, readiness};
+use aex_observation_store_dynamodb::composition::{Capability, Role, assert_grant};
+use aex_observation_store_dynamodb::health::{Probe, Readiness, readiness};
 use aex_otlp_admission::MemoryBudget;
 use aex_wire::dispatch::RequestLimits;
 
@@ -283,8 +283,8 @@ async fn main() -> std::process::ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use aex_observation_store_aws::composition::Capability;
-    use aex_observation_store_aws::health::Probe;
+    use aex_observation_store_dynamodb::composition::Capability;
+    use aex_observation_store_dynamodb::health::Probe;
 
     use super::{REQUIRED_PROBES, ROLE, RunError, compose};
 

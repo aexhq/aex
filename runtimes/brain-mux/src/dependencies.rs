@@ -75,7 +75,7 @@ pub trait Reachable: Send + Sync + core::fmt::Debug {
     fn reach(&self) -> BoxFuture<'_, Result<(), StoreError>>;
 }
 
-impl Reachable for aex_brain_store_aws::BrainStore {
+impl Reachable for aex_brain_store_dynamodb::BrainStore {
     fn dependency(&self) -> Dependency {
         Dependency::BrainStore
     }
@@ -85,7 +85,7 @@ impl Reachable for aex_brain_store_aws::BrainStore {
     }
 }
 
-impl Reachable for aex_brain_store_aws::SqsWakeQueue {
+impl Reachable for aex_brain_store_dynamodb::SqsWakeQueue {
     fn dependency(&self) -> Dependency {
         Dependency::WakeQueue
     }

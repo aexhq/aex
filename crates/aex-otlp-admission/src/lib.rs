@@ -11,7 +11,7 @@
 //! # Not this crate's job
 //!
 //! - operational `OTel` exporters (`aex-platform-telemetry`)
-//! - storage (`aex-observation-store-aws`)
+//! - storage (`aex-observation-store-dynamodb`)
 //! - quota accounting decisions
 //!
 //! # The pinned protocol

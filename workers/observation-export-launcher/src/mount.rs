@@ -3,7 +3,7 @@
 //! This deployable is invoked on a schedule rather than over `HTTP`, so the two
 //! paths are matched from the invocation payload instead of a router. The paths
 //! themselves come from
-//! [`aex_observation_store_aws::health`], never from a literal here: a
+//! [`aex_observation_store_dynamodb::health`], never from a literal here: a
 //! hand-typed `/internal/readyz` that drifts from the shared constant is a probe
 //! that silently never runs.
 //!
@@ -11,7 +11,7 @@
 //! every declared probe has actually passed, because a readiness endpoint that
 //! answers before its dependencies are proven is worse than none.
 
-use aex_observation_store_aws::health::{HEALTHZ, READYZ};
+use aex_observation_store_dynamodb::health::{HEALTHZ, READYZ};
 
 /// Everything a health answer needs, resolved once at start-up.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -110,8 +110,8 @@ mod tests {
 
     #[test]
     fn the_health_paths_are_the_shared_cross_stream_constants() {
-        assert_eq!(HEALTH_PATHS[0], aex_observation_store_aws::health::HEALTHZ);
-        assert_eq!(HEALTH_PATHS[1], aex_observation_store_aws::health::READYZ);
+        assert_eq!(HEALTH_PATHS[0], aex_observation_store_dynamodb::health::HEALTHZ);
+        assert_eq!(HEALTH_PATHS[1], aex_observation_store_dynamodb::health::READYZ);
         assert_eq!(HEALTH_PATHS[0], "/internal/healthz");
         assert_eq!(HEALTH_PATHS[1], "/internal/readyz");
     }

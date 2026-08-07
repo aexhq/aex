@@ -21,7 +21,7 @@ related:
 Plan of record: `references/rust-native-rewrite-2026-07-31/plans/07-brain-core.md` in the parent workspace.
 
 Owned: `crates/aex-brain-domain`, `crates/aex-brain-app`,
-`crates/aex-brain-store-aws`, `runtimes/brain-mux`, the `journal_gen` and
+`crates/aex-brain-store-dynamodb`, `runtimes/brain-mux`, the `journal_gen` and
 `histories` modules of `crates/aex-brain-test-support`.
 
 ## 1. Implemented
@@ -58,7 +58,7 @@ and lock in the stream: `ActivationRegistry`, `PermitSet`, `WarmCacheShard`,
 `--features loom`; the same six kernels also carry real threaded tests, so the
 `concurrency` target is non-empty in both configurations and both lanes run.
 
-### `aex-brain-store-aws` — namespace and expressions
+### `aex-brain-store-dynamodb` — namespace and expressions
 
 `keys` claims the `BRAIN#` namespace (§3) and `expressions` describes every
 transaction as data so the precondition sets are asserted without an AWS call.
@@ -276,10 +276,10 @@ Loom-checked; what is missing is the Tokio composition that drives them.
 ```
 cargo fmt --all                                                    clean
 cargo clippy -p aex-brain-domain -p aex-brain-app \
-             -p aex-brain-store-aws -p brain-mux --all-targets \
+             -p aex-brain-store-dynamodb -p brain-mux --all-targets \
              -- -D warnings                                        clean
 cargo nextest run -p aex-brain-domain -p aex-brain-app \
-                  -p aex-brain-store-aws -p brain-mux
+                  -p aex-brain-store-dynamodb -p brain-mux
     Summary [134.743s] 203 tests run: 203 passed, 0 skipped
 cargo nextest run -p aex-brain-app --features loom \
                   --test concurrency  (LOOM_MAX_PREEMPTIONS=3)     6 passed
@@ -297,7 +297,7 @@ campaigns and the live companion's targets.
 
 ### 8. What the second pass implemented
 
-#### `aex-brain-store-aws` — the real adapter
+#### `aex-brain-store-dynamodb` — the real adapter
 
 `translate` is the one seam between `aex-brain-domain`'s plain `Uuid` newtypes
 and the version-7 prefixed identifiers the regional key templates take. Every
@@ -376,10 +376,10 @@ process can answer a probe before it can do anything else.
 
 ```
 cargo fmt --all                                                    clean
-cargo clippy -p aex-brain-app -p aex-brain-store-aws \
+cargo clippy -p aex-brain-app -p aex-brain-store-dynamodb \
              -p brain-mux --all-targets -- -D warnings             clean
 cargo nextest run -p aex-brain-domain -p aex-brain-app \
-                  -p aex-brain-store-aws -p brain-mux
+                  -p aex-brain-store-dynamodb -p brain-mux
     Summary [124.705s] 355 tests run: 355 passed, 0 skipped
 cargo nextest run -p aex-brain-app --features loom \
                   --test concurrency  (LOOM_MAX_PREEMPTIONS=3)     6 passed
@@ -593,11 +593,11 @@ executors and the concrete Hands backend are still absent, so the process receiv
 ### 15. Third-pass gate output
 
 ```
-cargo fmt -p aex-brain-app -p aex-brain-store-aws -p brain-mux  clean
-cargo clippy -p aex-brain-app -p aex-brain-store-aws \
+cargo fmt -p aex-brain-app -p aex-brain-store-dynamodb -p brain-mux  clean
+cargo clippy -p aex-brain-app -p aex-brain-store-dynamodb \
              -p brain-mux --all-targets -- -D warnings                 clean
 cargo nextest run -p aex-brain-domain -p aex-brain-app \
-                  -p aex-brain-store-aws -p brain-mux
+                  -p aex-brain-store-dynamodb -p brain-mux
     Summary [311.890s] 384 tests run: 384 passed, 0 skipped
 cargo nextest run -p aex-brain-app --features loom \
                   --test concurrency  (LOOM_MAX_PREEMPTIONS=3)         6 passed
@@ -610,11 +610,11 @@ cargo run -p aex-workspace-check -- registry build      no change to either file
 ### 16. Continuation-pass gate output
 
 ```text
-cargo fmt -p aex-brain-app -p aex-brain-store-aws -p brain-mux  clean
-cargo clippy -p aex-brain-app -p aex-brain-store-aws \
+cargo fmt -p aex-brain-app -p aex-brain-store-dynamodb -p brain-mux  clean
+cargo clippy -p aex-brain-app -p aex-brain-store-dynamodb \
              -p brain-mux --all-targets -- -D warnings                 clean
 cargo nextest run -p aex-brain-domain -p aex-brain-app \
-                  -p aex-brain-store-aws -p brain-mux
+                  -p aex-brain-store-dynamodb -p brain-mux
     Summary [136.307s] 388 tests run: 388 passed, 0 skipped
 cargo nextest run -p aex-brain-app --features loom \
                   --test concurrency  (LOOM_MAX_PREEMPTIONS=3)
@@ -633,12 +633,12 @@ owned packages are formatted individually.
 
 ```text
 cargo fmt -p aex-brain-domain -p aex-brain-app \
-          -p aex-brain-store-aws -p aex-work-dynamodb                  clean
+          -p aex-brain-store-dynamodb -p aex-work-dynamodb                  clean
 cargo clippy -p aex-brain-domain -p aex-brain-app \
-             -p aex-brain-store-aws -p aex-work-dynamodb \
+             -p aex-brain-store-dynamodb -p aex-work-dynamodb \
              -p brain-mux --all-targets -- -D warnings                clean
 cargo nextest run -p aex-brain-domain -p aex-brain-app \
-                  -p aex-brain-store-aws -p aex-work-dynamodb \
+                  -p aex-brain-store-dynamodb -p aex-work-dynamodb \
                   -p brain-mux
     Summary [216.550s] 444 tests run: 444 passed, 0 skipped
 cargo nextest run -p aex-brain-app --features loom \
@@ -657,14 +657,14 @@ git diff --check                                         clean
 
 ```text
 cargo fmt -p aex-session-dynamodb -p aex-brain-domain \
-          -p aex-brain-app -p aex-brain-store-aws \
+          -p aex-brain-app -p aex-brain-store-dynamodb \
           -p aex-brain-hands -p aex-brain-test-support -p brain-mux   clean
 cargo clippy -p aex-session-dynamodb -p aex-brain-domain \
-             -p aex-brain-app -p aex-brain-store-aws \
+             -p aex-brain-app -p aex-brain-store-dynamodb \
              -p aex-brain-hands -p aex-brain-test-support \
              -p brain-mux --all-targets -- -D warnings                clean
 cargo test -p aex-session-dynamodb -p aex-brain-domain \
-           -p aex-brain-app -p aex-brain-store-aws \
+           -p aex-brain-app -p aex-brain-store-dynamodb \
            -p aex-brain-hands -p brain-mux
     554 passed, 0 failed
 cargo check --workspace --all-targets                                  clean

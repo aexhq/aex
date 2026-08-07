@@ -57,7 +57,7 @@ the syscall surface stays exactly four seams.
 
 `aex-usage-{storage,compute,transfer}-aws` each carry the key grammar bound to
 their own `CATEGORY`, the row codec, and the four-item single-partition
-admission transaction. `aex-usage-query-aws` carries the generation-keyed
+admission transaction. `aex-usage-query-dynamodb` carries the generation-keyed
 read-only projection key grammar.
 
 ### 1.4 Test evidence
@@ -545,7 +545,7 @@ X-1 through X-8 in §4 all stand. Two additions:
 
 | # | Decision | Rationale |
 | --- | --- | --- |
-| UH-11 | The projection key grammar moves from `aex-usage-query-aws` into `aex-usage-domain::projection` | The writer folds facts into these keys and the reader reads them back, and `aex-usage-query-aws` must stay unable to link anything that writes. The grammar therefore cannot live on either side, and two copies is exactly how the two would stop agreeing about where a row lives. |
+| UH-11 | The projection key grammar moves from `aex-usage-query-dynamodb` into `aex-usage-domain::projection` | The writer folds facts into these keys and the reader reads them back, and `aex-usage-query-dynamodb` must stay unable to link anything that writes. The grammar therefore cannot live on either side, and two copies is exactly how the two would stop agreeing about where a row lives. |
 | UH-12 | Memory and compute share one coverage row, keyed by the canonical public face of their authority | A frontier is one contiguous sequence per `(workspace, category)`. Two coverage rows would each see a subset of that sequence, and the projected-sequence fence would stop meaning anything. `coverage_face` normalises inside the grammar, so the writer and the reader cannot disagree. |
 | UH-13 | Detail rows partition by day; aggregates partition by month | A month partition of per-fact rows is the one place this table could grow a hot key, and a reader always knows which day it is asking about. |
 | UH-14 | Each of the four usage tables gets its own customer managed key rather than one shared usage CMK | Satisfies `U-31` separate-blast-radius and the workspace-wide distinct-alias property at once, and narrows the radius further at no cost. |

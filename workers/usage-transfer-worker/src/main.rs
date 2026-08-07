@@ -10,7 +10,7 @@
 //!
 //! The behaviour lives in `aex_usage_app::worker`, which is
 //! category-generic over ports. This binary is the only place that names a
-//! table, and it names exactly one: `aex-usage-transfer-aws`. That is what makes
+//! table, and it names exactly one: `aex-usage-transfer-dynamodb`. That is what makes
 //! "this worker cannot write a sibling authority" a link-graph fact rather than
 //! a review promise — see `src/main.rs` tests and the adapter's own
 //! `tests/isolation.rs`.
@@ -20,11 +20,11 @@ use std::sync::Arc;
 
 use aex_usage_app::worker::{BillingMode, UsageWorker, WorkerLimits};
 use aex_usage_domain::wire_pending::RegionId;
-use aex_usage_transfer_aws::clock::SystemClock;
-use aex_usage_transfer_aws::projection::QueryProjection;
-use aex_usage_transfer_aws::queue::SettlementQueue;
-use aex_usage_transfer_aws::store::TransferStore;
-use aex_usage_transfer_aws::stream::{receipt_records, stream_records};
+use aex_usage_transfer_dynamodb::clock::SystemClock;
+use aex_usage_transfer_dynamodb::projection::QueryProjection;
+use aex_usage_transfer_dynamodb::queue::SettlementQueue;
+use aex_usage_transfer_dynamodb::store::TransferStore;
+use aex_usage_transfer_dynamodb::stream::{receipt_records, stream_records};
 use lambda_runtime::{Error as LambdaError, LambdaEvent, service_fn};
 
 /// Validated start-up configuration for `usage-transfer-worker`.
@@ -185,13 +185,13 @@ pub const PLANE_VAR: &str = "AEX_PLANE";
 /// Environment variable naming the bound `AWS` region.
 pub const REGION_VAR: &str = "AEX_REGION";
 /// Environment variable naming the authority table.
-pub const AUTHORITY_TABLE_VAR: &str = aex_usage_transfer_aws::TABLE_ENV;
+pub const AUTHORITY_TABLE_VAR: &str = aex_usage_transfer_dynamodb::TABLE_ENV;
 /// Environment variable naming the shared query projection table.
 pub const PROJECTION_TABLE_VAR: &str = "AEX_USAGE_QUERY_TABLE";
 /// Environment variable naming the central settlement queue.
-pub const RATING_QUEUE_VAR: &str = aex_usage_transfer_aws::RATING_QUEUE_ENV;
+pub const RATING_QUEUE_VAR: &str = aex_usage_transfer_dynamodb::RATING_QUEUE_ENV;
 /// Environment variable naming this category's receipt queue.
-pub const RECEIPT_QUEUE_VAR: &str = aex_usage_transfer_aws::RECEIPT_QUEUE_ENV;
+pub const RECEIPT_QUEUE_VAR: &str = aex_usage_transfer_dynamodb::RECEIPT_QUEUE_ENV;
 /// Environment variable naming the charging gate.
 pub const BILLING_MODE_VAR: &str = "AEX_USAGE_BILLING_MODE";
 /// Environment variable naming the outbox republish threshold.
@@ -561,7 +561,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     /// The category this binary is bound to, and the only one it may name.
-    const CATEGORY: aex_usage_domain::meter::Category = aex_usage_transfer_aws::CATEGORY;
+    const CATEGORY: aex_usage_domain::meter::Category = aex_usage_transfer_dynamodb::CATEGORY;
 
     fn complete() -> BTreeMap<&'static str, String> {
         BTreeMap::from([
@@ -815,13 +815,13 @@ mod tests {
         // its table even with the wrong credentials.
         let manifest = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))
             .expect("the crate's own manifest is readable");
-        for sibling in ["aex-usage-storage-aws", "aex-usage-compute-aws"] {
+        for sibling in ["aex-usage-storage-dynamodb", "aex-usage-compute-dynamodb"] {
             assert!(
                 !manifest.contains(sibling),
                 "`{sibling}` must not be reachable from this worker"
             );
         }
-        assert!(manifest.contains("aex-usage-transfer-aws"));
+        assert!(manifest.contains("aex-usage-transfer-dynamodb"));
     }
 
     #[test]

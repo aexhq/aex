@@ -38,7 +38,7 @@ path = "src/main.rs"
 [dependencies]
 aex-observation-domain = { path = "../../crates/aex-observation-domain" }
 aex-observation-export = { path = "../../crates/aex-observation-export" }
-aex-observation-store-aws = { path = "../../crates/aex-observation-store-aws" }
+aex-observation-store-dynamodb = { path = "../../crates/aex-observation-store-dynamodb" }
 aex-otlp-admission = { path = "../../crates/aex-otlp-admission" }
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }

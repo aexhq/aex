@@ -42,7 +42,7 @@ aex-hands-control-aws = { path = "../../crates/aex-hands-control-aws" }
 aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }
 aex-brain-provider-custody = { path = "../../crates/aex-brain-provider-custody" }
 aex-brain-provider-gateway = { path = "../../crates/aex-brain-provider-gateway" }
-aex-brain-store-aws = { path = "../../crates/aex-brain-store-aws" }
+aex-brain-store-dynamodb = { path = "../../crates/aex-brain-store-dynamodb" }
 aex-model-catalog = { path = "../../crates/aex-model-catalog" }
 aex-runtime-activity-dynamodb = { path = "../../crates/aex-runtime-activity-dynamodb" }
 aex-runtime-control = { path = "../../crates/aex-runtime-control" }

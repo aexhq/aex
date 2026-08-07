@@ -384,8 +384,8 @@
       "unmapped_targets": [],
       "awaiting_owner": false
     },
-    "crates/aex-brain-store-aws": {
-      "name": "aex-brain-store-aws",
+    "crates/aex-brain-store-dynamodb": {
+      "name": "aex-brain-store-dynamodb",
       "kind": "cargo",
       "meta": {
         "owner": "brain-core",
@@ -1345,8 +1345,8 @@
       "unmapped_targets": [],
       "awaiting_owner": true
     },
-    "crates/aex-observation-store-aws": {
-      "name": "aex-observation-store-aws",
+    "crates/aex-observation-store-dynamodb": {
+      "name": "aex-observation-store-dynamodb",
       "kind": "cargo",
       "meta": {
         "owner": "observations-usage",
@@ -1531,7 +1531,9 @@
         ],
         "scenarios": [],
         "targets": {
-          "facade": "unit"
+          "facade": "unit",
+          "json": "unit",
+          "pump": "unit"
         },
         "not_applicable": {
           "integration": "awaiting the observations-usage stream; the real-collector integration target lands with the OTLP pipeline"
@@ -2094,8 +2096,8 @@
       "unmapped_targets": [],
       "awaiting_owner": false
     },
-    "crates/aex-usage-compute-aws": {
-      "name": "aex-usage-compute-aws",
+    "crates/aex-usage-compute-dynamodb": {
+      "name": "aex-usage-compute-dynamodb",
       "kind": "cargo",
       "meta": {
         "owner": "observations-usage",
@@ -2161,8 +2163,8 @@
       "unmapped_targets": [],
       "awaiting_owner": false
     },
-    "crates/aex-usage-query-aws": {
-      "name": "aex-usage-query-aws",
+    "crates/aex-usage-query-dynamodb": {
+      "name": "aex-usage-query-dynamodb",
       "kind": "cargo",
       "meta": {
         "owner": "observations-usage",
@@ -2226,8 +2228,8 @@
       "unmapped_targets": [],
       "awaiting_owner": false
     },
-    "crates/aex-usage-storage-aws": {
-      "name": "aex-usage-storage-aws",
+    "crates/aex-usage-storage-dynamodb": {
+      "name": "aex-usage-storage-dynamodb",
       "kind": "cargo",
       "meta": {
         "owner": "observations-usage",
@@ -2263,8 +2265,8 @@
       "unmapped_targets": [],
       "awaiting_owner": false
     },
-    "crates/aex-usage-transfer-aws": {
-      "name": "aex-usage-transfer-aws",
+    "crates/aex-usage-transfer-dynamodb": {
+      "name": "aex-usage-transfer-dynamodb",
       "kind": "cargo",
       "meta": {
         "owner": "observations-usage",

@@ -2,8 +2,8 @@
 //! observation store crate declares.
 //!
 //! The paths are never spelled here: they are
-//! [`aex_observation_store_aws::health::HEALTHZ`] and
-//! [`aex_observation_store_aws::health::READYZ`], so a rename in the
+//! [`aex_observation_store_dynamodb::health::HEALTHZ`] and
+//! [`aex_observation_store_dynamodb::health::READYZ`], so a rename in the
 //! cross-stream contract cannot leave this deployable answering the old one.
 //!
 //! This is a one-shot task and its Fargate row declares `port = 0`, so the
@@ -14,7 +14,7 @@
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
-use aex_observation_store_aws::health::{HEALTHZ, Probe, READYZ, Readiness, readiness};
+use aex_observation_store_dynamodb::health::{HEALTHZ, Probe, READYZ, Readiness, readiness};
 use axum::extract::State;
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -183,7 +183,7 @@ pub async fn serve(port: u16, state: Arc<HealthState>) -> Result<HealthServer, H
 mod tests {
     use std::sync::Arc;
 
-    use aex_observation_store_aws::health::{HEALTHZ, Probe, READYZ};
+    use aex_observation_store_dynamodb::health::{HEALTHZ, Probe, READYZ};
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt as _;

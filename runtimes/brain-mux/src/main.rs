@@ -551,7 +551,7 @@ fn resolve_production_ports(
     let catalog = bind_release_catalog()?;
     let snapshots = wake::snapshot_binding(
         &aws.sdk,
-        aex_brain_store_aws::BrainTables {
+        aex_brain_store_dynamodb::BrainTables {
             session_authority: config.resource.clone(),
             regional_work: config.work_table.clone(),
         },

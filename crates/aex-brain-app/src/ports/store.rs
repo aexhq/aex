@@ -1,6 +1,6 @@
 //! Brain's durable store ports.
 //!
-//! Production implementations live in `aex-brain-store-aws` plus the regional content
+//! Production implementations live in `aex-brain-store-dynamodb` plus the regional content
 //! authority. Snapshot body composition remains fail-closed until that content adapter is
 //! wired; the journal/effect/lease/wake adapters are independent of it.
 //!

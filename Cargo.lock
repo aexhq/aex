@@ -160,7 +160,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "aex-brain-store-aws"
+name = "aex-brain-store-dynamodb"
 version = "0.1.0"
 dependencies = [
  "aex-brain-app",
@@ -906,7 +906,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "aex-observation-store-aws"
+name = "aex-observation-store-dynamodb"
 version = "0.1.0"
 dependencies = [
  "aex-observation-app",
@@ -1365,7 +1365,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "aex-usage-compute-aws"
+name = "aex-usage-compute-dynamodb"
 version = "0.1.0"
 dependencies = [
  "aex-usage-app",
@@ -1402,7 +1402,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "aex-usage-query-aws"
+name = "aex-usage-query-dynamodb"
 version = "0.1.0"
 dependencies = [
  "aex-usage-domain",
@@ -1440,7 +1440,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "aex-usage-storage-aws"
+name = "aex-usage-storage-dynamodb"
 version = "0.1.0"
 dependencies = [
  "aex-usage-app",
@@ -1462,7 +1462,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "aex-usage-transfer-aws"
+name = "aex-usage-transfer-dynamodb"
 version = "0.1.0"
 dependencies = [
  "aex-usage-app",
@@ -2847,7 +2847,7 @@ dependencies = [
  "aex-brain-managed-web",
  "aex-brain-provider-custody",
  "aex-brain-provider-gateway",
- "aex-brain-store-aws",
+ "aex-brain-store-dynamodb",
  "aex-brain-tool-catalog",
  "aex-content-aws",
  "aex-hands-control-aws",
@@ -5527,7 +5527,7 @@ name = "observation-export-launcher"
 version = "0.1.0"
 dependencies = [
  "aex-observation-domain",
- "aex-observation-store-aws",
+ "aex-observation-store-dynamodb",
  "aex-platform-telemetry",
  "aex-telemetry-schema",
  "aex-wire",
@@ -5551,7 +5551,7 @@ version = "0.1.0"
 dependencies = [
  "aex-observation-domain",
  "aex-observation-export",
- "aex-observation-store-aws",
+ "aex-observation-store-dynamodb",
  "aex-otlp-admission",
  "aex-platform-telemetry",
  "aex-telemetry-schema",
@@ -5576,7 +5576,7 @@ name = "observation-reconciler"
 version = "0.1.0"
 dependencies = [
  "aex-observation-domain",
- "aex-observation-store-aws",
+ "aex-observation-store-dynamodb",
  "aex-platform-telemetry",
  "aex-telemetry-schema",
  "aex-wire",
@@ -6476,7 +6476,7 @@ dependencies = [
  "aex-internal-contracts",
  "aex-observation-domain",
  "aex-observation-query",
- "aex-observation-store-aws",
+ "aex-observation-store-dynamodb",
  "aex-otlp-admission",
  "aex-platform-telemetry",
  "aex-regional-http",
@@ -6514,7 +6514,7 @@ dependencies = [
  "aex-identity-domain",
  "aex-internal-contracts",
  "aex-observation-domain",
- "aex-observation-store-aws",
+ "aex-observation-store-dynamodb",
  "aex-otlp-admission",
  "aex-platform-telemetry",
  "aex-regional-http",
@@ -6647,7 +6647,7 @@ dependencies = [
  "aex-internal-contracts",
  "aex-observation-domain",
  "aex-observation-query",
- "aex-observation-store-aws",
+ "aex-observation-store-dynamodb",
  "aex-platform-telemetry",
  "aex-regional-http",
  "aex-session-dynamodb",
@@ -8419,7 +8419,7 @@ dependencies = [
  "aex-platform-telemetry",
  "aex-telemetry-schema",
  "aex-usage-app",
- "aex-usage-compute-aws",
+ "aex-usage-compute-dynamodb",
  "aex-usage-domain",
  "aws-config",
  "aws-sdk-dynamodb",
@@ -8459,7 +8459,7 @@ dependencies = [
  "aex-telemetry-schema",
  "aex-usage-app",
  "aex-usage-domain",
- "aex-usage-storage-aws",
+ "aex-usage-storage-dynamodb",
  "aws-config",
  "aws-sdk-dynamodb",
  "aws-sdk-sqs",
@@ -8477,7 +8477,7 @@ dependencies = [
  "aex-telemetry-schema",
  "aex-usage-app",
  "aex-usage-domain",
- "aex-usage-transfer-aws",
+ "aex-usage-transfer-dynamodb",
  "aws-config",
  "aws-sdk-dynamodb",
  "aws-sdk-sqs",

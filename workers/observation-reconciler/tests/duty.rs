@@ -9,9 +9,9 @@ use std::collections::{BTreeMap, HashMap};
 
 use aex_observation_domain::keys::{self, ControlDomain};
 use aex_observation_domain::limits;
-use aex_observation_store_aws::composition::{Capability, Role};
-use aex_observation_store_aws::expressions::Index;
-use aex_observation_store_aws::health::{HEALTHZ, READYZ};
+use aex_observation_store_dynamodb::composition::{Capability, Role};
+use aex_observation_store_dynamodb::expressions::Index;
+use aex_observation_store_dynamodb::health::{HEALTHZ, READYZ};
 use aex_wire::types::{Region, Timestamp};
 use aws_sdk_dynamodb::types::AttributeValue;
 use aws_smithy_http_client::test_util::{
@@ -265,8 +265,8 @@ fn each_selected_role_starts_under_its_own_grant_and_the_full_probe_set() {
     assert_eq!(
         REQUIRED_PROBES,
         &[
-            aex_observation_store_aws::health::Probe::ObservationTable,
-            aex_observation_store_aws::health::Probe::ObservationBucket,
+            aex_observation_store_dynamodb::health::Probe::ObservationTable,
+            aex_observation_store_dynamodb::health::Probe::ObservationBucket,
         ]
     );
 }
@@ -844,7 +844,7 @@ fn the_health_paths_are_never_hand_typed_in_this_deployable() {
     ] {
         assert!(
             !source.contains("\"/internal/"),
-            "the health paths come from `aex_observation_store_aws::health`, never a literal"
+            "the health paths come from `aex_observation_store_dynamodb::health`, never a literal"
         );
     }
 }
