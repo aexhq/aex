@@ -839,7 +839,7 @@ pub fn application_suffix_is_app(workspace: &Workspace) -> Vec<Violation> {
 /// Three clauses, all decidable from `cargo metadata` alone:
 ///
 /// - declaring `aws-sdk-dynamodb` means the name ends `-dynamodb`, so
-///   `ls crates | grep dynamodb` finds every DynamoDB adapter rather than 8 of 14
+///   `ls crates | grep dynamodb` finds every `DynamoDB` adapter rather than 8 of 14
 /// - ending `-aws` means it declares some `aws-sdk-*` and not `aws-sdk-dynamodb`,
 ///   so `-aws` reads as "an AWS adapter that is not a table adapter"
 /// - declaring any `aws-sdk-*` means it carries one of the frozen adapter
