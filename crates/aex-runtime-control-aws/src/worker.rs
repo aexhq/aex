@@ -31,8 +31,8 @@ use aex_runtime_control::lifecycle::{
 use aex_runtime_control::store::{
     CommandBinding, GenerationAccountingPlan, GenerationCommit, GenerationPlan, GenerationView,
     IdleProbe, LifecycleIntentPlan, LifecycleReceiptPlan, LifecycleReconcilePlan,
-    LifecycleRequestPlan, OpenCountRepairPlan, OpenEffectCounter, PageBudget, RuntimeActivityStore,
-    RuntimeShard, RuntimeStoreError, UsageOutboxPlan, bind_command,
+    LifecycleRequestPlan, OpenCountRepairPlan, OpenEffectCounter, PageBudget, ReadConsistency,
+    RuntimeActivityStore, RuntimeShard, RuntimeStoreError, UsageOutboxPlan, bind_command,
 };
 use aex_runtime_control::usage::{
     FactContext, SinkError, SnapshotIo, SnapshotResidence, UsageCategory, UsageFactSink,
@@ -466,7 +466,9 @@ impl RuntimeControl {
         let view = match self
             .ports
             .store
-            .load_generation_view(command.generation())
+            // A lifecycle decision reads strongly: acting on a stale head is a
+            // double effect, and this path runs once per evaluation, not per poll.
+            .load_generation_view(command.generation(), ReadConsistency::Strong)
             .await
         {
             Ok(Some(view)) => view,
@@ -1850,8 +1852,9 @@ mod tests {
         GenerationCommit, GenerationPlan, GenerationPointer, GenerationView, IdleProbe,
         LifecycleIntentCommit, LifecycleIntentPlan, LifecycleReceipt, LifecycleReceiptPlan,
         LifecycleReconcilePlan, LifecycleRequestPlan, OpenCountRepairPlan, OpenEffectCounter,
-        OperationAdmissionPlan, OperationSettlementPlan, PageBudget, RuntimeActivityStore,
-        RuntimeDuePage, RuntimeShard, RuntimeStoreError, StoreFuture, UsageOutboxEntry,
+        OperationAdmissionPlan, OperationSettlementPlan, PageBudget, ReadConsistency,
+        RuntimeActivityStore, RuntimeDuePage, RuntimeShard, RuntimeStoreError, StoreFuture,
+        UsageOutboxEntry,
     };
     use aex_runtime_control::usage::{SinkError, UsageCategory, UsageFactSink};
     use aex_usage_domain::fact::{FactDraft, FactKind};
@@ -1994,6 +1997,7 @@ mod tests {
         fn load_generation_view(
             &self,
             _generation: GenerationId,
+            _consistency: ReadConsistency,
         ) -> StoreFuture<'_, Option<GenerationView>> {
             let view = self.lock().view.clone();
             Box::pin(async move { Ok(view) })

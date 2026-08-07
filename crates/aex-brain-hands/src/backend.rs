@@ -44,7 +44,8 @@ use aex_runtime_control::lifecycle::{
 use aex_runtime_control::shape::ShapeCapacity as _;
 use aex_runtime_control::store::{
     GenerationAccountingPlan, GenerationPlan, GenerationView, LifecycleIntentPlan,
-    LifecycleReceiptPlan, LifecycleRequestPlan, RuntimeActivityStore, RuntimeStoreError,
+    LifecycleReceiptPlan, LifecycleRequestPlan, ReadConsistency, RuntimeActivityStore,
+    RuntimeStoreError,
 };
 use aex_runtime_control_aws::{
     AWAIT_BUDGET_MS, CommandOutcome, RuntimeCommand, RuntimeControl, Settled, intent_id,
@@ -65,6 +66,30 @@ const STATUS_TIMEOUT: Duration = Duration::from_secs(5);
 const RESULT_CHUNK_BYTES: u64 = 180_000;
 const RESULT_PULL_ATTEMPTS: usize = 32;
 const ENDPOINT_LEASE_CACHE_CAPACITY: usize = 128;
+
+/// The first poll interval after a start or for a young operation.
+const POLL_FLOOR_MS: u64 = 250;
+
+/// The poll ceiling a long-running operation grows to.
+///
+/// The growth must come from this guest-side hint: the application floor
+/// (`DETACHED_POLL_FLOOR`) only takes the maximum of floor and hint, so a
+/// hardcoded 250 ms here polled every detached operation four times a second
+/// for its whole life.
+const POLL_CEILING_MS: u64 = 4_000;
+
+/// The requested poll interval for an operation of the given age.
+///
+/// Grows linearly from the floor — an eighth of the elapsed age — to the
+/// ceiling: a shell command is polled tightly through its first seconds, a
+/// half-hour build settles at one poll every four seconds.
+fn poll_after(age_ms: u64) -> Duration {
+    Duration::from_millis(
+        POLL_FLOOR_MS
+            .saturating_add(age_ms / 8)
+            .min(POLL_CEILING_MS),
+    )
+}
 
 /// Production implementation of Brain's lower Hands backend.
 pub struct ProductionHandsBackend {
@@ -129,9 +154,13 @@ impl ProductionHandsBackend {
         lock
     }
 
-    async fn load_view(&self, generation: GenerationId) -> Result<GenerationView, HandsError> {
+    async fn load_view(
+        &self,
+        generation: GenerationId,
+        consistency: ReadConsistency,
+    ) -> Result<GenerationView, HandsError> {
         self.store
-            .load_generation_view(generation)
+            .load_generation_view(generation, consistency)
             .await
             .map_err(store_error)?
             .ok_or(HandsError::GenerationLost { generation })
@@ -161,15 +190,16 @@ impl ProductionHandsBackend {
         &self,
         session: SessionId,
         generation: GenerationId,
-    ) -> Result<LeaseHandle<AuthenticatedGuestEndpoint>, HandsError> {
+    ) -> Result<(GenerationView, LeaseHandle<AuthenticatedGuestEndpoint>), HandsError> {
         let flight = self.flight(generation).await;
         let _guard = flight.lock().await;
         for attempt in 0..MATERIALIZE_ATTEMPTS {
-            let view = self.load_view(generation).await?;
+            let view = self.load_view(generation, ReadConsistency::Strong).await?;
             Self::require_view(&view, session, generation)?;
             match view.head.state {
                 GenerationState::Running | GenerationState::LifetimeDraining => {
-                    return self.connect(&view).await;
+                    let lease = self.connect(&view).await?;
+                    return Ok((view, lease));
                 }
                 GenerationState::Requested => {
                     let _ = self.launch(&view).await?;
@@ -625,7 +655,12 @@ impl ProductionHandsBackend {
         &self,
         generation: GenerationId,
     ) -> Result<(GenerationView, LeaseHandle<AuthenticatedGuestEndpoint>), HandsError> {
-        let view = self.load_view(generation).await?;
+        // Every status, cancel and result call lands here, so the read is
+        // eventually consistent: the guest's generation and fence check
+        // rejects anything a stale head could mis-route.
+        let view = self
+            .load_view(generation, ReadConsistency::Eventual)
+            .await?;
         if !matches!(
             view.head.state,
             GenerationState::Running | GenerationState::LifetimeDraining
@@ -641,9 +676,15 @@ impl ProductionHandsBackend {
         &self,
         generation: GenerationId,
         operation: HandsOperationId,
+        first: GenerationView,
     ) -> Result<GenerationView, HandsError> {
-        for _ in 0..STORE_ATTEMPTS {
-            let view = self.load_view(generation).await?;
+        // The first attempt reuses the view the caller already loaded; only a
+        // lost conditional write pays for a fresh strong read.
+        let mut view = first;
+        for attempt in 0..STORE_ATTEMPTS {
+            if attempt > 0 {
+                view = self.load_view(generation, ReadConsistency::Strong).await?;
+            }
             let plan = admit(
                 &view.head,
                 operation,
@@ -670,7 +711,7 @@ impl ProductionHandsBackend {
         operation: HandsOperationId,
     ) -> Result<(), HandsError> {
         for _ in 0..STORE_ATTEMPTS {
-            let view = self.load_view(generation).await?;
+            let view = self.load_view(generation, ReadConsistency::Strong).await?;
             let plan = settle(&view.head, operation, now()?);
             match self.store.settle_operation(&plan).await {
                 Ok(()) => return Ok(()),
@@ -700,7 +741,7 @@ impl crate::HandsBackend for ProductionHandsBackend {
         generation: GenerationId,
     ) -> BoxFuture<'a, Result<HandsEndpoint, HandsError>> {
         Box::pin(async move {
-            let endpoint = self
+            let (_, endpoint) = self
                 .materialize(wire_session(*session)?, generation)
                 .await?;
             Ok(HandsEndpoint {
@@ -725,7 +766,12 @@ impl crate::HandsBackend for ProductionHandsBackend {
     ) -> BoxFuture<'a, Result<HandsAccepted, HandsError>> {
         Box::pin(async move {
             let session = wire_session(ticket.key().session)?;
-            let _ = self.materialize(session, generation).await?;
+            // One strong view serves the whole dispatch: materialize returns
+            // the view it connected under, the ownership and capability checks
+            // read immutable fields, and admission seeds its first conditional
+            // write from it. The retired shape loaded the same head three
+            // times serially per start.
+            let (view, _endpoint) = self.materialize(session, generation).await?;
             let operation = wire_operation(&start.operation)?;
             let request: OperationRequest =
                 serde_json::from_value(start.request.clone()).map_err(|_| {
@@ -734,7 +780,6 @@ impl crate::HandsBackend for ProductionHandsBackend {
                         "the Hands operation request does not match the strict protocol",
                     )
                 })?;
-            let view = self.load_view(generation).await?;
             if view.workspace != ticket.workspace()
                 || view.organization != ticket.organization()
                 || view.session != session
@@ -758,7 +803,7 @@ impl crate::HandsBackend for ProductionHandsBackend {
                     "the browser request has an incoherent session target",
                 ));
             }
-            let admitted = self.admit_operation(generation, operation).await?;
+            let admitted = self.admit_operation(generation, operation, view).await?;
             let endpoint = match self.connect(&admitted).await {
                 Ok(endpoint) => endpoint,
                 Err(error) => {
@@ -804,7 +849,7 @@ impl crate::HandsBackend for ProductionHandsBackend {
                         operation: start.operation.clone(),
                         generation,
                         created: !existing,
-                        poll_after: Duration::from_millis(250),
+                        poll_after: poll_after(0),
                     })
                 }
                 StartResponse::AlreadyTerminal {
@@ -862,7 +907,7 @@ impl crate::HandsBackend for ProductionHandsBackend {
                 .await?;
             self.observe_guest(&endpoint, &reply).await?;
             let unknown = matches!(&reply.payload, StatusResponse::Unknown { .. });
-            let status = status(reply.payload, wire)?;
+            let status = status(reply.payload, wire, now()?)?;
             if unknown {
                 self.settle_operation(generation, wire).await?;
             }
@@ -1186,6 +1231,7 @@ fn now() -> Result<Timestamp, HandsError> {
 fn status(
     response: StatusResponse,
     expected: HandsOperationId,
+    now: Timestamp,
 ) -> Result<HandsOperationStatus, HandsError> {
     match response {
         StatusResponse::Unknown { operation } => {
@@ -1197,10 +1243,22 @@ fn status(
                 ),
             })
         }
-        StatusResponse::Accepted { operation, .. } | StatusResponse::Running { operation, .. } => {
+        StatusResponse::Accepted { operation, .. } => {
             require_operation(expected, operation)?;
             Ok(HandsOperationStatus::Running {
-                poll_after: Duration::from_millis(250),
+                poll_after: poll_after(0),
+            })
+        }
+        StatusResponse::Running {
+            operation,
+            started_at,
+            ..
+        } => {
+            require_operation(expected, operation)?;
+            let age_ms = u64::try_from(now.unix_millis().saturating_sub(started_at.unix_millis()))
+                .unwrap_or(0);
+            Ok(HandsOperationStatus::Running {
+                poll_after: poll_after(age_ms),
             })
         }
         StatusResponse::Terminal {
@@ -1399,6 +1457,28 @@ mod tests {
             limits_revision: LimitsRevision(9),
             root: GuestRoot::workspace(),
         }
+    }
+
+    #[test]
+    fn the_poll_hint_grows_with_operation_age_to_a_bounded_ceiling() {
+        assert_eq!(
+            super::poll_after(0),
+            core::time::Duration::from_millis(250),
+            "a fresh operation polls tightly"
+        );
+        assert_eq!(
+            super::poll_after(8_000),
+            core::time::Duration::from_millis(1_250)
+        );
+        assert_eq!(
+            super::poll_after(30_000),
+            core::time::Duration::from_millis(4_000)
+        );
+        assert_eq!(
+            super::poll_after(u64::MAX),
+            core::time::Duration::from_millis(4_000),
+            "the ceiling holds for any age"
+        );
     }
 
     #[test]

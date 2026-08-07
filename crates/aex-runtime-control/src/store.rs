@@ -493,6 +493,21 @@ pub enum RuntimeStoreError {
 pub type StoreFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, RuntimeStoreError>> + Send + 'a>>;
 
+/// How a generation view read is served.
+///
+/// Every caller chooses explicitly. A decision path — admission, a lifecycle
+/// transition, a launch — reads strongly, because acting on a stale head is a
+/// double effect. A poll path reads eventually: the guest's own generation and
+/// fence check already rejects a stale frame, and a strongly consistent
+/// `GetItem` on every status poll doubles the read cost of the hot path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadConsistency {
+    /// Linearizable with the last committed write.
+    Strong,
+    /// Possibly one replication step behind.
+    Eventual,
+}
+
 /// The runtime-activity port.
 ///
 /// Boxed futures rather than `async fn` so the trait stays object-safe: the worker
@@ -508,6 +523,7 @@ pub trait RuntimeActivityStore: Send + Sync + 'static {
     fn load_generation_view(
         &self,
         generation: GenerationId,
+        consistency: ReadConsistency,
     ) -> StoreFuture<'_, Option<GenerationView>>;
 
     /// Lands a conditional generation-head write.
