@@ -192,6 +192,7 @@ jobs:
           set -euo pipefail
           binding="${AEX_MODEL_CATALOG_BINDING_JSON:-}"
           if [[ -z "$binding" ]]; then
+            echo "::warning title=brain-mux built without a model catalog::AEX_MODEL_CATALOG_BINDING_JSON is empty, so this brain-mux image compiles the release-input blocker instead of a signed model catalog. The binary refuses to start on every launch and the image can never become ready. Set the repository variable to the last-good signed binding before shipping this image."
             exit 0
           fi
           (( ${#binding} <= 49152 )) || {

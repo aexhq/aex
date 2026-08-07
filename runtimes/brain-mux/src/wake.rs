@@ -21,6 +21,11 @@
 //! implementation. None of them is a stub: a stub would let an activation appear to make
 //! progress it did not make, and the whole point of the split-phase machine is that a caller
 //! can always tell what did and did not leave the process.
+//!
+//! The deployed composition binds every port for real — [`Bindings::production`] is the only
+//! binding set a running task ever holds. The fail-closed refusal fixtures and the partial
+//! binding sets exist solely to prove an accidentally unbound port stays fail closed, so they
+//! are compiled into tests only.
 
 use crate::admission::{Admission, AdmissionOutcome};
 use aex_brain_application::activation::{
@@ -31,29 +36,39 @@ use aex_brain_application::kernel::{
     ActivationRegistry, DrainGate, FoldCache, PermitKind, PermitSet,
 };
 use aex_brain_application::ports::{
-    AgentHead, BoxFuture, CancelToken, CatalogDigest, CatalogError, CatalogPort, Claim, ClaimError,
-    ClockPort, CommitError, CommitReceipt, DecisionContext, DispatchTicket, EffectStore,
-    FenceGuard, FoldSnapshotStore, HandsAccepted, HandsEndpoint, HandsError, HandsOperationStart,
-    HandsOperationStatus, HandsPort, HandsResult, IdPort, JournalPage, JournalStore, LeaseStore,
-    PreviewSink, ProviderDispatchError, ProviderOutcome, ProviderPort, ReadBudget, RedactedDetail,
-    ReleaseDisposition, ResultBounds, SessionAuthority, SnapshotPublishOutcome, SteadyInstant,
-    StoreError, StreamBudget, ToolPort, UnknownResolution,
+    BoxFuture, CatalogPort, ClockPort, FoldSnapshotStore, HandsError, HandsPort, IdPort,
+    ProviderPort, SteadyInstant, StoreError, ToolPort,
 };
 use aex_brain_domain::child::QueuedReason;
-use aex_brain_domain::commit::DecisionCommit;
-use aex_brain_domain::effect::{
-    DispatchEvidence, DispatchProof, DispatchStage, DurableEffect, EffectKind,
-};
+use aex_brain_domain::effect::EffectKind;
 use aex_brain_domain::ids::{
-    AgentId, AgentKey, CatalogPin, DetachedOperationId, EffectId, HandsOperationId, JournalSeq,
-    ModelSlug, OwnerToken, SessionId, Timestamp, WakeId,
+    AgentId, CatalogPin, DetachedOperationId, EffectId, JournalSeq, OwnerToken, Timestamp, WakeId,
 };
 use aex_brain_domain::journal::ExecutorRoute;
-use aex_brain_domain::snapshot::{FoldSnapshotArtifact, FoldSnapshotPointer};
-use aex_brain_domain::wire_pending::{CanonicalModelRequest, DurableOperationSupport, ProviderId};
-use aex_model_catalog::{ProviderFailureKind, QualifiedModel};
-use aex_wire::ids::GenerationId;
 use std::sync::Arc;
+
+// The fail-closed fixtures below are `#[cfg(test)]`, so the vocabulary only
+// they speak is too: none of these names may appear in the deployed build.
+#[cfg(test)]
+use aex_brain_application::ports::{
+    AgentHead, CancelToken, CatalogDigest, CatalogError, Claim, ClaimError, CommitError,
+    CommitReceipt, DecisionContext, DispatchTicket, EffectStore, FenceGuard, JournalPage,
+    JournalStore, LeaseStore, PreviewSink, ProviderDispatchError, ProviderOutcome, ReadBudget,
+    RedactedDetail, ReleaseDisposition, SessionAuthority, SnapshotPublishOutcome, StreamBudget,
+    UnknownResolution,
+};
+#[cfg(test)]
+use aex_brain_domain::commit::DecisionCommit;
+#[cfg(test)]
+use aex_brain_domain::effect::{DispatchEvidence, DispatchProof, DispatchStage, DurableEffect};
+#[cfg(test)]
+use aex_brain_domain::ids::{AgentKey, ModelSlug};
+#[cfg(test)]
+use aex_brain_domain::snapshot::{FoldSnapshotArtifact, FoldSnapshotPointer};
+#[cfg(test)]
+use aex_brain_domain::wire_pending::{CanonicalModelRequest, DurableOperationSupport, ProviderId};
+#[cfg(test)]
+use aex_model_catalog::{ProviderFailureKind, QualifiedModel};
 
 use aex_brain_tool_catalog::readiness::{
     BuiltinSelection, CapabilitySet as ToolCapabilitySet, ExecutorRegistry, ReadinessInput,
@@ -70,25 +85,31 @@ use aex_runtime_control_aws::worker::{Pace, RuntimeControl, RuntimePorts, Runtim
 /// Deployed composition no longer uses it: `BrainStore` now derives these facts from each
 /// claimed session. Keeping the refusal fixture proves an accidentally unbound store remains
 /// fail closed.
+#[cfg(test)]
 pub const STORE_UNBOUND: &str = "aex-brain-store-aws is not bound into this composition";
 
-/// Why verified fold snapshots are not yet bound.
+/// Why verified fold snapshots would be refused, were they ever unbound.
+#[cfg(test)]
 pub const SNAPSHOT_ABSENT: &str = "the regional content-authority fold snapshot reader and \
                                   monotonic publisher are not bound";
 
-/// Why the provider is not bound.
+/// Why the provider would be refused, were it ever unbound.
+#[cfg(test)]
 pub const PROVIDER_ABSENT: &str =
     "the provider gateway could not bind its build-stamped adapter source identity";
 
-/// Why the catalog is not bound.
+/// Why the catalog would be refused, were it ever unbound.
+#[cfg(test)]
 pub const CATALOG_ABSENT: &str = "no content-addressed signed model catalog and compiled trust \
                                   root were bound at startup";
 
 /// Why a verified collection still cannot serve wakes.
+#[cfg(test)]
 pub const CATALOG_NO_ACTIVE_MODELS: &str =
     "the signed model catalog collection contains no Active serviceable model";
 
-/// Why tool execution is not bound.
+/// Why tool execution would be refused, were it ever unbound.
+#[cfg(test)]
 pub const TOOL_EXECUTORS_ABSENT: &str = "one or more production tool executors are not bound";
 
 /// Missing in-process implementation of control, park, and subagent scheduling tools.
@@ -106,7 +127,8 @@ pub const MCP_EXECUTOR_ABSENT: &str = "MCP has no production ToolExecutor with q
 /// Missing concrete Hands tool route.
 pub const HANDS_TOOL_EXECUTOR_ABSENT: &str = "Hands tool executor is not bound";
 
-/// Why Hands is not bound.
+/// Why Hands would be refused, were it ever unbound.
+#[cfg(test)]
 pub const HANDS_ABSENT: &str = "the production Hands backend is not bound";
 
 /// The admission controller, as the loop sees it.
@@ -288,10 +310,13 @@ impl IdPort for ProcessIds {
 ///
 /// It is not a stub. A stub returns something plausible; this returns a non-retryable typed
 /// refusal naming the exact reason, so a delivery is released rather than acked, readiness
-/// stays false, and no row is ever written under a guessed tenant.
+/// stays false, and no row is ever written under a guessed tenant. Deployed composition
+/// always binds the real `BrainStore`, so this fixture is compiled into tests only.
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct UnboundStore;
 
+#[cfg(test)]
 impl UnboundStore {
     fn refusal() -> StoreError {
         StoreError::Transport {
@@ -303,6 +328,7 @@ impl UnboundStore {
     }
 }
 
+#[cfg(test)]
 impl JournalStore for UnboundStore {
     fn load_head<'a>(
         &'a self,
@@ -330,6 +356,7 @@ impl JournalStore for UnboundStore {
     }
 }
 
+#[cfg(test)]
 impl FoldSnapshotStore for UnboundStore {
     fn load_latest<'a>(
         &'a self,
@@ -356,6 +383,7 @@ impl FoldSnapshotStore for UnboundStore {
     }
 }
 
+#[cfg(test)]
 impl EffectStore for UnboundStore {
     fn mark_dispatch_started<'a>(
         &'a self,
@@ -384,6 +412,7 @@ impl EffectStore for UnboundStore {
     }
 }
 
+#[cfg(test)]
 impl LeaseStore for UnboundStore {
     fn claim<'a>(
         &'a self,
@@ -417,10 +446,13 @@ impl LeaseStore for UnboundStore {
 ///
 /// Every dispatch fails `NotSent`, which is the strongest thing an adapter may assert and the
 /// only value that permits another attempt. Answering anything weaker would make an
-/// unimplemented port indistinguishable from a request that may have been served.
+/// unimplemented port indistinguishable from a request that may have been served. Deployed
+/// composition always binds the real router, so this fixture is compiled into tests only.
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AbsentProvider;
 
+#[cfg(test)]
 impl ProviderPort for AbsentProvider {
     fn dispatch<'a>(
         &'a self,
@@ -461,10 +493,13 @@ impl ProviderPort for AbsentProvider {
 ///
 /// `durable_operation_support` answers [`DurableOperationSupport::None`], which is not a stub:
 /// it is the correct launch answer for every admitted model, and the safe answer to "can this
-/// be resumed?" is always "no".
+/// be resumed?" is always "no". Deployed composition always binds the release-verified
+/// catalog, so this fixture is compiled into tests only.
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AbsentCatalog;
 
+#[cfg(test)]
 impl CatalogPort for AbsentCatalog {
     fn digest(&self, pin: &CatalogPin) -> Result<CatalogDigest, CatalogError> {
         Err(CatalogError::UnknownPin { pin: *pin })
@@ -486,65 +521,6 @@ impl CatalogPort for AbsentCatalog {
         _model: &ModelSlug,
     ) -> DurableOperationSupport {
         DurableOperationSupport::None
-    }
-}
-
-/// A Hands adapter that does not implement this port.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct AbsentHands;
-
-impl AbsentHands {
-    fn refusal() -> HandsError {
-        HandsError::Transport {
-            stage: DispatchStage::PreDispatch,
-            proof: DispatchProof::NotSent,
-            detail: RedactedDetail::internal(ProviderFailureKind::ServerError, HANDS_ABSENT),
-        }
-    }
-}
-
-impl HandsPort for AbsentHands {
-    fn ensure_generation<'a>(
-        &'a self,
-        _session: &'a SessionId,
-        _generation: GenerationId,
-    ) -> BoxFuture<'a, Result<HandsEndpoint, HandsError>> {
-        Box::pin(async { Err(Self::refusal()) })
-    }
-
-    fn start<'a>(
-        &'a self,
-        _ticket: &'a DispatchTicket,
-        _generation: GenerationId,
-        _start: &'a HandsOperationStart,
-    ) -> BoxFuture<'a, Result<HandsAccepted, HandsError>> {
-        Box::pin(async { Err(Self::refusal()) })
-    }
-
-    fn status<'a>(
-        &'a self,
-        _generation: GenerationId,
-        _operation: &'a HandsOperationId,
-    ) -> BoxFuture<'a, Result<HandsOperationStatus, HandsError>> {
-        Box::pin(async { Err(Self::refusal()) })
-    }
-
-    fn cancel<'a>(
-        &'a self,
-        _generation: GenerationId,
-        _operation: &'a HandsOperationId,
-        _fence: aex_brain_domain::ids::Fence,
-    ) -> BoxFuture<'a, Result<(), HandsError>> {
-        Box::pin(async { Err(Self::refusal()) })
-    }
-
-    fn result<'a>(
-        &'a self,
-        _generation: GenerationId,
-        _operation: &'a HandsOperationId,
-        _bounds: &'a ResultBounds,
-    ) -> BoxFuture<'a, Result<HandsResult, HandsError>> {
-        Box::pin(async { Err(Self::refusal()) })
     }
 }
 
@@ -587,7 +563,12 @@ pub struct Bindings {
 }
 
 impl Bindings {
-    /// The currently unavailable production composition.
+    /// A test composition with every launch peer absent.
+    ///
+    /// Deployed composition never constructs this: [`Bindings::production`] is
+    /// the only set `main` builds. It exists so the admission tests can prove
+    /// an incomplete binding set never takes work off the queue.
+    #[cfg(test)]
     #[must_use]
     pub const fn unavailable() -> Self {
         Self {
@@ -600,7 +581,8 @@ impl Bindings {
         }
     }
 
-    /// Provider custody and transport are real; unrelated launch peers remain absent.
+    /// A test composition where only provider custody and transport are real.
+    #[cfg(test)]
     #[must_use]
     pub const fn provider_ready() -> Self {
         Self {
@@ -618,6 +600,7 @@ impl Bindings {
     /// Signature validity alone is not readiness: a zero-Active collection
     /// would make every model wake fail after receipt. Admission remains closed
     /// instead, so Brain never consumes work it cannot route.
+    #[cfg(test)]
     #[must_use]
     pub const fn with_catalog_capability(mut self, service_capable: bool) -> Self {
         self.catalog = if service_capable {
@@ -652,7 +635,8 @@ impl Bindings {
             && self.hands.is_ready()
     }
 
-    /// The unsatisfied bindings, named. Readiness reports a name, never a bare `false`.
+    /// The unsatisfied bindings, named. A refusal reports a name, never a bare `false`.
+    #[cfg(test)]
     #[must_use]
     pub fn unsatisfied(&self) -> Vec<&'static str> {
         let mut missing = Vec::new();
@@ -1134,51 +1118,6 @@ pub fn credential_bindings(
     CredentialBindings {
         provider: Arc::new(router),
         managed_web,
-    }
-}
-
-/// Fail-closed ports for a task whose production peers are not composed yet.
-#[must_use]
-pub fn unavailable_ports(
-    store: Arc<aex_brain_store_aws::BrainStore>,
-    wakes: Arc<dyn aex_brain_application::ports::WakeQueue>,
-) -> Ports {
-    partial_ports(store, wakes, Arc::new(AbsentProvider))
-}
-
-/// Composes a real provider while unrelated peer ports remain explicitly absent.
-#[must_use]
-pub fn partial_ports(
-    store: Arc<aex_brain_store_aws::BrainStore>,
-    wakes: Arc<dyn aex_brain_application::ports::WakeQueue>,
-    provider: Arc<dyn ProviderPort>,
-) -> Ports {
-    partial_ports_with_catalog(store, wakes, provider, Arc::new(AbsentCatalog))
-}
-
-/// Composes a real provider and verified immutable catalog while unrelated
-/// peer ports remain explicitly absent.
-#[must_use]
-pub fn partial_ports_with_catalog(
-    store: Arc<aex_brain_store_aws::BrainStore>,
-    wakes: Arc<dyn aex_brain_application::ports::WakeQueue>,
-    provider: Arc<dyn ProviderPort>,
-    catalog: Arc<dyn CatalogPort>,
-) -> Ports {
-    Ports {
-        journal: Arc::clone(&store) as Arc<_>,
-        snapshots: Arc::new(UnboundStore),
-        effects: Arc::clone(&store) as Arc<_>,
-        leases: store,
-        wakes,
-        provider,
-        // The real router. It holds no executor because nothing implements `ToolExecutor`
-        // yet, so it refuses by its own typed error rather than by one invented here.
-        tools: Arc::new(aex_brain_tool_catalog::router::CompositeToolRouter::new()),
-        hands: Arc::new(AbsentHands),
-        catalog,
-        clock: Arc::new(SystemClock::new()),
-        ids: Arc::new(ProcessIds),
     }
 }
 
