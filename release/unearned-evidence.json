@@ -148,13 +148,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-model-catalog",
-    "owner": "providers",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the providers stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "tests/live/aex-live-observation-export-launcher",
     "owner": "observations-usage",
     "blocking_rule": "aex-empty-unit",
@@ -1541,14 +1534,14 @@
   },
   {
     "reason_class": "requires_live_seam",
-    "subject": "crates/aex-central-runtime",
+    "subject": "crates/aex-central-aws",
     "owner": "central-identity",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
-    "subject": "crates/aex-central-runtime",
+    "subject": "crates/aex-central-aws",
     "owner": "central-identity",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"

@@ -697,7 +697,7 @@ pub async fn run(
     let concrete_store = std::sync::Arc::new(aex_control_aurora::AuroraControlStore::new(data));
     let store: std::sync::Arc<dyn runtime::Store> = concrete_store;
     let regional: std::sync::Arc<dyn aex_control_app::ports::RegionalControlPort> =
-        std::sync::Arc::new(aex_central_runtime::LambdaRegionalControl::new(
+        std::sync::Arc::new(aex_central_aws::LambdaRegionalControl::new(
             aws_sdk_lambda::Client::new(&aws),
             config.regional_functions.clone(),
         ));
@@ -707,7 +707,7 @@ pub async fn run(
         projections,
         std::sync::Arc::new(runtime::SesMail::new(ses, config.mail_from.clone())),
         signing,
-        std::sync::Arc::new(aex_central_runtime::SystemClock),
+        std::sync::Arc::new(aex_central_aws::SystemClock),
         format!("{}:{}", DEPLOYABLE.as_str(), config.region.as_str()),
         config.batch_size,
         time::Duration::milliseconds(i64::try_from(config.lease_ms).unwrap_or(i64::MAX)),

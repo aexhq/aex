@@ -37,7 +37,7 @@ path = "src/main.rs"
 
 [dependencies]
 aex-central-http = { path = "../../crates/aex-central-http" }
-aex-central-runtime = { path = "../../crates/aex-central-runtime" }
+aex-central-aws = { path = "../../crates/aex-central-aws" }
 aex-control-app = { path = "../../crates/aex-control-app" }
 aex-control-domain = { path = "../../crates/aex-control-domain" }
 aex-identity-app = { path = "../../crates/aex-identity-app" }

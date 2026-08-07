@@ -10,7 +10,7 @@ mod support;
 
 use std::sync::Arc;
 
-use aex_central_runtime::pepper::{PepperDirectory, PepperState, SecretsManagerPepperKeystore};
+use aex_central_aws::pepper::{PepperDirectory, PepperState, SecretsManagerPepperKeystore};
 use aex_identity_app::ports::{PepperKeystore as _, PepperPurpose, StoreError};
 use aex_identity_domain::{PepperVersion, PresentedDigest, verifier};
 use support::{

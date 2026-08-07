@@ -1,11 +1,11 @@
-//! Shared fixtures for the `aex-central-runtime` test targets.
+//! Shared fixtures for the `aex-central-aws` test targets.
 
 #![allow(dead_code, reason = "each test target uses a different subset")]
 #![allow(missing_docs, reason = "the module doc states what these fixtures are")]
 
 use std::sync::{Arc, Mutex};
 
-use aex_central_runtime::pepper::{PepperDirectory, PepperRecord, PepperState};
+use aex_central_aws::pepper::{PepperDirectory, PepperRecord, PepperState};
 use aex_identity_app::ports::{PepperPurpose, StoreError};
 use aex_identity_domain::PepperVersion;
 use async_trait::async_trait;

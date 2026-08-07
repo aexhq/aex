@@ -392,12 +392,12 @@ async fn compose(
         .await
         .map_err(|error| RunError::Dependency("aurora", error.to_string()))?;
 
-    let peppers = Arc::new(aex_central_runtime::SecretsManagerPepperKeystore::new(
+    let peppers = Arc::new(aex_central_aws::SecretsManagerPepperKeystore::new(
         aws_sdk_secretsmanager::Client::new(&aws),
         config.pepper_secret_id.clone(),
-        Arc::new(aex_central_runtime::DataApiPepperDirectory::new(
+        Arc::new(aex_central_aws::DataApiPepperDirectory::new(
             client.clone(),
-            aex_central_runtime::PepperStatements {
+            aex_central_aws::PepperStatements {
                 active: aex_identity_aurora::sql::ACTIVE_IDENTITY_PEPPER,
                 by_version: aex_identity_aurora::sql::IDENTITY_PEPPER_BY_VERSION,
             },
@@ -412,7 +412,7 @@ async fn compose(
         .await
         .map_err(|error| RunError::Dependency("identity-pepper", error.to_string()))?;
 
-    let clock: Arc<dyn aex_identity_app::ports::Clock> = Arc::new(aex_central_runtime::SystemClock);
+    let clock: Arc<dyn aex_identity_app::ports::Clock> = Arc::new(aex_central_aws::SystemClock);
     let store = Arc::new(aex_identity_aurora::AuroraIdentityStore::new(
         client,
         Arc::clone(&peppers) as Arc<dyn aex_identity_app::ports::PepperKeystore>,
@@ -423,8 +423,8 @@ async fn compose(
         store,
         Arc::clone(&peppers) as Arc<dyn aex_identity_app::ports::PepperKeystore>,
         Arc::clone(&clock),
-        Arc::new(aex_central_runtime::Uuid7Factory),
-        Arc::new(aex_central_runtime::OsSecretRng),
+        Arc::new(aex_central_aws::Uuid7Factory),
+        Arc::new(aex_central_aws::OsSecretRng),
         verification_uri,
     ));
 
@@ -433,7 +433,7 @@ async fn compose(
     // itself, and a configured shared secret would be one more credential to
     // hold for no reader.
     let mut cursor_bytes = [0_u8; 32];
-    aex_identity_domain::SecretRng::fill(&aex_central_runtime::OsSecretRng, &mut cursor_bytes);
+    aex_identity_domain::SecretRng::fill(&aex_central_aws::OsSecretRng, &mut cursor_bytes);
     let edge = EdgeStack::new(
         config.http.clone(),
         Arc::new(targets::NoOrganizationTargets),

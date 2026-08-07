@@ -1,4 +1,4 @@
-//! `aex-central-runtime` holds the central plane's non-Aurora port adapters.
+//! `aex-central-aws` holds the central plane's non-Aurora port adapters.
 //!
 //! Everything here is a port the two central APIs and the control worker must
 //! bind before they can serve: the ambient sources a domain is forbidden to

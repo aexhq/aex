@@ -276,13 +276,13 @@ impl IdentityStore for MemoryIdentity {
 /// The composed router, over the real service and the two in-memory ports.
 fn composed(probes: Probes) -> (axum::Router, Arc<MemoryIdentity>) {
     let store = Arc::new(MemoryIdentity::default());
-    let clock: Arc<dyn aex_identity_app::ports::Clock> = Arc::new(aex_central_runtime::SystemClock);
+    let clock: Arc<dyn aex_identity_app::ports::Clock> = Arc::new(aex_central_aws::SystemClock);
     let service = AuthService::new(
         Arc::clone(&store) as Arc<dyn IdentityStore>,
         Arc::new(FixedPepper),
         Arc::clone(&clock),
-        Arc::new(aex_central_runtime::Uuid7Factory),
-        Arc::new(aex_central_runtime::OsSecretRng),
+        Arc::new(aex_central_aws::Uuid7Factory),
+        Arc::new(aex_central_aws::OsSecretRng),
         aex_wire::types::HttpsUrl::parse("https://aex.dev/device").expect("a valid URL"),
     );
     let config = crate::Config::from_lookup(|name| environment(name).map(str::to_owned))
