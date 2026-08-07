@@ -62,6 +62,29 @@ pub enum GapStoreError {
     },
 }
 
+/// What one append told readers, after the revision itself was resolved.
+///
+/// The gap-change hint is an optimisation: it decides when a follow socket reads
+/// gap history, never what gap history says. Publishing it is therefore reported
+/// rather than enforced — an append that could not advance the hint is still a
+/// durable append, and the reader's bounded recovery interval is what makes that
+/// safe. Returning the fact keeps it out of the "silently fine" category.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum GapHintPublication {
+    /// The workspace hint advanced, so a follow socket notices this revision on
+    /// its next cycle.
+    Advanced,
+    /// The exact revision was already durable, so nothing changed and no hint
+    /// is owed.
+    AlreadyDurable,
+    /// The hint could not be advanced. Readers notice this revision when their
+    /// own recovery interval expires instead of on the next cycle.
+    Deferred {
+        /// Sanitized provider failure.
+        reason: Box<str>,
+    },
+}
+
 /// Async `DynamoDB` adapter for immutable gap revisions.
 #[derive(Clone, Debug)]
 pub struct GapStore {
@@ -85,14 +108,22 @@ impl GapStore {
     /// bytes at the same key is a conflict. Unknown write outcomes are resolved
     /// by a strongly consistent read of that exact key.
     ///
+    /// The workspace gap-change hint is advanced **before** the revision lands,
+    /// so a process that dies between the two leaves the hint ahead of durable
+    /// history rather than behind it. Ahead costs one wasted ledger read; behind
+    /// would suppress one.
+    ///
     /// # Errors
     ///
     /// Returns [`GapStoreError::Conflict`] for missing predecessors or unequal
     /// replays and [`GapStoreError::Provider`] when `DynamoDB` remains unknown.
-    pub async fn append(&self, record: &GapRecord) -> Result<(), GapStoreError> {
+    /// A hint that cannot be published is reported in the success value, never
+    /// as a failure: refusing to record a proven gap because an optimisation row
+    /// was unavailable would lose the gap outright.
+    pub async fn append(&self, record: &GapRecord) -> Result<GapHintPublication, GapStoreError> {
         let item = encode(record)?;
         if let Some(found) = self.read_exact(record).await? {
-            return equal_replay(&found, record);
+            return equal_replay(&found, record).map(|()| GapHintPublication::AlreadyDurable);
         }
         if record.revision.revision > 0 {
             let mut predecessor = record.clone();
@@ -109,6 +140,8 @@ impl GapStore {
             });
         }
 
+        let published = self.publish_hint(record.workspace).await;
+
         let mut builder = crate::expressions::ExpressionBuilder::new();
         let pk = builder.name(PK);
         let sk = builder.name(SK);
@@ -124,13 +157,35 @@ impl GapStore {
             .send()
             .await;
         match outcome {
-            Ok(_) => Ok(()),
+            Ok(_) => Ok(published),
             Err(error) => match self.read_exact(record).await? {
-                Some(found) => equal_replay(&found, record),
+                Some(found) => equal_replay(&found, record).map(|()| published),
                 None => Err(GapStoreError::Provider {
                     operation: "PutItem",
                     reason: error.to_string().into_boxed_str(),
                 }),
+            },
+        }
+    }
+
+    /// Advances the workspace gap-change hint by one revision.
+    async fn publish_hint(&self, workspace: WorkspaceId) -> GapHintPublication {
+        let update = crate::gap_hint::hint_update(workspace, 1);
+        let outcome = self
+            .dynamodb
+            .update_item()
+            .table_name(&self.table)
+            .key(PK, AttributeValue::S(update.pk))
+            .key(SK, AttributeValue::S(update.sk.to_owned()))
+            .update_expression(update.expression)
+            .set_expression_attribute_names(Some(update.names))
+            .set_expression_attribute_values(Some(update.values))
+            .send()
+            .await;
+        match outcome {
+            Ok(_) => GapHintPublication::Advanced,
+            Err(error) => GapHintPublication::Deferred {
+                reason: error.to_string().into_boxed_str(),
             },
         }
     }
@@ -167,7 +222,13 @@ impl aex_observation_application::ports::GapSink for GapStore {
         &self,
         record: &GapRecord,
     ) -> Result<(), aex_observation_application::ports::PortError> {
-        self.append(record).await.map_err(|error| {
+        // The port carries durability, which is the only fact admission may
+        // branch on. A deferred hint is deliberately not raised here: the
+        // revision is durable, and turning "readers will see this a recovery
+        // interval later" into an admission failure would refuse a batch over an
+        // optimisation row. [`GapStore::append`] returns the fact to any caller
+        // that can act on it.
+        self.append(record).await.map(|_| ()).map_err(|error| {
             aex_observation_application::ports::PortError::Unavailable {
                 authority: "observation",
                 reason: error.to_string().into_boxed_str(),

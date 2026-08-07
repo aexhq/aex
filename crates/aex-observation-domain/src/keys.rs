@@ -41,6 +41,9 @@ pub const INGEST_SK: &str = "INGEST";
 /// The sort key of the regional ingress-gate item.
 pub const GATE_SK: &str = "STATE";
 
+/// The sort key of the workspace gap-change hint item.
+pub const GAP_HINT_SK: &str = "CHANGE";
+
 /// Why a key component was refused.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum KeyError {
@@ -456,6 +459,22 @@ pub fn gap_pk(scope: &ScopeKey) -> String {
 #[must_use]
 pub fn gap_sk(gap_id: aex_wire::ids::TelemetryGapId, revision: u64) -> String {
     format!("{gap_id}#{}", pad_seq(u128::from(revision)))
+}
+
+/// `GAPV#{workspace_id}` — the gap-change hint partition.
+///
+/// The hint is keyed by workspace rather than by scope because a
+/// workspace-scoped reader's gap history contains every session-scoped gap of
+/// that workspace. One workspace-wide hint therefore changes for every gap a
+/// reader of any scope inside it could see; a scope-keyed hint would leave a
+/// workspace reader blind to a session's gap.
+///
+/// It is a partition of its own rather than a row inside [`gap_pk`], because a
+/// session gap query reads that whole partition and decodes every row it finds
+/// as a gap revision.
+#[must_use]
+pub fn gap_hint_pk(workspace: WorkspaceId) -> String {
+    format!("GAPV#{workspace}")
 }
 
 /// `SPOOL#{workspace_id}#{shard:02}`.

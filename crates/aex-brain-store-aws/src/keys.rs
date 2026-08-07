@@ -93,6 +93,27 @@ pub fn session_partition(session: SessionId) -> Result<String, BrainKeyError> {
     Ok(shared::session_partition(translate::session(session)?))
 }
 
+/// The reserved agent identity every readiness probe addresses.
+///
+/// A version-7 payload whose timestamp is the Unix epoch and whose entropy is all zero. It
+/// renders through the same templates a serving read uses, so a probe built on it proves the
+/// exact table, region, credential and read grant the serving path needs. No running clock
+/// mints a 1970 timestamp, so the rows it addresses stay absent for the life of the
+/// deployment — and that absence is the point: `GetItem` returning no item is the probe's
+/// success, while a probe pointed at a real row would start reporting on that row's
+/// existence instead of on reachability.
+#[must_use]
+pub fn health_probe_agent() -> AgentKey {
+    let reserved = uuid::Uuid::from_bytes(*aex_wire::ids::Uuid7::compose(0, [0; 10]).as_bytes());
+    AgentKey::new(SessionId(reserved), AgentId(reserved))
+}
+
+/// The reserved `regional-work` identity every readiness probe addresses.
+///
+/// A work identity is `wrk_` followed by a minted wake identity, and the all-zero payload is
+/// never minted, so this row is absent for the same reason [`health_probe_agent`] is.
+pub const HEALTH_PROBE_WORK_ID: &str = "wrk_00000000000000000000000000000000";
+
 /// The agent control item.
 ///
 /// # Errors
@@ -387,11 +408,11 @@ pub fn join_shard_for(child: AgentId, shards: u16) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::{
-        BRAIN_AGENT_PARTITION_PREFIX, BRAIN_PREFIX, agent_partition, brain_agent_partition,
-        child_index_sort_key, control, control_sort_key, effect, effect_sort_key,
-        fanout_intent_sort_key, fold_snapshot, fold_snapshot_sort_key, join_shard, join_shard_for,
-        join_sort_key, journal, journal_sort_key, mailbox_sort_key, queued_index_sort_key,
-        session_budget_sort_key, session_partition,
+        BRAIN_AGENT_PARTITION_PREFIX, BRAIN_PREFIX, HEALTH_PROBE_WORK_ID, agent_partition,
+        brain_agent_partition, child_index_sort_key, control, control_sort_key, effect,
+        effect_sort_key, fanout_intent_sort_key, fold_snapshot, fold_snapshot_sort_key,
+        health_probe_agent, join_shard, join_shard_for, join_sort_key, journal, journal_sort_key,
+        mailbox_sort_key, queued_index_sort_key, session_budget_sort_key, session_partition,
     };
     use aex_brain_domain::ids::{
         AgentId, AgentKey, EffectId, FanoutIntentId, JoinId, JournalSeq, SessionId,
@@ -445,6 +466,32 @@ mod tests {
                 7
             )
             .expect("hyphenated uuid")
+        );
+    }
+
+    /// The readiness probe's whole meaning depends on this row never existing. It renders
+    /// through the same templates a serving read uses, so it proves the same permission; its
+    /// epoch timestamp is what makes it unmintable, because no clock reads 1970.
+    #[test]
+    fn the_reserved_probe_identity_renders_normally_but_can_never_be_minted() {
+        let probe = health_probe_agent();
+        let rendered = control(&probe).expect("the reserved identity is a version-7 payload");
+        assert_eq!(rendered.sk, control_sort_key());
+        assert_eq!(rendered.pk, agent_partition(&probe).expect("v7"));
+        assert_ne!(rendered, control(&key()).expect("v7"));
+        for half in [probe.session.0, probe.agent.0] {
+            assert_eq!(
+                Uuid7::from_bytes(*half.as_bytes())
+                    .expect("v7")
+                    .unix_millis(),
+                0,
+                "a mintable identity would make the probe report on a real row"
+            );
+        }
+        assert!(HEALTH_PROBE_WORK_ID.starts_with("wrk_"));
+        assert!(
+            HEALTH_PROBE_WORK_ID.trim_start_matches("wrk_") == "0".repeat(32),
+            "the reserved work identity is the all-zero payload no wake ever mints"
         );
     }
 

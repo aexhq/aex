@@ -8,11 +8,12 @@
 # RESOURCE SHAPES
 #
 # Every row that runs on Lambda or Fargate now carries its shape. Two of them
-# the accepted design pins outright (`brain-mux` stop timeout 120 s and desired
-# count 1, `regional-stream` stop timeout 30 s); the rest are derived from the
-# shape a peer doing the same kind of work already carries, and each says which
-# peer and why in the comment above it. The reserved concurrencies sum to 477 in
-# the central plane (50 + 200 + 50 + 50 + 20 + 20 + 40 + 10 + 20 + 5 + 10 + 2)
+# the accepted design pins outright (`brain-mux` stop timeout 120 s and a
+# production floor of two tasks, `regional-stream` stop timeout 30 s); the rest
+# are derived from the shape a peer doing the same kind of work already carries,
+# and each says which peer and why in the comment above it. The reserved
+# concurrencies sum to 477 in the central plane
+# (50 + 200 + 50 + 50 + 20 + 20 + 40 + 10 + 20 + 5 + 10 + 2)
 # and 432 in the regional plane (200 + 40 + 40 + 20 + 50 + 20 + 20 + 8 + 4 + 10 +
 # 10 + 10), both inside the 900 an account with the default 1000-concurrency
 # limit may reserve. Regional capacity adds five to the regional total, making
@@ -827,13 +828,18 @@ required_receipts = ["unit", "property", "contract", "lint", "package-integrity"
 alarm_spec = "brain-mux"
 live_suite = "aex-live-brain-mux"
 
-# `desired_count` is pinned to 1 until the multi-task rendezvous-affinity
-# routing decision lands; the accepted design defers it explicitly. The 120 s
-# stop timeout is the drain deadline that design pins.
+# `desired_count` is the production floor: two tasks. Session state is not held
+# by the task — the journal, the lease/fence and the work and wake state are the
+# authority — so a second task takes work it can serve, and stable task affinity
+# is an accelerator over that authority rather than a correctness condition.
+# Development runs exactly one task; the plane-specific count belongs to the
+# deployment root, and `infra/modules/ecs-service` validates it per plane, so a
+# root that hands the production floor to a development plane is refused rather
+# than deployed. The 120 s stop timeout is the drain deadline the design pins.
 [unit.fargate]
 cpu = 2048
 memory_mb = 4096
-desired_count = 1
+desired_count = 2
 stop_timeout_s = 120
 port = 8080
 
