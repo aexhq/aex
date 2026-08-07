@@ -752,6 +752,54 @@ async fn an_expired_drain_window_aborts_and_joins_the_pump() {
     assert!(dropped.load(Ordering::SeqCst));
 }
 
+/// A pump panic before any stop request must end the serving phase with its
+/// cause. Joining only inside the drain sequence — the shape this replaced —
+/// left a panicked pump observed by nobody: the process consumed no wakes and
+/// reported live until something else killed it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_pump_that_panics_before_shutdown_ends_serving_with_the_cause() {
+    let mut pump = tokio::spawn(async { panic!("the drive unwound") });
+    match crate::serve_until(core::future::pending(), &mut pump).await {
+        crate::ServeEnd::PumpTerminated { reason } => {
+            assert!(reason.contains("panicked"), "{reason}");
+        }
+        crate::ServeEnd::Shutdown => panic!("a dead pump is the cause, not a stop request"),
+    }
+}
+
+/// An early return is the same defect as a panic: the scheduler loops until
+/// drain, so a pump that returns while drain has not started has stopped
+/// receiving for a reason nobody asked for.
+#[tokio::test(flavor = "current_thread")]
+async fn a_pump_that_returns_early_is_still_a_terminated_pump() {
+    let mut pump = tokio::spawn(async {});
+    assert!(matches!(
+        crate::serve_until(core::future::pending(), &mut pump).await,
+        crate::ServeEnd::PumpTerminated { .. }
+    ));
+}
+
+/// The normal path is preserved: a stop request with a healthy pump ends the
+/// serving phase as a shutdown, and the pump handle survives for the drain
+/// sequence to join.
+#[tokio::test(flavor = "current_thread")]
+async fn a_stop_request_with_a_healthy_pump_is_a_shutdown() {
+    let dropped = Arc::new(AtomicBool::new(false));
+    let mut pump = tokio::spawn(PendingUntilDropped(Arc::clone(&dropped)));
+    assert_eq!(
+        crate::serve_until(core::future::ready(()), &mut pump).await,
+        crate::ServeEnd::Shutdown
+    );
+    assert!(
+        !dropped.load(Ordering::SeqCst),
+        "a healthy pump survives the stop request for the drain sequence to join"
+    );
+    crate::join_pump(pump, core::time::Duration::ZERO)
+        .await
+        .expect("the surviving handle still drains");
+    assert!(dropped.load(Ordering::SeqCst));
+}
+
 /// A provider that is pending exactly once. It stands in for provider HTTP, a tool call and
 /// a durable wait alike: all three are pending between polls.
 #[derive(Debug, Default)]

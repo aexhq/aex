@@ -110,6 +110,16 @@ pub enum RunError {
     /// Graceful drain could not prove every admitted activation stopped.
     #[error(transparent)]
     Drain(#[from] drain::DrainError),
+    /// The activation pump terminated while the orchestrator had not asked.
+    ///
+    /// Nothing probes this service — no ALB, no container health check — so a
+    /// non-zero exit is the only signal that reaches the orchestrator, and ECS
+    /// restarts an exited task.
+    #[error("the wake pump stopped before shutdown was requested: {reason}")]
+    PumpStopped {
+        /// How the pump terminated.
+        reason: String,
+    },
     /// The production tool peer set is incomplete or invalid.
     #[error(transparent)]
     Tools(#[from] wake::ToolCompositionError),
@@ -429,8 +439,11 @@ pub fn compose(config: &Config) -> Result<compose::Composition, RunError> {
 ///
 /// # Errors
 ///
-/// [`RunError::Composition`] when the configuration does not compose, and
-/// [`RunError::Runtime`] when a runtime or the health listener cannot be created.
+/// [`RunError::Composition`] when the configuration does not compose,
+/// [`RunError::Runtime`] when a runtime or the health listener cannot be
+/// created, and [`RunError::PumpStopped`] when the pump terminates while the
+/// process was still meant to be serving — the process exits non-zero so the
+/// orchestrator replaces a task that would otherwise sit wake-deaf forever.
 pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Result<(), RunError> {
     // Readiness starts false and is never defaulted true: a process that reported ready
     // before validating its bindings would admit work it cannot serve.
@@ -500,14 +513,26 @@ pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Resul
         let sampler = tokio::spawn(sample_reactor_delay(std::sync::Arc::clone(&composition)));
         let reachability = tokio::spawn(std::sync::Arc::clone(&dependencies).run());
         let pressure = tokio::spawn(std::sync::Arc::clone(&pressure_sampler).run());
-        let pump = tokio::spawn(pump(
+        let mut pump = tokio::spawn(pump(
             std::sync::Arc::clone(&composition),
             config.clone(),
             telemetry.clone(),
             pump_ports,
         ));
-        wait_for_shutdown().await;
-        let stages = drain_sequence(&composition, pump).await;
+        let outcome = match serve_until(wait_for_shutdown(), &mut pump).await {
+            ServeEnd::Shutdown => drain_sequence(&composition, pump)
+                .await
+                .map_err(RunError::from),
+            ServeEnd::PumpTerminated { reason } => {
+                // A dead pump receives nothing, so there is no work to drain.
+                // Liveness and drain still flip first: the control thread stops
+                // answering and can be joined below, and a probe that does land
+                // sees the loss rather than a healthy task.
+                composition.health.supervisor_lost();
+                let _ = composition.begin_drain();
+                Err(RunError::PumpStopped { reason })
+            }
+        };
         // The two samplers and the reachability probe are children of this scope, not detached
         // background tasks: each is aborted and joined here, so none can still be publishing to
         // health after the process has reported it stopped answering.
@@ -517,7 +542,7 @@ pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Resul
         let _ = reachability.await;
         pressure.abort();
         let _ = pressure.await;
-        stages
+        outcome
     });
 
     // The control thread stops when the health state reports drain, so joining it is how the
@@ -973,6 +998,41 @@ async fn sample_reactor_delay(composition: std::sync::Arc<compose::Composition>)
         composition
             .health
             .observe_active(composition.admission.active());
+    }
+}
+
+/// How the serving phase ended.
+#[derive(Debug, PartialEq, Eq)]
+enum ServeEnd {
+    /// The orchestrator asked the process to stop; drain normally.
+    Shutdown,
+    /// The pump terminated on its own, before any stop was requested.
+    PumpTerminated {
+        /// How the pump terminated.
+        reason: String,
+    },
+}
+
+/// Waits for whichever comes first: the orchestrator's stop request or the
+/// pump's own termination.
+///
+/// The pump ends on its own only by panicking or by a logic error returning
+/// early — its scheduler loops until drain, and drain has not started yet.
+/// Joining it only inside the drain sequence, which is what this replaced,
+/// meant a pump that died mid-service was observed by nobody: the process
+/// kept running, consumed no wakes, and reported live.
+async fn serve_until<F>(shutdown: F, pump: &mut tokio::task::JoinHandle<()>) -> ServeEnd
+where
+    F: core::future::Future<Output = ()>,
+{
+    tokio::select! {
+        () = shutdown => ServeEnd::Shutdown,
+        outcome = pump => ServeEnd::PumpTerminated {
+            reason: match outcome {
+                Ok(()) => "the pump returned with shutdown not requested".to_owned(),
+                Err(error) => error.to_string(),
+            },
+        },
     }
 }
 
