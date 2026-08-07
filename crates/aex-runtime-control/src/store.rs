@@ -387,10 +387,33 @@ pub struct IdleProbe {
     pub generation: GenerationId,
     /// What the evaluation saw.
     pub assessment: IdleAssessment,
-    /// When the reaper should look again.
-    pub next_evaluate_at: Option<Timestamp>,
+    /// When the reaper should look again. Always an instant: a generation that
+    /// holds provider compute never leaves the due index, because the index is
+    /// also what enforces the lifetime and re-examines a stale busy count.
+    pub next_evaluate_at: Timestamp,
     /// The head revision the caller read.
     pub expected_revision: Revision,
+}
+
+/// One repair of the head's cached open-operation count against the authority.
+///
+/// Issued when the pre-lock recount proves the counter stale: a leaked count
+/// would otherwise hold the generation `Busy` until the provider's hard stop.
+/// The write is revision-conditional and rearms the due index in the same
+/// update, so a raced repair loses cleanly and a repaired generation stays
+/// scheduled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OpenCountRepairPlan {
+    /// The generation whose counter is repaired.
+    pub generation: GenerationId,
+    /// The head revision the caller read.
+    pub expected_revision: Revision,
+    /// The authoritative open count.
+    pub open_operations: u32,
+    /// When the reaper should look again.
+    pub next_evaluate_at: Timestamp,
+    /// When the repair happened. A repair to zero starts the idle clock here.
+    pub at: Timestamp,
 }
 
 /// Which slice of the due index a scan covers.
@@ -538,6 +561,10 @@ pub trait RuntimeActivityStore: Send + Sync + 'static {
 
     /// Records one idle evaluation and rearms the due index.
     fn record_probe<'a>(&'a self, probe: &'a IdleProbe) -> StoreFuture<'a, ()>;
+
+    /// Repairs the head's cached open-operation count to the authoritative
+    /// value, rearming the due index in the same conditional write.
+    fn repair_open_operations<'a>(&'a self, plan: &'a OpenCountRepairPlan) -> StoreFuture<'a, ()>;
 
     /// Reads one bounded page of due generations.
     fn scan_due(
