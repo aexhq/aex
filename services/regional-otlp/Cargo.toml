@@ -1,6 +1,7 @@
 [package]
 name = "regional-otlp"
 version = "0.1.0"
+description = "`regional-otlp` composition root (Rust Lambda ZIP)."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -38,7 +39,7 @@ path = "src/main.rs"
 aex-identity-domain = { path = "../../crates/aex-identity-domain" }
 aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }
 aex-observation-domain = { path = "../../crates/aex-observation-domain" }
-aex-observation-store-aws = { path = "../../crates/aex-observation-store-aws" }
+aex-observation-store-dynamodb = { path = "../../crates/aex-observation-store-dynamodb" }
 aex-otlp-admission = { path = "../../crates/aex-otlp-admission" }
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
 aex-regional-http = { path = "../../crates/aex-regional-http" }

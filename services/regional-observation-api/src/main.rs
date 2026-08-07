@@ -13,13 +13,13 @@ mod mount;
 
 use std::sync::Arc;
 
-use aex_observation_store_aws::composition::{Capability, Role, assert_grant};
-use aex_observation_store_aws::health::{Probe, Readiness, readiness};
+use aex_observation_store_dynamodb::composition::{Capability, Role, assert_grant};
+use aex_observation_store_dynamodb::health::{Probe, Readiness, readiness};
 use aex_wire::dispatch::RequestLimits;
 
 use crate::mount::{AUDIENCE, AppState, Edge};
 use regional_observation_api::api::{ObservationService, StreamPolicy, StreamRevalidator};
-use regional_observation_api::config::{Config, ConfigError, REQUIRED_VARS};
+use regional_observation_api::config::{Config, REQUIRED_VARS, RegionalObservationApiConfigError};
 use regional_observation_api::reader::ObservationReader;
 
 /// The capability grant this deployable is allowed to hold.
@@ -51,10 +51,10 @@ impl StreamRevalidator for EdgeRevalidator {
 
 /// Why `regional-observation-api` stopped.
 #[derive(Debug, thiserror::Error)]
-pub enum RunError {
+pub enum RegionalObservationApiRunError {
     /// Start-up configuration was rejected.
     #[error(transparent)]
-    Config(#[from] ConfigError),
+    Config(#[from] RegionalObservationApiConfigError),
     /// The process holds a capability its role must not.
     #[error("this deployable must not hold the `{capability}` capability")]
     Capability {
@@ -91,16 +91,21 @@ pub enum RunError {
 ///
 /// # Errors
 ///
-/// Returns [`RunError::Capability`] when the process holds a capability its role
-/// must not, and [`RunError::NotReady`] when a declared probe has not passed. A
+/// Returns [`RegionalObservationApiRunError::Capability`] when the process holds a capability its role
+/// must not, and [`RegionalObservationApiRunError::NotReady`] when a declared probe has not passed. A
 /// probe that has not passed is never assumed.
-pub fn compose(observed: &[Capability], passed: &[Probe]) -> Result<(), RunError> {
-    assert_grant(ROLE, observed).map_err(|violation| RunError::Capability {
-        capability: violation.capability.as_str(),
+pub fn compose(
+    observed: &[Capability],
+    passed: &[Probe],
+) -> Result<(), RegionalObservationApiRunError> {
+    assert_grant(ROLE, observed).map_err(|violation| {
+        RegionalObservationApiRunError::Capability {
+            capability: violation.capability.as_str(),
+        }
     })?;
     match readiness(REQUIRED_PROBES, passed) {
         Readiness::Ready => Ok(()),
-        Readiness::NotReady { outstanding } => Err(RunError::NotReady {
+        Readiness::NotReady { outstanding } => Err(RegionalObservationApiRunError::NotReady {
             probe: outstanding.as_str(),
         }),
     }
@@ -112,7 +117,7 @@ pub fn compose(observed: &[Capability], passed: &[Probe]) -> Result<(), RunError
 ///
 /// Returns the typed failure of the first start-up stage that refused. Nothing
 /// is served before every declared probe has actually passed.
-pub async fn run(config: Config) -> Result<(), RunError> {
+pub async fn run(config: Config) -> Result<(), RegionalObservationApiRunError> {
     let aws = aws_config::from_env()
         .region(aws_config::Region::new(config.region.as_str()))
         .load()
@@ -142,13 +147,13 @@ pub async fn run(config: Config) -> Result<(), RunError> {
         parameters.cursor_key_ring(&config.cursor_key_ref),
         parameters.trust_anchors(&config.authz_verify_keys_param),
     );
-    probe.map_err(|error| RunError::Probe {
+    probe.map_err(|error| RegionalObservationApiRunError::Probe {
         reason: error.to_string(),
     })?;
-    let ring = ring.map_err(|error| RunError::Probe {
+    let ring = ring.map_err(|error| RegionalObservationApiRunError::Probe {
         reason: error.to_string(),
     })?;
-    let anchors = anchors.map_err(|error| RunError::Edge {
+    let anchors = anchors.map_err(|error| RegionalObservationApiRunError::Edge {
         reason: error.to_string(),
     })?;
 
@@ -187,7 +192,7 @@ pub async fn run(config: Config) -> Result<(), RunError> {
                 cache_budget_bytes: config.assertion_cache_bytes,
             },
         )
-        .map_err(|error| RunError::Edge {
+        .map_err(|error| RegionalObservationApiRunError::Edge {
             reason: error.to_string(),
         })?,
     );
@@ -211,7 +216,7 @@ pub async fn run(config: Config) -> Result<(), RunError> {
     });
     lambda_http::run(mount::router(state))
         .await
-        .map_err(|error| RunError::Runtime {
+        .map_err(|error| RegionalObservationApiRunError::Runtime {
             reason: error.to_string(),
         })
 }
@@ -280,10 +285,10 @@ async fn main() -> std::process::ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use aex_observation_store_aws::composition::Capability;
-    use aex_observation_store_aws::health::Probe;
+    use aex_observation_store_dynamodb::composition::Capability;
+    use aex_observation_store_dynamodb::health::Probe;
 
-    use super::{REQUIRED_PROBES, ROLE, RunError, compose};
+    use super::{REQUIRED_PROBES, ROLE, RegionalObservationApiRunError, compose};
 
     #[test]
     fn its_own_grant_and_a_complete_probe_set_start() {
@@ -294,7 +299,10 @@ mod tests {
     fn a_capability_outside_the_grant_refuses_to_start() {
         for denied in ROLE.denied() {
             let error = compose(&[denied], REQUIRED_PROBES).expect_err("refused");
-            assert!(matches!(error, RunError::Capability { .. }), "{error:?}");
+            assert!(
+                matches!(error, RegionalObservationApiRunError::Capability { .. }),
+                "{error:?}"
+            );
         }
     }
 
@@ -317,7 +325,10 @@ mod tests {
                 forbidden.as_str()
             );
             let error = compose(&[forbidden], REQUIRED_PROBES).expect_err("refused");
-            assert!(matches!(error, RunError::Capability { .. }), "{error:?}");
+            assert!(
+                matches!(error, RegionalObservationApiRunError::Capability { .. }),
+                "{error:?}"
+            );
         }
     }
 
@@ -326,7 +337,7 @@ mod tests {
         let first = REQUIRED_PROBES.first().expect("a probe set is declared");
         let error = compose(ROLE.granted(), &[]).expect_err("refused");
         match error {
-            RunError::NotReady { probe } => assert_eq!(probe, first.as_str()),
+            RegionalObservationApiRunError::NotReady { probe } => assert_eq!(probe, first.as_str()),
             other => panic!("expected a readiness failure, got {other:?}"),
         }
         // Proving a prefix is not proving the set: the cursor key ring and the
@@ -336,6 +347,9 @@ mod tests {
             &[Probe::ObservationTable, Probe::ObservationBucket],
         )
         .expect_err("refused");
-        assert!(matches!(error, RunError::NotReady { .. }), "{error:?}");
+        assert!(
+            matches!(error, RegionalObservationApiRunError::NotReady { .. }),
+            "{error:?}"
+        );
     }
 }

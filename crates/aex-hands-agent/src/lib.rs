@@ -1,6 +1,8 @@
 //! `aex-hands-agent` owns the credential-free guest-root protocol agent: the command/result
-//! journal, the process tree, reconnect, cancel and crash observation. It also owns the
-//! exact-generation frame codec, which both sides of the wire share.
+//! journal, the process tree, reconnect, cancel and crash observation.
+//!
+//! It also owns the exact-generation frame codec, which both sides of the wire
+//! share.
 //!
 //! # Invariants
 //!

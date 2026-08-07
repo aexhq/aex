@@ -86,7 +86,7 @@ pub const PART_FLOOR_REASON: &str = "S3 refuses a non-final part under 5 MiB, so
 
 /// Why `observation-export-task` refused to start.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
-pub enum ConfigError {
+pub enum ObservationExportTaskConfigError {
     /// A required variable was absent or empty.
     #[error("required environment variable `{name}` is missing")]
     Missing {
@@ -137,10 +137,10 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError::Missing`] when a required variable is absent or
-    /// empty, and [`ConfigError::Invalid`] when a variable is present but does
+    /// Returns [`ObservationExportTaskConfigError::Missing`] when a required variable is absent or
+    /// empty, and [`ObservationExportTaskConfigError::Invalid`] when a variable is present but does
     /// not parse or is outside its permitted range.
-    pub fn from_env() -> Result<Self, ConfigError> {
+    pub fn from_env() -> Result<Self, ObservationExportTaskConfigError> {
         Self::from_lookup(|name| std::env::var(name).ok())
     }
 
@@ -152,21 +152,23 @@ impl Config {
     /// # Errors
     ///
     /// Identical to [`Config::from_env`].
-    pub fn from_lookup<F>(lookup: F) -> Result<Self, ConfigError>
+    pub fn from_lookup<F>(lookup: F) -> Result<Self, ObservationExportTaskConfigError>
     where
         F: Fn(&str) -> Option<String>,
     {
         let plane = required(&lookup, PLANE_VAR)?;
         if !PLANES.contains(&plane.as_str()) {
-            return Err(ConfigError::Invalid {
+            return Err(ObservationExportTaskConfigError::Invalid {
                 name: PLANE_VAR,
                 reason: format!("expected one of {PLANES:?}, got `{plane}`"),
             });
         }
         let raw_region = required(&lookup, REGION_VAR)?;
-        let region = Region::from_name(&raw_region).ok_or_else(|| ConfigError::Invalid {
-            name: REGION_VAR,
-            reason: format!("`{raw_region}` is not a regional plane region"),
+        let region = Region::from_name(&raw_region).ok_or_else(|| {
+            ObservationExportTaskConfigError::Invalid {
+                name: REGION_VAR,
+                reason: format!("`{raw_region}` is not a regional plane region"),
+            }
         })?;
         let export_id = identifier::<ExportId, F>(&lookup, EXPORT_ID_VAR)?;
         let workspace_id = identifier::<WorkspaceId, F>(&lookup, WORKSPACE_ID_VAR)?;
@@ -215,7 +217,7 @@ impl Config {
             rowgroup_bytes,
             page_limit,
             lease: Duration::from_millis(u64::try_from(lease_ms).map_err(|_| {
-                ConfigError::Invalid {
+                ObservationExportTaskConfigError::Invalid {
                     name: LEASE_MS_VAR,
                     reason: "the lease does not fit a 64-bit millisecond count".to_owned(),
                 }
@@ -232,18 +234,18 @@ impl Config {
 }
 
 /// Reads a required, non-blank variable.
-fn required<F>(lookup: &F, name: &'static str) -> Result<String, ConfigError>
+fn required<F>(lookup: &F, name: &'static str) -> Result<String, ObservationExportTaskConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     match lookup(name) {
         Some(value) if !value.trim().is_empty() => Ok(value),
-        _ => Err(ConfigError::Missing { name }),
+        _ => Err(ObservationExportTaskConfigError::Missing { name }),
     }
 }
 
 /// Reads a required identifier of one exact resource kind.
-fn identifier<I, F>(lookup: &F, name: &'static str) -> Result<I, ConfigError>
+fn identifier<I, F>(lookup: &F, name: &'static str) -> Result<I, ObservationExportTaskConfigError>
 where
     I: std::str::FromStr<Err = aex_wire::ids::IdParseError>,
     F: Fn(&str) -> Option<String>,
@@ -251,27 +253,27 @@ where
     let raw = required(lookup, name)?;
     raw.trim()
         .parse::<I>()
-        .map_err(|error| ConfigError::Invalid {
+        .map_err(|error| ObservationExportTaskConfigError::Invalid {
             name,
             reason: format!("`{raw}` is not the identifier this variable names: {error}"),
         })
 }
 
 /// Reads a required, strictly positive count.
-fn positive<F>(lookup: &F, name: &'static str) -> Result<usize, ConfigError>
+fn positive<F>(lookup: &F, name: &'static str) -> Result<usize, ObservationExportTaskConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     let raw = required(lookup, name)?;
-    let value = raw
-        .trim()
-        .parse::<usize>()
-        .map_err(|error| ConfigError::Invalid {
-            name,
-            reason: format!("expected a positive integer, got `{raw}`: {error}"),
-        })?;
+    let value =
+        raw.trim()
+            .parse::<usize>()
+            .map_err(|error| ObservationExportTaskConfigError::Invalid {
+                name,
+                reason: format!("expected a positive integer, got `{raw}`: {error}"),
+            })?;
     if value == 0 {
-        return Err(ConfigError::Invalid {
+        return Err(ObservationExportTaskConfigError::Invalid {
             name,
             reason: "expected a positive integer, got `0`".to_owned(),
         });
@@ -285,14 +287,14 @@ fn ranged<F>(
     name: &'static str,
     bounds: (usize, usize),
     because: &str,
-) -> Result<usize, ConfigError>
+) -> Result<usize, ObservationExportTaskConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     let (low, high) = bounds;
     let value = positive(lookup, name)?;
     if value < low || value > high {
-        return Err(ConfigError::Invalid {
+        return Err(ObservationExportTaskConfigError::Invalid {
             name,
             reason: format!("{value} is outside the permitted {low}..={high} range: {because}"),
         });
@@ -301,14 +303,17 @@ where
 }
 
 /// Reads the working budget and proves it covers every reservation.
-fn memory_budget<F>(lookup: &F, plan: &MemoryPlan) -> Result<usize, ConfigError>
+fn memory_budget<F>(
+    lookup: &F,
+    plan: &MemoryPlan,
+) -> Result<usize, ObservationExportTaskConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     let value = positive(lookup, MEMORY_BUDGET_VAR)?;
     let total = plan.total_bytes();
     if value < total {
-        return Err(ConfigError::Invalid {
+        return Err(ObservationExportTaskConfigError::Invalid {
             name: MEMORY_BUDGET_VAR,
             reason: format!(
                 "a budget of {value} bytes cannot cover the {total} bytes this export reserves \
@@ -322,7 +327,7 @@ where
 }
 
 /// Reads the optional loopback health port.
-fn health_port<F>(lookup: &F) -> Result<Option<u16>, ConfigError>
+fn health_port<F>(lookup: &F) -> Result<Option<u16>, ObservationExportTaskConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
@@ -332,13 +337,13 @@ where
     if raw.trim().is_empty() {
         return Ok(None);
     }
-    let port = raw
-        .trim()
-        .parse::<u16>()
-        .map_err(|error| ConfigError::Invalid {
-            name: HEALTH_PORT_VAR,
-            reason: format!("expected a TCP port, got `{raw}`: {error}"),
-        })?;
+    let port =
+        raw.trim()
+            .parse::<u16>()
+            .map_err(|error| ObservationExportTaskConfigError::Invalid {
+                name: HEALTH_PORT_VAR,
+                reason: format!("expected a TCP port, got `{raw}`: {error}"),
+            })?;
     if port == 0 {
         // `port = 0` in the unit row means "no listener", not "any port".
         return Ok(None);
@@ -351,9 +356,10 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        Config, ConfigError, EXPORT_ID_VAR, HEALTH_PORT_VAR, LEASE_MS_VAR, MEMORY_BUDGET_VAR,
-        OBSERVATION_BUCKET_VAR, OBSERVATION_TABLE_VAR, PAGE_LIMIT_VAR, PART_BYTES_VAR, PLANE_VAR,
-        REGION_VAR, REQUIRED_VARS, ROWGROUP_BYTES_VAR, WORKSPACE_ID_VAR,
+        Config, EXPORT_ID_VAR, HEALTH_PORT_VAR, LEASE_MS_VAR, MEMORY_BUDGET_VAR,
+        OBSERVATION_BUCKET_VAR, OBSERVATION_TABLE_VAR, ObservationExportTaskConfigError,
+        PAGE_LIMIT_VAR, PART_BYTES_VAR, PLANE_VAR, REGION_VAR, REQUIRED_VARS, ROWGROUP_BYTES_VAR,
+        WORKSPACE_ID_VAR,
     };
 
     pub(crate) const EXPORT_FIXTURE: &str = "exp_0000000001e40r2081040g2081";
@@ -375,7 +381,9 @@ mod tests {
         ])
     }
 
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
+    fn read(
+        vars: &BTreeMap<&'static str, String>,
+    ) -> Result<Config, ObservationExportTaskConfigError> {
         Config::from_lookup(|name| vars.get(name).cloned())
     }
 
@@ -400,7 +408,7 @@ mod tests {
             vars.remove(*name);
             assert_eq!(
                 read(&vars),
-                Err(ConfigError::Missing { name }),
+                Err(ObservationExportTaskConfigError::Missing { name }),
                 "removing {name}"
             );
         }
@@ -421,7 +429,7 @@ mod tests {
         vars.insert(OBSERVATION_BUCKET_VAR, "   ".to_owned());
         assert_eq!(
             read(&vars),
-            Err(ConfigError::Missing {
+            Err(ObservationExportTaskConfigError::Missing {
                 name: OBSERVATION_BUCKET_VAR
             })
         );
@@ -433,12 +441,12 @@ mod tests {
         vars.insert(PART_BYTES_VAR, (4 * 1024 * 1024).to_string());
         let error = read(&vars).expect_err("a part S3 cannot complete is refused");
         match error {
-            ConfigError::Invalid { name, reason } => {
+            ObservationExportTaskConfigError::Invalid { name, reason } => {
                 assert_eq!(name, PART_BYTES_VAR);
                 assert!(reason.contains("5 MiB"), "{reason}");
                 assert!(reason.contains("completed"), "{reason}");
             }
-            other @ ConfigError::Missing { .. } => {
+            other @ ObservationExportTaskConfigError::Missing { .. } => {
                 panic!("expected an invalid-part-size failure, got {other:?}")
             }
         }
@@ -447,7 +455,7 @@ mod tests {
         vars.insert(PART_BYTES_VAR, (65 * 1024 * 1024).to_string());
         assert!(matches!(
             read(&vars),
-            Err(ConfigError::Invalid {
+            Err(ObservationExportTaskConfigError::Invalid {
                 name: PART_BYTES_VAR,
                 ..
             })
@@ -470,7 +478,7 @@ mod tests {
                 vars.insert(name, value.clone());
                 let error = read(&vars).expect_err("an out-of-range bound is refused");
                 assert!(
-                    matches!(error, ConfigError::Invalid { name: named, .. } if named == name),
+                    matches!(error, ObservationExportTaskConfigError::Invalid { name: named, .. } if named == name),
                     "{name}={value}: {error:?}"
                 );
             }
@@ -483,11 +491,11 @@ mod tests {
         vars.insert(MEMORY_BUDGET_VAR, (8 * 1024 * 1024).to_string());
         let error = read(&vars).expect_err("a budget below the reservations is refused");
         match error {
-            ConfigError::Invalid { name, reason } => {
+            ObservationExportTaskConfigError::Invalid { name, reason } => {
                 assert_eq!(name, MEMORY_BUDGET_VAR);
                 assert!(reason.contains("export_capacity"), "{reason}");
             }
-            other @ ConfigError::Missing { .. } => {
+            other @ ObservationExportTaskConfigError::Missing { .. } => {
                 panic!("expected an invalid-budget failure, got {other:?}")
             }
         }
@@ -499,7 +507,7 @@ mod tests {
         vars.insert(EXPORT_ID_VAR, WORKSPACE_FIXTURE.to_owned());
         assert!(matches!(
             read(&vars),
-            Err(ConfigError::Invalid {
+            Err(ObservationExportTaskConfigError::Invalid {
                 name: EXPORT_ID_VAR,
                 ..
             })
@@ -508,7 +516,7 @@ mod tests {
         vars.insert(WORKSPACE_ID_VAR, EXPORT_FIXTURE.to_owned());
         assert!(matches!(
             read(&vars),
-            Err(ConfigError::Invalid {
+            Err(ObservationExportTaskConfigError::Invalid {
                 name: WORKSPACE_ID_VAR,
                 ..
             })
@@ -521,7 +529,7 @@ mod tests {
         vars.insert(PLANE_VAR, "staging".to_owned());
         assert!(matches!(
             read(&vars),
-            Err(ConfigError::Invalid {
+            Err(ObservationExportTaskConfigError::Invalid {
                 name: PLANE_VAR,
                 ..
             })
@@ -530,7 +538,7 @@ mod tests {
         vars.insert(REGION_VAR, "eu-central-9".to_owned());
         assert!(matches!(
             read(&vars),
-            Err(ConfigError::Invalid {
+            Err(ObservationExportTaskConfigError::Invalid {
                 name: REGION_VAR,
                 ..
             })
@@ -554,7 +562,7 @@ mod tests {
         vars.insert(HEALTH_PORT_VAR, "not-a-port".to_owned());
         assert!(matches!(
             read(&vars),
-            Err(ConfigError::Invalid {
+            Err(ObservationExportTaskConfigError::Invalid {
                 name: HEALTH_PORT_VAR,
                 ..
             })
@@ -566,12 +574,15 @@ mod tests {
         // Removing everything leaves the first required variable named, and no
         // field is silently filled in from a constant.
         let empty = BTreeMap::new();
-        assert_eq!(read(&empty), Err(ConfigError::Missing { name: PLANE_VAR }));
+        assert_eq!(
+            read(&empty),
+            Err(ObservationExportTaskConfigError::Missing { name: PLANE_VAR })
+        );
         let mut vars = complete();
         vars.remove(OBSERVATION_TABLE_VAR);
         assert_eq!(
             read(&vars),
-            Err(ConfigError::Missing {
+            Err(ObservationExportTaskConfigError::Missing {
                 name: OBSERVATION_TABLE_VAR
             })
         );

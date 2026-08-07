@@ -12,7 +12,7 @@
 //!    canonicalization, compression and hashing above the inline budget run there, leaving
 //!    the reactor bounded parsing, scheduling and async I/O.
 
-use aex_brain_application::kernel::{PermitKind, PermitSet, Reservation};
+use aex_brain_app::kernel::{PermitKind, PermitSet, Reservation};
 use std::sync::Arc;
 
 /// The CPU cost above which work belongs on the compute lane rather than inline.
@@ -147,7 +147,7 @@ impl ComputeLane {
 #[cfg(test)]
 mod tests {
     use super::{ComputeLane, INLINE_CPU_BUDGET, MAX_BLOCKING_THREADS, RuntimeShape};
-    use aex_brain_application::kernel::{PermitKind, PermitSet};
+    use aex_brain_app::kernel::{PermitKind, PermitSet};
     use std::collections::BTreeMap;
     use std::sync::Arc;
 

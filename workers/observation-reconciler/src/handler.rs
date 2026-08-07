@@ -3,15 +3,15 @@
 //! This deployable is driven by an `EventBridge` schedule **and** by `SQS`, and
 //! it also answers the two cross-stream health paths. It has no listener, so the
 //! paths are matched against
-//! [`aex_observation_store_aws::health::HEALTHZ`] and
-//! [`aex_observation_store_aws::health::READYZ`] rather than mounted; the
+//! [`aex_observation_store_dynamodb::health::HEALTHZ`] and
+//! [`aex_observation_store_dynamodb::health::READYZ`] rather than mounted; the
 //! constants are the single source and no path is ever spelled out here.
 //!
 //! A queue-driven invocation answers with an **SQS partial-batch failure body**
 //! instead of throwing: throwing would re-drive every record in the batch,
 //! including the ones whose duty is already durably resolved.
 
-use aex_observation_store_aws::health::{HEALTHZ, Probe, READYZ};
+use aex_observation_store_dynamodb::health::{HEALTHZ, Probe, READYZ};
 use aex_wire::types::Timestamp;
 
 use crate::duty::{BatchOutcome, DutyEngine, DutyError, ItemId, ItemKey, QueuedRecord};
@@ -164,7 +164,7 @@ fn rendered(status: u16, body: &serde_json::Value) -> serde_json::Value {
 
 #[cfg(test)]
 mod tests {
-    use aex_observation_store_aws::health::{HEALTHZ, READYZ};
+    use aex_observation_store_dynamodb::health::{HEALTHZ, READYZ};
 
     use super::{Invocation, classify, partial_batch_body, rendered};
     use crate::duty::{BatchOutcome, ItemId};

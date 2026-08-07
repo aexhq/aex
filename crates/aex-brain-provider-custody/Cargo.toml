@@ -1,6 +1,7 @@
 [package]
 name = "aex-brain-provider-custody"
 version = "0.1.0"
+description = "Regional secret-custody adapter for direct BYOK provider dispatch."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -30,7 +31,7 @@ authority = "unit"
 integration = "port-composition adapter with no datastore or transport engine of its own; DynamoDB and KMS integration evidence belongs to the regional-stores adapters"
 
 [dependencies]
-aex-brain-application = { path = "../aex-brain-application" }
+aex-brain-app = { path = "../aex-brain-app" }
 aex-brain-provider-gateway = { path = "../aex-brain-provider-gateway" }
 aex-secret-aws = { path = "../aex-secret-aws" }
 aex-secret-custody-dynamodb = { path = "../aex-secret-custody-dynamodb" }

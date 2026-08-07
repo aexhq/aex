@@ -12,7 +12,7 @@
 //! this cache disabled until a resident-memory measurement can own `WarmCacheBytes`; replay
 //! body bytes alone are not evidence of the Rust fold's heap residency.
 
-use aex_brain_application::kernel::{FoldCache, WarmCacheShard, WarmEntry};
+use aex_brain_app::kernel::{FoldCache, WarmCacheShard, WarmEntry};
 use aex_brain_domain::ids::{AgentKey, AgentRevision};
 
 /// The default idle retention of a warm entry.
@@ -289,7 +289,7 @@ mod tests {
         Band, CachePolicy, ConfiguredFoldCache, DEFAULT_TTL, ENTRY_CAP_BYTES,
         HARD_THRESHOLD_PERCENT, MIN_RESIDENCY, SOFT_THRESHOLD_PERCENT, load, should_evict, store,
     };
-    use aex_brain_application::kernel::{FoldCache, WarmCacheShard, WarmEntry};
+    use aex_brain_app::kernel::{FoldCache, WarmCacheShard, WarmEntry};
     use aex_brain_domain::fold::FoldState;
     use aex_brain_domain::ids::{AgentId, AgentKey, AgentRevision, ContentHash, SessionId};
     use uuid::Uuid;

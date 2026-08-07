@@ -32,7 +32,7 @@ pub mod keys {
 
 /// Why the controller refused startup.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
-pub enum ConfigError {
+pub enum RegionalCapacityControllerConfigError {
     /// Required input was absent or empty.
     #[error("required environment variable `{0}` is missing")]
     Missing(&'static str),
@@ -67,7 +67,7 @@ impl Config {
     /// # Errors
     ///
     /// Returns the first absent or invalid required value.
-    pub fn from_env() -> Result<Self, ConfigError> {
+    pub fn from_env() -> Result<Self, RegionalCapacityControllerConfigError> {
         Self::from_lookup(|name| std::env::var(name).ok())
     }
 
@@ -76,7 +76,7 @@ impl Config {
     /// # Errors
     ///
     /// Identical to [`Self::from_env`].
-    pub fn from_lookup<F>(lookup: F) -> Result<Self, ConfigError>
+    pub fn from_lookup<F>(lookup: F) -> Result<Self, RegionalCapacityControllerConfigError>
     where
         F: Fn(&str) -> Option<String>,
     {
@@ -113,17 +113,20 @@ impl Config {
     }
 }
 
-fn required<F>(lookup: &F, name: &'static str) -> Result<String, ConfigError>
+fn required<F>(
+    lookup: &F,
+    name: &'static str,
+) -> Result<String, RegionalCapacityControllerConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     lookup(name)
         .filter(|value| !value.trim().is_empty())
-        .ok_or(ConfigError::Missing(name))
+        .ok_or(RegionalCapacityControllerConfigError::Missing(name))
 }
 
-fn invalid(name: &'static str, reason: &str) -> ConfigError {
-    ConfigError::Invalid {
+fn invalid(name: &'static str, reason: &str) -> RegionalCapacityControllerConfigError {
+    RegionalCapacityControllerConfigError::Invalid {
         name,
         reason: reason.to_owned(),
     }

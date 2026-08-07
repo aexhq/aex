@@ -151,11 +151,11 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
 fn health_router(state: Arc<AppState>) -> axum::Router {
     axum::Router::new()
         .route(
-            aex_observation_store_aws::health::HEALTHZ,
+            aex_observation_store_dynamodb::health::HEALTHZ,
             axum::routing::get(healthz),
         )
         .route(
-            aex_observation_store_aws::health::READYZ,
+            aex_observation_store_dynamodb::health::READYZ,
             axum::routing::get(readyz),
         )
         .with_state(state)

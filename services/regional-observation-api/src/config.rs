@@ -76,7 +76,7 @@ pub const PLANES: [&str; 2] = ["dev", "prd"];
 
 /// Why `regional-observation-api` refused to start.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
-pub enum ConfigError {
+pub enum RegionalObservationApiConfigError {
     /// A required variable was absent or empty.
     #[error("required environment variable `{name}` is missing")]
     Missing {
@@ -129,10 +129,10 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError::Missing`] when a required variable is absent or
-    /// empty, and [`ConfigError::Invalid`] when a variable is present but does
+    /// Returns [`RegionalObservationApiConfigError::Missing`] when a required variable is absent or
+    /// empty, and [`RegionalObservationApiConfigError::Invalid`] when a variable is present but does
     /// not parse or is outside its permitted range.
-    pub fn from_env() -> Result<Self, ConfigError> {
+    pub fn from_env() -> Result<Self, RegionalObservationApiConfigError> {
         Self::from_lookup(|name| std::env::var(name).ok())
     }
 
@@ -144,7 +144,7 @@ impl Config {
     /// # Errors
     ///
     /// Identical to [`Config::from_env`].
-    pub fn from_lookup<F>(lookup: F) -> Result<Self, ConfigError>
+    pub fn from_lookup<F>(lookup: F) -> Result<Self, RegionalObservationApiConfigError>
     where
         F: Fn(&str) -> Option<String>,
     {
@@ -153,15 +153,17 @@ impl Config {
         // the plane this process reports and the plane it will accept an
         // assertion for must be the same value.
         let plane = aex_identity_domain::assertion::Plane::parse(&raw_plane).ok_or_else(|| {
-            ConfigError::Invalid {
+            RegionalObservationApiConfigError::Invalid {
                 name: PLANE_VAR,
                 reason: format!("expected one of {PLANES:?}, got `{raw_plane}`"),
             }
         })?;
         let raw_region = required(&lookup, REGION_VAR)?;
-        let region = Region::from_name(&raw_region).ok_or_else(|| ConfigError::Invalid {
-            name: REGION_VAR,
-            reason: format!("`{raw_region}` is not a regional plane region"),
+        let region = Region::from_name(&raw_region).ok_or_else(|| {
+            RegionalObservationApiConfigError::Invalid {
+                name: REGION_VAR,
+                reason: format!("`{raw_region}` is not a regional plane region"),
+            }
         })?;
 
         // The settle window must dominate both index propagation and the
@@ -169,13 +171,13 @@ impl Config {
         // complete by construction.
         let index_settle_ms =
             i64::try_from(positive(&lookup, INDEX_SETTLE_VAR)?).map_err(|_| {
-                ConfigError::Invalid {
+                RegionalObservationApiConfigError::Invalid {
                     name: INDEX_SETTLE_VAR,
                     reason: "the settle window does not fit a 64-bit millisecond count".to_owned(),
                 }
             })?;
         if index_settle_ms <= limits::OBS_CLOCK_SKEW_MAX_MS {
-            return Err(ConfigError::Invalid {
+            return Err(RegionalObservationApiConfigError::Invalid {
                 name: INDEX_SETTLE_VAR,
                 reason: format!(
                     "a settle window of {index_settle_ms} ms does not dominate the \
@@ -247,28 +249,30 @@ impl Config {
 }
 
 /// Reads a required, non-blank variable.
-fn required<F>(lookup: &F, name: &'static str) -> Result<String, ConfigError>
+fn required<F>(lookup: &F, name: &'static str) -> Result<String, RegionalObservationApiConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     match lookup(name) {
         Some(value) if !value.trim().is_empty() => Ok(value),
-        _ => Err(ConfigError::Missing { name }),
+        _ => Err(RegionalObservationApiConfigError::Missing { name }),
     }
 }
 
 /// Reads a required, strictly positive count.
-fn positive<F>(lookup: &F, name: &'static str) -> Result<u64, ConfigError>
+fn positive<F>(lookup: &F, name: &'static str) -> Result<u64, RegionalObservationApiConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     let raw = required(lookup, name)?;
-    let value = raw.parse::<u64>().map_err(|error| ConfigError::Invalid {
-        name,
-        reason: format!("expected a positive integer, got `{raw}`: {error}"),
-    })?;
+    let value = raw
+        .parse::<u64>()
+        .map_err(|error| RegionalObservationApiConfigError::Invalid {
+            name,
+            reason: format!("expected a positive integer, got `{raw}`: {error}"),
+        })?;
     if value == 0 {
-        return Err(ConfigError::Invalid {
+        return Err(RegionalObservationApiConfigError::Invalid {
             name,
             reason: "expected a positive integer, got `0`".to_owned(),
         });
@@ -277,13 +281,17 @@ where
 }
 
 /// Reads a positive count that may not exceed the registered ceiling.
-fn bounded<F>(lookup: &F, name: &'static str, ceiling: u64) -> Result<u64, ConfigError>
+fn bounded<F>(
+    lookup: &F,
+    name: &'static str,
+    ceiling: u64,
+) -> Result<u64, RegionalObservationApiConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     let value = positive(lookup, name)?;
     if value > ceiling {
-        return Err(ConfigError::Invalid {
+        return Err(RegionalObservationApiConfigError::Invalid {
             name,
             reason: format!(
                 "{value} exceeds the registered ceiling of {ceiling}; the registry is the \
@@ -302,10 +310,10 @@ mod tests {
 
     use super::{
         ASSERTION_CACHE_BYTES_VAR, AUTHZ_FUNCTION_ARN_VAR, AUTHZ_PROJECTION_TABLE_VAR,
-        AUTHZ_VERIFY_KEYS_PARAM_VAR, CURSOR_KEY_REF_VAR, Config, ConfigError, INDEX_SETTLE_VAR,
+        AUTHZ_VERIFY_KEYS_PARAM_VAR, CURSOR_KEY_REF_VAR, Config, INDEX_SETTLE_VAR,
         METRIC_AGGREGATE_SCAN_VAR, OBSERVATION_BUCKET_VAR, OBSERVATION_TABLE_VAR, PLANE_VAR,
         QUERY_READ_BYTES_VAR, QUERY_SCANNED_ITEMS_VAR, QUERY_SEGMENTS_VAR, REGION_VAR,
-        REQUIRED_VARS, SESSION_TABLE_VAR,
+        REQUIRED_VARS, RegionalObservationApiConfigError, SESSION_TABLE_VAR,
     };
 
     fn complete() -> BTreeMap<&'static str, String> {
@@ -340,7 +348,9 @@ mod tests {
         ])
     }
 
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
+    fn read(
+        vars: &BTreeMap<&'static str, String>,
+    ) -> Result<Config, RegionalObservationApiConfigError> {
         Config::from_lookup(|name| vars.get(name).cloned())
     }
 
@@ -364,7 +374,7 @@ mod tests {
             vars.remove(*name);
             assert_eq!(
                 read(&vars),
-                Err(ConfigError::Missing { name }),
+                Err(RegionalObservationApiConfigError::Missing { name }),
                 "removing {name}"
             );
         }
@@ -387,7 +397,7 @@ mod tests {
         vars.insert(INDEX_SETTLE_VAR, limits::OBS_CLOCK_SKEW_MAX_MS.to_string());
         assert!(matches!(
             read(&vars),
-            Err(ConfigError::Invalid {
+            Err(RegionalObservationApiConfigError::Invalid {
                 name: INDEX_SETTLE_VAR,
                 ..
             })
@@ -412,7 +422,7 @@ mod tests {
             vars.insert(name, over.to_string());
             let error = read(&vars).expect_err("a raised ceiling is refused");
             assert!(
-                matches!(error, ConfigError::Invalid { name: named, .. } if named == name),
+                matches!(error, RegionalObservationApiConfigError::Invalid { name: named, .. } if named == name),
                 "{error:?}"
             );
         }
@@ -424,7 +434,7 @@ mod tests {
         vars.insert(PLANE_VAR, "staging".to_owned());
         assert!(matches!(
             read(&vars),
-            Err(ConfigError::Invalid {
+            Err(RegionalObservationApiConfigError::Invalid {
                 name: PLANE_VAR,
                 ..
             })
@@ -433,7 +443,7 @@ mod tests {
         vars.insert(REGION_VAR, "eu-central-9".to_owned());
         assert!(matches!(
             read(&vars),
-            Err(ConfigError::Invalid {
+            Err(RegionalObservationApiConfigError::Invalid {
                 name: REGION_VAR,
                 ..
             })

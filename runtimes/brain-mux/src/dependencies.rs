@@ -11,7 +11,7 @@
 //! orchestrator kill it along with them. It simply stops being a candidate for new work.
 
 use crate::control::HealthState;
-use aex_brain_application::ports::{BoxFuture, StoreError};
+use aex_brain_app::ports::{BoxFuture, StoreError};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Instant;
@@ -75,7 +75,7 @@ pub trait Reachable: Send + Sync + core::fmt::Debug {
     fn reach(&self) -> BoxFuture<'_, Result<(), StoreError>>;
 }
 
-impl Reachable for aex_brain_store_aws::BrainStore {
+impl Reachable for aex_brain_store_dynamodb::BrainStore {
     fn dependency(&self) -> Dependency {
         Dependency::BrainStore
     }
@@ -85,7 +85,7 @@ impl Reachable for aex_brain_store_aws::BrainStore {
     }
 }
 
-impl Reachable for aex_brain_store_aws::SqsWakeQueue {
+impl Reachable for aex_brain_store_dynamodb::SqsWakeQueue {
     fn dependency(&self) -> Dependency {
         Dependency::WakeQueue
     }
@@ -206,7 +206,7 @@ mod tests {
     use super::{Dependency, DependencyProbe, PROBE_INTERVAL, Reachable};
     use crate::control::HealthState;
     use crate::health::{LIVE_PATH, READY_PATH};
-    use aex_brain_application::ports::{BoxFuture, StoreError};
+    use aex_brain_app::ports::{BoxFuture, StoreError};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 

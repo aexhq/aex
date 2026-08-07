@@ -11,7 +11,7 @@ use std::num::NonZeroUsize;
 use std::sync::{Arc, Weak};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use aex_brain_application::ports::{
+use aex_brain_app::ports::{
     BoxFuture, DispatchTicket, HandsAccepted, HandsEndpoint, HandsError, HandsOperationStart,
     HandsOperationStatus, HandsResult, ProviderFailureKind, RedactedDetail, ResultBounds,
 };
@@ -1509,7 +1509,7 @@ fn transport(
 #[cfg(test)]
 mod tests {
     use super::{launch_request, should_invalidate_lease, wire_operation, wire_session};
-    use aex_brain_application::ports::{HandsError, ProviderFailureKind, RedactedDetail};
+    use aex_brain_app::ports::{HandsError, ProviderFailureKind, RedactedDetail};
     use aex_brain_domain::effect::{DispatchProof, DispatchStage};
     use aex_brain_domain::ids::{
         HandsOperationId as BrainOperationId, SessionId as BrainSessionId,

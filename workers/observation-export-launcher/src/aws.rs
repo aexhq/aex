@@ -1,7 +1,7 @@
 //! The production implementations of the two ports, over the real `AWS` clients.
 //!
 //! Every expression string is assembled through
-//! [`aex_observation_store_aws::expressions::ExpressionBuilder`], so an attribute
+//! [`aex_observation_store_dynamodb::expressions::ExpressionBuilder`], so an attribute
 //! name reaches `DynamoDB` as a generated `#n0` placeholder and a value as a
 //! generated `:v0` placeholder. Nothing customer-supplied is ever interpolated
 //! into an expression.
@@ -11,7 +11,7 @@
 //! observation read permission, so a full-table read would be denied by `IAM`
 //! before it could be slow.
 
-use aex_observation_store_aws::expressions::{ExpressionBuilder, ITEM_TYPE, Index, PK, SK};
+use aex_observation_store_dynamodb::expressions::{ExpressionBuilder, ITEM_TYPE, Index, PK, SK};
 use aex_wire::types::Timestamp;
 use aws_sdk_dynamodb::types::{AttributeValue, ReturnValue};
 use aws_sdk_ecs::types::{

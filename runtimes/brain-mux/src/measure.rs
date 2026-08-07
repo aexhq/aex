@@ -1,6 +1,6 @@
 //! A11-MUX resource measurement.
 //!
-//! Everything here composes `aex_usage_application::probe`. Plan 07 §9.8 sketched its own
+//! Everything here composes `aex_usage_app::probe`. Plan 07 §9.8 sketched its own
 //! `MemoryReservation`, `ReservationClass` and `ActivationMeter`; those are the usage
 //! stream's types and are imported, never redeclared, because two definitions of a billing
 //! unit is how a bill and a receipt come to disagree.
@@ -12,7 +12,7 @@
 //!   not inside one. Nothing is needed to get that behaviour, which is exactly why it is
 //!   asserted: it would be easy to "improve" the meter into wall-clock and never notice.
 //! - **Per-poll attribution is capped.** A poll above
-//!   [`MAX_ATTRIBUTED_POLL_US`](aex_usage_application::probe::MAX_ATTRIBUTED_POLL_US) is a
+//!   [`MAX_ATTRIBUTED_POLL_US`](aex_usage_app::probe::MAX_ATTRIBUTED_POLL_US) is a
 //!   defect — long work belongs on the compute lane — so it increments a violation counter
 //!   rather than becoming a larger charge.
 //! - **Charged CPU never exceeds physical CPU.** Every ten seconds the reconciler reads the
@@ -21,7 +21,7 @@
 //! - **A memory reservation is a `#[must_use]` RAII token.** Binding one to `_` releases it
 //!   immediately, which the type system says out loud rather than leaving to review.
 
-use aex_usage_application::probe::{
+use aex_usage_app::probe::{
     ActivationKey, ActivationMeter, BoundedFactSink, CpuIntervalReport, CpuReconciler,
     MemoryBudget, MemoryReservation, OverflowLedger, PhysicalCpuSource, ProbeContext, ProbeError,
     RustixThreadCpuClock, SystemWallClock, ThreadCpuClock, WallClock,

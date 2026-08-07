@@ -5,7 +5,7 @@
 //! [`PreparedToolCall`]; writes become durable only when the activation settles
 //! the matching result.
 
-use aex_brain_application::ports::{
+use aex_brain_app::ports::{
     BoxFuture, CancelToken, DetachedStatus, DispatchTicket, PreparedToolCall, ProviderFailureKind,
     RedactedDetail, ToolDispatchError, ToolOutcome, ToolResultBody,
 };
@@ -158,7 +158,7 @@ fn refusal(kind: ProviderFailureKind, message: &'static str) -> ToolDispatchErro
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aex_brain_application::ports::{ControlStateView, FenceGuard, ToolRoute};
+    use aex_brain_app::ports::{ControlStateView, FenceGuard, ToolRoute};
     use aex_brain_domain::effect::EffectClass;
     use aex_brain_domain::ids::{
         AgentId, AgentKey, AgentRevision, CancelEpoch, EffectId, OwnerToken, SessionId, Timestamp,

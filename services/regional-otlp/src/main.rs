@@ -18,14 +18,14 @@ mod staging;
 
 use std::sync::Arc;
 
-use aex_observation_store_aws::composition::{Capability, Role, assert_grant};
-use aex_observation_store_aws::health::{Probe, Readiness, readiness};
+use aex_observation_store_dynamodb::composition::{Capability, Role, assert_grant};
+use aex_observation_store_dynamodb::health::{Probe, Readiness, readiness};
 use aex_otlp_admission::MemoryBudget;
 use aex_wire::dispatch::RequestLimits;
 
 use crate::admission::{CustodyManifests, OtlpService};
 use crate::authority::AdmissionAuthority;
-use crate::config::{Config, ConfigError, REQUIRED_VARS};
+use crate::config::{Config, REQUIRED_VARS, RegionalOtlpConfigError};
 use crate::counters::AdmissionTelemetry;
 use crate::mount::{AUDIENCE, AppState};
 
@@ -42,10 +42,10 @@ pub const REQUIRED_PROBES: &[Probe] = &[
 
 /// Why `regional-otlp` stopped.
 #[derive(Debug, thiserror::Error)]
-pub enum RunError {
+pub enum RegionalOtlpRunError {
     /// Start-up configuration was rejected.
     #[error(transparent)]
-    Config(#[from] ConfigError),
+    Config(#[from] RegionalOtlpConfigError),
     /// The process holds a capability its role must not.
     #[error("this deployable must not hold the `{capability}` capability")]
     Capability {
@@ -82,16 +82,16 @@ pub enum RunError {
 ///
 /// # Errors
 ///
-/// Returns [`RunError::Capability`] when the process holds a capability its role
-/// must not, and [`RunError::NotReady`] when a declared probe has not passed. A
+/// Returns [`RegionalOtlpRunError::Capability`] when the process holds a capability its role
+/// must not, and [`RegionalOtlpRunError::NotReady`] when a declared probe has not passed. A
 /// probe that has not passed is never assumed.
-pub fn compose(observed: &[Capability], passed: &[Probe]) -> Result<(), RunError> {
-    assert_grant(ROLE, observed).map_err(|violation| RunError::Capability {
+pub fn compose(observed: &[Capability], passed: &[Probe]) -> Result<(), RegionalOtlpRunError> {
+    assert_grant(ROLE, observed).map_err(|violation| RegionalOtlpRunError::Capability {
         capability: violation.capability.as_str(),
     })?;
     match readiness(REQUIRED_PROBES, passed) {
         Readiness::Ready => Ok(()),
-        Readiness::NotReady { outstanding } => Err(RunError::NotReady {
+        Readiness::NotReady { outstanding } => Err(RegionalOtlpRunError::NotReady {
             probe: outstanding.as_str(),
         }),
     }
@@ -106,7 +106,7 @@ pub fn compose(observed: &[Capability], passed: &[Probe]) -> Result<(), RunError
 pub async fn run(
     config: Config,
     telemetry: aex_platform_telemetry::Handle,
-) -> Result<(), RunError> {
+) -> Result<(), RegionalOtlpRunError> {
     let aws = aws_config::from_env()
         .region(aws_config::Region::new(config.region.as_str()))
         .load()
@@ -124,9 +124,12 @@ pub async fn run(
     );
 
     let mut passed = Vec::new();
-    authority.probe().await.map_err(|error| RunError::Probe {
-        reason: error.to_string(),
-    })?;
+    authority
+        .probe()
+        .await
+        .map_err(|error| RegionalOtlpRunError::Probe {
+            reason: error.to_string(),
+        })?;
     passed.push(Probe::ObservationTable);
     passed.push(Probe::ObservationBucket);
 
@@ -136,7 +139,7 @@ pub async fn run(
     authority
         .ingress_gate()
         .await
-        .map_err(|error| RunError::Probe {
+        .map_err(|error| RegionalOtlpRunError::Probe {
             reason: error.to_string(),
         })?;
     passed.push(Probe::IngressGate);
@@ -151,7 +154,7 @@ pub async fn run(
     let anchors = parameters
         .trust_anchors(&config.authz_verify_keys_param)
         .await
-        .map_err(|error| RunError::Edge {
+        .map_err(|error| RegionalOtlpRunError::Edge {
             reason: error.to_string(),
         })?;
     let projection = aex_session_dynamodb::projection::ProjectionReader::new(
@@ -175,7 +178,7 @@ pub async fn run(
             cache_budget_bytes: config.assertion_cache_bytes,
         },
     )
-    .map_err(|error| RunError::Edge {
+    .map_err(|error| RegionalOtlpRunError::Edge {
         reason: error.to_string(),
     })?;
 
@@ -200,7 +203,7 @@ pub async fn run(
     });
     lambda_http::run(mount::router(state))
         .await
-        .map_err(|error| RunError::Runtime {
+        .map_err(|error| RegionalOtlpRunError::Runtime {
             reason: error.to_string(),
         })
 }
@@ -212,7 +215,7 @@ pub async fn run(
 async fn resolve_redaction_key(
     secrets: &aws_sdk_secretsmanager::Client,
     reference: &str,
-) -> Result<Vec<u8>, RunError> {
+) -> Result<Vec<u8>, RegionalOtlpRunError> {
     use base64::Engine as _;
 
     let response = secrets
@@ -220,19 +223,21 @@ async fn resolve_redaction_key(
         .secret_id(reference)
         .send()
         .await
-        .map_err(|error| RunError::Probe {
+        .map_err(|error| RegionalOtlpRunError::Probe {
             reason: format!("the redaction key reference did not resolve: {error}"),
         })?;
-    let material = response.secret_string().ok_or_else(|| RunError::Probe {
-        reason: "the redaction key reference carries no string value".to_owned(),
-    })?;
+    let material = response
+        .secret_string()
+        .ok_or_else(|| RegionalOtlpRunError::Probe {
+            reason: "the redaction key reference carries no string value".to_owned(),
+        })?;
     let key = base64::engine::general_purpose::STANDARD
         .decode(material.trim())
-        .map_err(|_| RunError::Probe {
+        .map_err(|_| RegionalOtlpRunError::Probe {
             reason: "the redaction key is not base64".to_owned(),
         })?;
     if key.len() < 32 {
-        return Err(RunError::Probe {
+        return Err(RegionalOtlpRunError::Probe {
             reason: "the redaction key is shorter than 32 bytes".to_owned(),
         });
     }
@@ -289,10 +294,10 @@ async fn main() -> std::process::ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use aex_observation_store_aws::composition::Capability;
-    use aex_observation_store_aws::health::Probe;
+    use aex_observation_store_dynamodb::composition::Capability;
+    use aex_observation_store_dynamodb::health::Probe;
 
-    use super::{REQUIRED_PROBES, ROLE, RunError, compose};
+    use super::{REQUIRED_PROBES, ROLE, RegionalOtlpRunError, compose};
 
     #[test]
     fn its_own_grant_and_a_complete_probe_set_start() {
@@ -303,7 +308,10 @@ mod tests {
     fn a_capability_outside_the_grant_refuses_to_start() {
         for denied in ROLE.denied() {
             let error = compose(&[denied], REQUIRED_PROBES).expect_err("refused");
-            assert!(matches!(error, RunError::Capability { .. }), "{error:?}");
+            assert!(
+                matches!(error, RegionalOtlpRunError::Capability { .. }),
+                "{error:?}"
+            );
         }
     }
 
@@ -326,7 +334,10 @@ mod tests {
                 forbidden.as_str()
             );
             let error = compose(&[forbidden], REQUIRED_PROBES).expect_err("refused");
-            assert!(matches!(error, RunError::Capability { .. }), "{error:?}");
+            assert!(
+                matches!(error, RegionalOtlpRunError::Capability { .. }),
+                "{error:?}"
+            );
         }
     }
 
@@ -335,11 +346,14 @@ mod tests {
         let first = REQUIRED_PROBES.first().expect("a probe set is declared");
         let error = compose(ROLE.granted(), &[]).expect_err("refused");
         match error {
-            RunError::NotReady { probe } => assert_eq!(probe, first.as_str()),
+            RegionalOtlpRunError::NotReady { probe } => assert_eq!(probe, first.as_str()),
             other => panic!("expected a readiness failure, got {other:?}"),
         }
         // Proving a prefix is not proving the set.
         let error = compose(ROLE.granted(), &[Probe::ObservationTable]).expect_err("refused");
-        assert!(matches!(error, RunError::NotReady { .. }), "{error:?}");
+        assert!(
+            matches!(error, RegionalOtlpRunError::NotReady { .. }),
+            "{error:?}"
+        );
     }
 }

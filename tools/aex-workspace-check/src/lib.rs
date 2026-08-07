@@ -22,6 +22,8 @@
 //! - product policy of any kind
 
 pub mod collect;
+pub mod description;
+pub mod errorname;
 pub mod flake;
 pub mod inventory;
 pub mod metadata;
@@ -47,6 +49,9 @@ pub enum CheckError {
     /// The tree could not be read.
     #[error(transparent)]
     Collect(#[from] CollectError),
+    /// A member's description or `//!` header could not be read.
+    #[error(transparent)]
+    Description(#[from] description::DescriptionError),
     /// A member root could not be read.
     #[error("cannot read `{root}`: {source}")]
     Tree {
@@ -135,10 +140,14 @@ pub fn check_workspace(json: &str, phase: Phase) -> Result<FullReport, CheckErro
     let collected = collect::collect(&root, &metadata)?;
     let policy = Policy::embedded();
     let report = registry::check(&collected.as_input(policy, phase));
+    let descriptions = description::check(&description::read_members(&root, &metadata)?);
+    let error_names = errorname::check(&errorname::scan(&root, &metadata)?);
     Ok(FullReport {
         structural,
         registry: report,
         collected,
+        descriptions,
+        error_names,
     })
 }
 
@@ -151,14 +160,21 @@ pub struct FullReport {
     pub registry: RegistryReport,
     /// What was read from the tree.
     pub collected: Collected,
+    /// `[package] description` drift against each entry file's `//!` header.
+    pub descriptions: Vec<Violation>,
+    /// Error enum names declared in more than one file.
+    pub error_names: Vec<Violation>,
 }
 
 impl FullReport {
-    /// Every violation, structural and registry, sorted and deduplicated.
+    /// Every violation, structural, registry and description, sorted and
+    /// deduplicated.
     #[must_use]
     pub fn violations(&self) -> Vec<Violation> {
         let mut all = self.structural.clone();
         all.extend(self.registry.violations.iter().cloned());
+        all.extend(self.descriptions.iter().cloned());
+        all.extend(self.error_names.iter().cloned());
         all.sort();
         all.dedup();
         all

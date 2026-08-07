@@ -6,8 +6,8 @@
 //! start-up (RS-05).
 
 use aex_regional_http::config::{
-    Arn, ConfigError, Lookup, arn_in_region, bounded_u64, bounded_usize, forbidden, one_of,
-    plane_name, region, required,
+    Arn, Lookup, RegionalHttpConfigError, arn_in_region, bounded_u64, bounded_usize, forbidden,
+    one_of, plane_name, region, required,
 };
 use aex_wire::types::Region;
 
@@ -208,8 +208,8 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// Returns the first [`ConfigError`], naming the offending variable.
-    pub fn from_env() -> Result<Self, ConfigError> {
+    /// Returns the first [`RegionalHttpConfigError`], naming the offending variable.
+    pub fn from_env() -> Result<Self, RegionalHttpConfigError> {
         Self::read(&aex_regional_http::config::Environment)
     }
 
@@ -219,7 +219,7 @@ impl Config {
     ///
     /// Identical to [`Config::from_env`].
     #[allow(clippy::too_many_lines, reason = "one arm per declared variable")]
-    pub fn read<L: Lookup + ?Sized>(lookup: &L) -> Result<Self, ConfigError> {
+    pub fn read<L: Lookup + ?Sized>(lookup: &L) -> Result<Self, RegionalHttpConfigError> {
         for (name, reason) in FORBIDDEN {
             forbidden(lookup, name, DEPLOYABLE, reason)?;
         }
@@ -236,7 +236,7 @@ impl Config {
         // ones that were already there, so a third task is refused rather than
         // discovered as intermittent stream lag.
         if wake_mode == WakeMode::DdbStreams && max_tasks > MAX_STREAM_READER_TASKS {
-            return Err(ConfigError::Invalid {
+            return Err(RegionalHttpConfigError::Invalid {
                 name: STREAM_MAX_TASKS,
                 reason: format!(
                     "`ddb_streams` admits at most {MAX_STREAM_READER_TASKS} tasks per shard, got `{max_tasks}`"
@@ -247,7 +247,7 @@ impl Config {
             if wake_mode == WakeMode::DdbStreams {
                 let endpoint = required(lookup, DYNAMODB_STREAMS_ENDPOINT_URL)?;
                 let Some(host) = endpoint.strip_prefix("https://") else {
-                    return Err(ConfigError::Invalid {
+                    return Err(RegionalHttpConfigError::Invalid {
                         name: DYNAMODB_STREAMS_ENDPOINT_URL,
                         reason: "must be the HTTPS origin of the private DynamoDB Streams endpoint"
                             .to_owned(),
@@ -258,7 +258,7 @@ impl Config {
                     || !host.contains(".dynamodb")
                     || !host.ends_with(".vpce.amazonaws.com")
                 {
-                    return Err(ConfigError::Invalid {
+                    return Err(RegionalHttpConfigError::Invalid {
                         name: DYNAMODB_STREAMS_ENDPOINT_URL,
                         reason:
                             "must be a bare DynamoDB endpoint-specific `.vpce.amazonaws.com` origin"
@@ -285,7 +285,7 @@ impl Config {
             };
 
         let raw_port = bounded_u64(lookup, STREAM_PORT, 1, 65_535)?;
-        let port = u16::try_from(raw_port).map_err(|_| ConfigError::Invalid {
+        let port = u16::try_from(raw_port).map_err(|_| RegionalHttpConfigError::Invalid {
             name: STREAM_PORT,
             reason: format!("`{raw_port}` is not a TCP port"),
         })?;
@@ -300,7 +300,7 @@ impl Config {
         if max_connections < max_connections_session
             || max_connections < max_connections_observation
         {
-            return Err(ConfigError::Invalid {
+            return Err(RegionalHttpConfigError::Invalid {
                 name: STREAM_MAX_CONNECTIONS,
                 reason: format!(
                     "total `{max_connections}` is below a class budget \
@@ -323,7 +323,7 @@ impl Config {
                 1,
                 u64::from(aex_observation_domain::limits::QUERY_MAX_ITEMS_SCANNED),
             )?)
-            .map_err(|_| ConfigError::Invalid {
+            .map_err(|_| RegionalHttpConfigError::Invalid {
                 name: OBS_QUERY_SCANNED_ITEMS,
                 reason: "the admitted scan budget does not fit `u32`".to_owned(),
             })?,
@@ -333,7 +333,7 @@ impl Config {
                 1,
                 u64::from(aex_observation_domain::limits::QUERY_MAX_SEGMENTS),
             )?)
-            .map_err(|_| ConfigError::Invalid {
+            .map_err(|_| RegionalHttpConfigError::Invalid {
                 name: OBS_QUERY_SEGMENTS,
                 reason: "the admitted segment budget does not fit `u16`".to_owned(),
             })?,
@@ -361,7 +361,7 @@ impl Config {
             content_bucket: required(lookup, CONTENT_BUCKET)?,
             cursor_signing_key_ref: required(lookup, CURSOR_SIGNING_KEY_REF)?,
             observation_index_settle_ms: i64::try_from(observation_index_settle_ms).map_err(
-                |_| ConfigError::Invalid {
+                |_| RegionalHttpConfigError::Invalid {
                     name: OBS_INDEX_SETTLE_MS,
                     reason: "the settle window does not fit `i64`".to_owned(),
                 },

@@ -1,6 +1,7 @@
 [package]
 name = "aex-hands-protocol"
 version = "0.1.0"
+description = "`aex-hands-protocol` is the exact-generation Brain-to-Hands RPC."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

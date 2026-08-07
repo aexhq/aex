@@ -23,7 +23,7 @@ use std::future::Future;
 
 use aex_observation_domain::canonical::sha256_hex;
 use aex_observation_domain::limits;
-use aex_observation_store_aws::store::StoreError;
+use aex_observation_store_dynamodb::store::StoreError;
 use aex_otlp_admission::OtlpLimits;
 use aex_wire::ids::WorkspaceId;
 use async_trait::async_trait;
@@ -635,7 +635,7 @@ mod tests {
             matches!(
                 error,
                 AuthorityError::Store(
-                    aex_observation_store_aws::store::StoreError::ItemTooLarge { .. }
+                    aex_observation_store_dynamodb::store::StoreError::ItemTooLarge { .. }
                 )
             ),
             "{error:?}"

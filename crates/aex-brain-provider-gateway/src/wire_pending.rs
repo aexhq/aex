@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 pub use aex_secret_domain::{CiphertextRef, EncryptionContext, RevocationEpoch, SourceGeneration};
 
-pub use aex_brain_application::ports::{
+pub use aex_brain_app::ports::{
     BoxFuture, CancelToken, DispatchTicket, PreviewSink, ProviderDispatchError, ProviderOutcome,
     ProviderPort, UnknownResolution,
 };

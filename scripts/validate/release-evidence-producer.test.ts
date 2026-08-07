@@ -23,6 +23,7 @@ const {
   assertExactDeploymentHealth,
   checkExactDeploymentHealth,
   assertRunnableScenarioMatrix,
+  capturedCommandOutput,
   assertUserJourneyInventory,
   validateHygieneReport
 } = releaseEvidence;
@@ -154,6 +155,12 @@ describe("release-bound public evidence producer", () => {
     )).toEqual(["live.provider-model-pair", "live.session-round-trip"]);
   });
 
+  it("merges Bun reporter stderr only for user inventory captures", () => {
+    const result = { stdout: "json\n", stderr: "(pass) live.registry-list\n" };
+    expect(capturedCommandOutput(result)).toBe("json\n");
+    expect(capturedCommandOutput(result, true)).toBe("json\n(pass) live.registry-list\n");
+  });
+
   it("derives receipt hygiene only from a bounded cleanup, spend and canary report", () => {
     const valid = {
       schema: "aex.release-evidence-hygiene.v1",
@@ -248,7 +255,7 @@ describe("release-bound public evidence producer", () => {
       "AEX_RELEASE_EVIDENCE_MODE=inventory"
     );
     expect(workflowStep(job, "Require non-empty release scenario and user-journey inventories").run).toContain(
-      "bun test apps/user-tests/test/live"
+      'bun test apps/user-tests/test/live > "$RUN_ROOT/user/list.txt" 2>&1'
     );
     expect(source).toContain("AEX_RELEASE_EVIDENCE_HEALTH_URL");
     expect(source).toContain("https://{0}/api/release/health");

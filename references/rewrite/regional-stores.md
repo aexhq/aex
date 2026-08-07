@@ -167,7 +167,7 @@ Every remaining crate is still the compiling skeleton `main` shipped, so
   `PagePosition`, `PageBudget`, `mint`, `verify`.
 - **`aex_session_dynamodb::keys`** — the `session-authority` key templates,
   including `BRAIN_PREFIX` and `BRAIN_AGENT_PARTITION_PREFIX`.
-  **`aex-brain-store-aws` calls this module rather than forking the item
+  **`aex-brain-store-dynamodb` calls this module rather than forking the item
   shapes.**
 - **`aex_session_dynamodb::transactions`** — `ADMISSION_ORDER`,
   `TERMINAL_ORDER`, `DECISION_ORDER`, `Foreign`, `ForeignAction`, and the five

@@ -292,7 +292,6 @@ CREATE TABLE control.outbox_message (
     'workspace.delete.requested',
     'account.state.changed',
     'invitation.email.requested',
-    'api_key.created',
     'authorization.epoch.changed',
     'authorization.signing_key.published')),
   CONSTRAINT outbox_claim_ck    CHECK ((claimed_by IS NULL) = (claimed_until IS NULL)),

@@ -8,7 +8,7 @@
 use std::process::ExitCode;
 
 use aex_content_dynamodb::store::ContentStore;
-use aex_regional_http::config::ConfigError;
+use aex_regional_http::config::RegionalHttpConfigError;
 use aex_session_dynamodb::paging::PageBudget;
 use aex_wire::types::Timestamp;
 use aws_lambda_events::event::sqs::{BatchItemFailure, SqsBatchResponse, SqsEvent};
@@ -18,10 +18,10 @@ use lambda_runtime::{Error as LambdaError, LambdaEvent, service_fn};
 
 /// Why `content-lifecycle-worker` stopped.
 #[derive(Debug, thiserror::Error)]
-enum RunError {
+enum ContentLifecycleWorkerRunError {
     /// Start-up configuration was rejected.
     #[error(transparent)]
-    Config(#[from] ConfigError),
+    Config(#[from] RegionalHttpConfigError),
     /// The Lambda runtime stopped.
     #[error("the lambda runtime stopped: {0}")]
     Runtime(String),
@@ -54,7 +54,10 @@ async fn main() -> ExitCode {
 }
 
 /// Builds the adapters this role is allowed to hold and serves its trigger.
-async fn run(config: Config, telemetry: &aex_platform_telemetry::Handle) -> Result<(), RunError> {
+async fn run(
+    config: Config,
+    telemetry: &aex_platform_telemetry::Handle,
+) -> Result<(), ContentLifecycleWorkerRunError> {
     telemetry.emit(
         aex_platform_telemetry::Record::event(
             aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
@@ -95,7 +98,7 @@ async fn run(config: Config, telemetry: &aex_platform_telemetry::Handle) -> Resu
         async move { role.handle(event.payload).await }
     }))
     .await
-    .map_err(|error: LambdaError| RunError::Runtime(error.to_string()))
+    .map_err(|error: LambdaError| ContentLifecycleWorkerRunError::Runtime(error.to_string()))
 }
 
 /// One deployed role and the adapters it is allowed to hold.

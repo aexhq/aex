@@ -38,7 +38,7 @@ use std::future::Future;
 use std::time::{Duration, Instant};
 
 use aex_observation_domain::gap::GapRecord;
-use aex_observation_store_aws::gap_hint::GapAppendCount;
+use aex_observation_store_dynamodb::gap_hint::GapAppendCount;
 
 use crate::counters::{ReadCounter, ReadCounters};
 use crate::frontier::GapChange;
@@ -256,7 +256,7 @@ impl GapWatch {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use aex_observation_store_aws::gap_hint::hint_update;
+    use aex_observation_store_dynamodb::gap_hint::hint_update;
     use aex_wire::ids::{PrefixedId as _, WorkspaceId};
     use aws_sdk_dynamodb::types::AttributeValue;
 
@@ -277,7 +277,7 @@ mod tests {
             ),
         ]);
         GapChange::Counted(
-            aex_observation_store_aws::gap_hint::decode(&item).expect("a readable hint"),
+            aex_observation_store_dynamodb::gap_hint::decode(&item).expect("a readable hint"),
         )
     }
 

@@ -1,6 +1,7 @@
 [package]
 name = "aex-work-dynamodb"
 version = "0.1.0"
+description = "`aex-work-dynamodb` owns the `regional-work` table: wake, due, claim, lease, fence, attempt, dedupe claims and per-shard reconciliation cursors over one sharded due index."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

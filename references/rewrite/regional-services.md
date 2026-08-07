@@ -77,7 +77,7 @@ canonicalizer, floating-point resource quantity, or cloud call.
 These items remain and are not represented as complete:
 
 - The six existing binary skeletons still fail fast with
-  `RunError::NotImplemented`. Generated `aex_wire` server traits/router
+  a `NotImplemented` run-error variant. Generated `aex_wire` server traits/router
   constructors and the peer command/store ports needed to compose real
   `lambda_http`/`hyper` entrypoints are absent on the branch base. Therefore the
   shared health router is implemented and tested but is not yet mounted by a
@@ -308,7 +308,7 @@ aex-workspace-check: wrote release/test-registry.json and release/unearned-evide
 
 Branch `rw/deploy-regional`, off `main` after the four-stream merge. This closes
 the largest tracked gap in "Deliberately deferred": the six binaries no longer
-return `RunError::NotImplemented`. Each one now validates its own configuration,
+return a `NotImplemented` run-error variant. Each one now validates its own configuration,
 builds its real adapters from it, and reaches its real entry point.
 
 ### The mount table is a projection of the route table
@@ -443,7 +443,7 @@ Two smaller consequences, both recorded rather than worked around:
 | `aex-secret-custody-dynamodb::expressions::delete`, the conditional custody delete that `secret_delete` commits. | regional stores |
 | The `central-authz` invoke request/response shapes for a **workspace key**. `aex-internal-contracts::assertion` publishes `ResolveSessionForWorkspace`/`ResolvedSessionAssertion` for a browser session only, so a concrete `AssertionSource` cannot be written without inventing the workspace-key payload. | central identity |
 | `aws-sdk-lambda` in `[workspace.dependencies]`, which the concrete `AssertionSource` needs and no member currently declares. | delivery |
-| `graph verify` reports one pre-existing violation unrelated to this stream: `[graph-cycle] cargo:aex-usage-application -> cargo:aex-usage-application`. | usage metering |
+| `graph verify` reports one pre-existing violation unrelated to this stream: `[graph-cycle] cargo:aex-usage-app -> cargo:aex-usage-app`. | usage metering |
 
 ### Decisions taken beyond section 10
 
@@ -866,7 +866,7 @@ approvals, operations, usage and workspace routes as "mechanically the same shap
 and unblocked". They are not. Only `aex-secret-custody-dynamodb`,
 `aex-registry-dynamodb`, `aex-content-dynamodb` and `aex-work-dynamodb` publish a
 store trait at all, and of those only the first two publish a read a listing can
-use; `aex-usage-query-aws` publishes expression builders and no store type.
+use; `aex-usage-query-dynamodb` publishes expression builders and no store type.
 
 | Route(s) | Precise next blocker | Owner |
 | --- | --- | --- |
@@ -876,7 +876,7 @@ use; `aex-usage-query-aws` publishes expression builders and no store type.
 | the 3 `approvals` | `aex_session_dynamodb::wire_pending::Approval` carries neither `session_id` nor `expires_at`, both of which `models::Approval` requires, and no store method reads one. | regional stores |
 | the 6 `files` | Every template is `/api/sessions/{sessionId}/files/...`, so each needs the session's persisted root — the `SessionHead`-cannot-decode blocker already recorded above. A `TreePage` is additionally a **sealed** body, so listing entries needs the content data key too. | regional domains + regional stores |
 | the 4 `uploads` | `RegistryStore::load_upload` reads one, but `models::Upload` publishes the presigned target and nothing presigns. | regional stores |
-| the 1 `usage` | `aex-usage-query-aws` publishes `expressions::aggregate_page` and no store type at all — there is nothing holding a client to call it. | usage metering |
+| the 1 `usage` | `aex-usage-query-dynamodb` publishes `expressions::aggregate_page` and no store type at all — there is nothing holding a client to call it. | usage metering |
 | the 3 `workspace` | `models::Workspace` requires `apiUrl`, `name`, `slug`, `createdAt` and `operationalState`; the `regional-authz-projection` placement row carries none of them. `EffectiveWorkspaceLimit` has no regional source at all. | central identity/control, the projection's only writer |
 | the 15 `sessions`, `session_message_send`, `session_messages_list`, `secret_put`, `provider_credential_register` | Unchanged from the previous pass. | as recorded above |
 
@@ -972,19 +972,19 @@ derived from the binding plus the **observed** revision, so two attempts against
 the same observed state are one transaction and an attempt against a moved row is
 not.
 
-### `aex-usage-query-aws` has a store type
+### `aex-usage-query-dynamodb` has a store type
 
 `UsageProjectionReads` publishes the three reads the projection holds — the
 generation pointer, one coverage row and one bounded page of rollups — and
 `UsageQueryStore` is its DynamoDB adapter. Decoding is strict against the exact
-attribute names `aex_usage_application::projection` writes.
+attribute names `aex_usage_app::projection` writes.
 
 Three decisions worth naming:
 
 - **It stays inside its own stream.** The three usage authority adapters carry
   their own row reader and their own port error rather than linking
   `aex-session-dynamodb`, so this one does too. That is what keeps
-  `crates/aex-usage-query-aws/tests/write_incapability.rs` a fact about this
+  `crates/aex-usage-query-dynamodb/tests/write_incapability.rs` a fact about this
   crate's sources alone.
 - **`current_generation` answers `Option`.** An absent pointer means the
   projection was never cut over. Substituting `Generation::FIRST` would make a
@@ -1155,7 +1155,7 @@ default is introduced here.
 | # | Decision | Rationale |
 | --- | --- | --- |
 | RD-01 | A revocation `regional-session-api` owns is committed as a one-action `TransactWriteItems`, never as a bare conditional update | The role is granted the former and denied the latter. A capability the code assumes and IAM refuses is the class of defect that only appears in production, and the transaction path additionally keeps the unconditional-write check on the path. |
-| RD-02 | `aex-usage-query-aws` keeps its own row reader and error vocabulary rather than linking `aex-session-dynamodb` | The three usage authority adapters already do, and the write-incapability proof is a scan of this crate's own sources plus its own manifest. Borrowing another stream's reader would make "read-only" a claim about a dependency instead of a fact about the crate. |
+| RD-02 | `aex-usage-query-dynamodb` keeps its own row reader and error vocabulary rather than linking `aex-session-dynamodb` | The three usage authority adapters already do, and the write-incapability proof is a scan of this crate's own sources plus its own manifest. Borrowing another stream's reader would make "read-only" a claim about a dependency instead of a fact about the crate. |
 | RD-03 | The approval row persists all eleven bound fields, not the seven the wire publishes | `respond` revalidates the whole binding and commits `Cancelled { BindingDrift }` when any of the eleven moved. A row holding the public subset could not perform that comparison, so the bound call would have to be dispatched on trust. |
 | RD-04 | The workspace profile fields land on a second projection item rather than on the placement row | The placement row is read on every request and never cached. Descriptive data belongs beside the hot row, not inside it. |
 | RD-05 | This continuation mounts exactly the two fully served approval reads | The response route still needs an atomic writer; usage needs the full query planner; operations need point/list reads; workspace needs central producers and a richer signed account-state fact. RS-18 keeps all four absent. |

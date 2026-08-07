@@ -1,0 +1,92 @@
+[package]
+name = "aex-central-aws"
+version = "0.1.0"
+description = "`aex-central-aws` holds the central plane's non-Aurora port adapters."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+# Every test target is declared explicitly, so `tests/support/` is a module and
+# never a target of its own.
+autotests = false
+
+[lints]
+workspace = true
+
+[features]
+# Engine-backed targets. The unit lane neither builds nor links any of it, so
+# the per-stream gate still runs on a machine with no container runtime.
+integration-engines = ["aex-test-harness/containers"]
+
+[package.metadata.aex]
+owner = "central-identity"
+role = "adapter"
+artifact = "none"
+live_suite = "aex-live-central-identity-api"
+layers = ["unit", "integration"]
+concerns = ["contract", "property", "fault", "security"]
+seams = ["aws.iam.denial", "aws.rds_data.transaction"]
+security_tier = "secret"
+risk = ["iam", "concurrency"]
+scenarios = []
+
+[package.metadata.aex.targets]
+conformance = "unit"
+properties = "unit"
+faults = "unit"
+security = "unit"
+integration = "integration"
+
+[dependencies]
+async-trait.workspace = true
+aws-lc-rs.workspace = true
+aws-sdk-lambda.workspace = true
+aws-sdk-secretsmanager.workspace = true
+aws-smithy-types.workspace = true
+base64.workspace = true
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+time.workspace = true
+uuid.workspace = true
+zeroize.workspace = true
+aex-control-app = { path = "../aex-control-app" }
+aex-control-aurora = { path = "../aex-control-aurora" }
+aex-control-domain = { path = "../aex-control-domain" }
+aex-identity-app = { path = "../aex-identity-app" }
+aex-identity-aurora = { path = "../aex-identity-aurora" }
+aex-identity-domain = { path = "../aex-identity-domain" }
+aex-internal-contracts = { path = "../aex-internal-contracts" }
+aex-rds-data = { path = "../aex-rds-data" }
+aex-wire = { path = "../aex-wire" }
+
+[dev-dependencies]
+aws-smithy-http-client.workspace = true
+http.workspace = true
+proptest.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
+aex-test-harness = { path = "../../tests/support/aex-test-harness" }
+
+[[test]]
+name = "conformance"
+path = "tests/conformance.rs"
+
+[[test]]
+name = "properties"
+path = "tests/properties.rs"
+
+[[test]]
+name = "faults"
+path = "tests/faults.rs"
+
+[[test]]
+name = "security"
+path = "tests/security.rs"
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+required-features = ["integration-engines"]

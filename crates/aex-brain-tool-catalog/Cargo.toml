@@ -1,6 +1,7 @@
 [package]
 name = "aex-brain-tool-catalog"
 version = "0.1.0"
+description = "`aex-brain-tool-catalog` owns the signed immutable tool catalog: tool schema, route, effect class, recovery, approval requirement and result bounds."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -30,7 +31,7 @@ live_suite = "pure domain crate; Area 9's registry declares no independent live 
 
 [dependencies]
 aex-brain-domain = { path = "../aex-brain-domain" }
-aex-brain-application = { path = "../aex-brain-application" }
+aex-brain-app = { path = "../aex-brain-app" }
 aex-model-catalog = { path = "../aex-model-catalog" }
 aex-wire = { path = "../aex-wire" }
 p256.workspace = true

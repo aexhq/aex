@@ -1,8 +1,10 @@
 //! `aex-model-catalog` owns the signed immutable model catalog: model, dialect, capability
-//! and routing policy plus its content signature. It also owns the
-//! **provider-neutral canonical result vocabulary** (`canonical`, D-CANON),
-//! because that vocabulary must be visible to both the pure Brain domain and
-//! the provider adapter, and this crate already sits below both.
+//! and routing policy plus its content signature.
+//!
+//! It also owns the **provider-neutral canonical result vocabulary**
+//! (`canonical`, D-CANON), because that vocabulary must be visible to both the
+//! pure Brain domain and the provider adapter, and this crate already sits
+//! below both.
 //!
 //! # Invariants
 //!

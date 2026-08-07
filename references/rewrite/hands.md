@@ -229,7 +229,7 @@ live companions are declared and unearned rather than silently green.
 | regional stores | `aex_runtime_control::store` | `RuntimeActivityStore`, `GenerationPointer`, `GenerationPlan`, `GenerationCommit`, `LifecycleIntentPlan`, `LifecycleReceiptPlan`, `LifecycleReceipt`, `IdleProbe`, `RuntimeShard`, `PageBudget`, `RuntimeDuePage`, `RuntimeStoreError` |
 | regional stores, brain | `aex_runtime_control::generation` | `HandsGeneration`, `GenerationHead`, `GenerationState`, `Revision`, `TransportMode`, `ImagePin`, `ImageCapability`, `NetworkPolicy`, `LimitsRevision`, the F1/F4/F6 functions |
 | brain | `aex_brain_hands::adapter` | `MaterializeStep`, `AdmitPlan`, `SettlePlan`, `HandsError`, `Alpn`, `transport_mode`, `pool_size`, `max_in_flight` |
-| brain, mux | `aex_brain_hands::port` | `HandsAdapter`, the exact-generation `impl aex_brain_application::ports::HandsPort`, and its `HandsBackend` runtime seam |
+| brain, mux | `aex_brain_hands::port` | `HandsAdapter`, the exact-generation `impl aex_brain_app::ports::HandsPort`, and its `HandsBackend` runtime seam |
 | brain | `aex_brain_hands::operation` | `ResultAssembly`, `IncorporateError`, `ConstructedCommand`, `CodeLanguage`, `PackageManager`, `git`, `package_install`, `code_run` |
 | brain, guest | `aex_hands_agent::wire` | `RequestPreamble`, `ResponsePreamble`, `Frame`, `FrameExpectation`, `FrameError`, `Verb`, `encode_request`/`decode_request`, `encode_response`/`decode_response`, `split_result_payload`, `verify_body`, `DECODE_STEPS` |
 | usage | `aex_runtime_control::usage` and `aex_usage_domain::ingress` | `UsageFactSink`, `FactDraftEnvelope`, `UsageCategory`, `FactContext`, `HandsUsage`, `SnapshotResidence`, `SnapshotIo`, `derive_usage`, `derive_facts`, `category_of` |
@@ -276,7 +276,7 @@ cannot break the supervisor out from under its own operation.
 
 ### Brain (plan 07)
 
-`aex-brain-application` publishes `HandsPort` entirely over the canonical
+`aex-brain-app` publishes `HandsPort` entirely over the canonical
 `aex_wire::ids::GenerationId`. `aex_brain_hands::HandsAdapter` implements it over a
 `HandsBackend` and independently rejects an endpoint, acceptance or result that names a
 different generation. The concrete backend over runtime-activity conditional writes,

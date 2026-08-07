@@ -43,7 +43,7 @@ impl Lookup for Environment {
 
 /// Why a deployable refused to start.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ConfigError {
+pub enum RegionalHttpConfigError {
     /// A required variable was absent or blank.
     #[error("required environment variable `{name}` is missing")]
     Missing {
@@ -78,11 +78,14 @@ pub enum ConfigError {
 ///
 /// # Errors
 ///
-/// Returns [`ConfigError::Missing`] when the variable is absent or blank.
-pub fn required<L: Lookup + ?Sized>(lookup: &L, name: &'static str) -> Result<String, ConfigError> {
+/// Returns [`RegionalHttpConfigError::Missing`] when the variable is absent or blank.
+pub fn required<L: Lookup + ?Sized>(
+    lookup: &L,
+    name: &'static str,
+) -> Result<String, RegionalHttpConfigError> {
     match lookup.get(name) {
         Some(value) if !value.trim().is_empty() => Ok(value.trim().to_owned()),
-        _ => Err(ConfigError::Missing { name }),
+        _ => Err(RegionalHttpConfigError::Missing { name }),
     }
 }
 
@@ -98,15 +101,15 @@ pub fn optional<L: Lookup + ?Sized>(lookup: &L, name: &'static str) -> Option<St
 ///
 /// # Errors
 ///
-/// Returns [`ConfigError::Forbidden`] when the variable is set at all.
+/// Returns [`RegionalHttpConfigError::Forbidden`] when the variable is set at all.
 pub fn forbidden<L: Lookup + ?Sized>(
     lookup: &L,
     name: &'static str,
     deployable: &'static str,
     reason: &'static str,
-) -> Result<(), ConfigError> {
+) -> Result<(), RegionalHttpConfigError> {
     if lookup.get(name).is_some() {
-        return Err(ConfigError::Forbidden {
+        return Err(RegionalHttpConfigError::Forbidden {
             name,
             deployable,
             reason,
@@ -119,18 +122,18 @@ pub fn forbidden<L: Lookup + ?Sized>(
 ///
 /// # Errors
 ///
-/// Returns [`ConfigError::Missing`] or [`ConfigError::Invalid`]; zero is
+/// Returns [`RegionalHttpConfigError::Missing`] or [`RegionalHttpConfigError::Invalid`]; zero is
 /// rejected, because a zero page, lease or shard count is never a value anyone
 /// meant to deploy.
 pub fn positive_u64<L: Lookup + ?Sized>(
     lookup: &L,
     name: &'static str,
-) -> Result<u64, ConfigError> {
+) -> Result<u64, RegionalHttpConfigError> {
     let raw = required(lookup, name)?;
     raw.parse::<u64>()
         .ok()
         .filter(|value| *value > 0)
-        .ok_or_else(|| ConfigError::Invalid {
+        .ok_or_else(|| RegionalHttpConfigError::Invalid {
             name,
             reason: format!("expected a positive integer, got `{raw}`"),
         })
@@ -140,16 +143,16 @@ pub fn positive_u64<L: Lookup + ?Sized>(
 ///
 /// # Errors
 ///
-/// As [`positive_u64`], plus [`ConfigError::Invalid`] outside the range.
+/// As [`positive_u64`], plus [`RegionalHttpConfigError::Invalid`] outside the range.
 pub fn bounded_u64<L: Lookup + ?Sized>(
     lookup: &L,
     name: &'static str,
     min: u64,
     max: u64,
-) -> Result<u64, ConfigError> {
+) -> Result<u64, RegionalHttpConfigError> {
     let value = positive_u64(lookup, name)?;
     if value < min || value > max {
-        return Err(ConfigError::Invalid {
+        return Err(RegionalHttpConfigError::Invalid {
             name,
             reason: format!("expected {min}..={max}, got `{value}`"),
         });
@@ -167,9 +170,9 @@ pub fn bounded_usize<L: Lookup + ?Sized>(
     name: &'static str,
     min: u64,
     max: u64,
-) -> Result<usize, ConfigError> {
+) -> Result<usize, RegionalHttpConfigError> {
     let value = bounded_u64(lookup, name, min, max)?;
-    usize::try_from(value).map_err(|_| ConfigError::Invalid {
+    usize::try_from(value).map_err(|_| RegionalHttpConfigError::Invalid {
         name,
         reason: format!("`{value}` does not fit this host's address width"),
     })
@@ -187,13 +190,13 @@ pub fn bounded_usize<L: Lookup + ?Sized>(
 ///
 /// # Errors
 ///
-/// Returns [`ConfigError::Invalid`] for anything but `dev` or `prd`.
+/// Returns [`RegionalHttpConfigError::Invalid`] for anything but `dev` or `prd`.
 pub fn plane_name<L: Lookup + ?Sized>(
     lookup: &L,
     name: &'static str,
-) -> Result<Plane, ConfigError> {
+) -> Result<Plane, RegionalHttpConfigError> {
     let raw = required(lookup, name)?;
-    Plane::parse(&raw).ok_or_else(|| ConfigError::Invalid {
+    Plane::parse(&raw).ok_or_else(|| RegionalHttpConfigError::Invalid {
         name,
         reason: format!("expected `dev` or `prd`, got `{raw}`"),
     })
@@ -203,14 +206,17 @@ pub fn plane_name<L: Lookup + ?Sized>(
 ///
 /// # Errors
 ///
-/// Returns [`ConfigError::Invalid`] for a region outside the closed set.
-pub fn region<L: Lookup + ?Sized>(lookup: &L, name: &'static str) -> Result<Region, ConfigError> {
+/// Returns [`RegionalHttpConfigError::Invalid`] for a region outside the closed set.
+pub fn region<L: Lookup + ?Sized>(
+    lookup: &L,
+    name: &'static str,
+) -> Result<Region, RegionalHttpConfigError> {
     let raw = required(lookup, name)?;
     Region::ALL
         .iter()
         .copied()
         .find(|candidate| candidate.as_str() == raw)
-        .ok_or_else(|| ConfigError::Invalid {
+        .ok_or_else(|| RegionalHttpConfigError::Invalid {
             name,
             reason: format!("`{raw}` is not an enabled region"),
         })
@@ -225,26 +231,26 @@ pub fn region<L: Lookup + ?Sized>(lookup: &L, name: &'static str) -> Result<Regi
 ///
 /// # Errors
 ///
-/// Returns [`ConfigError::Invalid`] for a malformed `ARN` or a region mismatch.
+/// Returns [`RegionalHttpConfigError::Invalid`] for a malformed `ARN` or a region mismatch.
 pub fn arn_in_region<L: Lookup + ?Sized>(
     lookup: &L,
     name: &'static str,
     expected: Region,
     service: &'static str,
-) -> Result<Arn, ConfigError> {
+) -> Result<Arn, RegionalHttpConfigError> {
     let raw = required(lookup, name)?;
-    let arn = Arn::parse(&raw).map_err(|reason| ConfigError::Invalid {
+    let arn = Arn::parse(&raw).map_err(|reason| RegionalHttpConfigError::Invalid {
         name,
         reason: reason.to_owned(),
     })?;
     if arn.service != service {
-        return Err(ConfigError::Invalid {
+        return Err(RegionalHttpConfigError::Invalid {
             name,
             reason: format!("expected an `{service}` ARN, got `{}`", arn.service),
         });
     }
     if arn.region != expected.as_str() {
-        return Err(ConfigError::Invalid {
+        return Err(RegionalHttpConfigError::Invalid {
             name,
             reason: format!(
                 "resource is in `{}` but this process is bound to `{}`",
@@ -314,23 +320,23 @@ impl Arn {
 ///
 /// # Errors
 ///
-/// Returns [`ConfigError::Invalid`] for a malformed URL or a region mismatch.
+/// Returns [`RegionalHttpConfigError::Invalid`] for a malformed URL or a region mismatch.
 pub fn queue_url<L: Lookup + ?Sized>(
     lookup: &L,
     name: &'static str,
     expected: Region,
-) -> Result<String, ConfigError> {
+) -> Result<String, RegionalHttpConfigError> {
     let raw = required(lookup, name)?;
     let host = raw
         .strip_prefix("https://sqs.")
         .and_then(|rest| rest.split_once('.'))
         .map(|(region, _)| region)
-        .ok_or_else(|| ConfigError::Invalid {
+        .ok_or_else(|| RegionalHttpConfigError::Invalid {
             name,
             reason: format!("expected `https://sqs.<region>.amazonaws.com/...`, got `{raw}`"),
         })?;
     if host != expected.as_str() {
-        return Err(ConfigError::Invalid {
+        return Err(RegionalHttpConfigError::Invalid {
             name,
             reason: format!(
                 "queue is in `{host}` but this process is bound to `{}`",
@@ -345,17 +351,17 @@ pub fn queue_url<L: Lookup + ?Sized>(
 ///
 /// # Errors
 ///
-/// Returns [`ConfigError::Invalid`] for a value outside the set, naming the set.
+/// Returns [`RegionalHttpConfigError::Invalid`] for a value outside the set, naming the set.
 pub fn one_of<L: Lookup + ?Sized>(
     lookup: &L,
     name: &'static str,
     permitted: &[&'static str],
-) -> Result<String, ConfigError> {
+) -> Result<String, RegionalHttpConfigError> {
     let raw = required(lookup, name)?;
     if permitted.contains(&raw.as_str()) {
         Ok(raw)
     } else {
-        Err(ConfigError::Invalid {
+        Err(RegionalHttpConfigError::Invalid {
             name,
             reason: format!("expected one of {permitted:?}, got `{raw}`"),
         })

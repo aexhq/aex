@@ -22,7 +22,7 @@ use aex_regional_http::assertion::AuthFailure;
 use aex_regional_http::authz::{
     LambdaAssertionSource, ParameterStore, RegionalProjection, TrustError,
 };
-use aex_regional_http::config::ConfigError;
+use aex_regional_http::config::RegionalHttpConfigError;
 use aex_regional_http::edge::{EdgeBinding, RegionalEdge, SystemClock};
 use aex_session_dynamodb::stream_keys::SessionReadState;
 use aex_wire::dispatch::RequestLimits;
@@ -92,10 +92,10 @@ impl StreamRevalidator for EdgeRevalidator {
 
 /// Why `regional-stream` stopped.
 #[derive(Debug, thiserror::Error)]
-enum RunError {
+enum RegionalStreamRunError {
     /// Start-up configuration was rejected.
     #[error(transparent)]
-    Config(#[from] ConfigError),
+    Config(#[from] RegionalHttpConfigError),
     /// Cold-start trust material was unreadable or malformed.
     #[error(transparent)]
     Trust(#[from] TrustError),
@@ -159,7 +159,10 @@ async fn main() -> ExitCode {
     clippy::too_many_lines,
     reason = "the composition root deliberately keeps every probed authority, wake reader, quota and drain binding visible in one audit surface"
 )]
-async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Result<(), RunError> {
+async fn run(
+    config: &Config,
+    telemetry: &aex_platform_telemetry::Handle,
+) -> Result<(), RegionalStreamRunError> {
     telemetry.emit(
         aex_platform_telemetry::Record::event(
             aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
@@ -191,14 +194,14 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
     );
     Box::pin(reader.probe())
         .await
-        .map_err(|error| RunError::Probe(error.to_string()))?;
+        .map_err(|error| RegionalStreamRunError::Probe(error.to_string()))?;
     dynamodb
         .describe_table()
         .table_name(&config.session_table)
         .send()
         .await
         .map_err(|error| {
-            RunError::Probe(format!("`session-authority` is not readable: {error}"))
+            RegionalStreamRunError::Probe(format!("`session-authority` is not readable: {error}"))
         })?;
 
     let anchors = parameters
@@ -225,16 +228,20 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
     let wake_hub = WakeHub::default();
     let _wake_readers = if config.wake_mode == WakeMode::DdbStreams {
         let session = config.session_stream.as_ref().ok_or_else(|| {
-            RunError::Probe("ddb_streams mode omitted the session stream ARN".to_owned())
+            RegionalStreamRunError::Probe(
+                "ddb_streams mode omitted the session stream ARN".to_owned(),
+            )
         })?;
         let observation = config.observation_stream.as_ref().ok_or_else(|| {
-            RunError::Probe("ddb_streams mode omitted the observation stream ARN".to_owned())
+            RegionalStreamRunError::Probe(
+                "ddb_streams mode omitted the observation stream ARN".to_owned(),
+            )
         })?;
         let endpoint = config
             .dynamodb_streams_endpoint_url
             .as_ref()
             .ok_or_else(|| {
-                RunError::Probe(
+                RegionalStreamRunError::Probe(
                     "ddb_streams mode omitted the private DynamoDB Streams endpoint".to_owned(),
                 )
             })?;
@@ -265,7 +272,7 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
                 Arc::clone(&counters),
             )
             .await
-            .map_err(|error| RunError::Probe(error.to_string()))?,
+            .map_err(|error| RegionalStreamRunError::Probe(error.to_string()))?,
         )
     } else {
         None
@@ -299,7 +306,7 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
         observation: quota(config.max_connections_observation)?,
         per_workspace: quota(config.max_connections_per_workspace)?,
     })
-    .map_err(|error| RunError::Probe(error.to_string()))?;
+    .map_err(|error| RegionalStreamRunError::Probe(error.to_string()))?;
     let router = regional_stream::mount::router(Arc::new(AppState {
         edge,
         service: Arc::new(service),
@@ -312,7 +319,9 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
     let address = SocketAddr::from((Ipv6Addr::UNSPECIFIED, config.port));
     let listener = tokio::net::TcpListener::bind(address)
         .await
-        .map_err(|error| RunError::Listener(format!("cannot bind {address}: {error}")))?;
+        .map_err(|error| {
+            RegionalStreamRunError::Listener(format!("cannot bind {address}: {error}"))
+        })?;
     eprintln!(
         "regional-stream: listening on {address} wake={} tasks={}",
         config.wake_mode.as_str(),
@@ -328,7 +337,7 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
         .into_future();
     tokio::pin!(server);
     tokio::select! {
-        outcome = &mut server => outcome.map_err(|error| RunError::Listener(error.to_string())),
+        outcome = &mut server => outcome.map_err(|error| RegionalStreamRunError::Listener(error.to_string())),
         () = wait_for_termination() => {
             // Readiness and producer drain flip before the listener is asked to
             // stop. Existing streams emit `rotate` with their last sent cursor;
@@ -337,8 +346,8 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
             let _ = shutdown_tx.send(true);
             eprintln!("regional-stream: draining, deadline {} ms", deadline.as_millis());
             match tokio::time::timeout(deadline, &mut server).await {
-                Ok(outcome) => outcome.map_err(|error| RunError::Listener(error.to_string())),
-                Err(_) => Err(RunError::Listener(format!(
+                Ok(outcome) => outcome.map_err(|error| RegionalStreamRunError::Listener(error.to_string())),
+                Err(_) => Err(RegionalStreamRunError::Listener(format!(
                     "drain deadline of {} ms expired",
                     deadline.as_millis()
                 ))),
@@ -347,9 +356,10 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
     }
 }
 
-fn quota(value: u64) -> Result<u32, RunError> {
-    u32::try_from(value)
-        .map_err(|_| RunError::Probe(format!("connection quota `{value}` exceeds `u32`")))
+fn quota(value: u64) -> Result<u32, RegionalStreamRunError> {
+    u32::try_from(value).map_err(|_| {
+        RegionalStreamRunError::Probe(format!("connection quota `{value}` exceeds `u32`"))
+    })
 }
 
 fn build_edge(
@@ -357,7 +367,7 @@ fn build_edge(
     aws: &aws_config::SdkConfig,
     dynamodb: &aws_sdk_dynamodb::Client,
     anchors: aex_identity_domain::assertion::VerificationKeySet,
-) -> Result<Edge, RunError> {
+) -> Result<Edge, RegionalStreamRunError> {
     let projection = aex_session_dynamodb::projection::ProjectionReader::new(
         dynamodb.clone(),
         config.authz_projection_table.clone(),
@@ -379,7 +389,7 @@ fn build_edge(
             cache_budget_bytes: config.assertion_cache_bytes,
         },
     )
-    .map_err(RunError::Edge)
+    .map_err(RegionalStreamRunError::Edge)
 }
 
 /// Waits for the container runtime's stop signal.

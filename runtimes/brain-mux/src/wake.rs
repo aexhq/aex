@@ -1,6 +1,6 @@
 //! The composed wake loop, and the ports the composition itself owns.
 //!
-//! `aex_brain_application::activation` owns what an activation *means*. This module owns
+//! `aex_brain_app::activation` owns what an activation *means*. This module owns
 //! which adapter each port resolves to in a deployed task, and it is where an absent peer is
 //! named rather than papered over.
 //!
@@ -8,8 +8,8 @@
 //!
 //! | Port | Bound to | Note |
 //! | --- | --- | --- |
-//! | `WakeQueue` | `aex_brain_store_aws::SqsWakeQueue` | real, over the configured queue and the `regional-work` due index |
-//! | `JournalStore`, `EffectStore`, `LeaseStore` | `aex_brain_store_aws::BrainStore` | real; each claim derives tenant and deletion authority from its session head |
+//! | `WakeQueue` | `aex_brain_store_dynamodb::SqsWakeQueue` | real, over the configured queue and the `regional-work` due index |
+//! | `JournalStore`, `EffectStore`, `LeaseStore` | `aex_brain_store_dynamodb::BrainStore` | real; each claim derives tenant and deletion authority from its session head |
 //! | `FoldSnapshotStore` | `AwsFoldSnapshotStore` over the regional content bucket | immutable bodies and the monotonic pointer use the same session/content authorities as the activation |
 //! | `ToolPort` | injected production router | startup refuses unless all four coarse routes have concrete executors |
 //! | `ClockPort`, `IdPort` | this module | composition facts, not a peer's |
@@ -28,14 +28,12 @@
 //! are compiled into tests only.
 
 use crate::admission::{Admission, AdmissionOutcome};
-use aex_brain_application::activation::{
+use aex_brain_app::activation::{
     Activation, ActivationPolicy, AdmissionControl, AdmissionDecision, DispatchControl,
     DispatchDecision, DispatchLane, Ports, WakeLoop,
 };
-use aex_brain_application::kernel::{
-    ActivationRegistry, DrainGate, FoldCache, PermitKind, PermitSet,
-};
-use aex_brain_application::ports::{
+use aex_brain_app::kernel::{ActivationRegistry, DrainGate, FoldCache, PermitKind, PermitSet};
+use aex_brain_app::ports::{
     BoxFuture, CatalogPort, ClockPort, FoldSnapshotStore, HandsError, HandsPort, IdPort,
     ProviderPort, SteadyInstant, StoreError, ToolPort,
 };
@@ -50,7 +48,7 @@ use std::sync::Arc;
 // The fail-closed fixtures below are `#[cfg(test)]`, so the vocabulary only
 // they speak is too: none of these names may appear in the deployed build.
 #[cfg(test)]
-use aex_brain_application::ports::{
+use aex_brain_app::ports::{
     AgentHead, CancelToken, CatalogDigest, CatalogError, Claim, ClaimError, CommitError,
     CommitReceipt, DecisionContext, DispatchTicket, EffectStore, FenceGuard, JournalPage,
     JournalStore, LeaseStore, PreviewSink, ProviderDispatchError, ProviderOutcome, ReadBudget,
@@ -86,7 +84,7 @@ use aex_runtime_control_aws::worker::{Pace, RuntimeControl, RuntimePorts, Runtim
 /// claimed session. Keeping the refusal fixture proves an accidentally unbound store remains
 /// fail closed.
 #[cfg(test)]
-pub const STORE_UNBOUND: &str = "aex-brain-store-aws is not bound into this composition";
+pub const STORE_UNBOUND: &str = "aex-brain-store-dynamodb is not bound into this composition";
 
 /// Why verified fold snapshots would be refused, were they ever unbound.
 #[cfg(test)]
@@ -342,7 +340,7 @@ impl JournalStore for UnboundStore {
         _key: &'a AgentKey,
         _from: JournalSeq,
         _budget: ReadBudget,
-        _after: Option<aex_brain_application::ports::JournalCursor>,
+        _after: Option<aex_brain_app::ports::JournalCursor>,
     ) -> BoxFuture<'a, Result<JournalPage, StoreError>> {
         Box::pin(async { Err(Self::refusal()) })
     }
@@ -875,7 +873,7 @@ pub struct SnapshotBinding {
 /// Returns a store composition error when deployment placement is invalid.
 pub fn snapshot_binding(
     aws: &aws_config::SdkConfig,
-    tables: aex_brain_store_aws::BrainTables,
+    tables: aex_brain_store_dynamodb::BrainTables,
     binding: SnapshotBinding,
 ) -> Result<Arc<dyn FoldSnapshotStore>, StoreError> {
     let bodies = aex_content_aws::S3ContentObjects::new(
@@ -887,13 +885,15 @@ pub fn snapshot_binding(
         },
     );
     let context =
-        aex_brain_store_aws::SnapshotContentContext::new(&binding.plane, &binding.region)?;
-    Ok(Arc::new(aex_brain_store_aws::AwsFoldSnapshotStore::new(
-        aws_sdk_dynamodb::Client::new(aws),
-        tables,
-        bodies,
-        context,
-    )))
+        aex_brain_store_dynamodb::SnapshotContentContext::new(&binding.plane, &binding.region)?;
+    Ok(Arc::new(
+        aex_brain_store_dynamodb::AwsFoldSnapshotStore::new(
+            aws_sdk_dynamodb::Client::new(aws),
+            tables,
+            bodies,
+            context,
+        ),
+    ))
 }
 
 /// Real Hands ports sharing one runtime authority and one `MicroVM` client.
@@ -1018,9 +1018,9 @@ pub fn hands_binding(
 /// Real AWS clients shared by store, queue, provider custody, and KMS composition.
 pub struct AwsBindings {
     /// Session-authority store.
-    pub store: Arc<aex_brain_store_aws::BrainStore>,
+    pub store: Arc<aex_brain_store_dynamodb::BrainStore>,
     /// Wake delivery and due backstop.
-    pub queue: Arc<aex_brain_store_aws::SqsWakeQueue>,
+    pub queue: Arc<aex_brain_store_dynamodb::SqsWakeQueue>,
     /// The one SDK configuration all clients in this task derive from.
     pub sdk: aws_config::SdkConfig,
 }
@@ -1037,17 +1037,17 @@ pub async fn aws_bindings(
         .load()
         .await;
     let dynamodb = aws_sdk_dynamodb::Client::new(&aws);
-    let store = Arc::new(aex_brain_store_aws::BrainStore::new(
+    let store = Arc::new(aex_brain_store_dynamodb::BrainStore::new(
         dynamodb.clone(),
-        aex_brain_store_aws::BrainTables {
+        aex_brain_store_dynamodb::BrainTables {
             session_authority: session_table.to_owned(),
             regional_work: work_table.to_owned(),
         },
     ));
-    let queue = Arc::new(aex_brain_store_aws::SqsWakeQueue::new(
+    let queue = Arc::new(aex_brain_store_dynamodb::SqsWakeQueue::new(
         aws_sdk_sqs::Client::new(&aws),
         queue_url.to_owned(),
-        aex_brain_store_aws::DueScan::new(dynamodb, work_table.to_owned()),
+        aex_brain_store_dynamodb::DueScan::new(dynamodb, work_table.to_owned()),
     ));
     AwsBindings {
         store,
@@ -1078,7 +1078,7 @@ impl core::fmt::Debug for CredentialBindings {
 #[must_use]
 pub fn credential_bindings(
     aws: &aws_config::SdkConfig,
-    store: Arc<aex_brain_store_aws::BrainStore>,
+    store: Arc<aex_brain_store_dynamodb::BrainStore>,
     custody_table: &str,
     kms_key_arn: &str,
     plane: aex_secret_domain::context::Plane,
@@ -1124,8 +1124,8 @@ pub fn credential_bindings(
 /// Composes the store/queue authorities with fully supplied production peers.
 #[must_use]
 pub fn production_ports(
-    store: Arc<aex_brain_store_aws::BrainStore>,
-    wakes: Arc<dyn aex_brain_application::ports::WakeQueue>,
+    store: Arc<aex_brain_store_dynamodb::BrainStore>,
+    wakes: Arc<dyn aex_brain_app::ports::WakeQueue>,
     peers: ProductionPeers,
 ) -> Ports {
     Ports {
@@ -1190,11 +1190,11 @@ mod tests {
         STORE_UNBOUND, SystemClock, UnboundStore,
     };
     use crate::admission::{ActivationResources, Admission, AdmissionBounds};
-    use aex_brain_application::activation::{
+    use aex_brain_app::activation::{
         AdmissionControl, AdmissionDecision, DispatchControl, DispatchDecision, DispatchLane,
     };
-    use aex_brain_application::kernel::{DrainGate, PermitKind, PermitSet};
-    use aex_brain_application::ports::{
+    use aex_brain_app::kernel::{DrainGate, PermitKind, PermitSet};
+    use aex_brain_app::ports::{
         BoxFuture, CancelToken, CatalogPort, ClockPort, DetachedStatus, DispatchTicket, IdPort,
         JournalStore, LeaseStore, PreparedToolCall, StoreError, ToolDispatchError, ToolOutcome,
     };
@@ -1319,7 +1319,7 @@ mod tests {
     /// served, and would interrupt every run instead of failing it honestly.
     #[test]
     fn the_absent_provider_proves_nothing_was_sent() {
-        let ports: &dyn aex_brain_application::ports::ProviderPort = &AbsentProvider;
+        let ports: &dyn aex_brain_app::ports::ProviderPort = &AbsentProvider;
         let _ = ports;
         assert!(PROVIDER_ABSENT.contains("build-stamped adapter source identity"));
     }
@@ -1388,11 +1388,11 @@ mod tests {
         assert!(advertised.parallel_safe);
         assert!(matches!(
             tools.route(&pin, &ToolName::parse("wait").expect("name")),
-            Err(aex_brain_application::ports::ToolRoutingError::NotAdmitted { .. })
+            Err(aex_brain_app::ports::ToolRoutingError::NotAdmitted { .. })
         ));
         assert!(matches!(
             tools.route(&pin, &ToolName::parse("read_file").expect("name")),
-            Err(aex_brain_application::ports::ToolRoutingError::NotAdmitted { .. })
+            Err(aex_brain_app::ports::ToolRoutingError::NotAdmitted { .. })
         ));
     }
 

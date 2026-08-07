@@ -12,9 +12,9 @@
 //! of both ports.
 
 use aex_observation_domain::keys::{ControlDomain, control_pk, control_sk};
-use aex_observation_store_aws::composition::{Capability, Role, assert_grant};
-use aex_observation_store_aws::expressions::Index;
-use aex_observation_store_aws::health::Probe;
+use aex_observation_store_dynamodb::composition::{Capability, Role, assert_grant};
+use aex_observation_store_dynamodb::expressions::Index;
+use aex_observation_store_dynamodb::health::Probe;
 use aex_wire::ids::{ExportId, PrefixedId, Uuid7, WorkspaceId};
 use aex_wire::types::Timestamp;
 

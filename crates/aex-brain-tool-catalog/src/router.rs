@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use aex_brain_application::ports::{
+use aex_brain_app::ports::{
     BoxFuture, CancelToken, DetachedStatus, DispatchTicket, PreparedToolCall, ProviderFailureKind,
     RedactedDetail, ToolAdvertisement, ToolDispatchError, ToolOutcome, ToolPort, ToolRoute,
     ToolRoutingError,
@@ -398,7 +398,7 @@ pub enum RouterBuildError {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use aex_brain_application::ports::{
+    use aex_brain_app::ports::{
         BoxFuture, CancelToken, DetachedStatus, DispatchTicket, PreparedToolCall,
         ToolDispatchError, ToolOutcome, ToolPort as _, ToolResultBody, ToolRoutingError,
     };

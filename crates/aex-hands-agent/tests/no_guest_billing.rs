@@ -53,10 +53,10 @@ fn the_guest_links_no_crate_that_can_write_a_usage_authority() {
     let forbidden = [
         "aex-runtime-control",
         "aex-usage-domain",
-        "aex-usage-application",
-        "aex-usage-storage-aws",
-        "aex-usage-compute-aws",
-        "aex-usage-transfer-aws",
+        "aex-usage-app",
+        "aex-usage-storage-dynamodb",
+        "aex-usage-compute-dynamodb",
+        "aex-usage-transfer-dynamodb",
         "aex-usage-rating",
     ];
     let manifest = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))

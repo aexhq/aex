@@ -23,7 +23,7 @@ use aex_observation_export::{
     Completeness, ExportCheckpoint, ExportMember, Format, PartRecord, Publication, PublishFence,
     ResumeError,
 };
-use aex_observation_store_aws::expressions::{ExpressionBuilder, Index, PK, SK};
+use aex_observation_store_dynamodb::expressions::{ExpressionBuilder, Index, PK, SK};
 use aex_wire::ids::{ExportId, WorkspaceId};
 use aex_wire::types::Timestamp;
 use aws_sdk_dynamodb::types::AttributeValue;
@@ -983,7 +983,7 @@ mod tests {
     use aex_observation_export::{
         Completeness, ExportCheckpoint, ExportMember, Format, PartRecord,
     };
-    use aex_observation_store_aws::expressions::{PK, SK, is_safe_expression};
+    use aex_observation_store_dynamodb::expressions::{PK, SK, is_safe_expression};
     use aws_sdk_dynamodb::types::AttributeValue;
 
     use super::{
@@ -1088,7 +1088,7 @@ mod tests {
     fn every_condition_this_adapter_builds_carries_only_generated_placeholders() {
         // A customer string can never become a placeholder, because a caller
         // never writes one.
-        let mut builder = aex_observation_store_aws::expressions::ExpressionBuilder::new();
+        let mut builder = aex_observation_store_dynamodb::expressions::ExpressionBuilder::new();
         let state = builder.name("state");
         let generating = builder.string(STATE_GENERATING);
         assert!(is_safe_expression(&format!("{state} = {generating}")));

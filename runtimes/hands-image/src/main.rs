@@ -101,7 +101,7 @@ enum Command {
 
 /// Why `hands-image` stopped.
 #[derive(Debug, thiserror::Error)]
-enum RunError {
+enum HandsImageRunError {
     /// A variant name was not one of the five published variants.
     #[error("{0}")]
     Variant(String),
@@ -144,8 +144,8 @@ enum RunError {
 }
 
 /// Wraps an I/O error with the path that produced it.
-fn io_at(path: &Path) -> impl FnOnce(std::io::Error) -> RunError + use<'_> {
-    move |source| RunError::Io {
+fn io_at(path: &Path) -> impl FnOnce(std::io::Error) -> HandsImageRunError + use<'_> {
+    move |source| HandsImageRunError::Io {
         path: path.to_path_buf(),
         source,
     }
@@ -157,7 +157,7 @@ fn write_context(
     out: &Path,
     agent: &Path,
     agent_sbom: &Path,
-) -> Result<PathBuf, RunError> {
+) -> Result<PathBuf, HandsImageRunError> {
     let sbom = std::fs::read(agent_sbom).map_err(io_at(agent_sbom))?;
     write_context_bytes(variant, out, agent, &sbom)
 }
@@ -167,11 +167,11 @@ fn write_context_bytes(
     out: &Path,
     agent: &Path,
     agent_sbom: &[u8],
-) -> Result<PathBuf, RunError> {
+) -> Result<PathBuf, HandsImageRunError> {
     std::fs::create_dir_all(out).map_err(io_at(out))?;
     let mut existing = std::fs::read_dir(out).map_err(io_at(out))?;
     if existing.next().transpose().map_err(io_at(out))?.is_some() {
-        return Err(RunError::OutputNotEmpty(out.to_path_buf()));
+        return Err(HandsImageRunError::OutputNotEmpty(out.to_path_buf()));
     }
     let dockerfile = out.join("Dockerfile");
     std::fs::write(&dockerfile, build::containerfile(variant)).map_err(io_at(&dockerfile))?;
@@ -180,7 +180,7 @@ fn write_context_bytes(
     std::fs::write(&sbom_path, agent_sbom).map_err(io_at(&sbom_path))?;
     let registration_path = out.join(build::REGISTRATION_DESCRIPTOR_FILENAME);
     let registration = serde_json::to_vec(&build::registration_descriptor(variant))
-        .map_err(|error| RunError::Registration(error.to_string()))?;
+        .map_err(|error| HandsImageRunError::Registration(error.to_string()))?;
     std::fs::write(&registration_path, registration).map_err(io_at(&registration_path))?;
     Ok(dockerfile)
 }
@@ -189,7 +189,7 @@ fn target_root() -> PathBuf {
     std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| PathBuf::from("target"), PathBuf::from)
 }
 
-fn build_release_artifact(variant: &Variant, out: &Path) -> Result<PathBuf, RunError> {
+fn build_release_artifact(variant: &Variant, out: &Path) -> Result<PathBuf, HandsImageRunError> {
     let argv = [
         "zigbuild",
         "--locked",
@@ -202,9 +202,9 @@ fn build_release_artifact(variant: &Variant, out: &Path) -> Result<PathBuf, RunE
     let status = std::process::Command::new("cargo")
         .args(argv)
         .status()
-        .map_err(|error| RunError::ArtifactBuild(error.to_string()))?;
+        .map_err(|error| HandsImageRunError::ArtifactBuild(error.to_string()))?;
     if !status.success() {
-        return Err(RunError::ArtifactBuild(format!(
+        return Err(HandsImageRunError::ArtifactBuild(format!(
             "cargo {} exited with {status}",
             argv.join(" ")
         )));
@@ -214,19 +214,19 @@ fn build_release_artifact(variant: &Variant, out: &Path) -> Result<PathBuf, RunE
         .join("release")
         .join("hands-agent");
     if !agent.is_file() {
-        return Err(RunError::ArtifactBuild(format!(
+        return Err(HandsImageRunError::ArtifactBuild(format!(
             "the fixed guest output does not exist: {}",
             agent.display()
         )));
     }
     let manifest = Path::new("runtimes/hands-agent/Cargo.toml");
     let agent_sbom = sbom::generate(manifest, image::GUEST_TARGET)
-        .map_err(|error| RunError::Sbom(error.to_string()))?;
+        .map_err(|error| HandsImageRunError::Sbom(error.to_string()))?;
     write_context_bytes(variant, out, &agent, &agent_sbom)
 }
 
 /// Runs the whole tool.
-fn run(cli: &Cli) -> Result<(), RunError> {
+fn run(cli: &Cli) -> Result<(), HandsImageRunError> {
     match &cli.command {
         Command::Context {
             variant,
@@ -234,7 +234,7 @@ fn run(cli: &Cli) -> Result<(), RunError> {
             agent,
             agent_sbom,
         } => {
-            let variant = Variant::parse(variant).map_err(RunError::Variant)?;
+            let variant = Variant::parse(variant).map_err(HandsImageRunError::Variant)?;
             let written = write_context(&variant, out, agent, agent_sbom)?;
             println!("{}", written.display());
             for input in build::build_inputs(&variant) {
@@ -248,7 +248,7 @@ fn run(cli: &Cli) -> Result<(), RunError> {
             agent,
             agent_sbom,
         } => {
-            let variant = Variant::parse(variant).map_err(RunError::Variant)?;
+            let variant = Variant::parse(variant).map_err(HandsImageRunError::Variant)?;
             write_context(&variant, out, agent, agent_sbom)?;
             let status = std::process::Command::new("docker")
                 .args([
@@ -265,22 +265,24 @@ fn run(cli: &Cli) -> Result<(), RunError> {
                 .arg(out)
                 .env("SOURCE_DATE_EPOCH", build::SOURCE_DATE_EPOCH.to_string())
                 .status()
-                .map_err(|error| RunError::Build(error.to_string()))?;
+                .map_err(|error| HandsImageRunError::Build(error.to_string()))?;
             if status.success() {
                 println!("built {}", variant.tag());
                 Ok(())
             } else {
-                Err(RunError::Build(format!("docker exited with {status}")))
+                Err(HandsImageRunError::Build(format!(
+                    "docker exited with {status}"
+                )))
             }
         }
         Command::Artifact { variant, out } => {
-            let variant = Variant::parse(variant).map_err(RunError::Variant)?;
+            let variant = Variant::parse(variant).map_err(HandsImageRunError::Variant)?;
             let written = build_release_artifact(&variant, out)?;
             println!("{}", written.display());
             Ok(())
         }
         Command::Publish { variant, region } => {
-            let variant = Variant::parse(variant).map_err(RunError::Variant)?;
+            let variant = Variant::parse(variant).map_err(HandsImageRunError::Variant)?;
             let mut registration = build::registration_descriptor(&variant);
             registration.base_image_arn_template = registration
                 .base_image_arn_template
@@ -288,7 +290,7 @@ fn run(cli: &Cli) -> Result<(), RunError> {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&registration)
-                    .map_err(|error| RunError::Registration(error.to_string()))?
+                    .map_err(|error| HandsImageRunError::Registration(error.to_string()))?
             );
             Ok(())
         }
@@ -297,11 +299,11 @@ fn run(cli: &Cli) -> Result<(), RunError> {
 }
 
 /// The `/validate` build hook's decision, runnable off-VM.
-fn validate(lock: &Path, observed: &Path) -> Result<(), RunError> {
+fn validate(lock: &Path, observed: &Path) -> Result<(), HandsImageRunError> {
     {
         let encoded = std::fs::read_to_string(lock).map_err(io_at(lock))?;
-        let locked: image::ImageLock =
-            serde_json::from_str(&encoded).map_err(|error| RunError::Lock(error.to_string()))?;
+        let locked: image::ImageLock = serde_json::from_str(&encoded)
+            .map_err(|error| HandsImageRunError::Lock(error.to_string()))?;
         let listing = std::fs::read_to_string(observed).map_err(io_at(observed))?;
         let installed: Vec<String> = listing
             .lines()
@@ -311,7 +313,7 @@ fn validate(lock: &Path, observed: &Path) -> Result<(), RunError> {
             .collect();
         locked
             .validate()
-            .map_err(|reason| RunError::Lock(reason.to_owned()))?;
+            .map_err(|reason| HandsImageRunError::Lock(reason.to_owned()))?;
         match locked.compare(&installed) {
             verdict @ image::LockVerdict::Match => {
                 println!(
@@ -337,7 +339,7 @@ fn validate(lock: &Path, observed: &Path) -> Result<(), RunError> {
                 for nevra in &unexpected {
                     eprintln!("unexpected {nevra}");
                 }
-                Err(RunError::Drift {
+                Err(HandsImageRunError::Drift {
                     missing: missing.len(),
                     unexpected: unexpected.len(),
                 })
@@ -360,7 +362,7 @@ fn main() -> std::process::ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{Cli, Command, RunError, run, write_context};
+    use super::{Cli, Command, HandsImageRunError, run, write_context};
     use crate::build::Variant;
     use clap::Parser as _;
 
@@ -441,7 +443,7 @@ mod tests {
         std::fs::write(context.join("stale-secret"), b"must not be packaged").expect("stale file");
         assert!(matches!(
             write_context(&variant, &context, &agent, &sbom),
-            Err(RunError::OutputNotEmpty(path)) if path == context
+            Err(HandsImageRunError::OutputNotEmpty(path)) if path == context
         ));
     }
 
@@ -480,7 +482,7 @@ mod tests {
         assert!(
             matches!(
                 run(&cli),
-                Err(RunError::Drift {
+                Err(HandsImageRunError::Drift {
                     missing: 1,
                     unexpected: 1
                 })
@@ -504,7 +506,7 @@ mod tests {
             "--agent-sbom",
             &dir.path().join("missing-sbom").to_string_lossy(),
         ]);
-        assert!(matches!(run(&cli), Err(RunError::Variant(_))));
+        assert!(matches!(run(&cli), Err(HandsImageRunError::Variant(_))));
         assert!(
             !dir.path().join("context").exists(),
             "the arity is five and a sixth shape writes nothing at all"

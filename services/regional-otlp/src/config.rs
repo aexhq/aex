@@ -80,7 +80,7 @@ pub const PLANES: [&str; 2] = ["dev", "prd"];
 
 /// Why `regional-otlp` refused to start.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
-pub enum ConfigError {
+pub enum RegionalOtlpConfigError {
     /// A required variable was absent or empty.
     #[error("required environment variable `{name}` is missing")]
     Missing {
@@ -135,10 +135,10 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError::Missing`] when a required variable is absent or
-    /// empty, and [`ConfigError::Invalid`] when a variable is present but does
+    /// Returns [`RegionalOtlpConfigError::Missing`] when a required variable is absent or
+    /// empty, and [`RegionalOtlpConfigError::Invalid`] when a variable is present but does
     /// not parse or is outside its permitted range.
-    pub fn from_env() -> Result<Self, ConfigError> {
+    pub fn from_env() -> Result<Self, RegionalOtlpConfigError> {
         Self::from_lookup(|name| std::env::var(name).ok())
     }
 
@@ -150,7 +150,7 @@ impl Config {
     /// # Errors
     ///
     /// Identical to [`Config::from_env`].
-    pub fn from_lookup<F>(lookup: F) -> Result<Self, ConfigError>
+    pub fn from_lookup<F>(lookup: F) -> Result<Self, RegionalOtlpConfigError>
     where
         F: Fn(&str) -> Option<String>,
     {
@@ -159,16 +159,17 @@ impl Config {
         // the plane this process reports and the plane it will accept an
         // assertion for must be the same value.
         let plane = aex_identity_domain::assertion::Plane::parse(&raw_plane).ok_or_else(|| {
-            ConfigError::Invalid {
+            RegionalOtlpConfigError::Invalid {
                 name: PLANE_VAR,
                 reason: format!("expected one of {PLANES:?}, got `{raw_plane}`"),
             }
         })?;
         let raw_region = required(&lookup, REGION_VAR)?;
-        let region = Region::from_name(&raw_region).ok_or_else(|| ConfigError::Invalid {
-            name: REGION_VAR,
-            reason: format!("`{raw_region}` is not a regional plane region"),
-        })?;
+        let region =
+            Region::from_name(&raw_region).ok_or_else(|| RegionalOtlpConfigError::Invalid {
+                name: REGION_VAR,
+                reason: format!("`{raw_region}` is not a regional plane region"),
+            })?;
 
         let registered = OtlpLimits::REGISTERED;
         let encoded_max = bounded(&lookup, ENCODED_MAX_VAR, registered.encoded_max)?;
@@ -181,7 +182,7 @@ impl Config {
             ..registered
         };
         if encoded_max > decoded_max {
-            return Err(ConfigError::Invalid {
+            return Err(RegionalOtlpConfigError::Invalid {
                 name: ENCODED_MAX_VAR,
                 reason: format!(
                     "the encoded ceiling of {encoded_max} exceeds the decoded ceiling of \
@@ -192,7 +193,7 @@ impl Config {
 
         let memory_budget_bytes = positive(&lookup, MEMORY_BUDGET_VAR)?;
         if memory_budget_bytes < decoded_max {
-            return Err(ConfigError::Invalid {
+            return Err(RegionalOtlpConfigError::Invalid {
                 name: MEMORY_BUDGET_VAR,
                 reason: format!(
                     "a budget of {memory_budget_bytes} bytes cannot cover one \
@@ -214,7 +215,7 @@ impl Config {
             memory_budget_bytes,
             reserve_wait: Duration::from_millis(reserve_wait_ms as u64),
             reserved_concurrency: u32::try_from(reserved_concurrency).map_err(|_| {
-                ConfigError::Invalid {
+                RegionalOtlpConfigError::Invalid {
                     name: RESERVED_CONCURRENCY_VAR,
                     reason: "reserved concurrency does not fit a 32-bit count".to_owned(),
                 }
@@ -259,28 +260,30 @@ impl Config {
 }
 
 /// Reads a required, non-blank variable.
-fn required<F>(lookup: &F, name: &'static str) -> Result<String, ConfigError>
+fn required<F>(lookup: &F, name: &'static str) -> Result<String, RegionalOtlpConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     match lookup(name) {
         Some(value) if !value.trim().is_empty() => Ok(value),
-        _ => Err(ConfigError::Missing { name }),
+        _ => Err(RegionalOtlpConfigError::Missing { name }),
     }
 }
 
 /// Reads a required, strictly positive count.
-fn positive<F>(lookup: &F, name: &'static str) -> Result<usize, ConfigError>
+fn positive<F>(lookup: &F, name: &'static str) -> Result<usize, RegionalOtlpConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     let raw = required(lookup, name)?;
-    let value = raw.parse::<usize>().map_err(|error| ConfigError::Invalid {
-        name,
-        reason: format!("expected a positive integer, got `{raw}`: {error}"),
-    })?;
+    let value = raw
+        .parse::<usize>()
+        .map_err(|error| RegionalOtlpConfigError::Invalid {
+            name,
+            reason: format!("expected a positive integer, got `{raw}`: {error}"),
+        })?;
     if value == 0 {
-        return Err(ConfigError::Invalid {
+        return Err(RegionalOtlpConfigError::Invalid {
             name,
             reason: "expected a positive integer, got `0`".to_owned(),
         });
@@ -289,13 +292,17 @@ where
 }
 
 /// Reads a positive count that may not exceed the registered ceiling.
-fn bounded<F>(lookup: &F, name: &'static str, ceiling: usize) -> Result<usize, ConfigError>
+fn bounded<F>(
+    lookup: &F,
+    name: &'static str,
+    ceiling: usize,
+) -> Result<usize, RegionalOtlpConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     let value = positive(lookup, name)?;
     if value > ceiling {
-        return Err(ConfigError::Invalid {
+        return Err(RegionalOtlpConfigError::Invalid {
             name,
             reason: format!(
                 "{value} exceeds the registered ceiling of {ceiling}; the registry is the \
@@ -312,10 +319,10 @@ mod tests {
 
     use super::{
         ASSERTION_CACHE_BYTES_VAR, AUTHZ_FUNCTION_ARN_VAR, AUTHZ_PROJECTION_TABLE_VAR,
-        AUTHZ_VERIFY_KEYS_PARAM_VAR, Config, ConfigError, DECODED_MAX_VAR, ENCODED_MAX_VAR,
-        MAX_RECORDS_VAR, MEMORY_BUDGET_VAR, OBSERVATION_BUCKET_VAR, OBSERVATION_TABLE_VAR,
-        PLANE_VAR, REDACTION_KEY_REF_VAR, REGION_VAR, REQUIRED_VARS, RESERVE_WAIT_VAR,
-        RESERVED_CONCURRENCY_VAR, SECRET_CUSTODY_TABLE_VAR,
+        AUTHZ_VERIFY_KEYS_PARAM_VAR, Config, DECODED_MAX_VAR, ENCODED_MAX_VAR, MAX_RECORDS_VAR,
+        MEMORY_BUDGET_VAR, OBSERVATION_BUCKET_VAR, OBSERVATION_TABLE_VAR, PLANE_VAR,
+        REDACTION_KEY_REF_VAR, REGION_VAR, REQUIRED_VARS, RESERVE_WAIT_VAR,
+        RESERVED_CONCURRENCY_VAR, RegionalOtlpConfigError, SECRET_CUSTODY_TABLE_VAR,
     };
 
     fn complete() -> BTreeMap<&'static str, String> {
@@ -354,7 +361,7 @@ mod tests {
         ])
     }
 
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
+    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, RegionalOtlpConfigError> {
         Config::from_lookup(|name| vars.get(name).cloned())
     }
 
@@ -380,7 +387,7 @@ mod tests {
             vars.remove(*name);
             assert_eq!(
                 read(&vars),
-                Err(ConfigError::Missing { name }),
+                Err(RegionalOtlpConfigError::Missing { name }),
                 "removing {name}"
             );
         }
@@ -401,7 +408,7 @@ mod tests {
         vars.insert(OBSERVATION_TABLE_VAR, "   ".to_owned());
         assert_eq!(
             read(&vars),
-            Err(ConfigError::Missing {
+            Err(RegionalOtlpConfigError::Missing {
                 name: OBSERVATION_TABLE_VAR
             })
         );
@@ -415,7 +422,7 @@ mod tests {
         assert!(
             matches!(
                 error,
-                ConfigError::Invalid {
+                RegionalOtlpConfigError::Invalid {
                     name: ENCODED_MAX_VAR,
                     ..
                 }
@@ -430,7 +437,7 @@ mod tests {
         vars.insert(MAX_RECORDS_VAR, "2001".to_owned());
         assert!(matches!(
             read(&vars),
-            Err(ConfigError::Invalid {
+            Err(RegionalOtlpConfigError::Invalid {
                 name: MAX_RECORDS_VAR,
                 ..
             })
@@ -443,7 +450,7 @@ mod tests {
         vars.insert(MEMORY_BUDGET_VAR, (1024 * 1024).to_string());
         assert!(matches!(
             read(&vars),
-            Err(ConfigError::Invalid {
+            Err(RegionalOtlpConfigError::Invalid {
                 name: MEMORY_BUDGET_VAR,
                 ..
             })
@@ -456,7 +463,7 @@ mod tests {
         vars.insert(PLANE_VAR, "staging".to_owned());
         assert!(matches!(
             read(&vars),
-            Err(ConfigError::Invalid {
+            Err(RegionalOtlpConfigError::Invalid {
                 name: PLANE_VAR,
                 ..
             })
@@ -465,7 +472,7 @@ mod tests {
         vars.insert(REGION_VAR, "eu-central-9".to_owned());
         assert!(matches!(
             read(&vars),
-            Err(ConfigError::Invalid {
+            Err(RegionalOtlpConfigError::Invalid {
                 name: REGION_VAR,
                 ..
             })

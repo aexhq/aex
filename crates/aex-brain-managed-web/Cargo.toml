@@ -1,6 +1,7 @@
 [package]
 name = "aex-brain-managed-web"
 version = "0.1.0"
+description = "`aex-brain-managed-web` owns the Brain-managed network tool adapter: bounded fetch and search with `URL`, redirect, `DNS`, size, media-type and timeout guards."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -30,7 +31,7 @@ integration = "integration"
 [package.metadata.aex.not_applicable]
 
 [dependencies]
-aex-brain-application = { path = "../aex-brain-application" }
+aex-brain-app = { path = "../aex-brain-app" }
 aex-brain-domain = { path = "../aex-brain-domain" }
 aex-brain-tool-catalog = { path = "../aex-brain-tool-catalog" }
 aex-model-catalog = { path = "../aex-model-catalog" }

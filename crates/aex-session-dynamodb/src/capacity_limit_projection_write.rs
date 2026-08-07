@@ -15,10 +15,9 @@ use aws_sdk_dynamodb::Client;
 use crate::attr::{Item, ItemBuilder, n, s, stamp};
 use crate::error::{Idempotence, Resolution, StoreError, classify};
 use crate::plan::Participant;
-use crate::projection::{WORKSPACE_EDGE_LIMITS, edge_limits_key};
 use crate::projection_limit::{
-    WORKSPACE_LIMIT, WORKSPACE_LIMIT_BUNDLE, WORKSPACE_LIMIT_BUNDLE_HEAD, decode_limit_at,
-    limit_bundle_head_key, limit_bundle_key, limit_key,
+    WORKSPACE_EDGE_LIMITS, WORKSPACE_LIMIT, WORKSPACE_LIMIT_BUNDLE, WORKSPACE_LIMIT_BUNDLE_HEAD,
+    decode_limit_at, edge_limits_key, limit_bundle_head_key, limit_bundle_key, limit_key,
 };
 use crate::wire_pending::{EdgeLimits, ProjectedWorkspaceLimit};
 

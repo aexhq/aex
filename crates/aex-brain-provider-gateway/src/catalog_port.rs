@@ -4,7 +4,7 @@
 //! authority. The hot path is a synchronous `BTreeMap` lookup and cannot reach
 //! a network, filesystem or mutable tenant/process authority.
 
-use aex_brain_application::ports::{CatalogError, CatalogPort};
+use aex_brain_app::ports::{CatalogError, CatalogPort};
 use aex_brain_domain::ids::{CatalogPin, ModelSlug};
 pub use aex_model_catalog::collection::{
     CATALOG_COLLECTION_SCHEMA, CatalogArtifact, CatalogCollection, CatalogCollectionError,
@@ -159,7 +159,7 @@ mod tests {
         CATALOG_COLLECTION_SCHEMA, CatalogArtifact, CatalogArtifactError, CatalogCollection,
         MAX_CATALOG_COLLECTION_BYTES, MAX_CATALOG_REVISIONS, VerifiedCatalogPort,
     };
-    use aex_brain_application::ports::CatalogPort;
+    use aex_brain_app::ports::CatalogPort;
     use aex_brain_domain::ids::CatalogPin;
     use aex_model_catalog::CatalogCollectionError;
     use aex_model_catalog::document::{CapabilitySet, CatalogDigest};

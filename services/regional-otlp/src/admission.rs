@@ -28,7 +28,7 @@ use aws_sdk_dynamodb::types::AttributeValue;
 
 use crate::authority::{AdmissionAuthority, AdmissionRequest, AuthorityError, PreparedObservation};
 use crate::counters::{AdmissionCounter, AdmissionTelemetry};
-use aex_observation_store_aws::spool::GateState;
+use aex_observation_store_dynamodb::spool::GateState;
 use aex_regional_http::context::RequestContext as EdgeContext;
 
 /// The header naming the session an in-guest collector is emitting for.

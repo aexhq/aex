@@ -75,7 +75,7 @@ impl ProviderFailureKind {
 
     /// The single translation site onto plan 07's four port-facing classes.
     ///
-    /// `TODO(cross-stream)`: `aex-brain-application` landed with the four classes
+    /// `TODO(cross-stream)`: `aex-brain-app` landed with the four classes
     /// rather than these fifteen kinds, so this function is still the only place
     /// the mapping exists.
     #[must_use]

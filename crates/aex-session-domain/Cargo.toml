@@ -1,6 +1,7 @@
 [package]
 name = "aex-session-domain"
 version = "0.1.0"
+description = "`aex-session-domain` owns the pure session, run, agent and journal model: fold order, lineage, the terminal barrier and idempotency."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

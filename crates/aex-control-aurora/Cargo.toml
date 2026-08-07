@@ -1,6 +1,7 @@
 [package]
 name = "aex-control-aurora"
 version = "0.1.0"
+description = "`aex-control-aurora` is the schema-owned SQL for the control plane."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

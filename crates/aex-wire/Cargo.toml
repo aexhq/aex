@@ -1,6 +1,7 @@
 [package]
 name = "aex-wire"
 version = "0.1.0"
+description = "`aex-wire` is the public v1 wire vocabulary: validated identifier newtypes, the closed error vocabulary, the request and response models, the route registry, and their deterministic codecs."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

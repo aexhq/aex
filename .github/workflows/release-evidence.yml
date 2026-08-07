@@ -203,7 +203,7 @@ jobs:
           sed -n 's/^matrix=//p' "$RUN_ROOT/scenario.outputs" > "$RUN_ROOT/scenario-matrix.json"
           bun scripts/cicd/release-evidence.mjs matrix --file "$RUN_ROOT/scenario-matrix.json"
           AEX_RELEASE_EVIDENCE_MODE=inventory \
-            bun test apps/user-tests/test/live > "$RUN_ROOT/user/list.txt"
+            bun test apps/user-tests/test/live > "$RUN_ROOT/user/list.txt" 2>&1
           bun -e 'import { USER_SCENARIOS } from "./apps/user-tests/scenarios.ts";
             console.log(JSON.stringify(USER_SCENARIOS.filter((row) => row.suite === "live").map((row) => row.id)))' \
             > "$RUN_ROOT/user/live-ids.json"

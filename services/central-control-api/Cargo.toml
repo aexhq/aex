@@ -1,6 +1,7 @@
 [package]
 name = "central-control-api"
 version = "0.1.0"
+description = "`central-control-api` composition root (Rust Lambda ZIP)."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -36,7 +37,7 @@ path = "src/main.rs"
 
 [dependencies]
 aex-central-http = { path = "../../crates/aex-central-http" }
-aex-central-runtime = { path = "../../crates/aex-central-runtime" }
+aex-central-aws = { path = "../../crates/aex-central-aws" }
 aex-control-app = { path = "../../crates/aex-control-app" }
 aex-control-aurora = { path = "../../crates/aex-control-aurora" }
 aex-control-domain = { path = "../../crates/aex-control-domain" }

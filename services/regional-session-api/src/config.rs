@@ -6,7 +6,8 @@
 //! then silently writes a tenant's data outside its declared residency.
 
 use aex_regional_http::config::{
-    Arn, ConfigError, Lookup, arn_in_region, bounded_usize, forbidden, plane_name, region, required,
+    Arn, Lookup, RegionalHttpConfigError, arn_in_region, bounded_usize, forbidden, plane_name,
+    region, required,
 };
 use aex_wire::types::{HttpsUrl, Region};
 
@@ -159,8 +160,8 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// Returns the first [`ConfigError`], naming the offending variable.
-    pub fn from_env() -> Result<Self, ConfigError> {
+    /// Returns the first [`RegionalHttpConfigError`], naming the offending variable.
+    pub fn from_env() -> Result<Self, RegionalHttpConfigError> {
         Self::read(&aex_regional_http::config::Environment)
     }
 
@@ -169,7 +170,7 @@ impl Config {
     /// # Errors
     ///
     /// Identical to [`Config::from_env`].
-    pub fn read<L: Lookup + ?Sized>(lookup: &L) -> Result<Self, ConfigError> {
+    pub fn read<L: Lookup + ?Sized>(lookup: &L) -> Result<Self, RegionalHttpConfigError> {
         for (name, reason) in FORBIDDEN {
             forbidden(lookup, name, DEPLOYABLE, reason)?;
         }
@@ -177,7 +178,7 @@ impl Config {
         let region = region(lookup, REGION)?;
         let regional_api_url =
             HttpsUrl::parse(&required(lookup, REGIONAL_API_URL)?).map_err(|error| {
-                ConfigError::Invalid {
+                RegionalHttpConfigError::Invalid {
                     name: REGIONAL_API_URL,
                     reason: error.to_string(),
                 }
@@ -185,7 +186,7 @@ impl Config {
         let content_kms_key = arn_in_region(lookup, CONTENT_KMS_KEY_ARN, region, "kms")?;
         let content_bucket_owner = required(lookup, CONTENT_BUCKET_OWNER)?;
         if content_bucket_owner != content_kms_key.account {
-            return Err(ConfigError::Invalid {
+            return Err(RegionalHttpConfigError::Invalid {
                 name: CONTENT_BUCKET_OWNER,
                 reason: format!(
                     "bucket owner `{content_bucket_owner}` differs from the content key account `{}`",

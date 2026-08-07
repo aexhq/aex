@@ -1,0 +1,62 @@
+[package]
+name = "aex-brain-app"
+version = "0.1.0"
+description = "`aex-brain-app` owns activation and effect orchestration ports: park/wake, provider ambiguity, cancellation and the pressure policy."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[package.metadata.aex]
+owner = "brain-core"
+role = "application"
+artifact = "none"
+layers = ["unit"]
+concerns = ["property", "fault"]
+seams = []
+security_tier = "internal"
+risk = ["concurrency"]
+scenarios = []
+
+[package.metadata.aex.targets]
+concurrency = "unit"
+ports = "unit"
+
+[package.metadata.aex.not_applicable]
+live_suite = "application crate; its ports are exercised through its deployable's companion"
+
+[features]
+# Swaps the kernel's synchronization shim for Loom's model-checking primitives. Off in
+# every normal build; the concurrency lane turns it on.
+loom = ["dep:loom"]
+# Publishes the in-memory ports of `activation::memory` so the composition root asserts its
+# wiring against the same fixtures the engine is asserted against. Off in every shipped
+# build; only a `[dev-dependencies]` entry turns it on.
+testing = []
+
+[dependencies]
+futures.workspace = true
+aex-brain-domain = { path = "../aex-brain-domain" }
+aex-model-catalog = { path = "../aex-model-catalog" }
+aex-wire = { path = "../aex-wire" }
+loom = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+aex-brain-test-support = { path = "../aex-brain-test-support" }
+
+[[test]]
+name = "concurrency"
+path = "tests/concurrency.rs"
+
+[[test]]
+name = "ports"
+path = "tests/ports.rs"

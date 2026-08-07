@@ -1,6 +1,7 @@
 [package]
 name = "aex-content-dynamodb"
 version = "0.1.0"
+description = "`aex-content-dynamodb` owns the `regional-content` table adapter: body descriptors, inline ciphertext bodies, Merkle pages, root and body pins, download grants, the garbage-collection epoch and its candidates."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

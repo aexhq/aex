@@ -1,7 +1,7 @@
 //! The composed loop: one turn end to end, the drain order, and A11-MUX through the
 //! composition.
 //!
-//! The engine's own crash boundaries are asserted in `aex_brain_application::activation`.
+//! The engine's own crash boundaries are asserted in `aex_brain_app::activation`.
 //! What this module asserts is that the *composition* preserves them: the same in-memory
 //! ports are used here, so a divergence between what the engine promises and what the mux
 //! wires it to shows up as a failure rather than as a difference nobody compared.
@@ -10,15 +10,13 @@ use crate::admission::{ActivationResources, Admission, AdmissionBounds};
 use crate::drain::Stage;
 use crate::measure::Measurement;
 use crate::wake::{BindingState, Bindings, MuxAdmission};
-use aex_brain_application::activation::memory::{
+use aex_brain_app::activation::memory::{
     AbsentHands, CountingIds, FixedCatalog, FixedClock, MemoryQueue, MemoryStore, ProviderScript,
     Recorder, ScriptedProvider, ScriptedTools, wake_for,
 };
-use aex_brain_application::activation::{
-    Activation, ActivationPolicy, Outcome, Ports, Stop, WakeLoop,
-};
-use aex_brain_application::kernel::{ActivationRegistry, DrainGate, PermitKind, PermitSet};
-use aex_brain_application::ports::{
+use aex_brain_app::activation::{Activation, ActivationPolicy, Outcome, Ports, Stop, WakeLoop};
+use aex_brain_app::kernel::{ActivationRegistry, DrainGate, PermitKind, PermitSet};
+use aex_brain_app::ports::{
     BoxFuture, CancelToken, ClockPort, DispatchTicket, PreviewSink, ProviderDispatchError,
     ProviderOutcome, ProviderPort, SteadyInstant, StreamBudget, UnknownResolution, WakeQueue as _,
 };
@@ -35,7 +33,7 @@ use aex_brain_domain::wire_pending::{
 use aex_model_catalog::canonical::{CredentialBindingRef, ProviderReceipt, ReceiptBounds, seal};
 use aex_model_catalog::document::CapabilitySet;
 use aex_model_catalog::{BoundedString, QualifiedModel, fixture};
-use aex_usage_application::probe::{
+use aex_usage_app::probe::{
     ActivationKey, ActivationScoped, CpuInstant, PhysicalCpuSource, ProbeContext, ProbeError,
     ThreadCpuClock,
 };
@@ -911,8 +909,8 @@ async fn time_pending_on_the_provider_creates_no_compute_fact_through_the_loop()
     let measurement = Measurement::new(1 << 20, 1 << 17, Arc::new(ScriptedPhysical))
         .expect("the envelope leaves grantable bytes")
         .with_clocks(Arc::clone(&cpu) as Arc<_>, {
-            let wall: Arc<dyn aex_usage_application::probe::WallClock> =
-                Arc::new(aex_usage_application::probe::SystemWallClock);
+            let wall: Arc<dyn aex_usage_app::probe::WallClock> =
+                Arc::new(aex_usage_app::probe::SystemWallClock);
             wall
         });
     let meter = measurement.activation(activation_key(), probe_context(), Attribution::default());

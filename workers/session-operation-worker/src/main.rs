@@ -11,7 +11,7 @@
 
 use std::process::ExitCode;
 
-use aex_regional_http::config::ConfigError;
+use aex_regional_http::config::RegionalHttpConfigError;
 use aex_session_dynamodb::paging::PageBudget;
 use aex_wire::types::Timestamp;
 use aws_lambda_events::event::sqs::{BatchItemFailure, SqsBatchResponse, SqsEvent};
@@ -36,10 +36,10 @@ struct ShardOutcome {
 
 /// Why `session-operation-worker` stopped.
 #[derive(Debug, thiserror::Error)]
-enum RunError {
+enum SessionOperationWorkerRunError {
     /// Start-up configuration was rejected.
     #[error(transparent)]
-    Config(#[from] ConfigError),
+    Config(#[from] RegionalHttpConfigError),
     /// The Lambda runtime stopped.
     #[error("the lambda runtime stopped: {0}")]
     Runtime(String),
@@ -75,7 +75,10 @@ async fn main() -> ExitCode {
 }
 
 /// Builds the real adapters and serves both triggers.
-async fn run(config: Config, telemetry: &aex_platform_telemetry::Handle) -> Result<(), RunError> {
+async fn run(
+    config: Config,
+    telemetry: &aex_platform_telemetry::Handle,
+) -> Result<(), SessionOperationWorkerRunError> {
     telemetry.emit(
         aex_platform_telemetry::Record::event(
             aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
@@ -93,14 +96,14 @@ async fn run(config: Config, telemetry: &aex_platform_telemetry::Handle) -> Resu
     let aws = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
     let dynamodb = aws_sdk_dynamodb::Client::new(&aws);
     let worker = Worker::new(&config, &dynamodb)
-        .map_err(|error| RunError::Composition(error.to_string()))?;
+        .map_err(|error| SessionOperationWorkerRunError::Composition(error.to_string()))?;
 
     lambda_runtime::run(service_fn(move |event: LambdaEvent<serde_json::Value>| {
         let worker = worker.clone();
         async move { worker.handle(event.payload).await }
     }))
     .await
-    .map_err(|error: LambdaError| RunError::Runtime(error.to_string()))
+    .map_err(|error: LambdaError| SessionOperationWorkerRunError::Runtime(error.to_string()))
 }
 
 /// The composed operation-reconciliation slice.

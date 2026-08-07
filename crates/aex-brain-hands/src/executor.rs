@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use aex_brain_application::ports::{
+use aex_brain_app::ports::{
     BoxFuture, CancelToken, DetachedStatus, DispatchTicket, HandsError, HandsOperationStart,
     HandsOperationStatus, HandsPort, HandsResult, PreparedToolCall, ProviderFailureClass,
     ProviderFailureKind, RedactedDetail, ResultBounds, ToolDispatchError, ToolOutcome,
@@ -433,7 +433,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::{HandsToolExecutor, decode_detached, operation_for};
-    use aex_brain_application::ports::{
+    use aex_brain_app::ports::{
         BoxFuture, CancelToken, ControlStateView, DetachedStatus, DispatchTicket, FenceGuard,
         HandsAccepted, HandsEndpoint, HandsError, HandsOperationStart, HandsOperationStatus,
         HandsPort, HandsResult, PreparedToolCall, ResultBounds, ToolOutcome, ToolResultBody,

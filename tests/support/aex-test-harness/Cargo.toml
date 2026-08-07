@@ -1,6 +1,7 @@
 [package]
 name = "aex-test-harness"
 version = "0.1.0"
+description = "The one shared substrate for every AEX test run that touches something it must later clean up."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

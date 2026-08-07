@@ -8,7 +8,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use aex_brain_application::ports::{
+use aex_brain_app::ports::{
     BoxFuture, CancelToken, DetachedStatus, DispatchTicket, PreparedToolCall, ProviderFailureKind,
     RedactedDetail, ToolDispatchError, ToolOutcome, ToolResultBody,
 };
@@ -406,7 +406,7 @@ fn dispatch_error(
 mod tests {
     use std::sync::Arc;
 
-    use aex_brain_application::ports::{
+    use aex_brain_app::ports::{
         CancelToken, ControlStateView, DispatchTicket, FenceGuard, PreparedToolCall, ToolOutcome,
         ToolRoute,
     };
@@ -433,7 +433,7 @@ mod tests {
         fn fetch<'a>(
             &'a self,
             request: FetchRequest<'a>,
-        ) -> aex_brain_application::ports::BoxFuture<'a, Result<FetchDocument, ManagedWebCallError>>
+        ) -> aex_brain_app::ports::BoxFuture<'a, Result<FetchDocument, ManagedWebCallError>>
         {
             Box::pin(async move {
                 Ok(FetchDocument {
@@ -456,7 +456,7 @@ mod tests {
             &'a self,
             request: WebSearchRequest<'a>,
             credential: &'a WebSearchCredential,
-        ) -> aex_brain_application::ports::BoxFuture<'a, Result<WebSearchResult, ManagedWebCallError>>
+        ) -> aex_brain_app::ports::BoxFuture<'a, Result<WebSearchResult, ManagedWebCallError>>
         {
             Box::pin(async move {
                 Ok(WebSearchResult {
@@ -476,10 +476,8 @@ mod tests {
         fn resolve<'a>(
             &'a self,
             _ticket: &'a DispatchTicket,
-        ) -> aex_brain_application::ports::BoxFuture<
-            'a,
-            Result<WebSearchCredential, CredentialSourceError>,
-        > {
+        ) -> aex_brain_app::ports::BoxFuture<'a, Result<WebSearchCredential, CredentialSourceError>>
+        {
             Box::pin(async {
                 WebSearchCredential::parse(br#"{"provider":"brave","apiKey":"test-key"}"#)
                     .map_err(|_| CredentialSourceError::Malformed)

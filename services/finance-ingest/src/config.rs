@@ -63,7 +63,7 @@ pub struct Config {
 
 /// Why `finance-ingest` refused to start.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ConfigError {
+pub enum FinanceIngestConfigError {
     /// A required variable was absent or blank.
     #[error("required environment variable `{name}` is missing")]
     Missing {
@@ -85,9 +85,9 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError::Missing`] naming the first absent or blank
-    /// variable and [`ConfigError::Invalid`] naming the first unusable one.
-    pub fn from_env() -> Result<Self, ConfigError> {
+    /// Returns [`FinanceIngestConfigError::Missing`] naming the first absent or blank
+    /// variable and [`FinanceIngestConfigError::Invalid`] naming the first unusable one.
+    pub fn from_env() -> Result<Self, FinanceIngestConfigError> {
         Self::from_lookup(|name| std::env::var(name).ok())
     }
 
@@ -96,13 +96,13 @@ impl Config {
     /// # Errors
     ///
     /// Identical to [`Config::from_env`].
-    pub fn from_lookup<F>(lookup: F) -> Result<Self, ConfigError>
+    pub fn from_lookup<F>(lookup: F) -> Result<Self, FinanceIngestConfigError>
     where
         F: Fn(&str) -> Option<String>,
     {
         let plane = required(&lookup, PLANE_VAR)?;
         if !PLANES.contains(&plane.as_str()) {
-            return Err(ConfigError::Invalid {
+            return Err(FinanceIngestConfigError::Invalid {
                 name: PLANE_VAR,
                 reason: format!("expected one of {PLANES:?}, got `{plane}`"),
             });
@@ -116,7 +116,7 @@ impl Config {
             .map_err(|error| invalid(DATABASE_NAME_VAR, &error))?;
         let database_role = required(&lookup, DATABASE_ROLE_VAR)?;
         if database_role != REQUIRED_ROLE {
-            return Err(ConfigError::Invalid {
+            return Err(FinanceIngestConfigError::Invalid {
                 name: DATABASE_ROLE_VAR,
                 reason: format!("expected `{REQUIRED_ROLE}`, got `{database_role}`"),
             });
@@ -127,7 +127,7 @@ impl Config {
             .parse::<u64>()
             .ok()
             .filter(|value| *value > 0)
-            .ok_or_else(|| ConfigError::Invalid {
+            .ok_or_else(|| FinanceIngestConfigError::Invalid {
                 name: TX_DEADLINE_VAR,
                 reason: format!("expected a positive integer, got `{deadline_ms}`"),
             })?;
@@ -148,19 +148,19 @@ impl Config {
 }
 
 /// Reads a variable, treating blank as absent.
-fn required<F>(lookup: &F, name: &'static str) -> Result<String, ConfigError>
+fn required<F>(lookup: &F, name: &'static str) -> Result<String, FinanceIngestConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     match lookup(name) {
         Some(value) if !value.trim().is_empty() => Ok(value.trim().to_owned()),
-        _ => Err(ConfigError::Missing { name }),
+        _ => Err(FinanceIngestConfigError::Missing { name }),
     }
 }
 
 /// Renders a peer validation failure as this deployable's own refusal.
-fn invalid(name: &'static str, error: &impl std::fmt::Display) -> ConfigError {
-    ConfigError::Invalid {
+fn invalid(name: &'static str, error: &impl std::fmt::Display) -> FinanceIngestConfigError {
+    FinanceIngestConfigError::Invalid {
         name,
         reason: error.to_string(),
     }
@@ -171,7 +171,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        CLUSTER_ARN_VAR, Config, ConfigError, DATABASE_ROLE_VAR, NAMESPACE, PLANE_VAR,
+        CLUSTER_ARN_VAR, Config, DATABASE_ROLE_VAR, FinanceIngestConfigError, NAMESPACE, PLANE_VAR,
         REQUIRED_VARS,
     };
 
@@ -198,7 +198,7 @@ mod tests {
         ])
     }
 
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
+    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, FinanceIngestConfigError> {
         Config::from_lookup(|name| vars.get(name).cloned())
     }
 
@@ -226,7 +226,7 @@ mod tests {
             vars.remove(name);
             assert_eq!(
                 read(&vars),
-                Err(ConfigError::Missing { name }),
+                Err(FinanceIngestConfigError::Missing { name }),
                 "removing {name}"
             );
         }
@@ -238,7 +238,7 @@ mod tests {
         vars.insert(DATABASE_ROLE_VAR, "aex_finance_api".to_owned());
         let error = read(&vars).expect_err("finance-ingest may only be aex_finance_ingest");
         assert!(
-            matches!(error, ConfigError::Invalid { name, .. } if name == DATABASE_ROLE_VAR),
+            matches!(error, FinanceIngestConfigError::Invalid { name, .. } if name == DATABASE_ROLE_VAR),
             "{error:?}"
         );
     }
@@ -249,7 +249,7 @@ mod tests {
         vars.insert(CLUSTER_ARN_VAR, "aex-central".to_owned());
         let error = read(&vars).expect_err("a bare cluster name is not an ARN");
         assert!(
-            matches!(error, ConfigError::Invalid { name, .. } if name == CLUSTER_ARN_VAR),
+            matches!(error, FinanceIngestConfigError::Invalid { name, .. } if name == CLUSTER_ARN_VAR),
             "{error:?}"
         );
     }
@@ -260,7 +260,7 @@ mod tests {
         vars.insert(PLANE_VAR, "local".to_owned());
         let error = read(&vars).expect_err("an unknown plane is refused");
         assert!(
-            matches!(error, ConfigError::Invalid { name, .. } if name == PLANE_VAR),
+            matches!(error, FinanceIngestConfigError::Invalid { name, .. } if name == PLANE_VAR),
             "{error:?}"
         );
     }

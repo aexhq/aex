@@ -1,6 +1,7 @@
 [package]
 name = "aex-payment-contracts"
 version = "0.1.0"
+description = "`aex-payment-contracts` is the command, result and event boundary between the two minimal `TypeScript` Stripe edges and the Rust finance path."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

@@ -1,6 +1,7 @@
 [package]
 name = "aex-finance-app"
 version = "0.1.0"
+description = "`aex-finance-app` owns finance, provider-effect and settlement use cases: the prepare/execute/finalize state machine and account serialization."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

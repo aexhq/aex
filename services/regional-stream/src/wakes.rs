@@ -343,7 +343,7 @@ fn classify(record: &Record, authority: AuthorityStream) -> Option<ScopeKey> {
     let sk = string(keys.get("sk")?)?;
     match authority {
         AuthorityStream::Observation => {
-            aex_observation_store_aws::keys::parse_observation_pk(pk).map(|wake| wake.scope)
+            aex_observation_store_dynamodb::keys::parse_observation_pk(pk).map(|wake| wake.scope)
         }
         AuthorityStream::Session => {
             aex_session_dynamodb::stream_keys::parse_event(pk, sk).map(ScopeKey::Session)

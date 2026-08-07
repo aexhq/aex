@@ -5,15 +5,15 @@
 //! never be reached. The cross-stream health surface is therefore rendered here
 //! as the two JSON bodies and routed by
 //! [`crate::handler::classify`](crate::handler::classify) against
-//! [`aex_observation_store_aws::health::HEALTHZ`] and
-//! [`aex_observation_store_aws::health::READYZ`] — the paths are read from those
+//! [`aex_observation_store_dynamodb::health::HEALTHZ`] and
+//! [`aex_observation_store_dynamodb::health::READYZ`] — the paths are read from those
 //! constants and never spelled out.
 //!
 //! `readyz` answers `200` only once **every** declared probe has actually
 //! passed, and names the first outstanding one otherwise. A readiness endpoint
 //! that answers before its dependencies are proven is worse than none.
 
-use aex_observation_store_aws::health::{Probe, Readiness, readiness};
+use aex_observation_store_dynamodb::health::{Probe, Readiness, readiness};
 
 /// The dependencies this deployable proves before it reports ready.
 pub const REQUIRED_PROBES: &[Probe] = &[Probe::ObservationTable, Probe::ObservationBucket];
@@ -60,7 +60,7 @@ pub fn readiness_body(release_digest: &str, passed: &[Probe]) -> (u16, serde_jso
 
 #[cfg(test)]
 mod tests {
-    use aex_observation_store_aws::health::Probe;
+    use aex_observation_store_dynamodb::health::Probe;
 
     use super::{NOT_READY_STATUS, READY_STATUS, REQUIRED_PROBES, health_body, readiness_body};
 

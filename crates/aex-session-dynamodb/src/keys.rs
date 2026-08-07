@@ -1,6 +1,6 @@
 //! The `session-authority` key templates.
 //!
-//! This module is the single owner of these keys. `aex-brain-store-aws` calls it
+//! This module is the single owner of these keys. `aex-brain-store-dynamodb` calls it
 //! rather than forking the item shapes, which is the whole reason Brain and the
 //! session API cannot drift apart on row shape.
 //!

@@ -12,8 +12,8 @@ use aex_observation_export::encoder::encoder_for;
 use aex_observation_export::{
     EncodeError, ExportCheckpoint, Format, PartRecord, Publication, PublishFence, ResumeError,
 };
-use aex_observation_store_aws::composition::{Capability, Role, assert_grant};
-use aex_observation_store_aws::health::{HEALTHZ, Probe, READYZ};
+use aex_observation_store_dynamodb::composition::{Capability, Role, assert_grant};
+use aex_observation_store_dynamodb::health::{HEALTHZ, Probe, READYZ};
 use aex_wire::error::ErrorCode;
 
 /// The role this deployable composes as.
@@ -204,7 +204,7 @@ fn the_health_paths_are_never_hand_typed() {
         "the path is the store crate's constant, not a literal"
     );
     assert!(!source.contains("\"/internal/readyz\""));
-    assert!(source.contains("aex_observation_store_aws::health::HEALTHZ"));
+    assert!(source.contains("aex_observation_store_dynamodb::health::HEALTHZ"));
     assert_eq!(HEALTHZ, "/internal/healthz");
     assert_eq!(READYZ, "/internal/readyz");
 }

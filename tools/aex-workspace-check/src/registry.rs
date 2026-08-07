@@ -1350,12 +1350,8 @@ mod tests {
     fn a_transitive_normal_dependency_on_test_support_is_reported() {
         let policy = Policy::embedded();
         let mut deployable = row("runtimes/brain-mux", "brain-mux", Some(DOMAIN));
-        deployable.normal_dependencies = vec!["aex-brain-application".to_owned()];
-        let mut middle = row(
-            "crates/aex-brain-application",
-            "aex-brain-application",
-            Some(DOMAIN),
-        );
+        deployable.normal_dependencies = vec!["aex-brain-app".to_owned()];
+        let mut middle = row("crates/aex-brain-app", "aex-brain-app", Some(DOMAIN));
         middle.normal_dependencies = vec!["aex-brain-test-support".to_owned()];
         let report = check(&input(vec![deployable, middle], policy));
         assert!(

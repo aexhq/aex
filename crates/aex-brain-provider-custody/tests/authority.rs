@@ -3,7 +3,7 @@
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
-use aex_brain_application::ports::BoxFuture;
+use aex_brain_app::ports::BoxFuture;
 use aex_brain_provider_custody::{CredentialAuthority, CredentialCustody};
 use aex_brain_provider_gateway::credential::{
     CredentialResolveError, ProviderCredentialDecryptor, ProviderCredentialDirectory,

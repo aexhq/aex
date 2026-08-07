@@ -168,7 +168,7 @@ pub struct QueueRun {
 
 /// Why a run transition was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum RunError {
+pub enum SessionDomainRunError {
     /// The run is already terminal.
     #[error("run is already {0:?}")]
     AlreadyTerminal(RunStatus),
@@ -199,7 +199,7 @@ pub enum RunError {
 ///
 /// # Errors
 ///
-/// Returns [`RunError`] when the session already has an active run, is not
+/// Returns [`SessionDomainRunError`] when the session already has an active run, is not
 /// admitting work, is not `Live`, is held by a whole-session command, or when the
 /// deadline is not in the future.
 pub fn queue(
@@ -207,23 +207,25 @@ pub fn queue(
     command: &QueueRun,
     session: &Session,
     now: Timestamp,
-) -> Result<RunCommit, RunError> {
+) -> Result<RunCommit, SessionDomainRunError> {
     if session.deletion.state != DeletionState::Live {
-        return Err(RunError::Deleted(session.deletion.state));
+        return Err(SessionDomainRunError::Deleted(session.deletion.state));
     }
     if !session.work_admission.is_open() {
-        return Err(RunError::AdmissionClosed(session.work_admission));
+        return Err(SessionDomainRunError::AdmissionClosed(
+            session.work_admission,
+        ));
     }
     if let Some(guard) = session.mutation_guard {
-        return Err(RunError::MutationGuardHeld {
+        return Err(SessionDomainRunError::MutationGuardHeld {
             holder: guard.holder,
         });
     }
     if let Some(active) = session.active_run {
-        return Err(RunError::SessionBusy { active });
+        return Err(SessionDomainRunError::SessionBusy { active });
     }
     if command.deadline.unix_millis() <= now.unix_millis() {
-        return Err(RunError::DeadlineNotInFuture);
+        return Err(SessionDomainRunError::DeadlineNotInFuture);
     }
     Ok(RunCommit {
         run: Run {
@@ -254,11 +256,15 @@ pub fn queue(
 ///
 /// # Errors
 ///
-/// Returns [`RunError::AlreadyTerminal`] for a settled run and the session
+/// Returns [`SessionDomainRunError::AlreadyTerminal`] for a settled run and the session
 /// guards otherwise.
-pub fn start(run: &Run, session: &Session, now: Timestamp) -> Result<RunCommit, RunError> {
+pub fn start(
+    run: &Run,
+    session: &Session,
+    now: Timestamp,
+) -> Result<RunCommit, SessionDomainRunError> {
     if run.status.is_terminal() {
-        return Err(RunError::AlreadyTerminal(run.status));
+        return Err(SessionDomainRunError::AlreadyTerminal(run.status));
     }
     if run.status == RunStatus::Running {
         return Ok(RunCommit {
@@ -267,10 +273,12 @@ pub fn start(run: &Run, session: &Session, now: Timestamp) -> Result<RunCommit, 
         });
     }
     if session.deletion.state != DeletionState::Live {
-        return Err(RunError::Deleted(session.deletion.state));
+        return Err(SessionDomainRunError::Deleted(session.deletion.state));
     }
     if !session.work_admission.is_open() {
-        return Err(RunError::AdmissionClosed(session.work_admission));
+        return Err(SessionDomainRunError::AdmissionClosed(
+            session.work_admission,
+        ));
     }
     let mut next = run.clone();
     next.status = RunStatus::Running;
@@ -288,7 +296,7 @@ mod tests {
     use aex_wire::ids::{MessageId, PrefixedId as _, RunId, Uuid7};
     use aex_wire::types::Timestamp;
 
-    use super::{QueueRun, RunError, RunStatus, queue, start};
+    use super::{QueueRun, RunStatus, SessionDomainRunError, queue, start};
     use crate::ids::ReservationId;
     use crate::session::WorkAdmission;
     use crate::testing::session_fixture;
@@ -324,7 +332,9 @@ mod tests {
         session.work_admission = WorkAdmission::Paused;
         assert_eq!(
             queue(run_id(), &command(), &session, moment(0)),
-            Err(RunError::AdmissionClosed(WorkAdmission::Paused))
+            Err(SessionDomainRunError::AdmissionClosed(
+                WorkAdmission::Paused
+            ))
         );
     }
 
@@ -348,7 +358,7 @@ mod tests {
         command.deadline = moment(0);
         assert_eq!(
             queue(run_id(), &command, &session, moment(0)),
-            Err(RunError::DeadlineNotInFuture)
+            Err(SessionDomainRunError::DeadlineNotInFuture)
         );
     }
 }

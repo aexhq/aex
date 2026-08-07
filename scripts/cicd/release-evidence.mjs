@@ -149,6 +149,10 @@ export function assertUserJourneyInventory(listOutput, liveIds) {
   return selected.sort();
 }
 
+export function capturedCommandOutput(result, includeStderr = false) {
+  return `${result.stdout ?? ""}${includeStderr ? result.stderr ?? "" : ""}`;
+}
+
 export function validateHygieneReport(report, expected) {
   if (!isRecord(report) || report.schema !== "aex.release-evidence-hygiene.v1") {
     throw new Error("release-evidence hygiene report has the wrong schema");
@@ -326,6 +330,7 @@ async function runUser(outputRoot) {
   const hygienePath = resolve(absoluteRoot, "hygiene.json");
   const listed = run(["bun", "test", "apps/user-tests/test/live"], {
     capture: true,
+    includeStderr: true,
     env: { ...process.env, AEX_RELEASE_EVIDENCE_MODE: "inventory" }
   });
   writeFileSync(listPath, listed);
@@ -436,7 +441,7 @@ function run(argv, options = {}) {
     if (options.capture && result.stderr) process.stderr.write(result.stderr);
     throw new Error(`release-evidence command failed (${result.status}): ${argv.join(" ")}`);
   }
-  return options.capture ? result.stdout : "";
+  return options.capture ? capturedCommandOutput(result, options.includeStderr) : "";
 }
 
 function assertBlob(value, prefix, expectedUri) {

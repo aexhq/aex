@@ -1,6 +1,7 @@
 [package]
 name = "brain-mux"
 version = "0.1.0"
+description = "`brain-mux` composition root (Rust Fargate OCI)."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -32,7 +33,7 @@ name = "brain-mux"
 path = "src/main.rs"
 
 [dependencies]
-aex-brain-application = { path = "../../crates/aex-brain-application" }
+aex-brain-app = { path = "../../crates/aex-brain-app" }
 aex-brain-domain = { path = "../../crates/aex-brain-domain" }
 aex-brain-hands = { path = "../../crates/aex-brain-hands" }
 aex-brain-managed-web = { path = "../../crates/aex-brain-managed-web" }
@@ -41,7 +42,7 @@ aex-hands-control-aws = { path = "../../crates/aex-hands-control-aws" }
 aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }
 aex-brain-provider-custody = { path = "../../crates/aex-brain-provider-custody" }
 aex-brain-provider-gateway = { path = "../../crates/aex-brain-provider-gateway" }
-aex-brain-store-aws = { path = "../../crates/aex-brain-store-aws" }
+aex-brain-store-dynamodb = { path = "../../crates/aex-brain-store-dynamodb" }
 aex-model-catalog = { path = "../../crates/aex-model-catalog" }
 aex-runtime-activity-dynamodb = { path = "../../crates/aex-runtime-activity-dynamodb" }
 aex-runtime-control = { path = "../../crates/aex-runtime-control" }
@@ -68,7 +69,7 @@ aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
 # `MemoryReservation` and `CpuReconciler` from here rather than declaring its
 # own: two definitions of a billing unit is how a bill and a receipt come to
 # disagree.
-aex-usage-application = { path = "../../crates/aex-usage-application", features = ["probe"] }
+aex-usage-app = { path = "../../crates/aex-usage-app", features = ["probe"] }
 aex-usage-domain = { path = "../../crates/aex-usage-domain" }
 aex-wire = { path = "../../crates/aex-wire" }
 thiserror.workspace = true
@@ -79,7 +80,7 @@ tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "sign
 [dev-dependencies]
 # The engine's own in-memory ports, so the composition is asserted against exactly the
 # behaviour the activation is asserted against rather than a second set of fixtures.
-aex-brain-application = { path = "../../crates/aex-brain-application", features = ["testing"] }
+aex-brain-app = { path = "../../crates/aex-brain-app", features = ["testing"] }
 serde.workspace = true
 # The paused clock. The dependency probe's cadence and the reactor window's one-second
 # publication are both schedules, and asserting a schedule against the wall clock is how a

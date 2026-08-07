@@ -51,7 +51,7 @@ pub struct Page<T> {
 // TODO(cross-stream): `aex-session-app` publishes no journal store port. Journal reads are
 // `aex_session_app::ports::SessionReader`, and journal writes are ordinary writes inside an
 // `aex_session_app::plan::SessionTransaction`.
-/// The agent journal, consumed by Brain through `aex-brain-store-aws`.
+/// The agent journal, consumed by Brain through `aex-brain-store-dynamodb`.
 #[async_trait]
 pub trait AgentJournalStore: Send + Sync + 'static {
     /// Commits one agent decision.

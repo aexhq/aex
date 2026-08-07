@@ -9,7 +9,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
-name = "aex-brain-application"
+name = "aex-brain-app"
 version = "0.1.0"
 dependencies = [
  "aex-brain-domain",
@@ -44,7 +44,7 @@ dependencies = [
 name = "aex-brain-hands"
 version = "0.1.0"
 dependencies = [
- "aex-brain-application",
+ "aex-brain-app",
  "aex-brain-domain",
  "aex-brain-tool-catalog",
  "aex-hands-agent",
@@ -69,7 +69,7 @@ dependencies = [
 name = "aex-brain-managed-web"
 version = "0.1.0"
 dependencies = [
- "aex-brain-application",
+ "aex-brain-app",
  "aex-brain-domain",
  "aex-brain-tool-catalog",
  "aex-model-catalog",
@@ -119,7 +119,7 @@ dependencies = [
 name = "aex-brain-provider-custody"
 version = "0.1.0"
 dependencies = [
- "aex-brain-application",
+ "aex-brain-app",
  "aex-brain-provider-gateway",
  "aex-secret-aws",
  "aex-secret-custody-dynamodb",
@@ -135,7 +135,7 @@ dependencies = [
 name = "aex-brain-provider-gateway"
 version = "0.1.0"
 dependencies = [
- "aex-brain-application",
+ "aex-brain-app",
  "aex-brain-domain",
  "aex-model-catalog",
  "aex-secret-domain",
@@ -160,10 +160,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "aex-brain-store-aws"
+name = "aex-brain-store-dynamodb"
 version = "0.1.0"
 dependencies = [
- "aex-brain-application",
+ "aex-brain-app",
  "aex-brain-domain",
  "aex-brain-test-support",
  "aex-content-aws",
@@ -209,7 +209,7 @@ dependencies = [
 name = "aex-brain-tool-catalog"
 version = "0.1.0"
 dependencies = [
- "aex-brain-application",
+ "aex-brain-app",
  "aex-brain-domain",
  "aex-model-catalog",
  "aex-wire",
@@ -242,32 +242,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "aex-central-http"
-version = "0.1.0"
-dependencies = [
- "aex-control-app",
- "aex-control-domain",
- "aex-wire",
- "async-trait",
- "axum",
- "http 1.5.0",
- "http-body-util",
- "lambda_http",
- "lambda_runtime",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "thiserror",
- "time",
- "tokio",
- "tower",
- "tower-http 0.7.0",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "aex-central-runtime"
+name = "aex-central-aws"
 version = "0.1.0"
 dependencies = [
  "aex-control-app",
@@ -297,6 +272,31 @@ dependencies = [
  "tokio",
  "uuid",
  "zeroize",
+]
+
+[[package]]
+name = "aex-central-http"
+version = "0.1.0"
+dependencies = [
+ "aex-control-app",
+ "aex-control-domain",
+ "aex-wire",
+ "async-trait",
+ "axum",
+ "http 1.5.0",
+ "http-body-util",
+ "lambda_http",
+ "lambda_runtime",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "thiserror",
+ "time",
+ "tokio",
+ "tower",
+ "tower-http 0.7.0",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -703,7 +703,7 @@ version = "0.1.0"
 name = "aex-live-model-catalog"
 version = "0.1.0"
 dependencies = [
- "aex-brain-application",
+ "aex-brain-app",
  "aex-brain-provider-gateway",
  "aex-model-catalog",
  "aex-test-harness",
@@ -853,7 +853,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "aex-observation-application"
+name = "aex-observation-app"
 version = "0.1.0"
 dependencies = [
  "aex-observation-domain",
@@ -908,10 +908,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "aex-observation-store-aws"
+name = "aex-observation-store-dynamodb"
 version = "0.1.0"
 dependencies = [
- "aex-observation-application",
+ "aex-observation-app",
  "aex-observation-domain",
  "aex-wire",
  "async-trait",
@@ -1345,11 +1345,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "aex-usage-application"
+name = "aex-usage-app"
 version = "0.1.0"
 dependencies = [
  "aex-internal-contracts",
- "aex-usage-application",
+ "aex-usage-app",
  "aex-usage-domain",
  "aex-wire",
  "async-trait",
@@ -1369,10 +1369,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "aex-usage-compute-aws"
+name = "aex-usage-compute-dynamodb"
 version = "0.1.0"
 dependencies = [
- "aex-usage-application",
+ "aex-usage-app",
  "aex-usage-domain",
  "async-trait",
  "aws-config",
@@ -1406,7 +1406,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "aex-usage-query-aws"
+name = "aex-usage-query-dynamodb"
 version = "0.1.0"
 dependencies = [
  "aex-usage-domain",
@@ -1444,10 +1444,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "aex-usage-storage-aws"
+name = "aex-usage-storage-dynamodb"
 version = "0.1.0"
 dependencies = [
- "aex-usage-application",
+ "aex-usage-app",
  "aex-usage-domain",
  "async-trait",
  "aws-config",
@@ -1466,10 +1466,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "aex-usage-transfer-aws"
+name = "aex-usage-transfer-dynamodb"
 version = "0.1.0"
 dependencies = [
- "aex-usage-application",
+ "aex-usage-app",
  "aex-usage-domain",
  "async-trait",
  "aws-config",
@@ -2845,13 +2845,13 @@ checksum = "dc0b364ead1874514c8c2855ab558056ebfeb775653e7ae45ff72f28f8f3166c"
 name = "brain-mux"
 version = "0.1.0"
 dependencies = [
- "aex-brain-application",
+ "aex-brain-app",
  "aex-brain-domain",
  "aex-brain-hands",
  "aex-brain-managed-web",
  "aex-brain-provider-custody",
  "aex-brain-provider-gateway",
- "aex-brain-store-aws",
+ "aex-brain-store-dynamodb",
  "aex-brain-tool-catalog",
  "aex-content-aws",
  "aex-hands-control-aws",
@@ -2866,7 +2866,7 @@ dependencies = [
  "aex-secret-domain",
  "aex-session-dynamodb",
  "aex-telemetry-schema",
- "aex-usage-application",
+ "aex-usage-app",
  "aex-usage-domain",
  "aex-wire",
  "aws-config",
@@ -3074,8 +3074,8 @@ dependencies = [
 name = "central-control-api"
 version = "0.1.0"
 dependencies = [
+ "aex-central-aws",
  "aex-central-http",
- "aex-central-runtime",
  "aex-control-app",
  "aex-control-aurora",
  "aex-control-domain",
@@ -3105,8 +3105,8 @@ dependencies = [
 name = "central-control-worker"
 version = "0.1.0"
 dependencies = [
+ "aex-central-aws",
  "aex-central-http",
- "aex-central-runtime",
  "aex-control-app",
  "aex-control-aurora",
  "aex-control-domain",
@@ -3142,8 +3142,8 @@ dependencies = [
 name = "central-identity-api"
 version = "0.1.0"
 dependencies = [
+ "aex-central-aws",
  "aex-central-http",
- "aex-central-runtime",
  "aex-control-app",
  "aex-control-domain",
  "aex-identity-app",
@@ -4156,7 +4156,7 @@ dependencies = [
  "aex-platform-telemetry",
  "aex-rds-data",
  "aex-telemetry-schema",
- "aex-usage-application",
+ "aex-usage-app",
  "aex-usage-domain",
  "aex-wire",
  "async-trait",
@@ -5532,7 +5532,7 @@ name = "observation-export-launcher"
 version = "0.1.0"
 dependencies = [
  "aex-observation-domain",
- "aex-observation-store-aws",
+ "aex-observation-store-dynamodb",
  "aex-platform-telemetry",
  "aex-telemetry-schema",
  "aex-wire",
@@ -5556,7 +5556,7 @@ version = "0.1.0"
 dependencies = [
  "aex-observation-domain",
  "aex-observation-export",
- "aex-observation-store-aws",
+ "aex-observation-store-dynamodb",
  "aex-otlp-admission",
  "aex-platform-telemetry",
  "aex-telemetry-schema",
@@ -5581,7 +5581,7 @@ name = "observation-reconciler"
 version = "0.1.0"
 dependencies = [
  "aex-observation-domain",
- "aex-observation-store-aws",
+ "aex-observation-store-dynamodb",
  "aex-platform-telemetry",
  "aex-telemetry-schema",
  "aex-wire",
@@ -6481,7 +6481,7 @@ dependencies = [
  "aex-internal-contracts",
  "aex-observation-domain",
  "aex-observation-query",
- "aex-observation-store-aws",
+ "aex-observation-store-dynamodb",
  "aex-otlp-admission",
  "aex-platform-telemetry",
  "aex-regional-http",
@@ -6519,7 +6519,7 @@ dependencies = [
  "aex-identity-domain",
  "aex-internal-contracts",
  "aex-observation-domain",
- "aex-observation-store-aws",
+ "aex-observation-store-dynamodb",
  "aex-otlp-admission",
  "aex-platform-telemetry",
  "aex-regional-http",
@@ -6655,7 +6655,7 @@ dependencies = [
  "aex-internal-contracts",
  "aex-observation-domain",
  "aex-observation-query",
- "aex-observation-store-aws",
+ "aex-observation-store-dynamodb",
  "aex-platform-telemetry",
  "aex-regional-http",
  "aex-session-dynamodb",
@@ -8429,8 +8429,8 @@ version = "0.1.0"
 dependencies = [
  "aex-platform-telemetry",
  "aex-telemetry-schema",
- "aex-usage-application",
- "aex-usage-compute-aws",
+ "aex-usage-app",
+ "aex-usage-compute-dynamodb",
  "aex-usage-domain",
  "aws-config",
  "aws-sdk-dynamodb",
@@ -8468,9 +8468,9 @@ version = "0.1.0"
 dependencies = [
  "aex-platform-telemetry",
  "aex-telemetry-schema",
- "aex-usage-application",
+ "aex-usage-app",
  "aex-usage-domain",
- "aex-usage-storage-aws",
+ "aex-usage-storage-dynamodb",
  "aws-config",
  "aws-sdk-dynamodb",
  "aws-sdk-sqs",
@@ -8486,9 +8486,9 @@ version = "0.1.0"
 dependencies = [
  "aex-platform-telemetry",
  "aex-telemetry-schema",
- "aex-usage-application",
+ "aex-usage-app",
  "aex-usage-domain",
- "aex-usage-transfer-aws",
+ "aex-usage-transfer-dynamodb",
  "aws-config",
  "aws-sdk-dynamodb",
  "aws-sdk-sqs",

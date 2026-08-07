@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use aex_regional_http::config::ConfigError;
+use aex_regional_http::config::RegionalHttpConfigError;
 use aex_regional_http::router::{RouteOwner, route_owner};
 use aex_wire::routes::{Plane, RouteId, TransportKind, route};
 use aex_wire::server::RouteGroup;
@@ -72,7 +72,7 @@ fn complete() -> BTreeMap<&'static str, String> {
     ])
 }
 
-fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
+fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, RegionalHttpConfigError> {
     Config::read(&|name: &str| vars.get(name).cloned())
 }
 
@@ -94,7 +94,7 @@ fn a_non_https_regional_api_url_is_refused() {
     vars.insert(config::REGIONAL_API_URL, "http://localhost".to_owned());
     assert!(matches!(
         read(&vars),
-        Err(ConfigError::Invalid { name, .. }) if name == config::REGIONAL_API_URL
+        Err(RegionalHttpConfigError::Invalid { name, .. }) if name == config::REGIONAL_API_URL
     ));
 }
 
@@ -111,7 +111,7 @@ fn every_required_variable_is_required() {
         missing.remove(name);
         let error = read(&missing).expect_err("a missing variable refuses the process");
         assert!(
-            matches!(error, ConfigError::Missing { name: reported } if reported == name),
+            matches!(error, RegionalHttpConfigError::Missing { name: reported } if reported == name),
             "removing {name} reported {error:?}"
         );
     }
@@ -126,7 +126,7 @@ fn the_finite_api_cannot_be_bound_to_a_queue_or_the_secret_key() {
         assert!(
             matches!(
                 error,
-                ConfigError::Forbidden { name: reported, deployable, .. }
+                RegionalHttpConfigError::Forbidden { name: reported, deployable, .. }
                     if reported == name && deployable == config::DEPLOYABLE
             ),
             "binding {name} reported {error:?}"
@@ -140,7 +140,7 @@ fn a_bucket_owned_by_another_account_refuses_the_process() {
     vars.insert(config::CONTENT_BUCKET_OWNER, "999999999999".to_owned());
     let error = read(&vars).expect_err("a cross-account bucket owner is refused");
     assert!(
-        matches!(error, ConfigError::Invalid { name, .. } if name == config::CONTENT_BUCKET_OWNER),
+        matches!(error, RegionalHttpConfigError::Invalid { name, .. } if name == config::CONTENT_BUCKET_OWNER),
         "{error:?}"
     );
 }
@@ -151,7 +151,7 @@ fn a_page_bound_outside_the_registry_range_refuses_the_process() {
     vars.insert(config::MAX_PAGE_ITEMS, "1001".to_owned());
     assert!(matches!(
         read(&vars),
-        Err(ConfigError::Invalid { name, .. }) if name == config::MAX_PAGE_ITEMS
+        Err(RegionalHttpConfigError::Invalid { name, .. }) if name == config::MAX_PAGE_ITEMS
     ));
 }
 

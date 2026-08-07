@@ -1,6 +1,7 @@
 [package]
 name = "aex-brain-domain"
 version = "0.1.0"
+description = "`aex-brain-domain` owns the pure Brain fold, effect, child-activation, join and budget model."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

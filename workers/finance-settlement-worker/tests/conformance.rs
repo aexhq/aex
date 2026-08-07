@@ -209,7 +209,7 @@ fn the_producers_exact_bytes_decode_through_this_workers_exact_path() {
     // producer's serialization and the worker's per-record decode must round
     // trip, cross-crate, forever.
     let fact = regional_fact();
-    let message = aex_usage_application::outbox::OutboxMessage::for_fact(&fact)
+    let message = aex_usage_app::outbox::OutboxMessage::for_fact(&fact)
         .expect("a measured fact converts to the contract");
 
     // Exactly the bytes `SettlementQueue::publish` puts on the queue.

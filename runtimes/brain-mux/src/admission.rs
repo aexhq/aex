@@ -17,7 +17,7 @@
 //! over the bytes it did not — see [`crate::pressure`] — and it acts on receipt only.
 
 use crate::pressure::PressureGate;
-use aex_brain_application::kernel::{DrainGate, PermitKind, PermitSet, PermitSetFull, Reservation};
+use aex_brain_app::kernel::{DrainGate, PermitKind, PermitSet, PermitSetFull, Reservation};
 use std::sync::Arc;
 
 /// The process resources held for one activation's lifetime.
@@ -301,7 +301,7 @@ const fn shed(full: &PermitSetFull) -> TypedOverload {
 mod tests {
     use super::{ActivationResources, Admission, AdmissionBounds, AdmissionOutcome, TypedOverload};
     use crate::pressure::{MemoryReading, MemorySource, PressureState};
-    use aex_brain_application::kernel::{DrainGate, PermitKind, PermitSet};
+    use aex_brain_app::kernel::{DrainGate, PermitKind, PermitSet};
     use std::collections::BTreeMap;
     use std::sync::Arc;
 

@@ -1,6 +1,7 @@
 [package]
 name = "aex-live-finance-reconcile"
 version = "0.1.0"
+description = "Live-test companion package for the `finance-reconcile` deployable."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

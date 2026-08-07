@@ -25,10 +25,12 @@ use aex_observation_domain::gap::{GapRecord, GapRevision, OrdinalRange, TimeWind
 use aex_observation_domain::keys::{self, BucketHour, ControlDomain, ScopeKey};
 use aex_observation_domain::limits;
 use aex_observation_domain::signal::{Signal, SignalSet};
-use aex_observation_store_aws::expressions::{ExpressionBuilder, Index, PK, SK};
-use aex_observation_store_aws::gap::{append_action, decode as decode_gap};
-use aex_observation_store_aws::gap_hint::hint_update_action;
-use aex_observation_store_aws::spool::{GateEvidence, GateState, Pending, SpoolChunk, evaluate};
+use aex_observation_store_dynamodb::expressions::{ExpressionBuilder, Index, PK, SK};
+use aex_observation_store_dynamodb::gap::{append_action, decode as decode_gap};
+use aex_observation_store_dynamodb::gap_hint::hint_update_action;
+use aex_observation_store_dynamodb::spool::{
+    GateEvidence, GateState, Pending, SpoolChunk, evaluate,
+};
 use aex_wire::ids::{PrefixedId, TelemetryGapId, WorkspaceId};
 use aex_wire::models::TelemetryGapReason;
 use aex_wire::types::{Region, Timestamp};
@@ -58,7 +60,7 @@ pub const OUTBOX_PREFIX: &str = "OUTBOX#";
 ///
 /// The writer records the exact count on the `SEG#` row; this is the fallback
 /// for a chunk whose segment row has not been read. It matches the admission
-/// edge's fan-out and is declared here because `aex-observation-store-aws`
+/// edge's fan-out and is declared here because `aex-observation-store-dynamodb`
 /// exposes no constant for it.
 pub const DEFAULT_BUCKET_SHARDS: u8 = 4;
 
@@ -1736,7 +1738,7 @@ impl DutyEngine {
 
     /// Deletes a bounded set of items, draining the unprocessed remainder.
     async fn delete_keys(&self, keys: &[ItemKey]) -> Result<(), DutyError> {
-        for chunk in keys.chunks(aex_observation_store_aws::store::DDB_BATCH_WRITE_MAX) {
+        for chunk in keys.chunks(aex_observation_store_dynamodb::store::DDB_BATCH_WRITE_MAX) {
             let mut pending = Vec::with_capacity(chunk.len());
             for key in chunk {
                 pending.push(
@@ -2091,8 +2093,8 @@ mod tests {
 
     use aex_observation_domain::keys::{self, ControlDomain};
     use aex_observation_domain::limits;
-    use aex_observation_store_aws::expressions::{Index, PK, SK, is_safe_expression};
-    use aex_observation_store_aws::spool::{GateState, Pending, SpoolChunk};
+    use aex_observation_store_dynamodb::expressions::{Index, PK, SK, is_safe_expression};
+    use aex_observation_store_dynamodb::spool::{GateState, Pending, SpoolChunk};
     use aex_wire::types::{Region, Timestamp};
     use aws_sdk_dynamodb::types::AttributeValue;
 

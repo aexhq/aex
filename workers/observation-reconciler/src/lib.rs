@@ -7,10 +7,10 @@
 //!
 //! The duty is configuration, and the capability grant follows from it: the
 //! `deletion.execute` deployment runs as
-//! [`Role::ReconcilerDeletion`](aex_observation_store_aws::composition::Role::ReconcilerDeletion)
+//! [`Role::ReconcilerDeletion`](aex_observation_store_dynamodb::composition::Role::ReconcilerDeletion)
 //! and is the only role in the whole stream that may delete an object; every
 //! other duty runs as
-//! [`Role::Reconciler`](aex_observation_store_aws::composition::Role::Reconciler)
+//! [`Role::Reconciler`](aex_observation_store_dynamodb::composition::Role::Reconciler)
 //! and its start-up assertion refuses `delete_bodies` by name. That is what
 //! makes "only the deletion deployment may delete" structural rather than a
 //! deployment convention.
@@ -25,11 +25,11 @@ pub mod handler;
 pub mod health;
 
 use aex_observation_domain::keys::ControlDomain;
-use aex_observation_store_aws::composition::{Capability, Role, assert_grant};
-use aex_observation_store_aws::health::{Probe, Readiness, readiness};
+use aex_observation_store_dynamodb::composition::{Capability, Role, assert_grant};
+use aex_observation_store_dynamodb::health::{Probe, Readiness, readiness};
 use aex_wire::types::Timestamp;
 
-use crate::config::{Config, ConfigError, REQUIRED_VARS};
+use crate::config::{Config, ObservationReconcilerConfigError, REQUIRED_VARS};
 use crate::duty::{DutyEngine, DutyError, DutySettings};
 use crate::handler::Handler;
 
@@ -73,10 +73,10 @@ pub const fn role_for(duty: ControlDomain) -> Role {
 
 /// Why `observation-reconciler` stopped.
 #[derive(Debug, thiserror::Error)]
-pub enum RunError {
+pub enum ObservationReconcilerRunError {
     /// Start-up configuration was rejected.
     #[error(transparent)]
-    Config(#[from] ConfigError),
+    Config(#[from] ObservationReconcilerConfigError),
     /// The process holds a capability its role must not.
     #[error("this deployable must not hold the `{capability}` capability")]
     Capability {
@@ -103,7 +103,7 @@ pub enum RunError {
     },
 }
 
-impl From<DutyError> for RunError {
+impl From<DutyError> for ObservationReconcilerRunError {
     fn from(error: DutyError) -> Self {
         Self::Probe {
             reason: error.to_string(),
@@ -115,16 +115,22 @@ impl From<DutyError> for RunError {
 ///
 /// # Errors
 ///
-/// Returns [`RunError::Capability`] when the process holds a capability its role
-/// must not, and [`RunError::NotReady`] when a declared probe has not passed. A
+/// Returns [`ObservationReconcilerRunError::Capability`] when the process holds a capability its role
+/// must not, and [`ObservationReconcilerRunError::NotReady`] when a declared probe has not passed. A
 /// probe that has not passed is never assumed.
-pub fn compose(role: Role, observed: &[Capability], passed: &[Probe]) -> Result<(), RunError> {
-    assert_grant(role, observed).map_err(|violation| RunError::Capability {
-        capability: violation.capability.as_str(),
+pub fn compose(
+    role: Role,
+    observed: &[Capability],
+    passed: &[Probe],
+) -> Result<(), ObservationReconcilerRunError> {
+    assert_grant(role, observed).map_err(|violation| {
+        ObservationReconcilerRunError::Capability {
+            capability: violation.capability.as_str(),
+        }
     })?;
     match readiness(REQUIRED_PROBES, passed) {
         Readiness::Ready => Ok(()),
-        Readiness::NotReady { outstanding } => Err(RunError::NotReady {
+        Readiness::NotReady { outstanding } => Err(ObservationReconcilerRunError::NotReady {
             probe: outstanding.as_str(),
         }),
     }
@@ -152,7 +158,7 @@ pub fn settings_for(config: &Config) -> DutySettings {
 /// Returns the typed failure of the first start-up stage that refused. Nothing
 /// is served before every declared probe has actually passed, and the capability
 /// assertion runs against the role the configured duty selects.
-pub async fn run(config: Config) -> Result<(), RunError> {
+pub async fn run(config: Config) -> Result<(), ObservationReconcilerRunError> {
     let aws = aws_config::from_env()
         .region(aws_config::Region::new(config.region.as_str()))
         .load()
@@ -192,7 +198,7 @@ pub async fn run(config: Config) -> Result<(), RunError> {
         },
     ))
     .await
-    .map_err(|error| RunError::Runtime {
+    .map_err(|error| ObservationReconcilerRunError::Runtime {
         reason: error.to_string(),
     })
 }
@@ -205,7 +211,7 @@ pub fn release_digest() -> String {
 
 /// The refusal one unusable configuration prints, in one place.
 #[must_use]
-pub fn refusal(error: &ConfigError) -> String {
+pub fn refusal(error: &ObservationReconcilerConfigError) -> String {
     format!(
         "observation-reconciler: refusing to start: {error}\n\
          observation-reconciler: required configuration: {}",
@@ -216,13 +222,14 @@ pub fn refusal(error: &ConfigError) -> String {
 #[cfg(test)]
 mod tests {
     use aex_observation_domain::keys::ControlDomain;
-    use aex_observation_store_aws::composition::{Capability, Role};
-    use aex_observation_store_aws::health::Probe;
+    use aex_observation_store_dynamodb::composition::{Capability, Role};
+    use aex_observation_store_dynamodb::health::Probe;
 
     use super::{
-        DELETION_ROLE, REQUIRED_PROBES, ROLE, RunError, UNRELEASED, compose, refusal, role_for,
+        DELETION_ROLE, ObservationReconcilerRunError, REQUIRED_PROBES, ROLE, UNRELEASED, compose,
+        refusal, role_for,
     };
-    use crate::config::{ConfigError, DUTY_VAR};
+    use crate::config::{DUTY_VAR, ObservationReconcilerConfigError};
 
     #[test]
     fn the_deletion_duty_is_the_only_one_that_selects_the_deleting_role() {
@@ -249,7 +256,7 @@ mod tests {
             let error = compose(role, &[Capability::DeleteBodies], REQUIRED_PROBES)
                 .expect_err("the delete grant is outside this role");
             match error {
-                RunError::Capability { capability } => {
+                ObservationReconcilerRunError::Capability { capability } => {
                     assert_eq!(capability, Capability::DeleteBodies.as_str());
                 }
                 other => panic!("expected a capability refusal, got {other:?}"),
@@ -262,7 +269,10 @@ mod tests {
         for denied in Role::ReconcilerDeletion.denied() {
             let error =
                 compose(DELETION_ROLE, &[denied], REQUIRED_PROBES).expect_err("outside the grant");
-            assert!(matches!(error, RunError::Capability { .. }), "{error:?}");
+            assert!(
+                matches!(error, ObservationReconcilerRunError::Capability { .. }),
+                "{error:?}"
+            );
         }
         compose(DELETION_ROLE, DELETION_ROLE.granted(), REQUIRED_PROBES)
             .expect("its own grant starts");
@@ -284,12 +294,15 @@ mod tests {
             &[Probe::ObservationTable, Probe::ObservationBucket]
         );
         let error = compose(ROLE, ROLE.granted(), &[]).expect_err("nothing is proven");
-        assert!(matches!(error, RunError::NotReady { .. }), "{error:?}");
+        assert!(
+            matches!(error, ObservationReconcilerRunError::NotReady { .. }),
+            "{error:?}"
+        );
     }
 
     #[test]
     fn the_refusal_lists_every_required_variable() {
-        let text = refusal(&ConfigError::Missing { name: DUTY_VAR });
+        let text = refusal(&ObservationReconcilerConfigError::Missing { name: DUTY_VAR });
         for name in super::REQUIRED_VARS {
             assert!(text.contains(name), "{name} is absent from: {text}");
         }

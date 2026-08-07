@@ -25,8 +25,8 @@ DynamoDB journal, lease/fence, effect, and receipt records remain decisive.
 | Owner | Responsibility |
 | --- | --- |
 | `crates/aex-brain-domain/` | Activation phases, typed deferral reasons, effect transition rules, resource reservations, and cache keys. No transport or storage calls. |
-| `crates/aex-brain-application/` | Wake-to-settlement orchestration, concurrent restore reads, fold-cache use, phase-specific permits, park/resume, cancellation, and drain cleanup. |
-| `crates/aex-brain-store-aws/` | Pending-state reads; fenced claim/release; strong session, journal/snapshot, and open-effect loads; durable continuation/effect transitions. |
+| `crates/aex-brain-app/` | Wake-to-settlement orchestration, concurrent restore reads, fold-cache use, phase-specific permits, park/resume, cancellation, and drain cleanup. |
+| `crates/aex-brain-store-dynamodb/` | Pending-state reads; fenced claim/release; strong session, journal/snapshot, and open-effect loads; durable continuation/effect transitions. |
 | `crates/aex-brain-provider-gateway/`, `crates/aex-brain-provider-custody/` | Pre-send permit and credential-generation fence, connection reuse, ambiguous provider outcomes, and credential/pool invalidation. |
 | `crates/aex-brain-mcp/`, `crates/aex-brain-managed-web/` | Revision-keyed pools, per-effect network checks, bounded concurrency, deterministic result commit ordering, and unknown non-task mutations. |
 | `crates/aex-brain-hands/` | Durable materialization park/resume and generation/fence/revision/token-keyed guest lease cache; no shell fast path outside Hands. |
@@ -85,7 +85,7 @@ and converge on the current fence/state.
 1. **State kernel.** In `aex-brain-domain`, first specify the complete legal
    transition table, stale-fence rejection, idempotent duplicate transitions,
    typed deferral, and `unknown` terminal recovery behavior.
-2. **Activation orchestration.** In `aex-brain-application`, prove restore
+2. **Activation orchestration.** In `aex-brain-app`, prove restore
    capacity precedes claim, session/context/open-effect reads overlap after the
    claim, exact-revision cache misses restore correctly, and no session lease
    is held while waiting for dispatch capacity.

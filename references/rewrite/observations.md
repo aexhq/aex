@@ -74,7 +74,7 @@ assert this.
 - `limits::OtlpLimits::REGISTERED` pins **4 MiB encoded**. The replaced
   implementation's 6 MiB is not ported, and a test asserts the difference.
 
-### `crates/aex-observation-store-aws`
+### `crates/aex-observation-store-dynamodb`
 
 - `expressions` — the bounded 18-field dense index projection (`attrS`/`attrN`/
   `attrB` and internal admission/accounting fields deliberately absent), the seven indexes and their key attributes, and a
@@ -119,7 +119,7 @@ assert this.
   weight-carrying t-digest at the pinned compression, and pre-read rejection of
   invalid instrument/calculation pairs.
 
-### `crates/aex-observation-application`
+### `crates/aex-observation-app`
 
 `SemanticEventSource`, `SecretManifestSource`, `ObservationAuthority` and
 `GapSink` ports, and async `AdmitBatch::admit_semantic` with the `GapOnFailure`
@@ -144,7 +144,7 @@ object. **All five now have a real `run()`; see §9.**
 
 ## 2. G7 — the `PERF-08` staged-commit proof, and the protocol change it forced
 
-`crates/aex-observation-store-aws/tests/g7_staged_commit_envelope.rs`.
+`crates/aex-observation-store-dynamodb/tests/g7_staged_commit_envelope.rs`.
 
 **G7 failed on first run and the protocol changed, not the public limit.** A
 staged page bounded only by `AEX_OBS_PAGE_RECORDS = 100` produced an 819 KiB
@@ -213,19 +213,19 @@ silent no-op or a stub that returns 503 unconditionally.
 ## 5. Cross-stream interfaces published
 
 ```rust
-// aex-observation-store-aws
-aex_observation_store_aws::keys::parse_observation_pk(&str) -> Option<ObservationWakeKey>;
-aex_observation_store_aws::keys::STREAM_VIEW_TYPE;                 // "KEYS_ONLY"
-aex_observation_store_aws::composition::{Role, Capability, assert_grant};
-aex_observation_store_aws::health::{HEALTHZ, READYZ, Probe, readiness};
-aex_observation_store_aws::segments::{Segment, SegmentDirectory};
-aex_observation_store_aws::store::{AdmissionPlan, TransactionEnvelope, StoreError};
+// aex-observation-store-dynamodb
+aex_observation_store_dynamodb::keys::parse_observation_pk(&str) -> Option<ObservationWakeKey>;
+aex_observation_store_dynamodb::keys::STREAM_VIEW_TYPE;                 // "KEYS_ONLY"
+aex_observation_store_dynamodb::composition::{Role, Capability, assert_grant};
+aex_observation_store_dynamodb::health::{HEALTHZ, READYZ, Probe, readiness};
+aex_observation_store_dynamodb::segments::{Segment, SegmentDirectory};
+aex_observation_store_dynamodb::store::{AdmissionPlan, TransactionEnvelope, StoreError};
 
-// aex-observation-application
-aex_observation_application::ports::SemanticEventSource;
-aex_observation_application::ports::SecretManifestSource;
-aex_observation_application::ports::ObservationAuthority;
-aex_observation_application::use_cases::{AdmitBatch, GapOnFailure, SemanticAdmission};
+// aex-observation-app
+aex_observation_app::ports::SemanticEventSource;
+aex_observation_app::ports::SecretManifestSource;
+aex_observation_app::ports::ObservationAuthority;
+aex_observation_app::use_cases::{AdmitBatch, GapOnFailure, SemanticAdmission};
 
 // aex-observation-query
 aex_observation_query::plan::{plan, NormalizedQuery, Plan, Budget, classify, PageOutcome};
@@ -312,7 +312,7 @@ retry-to-green anywhere in the stream; `cargo nextest` reports `0 skipped`.
 
 Branch `rw/deploy-observations`, off `main` after the four-stream merge. Every
 one of the five deployables now has a **real `run()`**: the typed
-`RunError::NotImplemented` is gone from all of them, and none was replaced by a
+`NotImplemented` run-error variant is gone from all of them, and none was replaced by a
 stub, a `todo!()` or a route that answers `503` because a port was never wired.
 
 Nothing here is deployed, credentialed or published. No AWS call was made and no
@@ -329,7 +329,7 @@ Nothing here is deployed, credentialed or published. No AWS call was made and no
 | `observation-export-task` | one-shot Rust Fargate task | Takes the lease before any read, acquires every memory reservation before the producing loop starts, streams bounded pages into a checkpointed NDJSON member, uploads parts with a fenced checkpoint after each, verifies `ListParts` to exhaustion on resume, and publishes under one conditional update — losing which aborts the upload and exits `0`. |
 
 `/internal/healthz` and `/internal/readyz` are served by all five, always through
-`aex_observation_store_aws::health::{HEALTHZ, READYZ}` rather than a hand-typed
+`aex_observation_store_dynamodb::health::{HEALTHZ, READYZ}` rather than a hand-typed
 path. `readyz` answers `200` only once every declared probe has actually passed;
 an unproven probe is never assumed.
 
@@ -469,7 +469,7 @@ reservation.
 
 ### 9.4 The library change this required
 
-`aex-observation-store-aws` gained `store::pack_pages` and `store::PageSpan`, and
+`aex-observation-store-dynamodb` gained `store::pack_pages` and `store::PageSpan`, and
 `AdmissionPlan::new` now calls them. The page-packing rule — bounded by both
 `OBS_PAGE_RECORDS` and `OBS_PAGE_MAX_BYTES` — previously existed only inside the
 planner, so the writer would have had to restate it. There is now exactly one
@@ -482,7 +482,7 @@ still pass.
 | # | Decision | Rationale |
 | --- | --- | --- |
 | OB-11 | The authenticated edge is composed in each service from `aex_regional_http::assertion`'s `VerifyingAssertionCache`, with the composition supplying the two things that crate deliberately leaves open: an Ed25519 `KeyVerifier` over trust anchors resolved at start-up, and an `AssertionSource` that exchanges the presented credential at `AEX_CENTRAL_AUTHZ_URL` | The crate's own comment says concrete crypto stays in the composition root, and OD-21 puts the 30-second assertion on Ed25519 because AEX holds that key directly. The exchange body is an internal contract, not a public route; the credential never leaves the regional plane except towards the authority that issued it. |
-| OB-12 | The `DynamoDB` item codec for admission and for reading lives in the deployables, not in `aex-observation-store-aws` | The library was explicitly out of scope beyond what mounting requires, and it models the protocol — plans, envelopes, item sizes — rather than executing it. A follow-up may lift the codec into the adapter crate; that is a move, not a rewrite. |
+| OB-12 | The `DynamoDB` item codec for admission and for reading lives in the deployables, not in `aex-observation-store-dynamodb` | The library was explicitly out of scope beyond what mounting requires, and it models the protocol — plans, envelopes, item sizes — rather than executing it. A follow-up may lift the codec into the adapter crate; that is a move, not a rewrite. |
 | OB-13 | Predicates are evaluated in process over the decoded row rather than compiled into a `DynamoDB` filter expression | Plan §4.6 compiles indexed predicates index-side to save bandwidth. Doing it in process is equally correct and still bounded, because `max_items_scanned` counts **index items read**, which is exactly the dimension the budget exists to bound. It costs bandwidth, not correctness, and the expression compiler can be added later without changing the public behaviour. |
 | OB-14 | The route's signal is the authority over the body's | `POST /api/logs/query` carrying `signal: "metrics"` is a contradiction rather than a preference. The refusal is `invalid_query` naming both spellings. |
 | OB-15 | A query operand arrives on the wire as a string and is recovered to its scalar kind before comparison | Comparing `severityNumber > 9` as text makes `10` false. The recovery is total and tested. |
@@ -519,7 +519,7 @@ cargo run -p aex-workspace-check
     source-rewrite phase
 cargo run -p aex-workspace-check -- registry build           regenerated, committed
 cargo run -p aex-release-tool -- graph verify
-    1 violation(s): [graph-cycle] cargo:aex-usage-application -> itself
+    1 violation(s): [graph-cycle] cargo:aex-usage-app -> itself
     (pre-existing, another stream's crate; no resource-shape violation on any
     of the five units)
 ```
@@ -587,12 +587,12 @@ cargo test -p aex-observation-query --lib                     39 passed
 cargo test -p regional-observation-api --lib                  46 passed
 cargo test -p aex-session-dynamodb --lib <event-key test>      1 passed
 cargo test -p regional-otlp --bin regional-otlp               28 passed
-cargo test -p aex-observation-store-aws --lib <key test>       1 passed
+cargo test -p aex-observation-store-dynamodb --lib <key test>       1 passed
 cargo test -p observation-reconciler --bin observation-reconciler
                                                                compiled clean
 cargo clippy -p regional-observation-api -p regional-otlp \
   -p observation-reconciler -p aex-observation-query \
-  -p aex-observation-domain -p aex-observation-store-aws \
+  -p aex-observation-domain -p aex-observation-store-dynamodb \
   -p aex-regional-http -p aex-session-dynamodb --all-targets \
   -- -D warnings                                                clean
 cargo run -p aex-regional-test-support --example emit-regional-tables
@@ -707,7 +707,7 @@ attempted bytes and recoverability. Empty signal sets and empty time windows are
 invalid. Revisions begin at zero and are contiguous; skipping a number is not a
 monotone append.
 
-`aex_observation_store_aws::gap::{encode, decode}` is the one strict row codec.
+`aex_observation_store_dynamodb::gap::{encode, decode}` is the one strict row codec.
 It refuses missing, mistyped or contradictory fields rather than defaulting a
 reason, signal, owner, range or repair state. The row is:
 

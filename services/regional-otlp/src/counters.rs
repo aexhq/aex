@@ -3,7 +3,7 @@
 //!
 //! Before this module the deployable emitted exactly one record in its life —
 //! the startup event — so the degraded-gate counter the spool contract
-//! documents ([`aex_observation_store_aws::spool::GateState::Degraded`]:
+//! documents ([`aex_observation_store_dynamodb::spool::GateState::Degraded`]:
 //! "admission proceeds and a counter is emitted") did not exist, and neither an
 //! emptying redaction manifest nor an exhausted materialization left any trace.
 //!

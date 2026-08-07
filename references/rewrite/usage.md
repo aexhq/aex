@@ -47,7 +47,7 @@ errors, thirteen lint failures and three genuine defects; see §6.
 | `keys` | The pure key grammar every authority table shares, with a per-category item-type fence. |
 | `wire_pending` | Bounded identifiers and the fixed-width `Timestamp`, all `TODO(cross-stream)`. |
 
-### 1.2 `aex-usage-application::probe` — the METER-02 library
+### 1.2 `aex-usage-app::probe` — the METER-02 library
 
 Behind a non-default `probe` feature. Four OS seams, each a trait with one Linux
 implementation, so the whole probe is deterministically testable off Linux and
@@ -57,7 +57,7 @@ the syscall surface stays exactly four seams.
 
 `aex-usage-{storage,compute,transfer}-aws` each carry the key grammar bound to
 their own `CATEGORY`, the row codec, and the four-item single-partition
-admission transaction. `aex-usage-query-aws` carries the generation-keyed
+admission transaction. `aex-usage-query-dynamodb` carries the generation-keyed
 read-only projection key grammar.
 
 ### 1.4 Test evidence
@@ -75,7 +75,7 @@ env-var self-skip.
   encoding. The five `SHA-256` fact-id vectors were computed outside this crate
   with `sha256sum` and pinned, so a drift in either the canonical form or the
   digest construction fails rather than agreeing with itself.
-- **Probe properties** (`aex-usage-application/tests/probe_properties.rs`):
+- **Probe properties** (`aex-usage-app/tests/probe_properties.rs`):
   awaited time attributes zero for any schedule; no poll exceeds the cap; the
   memory envelope is never over-committed; a resize sequence integrates exactly;
   a crossing yields at most one fact; suspended Hands time bills nothing; the
@@ -87,7 +87,7 @@ env-var self-skip.
 
 ## 2. The exact probe API peers should call
 
-Import path is `aex_usage_application::probe`, and the caller must enable the
+Import path is `aex_usage_app::probe`, and the caller must enable the
 crate's `probe` feature.
 
 ### 2.1 Context every fact carries
@@ -310,7 +310,7 @@ aex_usage_domain::{
 | --- | --- | --- |
 | X-1 | contracts | **Blocking.** `aex_internal_contracts::usage::UsageFact.fact_id` must be `FactId` — the deterministic `usage_<sha256hex(authorityKey)>` — not `Uuid7`. A random id cannot make a producer retry idempotent without extra state and contradicts the `MessageDeduplicationId` and `business_key` grammar finance already pinned. |
 | X-2 | contracts / finance | `SettlementReceipt` should carry `workspaceId` and `acceptedSequence`. Without them every receipt costs one `gsi_fact_id` lookup. An optimisation, not a correctness dependency. |
-| X-3 | brain | `aex-brain-application` must import `MemoryReservation`, `ReservationClass` and `ActivationMeter` from `aex_usage_application::probe` rather than declaring its own (plan 07 §9.8). |
+| X-3 | brain | `aex-brain-app` must import `MemoryReservation`, `ReservationClass` and `ActivationMeter` from `aex_usage_app::probe` rather than declaring its own (plan 07 §9.8). |
 | X-4 | runtime control | `aex-runtime-control` must expose `ComputeShape` per Hands size as integer `(millicpu, memory_bytes)`, not a float vCPU count, and must expose exactly **five** tokens. |
 | X-5 | regional stores | The four `migrations/regional/tables/usage-*.json` definitions are **not yet authored** (see §5) and must be picked up by plan 05's bundle generator and its exhaustive-projection test. |
 | X-6 | regional stores | `regional-work` must carry the three `usage.*` deferred-measurement payload kinds and filter them to the owning producer worker, not to a usage worker. |
@@ -326,7 +326,7 @@ Recorded plainly rather than marked "not applicable". Everything here is owed.
 | D-1 | **The three workers are still skeletons.** No `stream`, `sweep` or `receipt` mode handler exists. The projection transaction, frontier advance, outbox emission, partial-batch `batchItemFailures` and poison isolation are unimplemented. | plan 12 §6, work order U6 |
 | D-2 | **The `integration` layer for all four adapter crates.** The `DynamoDB` Local suites are unwritten. Recorded as `not_applicable.integration` with the exact missing cases named, so `aex-workspace-check` passes while the debt stays legible. | each adapter's `Cargo.toml` |
 | D-3 | **The four `migrations/regional/tables/usage-*.json` definitions.** Not authored. | X-5 |
-| D-4 | **`aex-usage-application` use cases.** `ports.rs` and `use_cases.rs` are still placeholders: `RecordFact`, `ProjectCategory`, `PublishOutbox`, `ApplyReceipt`, `RebuildProjection`, `SweepOutbox`, `QuarantineFact` are unimplemented. | plan 12 §1.1 |
+| D-4 | **`aex-usage-app` use cases.** `ports.rs` and `use_cases.rs` are still placeholders: `RecordFact`, `ProjectCategory`, `PublishOutbox`, `ApplyReceipt`, `RebuildProjection`, `SweepOutbox`, `QuarantineFact` are unimplemented. | plan 12 §1.1 |
 | D-5 | **`FactDrain`.** `FactSink`, `BoundedFactSink`, `OverflowLedger`, `DrainPolicy`, `DrainReport` and `DrainError` exist; the `FactDrain` actor that batches into `RecordFact` and whose `flush` fails on a non-empty overflow ledger does not. The types it needs are all in place. | plan 12 §5, U-25 |
 | D-6 | **`MemoryBudget::reserve(.., deadline)`.** Only the non-waiting `try_reserve` exists. | §2.4 |
 | D-7 | **`CountingBody<B>`.** The `http_body::Body` wrapper every response body was to use. `EgressCounter` underneath it is complete. | §2.5 |
@@ -359,7 +359,7 @@ Recorded plainly rather than marked "not applicable". Everything here is owed.
 | UH-5 | `lambda_facts` takes an explicit `at` timestamp | A `REPORT` line carries no instant of its own, and the service interval has to start somewhere. |
 | UH-6 | `MemoryBudget::close` derives the interval end from `held_ms` rather than re-reading the wall clock | The emitted `[start, end)` and the billed `bytes x held_ms` then cannot disagree by a scheduling delay. |
 | UH-7 | A dropped `CpuJob` still attributes its elapsed CPU and increments a drop counter | The work happened either way; discarding it would under-bill. The drop is the defect signal, not the discard. |
-| UH-8 | `aex-usage-application` carries a self dev-dependency enabling `probe` | Keeps the feature non-default for real consumers — the three workers never link `rustix` — while the default test lane still covers the probe rather than silently skipping it. |
+| UH-8 | `aex-usage-app` carries a self dev-dependency enabling `probe` | Keeps the feature non-default for real consumers — the three workers never link `rustix` — while the default test lane still covers the probe rather than silently skipping it. |
 | UH-9 | `pin-project-lite`, `http-body` and `rustix` added to `[workspace.dependencies]` | `unsafe_code` is forbidden workspace-wide, so a future wrapper cannot hand-roll pin projection and the thread-CPU syscall needs a safe wrapper. `http-body` is declared for the deferred `CountingBody` (D-7). |
 | UH-10 | `ActivationId` added to `wire_pending` | The plan's `ActivationKey` names one and no peer type existed yet. `TODO(cross-stream)` like the rest of that module. |
 
@@ -402,7 +402,7 @@ Each adapter now checks its own definition against its key grammar: the declared
 sibling worker appears in the IAM list, nothing expires, and both indexes project
 the discriminator.
 
-### S1.2 `aex-usage-application` (closes D-4, D-5, D-7)
+### S1.2 `aex-usage-app` (closes D-4, D-5, D-7)
 
 | Module | Owns |
 | --- | --- |
@@ -523,7 +523,7 @@ Unchanged from plan 12 §8.2 and §12, and none of it is silently passed:
 
 | # | Gap | Why it is not closed |
 | --- | --- | --- |
-| E-1 | **`AuthorityStore`, `ProjectionStore` and `RatingQueue` implementations over the real `DynamoDB` and `SQS` clients**, including strict `NEW_IMAGE` decode into `UsageFact`. The three worker `run` bodies return the typed `RunError::StoreUnimplemented` until they land. Everything above that seam — the fold, the three event modes, both frontier advances, the partial-batch rule and the poison path — is implemented and tested against in-memory ports. | The largest remaining piece; the expression and codec halves already exist per adapter. |
+| E-1 | **`AuthorityStore`, `ProjectionStore` and `RatingQueue` implementations over the real `DynamoDB` and `SQS` clients**, including strict `NEW_IMAGE` decode into `UsageFact`. The three worker `run` bodies return a typed `StoreUnimplemented` run-error variant until they land. Everything above that seam — the fold, the three event modes, both frontier advances, the partial-batch rule and the poison path — is implemented and tested against in-memory ports. | The largest remaining piece; the expression and codec halves already exist per adapter. |
 | E-2 | **The `DynamoDB` Local integration suites** for the four adapter crates. Still recorded as `not_applicable.integration` with the exact missing cases named. | Depends on E-1: there is no client call to exercise yet. |
 | E-3 | **The three live companions.** Still skeletons. | Depends on E-1 and a plane. |
 | E-4 | **The 10^5-fact corpus generator and the `insta`-pinned totals.** Replay equality is proved over a 40-fact corpus in two partitionings; the production-shaped corpus and its pinned snapshot are not written. | Cheap once E-1 lands and the same driver can run against `DynamoDB` Local. |
@@ -539,13 +539,13 @@ X-1 through X-8 in §4 all stand. Two additions:
 | # | Peer | What |
 | --- | --- | --- |
 | X-9 | test architecture / regional stores | Two peer assertions in `aex-regional-test-support` were extended rather than worked around: the checked-in table-name list now includes the four usage tables, and the `DeleteItem` allow list now names each usage worker against its own authority. Each worker deletes exactly one row shape — its `OUTBOX#` marker, after a confirmed send — and nothing else in an authority is deletable by it. |
-| X-10 | delivery | `aex-usage-application` is classified pure, so `dependency-direction` forbids it from linking `tokio`. The drain `Pacer` is therefore a port with no shipped implementation, and whichever composition root owns the runtime supplies one. If a pure crate is ever meant to ship a runtime-backed seam, that rule needs revisiting rather than evading. |
+| X-10 | delivery | `aex-usage-app` is classified pure, so `dependency-direction` forbids it from linking `tokio`. The drain `Pacer` is therefore a port with no shipped implementation, and whichever composition root owns the runtime supplies one. If a pure crate is ever meant to ship a runtime-backed seam, that rule needs revisiting rather than evading. |
 
 ## S6. Decisions taken beyond §7 and plan 12 §11
 
 | # | Decision | Rationale |
 | --- | --- | --- |
-| UH-11 | The projection key grammar moves from `aex-usage-query-aws` into `aex-usage-domain::projection` | The writer folds facts into these keys and the reader reads them back, and `aex-usage-query-aws` must stay unable to link anything that writes. The grammar therefore cannot live on either side, and two copies is exactly how the two would stop agreeing about where a row lives. |
+| UH-11 | The projection key grammar moves from `aex-usage-query-dynamodb` into `aex-usage-domain::projection` | The writer folds facts into these keys and the reader reads them back, and `aex-usage-query-dynamodb` must stay unable to link anything that writes. The grammar therefore cannot live on either side, and two copies is exactly how the two would stop agreeing about where a row lives. |
 | UH-12 | Memory and compute share one coverage row, keyed by the canonical public face of their authority | A frontier is one contiguous sequence per `(workspace, category)`. Two coverage rows would each see a subset of that sequence, and the projected-sequence fence would stop meaning anything. `coverage_face` normalises inside the grammar, so the writer and the reader cannot disagree. |
 | UH-13 | Detail rows partition by day; aggregates partition by month | A month partition of per-fact rows is the one place this table could grow a hot key, and a reader always knows which day it is asking about. |
 | UH-14 | Each of the four usage tables gets its own customer managed key rather than one shared usage CMK | Satisfies `U-31` separate-blast-radius and the workspace-wide distinct-alias property at once, and narrows the radius further at no cost. |

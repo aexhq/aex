@@ -9,9 +9,9 @@
 //! the identical category boundary, so a fourth deployable would buy nothing and
 //! would break Area 9's frozen inventory.
 //!
-//! The behaviour lives in `aex_usage_application::worker`, which is
+//! The behaviour lives in `aex_usage_app::worker`, which is
 //! category-generic over ports. This binary is the only place that names a
-//! table, and it names exactly one: `aex-usage-compute-aws`. That is what makes
+//! table, and it names exactly one: `aex-usage-compute-dynamodb`. That is what makes
 //! "this worker cannot write a sibling authority" a link-graph fact rather than
 //! a review promise — see `src/main.rs` tests and the adapter's own
 //! `tests/isolation.rs`.
@@ -19,14 +19,14 @@
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use aex_usage_application::ports::Admission;
-use aex_usage_application::use_cases::RecordFact;
-use aex_usage_application::worker::{BillingMode, UsageWorker, WorkerLimits};
-use aex_usage_compute_aws::clock::SystemClock;
-use aex_usage_compute_aws::projection::QueryProjection;
-use aex_usage_compute_aws::queue::SettlementQueue;
-use aex_usage_compute_aws::store::ComputeStore;
-use aex_usage_compute_aws::stream::{receipt_records, stream_records};
+use aex_usage_app::ports::Admission;
+use aex_usage_app::use_cases::RecordFact;
+use aex_usage_app::worker::{BillingMode, UsageWorker, WorkerLimits};
+use aex_usage_compute_dynamodb::clock::SystemClock;
+use aex_usage_compute_dynamodb::projection::QueryProjection;
+use aex_usage_compute_dynamodb::queue::SettlementQueue;
+use aex_usage_compute_dynamodb::store::ComputeStore;
+use aex_usage_compute_dynamodb::stream::{receipt_records, stream_records};
 use aex_usage_domain::ingress::FactDraftEnvelope;
 use aex_usage_domain::wire_pending::RegionId;
 use lambda_runtime::{Error as LambdaError, LambdaEvent, service_fn};
@@ -64,7 +64,7 @@ pub struct Config {
 
 /// Why `usage-compute-worker` refused to start.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ConfigError {
+pub enum UsageComputeWorkerConfigError {
     /// A required variable was absent or empty.
     #[error("required environment variable `{name}` is missing")]
     Missing {
@@ -98,10 +98,10 @@ pub enum ConfigError {
 
 /// Why `usage-compute-worker` stopped.
 #[derive(Debug, thiserror::Error)]
-pub enum RunError {
+pub enum UsageComputeWorkerRunError {
     /// Start-up configuration was rejected.
     #[error(transparent)]
-    Config(#[from] ConfigError),
+    Config(#[from] UsageComputeWorkerConfigError),
     /// An incoming event could not be classified.
     #[error(transparent)]
     Dispatch(#[from] DispatchError),
@@ -221,13 +221,13 @@ pub const PLANE_VAR: &str = "AEX_PLANE";
 /// Environment variable naming the bound `AWS` region.
 pub const REGION_VAR: &str = "AEX_REGION";
 /// Environment variable naming the authority table.
-pub const AUTHORITY_TABLE_VAR: &str = aex_usage_compute_aws::TABLE_ENV;
+pub const AUTHORITY_TABLE_VAR: &str = aex_usage_compute_dynamodb::TABLE_ENV;
 /// Environment variable naming the shared query projection table.
 pub const PROJECTION_TABLE_VAR: &str = "AEX_USAGE_QUERY_TABLE";
 /// Environment variable naming the central settlement queue.
-pub const RATING_QUEUE_VAR: &str = aex_usage_compute_aws::RATING_QUEUE_ENV;
+pub const RATING_QUEUE_VAR: &str = aex_usage_compute_dynamodb::RATING_QUEUE_ENV;
 /// Environment variable naming this category's receipt queue.
-pub const RECEIPT_QUEUE_VAR: &str = aex_usage_compute_aws::RECEIPT_QUEUE_ENV;
+pub const RECEIPT_QUEUE_VAR: &str = aex_usage_compute_dynamodb::RECEIPT_QUEUE_ENV;
 /// Environment variable naming the charging gate.
 pub const BILLING_MODE_VAR: &str = "AEX_USAGE_BILLING_MODE";
 /// Environment variable naming the outbox republish threshold.
@@ -254,11 +254,11 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// [`ConfigError::Missing`] for an absent or blank variable,
-    /// [`ConfigError::Invalid`] for one that does not parse, and
-    /// [`ConfigError::ChargingGate`] when the billing mode and the rating queue
+    /// [`UsageComputeWorkerConfigError::Missing`] for an absent or blank variable,
+    /// [`UsageComputeWorkerConfigError::Invalid`] for one that does not parse, and
+    /// [`UsageComputeWorkerConfigError::ChargingGate`] when the billing mode and the rating queue
     /// disagree.
-    pub fn from_env() -> Result<Self, ConfigError> {
+    pub fn from_env() -> Result<Self, UsageComputeWorkerConfigError> {
         Self::from_lookup(|name| std::env::var(name).ok())
     }
 
@@ -270,19 +270,19 @@ impl Config {
     /// # Errors
     ///
     /// Identical to [`Config::from_env`].
-    pub fn from_lookup<F>(lookup: F) -> Result<Self, ConfigError>
+    pub fn from_lookup<F>(lookup: F) -> Result<Self, UsageComputeWorkerConfigError>
     where
         F: Fn(&str) -> Option<String>,
     {
         let plane = required(&lookup, PLANE_VAR)?;
         if !PLANES.contains(&plane.as_str()) {
-            return Err(ConfigError::Invalid {
+            return Err(UsageComputeWorkerConfigError::Invalid {
                 name: PLANE_VAR,
                 reason: format!("expected one of {PLANES:?}, got `{plane}`"),
             });
         }
         let region = RegionId::parse(&required(&lookup, REGION_VAR)?).map_err(|error| {
-            ConfigError::Invalid {
+            UsageComputeWorkerConfigError::Invalid {
                 name: REGION_VAR,
                 reason: error.to_string(),
             }
@@ -297,13 +297,13 @@ impl Config {
         let limits = WorkerLimits {
             outbox_republish_after_ms: positive(&lookup, REPUBLISH_AFTER_VAR)?,
             sweep_page: usize::try_from(positive(&lookup, SWEEP_PAGE_VAR)?).map_err(|error| {
-                ConfigError::Invalid {
+                UsageComputeWorkerConfigError::Invalid {
                     name: SWEEP_PAGE_VAR,
                     reason: error.to_string(),
                 }
             })?,
             outbox_attempt_alarm: u32::try_from(positive(&lookup, ATTEMPT_ALARM_VAR)?).map_err(
-                |error| ConfigError::Invalid {
+                |error| UsageComputeWorkerConfigError::Invalid {
                     name: ATTEMPT_ALARM_VAR,
                     reason: error.to_string(),
                 },
@@ -312,7 +312,7 @@ impl Config {
             outbox_backlog_ceiling: positive(&lookup, BACKLOG_CEILING_VAR)?,
         };
         let budget = u32::try_from(positive(&lookup, BUDGET_VAR)?).map_err(|error| {
-            ConfigError::Invalid {
+            UsageComputeWorkerConfigError::Invalid {
                 name: BUDGET_VAR,
                 reason: error.to_string(),
             }
@@ -333,11 +333,11 @@ impl Config {
 }
 
 /// Parses the charging gate.
-fn billing_mode(value: &str) -> Result<BillingMode, ConfigError> {
+fn billing_mode(value: &str) -> Result<BillingMode, UsageComputeWorkerConfigError> {
     match value {
         "shadow" => Ok(BillingMode::Shadow),
         "active" => Ok(BillingMode::Active),
-        other => Err(ConfigError::Invalid {
+        other => Err(UsageComputeWorkerConfigError::Invalid {
             name: BILLING_MODE_VAR,
             reason: format!("expected `shadow` or `active`, got `{other}`"),
         }),
@@ -345,16 +345,19 @@ fn billing_mode(value: &str) -> Result<BillingMode, ConfigError> {
 }
 
 /// Refuses a deployment whose declared mode and rating queue disagree.
-fn check_charging_gate(mode: BillingMode, queue: &str) -> Result<(), ConfigError> {
+fn check_charging_gate(
+    mode: BillingMode,
+    queue: &str,
+) -> Result<(), UsageComputeWorkerConfigError> {
     let shadow_queue = queue.ends_with(SHADOW_QUEUE_SUFFIX);
     match (mode, shadow_queue) {
         (BillingMode::Shadow, true) | (BillingMode::Active, false) => Ok(()),
-        (BillingMode::Shadow, false) => Err(ConfigError::ChargingGate {
+        (BillingMode::Shadow, false) => Err(UsageComputeWorkerConfigError::ChargingGate {
             mode: mode.id(),
             queue: queue.to_owned(),
             reason: "a shadow deployment must publish to the shadow rating queue",
         }),
-        (BillingMode::Active, true) => Err(ConfigError::ChargingGate {
+        (BillingMode::Active, true) => Err(UsageComputeWorkerConfigError::ChargingGate {
             mode: mode.id(),
             queue: queue.to_owned(),
             reason: "an active deployment must not publish to the shadow rating queue",
@@ -362,27 +365,29 @@ fn check_charging_gate(mode: BillingMode, queue: &str) -> Result<(), ConfigError
     }
 }
 
-fn required<F>(lookup: &F, name: &'static str) -> Result<String, ConfigError>
+fn required<F>(lookup: &F, name: &'static str) -> Result<String, UsageComputeWorkerConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     match lookup(name) {
         Some(value) if !value.trim().is_empty() => Ok(value),
-        _ => Err(ConfigError::Missing { name }),
+        _ => Err(UsageComputeWorkerConfigError::Missing { name }),
     }
 }
 
-fn positive<F>(lookup: &F, name: &'static str) -> Result<u64, ConfigError>
+fn positive<F>(lookup: &F, name: &'static str) -> Result<u64, UsageComputeWorkerConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     let raw = required(lookup, name)?;
-    let value = raw.parse::<u64>().map_err(|error| ConfigError::Invalid {
-        name,
-        reason: format!("expected a positive integer, got `{raw}`: {error}"),
-    })?;
+    let value = raw
+        .parse::<u64>()
+        .map_err(|error| UsageComputeWorkerConfigError::Invalid {
+            name,
+            reason: format!("expected a positive integer, got `{raw}`: {error}"),
+        })?;
     if value == 0 {
-        return Err(ConfigError::Invalid {
+        return Err(UsageComputeWorkerConfigError::Invalid {
             name,
             reason: "expected a positive integer, got `0`".to_owned(),
         });
@@ -398,11 +403,11 @@ where
 ///
 /// # Errors
 ///
-/// Returns [`RunError::Runtime`] when the Lambda runtime stops.
+/// Returns [`UsageComputeWorkerRunError::Runtime`] when the Lambda runtime stops.
 pub async fn run(
     config: &Config,
     telemetry: &aex_platform_telemetry::Handle,
-) -> Result<(), RunError> {
+) -> Result<(), UsageComputeWorkerRunError> {
     telemetry.emit(
         aex_platform_telemetry::Record::event(
             aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
@@ -447,7 +452,7 @@ pub async fn run(
         async move { handler.handle(event.payload).await }
     }))
     .await
-    .map_err(|error: LambdaError| RunError::Runtime(error.to_string()))
+    .map_err(|error: LambdaError| UsageComputeWorkerRunError::Runtime(error.to_string()))
 }
 
 /// The composition every trigger is served from.
@@ -584,7 +589,7 @@ impl Handler {
                 let envelope: FactDraftEnvelope =
                     serde_json::from_str(body).map_err(|error| error.to_string())?;
                 let draft = envelope
-                    .into_draft(aex_usage_compute_aws::CATEGORY)
+                    .into_draft(aex_usage_compute_dynamodb::CATEGORY)
                     .map_err(|error| error.to_string())?;
                 self.admission
                     .execute(&draft)
@@ -652,14 +657,14 @@ async fn main() -> ExitCode {
 mod tests {
     use super::{
         AGE_ALARM_VAR, ATTEMPT_ALARM_VAR, AUTHORITY_TABLE_VAR, BACKLOG_CEILING_VAR,
-        BILLING_MODE_VAR, BUDGET_VAR, BillingMode, Config, ConfigError, DispatchError, EventMode,
-        PLANE_VAR, PROJECTION_TABLE_VAR, RATING_QUEUE_VAR, RECEIPT_QUEUE_VAR, REGION_VAR,
-        REPUBLISH_AFTER_VAR, SWEEP_PAGE_VAR,
+        BILLING_MODE_VAR, BUDGET_VAR, BillingMode, Config, DispatchError, EventMode, PLANE_VAR,
+        PROJECTION_TABLE_VAR, RATING_QUEUE_VAR, RECEIPT_QUEUE_VAR, REGION_VAR, REPUBLISH_AFTER_VAR,
+        SWEEP_PAGE_VAR, UsageComputeWorkerConfigError,
     };
     use std::collections::BTreeMap;
 
     /// The category this binary is bound to, and the only one it may name.
-    const CATEGORY: aex_usage_domain::meter::Category = aex_usage_compute_aws::CATEGORY;
+    const CATEGORY: aex_usage_domain::meter::Category = aex_usage_compute_dynamodb::CATEGORY;
 
     fn complete() -> BTreeMap<&'static str, String> {
         BTreeMap::from([
@@ -691,7 +696,9 @@ mod tests {
         ])
     }
 
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
+    fn read(
+        vars: &BTreeMap<&'static str, String>,
+    ) -> Result<Config, UsageComputeWorkerConfigError> {
         Config::from_lookup(|name| vars.get(name).cloned())
     }
 
@@ -714,7 +721,7 @@ mod tests {
             vars.remove(name);
             assert_eq!(
                 read(&vars),
-                Err(ConfigError::Missing { name }),
+                Err(UsageComputeWorkerConfigError::Missing { name }),
                 "removing {name}"
             );
         }
@@ -726,7 +733,7 @@ mod tests {
         vars.insert(AUTHORITY_TABLE_VAR, "   ".to_owned());
         assert_eq!(
             read(&vars),
-            Err(ConfigError::Missing {
+            Err(UsageComputeWorkerConfigError::Missing {
                 name: AUTHORITY_TABLE_VAR
             })
         );
@@ -738,7 +745,7 @@ mod tests {
         vars.insert(PLANE_VAR, "staging".to_owned());
         assert!(matches!(
             read(&vars),
-            Err(ConfigError::Invalid {
+            Err(UsageComputeWorkerConfigError::Invalid {
                 name: PLANE_VAR,
                 ..
             })
@@ -759,7 +766,10 @@ mod tests {
                 let mut vars = complete();
                 vars.insert(name, value.to_owned());
                 assert!(
-                    matches!(read(&vars), Err(ConfigError::Invalid { .. })),
+                    matches!(
+                        read(&vars),
+                        Err(UsageComputeWorkerConfigError::Invalid { .. })
+                    ),
                     "`{name}` accepted `{value}`"
                 );
             }
@@ -774,7 +784,7 @@ mod tests {
         live_queue_shadow_mode.insert(RATING_QUEUE_VAR, "aex-dev-usage-rating.fifo".to_owned());
         assert!(matches!(
             read(&live_queue_shadow_mode),
-            Err(ConfigError::ChargingGate { .. })
+            Err(UsageComputeWorkerConfigError::ChargingGate { .. })
         ));
 
         // And active pointed at the shadow queue would silently bill nothing.
@@ -782,7 +792,7 @@ mod tests {
         shadow_queue_active_mode.insert(BILLING_MODE_VAR, "active".to_owned());
         assert!(matches!(
             read(&shadow_queue_active_mode),
-            Err(ConfigError::ChargingGate { .. })
+            Err(UsageComputeWorkerConfigError::ChargingGate { .. })
         ));
 
         // The two consistent combinations are the only ones that start.
@@ -805,7 +815,7 @@ mod tests {
         vars.insert(BILLING_MODE_VAR, "maybe".to_owned());
         assert!(matches!(
             read(&vars),
-            Err(ConfigError::Invalid {
+            Err(UsageComputeWorkerConfigError::Invalid {
                 name: BILLING_MODE_VAR,
                 ..
             })
@@ -821,7 +831,7 @@ mod tests {
         vars.insert(REGION_VAR, "eu#west#1".to_owned());
         assert!(matches!(
             read(&vars),
-            Err(ConfigError::Invalid {
+            Err(UsageComputeWorkerConfigError::Invalid {
                 name: REGION_VAR,
                 ..
             })
@@ -921,13 +931,13 @@ mod tests {
         // its table even with the wrong credentials.
         let manifest = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))
             .expect("the crate's own manifest is readable");
-        for sibling in ["aex-usage-storage-aws", "aex-usage-transfer-aws"] {
+        for sibling in ["aex-usage-storage-dynamodb", "aex-usage-transfer-dynamodb"] {
             assert!(
                 !manifest.contains(sibling),
                 "`{sibling}` must not be reachable from this worker"
             );
         }
-        assert!(manifest.contains("aex-usage-compute-aws"));
+        assert!(manifest.contains("aex-usage-compute-dynamodb"));
     }
 
     #[test]

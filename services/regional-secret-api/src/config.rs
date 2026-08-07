@@ -8,8 +8,8 @@
 //! point of failure.
 
 use aex_regional_http::config::{
-    Arn, ConfigError, Lookup, arn_in_region, bounded_u64, bounded_usize, forbidden, plane_name,
-    region, required,
+    Arn, Lookup, RegionalHttpConfigError, arn_in_region, bounded_u64, bounded_usize, forbidden,
+    plane_name, region, required,
 };
 use aex_wire::types::Region;
 
@@ -125,8 +125,8 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// Returns the first [`ConfigError`], naming the offending variable.
-    pub fn from_env() -> Result<Self, ConfigError> {
+    /// Returns the first [`RegionalHttpConfigError`], naming the offending variable.
+    pub fn from_env() -> Result<Self, RegionalHttpConfigError> {
         Self::read(&aex_regional_http::config::Environment)
     }
 
@@ -135,7 +135,7 @@ impl Config {
     /// # Errors
     ///
     /// Identical to [`Config::from_env`].
-    pub fn read<L: Lookup + ?Sized>(lookup: &L) -> Result<Self, ConfigError> {
+    pub fn read<L: Lookup + ?Sized>(lookup: &L) -> Result<Self, RegionalHttpConfigError> {
         for (name, reason) in FORBIDDEN {
             forbidden(lookup, name, DEPLOYABLE, reason)?;
         }

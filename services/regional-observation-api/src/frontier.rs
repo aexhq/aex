@@ -20,8 +20,8 @@ use std::collections::{BTreeMap, HashMap};
 use aex_observation_domain::keys::{self, ScopeKey};
 use aex_observation_domain::signal::Signal;
 use aex_observation_query::plan::NormalizedQuery;
-use aex_observation_store_aws::expressions::{PK, SK};
-use aex_observation_store_aws::gap_hint::GapAppendCount;
+use aex_observation_store_dynamodb::expressions::{PK, SK};
+use aex_observation_store_dynamodb::gap_hint::GapAppendCount;
 use aex_wire::ids::WorkspaceId;
 use aex_wire::types::Timestamp;
 use aws_sdk_dynamodb::types::{AttributeValue, KeysAndAttributes};
@@ -329,7 +329,7 @@ fn decode_gap_change(item: Option<&HashMap<String, AttributeValue>>) -> GapChang
     let Some(item) = item else {
         return GapChange::Unpublished;
     };
-    aex_observation_store_aws::gap_hint::decode(item)
+    aex_observation_store_dynamodb::gap_hint::decode(item)
         .map_or(GapChange::Unreadable, GapChange::Counted)
 }
 

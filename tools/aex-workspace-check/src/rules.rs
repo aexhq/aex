@@ -94,9 +94,13 @@ pub fn is_domain_crate(name: &str) -> bool {
 }
 
 /// Whether a workspace crate name denotes an application crate.
+///
+/// One suffix, not two. `-application` was retired because the anchored search
+/// an agent actually types — `grep -- '-app$'` — returned four of the seven
+/// application crates under the split and now returns all seven.
 #[must_use]
 pub fn is_application_crate(name: &str) -> bool {
-    name.ends_with("-app") || name.ends_with("-application")
+    name.ends_with("-app")
 }
 
 /// Whether a workspace crate name denotes test-only code.
@@ -126,6 +130,9 @@ pub fn check(workspace: &Workspace) -> Vec<Violation> {
     violations.extend(no_dependency_cycles(workspace));
     violations.extend(frozen_inventory_is_present(workspace));
     violations.extend(every_member_is_unpublished(workspace));
+    violations.extend(application_suffix_is_app(workspace));
+    violations.extend(adapter_suffix_names_the_service(workspace));
+    violations.extend(deployables_expose_a_library(workspace));
     violations.sort();
     violations
 }
@@ -780,5 +787,323 @@ mod tests {
             rules(&every_member_is_unpublished(&workspace)),
             vec!["publish-false"]
         );
+    }
+}
+/// Members under `services/` or `workers/` that do not yet expose a library.
+///
+/// Frozen, and shrink-only: the rule below fails on any member outside this
+/// list, and fails again on a listed member that has since grown a library, so
+/// the list cannot silently outlive the debt it records. There is no `--write`
+/// and no number in it — the only legal edit is deleting a row, which is what
+/// keeps two branches from merge-summing their way back to green.
+pub const MAIN_ONLY_DEPLOYABLES: &[&str] = &[
+    "central-authz",
+    "central-control-api",
+    "central-control-worker",
+    "central-identity-api",
+    "observation-export-launcher",
+    "observation-export-task",
+    "regional-control",
+    "regional-otlp",
+    "runtime-control-worker",
+    "usage-compute-worker",
+    "usage-storage-worker",
+    "usage-transfer-worker",
+];
+
+/// No member name ends `-application`; the application layer suffix is `-app`.
+///
+/// Both suffixes named the same layer, so `grep -- '-app$'` returned four of
+/// the seven application crates and an agent that anchored its search concluded
+/// the layer did not exist.
+#[must_use]
+pub fn application_suffix_is_app(workspace: &Workspace) -> Vec<Violation> {
+    const RULE: &str = "application-suffix";
+    workspace
+        .metadata
+        .members()
+        .into_iter()
+        .filter(|package| package.name.ends_with("-application"))
+        .map(|package| Violation {
+            rule: RULE,
+            detail: format!(
+                "`{}` ends `-application`; the application layer suffix is `-app`",
+                package.name
+            ),
+        })
+        .collect()
+}
+
+/// A `crates/` member's adapter suffix names what it actually talks to.
+///
+/// Three clauses, all decidable from `cargo metadata` alone:
+///
+/// - declaring `aws-sdk-dynamodb` means the name ends `-dynamodb`, so
+///   `ls crates | grep dynamodb` finds every `DynamoDB` adapter rather than 8 of 14
+/// - ending `-aws` means it declares some `aws-sdk-*` and not `aws-sdk-dynamodb`,
+///   so `-aws` reads as "an AWS adapter that is not a table adapter"
+/// - declaring any `aws-sdk-*` means it carries one of the frozen adapter
+///   suffixes, so a new service cannot quietly widen the set
+#[must_use]
+pub fn adapter_suffix_names_the_service(workspace: &Workspace) -> Vec<Violation> {
+    const RULE: &str = "adapter-suffix";
+    let Ok(directories) = workspace.metadata.member_directories() else {
+        return Vec::new();
+    };
+    let mut violations = Vec::new();
+    for package in workspace.metadata.members() {
+        let Some(path) = directories.get(&package.name) else {
+            continue;
+        };
+        if !path.starts_with("crates/") {
+            continue;
+        }
+        let normal: Vec<&str> = package
+            .dependencies
+            .iter()
+            .filter(|dependency| dependency.kind() == DependencyKind::Normal)
+            .map(|dependency| dependency.name.as_str())
+            .collect();
+        let dynamodb = normal.contains(&"aws-sdk-dynamodb");
+        let any_aws = normal.iter().any(|name| name.starts_with("aws-sdk-"));
+
+        if dynamodb && !package.name.ends_with("-dynamodb") {
+            violations.push(Violation {
+                rule: RULE,
+                detail: format!(
+                    "`{}` declares `aws-sdk-dynamodb` but does not end `-dynamodb`",
+                    package.name
+                ),
+            });
+        }
+        if package.name.ends_with("-aws") {
+            if dynamodb {
+                violations.push(Violation {
+                    rule: RULE,
+                    detail: format!(
+                        "`{}` ends `-aws` but declares `aws-sdk-dynamodb`; a table adapter ends `-dynamodb`",
+                        package.name
+                    ),
+                });
+            } else if !any_aws {
+                violations.push(Violation {
+                    rule: RULE,
+                    detail: format!(
+                        "`{}` ends `-aws` but declares no `aws-sdk-*` dependency",
+                        package.name
+                    ),
+                });
+            }
+        }
+        if any_aws && !is_adapter_crate(&package.name) {
+            violations.push(Violation {
+                rule: RULE,
+                detail: format!(
+                    "`{}` declares an `aws-sdk-*` dependency but carries no adapter suffix",
+                    package.name
+                ),
+            });
+        }
+    }
+    violations
+}
+
+/// Every `services/` and `workers/` member exposes a library.
+///
+/// `main.rs` is composition only. A main-only deployable cannot be reached by an
+/// integration test, which is why 14 of the tree's 19 `include_str!("../src/…")`
+/// source-scanning tests live in these twelve members: with no library to call,
+/// the only thing left to assert against is the text of `main.rs`.
+#[must_use]
+pub fn deployables_expose_a_library(workspace: &Workspace) -> Vec<Violation> {
+    deployables_expose_a_library_against(workspace, MAIN_ONLY_DEPLOYABLES)
+}
+
+/// [`deployables_expose_a_library`] against an explicit frozen list.
+///
+/// Separate so a unit test can exercise the rule on a one-member fixture
+/// without the real twelve-row list reporting each of its members as missing.
+#[must_use]
+pub fn deployables_expose_a_library_against(
+    workspace: &Workspace,
+    frozen: &[&str],
+) -> Vec<Violation> {
+    const RULE: &str = "deployable-exposes-library";
+    let Ok(directories) = workspace.metadata.member_directories() else {
+        return Vec::new();
+    };
+    let mut violations = Vec::new();
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    for package in workspace.metadata.members() {
+        let Some(path) = directories.get(&package.name) else {
+            continue;
+        };
+        if !(path.starts_with("services/") || path.starts_with("workers/")) {
+            continue;
+        }
+        let grandfathered = frozen.contains(&package.name.as_str());
+        if package.library().is_some() {
+            if grandfathered {
+                violations.push(Violation {
+                    rule: RULE,
+                    detail: format!(
+                        "`{}` now exposes a library; remove it from `MAIN_ONLY_DEPLOYABLES`",
+                        package.name
+                    ),
+                });
+            }
+            continue;
+        }
+        seen.insert(package.name.as_str());
+        if !grandfathered {
+            violations.push(Violation {
+                rule: RULE,
+                detail: format!(
+                    "`{}` exposes no library; `main.rs` is composition only",
+                    package.name
+                ),
+            });
+        }
+    }
+    for name in frozen {
+        if !seen.contains(name) {
+            violations.push(Violation {
+                rule: RULE,
+                detail: format!(
+                    "`{name}` is listed in `MAIN_ONLY_DEPLOYABLES` but is not a main-only deployable; remove the row"
+                ),
+            });
+        }
+    }
+    violations
+}
+
+#[cfg(test)]
+mod suffix_and_shape_tests {
+    use super::{
+        TreeListing, Workspace, adapter_suffix_names_the_service, application_suffix_is_app,
+        deployables_expose_a_library_against,
+    };
+    use crate::metadata::WorkspaceMetadata;
+
+    fn one(name: &str, directory: &str, dependencies: &str, targets: &str) -> Workspace {
+        let json = format!(
+            r#"{{ "workspace_root": "/w",
+                  "workspace_members": ["{name} 0.1.0 (path+file:///w/{directory})"],
+                  "packages": [{{
+                    "id": "{name} 0.1.0 (path+file:///w/{directory})",
+                    "name": "{name}",
+                    "manifest_path": "/w/{directory}/Cargo.toml",
+                    "publish": [],
+                    "targets": [{targets}],
+                    "dependencies": [{dependencies}]
+                  }}] }}"#
+        );
+        Workspace {
+            metadata: WorkspaceMetadata::parse(&json).expect("the fixture parses"),
+            tree: TreeListing::new(),
+        }
+    }
+
+    const LIB: &str = r#"{ "name": "x", "kind": ["lib"] }"#;
+    const BIN: &str = r#"{ "name": "x", "kind": ["bin"] }"#;
+    const DDB: &str = r#"{ "name": "aws-sdk-dynamodb", "kind": null }"#;
+    const S3: &str = r#"{ "name": "aws-sdk-s3", "kind": null }"#;
+
+    #[test]
+    fn an_application_suffix_is_refused() {
+        let workspace = one("aex-a-application", "crates/aex-a-application", "", LIB);
+        let violations = application_suffix_is_app(&workspace);
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].detail.contains("ends `-application`"));
+    }
+
+    #[test]
+    fn an_app_suffix_is_silent() {
+        let workspace = one("aex-a-app", "crates/aex-a-app", "", LIB);
+        assert!(application_suffix_is_app(&workspace).is_empty());
+    }
+
+    #[test]
+    fn a_dynamodb_crate_must_say_so() {
+        let workspace = one("aex-a-aws", "crates/aex-a-aws", DDB, LIB);
+        let violations = adapter_suffix_names_the_service(&workspace);
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.detail.contains("does not end `-dynamodb`"))
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.detail.contains("a table adapter ends"))
+        );
+    }
+
+    #[test]
+    fn an_aws_crate_without_an_aws_sdk_is_refused() {
+        let workspace = one("aex-a-aws", "crates/aex-a-aws", "", LIB);
+        assert!(
+            adapter_suffix_names_the_service(&workspace)
+                .iter()
+                .any(|v| v.detail.contains("declares no `aws-sdk-*`"))
+        );
+    }
+
+    #[test]
+    fn an_aws_sdk_without_an_adapter_suffix_is_refused() {
+        let workspace = one("aex-a-domain", "crates/aex-a-domain", S3, LIB);
+        assert!(
+            adapter_suffix_names_the_service(&workspace)
+                .iter()
+                .any(|v| v.detail.contains("carries no adapter suffix"))
+        );
+    }
+
+    #[test]
+    fn a_correctly_named_adapter_is_silent() {
+        let ddb = one("aex-a-dynamodb", "crates/aex-a-dynamodb", DDB, LIB);
+        assert!(adapter_suffix_names_the_service(&ddb).is_empty());
+        let s3 = one("aex-a-aws", "crates/aex-a-aws", S3, LIB);
+        assert!(adapter_suffix_names_the_service(&s3).is_empty());
+    }
+
+    #[test]
+    fn the_adapter_rule_only_judges_crates() {
+        // A deployable may declare any SDK; only `crates/` carries the taxonomy.
+        let workspace = one("a-worker", "workers/a-worker", DDB, BIN);
+        assert!(adapter_suffix_names_the_service(&workspace).is_empty());
+    }
+
+    #[test]
+    fn a_main_only_deployable_outside_the_frozen_list_is_refused() {
+        let workspace = one("a-worker", "workers/a-worker", "", BIN);
+        assert!(
+            deployables_expose_a_library_against(&workspace, &[])
+                .iter()
+                .any(|v| v.detail.contains("exposes no library"))
+        );
+    }
+
+    #[test]
+    fn a_deployable_with_a_library_is_silent() {
+        let workspace = one("a-worker", "workers/a-worker", "", LIB);
+        assert!(deployables_expose_a_library_against(&workspace, &[]).is_empty());
+    }
+
+    #[test]
+    fn a_grandfathered_member_that_grew_a_library_must_leave_the_list() {
+        let workspace = one("central-authz", "services/central-authz", "", LIB);
+        assert!(
+            deployables_expose_a_library_against(&workspace, &["central-authz"])
+                .iter()
+                .any(|v| v.detail.contains("now exposes a library"))
+        );
+    }
+
+    #[test]
+    fn runtimes_are_exempt() {
+        let workspace = one("brain-mux", "runtimes/brain-mux", "", BIN);
+        assert!(deployables_expose_a_library_against(&workspace, &[]).is_empty());
     }
 }

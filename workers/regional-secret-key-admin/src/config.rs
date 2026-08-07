@@ -6,7 +6,7 @@
 //! or account, or when **any** product-table variable is bound to it.
 
 use aex_regional_http::config::{
-    Arn, ConfigError, Lookup, arn_in_region, forbidden, plane_name, region, required,
+    Arn, Lookup, RegionalHttpConfigError, arn_in_region, forbidden, plane_name, region, required,
 };
 use aex_wire::ids::{OperationId, PrefixedId as _};
 use aex_wire::types::Region;
@@ -76,8 +76,8 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// Returns the first [`ConfigError`], naming the offending variable.
-    pub fn from_env() -> Result<Self, ConfigError> {
+    /// Returns the first [`RegionalHttpConfigError`], naming the offending variable.
+    pub fn from_env() -> Result<Self, RegionalHttpConfigError> {
         Self::read(&aex_regional_http::config::Environment)
     }
 
@@ -86,7 +86,7 @@ impl Config {
     /// # Errors
     ///
     /// Identical to [`Config::from_env`].
-    pub fn read<L: Lookup + ?Sized>(lookup: &L) -> Result<Self, ConfigError> {
+    pub fn read<L: Lookup + ?Sized>(lookup: &L) -> Result<Self, RegionalHttpConfigError> {
         for (name, reason) in FORBIDDEN {
             forbidden(lookup, name, DEPLOYABLE, reason)?;
         }
@@ -98,7 +98,7 @@ impl Config {
         // this the task would happily administer a table that merely looks like
         // a keystore, which is how a lineage ends up split across two tables.
         if !keystore_table.ends_with(&keystore_logical_name) {
-            return Err(ConfigError::Invalid {
+            return Err(RegionalHttpConfigError::Invalid {
                 name: SECRET_KEYSTORE_TABLE,
                 reason: format!(
                     "table `{keystore_table}` is not the `{keystore_logical_name}` keystore"
@@ -107,7 +107,7 @@ impl Config {
         }
         let raw_attestation = required(lookup, ATTESTATION_OPERATION_ID)?;
         let attestation =
-            OperationId::parse(&raw_attestation).map_err(|_| ConfigError::Invalid {
+            OperationId::parse(&raw_attestation).map_err(|_| RegionalHttpConfigError::Invalid {
                 name: ATTESTATION_OPERATION_ID,
                 reason: format!("`{raw_attestation}` is not an `op_` identifier"),
             })?;

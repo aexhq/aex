@@ -37,19 +37,19 @@ pub const NON_CARGO_DIRECTORIES: &[&str] = &[
 
 /// The 67 library crates under `crates/`.
 pub const CRATES: &[&str] = &[
-    "aex-brain-application",
+    "aex-brain-app",
     "aex-brain-domain",
     "aex-brain-hands",
     "aex-brain-managed-web",
     "aex-brain-mcp",
     "aex-brain-provider-custody",
     "aex-brain-provider-gateway",
-    "aex-brain-store-aws",
+    "aex-brain-store-dynamodb",
     "aex-brain-test-support",
     "aex-brain-tool-catalog",
     "aex-capacity-dynamodb",
+    "aex-central-aws",
     "aex-central-http",
-    "aex-central-runtime",
     "aex-central-test-support",
     "aex-content-aws",
     "aex-content-domain",
@@ -69,11 +69,11 @@ pub const CRATES: &[&str] = &[
     "aex-identity-domain",
     "aex-internal-contracts",
     "aex-model-catalog",
-    "aex-observation-application",
+    "aex-observation-app",
     "aex-observation-domain",
     "aex-observation-export",
     "aex-observation-query",
-    "aex-observation-store-aws",
+    "aex-observation-store-dynamodb",
     "aex-observation-test-support",
     "aex-operation-domain",
     "aex-otlp-admission",
@@ -94,13 +94,13 @@ pub const CRATES: &[&str] = &[
     "aex-session-domain",
     "aex-session-dynamodb",
     "aex-telemetry-schema",
-    "aex-usage-application",
-    "aex-usage-compute-aws",
+    "aex-usage-app",
+    "aex-usage-compute-dynamodb",
     "aex-usage-domain",
-    "aex-usage-query-aws",
+    "aex-usage-query-dynamodb",
     "aex-usage-rating",
-    "aex-usage-storage-aws",
-    "aex-usage-transfer-aws",
+    "aex-usage-storage-dynamodb",
+    "aex-usage-transfer-dynamodb",
     "aex-wire",
     "aex-work-dynamodb",
     "aex-workspace-domain",
@@ -258,7 +258,7 @@ mod tests {
         assert_eq!(
             CRATES.len(),
             67,
-            "accepted inventory minus aex-observation-clickhouse, plus aex-central-runtime, aex-brain-provider-custody, and aex-capacity-dynamodb"
+            "accepted inventory minus aex-observation-clickhouse, plus aex-central-aws, aex-brain-provider-custody, and aex-capacity-dynamodb"
         );
         assert_eq!(SERVICES.len(), 10);
         assert_eq!(WORKERS.len(), 18);

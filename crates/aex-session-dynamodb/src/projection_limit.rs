@@ -20,6 +20,18 @@ pub const WORKSPACE_LIMIT: &str = "workspace_limit";
 pub const WORKSPACE_LIMIT_BUNDLE_HEAD: &str = "workspace_limit_bundle_head";
 /// The complete payload selected by [`WORKSPACE_LIMIT_BUNDLE_HEAD`].
 pub const WORKSPACE_LIMIT_BUNDLE: &str = "workspace_limit_bundle";
+/// The `itemType` of the hot admission limit subset.
+pub const WORKSPACE_EDGE_LIMITS: &str = "workspace_edge_limits";
+
+/// `LIMIT#WS#{workspace_id}` / `EDGE_LIMITS`.
+///
+/// This key is shared by the read-only projection and the capacity producer,
+/// so it lives in the feature-neutral limit module rather than widening the
+/// producer's dependency to the complete authorization reader.
+#[must_use]
+pub fn edge_limits_key(workspace: WorkspaceId) -> (String, String) {
+    (format!("LIMIT#WS#{workspace}"), "EDGE_LIMITS".to_owned())
+}
 
 /// `LIMIT#WS#{workspace_id}` / `LIMIT#{limit_id}`.
 ///

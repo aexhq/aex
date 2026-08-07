@@ -18,7 +18,7 @@ pub const DEFAULT_MAX_FIELD_BYTES: usize = 57_344;
 
 /// Why a configuration was refused.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ConfigError {
+pub enum RdsDataConfigError {
     /// A required value was empty.
     #[error("`{field}` must not be empty")]
     Empty {
@@ -70,15 +70,15 @@ macro_rules! arn_newtype {
             ///
             /// # Errors
             ///
-            /// Returns [`ConfigError::Empty`] for an empty value and
-            /// [`ConfigError::NotAnArn`] when the value is not an `arn:` string.
-            pub fn parse(raw: &str) -> Result<Self, ConfigError> {
+            /// Returns [`RdsDataConfigError::Empty`] for an empty value and
+            /// [`RdsDataConfigError::NotAnArn`] when the value is not an `arn:` string.
+            pub fn parse(raw: &str) -> Result<Self, RdsDataConfigError> {
                 let trimmed = raw.trim();
                 if trimmed.is_empty() {
-                    return Err(ConfigError::Empty { field: $field });
+                    return Err(RdsDataConfigError::Empty { field: $field });
                 }
                 if !trimmed.starts_with("arn:") || trimmed.split(':').count() < 6 {
-                    return Err(ConfigError::NotAnArn {
+                    return Err(RdsDataConfigError::NotAnArn {
                         field: $field,
                         value: trimmed.to_owned(),
                     });
@@ -103,11 +103,11 @@ impl DatabaseName {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError::Empty`] when the name is blank.
-    pub fn parse(raw: &str) -> Result<Self, ConfigError> {
+    /// Returns [`RdsDataConfigError::Empty`] when the name is blank.
+    pub fn parse(raw: &str) -> Result<Self, RdsDataConfigError> {
         let trimmed = raw.trim();
         if trimmed.is_empty() {
-            return Err(ConfigError::Empty { field: "database" });
+            return Err(RdsDataConfigError::Empty { field: "database" });
         }
         Ok(Self(trimmed.to_owned()))
     }
@@ -163,31 +163,31 @@ impl DataApiConfig {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError::BudgetOutOfRange`] when a byte budget is zero or
-    /// at/above the service cap, and [`ConfigError::NonPositiveDeadline`] when a
+    /// Returns [`RdsDataConfigError::BudgetOutOfRange`] when a byte budget is zero or
+    /// at/above the service cap, and [`RdsDataConfigError::NonPositiveDeadline`] when a
     /// deadline is zero.
-    pub fn validate(&self) -> Result<(), ConfigError> {
+    pub fn validate(&self) -> Result<(), RdsDataConfigError> {
         if self.max_result_bytes == 0 || self.max_result_bytes >= DATA_API_RESULT_CAP_BYTES {
-            return Err(ConfigError::BudgetOutOfRange {
+            return Err(RdsDataConfigError::BudgetOutOfRange {
                 field: "max_result_bytes",
                 cap: DATA_API_RESULT_CAP_BYTES,
                 value: self.max_result_bytes,
             });
         }
         if self.max_field_bytes == 0 || self.max_field_bytes >= DATA_API_FIELD_CAP_BYTES {
-            return Err(ConfigError::BudgetOutOfRange {
+            return Err(RdsDataConfigError::BudgetOutOfRange {
                 field: "max_field_bytes",
                 cap: DATA_API_FIELD_CAP_BYTES,
                 value: self.max_field_bytes,
             });
         }
         if self.statement_deadline.is_zero() {
-            return Err(ConfigError::NonPositiveDeadline {
+            return Err(RdsDataConfigError::NonPositiveDeadline {
                 field: "statement_deadline",
             });
         }
         if self.transaction_deadline.is_zero() {
-            return Err(ConfigError::NonPositiveDeadline {
+            return Err(RdsDataConfigError::NonPositiveDeadline {
                 field: "transaction_deadline",
             });
         }
@@ -198,8 +198,8 @@ impl DataApiConfig {
 #[cfg(test)]
 mod tests {
     use super::{
-        ConfigError, DATA_API_FIELD_CAP_BYTES, DATA_API_RESULT_CAP_BYTES, DataApiConfig,
-        DatabaseName, ResourceArn, SecretArn,
+        DATA_API_FIELD_CAP_BYTES, DATA_API_RESULT_CAP_BYTES, DataApiConfig, DatabaseName,
+        RdsDataConfigError, ResourceArn, SecretArn,
     };
     use std::time::Duration;
 
@@ -216,13 +216,13 @@ mod tests {
     fn an_arn_must_look_like_one() {
         assert_eq!(
             ResourceArn::parse("  "),
-            Err(ConfigError::Empty {
+            Err(RdsDataConfigError::Empty {
                 field: "resource_arn"
             })
         );
         assert_eq!(
             ResourceArn::parse("cluster-aex"),
-            Err(ConfigError::NotAnArn {
+            Err(RdsDataConfigError::NotAnArn {
                 field: "resource_arn",
                 value: "cluster-aex".to_owned()
             })
@@ -243,7 +243,7 @@ mod tests {
         config.max_result_bytes = DATA_API_RESULT_CAP_BYTES;
         assert_eq!(
             config.validate(),
-            Err(ConfigError::BudgetOutOfRange {
+            Err(RdsDataConfigError::BudgetOutOfRange {
                 field: "max_result_bytes",
                 cap: DATA_API_RESULT_CAP_BYTES,
                 value: DATA_API_RESULT_CAP_BYTES
@@ -257,7 +257,7 @@ mod tests {
         config.statement_deadline = Duration::ZERO;
         assert_eq!(
             config.validate(),
-            Err(ConfigError::NonPositiveDeadline {
+            Err(RdsDataConfigError::NonPositiveDeadline {
                 field: "statement_deadline"
             })
         );

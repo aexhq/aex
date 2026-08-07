@@ -12,7 +12,7 @@
 //!
 //! - launching tasks (`observation-export-launcher`)
 //! - public authorization
-//! - reading the authority (`aex-observation-store-aws`)
+//! - reading the authority (`aex-observation-store-dynamodb`)
 
 pub mod checkpoint;
 pub mod encoder;

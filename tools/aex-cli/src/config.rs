@@ -37,7 +37,7 @@ pub struct ResolvedConfig {
 }
 
 #[derive(Debug, Error)]
-pub enum ConfigError {
+pub enum CliConfigError {
     #[error("invalid AEX_OUTPUT value {0}")]
     InvalidOutput(String),
     #[error("central URL must be HTTPS")]
@@ -49,21 +49,21 @@ pub enum ConfigError {
 /// # Errors
 ///
 /// Returns an error for an unknown output format or a non-HTTPS central URL.
-pub fn resolve_config(input: ConfigInputs) -> Result<ResolvedConfig, ConfigError> {
+pub fn resolve_config(input: ConfigInputs) -> Result<ResolvedConfig, CliConfigError> {
     let central_url = input
         .central_url
         .or_else(|| input.env.get("AEX_CENTRAL_URL").cloned())
         .or(input.profile.central_url)
         .unwrap_or_else(|| "https://api.aex.dev".to_owned());
     if !central_url.starts_with("https://") {
-        return Err(ConfigError::InsecureCentralUrl);
+        return Err(CliConfigError::InsecureCentralUrl);
     }
     let output = if let Some(output) = input.output {
         output
     } else if let Some(value) = input.env.get("AEX_OUTPUT") {
         value
             .parse()
-            .map_err(|()| ConfigError::InvalidOutput(value.clone()))?
+            .map_err(|()| CliConfigError::InvalidOutput(value.clone()))?
     } else {
         input.profile.output.unwrap_or(if input.stdout_is_terminal {
             OutputFormat::Text

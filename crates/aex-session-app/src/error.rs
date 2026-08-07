@@ -7,7 +7,8 @@
 use aex_operation_domain::TransitionError;
 use aex_secret_domain::CustodyRejection;
 use aex_session_domain::{
-    ApprovalRejection, DeletionRejection, PauseRejection, RunError, SessionError, TerminalRejection,
+    ApprovalRejection, DeletionRejection, PauseRejection, SessionDomainRunError, SessionError,
+    TerminalRejection,
 };
 use aex_wire::canonical::CanonicalError;
 use aex_wire::error::ErrorCode;
@@ -29,7 +30,7 @@ pub enum AppError {
     Session(#[from] SessionError),
     /// The run refused the command.
     #[error(transparent)]
-    Run(#[from] RunError),
+    Run(#[from] SessionDomainRunError),
     /// The terminal barrier refused the attempt.
     #[error(transparent)]
     Terminal(#[from] TerminalRejection),

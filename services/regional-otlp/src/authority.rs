@@ -8,7 +8,7 @@
 //! Two properties are structural rather than conventional:
 //!
 //! - **Nothing customer-supplied reaches an expression string.** Every condition
-//!   is built through [`aex_observation_store_aws::ExpressionBuilder`], which
+//!   is built through [`aex_observation_store_dynamodb::ExpressionBuilder`], which
 //!   emits generated `#n0` / `:v0` placeholders.
 //! - **An ambiguous transaction outcome is resolved by batch identity.** The
 //!   caller re-reads `BATCH#…/RECEIPT` and branches on `state`; a transaction is
@@ -25,9 +25,9 @@ use aex_observation_domain::limits;
 use aex_observation_domain::order::OrderTuple;
 use aex_observation_domain::series::SeriesHash;
 use aex_observation_domain::signal::{Signal, SignalSet};
-use aex_observation_store_aws::expressions::{ExpressionBuilder, ITEM_TYPE, PK, SK};
-use aex_observation_store_aws::spool::GateState;
-use aex_observation_store_aws::store::{AdmissionPlan, StagedRecord, StoreError, pack_pages};
+use aex_observation_store_dynamodb::expressions::{ExpressionBuilder, ITEM_TYPE, PK, SK};
+use aex_observation_store_dynamodb::spool::GateState;
+use aex_observation_store_dynamodb::store::{AdmissionPlan, StagedRecord, StoreError, pack_pages};
 use aex_otlp_admission::NormalizedObservation;
 use aex_wire::ids::{
     ObservationId, OrganizationId, PrefixedId as _, TelemetryBatchId, TelemetryGapId, Uuid7,
@@ -572,7 +572,8 @@ impl AdmissionAuthority {
         // failed create through the durable receipt below; allowing PutItem to
         // overwrite a preparing receipt would execute the paired ADD again and
         // leak the same reservation on every retry.
-        let condition = aex_observation_store_aws::expressions::immutable_condition(&mut builder);
+        let condition =
+            aex_observation_store_dynamodb::expressions::immutable_condition(&mut builder);
         let expires = now.unix_millis() + limits::OBS_PREPARE_TTL_MS;
         let receipt = Put::builder()
             .table_name(&self.table)
@@ -716,7 +717,7 @@ impl AdmissionAuthority {
     async fn stage_pages(
         &self,
         request: &AdmissionRequest,
-        pages: &[aex_observation_store_aws::PageSpan],
+        pages: &[aex_observation_store_dynamodb::PageSpan],
         staged: &[StagedRecord],
     ) -> Result<Vec<String>, AuthorityError> {
         let expires = seconds_from_now(limits::OBS_PREPARE_TTL_MS);
@@ -947,7 +948,7 @@ impl AdmissionAuthority {
         pinned_epoch: u64,
     ) -> Result<TransactWriteItem, AuthorityError> {
         let mut deletion = ExpressionBuilder::new();
-        let epoch_condition = aex_observation_store_aws::expressions::deletion_epoch_condition(
+        let epoch_condition = aex_observation_store_dynamodb::expressions::deletion_epoch_condition(
             &mut deletion,
             pinned_epoch,
         );
@@ -1109,7 +1110,7 @@ fn allocate_in_signal_order(
 /// strings, so the delimiter preserves the page's exact record boundaries.
 /// The committed receipt binds the digest of these exact bytes.
 fn staged_page_bytes(
-    span: &aex_observation_store_aws::PageSpan,
+    span: &aex_observation_store_dynamodb::PageSpan,
     staged: &[StagedRecord],
 ) -> Vec<u8> {
     let mut encoded = Vec::with_capacity(span.bytes.saturating_add(span.end - span.start));
@@ -1122,7 +1123,7 @@ fn staged_page_bytes(
 
 /// Returns the ordered digest manifest a committed receipt binds.
 fn staged_page_digests(
-    pages: &[aex_observation_store_aws::PageSpan],
+    pages: &[aex_observation_store_dynamodb::PageSpan],
     staged: &[StagedRecord],
 ) -> Vec<String> {
     pages
@@ -1916,7 +1917,7 @@ mod tests {
     use aex_observation_domain::canonical::CanonicalValue;
     use aex_observation_domain::keys::ScopeKey;
     use aex_observation_domain::signal::{Signal, SignalSet};
-    use aex_observation_store_aws::store::{PageSpan, StagedRecord, StoreError};
+    use aex_observation_store_dynamodb::store::{PageSpan, StagedRecord, StoreError};
     use aex_wire::ids::{OrganizationId, PrefixedId as _, TelemetryBatchId, Uuid7, WorkspaceId};
     use aex_wire::types::Timestamp;
     use aws_sdk_dynamodb::types::AttributeValue;
@@ -2231,7 +2232,10 @@ mod tests {
         ]);
         let first = authority.ingress_gate_cached().await.expect("a gate read");
         let second = authority.ingress_gate_cached().await.expect("a gate read");
-        assert_eq!(first, aex_observation_store_aws::spool::GateState::Closed);
+        assert_eq!(
+            first,
+            aex_observation_store_dynamodb::spool::GateState::Closed
+        );
         assert_eq!(
             second, first,
             "inside the window the second admission reuses the first answer"

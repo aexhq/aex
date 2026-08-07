@@ -9,7 +9,7 @@
 
 use std::process::ExitCode;
 
-use aex_regional_http::config::ConfigError;
+use aex_regional_http::config::RegionalHttpConfigError;
 use aex_wire::ids::{PrefixedId as _, WorkspaceId};
 use clap::{Parser, Subcommand};
 use regional_secret_key_admin::AdminOutcome;
@@ -67,7 +67,7 @@ impl Command {
 enum AdminError {
     /// Start-up configuration was rejected.
     #[error(transparent)]
-    Config(#[from] ConfigError),
+    Config(#[from] RegionalHttpConfigError),
     /// The workspace argument was not a `wsp_` identifier.
     #[error("`{0}` is not a `wsp_` workspace identifier")]
     Workspace(String),

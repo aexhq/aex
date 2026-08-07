@@ -88,7 +88,7 @@ mod keys {
 
 /// Why `central-control-api` refused to start.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ConfigError {
+pub enum CentralControlApiConfigError {
     /// A required variable was absent or blank.
     #[error("required environment variable `{0}` is missing")]
     Missing(&'static str),
@@ -132,8 +132,8 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigError`] naming the first variable it refused.
-    pub fn from_env() -> Result<Self, ConfigError> {
+    /// Returns [`CentralControlApiConfigError`] naming the first variable it refused.
+    pub fn from_env() -> Result<Self, CentralControlApiConfigError> {
         Self::from_lookup(|name| std::env::var(name).ok())
     }
 
@@ -145,13 +145,13 @@ impl Config {
     /// # Errors
     ///
     /// Identical to [`Config::from_env`].
-    pub fn from_lookup<F>(lookup: F) -> Result<Self, ConfigError>
+    pub fn from_lookup<F>(lookup: F) -> Result<Self, CentralControlApiConfigError>
     where
         F: Fn(&str) -> Option<String>,
     {
         let role = required(&lookup, keys::ROLE)?;
         if role != REQUIRED_ROLE {
-            return Err(ConfigError::Invalid {
+            return Err(CentralControlApiConfigError::Invalid {
                 name: keys::ROLE,
                 reason: format!("this binary connects only as `{REQUIRED_ROLE}`, got `{role}`"),
             });
@@ -163,7 +163,7 @@ impl Config {
             integer(&lookup, keys::MAX_BODY_BYTES)?,
             integer(&lookup, keys::REQUEST_DEADLINE_MS)?,
         )
-        .map_err(|reason| ConfigError::Invalid {
+        .map_err(|reason| CentralControlApiConfigError::Invalid {
             name: keys::PLANE,
             reason: reason.to_string(),
         })?;
@@ -207,25 +207,26 @@ impl Config {
     }
 }
 
-fn required<F>(lookup: &F, name: &'static str) -> Result<String, ConfigError>
+fn required<F>(lookup: &F, name: &'static str) -> Result<String, CentralControlApiConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     match lookup(name) {
         Some(value) if !value.trim().is_empty() => Ok(value),
-        _ => Err(ConfigError::Missing(name)),
+        _ => Err(CentralControlApiConfigError::Missing(name)),
     }
 }
 
-fn integer<F>(lookup: &F, name: &'static str) -> Result<u64, ConfigError>
+fn integer<F>(lookup: &F, name: &'static str) -> Result<u64, CentralControlApiConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     let raw = required(lookup, name)?;
-    raw.parse::<u64>().map_err(|_| ConfigError::Invalid {
-        name,
-        reason: format!("expected an integer, got `{raw}`"),
-    })
+    raw.parse::<u64>()
+        .map_err(|_| CentralControlApiConfigError::Invalid {
+            name,
+            reason: format!("expected an integer, got `{raw}`"),
+        })
 }
 
 /// Parses the `region=lambda-arn` authority map.
@@ -234,16 +235,21 @@ where
 /// the first `POST /api/workspaces`: a control API that can place a workspace in
 /// four of five regions is one that `500`s on the fifth after it has already
 /// committed the central half.
-fn functions(raw: &str) -> Result<BTreeMap<Region, String>, ConfigError> {
+fn functions(raw: &str) -> Result<BTreeMap<Region, String>, CentralControlApiConfigError> {
     let mut map = BTreeMap::new();
     for entry in raw.split(',').filter(|it| !it.trim().is_empty()) {
-        let (region, function) = entry.split_once('=').ok_or_else(|| ConfigError::Invalid {
-            name: keys::REGIONAL_FUNCTIONS,
-            reason: "expected `region=lambda-arn` entries".to_owned(),
-        })?;
-        let parsed = Region::from_name(region.trim()).ok_or_else(|| ConfigError::Invalid {
-            name: keys::REGIONAL_FUNCTIONS,
-            reason: format!("`{region}` is not a launch region"),
+        let (region, function) =
+            entry
+                .split_once('=')
+                .ok_or_else(|| CentralControlApiConfigError::Invalid {
+                    name: keys::REGIONAL_FUNCTIONS,
+                    reason: "expected `region=lambda-arn` entries".to_owned(),
+                })?;
+        let parsed = Region::from_name(region.trim()).ok_or_else(|| {
+            CentralControlApiConfigError::Invalid {
+                name: keys::REGIONAL_FUNCTIONS,
+                reason: format!("`{region}` is not a launch region"),
+            }
         })?;
         let function = function.trim();
         let expected = format!("arn:aws:lambda:{}:", parsed.as_str());
@@ -251,7 +257,7 @@ fn functions(raw: &str) -> Result<BTreeMap<Region, String>, ConfigError> {
             || !function.contains(":function:")
             || map.insert(parsed, function.to_owned()).is_some()
         {
-            return Err(ConfigError::Invalid {
+            return Err(CentralControlApiConfigError::Invalid {
                 name: keys::REGIONAL_FUNCTIONS,
                 reason: format!(
                     "`{}` is not a unique Lambda ARN in its bound region",
@@ -261,7 +267,7 @@ fn functions(raw: &str) -> Result<BTreeMap<Region, String>, ConfigError> {
         }
     }
     if let Some(missing) = Region::ALL.iter().find(|region| !map.contains_key(region)) {
-        return Err(ConfigError::Invalid {
+        return Err(CentralControlApiConfigError::Invalid {
             name: keys::REGIONAL_FUNCTIONS,
             reason: format!("no function ARN for `{}`", missing.as_str()),
         });
@@ -269,31 +275,39 @@ fn functions(raw: &str) -> Result<BTreeMap<Region, String>, ConfigError> {
     Ok(map)
 }
 
-fn api_urls(raw: &str) -> Result<BTreeMap<Region, aex_wire::types::HttpsUrl>, ConfigError> {
+fn api_urls(
+    raw: &str,
+) -> Result<BTreeMap<Region, aex_wire::types::HttpsUrl>, CentralControlApiConfigError> {
     let mut map = BTreeMap::new();
     for entry in raw.split(',').filter(|entry| !entry.trim().is_empty()) {
-        let (region, url) = entry.split_once('=').ok_or_else(|| ConfigError::Invalid {
-            name: keys::API_URLS,
-            reason: "expected `region=https-url` entries".to_owned(),
+        let (region, url) =
+            entry
+                .split_once('=')
+                .ok_or_else(|| CentralControlApiConfigError::Invalid {
+                    name: keys::API_URLS,
+                    reason: "expected `region=https-url` entries".to_owned(),
+                })?;
+        let region = Region::from_name(region.trim()).ok_or_else(|| {
+            CentralControlApiConfigError::Invalid {
+                name: keys::API_URLS,
+                reason: format!("`{region}` is not a launch region"),
+            }
         })?;
-        let region = Region::from_name(region.trim()).ok_or_else(|| ConfigError::Invalid {
-            name: keys::API_URLS,
-            reason: format!("`{region}` is not a launch region"),
-        })?;
-        let url =
-            aex_wire::types::HttpsUrl::parse(url.trim()).map_err(|error| ConfigError::Invalid {
+        let url = aex_wire::types::HttpsUrl::parse(url.trim()).map_err(|error| {
+            CentralControlApiConfigError::Invalid {
                 name: keys::API_URLS,
                 reason: error.to_string(),
-            })?;
+            }
+        })?;
         if map.insert(region, url).is_some() {
-            return Err(ConfigError::Invalid {
+            return Err(CentralControlApiConfigError::Invalid {
                 name: keys::API_URLS,
                 reason: format!("`{}` is repeated", region.as_str()),
             });
         }
     }
     if let Some(missing) = Region::ALL.iter().find(|region| !map.contains_key(region)) {
-        return Err(ConfigError::Invalid {
+        return Err(CentralControlApiConfigError::Invalid {
             name: keys::API_URLS,
             reason: format!("no public API URL for `{}`", missing.as_str()),
         });
@@ -415,10 +429,10 @@ impl<T> ControlApi for T where
 
 /// Why `central-control-api` stopped.
 #[derive(Debug, thiserror::Error)]
-pub enum RunError {
+pub enum CentralControlApiRunError {
     /// Start-up configuration was rejected.
     #[error(transparent)]
-    Config(#[from] ConfigError),
+    Config(#[from] CentralControlApiConfigError),
     /// The composition was refused before any client was opened.
     #[error(transparent)]
     Composition(#[from] CompositionError),
@@ -447,7 +461,7 @@ pub fn app<A: ControlApi>(api: Arc<A>, edge: EdgeStack, readiness: Readiness) ->
 ///
 /// # Errors
 ///
-/// Returns [`RunError`] when configuration or composition is refused, or when
+/// Returns [`CentralControlApiRunError`] when configuration or composition is refused, or when
 /// the listener stops.
 pub async fn run<A: ControlApi>(
     config: &Config,
@@ -455,7 +469,7 @@ pub async fn run<A: ControlApi>(
     edge: EdgeStack,
     probes: Probes,
     telemetry: &aex_platform_telemetry::Handle,
-) -> Result<(), RunError> {
+) -> Result<(), CentralControlApiRunError> {
     aex_central_http::capability::admit(&manifest(), &config.resolved())?;
     telemetry.emit(
         aex_platform_telemetry::Record::event(
@@ -472,23 +486,23 @@ pub async fn run<A: ControlApi>(
     );
     lambda_http::run(app(api, edge, readiness(probes)))
         .await
-        .map_err(|error| RunError::Listener(error.to_string()))
+        .map_err(|error| CentralControlApiRunError::Listener(error.to_string()))
 }
 
 async fn compose(
     config: &Config,
     telemetry: &aex_platform_telemetry::Handle,
-) -> Result<(), RunError> {
+) -> Result<(), CentralControlApiRunError> {
     use aex_identity_app::ports::{PepperKeystore as _, PepperPurpose};
 
     let aws = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
     let data_api = aex_rds_data::DataApiConfig::new(
         aex_rds_data::ResourceArn::parse(&config.aurora_cluster_arn)
-            .map_err(|error| RunError::Dependency("aurora", error.to_string()))?,
+            .map_err(|error| CentralControlApiRunError::Dependency("aurora", error.to_string()))?,
         aex_rds_data::SecretArn::parse(&config.aurora_secret_arn)
-            .map_err(|error| RunError::Dependency("aurora", error.to_string()))?,
+            .map_err(|error| CentralControlApiRunError::Dependency("aurora", error.to_string()))?,
         aex_rds_data::DatabaseName::parse(&config.database)
-            .map_err(|error| RunError::Dependency("aurora", error.to_string()))?,
+            .map_err(|error| CentralControlApiRunError::Dependency("aurora", error.to_string()))?,
     );
     let client = aex_rds_data::DataApiClient::new(
         Arc::new(aex_rds_data::AwsTransport::new(
@@ -502,25 +516,27 @@ async fn compose(
             aex_control_aurora::sql::READINESS_PROBE,
         ))
         .await
-        .map_err(|error| RunError::Dependency("aurora", error.to_string()))?;
+        .map_err(|error| CentralControlApiRunError::Dependency("aurora", error.to_string()))?;
 
-    let directory = Arc::new(aex_central_runtime::DataApiPepperDirectory::new(
+    let directory = Arc::new(aex_central_aws::DataApiPepperDirectory::new(
         client.clone(),
-        aex_central_runtime::PepperStatements {
+        aex_central_aws::PepperStatements {
             active: aex_control_aurora::sql::ACTIVE_CONTROL_PEPPER,
             by_version: aex_control_aurora::sql::CONTROL_PEPPER_BY_VERSION,
         },
     ));
-    let api_peppers = Arc::new(aex_central_runtime::SecretsManagerPepperKeystore::new(
+    let api_peppers = Arc::new(aex_central_aws::SecretsManagerPepperKeystore::new(
         aws_sdk_secretsmanager::Client::new(&aws),
         config.pepper_secret_id.clone(),
-        Arc::clone(&directory) as Arc<dyn aex_central_runtime::PepperDirectory>,
+        Arc::clone(&directory) as Arc<dyn aex_central_aws::PepperDirectory>,
     ));
     api_peppers
         .probe(PepperPurpose::ApiKey)
         .await
-        .map_err(|error| RunError::Dependency("api-key-pepper", error.to_string()))?;
-    let cursor_peppers = Arc::new(aex_central_runtime::SecretsManagerPepperKeystore::new(
+        .map_err(|error| {
+            CentralControlApiRunError::Dependency("api-key-pepper", error.to_string())
+        })?;
+    let cursor_peppers = Arc::new(aex_central_aws::SecretsManagerPepperKeystore::new(
         aws_sdk_secretsmanager::Client::new(&aws),
         config.cursor_secret_id.clone(),
         directory,
@@ -528,11 +544,16 @@ async fn compose(
     cursor_peppers
         .probe(PepperPurpose::Cursor)
         .await
-        .map_err(|error| RunError::Dependency("cursor-secret", error.to_string()))?;
-    let (_, cursor_material) = cursor_peppers
-        .active(PepperPurpose::Cursor)
-        .await
-        .map_err(|error| RunError::Dependency("cursor-secret", error.to_string()))?;
+        .map_err(|error| {
+            CentralControlApiRunError::Dependency("cursor-secret", error.to_string())
+        })?;
+    let (_, cursor_material) =
+        cursor_peppers
+            .active(PepperPurpose::Cursor)
+            .await
+            .map_err(|error| {
+                CentralControlApiRunError::Dependency("cursor-secret", error.to_string())
+            })?;
     let cursor_secret = Arc::new(aex_control_domain::CursorSecret::new(
         cursor_material.expose_copy(),
     ));
@@ -540,9 +561,9 @@ async fn compose(
     let concrete_store = Arc::new(aex_control_aurora::AuroraControlStore::new(client));
     let api_store: Arc<dyn api::Store> = concrete_store.clone();
     let target_store: Arc<dyn aex_control_app::ports::ControlStore> = concrete_store;
-    let clock: Arc<dyn aex_identity_app::ports::Clock> = Arc::new(aex_central_runtime::SystemClock);
+    let clock: Arc<dyn aex_identity_app::ports::Clock> = Arc::new(aex_central_aws::SystemClock);
     let regional: Arc<dyn aex_control_app::ports::RegionalControlPort> =
-        Arc::new(aex_central_runtime::LambdaRegionalControl::new(
+        Arc::new(aex_central_aws::LambdaRegionalControl::new(
             aws_sdk_lambda::Client::new(&aws),
             config.regional_functions.clone(),
         ));
@@ -551,8 +572,8 @@ async fn compose(
         Arc::clone(&api_peppers) as Arc<dyn aex_identity_app::ports::PepperKeystore>,
         regional,
         Arc::clone(&clock),
-        Arc::new(aex_central_runtime::Uuid7Factory),
-        Arc::new(aex_central_runtime::OsSecretRng),
+        Arc::new(aex_central_aws::Uuid7Factory),
+        Arc::new(aex_central_aws::OsSecretRng),
         Arc::clone(&cursor_secret),
         config.http.region,
         config.api_urls.clone(),
@@ -619,8 +640,8 @@ async fn main() -> std::process::ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        Config, ConfigError, ControlApi, DEPLOYABLE, PERMISSIONS, Probes, app, keys, manifest,
-        readiness,
+        CentralControlApiConfigError, Config, ControlApi, DEPLOYABLE, PERMISSIONS, Probes, app,
+        keys, manifest, readiness,
     };
     use aex_central_http::authorizer::{CentralAuthorizerContext, ContextPrincipalKind};
     use aex_central_http::capability::{
@@ -724,7 +745,7 @@ mod tests {
         ])
     }
 
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
+    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, CentralControlApiConfigError> {
         Config::from_lookup(|name| vars.get(name).cloned())
     }
 

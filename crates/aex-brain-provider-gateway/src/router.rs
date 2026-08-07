@@ -4,7 +4,7 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use aex_brain_application::ports::{
+use aex_brain_app::ports::{
     BoxFuture, CancelToken, DispatchTicket, EffectStore, PreviewSink, ProviderDispatchError,
     ProviderOutcome, ProviderPort, StreamBudget as PortStreamBudget, UnknownResolution,
 };
@@ -1000,7 +1000,7 @@ fn error(
 mod tests {
     use std::time::{Duration, Instant};
 
-    use aex_brain_application::ports::{CancelToken, DispatchTicket, FenceGuard};
+    use aex_brain_app::ports::{CancelToken, DispatchTicket, FenceGuard};
     use aex_brain_domain::effect::DispatchProof;
     use aex_brain_domain::ids::{
         AgentId, AgentKey, AgentRevision, CancelEpoch, EffectId, Fence, OwnerToken, SessionId,

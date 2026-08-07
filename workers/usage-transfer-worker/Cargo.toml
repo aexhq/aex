@@ -1,6 +1,7 @@
 [package]
 name = "usage-transfer-worker"
 version = "0.1.0"
+description = "`usage-transfer-worker` composition root (Rust Lambda ZIP)."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -39,8 +40,8 @@ lambda_runtime.workspace = true
 tokio.workspace = true
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
-aex-usage-application = { path = "../../crates/aex-usage-application" }
+aex-usage-app = { path = "../../crates/aex-usage-app" }
 aex-usage-domain = { path = "../../crates/aex-usage-domain" }
-aex-usage-transfer-aws = { path = "../../crates/aex-usage-transfer-aws" }
+aex-usage-transfer-dynamodb = { path = "../../crates/aex-usage-transfer-dynamodb" }
 serde_json.workspace = true
 thiserror.workspace = true

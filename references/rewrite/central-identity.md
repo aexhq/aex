@@ -233,7 +233,7 @@ use aex_control_domain::{
 
 // The transport, for every central request and worker Lambda including finance.
 use aex_rds_data::{
-    DataApiClient, DataApiConfig, ResourceArn, SecretArn, DatabaseName, ConfigError,
+    DataApiClient, DataApiConfig, ResourceArn, SecretArn, DatabaseName, RdsDataConfigError,
     Statement, SqlValue, sql, Record, Row, Transaction, TransactionId, Isolation,
     Committed, CommitFailure, DataApiError, DecodeError, SqlState, ExceptionKind,
     Transport, TransportError, ExecuteResponse, AwsTransport,
@@ -868,7 +868,7 @@ returning `FAILURE`. The database half was landed; what was missing was every
 port around it. This pass landed those ports and composed the first of the two
 binaries.
 
-### 10.1 `aex-central-runtime`, the 65th library crate
+### 10.1 `aex-central-aws`, the 65th library crate
 
 One adapter crate for the central plane's non-Aurora ports, because three
 separate crates for six small adapters would have been three manifests, three
@@ -909,7 +909,7 @@ would have made the payload check compare the bound parameter to itself.
 Material is held in a bounded (8) zeroizing cache keyed by version id. The bound
 is a security property, not a memory one: an unbounded cache keyed by
 caller-supplied version is how a process ends up holding every pepper that ever
-existed. `crates/aex-central-runtime/tests/security.rs` drives the four
+existed. `crates/aex-central-aws/tests/security.rs` drives the four
 renderings material has escaped through before — `Debug`, the alternate
 `Debug`, an error `Display`, and a telemetry attribute built from one — including
 a scripted denial whose vendor message quotes the material, which is why the
@@ -1081,7 +1081,7 @@ closed in source:
 
 | Dependency | Current production fact |
 | --- | --- |
-| Credential pepper | `aex-central-runtime::SecretsManagerPepperKeystore` implements OD-39: the database selects the exact lifecycle version and purpose, the secret version holds material only, the cache is bounded and zeroizing, and both central APIs resolve the selected version before serving. |
+| Credential pepper | `aex-central-aws::SecretsManagerPepperKeystore` implements OD-39: the database selects the exact lifecycle version and purpose, the secret version holds material only, the cache is bounded and zeroizing, and both central APIs resolve the selected version before serving. |
 | `MailerPort` | The API persists the invitation intent in Aurora; `central-control-worker` is the one SES sender and acknowledges only after the provider accepts it. The API never links a mail client. |
 | `RegionalControlPort` | `LambdaRegionalControl` invokes one configured regional function, classifies only pre-dispatch failure as definitely unavailable, treats every lost/unreadable post-dispatch answer as unknown, and `regional-control` durably fences provision/delete in the session authority. |
 | Assertion exchange | The 323-byte signed envelope is the sole assertion artifact. `aex-internal-contracts` owns only the direct-invoke request/response exchange, `central-authz` serves it, and all four regional HTTP edges verify the domain envelope. The detached JSON claim/signature vocabulary is gone. |

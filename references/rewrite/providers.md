@@ -408,10 +408,10 @@ aex_model_catalog::document::{ModelEntry, ModelLimits, CapabilitySet, Capability
 > these requests was honoured. `aex-brain-domain` did **not** take the
 > `aex-model-catalog` dependency; it defines its own `wire_pending` copies of the
 > canonical vocabulary and every one of them has since diverged from
-> `aex_model_catalog::canonical`. `aex-brain-application` landed `ProviderPort` and
+> `aex_model_catalog::canonical`. `aex-brain-app` landed `ProviderPort` and
 > friends bound to *those* copies, so the gateway's restatement is no longer verbatim
 > and the two sides of the port name different request, message, usage and receipt
-> types. `aex-brain-application::pressure` is an empty placeholder, so
+> types. `aex-brain-app::pressure` is an empty placeholder, so
 > `MemoryReservation` and `ReservationClass` exist nowhere. `aex-secret-domain`'s
 > `CiphertextRef` and `EncryptionContext` are different designs from the gateway's,
 > not different spellings. The per-item markers in
@@ -424,13 +424,13 @@ aex_model_catalog::document::{ModelEntry, ModelLimits, CapabilitySet, Capability
   CanonicalModelRequest, CompleteAssistantMessage, CompleteProof, StopReason,
   NormalizedUsage, PreviewFrame, ProviderReceipt, ReasoningToken — rather than
   redefining any of them (D-CANON).`
-- `TODO(cross-stream): aex-brain-application owns ProviderPort, CatalogPort,
+- `TODO(cross-stream): aex-brain-app owns ProviderPort, CatalogPort,
   DispatchTicket, CancelToken, PreviewSink, DispatchProof, DispatchStage,
   DispatchEvidence, EffectIdentity, ProviderOutcome, ProviderDispatchError,
   UnknownResolution, BoxFuture, MemoryReservation and ReservationClass. They are
   restated verbatim in aex-brain-provider-gateway::wire_pending and every one is
   marked for replacement at merge.`
-- `TODO(cross-stream): aex-brain-application may widen ProviderFailureClass to the
+- `TODO(cross-stream): aex-brain-app may widen ProviderFailureClass to the
   fifteen ProviderFailureKind members. Until then ProviderFailureKind::class() is
   the single translation site.`
 - `DONE: aex-secret-domain owns SourceGeneration, RevocationEpoch, CiphertextRef

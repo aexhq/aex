@@ -7,8 +7,8 @@
 
 use aex_regional_http::capability::Capability as _;
 use aex_regional_http::config::{
-    ConfigError, Lookup, bounded_u64, forbidden, one_of, optional, plane_name, queue_url, region,
-    required,
+    Lookup, RegionalHttpConfigError, bounded_u64, forbidden, one_of, optional, plane_name,
+    queue_url, region, required,
 };
 use aex_wire::types::Region;
 
@@ -189,8 +189,8 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// Returns the first [`ConfigError`], naming the offending variable.
-    pub fn from_env() -> Result<Self, ConfigError> {
+    /// Returns the first [`RegionalHttpConfigError`], naming the offending variable.
+    pub fn from_env() -> Result<Self, RegionalHttpConfigError> {
         Self::read(&aex_regional_http::config::Environment)
     }
 
@@ -205,12 +205,12 @@ impl Config {
     /// Never: the numeric conversions follow stricter admitted bounds than
     /// their destination integer types.
     #[allow(clippy::too_many_lines, reason = "one arm per mode-specific variable")]
-    pub fn read<L: Lookup + ?Sized>(lookup: &L) -> Result<Self, ConfigError> {
+    pub fn read<L: Lookup + ?Sized>(lookup: &L) -> Result<Self, RegionalHttpConfigError> {
         for (name, reason) in FORBIDDEN {
             forbidden(lookup, name, DEPLOYABLE, reason)?;
         }
         let raw_mode = one_of(lookup, MODE, &Mode::ALL)?;
-        let mode = Mode::parse(&raw_mode).ok_or_else(|| ConfigError::Invalid {
+        let mode = Mode::parse(&raw_mode).ok_or_else(|| RegionalHttpConfigError::Invalid {
             name: MODE,
             reason: format!("expected one of {:?}, got `{raw_mode}`", Mode::ALL),
         })?;
@@ -234,7 +234,7 @@ impl Config {
             .iter()
             .any(|id| id == aex_regional_http::capability::ContentObjectDelete::ID);
         if mode.deletes_objects() && !holds_delete {
-            return Err(ConfigError::Invalid {
+            return Err(RegionalHttpConfigError::Invalid {
                 name: DECLARED_CAPABILITIES,
                 reason: format!(
                     "`delete` mode requires `{}`",
@@ -243,7 +243,7 @@ impl Config {
             });
         }
         if !mode.deletes_objects() && holds_delete {
-            return Err(ConfigError::Forbidden {
+            return Err(RegionalHttpConfigError::Forbidden {
                 name: DECLARED_CAPABILITIES,
                 deployable: DEPLOYABLE,
                 reason: "only `delete` mode may hold the object-delete capability",

@@ -7,8 +7,8 @@
 //! silently mixing two generations.
 //!
 //! The grammar lives in the domain because both halves need it and neither may
-//! own it: `aex-usage-application` folds facts into these keys, and
-//! `aex-usage-query-aws` reads them back without being able to write. A second
+//! own it: `aex-usage-app` folds facts into these keys, and
+//! `aex-usage-query-dynamodb` reads them back without being able to write. A second
 //! copy would let the writer and the reader disagree about where a row lives.
 use std::fmt;
 

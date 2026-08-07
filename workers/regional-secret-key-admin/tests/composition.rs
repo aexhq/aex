@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 
-use aex_regional_http::config::ConfigError;
+use aex_regional_http::config::RegionalHttpConfigError;
 use regional_secret_key_admin::config::{self, Config};
 
 fn complete() -> BTreeMap<&'static str, String> {
@@ -34,7 +34,7 @@ fn complete() -> BTreeMap<&'static str, String> {
     ])
 }
 
-fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
+fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, RegionalHttpConfigError> {
     Config::read(&|name: &str| vars.get(name).cloned())
 }
 
@@ -54,7 +54,7 @@ fn every_required_variable_is_required() {
         missing.remove(name);
         let error = read(&missing).expect_err("a missing variable refuses the process");
         assert!(
-            matches!(error, ConfigError::Missing { name: reported } if reported == name),
+            matches!(error, RegionalHttpConfigError::Missing { name: reported } if reported == name),
             "removing {name} reported {error:?}"
         );
     }
@@ -69,7 +69,7 @@ fn a_table_that_is_not_the_configured_keystore_refuses_the_process() {
     );
     let error = read(&vars).expect_err("a non-keystore table is refused");
     assert!(
-        matches!(error, ConfigError::Invalid { name, .. } if name == config::SECRET_KEYSTORE_TABLE),
+        matches!(error, RegionalHttpConfigError::Invalid { name, .. } if name == config::SECRET_KEYSTORE_TABLE),
         "{error:?}"
     );
 }
@@ -83,7 +83,7 @@ fn a_key_in_another_region_refuses_the_process() {
     );
     assert!(matches!(
         read(&vars),
-        Err(ConfigError::Invalid { name, .. }) if name == config::SECRET_KMS_KEY_ARN
+        Err(RegionalHttpConfigError::Invalid { name, .. }) if name == config::SECRET_KMS_KEY_ARN
     ));
 }
 
@@ -93,7 +93,7 @@ fn an_unattested_run_refuses_the_process() {
     vars.insert(config::ATTESTATION_OPERATION_ID, "not-an-op".to_owned());
     assert!(matches!(
         read(&vars),
-        Err(ConfigError::Invalid { name, .. }) if name == config::ATTESTATION_OPERATION_ID
+        Err(RegionalHttpConfigError::Invalid { name, .. }) if name == config::ATTESTATION_OPERATION_ID
     ));
 }
 
@@ -106,7 +106,7 @@ fn every_product_table_binding_refuses_the_process() {
         assert!(
             matches!(
                 error,
-                ConfigError::Forbidden { name: reported, deployable, .. }
+                RegionalHttpConfigError::Forbidden { name: reported, deployable, .. }
                     if reported == name && deployable == config::DEPLOYABLE
             ),
             "binding {name} reported {error:?}"

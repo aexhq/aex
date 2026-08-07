@@ -29,7 +29,7 @@ pub mod transaction;
 
 pub use aws::AwsTransport;
 pub use client::{DataApiClient, ExecuteResponse, Transport, TransportError};
-pub use config::{ConfigError, DataApiConfig, DatabaseName, ResourceArn, SecretArn};
+pub use config::{DataApiConfig, DatabaseName, RdsDataConfigError, ResourceArn, SecretArn};
 pub use error::ExceptionKind;
 pub use error::{DataApiError, DecodeError, SqlState};
 pub use params::{SqlValue, Statement, sql};
