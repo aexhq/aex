@@ -130,7 +130,7 @@ export interface TelemetryGap {
   readonly recoverable: boolean;
   readonly detectedAt: string;
   readonly signals: readonly string[];
-  readonly timeRange?: { readonly gte: string; readonly lt: string };
+  readonly timeRange: { readonly gte: string; readonly lt: string };
   readonly sessionId?: string;
   readonly byteCount?: string;
   readonly observationCount?: string;
@@ -140,7 +140,7 @@ export interface TelemetryGap {
 export interface UsageFrontier {
   readonly category: "storage" | "compute" | "memory" | "data_transfer";
   readonly region: string;
-  readonly serviceThrough?: string;
+  readonly serviceThrough: string;
   readonly workspaceId: string;
 }
 
@@ -148,6 +148,7 @@ export interface UsageAttribution {
   readonly workspaceId: string;
   readonly region: string;
   readonly source: string;
+  readonly ratedCents: string;
   readonly serviceTime: { readonly gte: string; readonly lt: string };
   readonly sessionId?: string;
   readonly runId?: string;

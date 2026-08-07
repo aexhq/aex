@@ -23,22 +23,6 @@ pub const TABLE_SCHEMA: &str = "aex.regional-table.v1";
 /// The schema identifier the generated bundle declares.
 pub const BUNDLE_SCHEMA: &str = "aex.regional-tables.v1";
 
-/// Monotone generation of the regional table contract.
-///
-/// This is the first prelaunch generation. Increment it only when a new
-/// generated table contract must not be admitted as the same regional schema
-/// generation as its predecessor.
-pub const BUNDLE_GENERATION: u32 = 1;
-
-/// `DynamoDB`'s hard maximum number of explicitly projected non-key attributes
-/// on one `INCLUDE` secondary index.
-pub const INCLUDE_ATTRIBUTES_PER_INDEX_MAX: usize = 20;
-
-/// `DynamoDB`'s hard maximum number of explicitly projected non-key attributes,
-/// summed across every `INCLUDE` secondary index on one table. Repeated names
-/// count once per index, exactly as the service counts them.
-pub const INCLUDE_ATTRIBUTES_PER_TABLE_MAX: usize = 100;
-
 /// Why a table definition could not be read, validated or bundled.
 #[derive(Debug, thiserror::Error)]
 pub enum TableError {
@@ -93,32 +77,6 @@ pub enum TableError {
         table: String,
         /// The attribute nothing references.
         attribute: String,
-    },
-    /// One `INCLUDE` index exceeds `DynamoDB`'s hard `NonKeyAttributes` bound.
-    #[error(
-        "table `{table}` index `{index}` projects {observed} non-key attributes, above DynamoDB's {limit}-attribute per-index limit"
-    )]
-    ProjectionIndexLimit {
-        /// The offending table.
-        table: String,
-        /// The offending index.
-        index: String,
-        /// The projected non-key attribute count.
-        observed: usize,
-        /// `DynamoDB`'s hard per-index limit.
-        limit: usize,
-    },
-    /// The sum of all `INCLUDE` projections exceeds `DynamoDB`'s table bound.
-    #[error(
-        "table `{table}` projects {observed} non-key attributes across its indexes, above DynamoDB's {limit}-attribute per-table limit"
-    )]
-    ProjectionTableLimit {
-        /// The offending table.
-        table: String,
-        /// The projected non-key attribute count summed across indexes.
-        observed: usize,
-        /// `DynamoDB`'s hard per-table limit.
-        limit: usize,
     },
     /// Two definitions claim the same logical table name.
     #[error("logical table `{table}` is defined twice")]
@@ -334,8 +292,6 @@ pub struct TableDefinition {
 pub struct TableBundle {
     /// Bundle schema identifier.
     pub schema: String,
-    /// Authored monotone regional schema generation.
-    pub generation: u32,
     /// `blake3:<64 hex>` over the rendered table array.
     pub digest: String,
     /// Every table, ordered by logical name.
@@ -491,42 +447,6 @@ pub fn check_attribute_closure(definition: &TableDefinition) -> Result<(), Table
     Ok(())
 }
 
-/// Enforces `DynamoDB`'s non-adjustable secondary-index projection bounds before
-/// a generated bundle can reach Terraform or `CreateTable`.
-///
-/// # Errors
-///
-/// Returns [`TableError::ProjectionIndexLimit`] when one `INCLUDE` index names
-/// more than twenty non-key attributes, or
-/// [`TableError::ProjectionTableLimit`] when the sum across a table exceeds one
-/// hundred. `KEYS_ONLY` indexes contribute zero.
-pub fn check_projection_limits(definition: &TableDefinition) -> Result<(), TableError> {
-    let mut table_total = 0_usize;
-    for index in &definition.global_secondary_indexes {
-        if index.projection.projection_type != "INCLUDE" {
-            continue;
-        }
-        let observed = index.projection.attributes.len();
-        if observed > INCLUDE_ATTRIBUTES_PER_INDEX_MAX {
-            return Err(TableError::ProjectionIndexLimit {
-                table: definition.table.clone(),
-                index: index.name.clone(),
-                observed,
-                limit: INCLUDE_ATTRIBUTES_PER_INDEX_MAX,
-            });
-        }
-        table_total = table_total.saturating_add(observed);
-    }
-    if table_total > INCLUDE_ATTRIBUTES_PER_TABLE_MAX {
-        return Err(TableError::ProjectionTableLimit {
-            table: definition.table.clone(),
-            observed: table_total,
-            limit: INCLUDE_ATTRIBUTES_PER_TABLE_MAX,
-        });
-    }
-    Ok(())
-}
-
 /// Read, validate and sort every table definition under `directory`.
 ///
 /// # Errors
@@ -575,7 +495,6 @@ pub fn load_all(directory: &Path) -> Result<Vec<TableDefinition>, TableError> {
             });
         }
         check_attribute_closure(&definition)?;
-        check_projection_limits(&definition)?;
         if tables
             .iter()
             .any(|existing| existing.table == definition.table)
@@ -607,7 +526,6 @@ pub fn bundle(tables: Vec<TableDefinition>) -> TableBundle {
     let digest = blake3::hash(body.as_bytes());
     TableBundle {
         schema: BUNDLE_SCHEMA.to_owned(),
-        generation: BUNDLE_GENERATION,
         digest: format!("blake3:{}", hex::encode(digest.as_bytes())),
         tables,
     }
@@ -653,8 +571,8 @@ pub fn read_bundle() -> Result<TableBundle, TableError> {
 mod tests {
     use super::{
         AttributeDefinition, GlobalSecondaryIndex, KeySchema, Projection, TableDefinition,
-        TableError, bundle, check_attribute_closure, check_projection_limits,
-        definitions_directory, load_all, rebuild, render,
+        TableError, bundle, check_attribute_closure, definitions_directory, load_all, rebuild,
+        render,
     };
 
     fn sample() -> TableDefinition {
@@ -674,7 +592,6 @@ mod tests {
             vec![
                 "observation-authority",
                 "regional-authz-projection",
-                "regional-capacity-authority",
                 "regional-content",
                 "regional-registry",
                 "regional-secret-custody",
@@ -713,56 +630,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn every_projection_stays_inside_dynamodb_hard_limits() {
-        for table in load_all(&definitions_directory()).expect("the definitions load") {
-            check_projection_limits(&table).expect("the definition is creatable by DynamoDB");
-        }
-    }
-
-    #[test]
-    fn an_include_projection_above_twenty_attributes_is_rejected_before_bundle_generation() {
-        let mut table = sample();
-        table.global_secondary_indexes[0].projection.projection_type = "INCLUDE".to_owned();
-        table.global_secondary_indexes[0].projection.attributes =
-            (0..21).map(|value| format!("field{value}")).collect();
-        assert!(matches!(
-            check_projection_limits(&table),
-            Err(TableError::ProjectionIndexLimit {
-                observed: 21,
-                limit: 20,
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn a_table_projection_sum_above_one_hundred_is_rejected_before_bundle_generation() {
-        let mut table = sample();
-        let template = table.global_secondary_indexes[1].clone();
-        table.global_secondary_indexes = (0..6)
-            .map(|position| {
-                let mut index = template.clone();
-                index.name = format!("gsi_limit_{position}");
-                index.projection.projection_type = "INCLUDE".to_owned();
-                index.projection.attributes = (0..20)
-                    .map(|attribute| format!("field{position}_{attribute}"))
-                    .collect();
-                index
-            })
-            .collect();
-        assert!(matches!(
-            check_projection_limits(&table),
-            Err(TableError::ProjectionTableLimit {
-                observed: 120,
-                limit: 100,
-                ..
-            })
-        ));
-    }
-
     /// Attribute names that carry a record body, a prompt or a receipt.
-    const BODY_SHAPED: [&str; 11] = [
+    const BODY_SHAPED: [&str; 10] = [
         "bodyInline",
         "bodyDigest",
         "contentInline",
@@ -773,7 +642,6 @@ mod tests {
         "resolvedConfig",
         "resultInline",
         "enc",
-        "authorityDocument",
     ];
 
     #[test]
@@ -1007,7 +875,7 @@ mod tests {
             assert!(
                 writer.actions.iter().all(|action| matches!(
                     action.as_str(),
-                    "dynamodb:GetItem" | "dynamodb:PutItem" | "dynamodb:TransactWriteItems"
+                    "dynamodb:GetItem" | "dynamodb:PutItem"
                 )),
                 "{} holds a broad action: {:?}",
                 writer.role,
@@ -1053,14 +921,7 @@ mod tests {
             .iter()
             .find(|grant| grant.role == "regional-capacity-controller")
             .expect("regional capacity owns workspace limits");
-        assert_eq!(
-            capacity.item_types,
-            [
-                "workspace_limit",
-                "workspace_limit_bundle_head",
-                "workspace_limit_bundle"
-            ]
-        );
+        assert_eq!(capacity.item_types, ["workspace_limit"]);
         assert_eq!(
             capacity
                 .condition
@@ -1069,41 +930,6 @@ mod tests {
                 .values,
             ["LIMIT#*"]
         );
-    }
-
-    #[test]
-    fn capacity_authority_has_one_key_scoped_transactional_writer() {
-        let tables = load_all(&definitions_directory()).expect("the definitions load");
-        let table = tables
-            .iter()
-            .find(|table| table.table == "regional-capacity-authority")
-            .expect("the capacity authority is declared");
-
-        assert_eq!(
-            table.server_side_encryption.key_authority,
-            "regional-capacity"
-        );
-        assert_eq!(table.item_types, ["workspace_capacity", "capacity_audit"]);
-        assert!(table.global_secondary_indexes.is_empty());
-        assert!(!table.stream.enabled);
-        assert!(!table.time_to_live.enabled);
-        assert_eq!(table.iam.len(), 1);
-
-        let writer = &table.iam[0];
-        assert_eq!(writer.role, "regional-capacity-controller");
-        assert_eq!(
-            writer.actions,
-            ["dynamodb:GetItem", "dynamodb:TransactWriteItems"]
-        );
-        assert_eq!(writer.resources, ["table"]);
-        assert_eq!(writer.item_types, ["workspace_capacity", "capacity_audit"]);
-        let condition = writer
-            .condition
-            .as_ref()
-            .expect("capacity authority writes are key restricted");
-        assert_eq!(condition.operator, "ForAllValues:StringLike");
-        assert_eq!(condition.key, "dynamodb:LeadingKeys");
-        assert_eq!(condition.values, ["WS#*"]);
     }
 
     #[test]
@@ -1158,7 +984,6 @@ mod tests {
     fn the_bundle_digest_is_stable_across_two_builds() {
         let first = rebuild().expect("the bundle rebuilds");
         let second = rebuild().expect("the bundle rebuilds");
-        assert_eq!(first.generation, 1);
         assert_eq!(first.digest, second.digest);
         assert!(first.digest.starts_with("blake3:"));
         assert_eq!(first.digest.len(), "blake3:".len() + 64);

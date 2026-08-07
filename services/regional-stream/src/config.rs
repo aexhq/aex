@@ -36,8 +36,6 @@ pub const OBSERVATION_TABLE: &str = "AEX_OBSERVATION_TABLE";
 pub const SESSION_TABLE_STREAM_ARN: &str = "AEX_SESSION_TABLE_STREAM_ARN";
 /// The `observation-authority` stream this task tails in `ddb_streams` mode.
 pub const OBSERVATION_TABLE_STREAM_ARN: &str = "AEX_OBSERVATION_TABLE_STREAM_ARN";
-/// The endpoint-specific HTTPS origin of the `DynamoDB` Streams interface endpoint.
-pub const DYNAMODB_STREAMS_ENDPOINT_URL: &str = "AEX_DYNAMODB_STREAMS_ENDPOINT_URL";
 /// The regional content bucket, read for large stored records.
 pub const CONTENT_BUCKET: &str = "AEX_CONTENT_BUCKET";
 /// The storage reference of the cursor signing key.
@@ -171,8 +169,6 @@ pub struct Config {
     pub session_stream: Option<Arn>,
     /// `observation-authority` stream, in `ddb_streams` mode.
     pub observation_stream: Option<Arn>,
-    /// Endpoint-specific `DynamoDB` Streams origin, in `ddb_streams` mode.
-    pub dynamodb_streams_endpoint_url: Option<String>,
     /// Regional content bucket.
     pub content_bucket: String,
     /// Cursor signing key reference.
@@ -243,46 +239,24 @@ impl Config {
                 ),
             });
         }
-        let (session_stream, observation_stream, dynamodb_streams_endpoint_url) =
-            if wake_mode == WakeMode::DdbStreams {
-                let endpoint = required(lookup, DYNAMODB_STREAMS_ENDPOINT_URL)?;
-                let Some(host) = endpoint.strip_prefix("https://") else {
-                    return Err(ConfigError::Invalid {
-                        name: DYNAMODB_STREAMS_ENDPOINT_URL,
-                        reason: "must be the HTTPS origin of the private DynamoDB Streams endpoint"
-                            .to_owned(),
-                    });
-                };
-                if host.is_empty()
-                    || host.contains('/')
-                    || !host.contains(".dynamodb")
-                    || !host.ends_with(".vpce.amazonaws.com")
-                {
-                    return Err(ConfigError::Invalid {
-                        name: DYNAMODB_STREAMS_ENDPOINT_URL,
-                        reason:
-                            "must be a bare DynamoDB endpoint-specific `.vpce.amazonaws.com` origin"
-                                .to_owned(),
-                    });
-                }
-                (
-                    Some(arn_in_region(
-                        lookup,
-                        SESSION_TABLE_STREAM_ARN,
-                        region,
-                        "dynamodb",
-                    )?),
-                    Some(arn_in_region(
-                        lookup,
-                        OBSERVATION_TABLE_STREAM_ARN,
-                        region,
-                        "dynamodb",
-                    )?),
-                    Some(endpoint),
-                )
-            } else {
-                (None, None, None)
-            };
+        let (session_stream, observation_stream) = if wake_mode == WakeMode::DdbStreams {
+            (
+                Some(arn_in_region(
+                    lookup,
+                    SESSION_TABLE_STREAM_ARN,
+                    region,
+                    "dynamodb",
+                )?),
+                Some(arn_in_region(
+                    lookup,
+                    OBSERVATION_TABLE_STREAM_ARN,
+                    region,
+                    "dynamodb",
+                )?),
+            )
+        } else {
+            (None, None)
+        };
 
         let raw_port = bounded_u64(lookup, STREAM_PORT, 1, 65_535)?;
         let port = u16::try_from(raw_port).map_err(|_| ConfigError::Invalid {
@@ -357,7 +331,6 @@ impl Config {
             observation_table: required(lookup, OBSERVATION_TABLE)?,
             session_stream,
             observation_stream,
-            dynamodb_streams_endpoint_url,
             content_bucket: required(lookup, CONTENT_BUCKET)?,
             cursor_signing_key_ref: required(lookup, CURSOR_SIGNING_KEY_REF)?,
             observation_index_settle_ms: i64::try_from(observation_index_settle_ms).map_err(

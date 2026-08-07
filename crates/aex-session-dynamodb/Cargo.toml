@@ -39,14 +39,7 @@ integration = "blocked on a cross-stream gap: `data-image-literal` bans `Generic
 [features]
 default = ["session-authority", "authz-projection"]
 # The `session-authority` key templates, row codecs and transactions.
-session-authority = [
-    "dep:aex-content-domain",
-    "dep:aex-operation-domain",
-    "dep:aex-runtime-control",
-    "dep:aex-secret-domain",
-    "dep:aex-session-app",
-    "dep:aex-session-domain",
-]
+session-authority = ["dep:aex-operation-domain", "dep:aex-runtime-control"]
 # The read-only `regional-authz-projection` reader. A deployable that needs only
 # the projection depends on this crate with `default-features = false,
 # features = ["authz-projection"]` and links no session write symbol (D-21).
@@ -77,13 +70,9 @@ time.workspace = true
 xxhash-rust.workspace = true
 aex-wire = { path = "../aex-wire" }
 aex-observation-domain = { path = "../aex-observation-domain" }
-aex-content-domain = { path = "../aex-content-domain", optional = true }
 aex-operation-domain = { path = "../aex-operation-domain", optional = true }
 aex-internal-contracts = { path = "../aex-internal-contracts" }
 aex-runtime-control = { path = "../aex-runtime-control", optional = true }
-aex-secret-domain = { path = "../aex-secret-domain", optional = true }
-aex-session-app = { path = "../aex-session-app", optional = true }
-aex-session-domain = { path = "../aex-session-domain", optional = true }
 futures.workspace = true
 
 tokio = { workspace = true, optional = true }

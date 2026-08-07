@@ -20,9 +20,8 @@ related:
 This page describes the supported public contract, not the hosted substrate.
 The strict schemas under [`api/schemas/`](../api/schemas/) are the wire
 authority; [`api/generated/`](../api/generated/) and
-[`crates/aex-wire/`](../crates/aex-wire/) and
-[`packages/wire/`](../packages/wire/) are generated from them and never edited
-by hand. The documentation under
+[`crates/aex-wire/`](../crates/aex-wire/) are generated from them and never
+edited by hand. The documentation under
 [`apps/site/content/docs/`](../apps/site/content/docs/) is the user-facing
 authority.
 
@@ -191,8 +190,7 @@ This Apache-2.0 repository owns:
 
 - strict public schemas, identifiers, routes, errors, and scopes in
   `api/schemas`, and the OpenAPI documents, JSON Schema and Rust contract
-  generated from them into `api/generated`, `crates/aex-wire`, and
-  `packages/wire`;
+  generated from them into `api/generated` and `crates/aex-wire`;
 - the service, runtime and tooling crates under `crates/`, `services/`,
   `runtimes/`, `workers/` and `tools/`;
 - the TypeScript SDK in `packages/sdk`;
@@ -206,7 +204,7 @@ public API when the strict wire behavior remains the same, and nothing in them
 is a public contract.
 
 The generation direction is one way: strict schemas produce the OpenAPI
-documents, JSON Schema, Rust contract, and TypeScript wire binding, and
+documents, JSON Schema and Rust contract, and
 `cargo run -p aex-contract-gen -- check` prevents those views from drifting.
 
 ## Design rules

@@ -126,12 +126,6 @@ pub fn config() -> ResolvedAgentConfig {
     ResolvedAgentConfig {
         catalog_pin: model.catalog(),
         provider: ProviderId::Deepseek,
-        credential: aex_brain_domain::wire_pending::SessionCredentialPin {
-            binding: ProviderCredentialId::from_uuid7(Uuid7::compose(1, [8; 10])),
-            revision: core::num::NonZeroU64::MIN,
-            generation: core::num::NonZeroU64::MIN,
-            revocation_epoch: 0,
-        },
         model: model.model().clone(),
         system: None,
         tool_manifest_digests: vec![ContentHash::of(b"fixture-tools")],
@@ -230,7 +224,6 @@ pub fn assistant(
             generation: 1,
         },
         provider_request_id: None,
-        gateway_route: None,
         http_status: 200,
         attempts: 1,
         started_at: at,
@@ -251,7 +244,7 @@ pub fn assistant(
     JournalRecord::AssistantMessage {
         message,
         usage: TURN_USAGE,
-        receipt: Box::new(receipt),
+        receipt,
         effect,
     }
 }
@@ -270,11 +263,6 @@ pub fn assistant_text(text: &str, effect: EffectId) -> JournalRecord {
 }
 
 /// An assistant turn asking for the named tool calls, in order.
-///
-/// # Panics
-///
-/// Panics when a fixture supplies an invalid tool name. The tool input is a
-/// fixed valid canonical JSON object.
 #[must_use]
 pub fn assistant_tool_use(calls: &[(&str, &str)], effect: EffectId) -> JournalRecord {
     let blocks = calls

@@ -9,7 +9,7 @@
 //! equal `declared`. A skipped test is a deleted test that still reports as
 //! coverage; a flaky pass is a failure that happened to be scheduled well.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
@@ -67,31 +67,19 @@ pub struct Inputs {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Subject {
-    /// Receipt-independent artifact subject this receipt is bound to.
+    /// Artifact envelope this receipt is bound to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub artifact_subject_digest: Option<String>,
+    pub artifact_envelope_digest: Option<String>,
     /// Release this receipt is bound to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub release_id: Option<String>,
-    /// Exact private VERIFYING continuation context this receipt was earned for.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub deployment_context_digest: Option<String>,
     /// Units covered.
     #[serde(default)]
     pub unit_ids: Vec<String>,
 }
 
-fn valid_sha256_digest(value: &str) -> bool {
-    value.strip_prefix("sha256:").is_some_and(|hex| {
-        hex.len() == 64
-            && hex
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
-    })
-}
-
 /// One partition of a sharded run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Partition {
     /// Zero-based index.
@@ -169,42 +157,6 @@ pub struct Attachment {
     pub uri: String,
     /// Byte length.
     pub size_bytes: u64,
-}
-
-/// One workload smoke recorded by architecture qualification.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ArchitectureSmoke {
-    /// Stable smoke identifier.
-    pub id: String,
-    /// Derived smoke result; only `passed` qualifies.
-    pub result: String,
-}
-
-/// Execution evidence for exact ARM artifact bytes.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ArchitectureQualification {
-    /// Exact packaged artifact or OCI manifest digest that executed.
-    pub artifact_digest: String,
-    /// Release target identity. Strict v1 permits only `aarch64`.
-    pub target: String,
-    /// Physical host or VM identity.
-    pub host_identity: String,
-    /// Executor identity, including its pinned version or image digest.
-    pub executor_identity: String,
-    /// Whether execution used a native host or faithful emulation.
-    pub executor_kind: String,
-    /// Bootstrap or process-start result.
-    pub bootstrap_result: String,
-    /// Dynamic-loader and dependency result.
-    pub dependency_loader_result: String,
-    /// When the execution observation was made.
-    pub observed_at: String,
-    /// Hard expiry for this qualification.
-    pub expires_at: String,
-    /// Workload-specific smoke results.
-    pub workload_smokes: Vec<ArchitectureSmoke>,
 }
 
 /// Test-data hygiene.
@@ -312,9 +264,6 @@ pub struct Receipt {
     /// Hashed attachments.
     #[serde(default)]
     pub attachments: Vec<Attachment>,
-    /// Exact-byte ARM execution evidence, present only for `arch-qualification`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub architecture_qualification: Option<ArchitectureQualification>,
     /// Data hygiene.
     pub data: DataBlock,
     /// When it started.
@@ -372,23 +321,6 @@ impl Receipt {
                 format!("unknown receipt schema `{}`", self.schema),
             ));
         }
-        let release_evidence =
-            self.lane == "release" && matches!(self.class.as_str(), "e2e" | "user");
-        if self
-            .subject
-            .deployment_context_digest
-            .as_deref()
-            .is_some_and(|digest| !valid_sha256_digest(digest))
-            || (release_evidence && self.subject.deployment_context_digest.is_none())
-        {
-            violations.push(Violation::new(
-                "release-deployment-context-missing",
-                format!(
-                    "release receipt `{}` is not bound to one exact deployment continuation context",
-                    self.receipt_id
-                ),
-            ));
-        }
         for (field, value) in [
             ("skipped", self.inventory.skipped),
             ("ignored", self.inventory.ignored),
@@ -437,6 +369,21 @@ impl Receipt {
                 ),
             ));
         }
+        if self.source.run_attempt > 1
+            && !self
+                .attachments
+                .iter()
+                .any(|attachment| attachment.kind == "first-failure")
+        {
+            violations.push(Violation::new(
+                "flake-first-failure-lost",
+                format!(
+                    "receipt `{}` is attempt {} and carries no preserved first failure; the \
+                     original verdict may not be discarded",
+                    self.receipt_id, self.source.run_attempt
+                ),
+            ));
+        }
         // `unreclaimed` is a janitor finding, not a lane's declaration about
         // itself, and no explanation makes it acceptable. OD-36 makes
         // reclamation a release gate; a lane that left something in production
@@ -479,79 +426,6 @@ impl Receipt {
                     self.receipt_id
                 ),
             ));
-        }
-        match (&*self.class, &self.architecture_qualification) {
-            ("arch-qualification", None) => violations.push(Violation::new(
-                "arch-qualification-missing",
-                format!(
-                    "receipt `{}` names arch-qualification without exact-byte execution evidence",
-                    self.receipt_id
-                ),
-            )),
-            ("arch-qualification", Some(qualification)) => {
-                if qualification.target != "aarch64" {
-                    violations.push(Violation::new(
-                        "arch-qualification-target",
-                        format!(
-                            "receipt `{}` qualifies target `{}`, not clean-cut `aarch64`",
-                            self.receipt_id, qualification.target
-                        ),
-                    ));
-                }
-                if !matches!(qualification.executor_kind.as_str(), "native" | "emulated") {
-                    violations.push(Violation::new(
-                        "arch-qualification-executor",
-                        format!(
-                            "receipt `{}` has unsupported executor kind `{}`",
-                            self.receipt_id, qualification.executor_kind
-                        ),
-                    ));
-                }
-                if qualification.bootstrap_result != "passed"
-                    || qualification.dependency_loader_result != "passed"
-                    || qualification.workload_smokes.is_empty()
-                    || qualification
-                        .workload_smokes
-                        .iter()
-                        .any(|smoke| smoke.result != "passed")
-                {
-                    violations.push(Violation::new(
-                        "arch-qualification-workload",
-                        format!(
-                            "receipt `{}` did not pass bootstrap, loader and every declared workload smoke",
-                            self.receipt_id
-                        ),
-                    ));
-                }
-                let observed = time::OffsetDateTime::parse(
-                    &qualification.observed_at,
-                    &time::format_description::well_known::Rfc3339,
-                );
-                let expires = time::OffsetDateTime::parse(
-                    &qualification.expires_at,
-                    &time::format_description::well_known::Rfc3339,
-                );
-                if observed.is_err()
-                    || expires.is_err()
-                    || expires.is_ok_and(|expiry| observed.is_ok_and(|start| expiry <= start))
-                {
-                    violations.push(Violation::new(
-                        "arch-qualification-expiry",
-                        format!(
-                            "receipt `{}` has an invalid or non-increasing ARM qualification window",
-                            self.receipt_id
-                        ),
-                    ));
-                }
-            }
-            (_, Some(_)) => violations.push(Violation::new(
-                "arch-qualification-class",
-                format!(
-                    "receipt `{}` carries ARM qualification evidence under class `{}`",
-                    self.receipt_id, self.class
-                ),
-            )),
-            (_, None) => {}
         }
         if violations.is_empty() {
             Ok(())
@@ -637,9 +511,6 @@ pub struct RunContext {
     /// What it is about.
     #[serde(default)]
     pub subject: Subject,
-    /// Exact-byte ARM execution evidence, present only for `arch-qualification`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub architecture_qualification: Option<ArchitectureQualification>,
     /// How it selected.
     pub selection: SelectionBlock,
     /// Data hygiene.
@@ -690,7 +561,6 @@ pub fn new_receipt(context: RunContext, junit: &JunitSummary) -> Result<Receipt>
         source: context.source,
         inputs: context.inputs,
         subject: context.subject,
-        architecture_qualification: context.architecture_qualification,
         selection: context.selection,
         inventory,
         failures: Vec::new(),
@@ -703,227 +573,6 @@ pub fn new_receipt(context: RunContext, junit: &JunitSummary) -> Result<Receipt>
         } else {
             "failed".to_owned()
         },
-    }
-    .seal()
-}
-
-/// The terminal verdict emitted by one Cargo command.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CargoCommandSummary {
-    /// Cargo's own `build-finished.success` value.
-    pub success: bool,
-}
-
-/// Read the terminal verdict from Cargo's JSON message stream.
-///
-/// Every non-empty line must be one Cargo JSON message and the stream must
-/// contain exactly one `build-finished` record. The workflow therefore cannot
-/// turn an empty, truncated or concatenated log into a passing command receipt.
-///
-/// # Errors
-/// Returns [`Exit::EvidenceMissing`] when Cargo emitted no terminal verdict and
-/// [`Exit::EvidenceUnsound`] when the message stream is malformed or carries
-/// more than one terminal verdict.
-pub fn parse_cargo_messages(messages: &str) -> Result<CargoCommandSummary> {
-    let mut verdict = None;
-    for (index, line) in messages.lines().enumerate() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let message: serde_json::Value = serde_json::from_str(line).map_err(|err| {
-            ToolError::single(
-                Exit::EvidenceUnsound,
-                "cargo-output-invalid",
-                format!("Cargo message line {} is not JSON: {err}", index + 1),
-            )
-        })?;
-        if message.get("reason").and_then(serde_json::Value::as_str) != Some("build-finished") {
-            continue;
-        }
-        let success = message
-            .get("success")
-            .and_then(serde_json::Value::as_bool)
-            .ok_or_else(|| {
-                ToolError::single(
-                    Exit::EvidenceUnsound,
-                    "cargo-verdict-invalid",
-                    format!(
-                        "Cargo build-finished message on line {} has no boolean success field",
-                        index + 1
-                    ),
-                )
-            })?;
-        if verdict.replace(success).is_some() {
-            return Err(ToolError::single(
-                Exit::EvidenceUnsound,
-                "cargo-verdict-ambiguous",
-                "Cargo output contains more than one build-finished verdict",
-            ));
-        }
-    }
-    verdict
-        .map(|success| CargoCommandSummary { success })
-        .ok_or_else(|| {
-            ToolError::single(
-                Exit::EvidenceMissing,
-                "cargo-verdict-missing",
-                "Cargo output contains no build-finished verdict",
-            )
-        })
-}
-
-/// Build one receipt for one Cargo command from Cargo's terminal verdict.
-///
-/// `declared` must be exactly one because the inventory counts the selected
-/// command, not compiler targets inferred after execution. Package and unit
-/// scope remain explicit in the context's selection and subject blocks.
-///
-/// # Errors
-/// Returns [`Exit::EvidenceUnsound`] when the context does not declare exactly
-/// one command and propagates canonicalization failures from sealing.
-pub fn new_command_receipt(context: RunContext, summary: CargoCommandSummary) -> Result<Receipt> {
-    if context.declared != 1 {
-        return Err(ToolError::single(
-            Exit::EvidenceUnsound,
-            "command-inventory-invalid",
-            format!(
-                "command receipt `{}` declares {} commands; exactly one command was observed",
-                context.receipt_id, context.declared
-            ),
-        ));
-    }
-    Receipt {
-        schema: "aex.evidence-receipt.v1".to_owned(),
-        receipt_digest: "sha256:0".to_owned(),
-        receipt_id: context.receipt_id,
-        class: context.class,
-        layer: context.layer,
-        lane: context.lane,
-        concerns: context.concerns,
-        source: context.source,
-        inputs: context.inputs,
-        subject: context.subject,
-        architecture_qualification: context.architecture_qualification,
-        selection: context.selection,
-        inventory: Inventory {
-            declared: 1,
-            collected: 1,
-            passed: u64::from(summary.success),
-            failed: u64::from(!summary.success),
-            ..Inventory::default()
-        },
-        failures: Vec::new(),
-        attachments: Vec::new(),
-        data: context.data,
-        started_at: context.started_at,
-        completed_at: context.completed_at,
-        conclusion: if summary.success {
-            "passed".to_owned()
-        } else {
-            "failed".to_owned()
-        },
-    }
-    .seal()
-}
-
-/// One machine-readable check emitted only after its named producer ran.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct CheckResult {
-    /// Stable check identity within the producer.
-    pub id: String,
-    /// `passed` or `failed`; no skipped/unknown state is evidence.
-    pub status: String,
-}
-
-/// Closed report consumed by [`new_check_receipt`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct CheckReport {
-    /// `aex.check-report.v1`.
-    pub schema: String,
-    /// Exact producer and version, for example `syft 1.50.0`.
-    pub producer: String,
-    /// Checks the producer actually completed.
-    pub checks: Vec<CheckResult>,
-}
-
-/// Build a receipt from a closed machine-readable check report.
-///
-/// The report, rather than the workflow context, supplies the collected and
-/// passing counters. Empty, duplicate, unknown or partial check sets are
-/// refused, and the declared inventory must match exactly.
-///
-/// # Errors
-/// Returns [`Exit::EvidenceUnsound`] for a malformed or partial report and
-/// propagates canonicalization failures from sealing.
-pub fn new_check_receipt(context: RunContext, report: &CheckReport) -> Result<Receipt> {
-    let mut violations = Vec::new();
-    if report.schema != "aex.check-report.v1" || report.producer.trim().is_empty() {
-        violations.push(Violation::new(
-            "check-report-identity",
-            "a check report requires schema `aex.check-report.v1` and an exact producer identity",
-        ));
-    }
-    let mut ids = std::collections::BTreeSet::new();
-    let mut passed = 0_u64;
-    let mut failed = 0_u64;
-    for check in &report.checks {
-        if check.id.trim().is_empty() || !ids.insert(check.id.as_str()) {
-            violations.push(Violation::new(
-                "check-report-inventory",
-                "check ids must be non-empty and unique",
-            ));
-        }
-        match check.status.as_str() {
-            "passed" => passed += 1,
-            "failed" => failed += 1,
-            other => violations.push(Violation::new(
-                "check-report-status",
-                format!("check `{}` has unsupported status `{other}`", check.id),
-            )),
-        }
-    }
-    let collected = report.checks.len() as u64;
-    if collected == 0 || context.declared != collected {
-        violations.push(Violation::new(
-            "check-report-inventory",
-            format!(
-                "receipt `{}` declared {} check(s), but the producer reported {collected}",
-                context.receipt_id, context.declared
-            ),
-        ));
-    }
-    if !violations.is_empty() {
-        return Err(ToolError::many(Exit::EvidenceUnsound, violations));
-    }
-    Receipt {
-        schema: "aex.evidence-receipt.v1".to_owned(),
-        receipt_digest: "sha256:0".to_owned(),
-        receipt_id: context.receipt_id,
-        class: context.class,
-        layer: context.layer,
-        lane: context.lane,
-        concerns: context.concerns,
-        source: context.source,
-        inputs: context.inputs,
-        subject: context.subject,
-        architecture_qualification: context.architecture_qualification,
-        selection: context.selection,
-        inventory: Inventory {
-            declared: context.declared,
-            collected,
-            passed,
-            failed,
-            ..Inventory::default()
-        },
-        failures: Vec::new(),
-        attachments: Vec::new(),
-        data: context.data,
-        started_at: context.started_at,
-        completed_at: context.completed_at,
-        conclusion: if failed == 0 { "passed" } else { "failed" }.to_owned(),
     }
     .seal()
 }
@@ -952,81 +601,6 @@ pub fn attach(receipt: Receipt, kind: &str, file: &std::path::Path, uri: &str) -
     receipt.seal()
 }
 
-/// Bind an already-earned receipt to one receipt-independent artifact subject.
-///
-/// This is an explicit, auditable transformation: the input receipt must be
-/// sound, the draft subject must recompute exactly, and source plus unit scope
-/// must already agree. Certification never performs this mutation implicitly.
-///
-/// # Errors
-/// Returns a classified refusal for an unsound receipt, tampered artifact
-/// subject, cross-source/unit binding or attempted rebind.
-pub fn bind_artifact(
-    mut receipt: Receipt,
-    envelope: &crate::artifact::ArtifactEnvelope,
-) -> Result<Receipt> {
-    receipt.verify()?;
-    let artifact_subject_digest = envelope.compute_artifact_subject_digest()?;
-    if envelope.artifact_subject_digest != artifact_subject_digest {
-        return Err(ToolError::single(
-            Exit::ArtifactMismatch,
-            "bind-artifact-subject-mismatch",
-            format!(
-                "envelope artifactSubjectDigest `{}` does not match the canonical artifact subject `{artifact_subject_digest}`",
-                envelope.artifact_subject_digest
-            ),
-        ));
-    }
-    if receipt.source.repository != envelope.source.repository
-        || receipt.source.commit_sha != envelope.source.commit_sha
-        || !receipt
-            .subject
-            .unit_ids
-            .iter()
-            .any(|unit| unit == &envelope.unit.id)
-    {
-        return Err(ToolError::single(
-            Exit::EvidenceUnsound,
-            "bind-artifact-scope",
-            format!(
-                "receipt `{}` does not cover unit `{}` at the envelope's exact repository and commit",
-                receipt.receipt_id, envelope.unit.id
-            ),
-        ));
-    }
-    if receipt
-        .subject
-        .artifact_subject_digest
-        .as_deref()
-        .is_some_and(|bound| bound != artifact_subject_digest)
-    {
-        return Err(ToolError::single(
-            Exit::EvidenceUnsound,
-            "bind-artifact-rebind",
-            format!(
-                "receipt `{}` is already bound to another artifact subject",
-                receipt.receipt_id
-            ),
-        ));
-    }
-    receipt.subject.artifact_subject_digest = Some(artifact_subject_digest);
-    if let Some(qualification) = &receipt.architecture_qualification
-        && qualification.artifact_digest != envelope.output.digest
-    {
-        return Err(ToolError::single(
-            Exit::EvidenceUnsound,
-            "bind-architecture-artifact-mismatch",
-            format!(
-                "receipt `{}` qualifies `{}` but the envelope output is `{}`",
-                receipt.receipt_id, qualification.artifact_digest, envelope.output.digest
-            ),
-        ));
-    }
-    let bound = receipt.seal()?;
-    bound.verify()?;
-    Ok(bound)
-}
-
 /// Freshness classes and their requirement.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -1042,7 +616,7 @@ pub struct FreshnessPolicy {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FreshnessRule {
-    /// What the receipt must be bound to: `artifact`, `commit`, `release` or
+    /// What the receipt must be bound to: `envelope`, `commit`, `release` or
     /// `none`.
     pub bound_to: String,
     /// Maximum age in hours, where one applies.
@@ -1087,11 +661,11 @@ pub fn check_freshness(
             ),
         ));
     }
-    if rule.bound_to == "artifact" && receipt.subject.artifact_subject_digest.is_none() {
+    if rule.bound_to == "envelope" && receipt.subject.artifact_envelope_digest.is_none() {
         violations.push(Violation::new(
             "evidence-stale",
             format!(
-                "receipt `{}` of class `{}` must be bound to an artifact subject digest",
+                "receipt `{}` of class `{}` must be bound to an artifact envelope digest",
                 receipt.receipt_id, receipt.class
             ),
         ));
@@ -1124,31 +698,6 @@ pub fn check_freshness(
             ));
         }
     }
-    if let Some(qualification) = &receipt.architecture_qualification {
-        let expires = time::OffsetDateTime::parse(
-            &qualification.expires_at,
-            &time::format_description::well_known::Rfc3339,
-        )
-        .map_err(|err| {
-            ToolError::single(
-                Exit::EvidenceStale,
-                "arch-qualification-expiry-unparseable",
-                format!(
-                    "receipt `{}` has expiresAt `{}`: {err}",
-                    receipt.receipt_id, qualification.expires_at
-                ),
-            )
-        })?;
-        if now > expires {
-            violations.push(Violation::new(
-                "evidence-stale",
-                format!(
-                    "receipt `{}` ARM qualification expired at {}",
-                    receipt.receipt_id, qualification.expires_at
-                ),
-            ));
-        }
-    }
     if violations.is_empty() {
         Ok(())
     } else {
@@ -1156,31 +705,16 @@ pub fn check_freshness(
     }
 }
 
-/// One exact receipt producer selected by the router.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ProducerInstance {
-    /// Caller job id recorded in the receipt.
-    pub job_name: String,
-    /// Exact package or Terraform node selected by the matrix.
-    pub package: String,
-    /// Exact matrix shard, absent only for unsharded semantic receipts.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub partition: Option<Partition>,
-    /// Evidence class produced by this instance.
-    pub class: String,
-}
-
-/// The exact receipt producers a lane declared it would run.
+/// The jobs a lane declared it would run.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct DeclaredProducers {
+pub struct DeclaredJobs {
     /// Schema discriminator.
     pub schema: String,
     /// Lane name.
     pub lane: String,
-    /// Exact job/package/partition/class instances.
-    pub producers: Vec<ProducerInstance>,
+    /// Job names.
+    pub jobs: Vec<String>,
 }
 
 /// The aggregate verdict of a lane.
@@ -1190,46 +724,46 @@ pub struct LaneReceipt {
     pub schema: &'static str,
     /// Lane name.
     pub lane: String,
-    /// Declared producer instances.
-    pub declared: Vec<ProducerInstance>,
-    /// Producer instances that emitted a receipt.
-    pub collected: Vec<ProducerInstance>,
-    /// Unique receipt identities included in this aggregate.
-    pub receipt_ids: Vec<String>,
+    /// Declared jobs.
+    pub declared: Vec<String>,
+    /// Jobs that produced a receipt.
+    pub collected: Vec<String>,
     /// Overall verdict.
     pub conclusion: String,
 }
 
-/// Compare declared producer instances against collected receipts.
+/// Compare declared jobs against collected receipts.
 ///
 /// # Errors
 /// Returns [`Exit::EvidenceMissing`] when a declared job produced no receipt,
 /// and [`Exit::EvidenceUnsound`] when any receipt is unsound or not passing.
-pub fn aggregate(receipts: &[Receipt], declared: &DeclaredProducers) -> Result<LaneReceipt> {
-    let (expected, mut unsound) = declared_instances(declared);
-    let mut collected = BTreeSet::new();
-    let mut receipt_ids = BTreeSet::new();
-    for receipt in receipts {
-        if !receipt_ids.insert(receipt.receipt_id.clone()) {
-            unsound.push(Violation::new(
-                "lane-receipt-id-duplicate",
+pub fn aggregate(receipts: &[Receipt], declared: &DeclaredJobs) -> Result<LaneReceipt> {
+    let mut collected: Vec<String> = receipts
+        .iter()
+        .map(|receipt| receipt.source.job_name.clone())
+        .collect();
+    collected.sort();
+    collected.dedup();
+    let mut missing = Vec::new();
+    for job in &declared.jobs {
+        if !collected.contains(job) {
+            missing.push(Violation::new(
+                "lane-receipt-missing",
                 format!(
-                    "receipt id `{}` was collected more than once",
-                    receipt.receipt_id
+                    "lane `{}` declared job `{job}` and collected no receipt for it; a \
+                     required job that emitted nothing is not a pass",
+                    declared.lane
                 ),
             ));
         }
+    }
+    if !missing.is_empty() {
+        return Err(ToolError::many(Exit::EvidenceMissing, missing));
+    }
+    let mut unsound = Vec::new();
+    for receipt in receipts {
         if let Err(err) = receipt.verify() {
             unsound.extend(err.violations);
-        }
-        if receipt.lane != declared.lane {
-            unsound.push(Violation::new(
-                "lane-receipt-lane",
-                format!(
-                    "receipt `{}` belongs to lane `{}`, not `{}`",
-                    receipt.receipt_id, receipt.lane, declared.lane
-                ),
-            ));
         }
         if !receipt.is_passing() {
             unsound.push(Violation::new(
@@ -1240,112 +774,24 @@ pub fn aggregate(receipts: &[Receipt], declared: &DeclaredProducers) -> Result<L
                 ),
             ));
         }
-        let producer = match producer_instance(receipt) {
-            Ok(producer) => producer,
-            Err(violation) => {
-                unsound.push(violation);
-                continue;
-            }
-        };
-        if !collected.insert(producer.clone()) {
-            unsound.push(Violation::new(
-                "lane-receipt-producer-duplicate",
-                format!(
-                    "producer {producer:?} emitted more than one receipt; artifact namespaces \
-                     may not overwrite or duplicate evidence"
-                ),
-            ));
-        }
-        if !expected.contains(&producer) {
-            unsound.push(Violation::new(
-                "lane-receipt-producer-unexpected",
-                format!(
-                    "receipt `{}` came from undeclared producer {producer:?}",
-                    receipt.receipt_id
-                ),
-            ));
-        }
     }
     if !unsound.is_empty() {
         return Err(ToolError::many(Exit::EvidenceUnsound, unsound));
     }
-
-    let missing: Vec<Violation> = expected
-        .difference(&collected)
-        .map(|producer| {
-            Violation::new(
-                "lane-receipt-missing",
-                format!(
-                    "lane `{}` declared producer {producer:?} and collected no receipt for it; \
-                     a required matrix instance that emitted nothing is not a pass",
-                    declared.lane
-                ),
-            )
-        })
-        .collect();
-    if !missing.is_empty() {
-        return Err(ToolError::many(Exit::EvidenceMissing, missing));
-    }
-
     Ok(LaneReceipt {
         schema: "aex.lane-receipt.v1",
         lane: declared.lane.clone(),
-        declared: expected.into_iter().collect(),
-        collected: collected.into_iter().collect(),
-        receipt_ids: receipt_ids.into_iter().collect(),
+        declared: declared.jobs.clone(),
+        collected,
         conclusion: "passed".to_owned(),
-    })
-}
-
-fn declared_instances(
-    declared: &DeclaredProducers,
-) -> (BTreeSet<ProducerInstance>, Vec<Violation>) {
-    let mut violations = Vec::new();
-    if declared.schema != "aex.declared-producers.v1" {
-        violations.push(Violation::new(
-            "lane-producer-schema",
-            format!("unknown producer declaration schema `{}`", declared.schema),
-        ));
-    }
-    let mut expected = BTreeSet::new();
-    for producer in &declared.producers {
-        if !expected.insert(producer.clone()) {
-            violations.push(Violation::new(
-                "lane-producer-declaration-duplicate",
-                format!(
-                    "lane `{}` declares producer {producer:?} twice",
-                    declared.lane
-                ),
-            ));
-        }
-    }
-    (expected, violations)
-}
-
-fn producer_instance(receipt: &Receipt) -> std::result::Result<ProducerInstance, Violation> {
-    if receipt.selection.packages.len() != 1 {
-        return Err(Violation::new(
-            "lane-receipt-producer-identity",
-            format!(
-                "receipt `{}` names {} packages; exact producer identity requires one",
-                receipt.receipt_id,
-                receipt.selection.packages.len()
-            ),
-        ));
-    }
-    Ok(ProducerInstance {
-        job_name: receipt.source.job_name.clone(),
-        package: receipt.selection.packages[0].clone(),
-        partition: receipt.selection.partition,
-        class: receipt.class.clone(),
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        DataBlock, DeclaredProducers, Inventory, JunitSummary, ProducerInstance, Receipt,
-        SelectionBlock, Source, aggregate, parse_junit,
+        DataBlock, DeclaredJobs, Inventory, JunitSummary, Receipt, SelectionBlock, Source,
+        aggregate, parse_junit,
     };
 
     pub(super) fn receipt(class: &str) -> Receipt {
@@ -1384,7 +830,6 @@ mod tests {
             },
             failures: Vec::new(),
             attachments: Vec::new(),
-            architecture_qualification: None,
             data: DataBlock {
                 budget_micro_usd: None,
                 spent_micro_usd: None,
@@ -1405,63 +850,6 @@ mod tests {
         sealed.verify().unwrap();
         let again = sealed.clone().seal().unwrap();
         assert_eq!(sealed.receipt_digest, again.receipt_digest);
-    }
-
-    #[test]
-    fn release_e2e_and_user_receipts_require_one_exact_deployment_context() {
-        for class in ["e2e", "user"] {
-            let mut release = receipt(class);
-            release.lane = "release".to_owned();
-            let missing = release.verify().unwrap_err();
-            assert!(
-                missing
-                    .rules()
-                    .contains(&"release-deployment-context-missing")
-            );
-
-            release.subject.deployment_context_digest = Some(format!("sha256:{}", "b".repeat(64)));
-            release.verify().unwrap();
-
-            release.subject.deployment_context_digest = Some("sha256:moving".to_owned());
-            let malformed = release.verify().unwrap_err();
-            assert!(
-                malformed
-                    .rules()
-                    .contains(&"release-deployment-context-missing")
-            );
-        }
-    }
-
-    #[test]
-    fn architecture_qualification_requires_exact_arm_execution_evidence() {
-        let mut qualified = receipt("arch-qualification");
-        let missing = qualified.verify().unwrap_err();
-        assert!(missing.rules().contains(&"arch-qualification-missing"));
-
-        qualified.architecture_qualification = Some(super::ArchitectureQualification {
-            artifact_digest: format!("sha256:{}", "b".repeat(64)),
-            target: "aarch64".to_owned(),
-            host_identity: "github-hosted-ubuntu-arm64".to_owned(),
-            executor_identity: "native-linux-arm64".to_owned(),
-            executor_kind: "native".to_owned(),
-            bootstrap_result: "passed".to_owned(),
-            dependency_loader_result: "passed".to_owned(),
-            observed_at: "2026-08-01T00:00:00Z".to_owned(),
-            expires_at: "2026-08-08T00:00:00Z".to_owned(),
-            workload_smokes: vec![super::ArchitectureSmoke {
-                id: "bootstrap-start".to_owned(),
-                result: "passed".to_owned(),
-            }],
-        });
-        qualified.verify().unwrap();
-
-        qualified
-            .architecture_qualification
-            .as_mut()
-            .unwrap()
-            .target = "x86_64".to_owned();
-        let wrong_target = qualified.verify().unwrap_err();
-        assert!(wrong_target.rules().contains(&"arch-qualification-target"));
     }
 
     #[test]
@@ -1499,10 +887,11 @@ mod tests {
     }
 
     #[test]
-    fn workflow_attempt_alone_does_not_imply_a_receipt_rerun() {
+    fn a_rerun_that_discarded_its_first_failure_is_rejected() {
         let mut receipt = receipt("unit");
         receipt.source.run_attempt = 2;
-        receipt.verify().unwrap();
+        let err = receipt.verify().unwrap_err();
+        assert!(err.rules().contains(&"flake-first-failure-lost"));
     }
 
     #[test]
@@ -1621,113 +1010,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn cargo_build_finished_is_the_lint_verdict() {
-        let messages = r#"{"reason":"compiler-artifact","package_id":"path+file:///repo#aex-wire@0.1.0"}
-{"reason":"build-finished","success":true}"#;
-        let summary = super::parse_cargo_messages(messages).unwrap();
-        assert!(summary.success);
-
-        let mut context = context(1);
-        context.class = "lint".to_owned();
-        let built = super::new_command_receipt(context, summary).unwrap();
-        assert_eq!(built.class, "lint");
-        assert_eq!(built.inventory.declared, 1);
-        assert_eq!(built.inventory.collected, 1);
-        assert_eq!(built.inventory.passed, 1);
-        assert_eq!(built.conclusion, "passed");
-        built.verify().unwrap();
-    }
-
-    #[test]
-    fn failed_cargo_output_cannot_become_a_passing_receipt() {
-        let messages = r#"{"reason":"compiler-message"}
-{"reason":"build-finished","success":false}"#;
-        let summary = super::parse_cargo_messages(messages).unwrap();
-        assert!(!summary.success);
-
-        let built = super::new_command_receipt(context(1), summary).unwrap();
-        assert_eq!(built.inventory.failed, 1);
-        assert_eq!(built.conclusion, "failed");
-        assert!(!built.is_passing());
-    }
-
-    #[test]
-    fn missing_or_ambiguous_cargo_verdict_is_not_evidence() {
-        let missing = super::parse_cargo_messages(r#"{"reason":"compiler-artifact"}"#).unwrap_err();
-        assert_eq!(missing.exit.code(), 40);
-        assert!(missing.rules().contains(&"cargo-verdict-missing"));
-
-        let duplicate = super::parse_cargo_messages(
-            r#"{"reason":"build-finished","success":true}
-{"reason":"build-finished","success":true}"#,
-        )
-        .unwrap_err();
-        assert_eq!(duplicate.exit.code(), 41);
-        assert!(duplicate.rules().contains(&"cargo-verdict-ambiguous"));
-    }
-
-    #[test]
-    fn a_command_receipt_must_declare_exactly_one_command() {
-        let err =
-            super::new_command_receipt(context(2), super::CargoCommandSummary { success: true })
-                .unwrap_err();
-        assert_eq!(err.exit.code(), 41);
-        assert!(err.rules().contains(&"command-inventory-invalid"));
-    }
-
-    #[test]
-    fn a_check_receipt_counts_the_closed_producer_report() {
-        let report = super::CheckReport {
-            schema: "aex.check-report.v1".to_owned(),
-            producer: "syft 1.50.0".to_owned(),
-            checks: vec![
-                super::CheckResult {
-                    id: "cyclonedx-1.6".to_owned(),
-                    status: "passed".to_owned(),
-                },
-                super::CheckResult {
-                    id: "artifact-subject-bound".to_owned(),
-                    status: "passed".to_owned(),
-                },
-            ],
-        };
-        let built = super::new_check_receipt(context(2), &report).unwrap();
-        assert_eq!(built.inventory.collected, 2);
-        assert_eq!(built.inventory.passed, 2);
-        assert_eq!(built.conclusion, "passed");
-        built.verify().unwrap();
-    }
-
-    #[test]
-    fn a_check_report_cannot_hide_empty_duplicate_or_unknown_results() {
-        let empty = super::CheckReport {
-            schema: "aex.check-report.v1".to_owned(),
-            producer: "grype 0.116.1".to_owned(),
-            checks: Vec::new(),
-        };
-        let err = super::new_check_receipt(context(1), &empty).unwrap_err();
-        assert!(err.rules().contains(&"check-report-inventory"));
-
-        let invalid = super::CheckReport {
-            schema: "aex.check-report.v1".to_owned(),
-            producer: "grype 0.116.1".to_owned(),
-            checks: vec![
-                super::CheckResult {
-                    id: "advisories".to_owned(),
-                    status: "passed".to_owned(),
-                },
-                super::CheckResult {
-                    id: "advisories".to_owned(),
-                    status: "skipped".to_owned(),
-                },
-            ],
-        };
-        let err = super::new_check_receipt(context(2), &invalid).unwrap_err();
-        assert!(err.rules().contains(&"check-report-inventory"));
-        assert!(err.rules().contains(&"check-report-status"));
-    }
-
     fn context(declared: u64) -> super::RunContext {
         let template = receipt("unit");
         super::RunContext {
@@ -1740,7 +1022,6 @@ mod tests {
             source: template.source,
             inputs: super::Inputs::default(),
             subject: super::Subject::default(),
-            architecture_qualification: None,
             selection: template.selection,
             data: template.data,
             started_at: "2026-08-01T00:00:00Z".to_owned(),
@@ -1831,13 +1112,10 @@ mod tests {
 
     #[test]
     fn aggregation_fails_when_a_declared_job_produced_no_receipt() {
-        let declared = DeclaredProducers {
-            schema: "aex.declared-producers.v1".to_owned(),
+        let declared = DeclaredJobs {
+            schema: "aex.declared-jobs.v1".to_owned(),
             lane: "pr".to_owned(),
-            producers: vec![
-                producer("rust", "aex-wire", None, "unit"),
-                producer("terraform", "tf:regional", Some((0, 1)), "unit"),
-            ],
+            jobs: vec!["rust".to_owned(), "terraform".to_owned()],
         };
         let err = aggregate(&[receipt("unit")], &declared).unwrap_err();
         assert_eq!(err.exit.code(), 40);
@@ -1845,102 +1123,17 @@ mod tests {
     }
 
     #[test]
-    fn aggregation_accepts_no_receipts_when_no_producer_was_selected() {
-        let declared = DeclaredProducers {
-            schema: "aex.declared-producers.v1".to_owned(),
-            lane: "pr".to_owned(),
-            producers: Vec::new(),
-        };
-
-        let lane = aggregate(&[], &declared).unwrap();
-
-        assert!(lane.declared.is_empty());
-        assert!(lane.collected.is_empty());
-        assert_eq!(lane.conclusion, "passed");
-    }
-
-    #[test]
     fn aggregation_fails_when_a_collected_receipt_did_not_pass() {
-        let declared = DeclaredProducers {
-            schema: "aex.declared-producers.v1".to_owned(),
+        let declared = DeclaredJobs {
+            schema: "aex.declared-jobs.v1".to_owned(),
             lane: "pr".to_owned(),
-            producers: vec![producer("rust", "aex-wire", None, "unit")],
+            jobs: vec!["rust".to_owned()],
         };
         let mut receipt = receipt("unit");
         receipt.conclusion = "infrastructure_failed".to_owned();
         let err = aggregate(&[receipt], &declared).unwrap_err();
         assert_eq!(err.exit.code(), 41);
         assert!(err.rules().contains(&"lane-receipt-not-passed"));
-    }
-
-    fn producer(
-        job_name: &str,
-        package: &str,
-        partition: Option<(usize, usize)>,
-        class: &str,
-    ) -> ProducerInstance {
-        ProducerInstance {
-            job_name: job_name.to_owned(),
-            package: package.to_owned(),
-            partition: partition.map(|(index, total)| super::Partition { index, total }),
-            class: class.to_owned(),
-        }
-    }
-
-    #[test]
-    fn aggregation_requires_every_declared_matrix_instance() {
-        let declared = DeclaredProducers {
-            schema: "aex.declared-producers.v1".to_owned(),
-            lane: "pr".to_owned(),
-            producers: vec![
-                producer("rust", "aex-wire", Some((0, 2)), "unit"),
-                producer("rust", "aex-sdk", Some((1, 2)), "unit"),
-            ],
-        };
-        let mut first = receipt("unit");
-        first.selection.partition = Some(super::Partition { index: 0, total: 2 });
-
-        let err = aggregate(&[first], &declared).unwrap_err();
-
-        assert_eq!(err.exit.code(), 40);
-        assert!(err.rules().contains(&"lane-receipt-missing"));
-    }
-
-    #[test]
-    fn aggregation_rejects_duplicate_producer_instances() {
-        let declared = DeclaredProducers {
-            schema: "aex.declared-producers.v1".to_owned(),
-            lane: "pr".to_owned(),
-            producers: vec![producer("rust", "aex-wire", None, "unit")],
-        };
-        let first = receipt("unit");
-        let mut second = first.clone();
-        second.receipt_id = "rc_unit_second".to_owned();
-
-        let err = aggregate(&[first, second], &declared).unwrap_err();
-
-        assert_eq!(err.exit.code(), 41);
-        assert!(err.rules().contains(&"lane-receipt-producer-duplicate"));
-    }
-
-    #[test]
-    fn aggregation_rejects_duplicate_receipt_ids_across_producers() {
-        let declared = DeclaredProducers {
-            schema: "aex.declared-producers.v1".to_owned(),
-            lane: "pr".to_owned(),
-            producers: vec![
-                producer("rust", "aex-wire", None, "unit"),
-                producer("rust", "aex-wire", None, "lint"),
-            ],
-        };
-        let first = receipt("unit");
-        let mut second = receipt("lint");
-        second.receipt_id.clone_from(&first.receipt_id);
-
-        let err = aggregate(&[first, second], &declared).unwrap_err();
-
-        assert_eq!(err.exit.code(), 41);
-        assert!(err.rules().contains(&"lane-receipt-id-duplicate"));
     }
 }
 
@@ -1952,7 +1145,7 @@ mod freshness_tests {
 schema = "aex.freshness-policy.v1"
 
 [class.unit]
-bound_to = "artifact"
+bound_to = "envelope"
 rationale = "bound to the exact artifact; there is nothing for age to invalidate"
 
 [class.smoke]

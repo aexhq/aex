@@ -306,7 +306,7 @@ pub fn settle_model_call(draft: &mut Draft, effect: EffectId, outcome: &Provider
     draft.append(JournalRecord::AssistantMessage {
         message: outcome.message.clone(),
         usage: outcome.usage,
-        receipt: Box::new(outcome.receipt.clone()),
+        receipt: outcome.receipt.clone(),
         effect,
     });
     draft.phase(if outcome.message.blocks.iter().any(is_tool_use) {
@@ -453,8 +453,7 @@ pub fn classify_provider_failure(error: &ProviderDispatchError, attempt: u16) ->
         proof: error.proof,
         attempt,
         provider_request_id: error.provider_request_id.clone(),
-        external_operation: None,
-        detached_tool: None,
+        operation: None,
         receipt: None,
         detail: Some(error.detail.as_str().to_owned()),
     }))
@@ -480,8 +479,7 @@ pub fn classify_tool_failure(error: &ToolDispatchError, attempt: u16) -> Failure
         proof: error.proof,
         attempt,
         provider_request_id: None,
-        external_operation: None,
-        detached_tool: None,
+        operation: None,
         receipt: None,
         detail: Some(error.detail.as_str().to_owned()),
     }))

@@ -22,30 +22,18 @@ permissions:
   contents: read
 
 jobs:
-  # The head of the graph. Every job below runs the exact bytes this one built
-  # and published the digest of, so `gates` deliberately depends on `tools`
-  # rather than on `route`: a broken router must not hide a policy finding.
-  tools:
-    name: Tools
-    uses: ./.github/workflows/_tools.yml
-
   route:
     name: Route
-    needs: tools
     uses: ./.github/workflows/_route.yml
     with:
       mode: affected
-      artifact_mode: affected
       lane: pr
       base_sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
       head_sha: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
       partitions: 4
-      release_tool_sha256: ${{ needs.tools.outputs.release_tool_sha256 }}
-      workspace_check_sha256: ${{ needs.tools.outputs.workspace_check_sha256 }}
 
   gates:
     name: Gates
-    needs: tools
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -55,138 +43,91 @@ jobs:
         with:
           fetch-depth: 0
 
-      # No cargo cache: nothing here compiles since the tools arrive prebuilt,
-      # and the only cargo this job still runs is the `metadata --no-deps`
-      # behind `cargo fmt --all`, `aex-workspace-check` and `graph verify`,
-      # which resolves no dependency and reads no registry. The key it used to
-      # declare was never written by any workflow, so the step could only miss.
       - name: Install Rust
         uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
         with:
           toolchain: "1.97.1"
           components: rustfmt, clippy
 
-      - name: Download the prepared workspace tools
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@bc2d2e71bd35c5549942babaa51a89c586b981d1  # v2.8.1
         with:
-          name: workspace-tools-${{ github.run_id }}
-          path: ${{ runner.temp }}/aex-tools
+          save-if: false
+          shared-key: gates
 
-      # The digests arrive through the job-output channel, not inside the
-      # artifact, so an artifact that lies about itself cannot self-certify.
-      - name: Use the prepared workspace tools
-        env:
-          RELEASE_TOOL_SHA256: ${{ needs.tools.outputs.release_tool_sha256 }}
-          WORKSPACE_CHECK_SHA256: ${{ needs.tools.outputs.workspace_check_sha256 }}
-        run: |
-          set -euo pipefail
-          cd "$RUNNER_TEMP/aex-tools"
-          [[ "$RELEASE_TOOL_SHA256" =~ ^[0-9a-f]{64}$ ]]
-          [[ "$WORKSPACE_CHECK_SHA256" =~ ^[0-9a-f]{64}$ ]]
-          printf '%s  %s\n' "$RELEASE_TOOL_SHA256" aex-release-tool > expected.sha256
-          printf '%s  %s\n' "$WORKSPACE_CHECK_SHA256" aex-workspace-check >> expected.sha256
-          sha256sum --check --strict expected.sha256
-          [[ "$(find . -maxdepth 1 -type f ! -name expected.sha256 | wc -l)" -eq 2 ]]
-          chmod 0755 aex-release-tool aex-workspace-check
-          ./aex-release-tool --version | grep -Eq '^aex-release-tool [0-9]+\.[0-9]+\.[0-9]+'
-          ./aex-workspace-check --version | grep -Eq '^aex-workspace-check [0-9]+\.[0-9]+\.[0-9]+'
-          echo "$RUNNER_TEMP/aex-tools" >> "$GITHUB_PATH"
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@2cdf2d81f4edfc3b41d5ddf56083c70b48ac2475  # v2.62.35
+        with:
+          tool: cargo-deny
 
       - name: Format
         run: cargo fmt --all -- --check
 
       - name: Workspace structure
-        run: aex-workspace-check
+        run: cargo run --locked -p aex-workspace-check
 
       - name: Delivery graph
-        run: aex-release-tool graph verify
+        run: cargo run --locked --release -p aex-release-tool -- graph verify
 
       - name: Router selftest
-        run: aex-release-tool selftest
+        run: cargo run --locked --release -p aex-release-tool -- selftest
 
       - name: Workflow structure
-        run: aex-release-tool policy workflows
+        run: cargo run --locked --release -p aex-release-tool -- policy workflows
 
       - name: Terraform packages no code
-        run: aex-release-tool policy terraform
+        run: cargo run --locked --release -p aex-release-tool -- policy terraform
+
+      - name: Supply chain
+        run: cargo deny --all-features check
 
       - name: Secret scan
-        run: bash scripts/cicd/scan-secrets.sh
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7  # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
 
   rust:
     name: Rust
-    needs: [tools, route]
+    needs: route
     if: needs.route.outputs.has_test == 'true'
     uses: ./.github/workflows/_rust-lane.yml
     with:
       matrix: ${{ needs.route.outputs.test_matrix }}
       lane: pr
-      job_name: rust
-      selection_mode: affected
       cache_mode: restore
-      release_tool_sha256: ${{ needs.tools.outputs.release_tool_sha256 }}
-      workspace_check_sha256: ${{ needs.tools.outputs.workspace_check_sha256 }}
 
   node:
     name: TypeScript
-    needs: [tools, route]
+    needs: route
     uses: ./.github/workflows/_node-lane.yml
     with:
-      matrix: ${{ needs.route.outputs.node_matrix }}
-      lane: pr
-      job_name: node
-      selection_mode: affected
-      release_tool_sha256: ${{ needs.tools.outputs.release_tool_sha256 }}
-      workspace_check_sha256: ${{ needs.tools.outputs.workspace_check_sha256 }}
-
-  scenarios:
-    name: Scenarios
-    needs: route
-    if: needs.route.outputs.has_scenario == 'true'
-    uses: ./.github/workflows/_scenario-lane.yml
-    with:
-      matrix: ${{ needs.route.outputs.scenario_matrix }}
       lane: pr
 
   terraform:
     name: Terraform
-    needs: [tools, route]
+    needs: route
     if: needs.route.outputs.has_terraform == 'true'
     uses: ./.github/workflows/_terraform-lane.yml
     with:
       matrix: ${{ needs.route.outputs.terraform_matrix }}
       mode: static
       lane: pr
-      job_name: terraform
-      selection_mode: affected
-      release_tool_sha256: ${{ needs.tools.outputs.release_tool_sha256 }}
-      workspace_check_sha256: ${{ needs.tools.outputs.workspace_check_sha256 }}
 
   artifacts:
     name: Artifacts
-    needs: [tools, route]
+    needs: route
     if: needs.route.outputs.has_artifact == 'true'
     uses: ./.github/workflows/_build-artifacts.yml
     with:
       matrix: ${{ needs.route.outputs.artifact_matrix }}
       lane: pr
       publish: false
-      release_tool_sha256: ${{ needs.tools.outputs.release_tool_sha256 }}
-      workspace_check_sha256: ${{ needs.tools.outputs.workspace_check_sha256 }}
 
   checks:
     name: Checks
-    needs: [tools, route, gates, rust, node, scenarios, terraform, artifacts]
+    needs: [route, gates, rust, node, terraform, artifacts]
     if: always()
     uses: ./.github/workflows/_receipts.yml
     with:
       lane: pr
-      release_tool_sha256: ${{ needs.tools.outputs.release_tool_sha256 }}
-      workspace_check_sha256: ${{ needs.tools.outputs.workspace_check_sha256 }}
-      receipt_jobs: >-
-        {"rust":{"job":"rust","selected":"${{ needs.route.outputs.has_test }}"},"node":{"job":"node","selected":"${{ needs.route.outputs.has_node }}"},"terraform":{"job":"terraform","selected":"${{ needs.route.outputs.has_terraform }}"}}
-      rust_matrix: ${{ needs.route.outputs.test_matrix }}
-      node_matrix: ${{ needs.route.outputs.node_matrix }}
-      terraform_matrix: ${{ needs.route.outputs.terraform_matrix }}
-      required_job_results: >-
-        {"tools":{"result":"${{ needs.tools.result }}","allowSkipped":false},"route":{"result":"${{ needs.route.result }}","allowSkipped":false},"gates":{"result":"${{ needs.gates.result }}","allowSkipped":false},"rust":{"result":"${{ needs.rust.result }}","allowSkipped":true},"node":{"result":"${{ needs.node.result }}","allowSkipped":false},"scenarios":{"result":"${{ needs.scenarios.result }}","allowSkipped":true},"terraform":{"result":"${{ needs.terraform.result }}","allowSkipped":true},"artifacts":{"result":"${{ needs.artifacts.result }}","allowSkipped":true}}
+      declared_jobs: '["route","gates","rust","node","terraform","artifacts"]'

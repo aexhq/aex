@@ -50,17 +50,15 @@ use std::collections::BTreeMap;
 use aex_model_catalog::QualifiedModel;
 use aex_model_catalog::canonical::{
     CacheBreakpoint, CanonicalBlock, CanonicalMessage, CanonicalModelRequest, CanonicalToolDef,
-    GatewayRoute, NormalizedUsage, REASON_MAX, ReasoningBlock, ReasoningBody, ReasoningEffort,
-    ReasoningRequest, Role, StopReason, StructuredOutputRequest, SystemBlock, TEXT_MAX, ToolChoice,
-    ToolResultPart, UsageCompleteness,
+    NormalizedUsage, REASON_MAX, ReasoningBlock, ReasoningBody, ReasoningEffort, ReasoningRequest,
+    Role, StopReason, StructuredOutputRequest, SystemBlock, TEXT_MAX, ToolChoice, ToolResultPart,
+    UsageCompleteness,
 };
 use aex_model_catalog::document::{
-    Capability, CapabilitySet, Dialect, EndpointPin, ModelLimits, ReasoningMode, ReasoningPolicy,
+    Capability, CapabilitySet, EndpointPin, ModelLimits, ReasoningMode, ReasoningPolicy,
     SamplingSupport, SchemaEncoding, StructuredOutputPolicy, ToolEncoding, ToolPolicy,
 };
-use aex_model_catalog::primitives::{
-    BoundedString, ModelSlug, ProviderRequestId, ToolCallId, ToolName,
-};
+use aex_model_catalog::primitives::{BoundedString, ProviderRequestId, ToolCallId, ToolName};
 use aex_wire::CanonicalJson;
 use aex_wire::provider::ProviderId;
 use bytes::Bytes;
@@ -158,32 +156,6 @@ const ERROR_STATUSES: [(u16, ProviderFailureKind); 9] = [
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MoonshotAdapter;
 
-/// Fixed identity and protocol choices for one OpenAI-compatible chat authority.
-///
-/// Gateway adapters supply this value to the shared byte/state-machine core;
-/// credential identity, endpoint, error mapping and receipts remain owned by
-/// the calling adapter.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct GatewayChatAuthority {
-    pub(crate) provider: ProviderId,
-    pub(crate) dialect: Dialect,
-    pub(crate) endpoint: EndpointPin,
-    pub(crate) path: &'static str,
-}
-
-const MOONSHOT_AUTHORITY: GatewayChatAuthority = GatewayChatAuthority {
-    provider: ProviderId::Moonshotai,
-    dialect: Dialect::MoonshotChat,
-    endpoint: EndpointPin::MoonshotIntlV1,
-    path: CHAT_COMPLETIONS_PATH,
-};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ChatProfile {
-    Moonshot,
-    Gateway,
-}
-
 /// Which control vocabulary a model slug takes.
 ///
 /// Slug-family gating is a recorded fact for this provider rather than an
@@ -205,7 +177,7 @@ enum ModelFamily {
 /// Usage starts [`UsageCompleteness::Absent`] rather than `Exact`: this dialect
 /// reports usage only in the trailing chunk, so a stream that never delivers one
 /// must record the absence rather than a zeroed tally.
-pub(crate) fn fresh_state() -> DialectState {
+fn fresh_state() -> DialectState {
     DialectState {
         usage: NormalizedUsage {
             completeness: UsageCompleteness::Absent,
@@ -293,7 +265,32 @@ impl ProviderAdapter for MoonshotAdapter {
         model: &QualifiedModel,
         request: &CanonicalModelRequest,
     ) -> Result<WireRequest, RequestBuildError> {
-        build_qualified(MOONSHOT_AUTHORITY, ChatProfile::Moonshot, model, request)
+        let entry = model.entry();
+        let view = EntryView {
+            model: model.model().as_str(),
+            endpoint: model.endpoint(),
+            capabilities: model.capabilities(),
+            limits: model.limits(),
+            sampling: entry.sampling,
+            reasoning: entry.reasoning,
+            structured_output: entry.structured_output,
+            tool_policy: &entry.tool_policy,
+        };
+        let projection = RequestView {
+            system: &request.system,
+            messages: &request.messages,
+            tools: &request.tools,
+            tool_choice: &request.tool_choice,
+            parallel_tools: request.parallel_tools,
+            max_output_tokens: request.max_output_tokens,
+            temperature_milli: request.temperature_milli,
+            top_p_milli: request.top_p_milli,
+            stop_sequences: &request.stop_sequences,
+            reasoning: request.reasoning,
+            structured_output: request.structured_output.as_ref(),
+            cache_breakpoints: &request.cache_breakpoints,
+        };
+        build(&view, &projection)
     }
 
     fn new_state(&self, _model: &QualifiedModel) -> DialectState {
@@ -326,7 +323,40 @@ impl ProviderAdapter for MoonshotAdapter {
     }
 
     fn finish(&self, state: DialectState) -> Result<SealedResponse, FrameDecodeError> {
-        finish_chat(state)
+        if !state.terminal {
+            return Err(FrameDecodeError::OutOfOrder {
+                reason: "the stream ended without the `[DONE]` sentinel",
+            });
+        }
+        let token = state
+            .finish_token
+            .as_deref()
+            .ok_or(FrameDecodeError::MalformedField {
+                field: "choices[].finish_reason",
+            })?;
+        let stop_reason = stop_for(token).ok_or(FrameDecodeError::MalformedField {
+            field: "choices[].finish_reason",
+        })?;
+        let blocks = assemble_blocks(&state)?;
+        if blocks.is_empty() {
+            return Err(FrameDecodeError::OutOfOrder {
+                reason: "the stream produced no content",
+            });
+        }
+        let has_tools = blocks
+            .iter()
+            .any(|block| matches!(block, CanonicalBlock::ToolUse { .. }));
+        if has_tools != matches!(stop_reason, StopReason::ToolUse) {
+            return Err(FrameDecodeError::OutOfOrder {
+                reason: "tool calls and the finish reason disagree",
+            });
+        }
+        Ok(SealedResponse {
+            blocks,
+            stop_reason,
+            usage: state.usage,
+            provider_request_id: state.request_id,
+        })
     }
 
     fn classify_http(
@@ -375,84 +405,14 @@ impl ProviderAdapter for MoonshotAdapter {
 // request building (pure: no I/O, no clock, no credential)
 // ---------------------------------------------------------------------------
 
-/// Builds one request for a fixed OpenAI-compatible chat authority.
-pub(crate) fn build_gateway_request(
-    authority: GatewayChatAuthority,
-    model: &QualifiedModel,
-    request: &CanonicalModelRequest,
-) -> Result<WireRequest, RequestBuildError> {
-    build_qualified(authority, ChatProfile::Gateway, model, request)
-}
-
-fn build_qualified(
-    authority: GatewayChatAuthority,
-    profile: ChatProfile,
-    model: &QualifiedModel,
-    request: &CanonicalModelRequest,
-) -> Result<WireRequest, RequestBuildError> {
-    if model.provider() != authority.provider
-        || model.dialect() != authority.dialect
-        || model.endpoint() != authority.endpoint
-    {
-        return Err(RequestBuildError::Encoding {
-            reason: "the pinned pair does not belong to this adapter authority",
-        });
-    }
-    if request.selection != *model {
-        return Err(RequestBuildError::Encoding {
-            reason: "the request selection is not the pinned pair",
-        });
-    }
-    let entry = model.entry();
-    let view = EntryView {
-        model: model.model().as_str(),
-        endpoint: model.endpoint(),
-        capabilities: model.capabilities(),
-        limits: model.limits(),
-        sampling: entry.sampling,
-        reasoning: entry.reasoning,
-        structured_output: entry.structured_output,
-        tool_policy: &entry.tool_policy,
-    };
-    let projection = RequestView {
-        system: &request.system,
-        messages: &request.messages,
-        tools: &request.tools,
-        tool_choice: &request.tool_choice,
-        parallel_tools: request.parallel_tools,
-        max_output_tokens: request.max_output_tokens,
-        temperature_milli: request.temperature_milli,
-        top_p_milli: request.top_p_milli,
-        stop_sequences: &request.stop_sequences,
-        reasoning: request.reasoning,
-        structured_output: request.structured_output.as_ref(),
-        cache_breakpoints: &request.cache_breakpoints,
-    };
-    build_for(&view, &projection, authority, profile)
-}
-
 /// Builds the wire request from lifted catalog and request facts.
-#[cfg(test)]
 fn build(
     entry: &EntryView<'_>,
     request: &RequestView<'_>,
 ) -> Result<WireRequest, RequestBuildError> {
-    build_for(entry, request, MOONSHOT_AUTHORITY, ChatProfile::Moonshot)
-}
-
-fn build_for(
-    entry: &EntryView<'_>,
-    request: &RequestView<'_>,
-    authority: GatewayChatAuthority,
-    profile: ChatProfile,
-) -> Result<WireRequest, RequestBuildError> {
-    if entry.endpoint != authority.endpoint {
+    if entry.endpoint != EndpointPin::MoonshotIntlV1 {
         return Err(RequestBuildError::Encoding {
-            reason: if profile == ChatProfile::Moonshot {
-                "this dialect speaks only to the pinned international origin"
-            } else {
-                "this dialect speaks only to its pinned gateway origin"
-            },
+            reason: "this dialect speaks only to the pinned international origin",
         });
     }
     if !entry.capabilities.has(Capability::Streaming) {
@@ -479,30 +439,25 @@ fn build_for(
     body.insert("model".to_owned(), Value::String(entry.model.to_owned()));
     body.insert(
         "messages".to_owned(),
-        Value::Array(encode_messages(request, authority.provider)?),
+        Value::Array(encode_messages(request)?),
     );
     body.insert("stream".to_owned(), Value::Bool(true));
     body.insert(
         "stream_options".to_owned(),
         json!({ "include_usage": true }),
     );
-    let output_limit_field = if profile == ChatProfile::Gateway {
-        "max_tokens"
-    } else {
-        "max_completion_tokens"
-    };
     body.insert(
-        output_limit_field.to_owned(),
+        "max_completion_tokens".to_owned(),
         Value::from(request.max_output_tokens),
     );
     encode_stop(entry, request, &mut body)?;
-    encode_sampling(entry, request, &mut body, profile)?;
-    encode_reasoning(entry, request, &mut body, profile)?;
+    encode_sampling(entry, request, &mut body)?;
+    encode_reasoning(entry, request, &mut body)?;
     encode_tools(entry, request, &mut body)?;
     encode_response_format(entry, request, &mut body)?;
 
     let bytes =
-        aex_wire::to_jcs_bytes(&Value::Object(body)).map_err(|_| RequestBuildError::Encoding {
+        serde_json::to_vec(&Value::Object(body)).map_err(|_| RequestBuildError::Encoding {
             reason: "the request body could not be serialized",
         })?;
     if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > u64::from(limits.request_body_max_bytes) {
@@ -512,7 +467,7 @@ fn build_for(
     }
     Ok(WireRequest {
         endpoint: entry.endpoint,
-        path: bounded_path(authority.path)?,
+        path: bounded_path(CHAT_COMPLETIONS_PATH)?,
         query: Vec::new(),
         headers: vec![("content-type", bounded_header("application/json")?)],
         auth: AuthScheme::BearerAuthorization,
@@ -586,12 +541,10 @@ fn encode_sampling(
     entry: &EntryView<'_>,
     request: &RequestView<'_>,
     body: &mut Map<String, Value>,
-    profile: ChatProfile,
 ) -> Result<(), RequestBuildError> {
-    let honours_standard_sampling =
-        profile == ChatProfile::Gateway || family_of(entry.model) == ModelFamily::MoonshotV1;
+    let v1 = family_of(entry.model) == ModelFamily::MoonshotV1;
     if let Some(milli) = request.temperature_milli {
-        let honoured = honours_standard_sampling
+        let honoured = v1
             && entry.capabilities.has(Capability::Temperature)
             && matches!(
                 entry.sampling,
@@ -606,7 +559,7 @@ fn encode_sampling(
         body.insert("temperature".to_owned(), decimal(milli)?);
     }
     if let Some(milli) = request.top_p_milli {
-        let honoured = honours_standard_sampling
+        let honoured = v1
             && entry.capabilities.has(Capability::TopP)
             && matches!(entry.sampling, SamplingSupport::Full)
             && in_range(entry.limits.top_p_milli, milli);
@@ -632,24 +585,7 @@ fn encode_reasoning(
     entry: &EntryView<'_>,
     request: &RequestView<'_>,
     body: &mut Map<String, Value>,
-    profile: ChatProfile,
 ) -> Result<(), RequestBuildError> {
-    if profile == ChatProfile::Gateway {
-        return match request.reasoning {
-            ReasoningRequest::ProviderDefault => Ok(()),
-            ReasoningRequest::Disabled
-                if !entry.capabilities.has(Capability::Reasoning)
-                    || entry.reasoning.mode == ReasoningMode::Unsupported =>
-            {
-                Ok(())
-            }
-            ReasoningRequest::Disabled | ReasoningRequest::Enabled { .. } => {
-                Err(RequestBuildError::Encoding {
-                    reason: "this gateway pair has no conformance-proved reasoning control encoding",
-                })
-            }
-        };
-    }
     let (enabled, effort) = match request.reasoning {
         ReasoningRequest::ProviderDefault => return Ok(()),
         ReasoningRequest::Disabled => (false, None),
@@ -943,7 +879,6 @@ fn encode_user_turn(
 /// carries it (`ReasoningReplay::RecommendedEcho`).
 fn encode_assistant_turn(
     blocks: &[CanonicalBlock],
-    expected: ProviderId,
     out: &mut Vec<Value>,
 ) -> Result<(), RequestBuildError> {
     let mut text = String::new();
@@ -956,7 +891,7 @@ fn encode_assistant_turn(
             // as the assistant prose it literally was.
             CanonicalBlock::Refusal { text: body } => push_line(&mut text, body.as_str()),
             CanonicalBlock::Reasoning(reasoning_block) => {
-                check_provenance(reasoning_block, expected)?;
+                check_provenance(reasoning_block)?;
                 match &reasoning_block.body {
                     ReasoningBody::Text { text: body } | ReasoningBody::Summary { text: body } => {
                         push_line(&mut reasoning, body.as_str());
@@ -997,12 +932,12 @@ fn encode_assistant_turn(
 }
 
 /// Refuses reasoning material minted by another provider (D-12).
-fn check_provenance(block: &ReasoningBlock, expected: ProviderId) -> Result<(), RequestBuildError> {
+fn check_provenance(block: &ReasoningBlock) -> Result<(), RequestBuildError> {
     if let Some(token) = &block.token
-        && token.provenance != expected
+        && token.provenance != ProviderId::Moonshotai
     {
         return Err(RequestBuildError::ReasoningProvenanceMismatch {
-            expected,
+            expected: ProviderId::Moonshotai,
             found: token.provenance,
         });
     }
@@ -1010,10 +945,7 @@ fn check_provenance(block: &ReasoningBlock, expected: ProviderId) -> Result<(), 
 }
 
 /// Encodes the whole `messages` array.
-fn encode_messages(
-    request: &RequestView<'_>,
-    expected: ProviderId,
-) -> Result<Vec<Value>, RequestBuildError> {
+fn encode_messages(request: &RequestView<'_>) -> Result<Vec<Value>, RequestBuildError> {
     let names = tool_names(request.messages);
     let mut out = Vec::new();
     for block in request.system {
@@ -1022,7 +954,7 @@ fn encode_messages(
     for message in request.messages {
         match message.role {
             Role::User => encode_user_turn(&message.blocks, &names, &mut out)?,
-            Role::Assistant => encode_assistant_turn(&message.blocks, expected, &mut out)?,
+            Role::Assistant => encode_assistant_turn(&message.blocks, &mut out)?,
         }
     }
     if out.is_empty() {
@@ -1305,168 +1237,9 @@ fn decode_chunk(
     Ok(state.mark_started())
 }
 
-/// Decodes one gateway chat-completions event through the shared bounded state
-/// machine while leaving the gateway's error taxonomy with its own adapter.
-pub(crate) fn decode_gateway_event(
-    state: &mut DialectState,
-    event: &SseEvent<'_>,
-    budget: &StreamBudget,
-    classify_error: fn(u16, Option<&str>) -> ProviderFailureKind,
-) -> Result<FrameOutcome, FrameDecodeError> {
-    if let Some(name) = event.name {
-        return Err(FrameDecodeError::UnknownEvent {
-            event: BoundedString::truncating(name),
-        });
-    }
-    state
-        .ledger
-        .charge_response(budget, u64::try_from(event.data.len()).unwrap_or(u64::MAX))?;
-    if event.is_done_sentinel() {
-        state.ledger.count_frame();
-        state.terminal = true;
-        return Ok(FrameOutcome::Terminal);
-    }
-    let text = event.data_str().map_err(|_| FrameDecodeError::NotJson)?;
-    let chunk: Value = serde_json::from_str(text).map_err(|_| FrameDecodeError::NotJson)?;
-    state.ledger.count_frame();
-    capture_gateway_route(state, &chunk)?;
-    if let Some(error) = chunk.get("error").filter(|value| !value.is_null()) {
-        let status = error
-            .get("code")
-            .and_then(Value::as_u64)
-            .and_then(|value| u16::try_from(value).ok())
-            .unwrap_or(500);
-        let code = error
-            .get("metadata")
-            .and_then(|value| value.get("error_type"))
-            .and_then(Value::as_str)
-            .or_else(|| error.get("type").and_then(Value::as_str))
-            .or_else(|| error.get("code").and_then(Value::as_str));
-        let message = error
-            .get("message")
-            .and_then(Value::as_str)
-            .unwrap_or("the gateway returned an in-stream error");
-        let kind = classify_error(status, code);
-        let mut detail = RedactedDetail::new(kind, redact::<512>(message, &[])).with_status(status);
-        if let Some(code) = code {
-            detail = detail.with_code(redact::<64>(code, &[]).as_str());
-        }
-        return Ok(FrameOutcome::Failed(Box::new(ProviderFailure::new(detail))));
-    }
-    decode_chunk(state, &chunk, budget)
-}
-
-fn capture_gateway_route(state: &mut DialectState, chunk: &Value) -> Result<(), FrameDecodeError> {
-    let metadata = chunk
-        .get("provider_metadata")
-        .and_then(|value| value.get("gateway"));
-    let reported_model = chunk
-        .get("model")
-        .and_then(Value::as_str)
-        .or_else(|| {
-            metadata
-                .and_then(|value| value.get("model"))
-                .and_then(Value::as_str)
-        })
-        .map(ModelSlug::new)
-        .transpose()
-        .map_err(|_| FrameDecodeError::MalformedField {
-            field: "gateway reported model",
-        })?;
-    let reported_provider = chunk
-        .get("provider")
-        .and_then(Value::as_str)
-        .or_else(|| {
-            metadata
-                .and_then(|value| value.get("provider"))
-                .and_then(Value::as_str)
-        })
-        .map(BoundedString::new)
-        .transpose()
-        .map_err(|_| FrameDecodeError::MalformedField {
-            field: "gateway reported provider",
-        })?;
-    if reported_model.is_none() && reported_provider.is_none() {
-        return Ok(());
-    }
-    let observed = GatewayRoute {
-        reported_model,
-        reported_provider,
-    };
-    if let Some(current) = &state.gateway_route {
-        let model_changed = observed.reported_model.is_some()
-            && current.reported_model.is_some()
-            && observed.reported_model != current.reported_model;
-        let provider_changed = observed.reported_provider.is_some()
-            && current.reported_provider.is_some()
-            && observed.reported_provider != current.reported_provider;
-        if model_changed || provider_changed {
-            return Err(FrameDecodeError::OutOfOrder {
-                reason: "the gateway changed its reported route after streaming began",
-            });
-        }
-    }
-    let current = state.gateway_route.get_or_insert(GatewayRoute {
-        reported_model: None,
-        reported_provider: None,
-    });
-    if current.reported_model.is_none() {
-        current.reported_model = observed.reported_model;
-    }
-    if current.reported_provider.is_none() {
-        current.reported_provider = observed.reported_provider;
-    }
-    Ok(())
-}
-
 // ---------------------------------------------------------------------------
 // sealing
 // ---------------------------------------------------------------------------
-
-/// Finishes a gateway stream using the common chat-completions state machine.
-pub(crate) fn finish_gateway_stream(
-    state: DialectState,
-) -> Result<SealedResponse, FrameDecodeError> {
-    finish_chat(state)
-}
-
-fn finish_chat(state: DialectState) -> Result<SealedResponse, FrameDecodeError> {
-    if !state.terminal {
-        return Err(FrameDecodeError::OutOfOrder {
-            reason: "the stream ended without the `[DONE]` sentinel",
-        });
-    }
-    let token = state
-        .finish_token
-        .as_deref()
-        .ok_or(FrameDecodeError::MalformedField {
-            field: "choices[].finish_reason",
-        })?;
-    let stop_reason = stop_for(token).ok_or(FrameDecodeError::MalformedField {
-        field: "choices[].finish_reason",
-    })?;
-    let blocks = assemble_blocks(&state)?;
-    if blocks.is_empty() {
-        return Err(FrameDecodeError::OutOfOrder {
-            reason: "the stream produced no content",
-        });
-    }
-    let has_tools = blocks
-        .iter()
-        .any(|block| matches!(block, CanonicalBlock::ToolUse { .. }));
-    if has_tools != matches!(stop_reason, StopReason::ToolUse) {
-        return Err(FrameDecodeError::OutOfOrder {
-            reason: "tool calls and the finish reason disagree",
-        });
-    }
-    Ok(SealedResponse {
-        blocks,
-        stop_reason,
-        usage: state.usage,
-        provider_request_id: state.request_id,
-        gateway_route: state.gateway_route,
-    })
-}
 
 /// Bounds accumulated prose without silently truncating it.
 fn bounded_text<const N: usize>(

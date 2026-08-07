@@ -17,12 +17,10 @@ use aex_brain_application::ports::{
     BoxFuture, CancelToken, DispatchTicket, FenceGuard, HandsAccepted, HandsEndpoint, HandsError,
     HandsOperationStart, HandsOperationStatus, HandsPort, PreparedToolCall, ProviderDispatchError,
     ProviderFailureKind, ProviderOutcome, ProviderPort, RedactedDetail, ResultBounds, StreamBudget,
-    ToolAdvertisement, ToolDispatchError, ToolOutcome, ToolPort, ToolRoute, ToolRoutingError,
-    UnknownResolution,
+    ToolDispatchError, ToolOutcome, ToolPort, ToolRoute, ToolRoutingError, UnknownResolution,
 };
 use aex_brain_domain::effect::{
-    DetachedOperationRef, DispatchEvidence, DispatchProof, DispatchStage, DurableEffect,
-    EffectClass, EffectKind,
+    DispatchEvidence, DispatchProof, DispatchStage, DurableEffect, EffectClass, EffectKind,
 };
 use aex_brain_domain::ids::{
     AgentId, AgentKey, AgentRevision, CancelEpoch, CatalogPin, ContentHash, DetachedOperationId,
@@ -31,28 +29,18 @@ use aex_brain_domain::ids::{
 };
 use aex_brain_domain::journal::ExecutorRoute;
 use aex_brain_domain::wire_pending::{
-    CanonicalModelRequest, PreviewFrame, ProviderId, ResolvedAgentConfig, SessionCredentialPin,
+    CanonicalModelRequest, PreviewFrame, ProviderId, ResolvedAgentConfig,
 };
 use aex_model_catalog::canonical::{CorrelationId, ReasoningRequest, ToolChoice};
 use aex_model_catalog::document::CapabilitySet;
 use aex_model_catalog::{BoundedString, fixture};
 use aex_wire::CanonicalJson;
-use aex_wire::ids::{GenerationId, PrefixedId as _, ProviderCredentialId, Uuid7, WorkspaceId};
+use aex_wire::ids::{GenerationId, PrefixedId as _, Uuid7, WorkspaceId};
 use std::sync::Mutex;
 use uuid::Uuid;
 
 fn generation(seed: u8) -> GenerationId {
     GenerationId::from_uuid7(Uuid7::compose(1, [seed; 10]))
-}
-
-fn credential() -> SessionCredentialPin {
-    SessionCredentialPin::new(
-        ProviderCredentialId::from_uuid7(Uuid7::compose(1, [7; 10])),
-        1,
-        1,
-        0,
-    )
-    .expect("non-zero fixture pin")
 }
 
 fn guard() -> FenceGuard {
@@ -71,7 +59,6 @@ fn ticket(effect: EffectId) -> DispatchTicket {
     DispatchTicket::mint(
         &guard(),
         WorkspaceId::from_uuid7(Uuid7::compose(1, [8; 10])),
-        aex_wire::ids::OrganizationId::from_uuid7(Uuid7::compose(1, [9; 10])),
         effect,
         1,
         Timestamp(0),
@@ -88,7 +75,6 @@ impl ProviderPort for RecordingProvider {
     fn dispatch<'a>(
         &'a self,
         ticket: &'a DispatchTicket,
-        _credential: aex_brain_domain::wire_pending::SessionCredentialPin,
         _request: &'a CanonicalModelRequest,
         _budget: &'a StreamBudget,
         _preview: &'a dyn PreviewSink,
@@ -128,21 +114,6 @@ impl ProviderPort for RecordingProvider {
 struct StubTools;
 
 impl ToolPort for StubTools {
-    fn advertise(&self, _pin: &CatalogPin) -> Result<ToolAdvertisement, ToolRoutingError> {
-        Ok(ToolAdvertisement {
-            definitions: vec![aex_model_catalog::canonical::CanonicalToolDef {
-                name: ToolName::parse("read_file").expect("tool name"),
-                description: BoundedString::new("Read a file.").expect("description"),
-                input_schema: CanonicalJson::parse(
-                    r#"{"type":"object","additionalProperties":true}"#,
-                )
-                .expect("schema"),
-                strict: false,
-            }],
-            parallel_safe: false,
-        })
-    }
-
     fn route(&self, _pin: &CatalogPin, name: &ToolName) -> Result<ToolRoute, ToolRoutingError> {
         if name.as_str() == "read_file" {
             Ok(ToolRoute {
@@ -150,7 +121,6 @@ impl ToolPort for StubTools {
                 executor: ExecutorRoute::ManagedWeb,
                 class: EffectClass::IdempotentManaged,
                 timeout_ms: 30_000,
-                concurrency_weight: 1,
                 manifest_digest: ContentHash::of(b"manifest"),
             })
         } else {
@@ -180,14 +150,14 @@ impl ToolPort for StubTools {
 
     fn query<'a>(
         &'a self,
-        _operation: &'a DetachedOperationRef,
+        _operation: &'a DetachedOperationId,
     ) -> BoxFuture<'a, Result<DetachedStatus, ToolDispatchError>> {
         Box::pin(async { Ok(DetachedStatus::Unknown) })
     }
 
     fn cancel<'a>(
         &'a self,
-        _operation: &'a DetachedOperationRef,
+        _operation: &'a DetachedOperationId,
         _fence: Fence,
     ) -> BoxFuture<'a, Result<(), ToolDispatchError>> {
         Box::pin(async { Ok(()) })
@@ -337,7 +307,6 @@ fn every_port_is_dyn_compatible() {
     );
     let outcome = block_on(provider.dispatch(
         &ticket(effect),
-        credential(),
         &request(),
         &budget(),
         &NullPreviewSink,
@@ -373,7 +342,6 @@ fn a_dispatch_carries_the_ticket_it_was_authorized_by() {
     let effect = EffectId([9; 16]);
     let _ = block_on(provider.dispatch(
         &ticket(effect),
-        credential(),
         &request(),
         &budget(),
         &NullPreviewSink,
@@ -419,7 +387,6 @@ fn a_detached_tool_returns_an_operation_rather_than_blocking() {
             .expect("the tool routes"),
         input: CanonicalJson::parse("{}").expect("tool input"),
         max_result_bytes: 65_536,
-        hands_generation: generation(3),
         control: ControlStateView::default(),
     };
     let outcome = block_on(tools.invoke(&ticket(EffectId([2; 16])), &call, &CancelToken::new()))

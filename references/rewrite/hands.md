@@ -165,10 +165,8 @@ recount, official provider client, and compute/storage ingresses. Its `health`
 module owns `/internal/healthz` and `/internal/readyz`, named readiness
 dependencies, the two work domains and the two usage categories it may write to.
 `runtimes/hands-image` gains an `image` module with the build inputs, the package
-manifest, the NEVRA lockfile comparison, the five published non-browser
-per-region variants and the rootfs contract. Browser variants remain deferred
-until a pinned ARM64 browser layer is qualified. `runtimes/hands-agent` keeps
-its validated composition root.
+manifest, the NEVRA lockfile comparison, the eight per-region variants and the
+rootfs contract. `runtimes/hands-agent` keeps its validated composition root.
 
 ### Live companions
 

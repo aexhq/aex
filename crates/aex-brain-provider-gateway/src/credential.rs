@@ -13,16 +13,14 @@
 //! by default" — absent, with a test asserting no such constructor exists.
 
 use std::collections::HashMap;
-use std::hash::{DefaultHasher, Hash as _, Hasher as _};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use aex_wire::ids::{OrganizationId, ProviderCredentialId, WorkspaceId};
+use aex_wire::ids::{ProviderCredentialId, WorkspaceId};
 use aex_wire::provider::ProviderId;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
-pub use aex_brain_domain::wire_pending::SessionCredentialPin;
 pub use aex_model_catalog::canonical::CredentialBindingRef;
 
 use crate::transport::AuthScheme;
@@ -71,13 +69,27 @@ pub struct ProviderCredentialBinding {
     pub is_default: bool,
     /// Whether it may still be used.
     pub state: BindingState,
-    /// The sealed ciphertext fetched from the exact hidden source generation.
-    /// Never plaintext.
+    /// Where the ciphertext lives. Never the ciphertext itself.
     pub ciphertext: CiphertextRef,
     /// The encryption context a decrypt must present.
     pub context: EncryptionContext,
-    /// Digest persisted beside the ciphertext and checked before any KMS call.
-    pub context_digest: [u8; 32],
+}
+
+/// What a session pinned at admission.
+///
+/// Runtime behaviour never depends on a mutable "current default": the session
+/// records the exact binding, revision and generation it was admitted with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionCredentialPin {
+    /// Which binding.
+    pub binding: ProviderCredentialId,
+    /// Which revision.
+    pub revision: CredentialRevision,
+    /// Which generation.
+    pub generation: SourceGeneration,
+    /// The revocation epoch observed at admission. A later epoch overrides the
+    /// pin and fails the next dispatch before send.
+    pub epoch_at_admission: RevocationEpoch,
 }
 
 impl ProviderCredentialBinding {
@@ -92,10 +104,7 @@ impl ProviderCredentialBinding {
     }
 }
 
-/// Why one credential-authority operation failed before its current send.
-///
-/// The enclosing dispatch still preserves `ResponseStarted` when an earlier
-/// in-call retry attempt already reached the provider.
+/// Why credential resolution failed. Every arm is `DispatchProof::NotSent`.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CredentialResolveError {
     /// The regional authority cannot yet mint a workspace-bound provider
@@ -162,24 +171,24 @@ impl CredentialResolveError {
 
 /// The binding directory this crate consumes.
 ///
-/// Production composition resolves this from regional secret custody. The
-/// registration write path remains separately fail closed until its secret-name
-/// and wrapped branch-key contracts are decided.
+/// The regional secret crates do not yet expose a provider-binding record or
+/// the wrapped branch-key input required to mint one; the deny-all adapter
+/// below remains the only composition until that authority is published.
 pub trait ProviderCredentialDirectory: Send + Sync + 'static {
     /// Resolves a binding, either by explicit id or by the workspace default.
     fn resolve(
         &self,
-        organization: OrganizationId,
         workspace: WorkspaceId,
         provider: ProviderId,
         id: Option<ProviderCredentialId>,
     ) -> BoxFuture<'_, Result<ProviderCredentialBinding, CredentialResolveError>>;
 
-    /// Re-reads the mutable binding and secret fences immediately before send.
-    fn revalidate<'a>(
-        &'a self,
-        binding: &'a ProviderCredentialBinding,
-    ) -> BoxFuture<'a, Result<RevocationEpoch, CredentialResolveError>>;
+    /// The workspace's current revocation epoch.
+    fn current_epoch(
+        &self,
+        workspace: WorkspaceId,
+        id: ProviderCredentialId,
+    ) -> BoxFuture<'_, Result<RevocationEpoch, CredentialResolveError>>;
 }
 
 /// The decryptor this crate consumes.
@@ -192,7 +201,6 @@ pub trait ProviderCredentialDecryptor: Send + Sync + 'static {
     fn decrypt<'a>(
         &'a self,
         binding: &'a ProviderCredentialBinding,
-        now: aex_wire::types::Timestamp,
     ) -> BoxFuture<'a, Result<ProviderApiKey, CredentialResolveError>>;
 }
 
@@ -206,7 +214,6 @@ pub struct DenyAllCredentialDirectory;
 impl ProviderCredentialDirectory for DenyAllCredentialDirectory {
     fn resolve(
         &self,
-        _organization: OrganizationId,
         _workspace: WorkspaceId,
         _provider: ProviderId,
         id: Option<ProviderCredentialId>,
@@ -215,11 +222,12 @@ impl ProviderCredentialDirectory for DenyAllCredentialDirectory {
         Box::pin(async move { Err(CredentialResolveError::RegistrationAuthorityUnavailable) })
     }
 
-    fn revalidate<'a>(
-        &'a self,
-        binding: &'a ProviderCredentialBinding,
-    ) -> BoxFuture<'a, Result<RevocationEpoch, CredentialResolveError>> {
-        let _ = binding;
+    fn current_epoch(
+        &self,
+        _workspace: WorkspaceId,
+        id: ProviderCredentialId,
+    ) -> BoxFuture<'_, Result<RevocationEpoch, CredentialResolveError>> {
+        let _ = id;
         Box::pin(async move { Err(CredentialResolveError::RegistrationAuthorityUnavailable) })
     }
 }
@@ -231,7 +239,6 @@ impl ProviderCredentialDecryptor for DenyAllCredentialDecryptor {
     fn decrypt<'a>(
         &'a self,
         binding: &'a ProviderCredentialBinding,
-        _now: aex_wire::types::Timestamp,
     ) -> BoxFuture<'a, Result<ProviderApiKey, CredentialResolveError>> {
         let _ = binding;
         Box::pin(async move { Err(CredentialResolveError::RegistrationAuthorityUnavailable) })
@@ -243,9 +250,8 @@ impl ProviderCredentialDecryptor for DenyAllCredentialDecryptor {
 /// No `Clone`, no `Debug`, no `Display`, no `Serialize`, no `Deref<Target =
 /// str>`. The plaintext leaves this type through exactly one method,
 /// [`ProviderApiKey::sensitive_header`], which returns a `HeaderValue` already
-/// marked sensitive. The cache may share the allocation with an in-flight
-/// value; the final owner drop zeroizes it.
-pub struct ProviderApiKey(Arc<Zeroizing<String>>);
+/// marked sensitive. `Drop` zeroizes.
+pub struct ProviderApiKey(Zeroizing<String>);
 
 impl ProviderApiKey {
     /// Wraps decrypted material.
@@ -253,11 +259,7 @@ impl ProviderApiKey {
     /// Called only by a [`ProviderCredentialDecryptor`] implementation.
     #[must_use]
     pub fn new(plaintext: String) -> Self {
-        Self(Arc::new(Zeroizing::new(plaintext)))
-    }
-
-    fn from_shared(plaintext: Arc<Zeroizing<String>>) -> Self {
-        Self(plaintext)
+        Self(Zeroizing::new(plaintext))
     }
 
     /// Builds the one header the transport attaches, already marked sensitive
@@ -274,11 +276,9 @@ impl ProviderApiKey {
     ) -> Result<(reqwest::header::HeaderName, reqwest::header::HeaderValue), CredentialResolveError>
     {
         let rendered = match scheme {
-            AuthScheme::BearerAuthorization => {
-                Zeroizing::new(format!("Bearer {}", self.0.as_str()))
-            }
+            AuthScheme::BearerAuthorization => Zeroizing::new(format!("Bearer {}", *self.0)),
             AuthScheme::AnthropicApiKey { .. } | AuthScheme::GoogleApiKeyHeader => {
-                Zeroizing::new(self.0.as_str().to_owned())
+                Zeroizing::new(self.0.to_string())
             }
         };
         let name = reqwest::header::HeaderName::from_static(scheme.header_name());
@@ -293,7 +293,7 @@ impl ProviderApiKey {
     /// Crate-private: the redactor needs the exact bytes to remove them from a
     /// provider-echoed error body, and nothing else in the crate may look.
     pub(crate) fn expose_for_redaction(&self) -> &str {
-        self.0.as_str()
+        &self.0
     }
 }
 
@@ -301,10 +301,6 @@ impl ProviderApiKey {
 /// bump can never hit a stale entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CredentialCacheKey {
-    /// The owning organization. Workspace ids are globally unique, but keeping
-    /// the authority identity explicit makes accidental workspace movement a
-    /// cache miss even before the context-digest check rejects it.
-    pub organization: OrganizationId,
     /// The owning workspace.
     pub workspace: WorkspaceId,
     /// Which binding.
@@ -318,7 +314,6 @@ pub struct CredentialCacheKey {
 impl From<&ProviderCredentialBinding> for CredentialCacheKey {
     fn from(binding: &ProviderCredentialBinding) -> Self {
         Self {
-            organization: binding.context.organization,
             workspace: binding.workspace,
             binding: binding.id,
             revision: binding.revision,
@@ -333,28 +328,20 @@ pub const CACHE_TTL: Duration = Duration::from_mins(1);
 pub const CACHE_CAPACITY: usize = 256;
 
 struct CacheEntry {
-    key: Arc<Zeroizing<String>>,
+    key: ProviderApiKey,
     inserted_at: Instant,
-}
-
-const CACHE_SHARDS: usize = 16;
-
-struct CacheShard {
-    entries: Mutex<HashMap<CredentialCacheKey, CacheEntry>>,
-    capacity: usize,
 }
 
 /// A bounded, expiring cache of decrypted keys.
 ///
 /// Decryption happens immediately before dispatch and the plaintext exists only
-/// in one reference-counted, zeroizing allocation plus the sensitive
-/// `HeaderValue` used by transport. Revocation calls
-/// [`CredentialCache::invalidate`], which drops every matching cache reference.
-/// An already in-flight dispatch may keep its private reference until that
-/// attempt ends; the last reference drop zeroizes the allocation.
+/// inside an entry and inside the sensitive `HeaderValue`. Revocation calls
+/// [`CredentialCache::invalidate`], which drops — and therefore zeroizes —
+/// every matching entry.
 pub struct CredentialCache {
-    shards: Vec<CacheShard>,
+    entries: Mutex<HashMap<CredentialCacheKey, CacheEntry>>,
     ttl: Duration,
+    capacity: usize,
 }
 
 impl core::fmt::Debug for CredentialCache {
@@ -375,26 +362,18 @@ impl CredentialCache {
     /// Builds a cache with an explicit capacity and TTL.
     #[must_use]
     pub fn new(capacity: usize, ttl: Duration) -> Self {
-        let shard_count = capacity.clamp(1, CACHE_SHARDS);
-        let base_capacity = capacity / shard_count;
-        let remainder = capacity % shard_count;
         Self {
-            shards: (0..shard_count)
-                .map(|index| CacheShard {
-                    entries: Mutex::new(HashMap::new()),
-                    capacity: base_capacity + usize::from(index < remainder),
-                })
-                .collect(),
+            entries: Mutex::new(HashMap::new()),
             ttl,
+            capacity,
         }
     }
 
     /// Decrypts a binding, reusing a fresh entry where one exists.
     ///
-    /// A hit clones only a private `Arc`, not the plaintext string, while the
-    /// shard lock is held. A concurrent [`CredentialCache::invalidate`] removes
-    /// future hits but does not invalidate memory held by an in-flight caller;
-    /// the shared allocation is zeroized when its final owner drops.
+    /// The returned key is a fresh decryption rather than a handle into the
+    /// cache, so a concurrent [`CredentialCache::invalidate`] can never leave a
+    /// caller holding a reference into freed material.
     ///
     /// # Errors
     ///
@@ -403,40 +382,38 @@ impl CredentialCache {
         &self,
         binding: &ProviderCredentialBinding,
         decryptor: &dyn ProviderCredentialDecryptor,
-        now: aex_wire::types::Timestamp,
     ) -> Result<ProviderApiKey, CredentialResolveError> {
         let key = CredentialCacheKey::from(binding);
         if let Some(cached) = self.take_fresh(&key) {
             return Ok(cached);
         }
-        let decrypted = decryptor.decrypt(binding, now).await?;
-        self.insert(key, Arc::clone(&decrypted.0));
+        let decrypted = decryptor.decrypt(binding).await?;
+        self.insert(
+            key,
+            ProviderApiKey::new(decrypted.expose_for_redaction().to_owned()),
+        );
         Ok(decrypted)
     }
 
     fn take_fresh(&self, key: &CredentialCacheKey) -> Option<ProviderApiKey> {
-        let shard = self.shard(key);
-        let mut entries = shard.entries.lock().ok()?;
+        let mut entries = self.entries.lock().ok()?;
         let entry = entries.get(key)?;
         if entry.inserted_at.elapsed() >= self.ttl {
             entries.remove(key);
             return None;
         }
-        Some(ProviderApiKey::from_shared(Arc::clone(&entry.key)))
+        Some(ProviderApiKey::new(
+            entry.key.expose_for_redaction().to_owned(),
+        ))
     }
 
-    fn insert(&self, key: CredentialCacheKey, value: Arc<Zeroizing<String>>) {
-        let shard = self.shard(&key);
-        if shard.capacity == 0 {
-            return;
-        }
-        let Ok(mut entries) = shard.entries.lock() else {
+    fn insert(&self, key: CredentialCacheKey, value: ProviderApiKey) {
+        let Ok(mut entries) = self.entries.lock() else {
             return;
         };
         entries.retain(|_, entry| entry.inserted_at.elapsed() < self.ttl);
-        if entries.len() >= shard.capacity {
-            // Evict the oldest. Its allocation is zeroized now unless an
-            // in-flight dispatch still owns a private reference.
+        if entries.len() >= self.capacity {
+            // Evict the oldest. Dropping the entry zeroizes it.
             if let Some(oldest) = entries
                 .iter()
                 .min_by_key(|(_, entry)| entry.inserted_at)
@@ -455,52 +432,35 @@ impl CredentialCache {
     }
 
     /// Drops every entry for a binding. Returns how many were removed.
-    #[must_use]
     pub fn invalidate(&self, workspace: WorkspaceId, binding: ProviderCredentialId) -> usize {
-        self.retain_all(|key| !(key.workspace == workspace && key.binding == binding))
+        let Ok(mut entries) = self.entries.lock() else {
+            return 0;
+        };
+        let before = entries.len();
+        entries.retain(|key, _| !(key.workspace == workspace && key.binding == binding));
+        before - entries.len()
     }
 
     /// Drops every entry for a workspace.
-    #[must_use]
     pub fn invalidate_workspace(&self, workspace: WorkspaceId) -> usize {
-        self.retain_all(|key| key.workspace != workspace)
+        let Ok(mut entries) = self.entries.lock() else {
+            return 0;
+        };
+        let before = entries.len();
+        entries.retain(|key, _| key.workspace != workspace);
+        before - entries.len()
     }
 
     /// How many entries are held.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.shards
-            .iter()
-            .map(|shard| shard.entries.lock().map_or(0, |entries| entries.len()))
-            .sum()
+        self.entries.lock().map_or(0, |entries| entries.len())
     }
 
     /// Whether the cache holds nothing.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
-    }
-
-    fn shard(&self, key: &CredentialCacheKey) -> &CacheShard {
-        let mut hasher = DefaultHasher::new();
-        key.hash(&mut hasher);
-        let shard_count = u64::try_from(self.shards.len()).expect("at most sixteen shards");
-        let index = usize::try_from(hasher.finish() % shard_count).expect("index is below sixteen");
-        &self.shards[index]
-    }
-
-    fn retain_all(&self, mut keep: impl FnMut(&CredentialCacheKey) -> bool) -> usize {
-        self.shards
-            .iter()
-            .map(|shard| {
-                let Ok(mut entries) = shard.entries.lock() else {
-                    return 0;
-                };
-                let before = entries.len();
-                entries.retain(|key, _| keep(key));
-                before - entries.len()
-            })
-            .sum()
     }
 }
 
@@ -513,15 +473,12 @@ impl CredentialCache {
 /// consumed, so every one is `DispatchProof::NotSent`.
 pub async fn resolve(
     directory: &dyn ProviderCredentialDirectory,
-    organization: OrganizationId,
     workspace: WorkspaceId,
     provider: ProviderId,
     requested: Option<ProviderCredentialId>,
     pin: Option<&SessionCredentialPin>,
 ) -> Result<ProviderCredentialBinding, CredentialResolveError> {
-    let binding = directory
-        .resolve(organization, workspace, provider, requested)
-        .await?;
+    let binding = directory.resolve(workspace, provider, requested).await?;
 
     if binding.provider != provider {
         return Err(CredentialResolveError::ProviderMismatch {
@@ -533,19 +490,17 @@ pub async fn resolve(
         BindingState::Deleted => return Err(CredentialResolveError::Deleted),
         BindingState::Revoked => {
             return Err(CredentialResolveError::Revoked {
-                admitted: pin.map_or(binding.revocation_epoch, |pin| {
-                    RevocationEpoch(pin.revocation_epoch)
-                }),
+                admitted: pin.map_or(binding.revocation_epoch, |pin| pin.epoch_at_admission),
                 current: binding.revocation_epoch,
             });
         }
         BindingState::Ready => {}
     }
     if let Some(pin) = pin
-        && binding.revocation_epoch > RevocationEpoch(pin.revocation_epoch)
+        && binding.revocation_epoch > pin.epoch_at_admission
     {
         return Err(CredentialResolveError::Revoked {
-            admitted: RevocationEpoch(pin.revocation_epoch),
+            admitted: pin.epoch_at_admission,
             current: binding.revocation_epoch,
         });
     }
@@ -554,9 +509,9 @@ pub async fn resolve(
 
 #[cfg(test)]
 mod tests {
-    use aex_wire::ids::{OrganizationId, PrefixedId, ProviderCredentialId, WorkspaceId};
+    use aex_wire::CanonicalJson;
+    use aex_wire::ids::{PrefixedId, ProviderCredentialId, WorkspaceId};
     use aex_wire::provider::ProviderId;
-    use aex_wire::types::Region;
 
     use super::{
         BindingState, CredentialCache, CredentialResolveError, CredentialRevision,
@@ -573,10 +528,6 @@ mod tests {
         WorkspaceId::from_uuid7(aex_wire::Uuid7::compose(1, [1; 10]))
     }
 
-    fn organization() -> OrganizationId {
-        OrganizationId::from_uuid7(aex_wire::Uuid7::compose(1, [2; 10]))
-    }
-
     fn binding_id(seed: u8) -> ProviderCredentialId {
         ProviderCredentialId::from_uuid7(aex_wire::Uuid7::compose(2, [seed; 10]))
     }
@@ -591,31 +542,13 @@ mod tests {
             revocation_epoch: RevocationEpoch(epoch),
             is_default: true,
             state,
-            ciphertext: CiphertextRef {
-                key_generation: 1,
-                wrapped_key: vec![1; 32],
-                nonce: Vec::new(),
-                ciphertext: vec![2; 32],
-            },
+            ciphertext: CiphertextRef(
+                aex_model_catalog::primitives::BoundedString::new("kms://ref").expect("ref"),
+            ),
             context: EncryptionContext {
-                plane: aex_secret_domain::context::Plane::Dev,
-                region: Region::EuWest1,
-                organization: organization(),
                 workspace: workspace(),
-                name: aex_secret_domain::SecretName::parse("provider-key").expect("name"),
-                generation: SourceGeneration(1),
-                custody_revision: None,
+                extra: CanonicalJson::parse("{}").expect("json"),
             },
-            context_digest: EncryptionContext {
-                plane: aex_secret_domain::context::Plane::Dev,
-                region: Region::EuWest1,
-                organization: organization(),
-                workspace: workspace(),
-                name: aex_secret_domain::SecretName::parse("provider-key").expect("name"),
-                generation: SourceGeneration(1),
-                custody_revision: None,
-            }
-            .digest(),
         }
     }
 
@@ -623,7 +556,6 @@ mod tests {
     impl ProviderCredentialDirectory for Fixed {
         fn resolve(
             &self,
-            _organization: OrganizationId,
             _workspace: WorkspaceId,
             _provider: ProviderId,
             _id: Option<ProviderCredentialId>,
@@ -632,10 +564,11 @@ mod tests {
             Box::pin(async move { Ok(binding) })
         }
 
-        fn revalidate<'a>(
-            &'a self,
-            _binding: &'a ProviderCredentialBinding,
-        ) -> BoxFuture<'a, Result<RevocationEpoch, CredentialResolveError>> {
+        fn current_epoch(
+            &self,
+            _workspace: WorkspaceId,
+            _id: ProviderCredentialId,
+        ) -> BoxFuture<'_, Result<RevocationEpoch, CredentialResolveError>> {
             let epoch = self.0.revocation_epoch;
             Box::pin(async move { Ok(epoch) })
         }
@@ -646,30 +579,18 @@ mod tests {
         fn decrypt<'a>(
             &'a self,
             _binding: &'a ProviderCredentialBinding,
-            _now: aex_wire::types::Timestamp,
         ) -> BoxFuture<'a, Result<ProviderApiKey, CredentialResolveError>> {
             let text = self.0.to_owned();
             Box::pin(async move { Ok(ProviderApiKey::new(text)) })
         }
     }
 
-    fn now() -> aex_wire::types::Timestamp {
-        aex_wire::types::Timestamp::from_unix_millis(1).expect("timestamp")
-    }
-
     #[tokio::test]
     async fn the_placeholder_directory_refuses_everything() {
         let directory = DenyAllCredentialDirectory;
-        let error = resolve(
-            &directory,
-            organization(),
-            workspace(),
-            ProviderId::Anthropic,
-            None,
-            None,
-        )
-        .await
-        .expect_err("the placeholder must refuse");
+        let error = resolve(&directory, workspace(), ProviderId::Anthropic, None, None)
+            .await
+            .expect_err("the placeholder must refuse");
         assert_eq!(
             error,
             CredentialResolveError::RegistrationAuthorityUnavailable
@@ -686,7 +607,7 @@ mod tests {
         // `ProviderApiKey` has no `Debug`, so the success arm cannot be
         // formatted into a panic message — which is the point.
         match decryptor
-            .decrypt(&binding(ProviderId::Openai, BindingState::Ready, 0), now())
+            .decrypt(&binding(ProviderId::Openai, BindingState::Ready, 0))
             .await
         {
             Ok(_) => panic!("the placeholder must refuse"),
@@ -700,16 +621,9 @@ mod tests {
     #[tokio::test]
     async fn a_provider_mismatch_is_typed_never_a_silent_substitution() {
         let directory = Fixed(binding(ProviderId::Openai, BindingState::Ready, 0));
-        let error = resolve(
-            &directory,
-            organization(),
-            workspace(),
-            ProviderId::Anthropic,
-            None,
-            None,
-        )
-        .await
-        .expect_err("a mismatch must fail");
+        let error = resolve(&directory, workspace(), ProviderId::Anthropic, None, None)
+            .await
+            .expect_err("a mismatch must fail");
         assert_eq!(
             error,
             CredentialResolveError::ProviderMismatch {
@@ -722,16 +636,9 @@ mod tests {
     #[tokio::test]
     async fn a_revoked_binding_fails() {
         let directory = Fixed(binding(ProviderId::Openai, BindingState::Revoked, 3));
-        let error = resolve(
-            &directory,
-            organization(),
-            workspace(),
-            ProviderId::Openai,
-            None,
-            None,
-        )
-        .await
-        .expect_err("a revoked binding must fail");
+        let error = resolve(&directory, workspace(), ProviderId::Openai, None, None)
+            .await
+            .expect_err("a revoked binding must fail");
         assert!(matches!(error, CredentialResolveError::Revoked { .. }));
         assert_eq!(
             error.error_code(),
@@ -742,26 +649,23 @@ mod tests {
     #[tokio::test]
     async fn a_deleted_binding_fails() {
         let directory = Fixed(binding(ProviderId::Openai, BindingState::Deleted, 0));
-        let error = resolve(
-            &directory,
-            organization(),
-            workspace(),
-            ProviderId::Openai,
-            None,
-            None,
-        )
-        .await
-        .expect_err("a deleted binding must fail");
+        let error = resolve(&directory, workspace(), ProviderId::Openai, None, None)
+            .await
+            .expect_err("a deleted binding must fail");
         assert_eq!(error, CredentialResolveError::Deleted);
     }
 
     #[tokio::test]
     async fn an_epoch_bump_overrides_an_existing_session_pin() {
         let directory = Fixed(binding(ProviderId::Openai, BindingState::Ready, 5));
-        let pin = SessionCredentialPin::new(binding_id(7), 1, 1, 4).expect("non-zero fixture pin");
+        let pin = SessionCredentialPin {
+            binding: binding_id(7),
+            revision: CredentialRevision(1),
+            generation: SourceGeneration(1),
+            epoch_at_admission: RevocationEpoch(4),
+        };
         let error = resolve(
             &directory,
-            organization(),
             workspace(),
             ProviderId::Openai,
             None,
@@ -781,10 +685,14 @@ mod tests {
     #[tokio::test]
     async fn a_matching_epoch_still_resolves() {
         let directory = Fixed(binding(ProviderId::Openai, BindingState::Ready, 4));
-        let pin = SessionCredentialPin::new(binding_id(7), 1, 1, 4).expect("non-zero fixture pin");
+        let pin = SessionCredentialPin {
+            binding: binding_id(7),
+            revision: CredentialRevision(1),
+            generation: SourceGeneration(1),
+            epoch_at_admission: RevocationEpoch(4),
+        };
         resolve(
             &directory,
-            organization(),
             workspace(),
             ProviderId::Openai,
             None,
@@ -834,24 +742,20 @@ mod tests {
     async fn the_cache_reuses_a_fresh_entry_and_expires_a_stale_one() {
         let cache = CredentialCache::new(4, core::time::Duration::from_millis(50));
         let binding = binding(ProviderId::Openai, BindingState::Ready, 0);
-        let first = cache
-            .decrypt(&binding, &Constant("sk-one"), now())
+        cache
+            .decrypt(&binding, &Constant("sk-one"))
             .await
             .expect("first decrypt");
         assert_eq!(cache.len(), 1);
         let reused = cache
-            .decrypt(&binding, &Constant("sk-two"), now())
+            .decrypt(&binding, &Constant("sk-two"))
             .await
             .expect("cached");
         assert_eq!(reused.expose_for_redaction(), "sk-one");
-        assert!(
-            std::sync::Arc::ptr_eq(&first.0, &reused.0),
-            "a hot hit should share the zeroizing allocation, not copy plaintext"
-        );
 
         tokio::time::sleep(core::time::Duration::from_millis(60)).await;
         let refreshed = cache
-            .decrypt(&binding, &Constant("sk-two"), now())
+            .decrypt(&binding, &Constant("sk-two"))
             .await
             .expect("expired then decrypted again");
         assert_eq!(refreshed.expose_for_redaction(), "sk-two");
@@ -865,33 +769,14 @@ mod tests {
         rotated.revision = CredentialRevision(2);
 
         cache
-            .decrypt(&first, &Constant("sk-old"), now())
+            .decrypt(&first, &Constant("sk-old"))
             .await
             .expect("first");
         let after = cache
-            .decrypt(&rotated, &Constant("sk-new"), now())
+            .decrypt(&rotated, &Constant("sk-new"))
             .await
             .expect("rotated");
         assert_eq!(after.expose_for_redaction(), "sk-new");
-        assert_eq!(cache.len(), 2);
-    }
-
-    #[tokio::test]
-    async fn another_organization_never_hits_a_cached_plaintext() {
-        let cache = CredentialCache::default();
-        let first = binding(ProviderId::Openai, BindingState::Ready, 0);
-        cache
-            .decrypt(&first, &Constant("sk-first"), now())
-            .await
-            .expect("first decrypt");
-        let mut second = first;
-        second.context.organization =
-            OrganizationId::from_uuid7(aex_wire::Uuid7::compose(1, [9; 10]));
-        let resolved = cache
-            .decrypt(&second, &Constant("sk-second"), now())
-            .await
-            .expect("organization-isolated decrypt");
-        assert_eq!(resolved.expose_for_redaction(), "sk-second");
         assert_eq!(cache.len(), 2);
     }
 
@@ -900,7 +785,7 @@ mod tests {
         let cache = CredentialCache::default();
         let binding = binding(ProviderId::Openai, BindingState::Ready, 0);
         cache
-            .decrypt(&binding, &Constant("sk-one"), now())
+            .decrypt(&binding, &Constant("sk-one"))
             .await
             .expect("decrypt");
         assert_eq!(cache.invalidate(workspace(), binding_id(9)), 0);
@@ -915,7 +800,7 @@ mod tests {
             let mut entry = binding(ProviderId::Openai, BindingState::Ready, 0);
             entry.revision = CredentialRevision(u64::from(seed));
             cache
-                .decrypt(&entry, &Constant("sk-value"), now())
+                .decrypt(&entry, &Constant("sk-value"))
                 .await
                 .expect("decrypt");
         }

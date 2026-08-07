@@ -92,22 +92,12 @@ pub struct FoldState {
     /// The user turn currently accumulating.
     pub open_user: Vec<ContentBlockRef>,
     /// Tool calls asked for and not yet resolved, keyed by call id.
-    #[serde(with = "ordered_map_entries")]
     pub pending_calls: BTreeMap<ToolCallId, PendingCall>,
     /// Tool results resolved but not yet emitted into a turn.
-    #[serde(with = "ordered_map_entries")]
     pub resolved_calls: BTreeMap<ToolCallId, ResolvedCall>,
     /// Calls already resolved in this turn, so a duplicate result is refused.
     pub retired_calls: BTreeSet<ToolCallId>,
-    /// Canonical arguments of the last successful `todo_write`.
-    ///
-    /// This is derived from the durable assistant tool call plus its matching
-    /// successful result. It is process-independent fold state, not an
-    /// executor cache, and survives journal compaction and snapshots.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub todo_state: Option<aex_wire::CanonicalJson>,
     /// Effects opened and not yet settled.
-    #[serde(with = "ordered_map_entries")]
     pub open_effects: BTreeMap<EffectId, EffectState>,
     /// Effects that have settled, so a settlement without a preparation is refused.
     pub settled_effects: BTreeSet<EffectId>,
@@ -116,13 +106,10 @@ pub struct FoldState {
     /// This agent's budget node.
     pub budget: BudgetNode,
     /// Children, keyed by identity.
-    #[serde(with = "ordered_map_entries")]
     pub children: BTreeMap<AgentId, ChildRecord>,
     /// Join groups this agent opened.
-    #[serde(with = "ordered_map_entries")]
     pub joins: BTreeMap<JoinId, JoinGroup>,
     /// Open durable waits.
-    #[serde(with = "ordered_map_entries")]
     pub waits: BTreeMap<WaitId, ParkReason>,
     /// Where the agent is.
     pub phase: Phase,
@@ -147,42 +134,6 @@ pub struct FoldState {
     pub failure: Option<TypedFailure>,
     /// The structural limits every spawn is checked against.
     pub structural: StructuralLimits,
-}
-
-/// Stable JSON representation for typed-key maps.
-///
-/// JSON object keys can only be strings. Encoding a typed identifier as a string-keyed
-/// object would make its display spelling part of the snapshot contract and would bypass
-/// the identifier's normal serde validation. A sorted array of `(key, value)` pairs keeps
-/// the typed codec, inherits `BTreeMap` ordering, and permits duplicate rejection on read.
-mod ordered_map_entries {
-    use std::collections::BTreeMap;
-
-    use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
-
-    pub fn serialize<K, V, S>(map: &BTreeMap<K, V>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        K: Serialize + Ord,
-        V: Serialize,
-        S: Serializer,
-    {
-        map.iter().collect::<Vec<_>>().serialize(serializer)
-    }
-
-    pub fn deserialize<'de, K, V, D>(deserializer: D) -> Result<BTreeMap<K, V>, D::Error>
-    where
-        K: Deserialize<'de> + Ord,
-        V: Deserialize<'de>,
-        D: Deserializer<'de>,
-    {
-        let entries = Vec::<(K, V)>::deserialize(deserializer)?;
-        let expected = entries.len();
-        let map = entries.into_iter().collect::<BTreeMap<_, _>>();
-        if map.len() != expected {
-            return Err(D::Error::custom("duplicate typed map key"));
-        }
-        Ok(map)
-    }
 }
 
 /// Why a record could not be folded.
@@ -335,49 +286,6 @@ impl FoldState {
     fn stored_hash(&self, seq: JournalSeq) -> Option<ContentHash> {
         let offset = usize::try_from(seq.get().checked_sub(self.base_seq.get())?).ok()?;
         self.hashes.get(offset).copied()
-    }
-}
-
-#[cfg(test)]
-mod control_projection_tests {
-    use super::{FoldState, PendingCall, project_control_state};
-    use crate::ids::{ToolCallId, ToolName};
-    use crate::journal::ExecutorRoute;
-    use aex_wire::CanonicalJson;
-
-    fn todo_write(input: &str) -> PendingCall {
-        PendingCall {
-            call: ToolCallId::truncating("todo-call"),
-            name: ToolName::parse("todo_write").expect("tool name"),
-            order: 0,
-            input: CanonicalJson::parse(input).expect("canonical input"),
-        }
-    }
-
-    #[test]
-    fn only_a_successful_todo_write_replaces_the_folded_control_state() {
-        let first = todo_write(
-            r#"{"todos":[{"activeForm":"Doing","content":"First","status":"in_progress"}]}"#,
-        );
-        let failed = todo_write(
-            r#"{"todos":[{"activeForm":"Doing","content":"Failed","status":"completed"}]}"#,
-        );
-        let mut state = FoldState::empty();
-
-        project_control_state(&mut state, &first, false, ExecutorRoute::BrainInline);
-        assert_eq!(state.todo_state.as_ref(), Some(&first.input));
-        project_control_state(&mut state, &failed, true, ExecutorRoute::BrainInline);
-        assert_eq!(
-            state.todo_state.as_ref(),
-            Some(&first.input),
-            "a tool-level failure cannot mutate the folded replacement"
-        );
-        project_control_state(&mut state, &failed, false, ExecutorRoute::Hands);
-        assert_eq!(
-            state.todo_state.as_ref(),
-            Some(&first.input),
-            "a result attributed to another executor cannot mutate Brain control state"
-        );
     }
 }
 
@@ -564,7 +472,6 @@ fn apply_record(state: &mut FoldState, entry: &JournalEntry) -> Result<(), FoldE
                     .ok_or_else(|| FoldError::UnknownCall {
                         call: call.as_str().to_owned(),
                     })?;
-            project_control_state(state, &pending, *is_error, *executed_on);
             state.resolved_calls.insert(
                 call.clone(),
                 ResolvedCall {
@@ -809,20 +716,6 @@ fn emit_tool_result_turn(state: &mut FoldState) {
         role: Role::User,
         blocks,
     });
-}
-
-fn project_control_state(
-    state: &mut FoldState,
-    pending: &PendingCall,
-    is_error: bool,
-    executed_on: ExecutorRoute,
-) {
-    if pending.name.as_str() == "todo_write"
-        && !is_error
-        && executed_on == ExecutorRoute::BrainInline
-    {
-        state.todo_state = Some(pending.input.clone());
-    }
 }
 
 fn apply_compaction(

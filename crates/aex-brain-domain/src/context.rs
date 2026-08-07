@@ -266,9 +266,9 @@ mod tests {
     fn capability(window: u64, minimum_cacheable: Option<u64>) -> QualifiedModel {
         let mut entry = fixture::entry(ProviderId::Anthropic, "m", CapabilitySet::default());
         entry.limits.context_window_tokens = u32::try_from(window).expect("fixture window fits");
-        entry.limits.min_cacheable_prefix_tokens = minimum_cacheable.map_or(0, |tokens| {
-            u32::try_from(tokens).expect("fixture cache threshold fits")
-        });
+        entry.limits.min_cacheable_prefix_tokens = minimum_cacheable
+            .map(|tokens| u32::try_from(tokens).expect("fixture cache threshold fits"))
+            .unwrap_or(0);
         fixture::qualified(entry)
     }
 

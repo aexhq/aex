@@ -75,10 +75,6 @@ fn streaming() -> BTreeMap<&'static str, String> {
         "arn:aws:dynamodb:eu-west-1:000000000000:table/aex-dev-observation-authority/stream/2026-08-01T00:00:00.000"
             .to_owned(),
     );
-    vars.insert(
-        config::DYNAMODB_STREAMS_ENDPOINT_URL,
-        "https://vpce-0123456789abcdef0.streams.dynamodb.eu-west-1.vpce.amazonaws.com".to_owned(),
-    );
     vars
 }
 
@@ -95,7 +91,6 @@ fn both_wake_modes_accept_their_own_complete_environment() {
     let streamed = read(&streaming()).expect("ddb_streams mode is accepted");
     assert_eq!(streamed.wake_mode, WakeMode::DdbStreams);
     assert!(streamed.session_stream.is_some());
-    assert!(streamed.dynamodb_streams_endpoint_url.is_some());
     assert_eq!(streamed.port, 8080);
 }
 
@@ -137,26 +132,6 @@ fn ddb_streams_requires_both_authority_streams() {
     assert!(matches!(
         read(&vars),
         Err(ConfigError::Missing { name }) if name == config::SESSION_TABLE_STREAM_ARN
-    ));
-}
-
-#[test]
-fn ddb_streams_requires_an_endpoint_specific_private_origin() {
-    let mut missing = streaming();
-    missing.remove(config::DYNAMODB_STREAMS_ENDPOINT_URL);
-    assert!(matches!(
-        read(&missing),
-        Err(ConfigError::Missing { name }) if name == config::DYNAMODB_STREAMS_ENDPOINT_URL
-    ));
-
-    let mut public = streaming();
-    public.insert(
-        config::DYNAMODB_STREAMS_ENDPOINT_URL,
-        "https://streams.dynamodb.eu-west-1.amazonaws.com".to_owned(),
-    );
-    assert!(matches!(
-        read(&public),
-        Err(ConfigError::Invalid { name, .. }) if name == config::DYNAMODB_STREAMS_ENDPOINT_URL
     ));
 }
 

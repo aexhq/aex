@@ -389,9 +389,6 @@ struct LimitEntry {
     id: String,
     /// `scalar` or `map`.
     shape: String,
-    /// Complete ordered dimension vocabulary for a map limit.
-    #[serde(default)]
-    dimensions: Vec<String>,
     /// One-line documentation.
     doc: String,
 }
@@ -408,7 +405,6 @@ fn build_limits(file: &LimitsFile) -> Vec<LimitRow> {
             } else {
                 LimitShape::Scalar
             },
-            dimensions: entry.dimensions.clone(),
             doc: entry.doc.clone(),
         })
         .collect()
@@ -448,9 +444,6 @@ struct RoutesMetaFile {
     expected: BTreeMap<String, usize>,
     /// The one place a path parameter's type is declared.
     path_params: BTreeMap<String, FieldEntry>,
-    /// Closed release-artifact vocabulary and the API plane each artifact may
-    /// own. Both planned and actual ownership are checked against this map.
-    serving_artifacts: BTreeMap<String, String>,
     /// Release scenario owners, keyed `<plane>.<fragment>`.
     ///
     /// This is delivery metadata emitted only into the route registry. It is
@@ -460,20 +453,11 @@ struct RoutesMetaFile {
     /// Per-operation exceptions for fragments whose routes are split across
     /// deployables or transports.
     ///
-    /// The resolved planned owner is emitted into both the delivery registry
-    /// and generated runtime descriptor, so selection and responsibility do
-    /// not mirror routing rules. Actual mount evidence remains separate.
+    /// The resolved owner is emitted into both the delivery registry and the
+    /// generated runtime descriptor, so the release graph and the mounted
+    /// router consume one authority rather than mirroring routing rules.
     #[serde(default)]
     operation_owners: BTreeMap<String, RouteOwnerEntry>,
-    /// Operations that are mounted by a runnable composition today, keyed by
-    /// release artifact. An operation absent here is deliberately unserved.
-    #[serde(default)]
-    served_operations: BTreeMap<String, Vec<String>>,
-    /// Operations whose production composition is intentionally incomplete,
-    /// keyed by exact `operationId` with a non-empty architectural reason.
-    /// A deferred operation may not also appear in `servedOperations`.
-    #[serde(default)]
-    deferred_operations: BTreeMap<String, String>,
 }
 
 /// Release-selection metadata for one mounted API fragment.
@@ -941,8 +925,6 @@ fn load_planes(
     id_keys: &BTreeSet<&str>,
     sources: &mut BTreeMap<String, String>,
 ) -> Result<Vec<PlaneIr>, GenError> {
-    let actual_owners = actual_route_owners(meta)?;
-    let deferred_operations = deferred_operations(meta, &actual_owners)?;
     let mut planes = Vec::new();
     let mut seen_operations: BTreeSet<String> = BTreeSet::new();
     let mut used_scenario_owners = BTreeSet::new();
@@ -988,8 +970,6 @@ fn load_planes(
                     error_codes,
                     scope_names,
                     id_keys,
-                    &actual_owners,
-                    &deferred_operations,
                 )?);
             }
         }
@@ -1042,149 +1022,7 @@ fn load_planes(
             detail: format!("operationOwners names unknown operations: {stale_operation_owners:?}"),
         });
     }
-    let stale_served_operations = actual_owners
-        .keys()
-        .filter(|operation| !seen_operations.contains(*operation))
-        .cloned()
-        .collect::<Vec<_>>();
-    if !stale_served_operations.is_empty() {
-        return Err(GenError::Registry {
-            registry: "routes-meta",
-            detail: format!(
-                "servedOperations names unknown operations: {stale_served_operations:?}"
-            ),
-        });
-    }
-    let stale_deferred_operations = deferred_operations
-        .keys()
-        .filter(|operation| !seen_operations.contains(*operation))
-        .cloned()
-        .collect::<Vec<_>>();
-    if !stale_deferred_operations.is_empty() {
-        return Err(GenError::Registry {
-            registry: "routes-meta",
-            detail: format!(
-                "deferredOperations names unknown operations: {stale_deferred_operations:?}"
-            ),
-        });
-    }
-    let used_artifacts: BTreeSet<&str> = planes
-        .iter()
-        .flat_map(|plane| plane.operations.iter())
-        .map(|operation| operation.serving_artifact.as_str())
-        .collect();
-    let declared_artifacts: BTreeSet<&str> =
-        meta.serving_artifacts.keys().map(String::as_str).collect();
-    if used_artifacts != declared_artifacts {
-        let missing = used_artifacts
-            .difference(&declared_artifacts)
-            .copied()
-            .collect::<Vec<_>>();
-        let stale = declared_artifacts
-            .difference(&used_artifacts)
-            .copied()
-            .collect::<Vec<_>>();
-        return Err(GenError::Registry {
-            registry: "routes-meta",
-            detail: format!(
-                "servingArtifacts must exactly match planned owners; missing={missing:?}, stale={stale:?}"
-            ),
-        });
-    }
     Ok(planes)
-}
-
-/// Resolves the authored actual-mount table into one owner per operation.
-fn actual_route_owners(meta: &RoutesMetaFile) -> Result<BTreeMap<String, String>, GenError> {
-    for (artifact, plane) in &meta.serving_artifacts {
-        validate_artifact_id(artifact)?;
-        if !["central", "regional"].contains(&plane.as_str()) {
-            return Err(GenError::Registry {
-                registry: "routes-meta",
-                detail: format!("serving artifact `{artifact}` declares unknown plane `{plane}`"),
-            });
-        }
-    }
-    let mut owners = BTreeMap::new();
-    for (artifact, operations) in &meta.served_operations {
-        validate_artifact_id(artifact)?;
-        if !meta.serving_artifacts.contains_key(artifact) {
-            return Err(GenError::Registry {
-                registry: "routes-meta",
-                detail: format!("servedOperations names undeclared serving artifact `{artifact}`"),
-            });
-        }
-        let mut local = BTreeSet::new();
-        for operation in operations {
-            if !local.insert(operation) {
-                return Err(GenError::Registry {
-                    registry: "routes-meta",
-                    detail: format!("servedOperations.{artifact} repeats operation `{operation}`"),
-                });
-            }
-            if let Some(first) = owners.insert(operation.clone(), artifact.clone()) {
-                return Err(GenError::Registry {
-                    registry: "routes-meta",
-                    detail: format!(
-                        "operation `{operation}` is actually served by both `{first}` and `{artifact}`"
-                    ),
-                });
-            }
-        }
-    }
-    Ok(owners)
-}
-
-/// Validates the explicit incomplete-composition ledger.
-fn deferred_operations(
-    meta: &RoutesMetaFile,
-    actual_owners: &BTreeMap<String, String>,
-) -> Result<BTreeMap<String, String>, GenError> {
-    let mut deferred = BTreeMap::new();
-    for (operation, reason) in &meta.deferred_operations {
-        if reason.trim().is_empty() {
-            return Err(GenError::Registry {
-                registry: "routes-meta",
-                detail: format!(
-                    "deferredOperations.{operation} must carry a non-empty architectural reason"
-                ),
-            });
-        }
-        if actual_owners.contains_key(operation) {
-            return Err(GenError::Registry {
-                registry: "routes-meta",
-                detail: format!(
-                    "operation `{operation}` cannot be both served and explicitly deferred"
-                ),
-            });
-        }
-        deferred.insert(operation.clone(), reason.trim().to_owned());
-    }
-    Ok(deferred)
-}
-
-fn validate_artifact_id(artifact: &str) -> Result<(), GenError> {
-    let valid = !artifact.is_empty()
-        && artifact
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-        && artifact
-            .as_bytes()
-            .first()
-            .is_some_and(u8::is_ascii_lowercase)
-        && artifact
-            .as_bytes()
-            .last()
-            .is_some_and(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
-        && !artifact.contains("--");
-    if valid {
-        Ok(())
-    } else {
-        Err(GenError::Registry {
-            registry: "routes-meta",
-            detail: format!("malformed serving artifact `{artifact}`"),
-        })
-    }
 }
 
 /// Validates and converts one operation.
@@ -1201,8 +1039,6 @@ fn build_operation(
     error_codes: &[&str],
     scope_names: &BTreeSet<&str>,
     id_keys: &BTreeSet<&str>,
-    actual_owners: &BTreeMap<String, String>,
-    deferred_operations: &BTreeMap<String, String>,
 ) -> Result<OperationIr, GenError> {
     let bad = |detail: String| GenError::Operation {
         id: entry.id.clone(),
@@ -1223,42 +1059,20 @@ fn build_operation(
             "fragment `{scenario_key}` has an empty scenario owner list"
         )));
     }
-    validate_artifact_id(&owner.serving_artifact).map_err(|_| {
-        bad(format!(
+    if !owner
+        .serving_artifact
+        .chars()
+        .enumerate()
+        .all(|(index, character)| {
+            character.is_ascii_lowercase()
+                || character.is_ascii_digit()
+                || (character == '-' && index > 0)
+        })
+    {
+        return Err(bad(format!(
             "fragment `{scenario_key}` has invalid serving artifact `{}`",
             owner.serving_artifact
-        ))
-    })?;
-    let Some(owner_plane) = meta.serving_artifacts.get(&owner.serving_artifact) else {
-        return Err(bad(format!(
-            "fragment `{scenario_key}` names undeclared serving artifact `{}`",
-            owner.serving_artifact
         )));
-    };
-    if owner_plane != plane {
-        return Err(bad(format!(
-            "fragment `{scenario_key}` is on `{plane}` but serving artifact `{}` is declared on `{owner_plane}`",
-            owner.serving_artifact
-        )));
-    }
-    let served_artifact = actual_owners.get(&entry.id).cloned();
-    let deferred_reason = deferred_operations.get(&entry.id).cloned();
-    if let Some(actual) = &served_artifact {
-        let actual_plane = meta
-            .serving_artifacts
-            .get(actual)
-            .expect("actual_route_owners rejects undeclared artifacts");
-        if actual_plane != plane {
-            return Err(bad(format!(
-                "operation is on `{plane}` but actual serving artifact `{actual}` is declared on `{actual_plane}`"
-            )));
-        }
-        if actual != &owner.serving_artifact {
-            return Err(bad(format!(
-                "operation is planned for `{}` but claims it is actually served by `{actual}`",
-                owner.serving_artifact
-            )));
-        }
     }
     let mut unique_scenarios = BTreeSet::new();
     for scenario in &owner.scenarios {
@@ -1402,8 +1216,6 @@ fn build_operation(
         plane: plane.to_owned(),
         fragment: fragment.to_owned(),
         serving_artifact: owner.serving_artifact.clone(),
-        served_artifact,
-        deferred_reason,
         scenarios: owner.scenarios.clone(),
         method: entry.method.clone(),
         path: entry.path.clone(),

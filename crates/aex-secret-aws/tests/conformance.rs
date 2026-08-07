@@ -11,7 +11,7 @@ use aws_sdk_kms::Client;
 use aws_sdk_kms::config::{BehaviorVersion, Credentials, Region};
 use aws_smithy_http_client::test_util::{CaptureRequestReceiver, capture_request};
 
-use support::{FakeKeys, Pinned, WRAPPED, context, now, plaintext, session_context};
+use support::{FakeKeys, Pinned, WRAPPED, context, now, plaintext};
 
 fn capturing_kms() -> (Client, CaptureRequestReceiver) {
     let (http_client, receiver) = capture_request(None);
@@ -66,39 +66,6 @@ async fn the_serialized_decrypt_carries_the_context_and_never_the_secret_name() 
     assert_eq!(
         parsed["KeyId"].as_str(),
         Some("arn:aws:kms:eu-west-1:000000000000:key/secret")
-    );
-}
-
-#[tokio::test]
-async fn reencrypt_sends_exact_source_and_destination_contexts_to_the_same_root_key() {
-    let (client, receiver) = capturing_kms();
-    let key_arn = "arn:aws:kms:eu-west-1:000000000000:key/secret";
-    let keys = KmsBranchKeys::new(client, key_arn);
-    let source = context("acme-production-stripe", 1);
-    let destination = session_context("acme-production-stripe", 9);
-    let source_pairs = aex_secret_aws::context::kms_pairs(&source);
-    let destination_pairs = aex_secret_aws::context::kms_pairs(&destination);
-
-    let _ignored = keys
-        .rewrap(WRAPPED, &source_pairs, &destination_pairs)
-        .await;
-
-    let request = receiver.expect_request();
-    let body = request.body().bytes().expect("the KMS body is in memory");
-    let parsed: serde_json::Value = serde_json::from_slice(body).expect("the KMS body is JSON");
-    assert_eq!(
-        parsed["SourceEncryptionContext"],
-        serde_json::to_value(&source_pairs).expect("serializes")
-    );
-    assert_eq!(
-        parsed["DestinationEncryptionContext"],
-        serde_json::to_value(&destination_pairs).expect("serializes")
-    );
-    assert_eq!(parsed["SourceKeyId"].as_str(), Some(key_arn));
-    assert_eq!(parsed["DestinationKeyId"].as_str(), Some(key_arn));
-    assert!(
-        !String::from_utf8_lossy(body).contains("acme-production-stripe"),
-        "the customer-chosen name reached the ReEncrypt request"
     );
 }
 

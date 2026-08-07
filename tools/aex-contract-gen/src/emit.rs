@@ -83,10 +83,6 @@ pub fn emit_all(ir: &ContractIr) -> GeneratedTree {
         crate::emit_client::rust_client(ir, &digest),
     );
     tree.insert(
-        "packages/wire/src/generated/models.ts",
-        crate::typescript::typescript_wire(ir, &digest),
-    );
-    tree.insert(
         "conformance/routes/bindings.jsonl",
         route_binding_corpus(ir),
     );
@@ -317,18 +313,6 @@ fn route_registry_document(operation: &OperationIr) -> Value {
             "servingArtifact".to_owned(),
             json!(operation.serving_artifact),
         );
-    if let Some(served_artifact) = &operation.served_artifact {
-        document
-            .as_object_mut()
-            .expect("route documents are objects")
-            .insert("servedArtifact".to_owned(), json!(served_artifact));
-    }
-    if let Some(reason) = &operation.deferred_reason {
-        document
-            .as_object_mut()
-            .expect("route documents are objects")
-            .insert("deferredReason".to_owned(), json!(reason));
-    }
     document
 }
 
@@ -986,35 +970,6 @@ fn rust_limits(ir: &ContractIr, digest: &str) -> String {
     source.line("        }");
     source.line("    }");
     source.blank();
-    source.doc(
-        4,
-        "The complete ordered dimension vocabulary for a map limit.",
-    );
-    source.line("    #[must_use]");
-    source.line("    pub const fn dimensions(self) -> &'static [&'static str] {");
-    source.line("        match self {");
-    for row in &ir.limits {
-        let dimensions = row
-            .dimensions
-            .iter()
-            .map(|dimension| quote(dimension))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let value = format!("&[{dimensions}]");
-        let line_width = 12 + "Self::".len() + row.variant.len() + " => ".len() + value.len() + 1;
-        if line_width <= 100 {
-            source.arm(12, &row.variant, &value);
-        } else {
-            source.line(&format!("            Self::{} => &[", row.variant));
-            for dimension in &row.dimensions {
-                source.line(&format!("                {},", quote(dimension)));
-            }
-            source.line("            ],");
-        }
-    }
-    source.line("        }");
-    source.line("    }");
-    source.blank();
     source.doc(4, "Resolves a wire spelling.");
     source.line("    #[must_use]");
     source.line("    pub fn parse(text: &str) -> Option<Self> {");
@@ -1038,7 +993,6 @@ mod scenario_identity_tests {
             .scenarios
             .push("SC-SELECTION-PROBE".to_owned());
         changed.planes[0].operations[0].serving_artifact = "selection-probe".to_owned();
-        changed.planes[0].operations[0].served_artifact = Some("selection-probe".to_owned());
 
         let original_bundle = bundle_document(&original);
         let changed_bundle = bundle_document(&changed);

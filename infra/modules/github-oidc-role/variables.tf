@@ -1,18 +1,3 @@
-variable "role_name" {
-  type        = string
-  description = "Exact plane-scoped IAM role name. The caller owns physical naming so two planes in one account cannot collide."
-
-  validation {
-    condition     = can(regex("^aex-[a-z0-9][a-z0-9-]{2,59}$", var.role_name))
-    error_message = "The role name must be an exact 6-63 character lowercase `aex-...` name."
-  }
-
-  validation {
-    condition     = !strcontains(var.role_name, "*")
-    error_message = "The role name must be exact; wildcards are not physical identities."
-  }
-}
-
 variable "repository" {
   type        = string
   description = "The one repository permitted to assume the role, as `owner/name`."
@@ -58,22 +43,6 @@ variable "allowed_refs" {
   }
 }
 
-variable "allowed_environments" {
-  type        = list(string)
-  default     = []
-  description = "Exact protected GitHub Environment names. When non-empty, only environment subjects may assume the role; the plain ref subject is deliberately excluded."
-
-  validation {
-    condition     = alltrue([for environment in var.allowed_environments : can(regex("^aex-(dev|prd)$", environment))])
-    error_message = "Every protected environment must be exactly `aex-dev` or `aex-prd`."
-  }
-
-  validation {
-    condition     = alltrue([for environment in var.allowed_environments : !strcontains(environment, "*")])
-    error_message = "An environment pattern is not allowed; name every protected environment exactly."
-  }
-}
-
 variable "allowed_workflows" {
   type        = list(string)
   description = "Workflow file paths permitted to assume the role, such as `.github/workflows/main.yml`. Exact paths only."
@@ -99,61 +68,38 @@ variable "permissions_profile" {
   }
 }
 
-variable "profile_statements" {
-  type = map(list(object({
-    sid       = string
-    actions   = list(string)
-    resources = list(string)
-  })))
-  description = "Independent IAM statements per profile. Actions and resources are paired in each statement so an unscopable action can use `*` without widening the profile's resource-scoped mutations."
+variable "permission_profiles" {
+  type        = map(list(string))
+  description = "Actions granted by each profile. Supplied by the root so the profile contents are auditable in one place rather than buried in a module."
 
   validation {
-    condition = (
-      length(setsubtract(toset(keys(var.profile_statements)), toset(["publish", "plan", "deploy", "readonly"]))) == 0
-      && length(setsubtract(toset(["publish", "plan", "deploy", "readonly"]), toset(keys(var.profile_statements)))) == 0
-    )
+    condition     = length(setsubtract(["publish", "plan", "deploy", "readonly"], keys(var.permission_profiles))) == 0
     error_message = "All four profiles must be defined: `publish`, `plan`, `deploy` and `readonly`."
   }
 
   validation {
     condition = length(setintersection(
-      toset(flatten([
-        for statement in lookup(var.profile_statements, "publish", []) : [
-          for action in statement.actions : [for resource in statement.resources : "${action}|${resource}"]
-        ]
-      ])),
-      toset(flatten([
-        for statement in lookup(var.profile_statements, "deploy", []) : [
-          for action in statement.actions : [for resource in statement.resources : "${action}|${resource}"]
-        ]
-      ]))
+      toset(lookup(var.permission_profiles, "publish", [])),
+      toset(lookup(var.permission_profiles, "deploy", []))
     )) == 0
-    error_message = "The `publish` and `deploy` profiles must share no action/resource grant; one credential must not be able to mint bytes and roll them out."
+    error_message = "The `publish` and `deploy` profiles must be disjoint; an action in both would let one credential mint bytes and roll them out."
   }
 
   validation {
     condition = alltrue(flatten([
-      for profile, statements in var.profile_statements : [
-        for statement in statements : (
-          can(regex("^[A-Za-z0-9]+$", statement.sid))
-          && length(statement.actions) > 0
-          && length(statement.resources) > 0
-          && alltrue([for action in statement.actions : action != "*" && !endswith(action, ":*")])
-          && alltrue([for resource in statement.resources : trimspace(resource) != ""])
-          && (!contains(statement.resources, "*") || length(statement.resources) == 1)
-        )
-      ]
+      for p, actions in var.permission_profiles : [for a in actions : !contains(["*"], a) && !endswith(a, ":*")]
     ]))
-    error_message = "Every statement needs an alphanumeric Sid, non-empty actions/resources, no wildcard action, and either exact resources or `*` alone."
+    error_message = "No profile may grant a wildcard action."
   }
+}
+
+variable "profile_resources" {
+  type        = map(list(string))
+  description = "Resources each profile's actions apply to."
 
   validation {
-    condition = alltrue([
-      for profile, statements in var.profile_statements : (
-        length(distinct([for statement in statements : statement.sid])) == length(statements)
-      )
-    ])
-    error_message = "Statement Sids must be unique inside each profile."
+    condition     = length(setsubtract(["publish", "plan", "deploy", "readonly"], keys(var.profile_resources))) == 0
+    error_message = "All four profiles must declare their resources."
   }
 }
 

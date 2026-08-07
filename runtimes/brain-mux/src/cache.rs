@@ -1,5 +1,5 @@
-//! The warm fold cache's dormant lifecycle: pressure bands, adaptive idle eviction and
-//! TTL-zero release.
+//! The warm fold cache's lifecycle: pressure bands, adaptive idle eviction, TTL-zero
+//! release.
 //!
 //! The cache may change latency and nothing else. Entries are keyed `(agent, revision)`, so
 //! an entry can only be *stale*, never *wrong*, and a hit still validates the authoritative
@@ -8,11 +8,9 @@
 //! it disabled.
 //!
 //! Its byte budget is separate from accepted work's. Evicting an admitted activation's
-//! context to keep a cache entry would turn an optimization into a failure. Production keeps
-//! this cache disabled until a resident-memory measurement can own `WarmCacheBytes`; replay
-//! body bytes alone are not evidence of the Rust fold's heap residency.
+//! context to keep a cache entry would turn an optimization into a failure.
 
-use aex_brain_application::kernel::{FoldCache, WarmCacheShard, WarmEntry};
+use aex_brain_application::kernel::{WarmCacheShard, WarmEntry};
 use aex_brain_domain::ids::{AgentKey, AgentRevision};
 
 /// The default idle retention of a warm entry.
@@ -110,20 +108,6 @@ impl Default for CachePolicy {
 }
 
 impl CachePolicy {
-    /// A fail-closed policy which retains no fold state.
-    ///
-    /// This is the production policy until cache entries can acquire exact resident-byte
-    /// permits. Keeping the constructor named makes accidental re-enablement visible in the
-    /// composition diff.
-    #[must_use]
-    pub const fn disabled() -> Self {
-        Self {
-            ttl: core::time::Duration::ZERO,
-            budget_bytes: 0,
-            entry_cap_bytes: 0,
-        }
-    }
-
     /// Whether the cache is disabled.
     ///
     /// TTL zero releases the entry and its memory reservation in the same code path that
@@ -146,79 +130,6 @@ impl CachePolicy {
             Band::Reserved => core::time::Duration::from_secs(self.ttl.as_secs() / 4),
             Band::Critical => core::time::Duration::ZERO,
         }
-    }
-
-    fn ttl_millis(&self) -> u64 {
-        u64::try_from(self.ttl.as_millis()).unwrap_or(u64::MAX)
-    }
-}
-
-/// The process-local cache bound into activation.
-///
-/// Policy remains a mux concern while the application sees only the synchronous
-/// [`FoldCache`] capability. This keeps TTL and memory sizing out of the durable engine.
-#[derive(Debug)]
-pub struct ConfiguredFoldCache {
-    shard: WarmCacheShard,
-    policy: CachePolicy,
-}
-
-impl ConfiguredFoldCache {
-    /// Builds the one process-local shard under the configured byte ceilings.
-    #[must_use]
-    pub fn new(policy: CachePolicy) -> Self {
-        Self {
-            shard: WarmCacheShard::new(policy.budget_bytes, policy.entry_cap_bytes),
-            policy,
-        }
-    }
-
-    /// Exact cached canonical bytes.
-    #[must_use]
-    pub fn bytes(&self) -> usize {
-        self.shard.bytes()
-    }
-}
-
-impl FoldCache for ConfiguredFoldCache {
-    fn load(&self, key: &AgentKey, revision: AgentRevision, tick: u64) -> Option<WarmEntry> {
-        if self.policy.is_disabled() {
-            return None;
-        }
-        self.shard
-            .get_entry_with_max_idle(key, revision, tick, self.policy.ttl_millis())
-    }
-
-    fn store(
-        &self,
-        key: AgentKey,
-        revision: AgentRevision,
-        state: &aex_brain_domain::fold::FoldState,
-        bytes: usize,
-        tick: u64,
-    ) -> bool {
-        if self.policy.is_disabled()
-            || bytes == 0
-            || bytes > self.policy.entry_cap_bytes
-            || bytes > self.policy.budget_bytes
-        {
-            return false;
-        }
-        store(
-            &self.shard,
-            &self.policy,
-            key,
-            WarmEntry {
-                revision,
-                state: state.clone(),
-                bytes,
-                last_used: tick,
-            },
-        )
-    }
-
-    fn remove(&self, key: &AgentKey, revision: AgentRevision) {
-        self.shard.remove(key, revision);
     }
 }
 
@@ -253,12 +164,7 @@ pub fn store(
     key: AgentKey,
     entry: WarmEntry,
 ) -> bool {
-    if policy.is_disabled() {
-        return false;
-    }
-    shard.evict_idle(entry.last_used, policy.ttl_millis());
-    if entry.bytes == 0 || entry.bytes > policy.entry_cap_bytes || entry.bytes > policy.budget_bytes
-    {
+    if policy.is_disabled() || entry.bytes > policy.entry_cap_bytes {
         return false;
     }
     shard.insert(key, entry)
@@ -278,31 +184,22 @@ pub fn load(
     if policy.is_disabled() {
         return None;
     }
-    shard
-        .get_entry_with_max_idle(key, revision, tick, policy.ttl_millis())
-        .map(|entry| entry.state)
+    shard.get(key, revision, tick)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        Band, CachePolicy, ConfiguredFoldCache, DEFAULT_TTL, ENTRY_CAP_BYTES,
-        HARD_THRESHOLD_PERCENT, MIN_RESIDENCY, SOFT_THRESHOLD_PERCENT, load, should_evict, store,
+        Band, CachePolicy, DEFAULT_TTL, ENTRY_CAP_BYTES, HARD_THRESHOLD_PERCENT, MIN_RESIDENCY,
+        SOFT_THRESHOLD_PERCENT, load, should_evict, store,
     };
-    use aex_brain_application::kernel::{FoldCache, WarmCacheShard, WarmEntry};
+    use aex_brain_application::kernel::{WarmCacheShard, WarmEntry};
     use aex_brain_domain::fold::FoldState;
-    use aex_brain_domain::ids::{AgentId, AgentKey, AgentRevision, ContentHash, SessionId};
+    use aex_brain_domain::ids::{AgentId, AgentKey, AgentRevision, SessionId};
     use uuid::Uuid;
 
     fn key() -> AgentKey {
-        key_for(1)
-    }
-
-    fn key_for(value: u128) -> AgentKey {
-        AgentKey::new(
-            SessionId(Uuid::from_u128(value)),
-            AgentId(Uuid::from_u128(value.saturating_add(1))),
-        )
+        AgentKey::new(SessionId(Uuid::from_u128(1)), AgentId(Uuid::from_u128(2)))
     }
 
     fn entry(revision: u64, bytes: usize) -> WarmEntry {
@@ -377,72 +274,14 @@ mod tests {
     /// with it and must see identical semantics.
     #[test]
     fn a_ttl_of_zero_disables_the_cache_entirely() {
-        let policy = CachePolicy::disabled();
+        let policy = CachePolicy {
+            ttl: core::time::Duration::ZERO,
+            ..CachePolicy::default()
+        };
         assert!(policy.is_disabled());
         let shard = WarmCacheShard::new(1 << 20, ENTRY_CAP_BYTES);
         assert!(!store(&shard, &policy, key(), entry(1, 16)));
         assert!(load(&shard, &policy, &key(), AgentRevision(1), 0).is_none());
-    }
-
-    /// The exact TTL is enforced on reads, and a store also sweeps inactive keys so an
-    /// abandoned agent does not retain state until its own next activation.
-    #[test]
-    fn ttl_expires_on_load_and_store() {
-        let policy = CachePolicy {
-            ttl: core::time::Duration::from_millis(100),
-            budget_bytes: 1 << 20,
-            entry_cap_bytes: 1 << 20,
-        };
-        let shard = WarmCacheShard::new(policy.budget_bytes, policy.entry_cap_bytes);
-        assert!(store(&shard, &policy, key_for(1), entry(1, 16)));
-        assert!(load(&shard, &policy, &key_for(1), AgentRevision(1), 99).is_some());
-        assert!(load(&shard, &policy, &key_for(1), AgentRevision(1), 199).is_none());
-        assert_eq!(shard.bytes(), 0);
-
-        assert!(store(&shard, &policy, key_for(2), entry(1, 16)));
-        let mut next = entry(1, 32);
-        next.last_used = 100;
-        assert!(store(&shard, &policy, key_for(3), next));
-        assert_eq!(shard.bytes(), 32, "the store swept the expired first key");
-    }
-
-    /// Zero is not an honest resident-memory claim for a heap-owning fold. Refusing it also
-    /// prevents an unbounded number of zero-cost map entries from defeating the byte ceiling.
-    #[test]
-    fn zero_accounted_entries_are_refused() {
-        let policy = CachePolicy::default();
-        let shard = WarmCacheShard::new(policy.budget_bytes, policy.entry_cap_bytes);
-        assert!(!store(&shard, &policy, key(), entry(1, 0)));
-        assert!(shard.is_empty());
-    }
-
-    /// A 1 MiB fold obeys the declared ceiling exactly, while the production-disabled cache
-    /// declines the same borrowed state without retaining or cloning it.
-    #[test]
-    fn one_mib_fold_is_bounded_and_disabled_cache_retains_nothing() {
-        const MIB: usize = 1_024 * 1_024;
-        let mut state = FoldState::empty();
-        state.hashes = vec![ContentHash([0x5a; 32]); MIB / 32];
-        let enabled = ConfiguredFoldCache::new(CachePolicy {
-            ttl: core::time::Duration::from_mins(1),
-            budget_bytes: MIB,
-            entry_cap_bytes: MIB,
-        });
-        assert!(enabled.store(key(), AgentRevision(1), &state, MIB, 0));
-        assert_eq!(enabled.bytes(), MIB);
-        assert!(!enabled.store(
-            key_for(2),
-            AgentRevision(1),
-            &state,
-            MIB.saturating_add(1),
-            1,
-        ));
-        assert_eq!(enabled.bytes(), MIB);
-
-        let disabled = ConfiguredFoldCache::new(CachePolicy::disabled());
-        assert!(!disabled.store(key(), AgentRevision(1), &state, MIB, 0));
-        assert_eq!(disabled.bytes(), 0);
-        assert!(disabled.load(&key(), AgentRevision(1), 0).is_none());
     }
 
     #[test]

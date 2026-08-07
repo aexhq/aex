@@ -4,7 +4,7 @@ import { useState } from "react";
 
 import { DEADLINE_MS, useResource } from "../client";
 import { Card, Empty, Notice, Resolved } from "../components";
-import { usageThrough } from "../panel";
+import { centsToUsd, ratedThrough } from "../panel";
 import { bytes, instant, label } from "../status";
 import type { UsageAggregate, UsagePage } from "../wire";
 
@@ -25,11 +25,15 @@ function quantity(row: UsageAggregate): string {
 }
 
 /**
- * Measured usage.
+ * Rated usage.
  *
- * The regional usage authority reports four incompatible physical quantities.
- * Monetary rating belongs to central finance statements, so this panel neither
- * fabricates a price nor combines unlike units into a misleading total.
+ * There is no chart. The four categories are measured in four incompatible units,
+ * and the only figure they share is the rated amount, which is already exact — a
+ * bar chart over four exact numbers adds a scale to be misread and nothing else.
+ *
+ * The total is clamped to the pipeline frontier: anything after `serviceThrough`
+ * has been metered but not priced, so showing it as a total would state a cost the
+ * authority has not computed. The clamp is stated, not silent.
  */
 export function UsagePanel({
   workspaceId,
@@ -54,8 +58,8 @@ export function UsagePanel({
 
   return (
     <Card
-      title="Measured usage"
-      description="Regional usage quantities. Monetary charges are recorded in central billing statements."
+      title="Rated usage"
+      description="What this workspace consumed, priced by the usage authority."
       actions={
         <>
           <label className="field">
@@ -82,54 +86,81 @@ export function UsagePanel({
     >
       <Resolved state={state} reload={reload} billingHref={billingHref}>
         {(page) => {
-          const frontier = usageThrough(page.frontiers);
+          const frontier = ratedThrough(page.frontiers);
+          const priced = frontier === null
+            ? []
+            : page.items.filter((row) => row.attribution.serviceTime.lt <= frontier);
+          const withheld = page.items.length - priced.length;
+          const total = priced.reduce((sum, row) => sum + Number(row.attribution.ratedCents), 0);
 
           return (
             <>
               <div style={{ padding: "var(--aex-space-4)" }} className="stack">
                 {frontier === null ? (
-                  <Notice status="warning" title="Usage coverage is still starting" live>
+                  <Notice status="serious" title="No pricing frontier was reported" live>
                     <p className="small">
-                      At least one category has no service frontier yet. The measured rows below are
-                      valid, but this view cannot claim a complete cross-category coverage instant.
+                      Without a frontier there is no instant these numbers are complete through, so
+                      no total is shown. The rows below are raw aggregates only.
                     </p>
                   </Notice>
                 ) : (
-                  <div className="stat">
-                    <span className="stat-label">Shared service frontier</span>
-                    <span className="stat-value">{instant(frontier)}</span>
-                    <span className="stat-note">Earliest observed service time across the returned categories.</span>
-                  </div>
+                  <>
+                    <div className="stat">
+                      <span className="stat-label">Rated in this window</span>
+                      <span className="stat-value">{centsToUsd(String(total))}</span>
+                      <span className="stat-note">
+                        Complete through {instant(frontier)}
+                        {withheld > 0
+                          ? ` · ${withheld} aggregate${withheld === 1 ? "" : "s"} measured after the frontier are excluded from this total`
+                          : ""}
+                      </span>
+                    </div>
+                    {withheld > 0 ? (
+                      <Notice status="warning" title="Part of this window is not priced yet" live>
+                        <p className="small">
+                          {withheld} aggregate{withheld === 1 ? "" : "s"} fall after the pipeline
+                          frontier. They are listed below and marked, and they are not in the total,
+                          because their price has not been computed.
+                        </p>
+                      </Notice>
+                    ) : null}
+                  </>
                 )}
               </div>
 
               {page.items.length === 0 ? (
                 <Empty
-                  title="No measured usage in this window."
-                  hint="A new workspace or very recent window can legitimately be empty."
+                  title="No rated usage in this window."
+                  hint="Usage is rated after service time; a very recent window can legitimately be empty."
                 />
               ) : (
                 <div className="scroller">
                   <table>
-                    <caption className="sr-only">Measured usage aggregates</caption>
+                    <caption className="sr-only">Rated usage aggregates</caption>
                     <thead>
                       <tr>
                         <th scope="col">Category</th>
                         <th scope="col">Quantity</th>
                         <th scope="col">Service time</th>
                         <th scope="col">Region</th>
+                        <th scope="col">Rated</th>
                       </tr>
                     </thead>
                     <tbody>
                       {page.items.map((row, index) => {
+                        const pending = frontier !== null && row.attribution.serviceTime.lt > frontier;
                         return (
                           <tr key={`${row.category}-${row.attribution.serviceTime.gte}-${index}`}>
                             <td className="small">{label(row.category)}</td>
                             <td className="small muted">{quantity(row)}</td>
                             <td className="small muted">
                               {instant(row.attribution.serviceTime.gte)}
+                              {pending ? <span className="muted"> · not priced yet</span> : null}
                             </td>
                             <td className="small muted">{row.attribution.region}</td>
+                            <td className="numeric">
+                              {pending ? "—" : centsToUsd(row.attribution.ratedCents)}
+                            </td>
                           </tr>
                         );
                       })}

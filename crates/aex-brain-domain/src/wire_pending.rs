@@ -4,8 +4,7 @@
 //! lower authorities. This module retains only Brain journal/configuration
 //! shapes that do not yet have an importable owner.
 
-use aex_wire::ids::{GenerationId, ProviderCredentialId};
-use core::num::NonZeroU64;
+use aex_wire::ids::GenerationId;
 use serde::{Deserialize, Serialize};
 
 use crate::effect::EffectClass;
@@ -86,11 +85,6 @@ pub struct ResolvedAgentConfig {
     pub catalog_pin: CatalogPin,
     /// The provider the agent's model calls are bound to.
     pub provider: ProviderId,
-    /// The exact provider credential admitted with the session.
-    ///
-    /// This is immutable journal state. Runtime dispatch must never resolve a
-    /// mutable workspace default in its place.
-    pub credential: SessionCredentialPin,
     /// The exact model slug.
     pub model: ModelSlug,
     /// System instruction reference, when one is configured.
@@ -101,49 +95,6 @@ pub struct ResolvedAgentConfig {
     pub hands_generation: GenerationId,
     /// Per-agent run limits.
     pub limits: AgentLimits,
-}
-
-/// The immutable provider-credential authority admitted with a session.
-///
-/// The four scalar fields are normalized here rather than importing secret
-/// storage types into Brain. The gateway converts them at its custody boundary.
-/// Keeping this value `Copy` also means dispatch adds no allocation or secret
-/// material to the hot path.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SessionCredentialPin {
-    /// The stable `pcr_` binding identity.
-    pub binding: ProviderCredentialId,
-    /// The immutable binding revision.
-    pub revision: NonZeroU64,
-    /// The workspace-secret source generation.
-    pub generation: NonZeroU64,
-    /// The secret revocation epoch observed at session admission.
-    pub revocation_epoch: u64,
-}
-
-impl SessionCredentialPin {
-    /// Builds a pin, refusing zero revision or source generation.
-    #[must_use]
-    pub const fn new(
-        binding: ProviderCredentialId,
-        revision: u64,
-        generation: u64,
-        revocation_epoch: u64,
-    ) -> Option<Self> {
-        let Some(revision) = NonZeroU64::new(revision) else {
-            return None;
-        };
-        let Some(generation) = NonZeroU64::new(generation) else {
-            return None;
-        };
-        Some(Self {
-            binding,
-            revision,
-            generation,
-            revocation_epoch,
-        })
-    }
 }
 
 /// Per-agent structural limits carried by the pinned config.
