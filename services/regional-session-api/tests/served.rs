@@ -275,7 +275,11 @@ impl OperationApiStore for FakeOperations {
                 )),
             }
         });
-        Ok(PositionPage { items, next })
+        Ok(PositionPage {
+            items,
+            next,
+            isolated: 0,
+        })
     }
 
     async fn request_cancel(

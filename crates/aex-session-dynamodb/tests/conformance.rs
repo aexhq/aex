@@ -390,6 +390,57 @@ async fn a_provider_short_slice_spends_the_remaining_physical_budget_before_endi
     }
 }
 
+/// The sparse index is eventually consistent and the base row can be purged
+/// between the index read and hydration, so a located row that is already gone
+/// is a race, not corruption. The page skips it, counts the skip, and still
+/// answers — escalating the race to `Corrupt` was a customer 5xx for a row the
+/// customer never asked about.
+#[tokio::test]
+async fn a_located_operation_whose_authority_row_is_gone_is_isolated_rather_than_a_failure() {
+    let first = OperationId::from_uuid7(Uuid7::compose(1_754_051_696_790, [8; 10]));
+    let second = OperationId::from_uuid7(Uuid7::compose(1_754_051_696_791, [9; 10]));
+    let first_at = "2026-08-01T12:34:56.790Z";
+    let second_at = "2026-08-01T12:34:56.791Z";
+    let first_last = serde_json::json!({
+        "pk": {"S": format!("OP#{first}")},
+        "sk": {"S": "STATE"},
+        "wsIndexPk": {"S": format!("WS#{}#OP", workspace())},
+        "wsIndexSk": {"S": format!("{first_at}#{first}")}
+    });
+    let responses = vec![
+        serde_json::json!({
+            "Items": [projected_operation_row(first, first_at)],
+            "LastEvaluatedKey": first_last,
+        })
+        .to_string(),
+        // The strong hydration of the first locator finds nothing behind it.
+        serde_json::json!({}).to_string(),
+        serde_json::json!({"Items": [projected_operation_row(second, second_at)]}).to_string(),
+        serde_json::json!({"Item": operation_row(second, second_at)}).to_string(),
+    ];
+    let (client, _replay) = scripted_client(responses);
+    let store = OperationStore::new(client, &tables().session_authority);
+    let page = store
+        .page(
+            workspace(),
+            &OperationFilter::default(),
+            PageBudget::new(2).expect("a two-row read budget"),
+            None,
+        )
+        .await
+        .expect("the race is absorbed rather than escalated");
+    assert_eq!(
+        page.items
+            .iter()
+            .map(|stored| stored.record.id)
+            .collect::<Vec<_>>(),
+        [second],
+        "the row that still exists is served"
+    );
+    assert_eq!(page.isolated, 1, "the skip is counted, never silent");
+    assert_eq!(page.next, None);
+}
+
 #[test]
 fn a_public_cancel_request_fences_the_exact_observed_operation() {
     let request = OperationCancelRequest {

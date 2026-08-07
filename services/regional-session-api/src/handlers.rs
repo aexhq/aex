@@ -382,6 +382,15 @@ impl RegionalOperationsApi for Routes {
             )
             .await
             .map_err(|error| authority_failure(&error))?;
+        if page.isolated > 0 {
+            // The GSI-hit/base-miss race is legitimate — an eventually
+            // consistent index racing a purge — but it must stay visible: a
+            // growing count is an index-integrity signal, not noise.
+            eprintln!(
+                "regional-session-api: an operation listing isolated {} stale locator(s) for workspace {}",
+                page.isolated, self.cx.auth.workspace_id
+            );
+        }
         let items = page
             .items
             .iter()

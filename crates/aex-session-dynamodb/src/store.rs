@@ -116,6 +116,12 @@ pub struct PositionPage<T> {
     pub items: Vec<T>,
     /// Where the next page starts, when there is one.
     pub next: Option<PagePosition>,
+    /// Locators the sparse index served whose authority row was already gone —
+    /// an eventually consistent index racing a purge. The row is skipped
+    /// rather than answered as corruption, and the skip is counted here so the
+    /// serving edge can log it; a bare skip would hide an index-integrity
+    /// signal.
+    pub isolated: u32,
 }
 
 /// One session collection page and the deletion generation under which it was read.
@@ -324,34 +330,56 @@ impl OperationStore {
         }
     }
 
+    /// Strongly hydrates every located operation, isolating locators whose
+    /// authority row is already gone.
+    ///
+    /// The sparse index is eventually consistent and the base row can be
+    /// purged between the index read and this hydration, so an absent row is a
+    /// legitimate race rather than corruption: it is skipped and counted. A
+    /// row that exists but contradicts its locator remains
+    /// [`StoreError::Corrupt`] — that is a forged or mis-projected index
+    /// entry, not a race.
     async fn hydrate_operations(
         &self,
         workspace: WorkspaceId,
         projected: &[Item],
-    ) -> Result<Vec<StoredOperation>, StoreError> {
+    ) -> Result<HydratedOperations, StoreError> {
         let operation_ids = projected
             .iter()
             .map(|item| projected_operation_id(item, workspace))
             .collect::<Result<Vec<_>, _>>()?;
-        settle_bounded_ordered(operation_ids, |operation| async move {
-            let stored = OperationAuthority::load(self, workspace, operation)
-                .await?
-                .ok_or_else(|| {
-                    malformed_operation(
-                        "operationId",
-                        "the sparse index named an operation whose authority row is absent",
-                    )
-                })?;
+        let hydrated = settle_bounded_ordered(operation_ids, |operation| async move {
+            let Some(stored) = OperationAuthority::load(self, workspace, operation).await? else {
+                return Ok(None);
+            };
             if stored.record.id != operation || !stored.record.kind.is_public() {
                 return Err(malformed_operation(
                     "operationId",
                     "the hydrated authority row does not match its public index locator",
                 ));
             }
-            Ok(stored)
+            Ok(Some(stored))
         })
-        .await
+        .await?;
+        let mut operations = HydratedOperations {
+            items: Vec::with_capacity(hydrated.len()),
+            isolated: 0,
+        };
+        for entry in hydrated {
+            match entry {
+                Some(stored) => operations.items.push(stored),
+                None => operations.isolated = operations.isolated.saturating_add(1),
+            }
+        }
+        Ok(operations)
     }
+}
+
+/// One hydration pass: the rows that exist, plus the located rows that were
+/// already gone.
+struct HydratedOperations {
+    items: Vec<StoredOperation>,
+    isolated: u32,
 }
 
 async fn settle_bounded_ordered<I, F, Fut, T, E>(items: I, hydrate: F) -> Result<Vec<T>, E>
@@ -628,6 +656,7 @@ impl OperationApiStore for OperationStore {
         let mut remaining = budget.items();
         let mut start = after.cloned();
         let mut items = Vec::new();
+        let mut isolated = 0_u32;
         let next = loop {
             let output = self
                 .client
@@ -684,9 +713,11 @@ impl OperationApiStore for OperationStore {
                 break continuation;
             }
             remaining -= physical;
+            let hydrated = self.hydrate_operations(workspace, &projected).await?;
+            isolated = isolated.saturating_add(hydrated.isolated);
             items.extend(
-                self.hydrate_operations(workspace, &projected)
-                    .await?
+                hydrated
+                    .items
                     .into_iter()
                     .filter(|stored| filter.matches(&stored.record)),
             );
@@ -695,7 +726,11 @@ impl OperationApiStore for OperationStore {
             }
             start = continuation;
         };
-        Ok(PositionPage { items, next })
+        Ok(PositionPage {
+            items,
+            next,
+            isolated,
+        })
     }
 
     async fn request_cancel(
