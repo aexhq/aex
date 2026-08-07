@@ -45,29 +45,34 @@ async fn a_canonical_session_point_read_is_strong_and_targets_only_the_head() {
 }
 
 #[tokio::test]
-async fn a_scoped_run_point_read_is_one_atomic_two_item_read() {
-    let (client, receiver) = capturing_client();
+async fn a_scoped_run_point_read_is_two_concurrent_strong_point_reads() {
+    // Two plain `GetItem`s, never a `TransactGetItems`: the serializable read
+    // pair mutually cancelled with the session's own write transactions, so a
+    // busy session's runs were unreadable exactly while they were written.
+    let (client, replay) = scripted_client(vec![
+        serde_json::json!({}).to_string(),
+        serde_json::json!({}).to_string(),
+    ]);
     let reads = SessionReads::new(client, &tables().session_authority);
     let _ignored = reads.load_run(workspace(), session(), run_id()).await;
 
-    let body = captured_body(receiver);
-    let reads = body["TransactItems"]
-        .as_array()
-        .expect("a transactional point read");
-    assert_eq!(reads.len(), 2);
-    assert_eq!(
-        reads[0]["Get"]["Key"]["pk"]["S"],
-        format!("SESSION#{}", session())
-    );
-    assert_eq!(reads[0]["Get"]["Key"]["sk"]["S"], "HEAD");
-    assert_eq!(
-        reads[1]["Get"]["Key"]["pk"]["S"],
-        format!("SESSION#{}", session())
-    );
-    assert_eq!(
-        reads[1]["Get"]["Key"]["sk"]["S"],
-        format!("RUN#{}", run_id())
-    );
+    let bodies = request_bodies(&replay);
+    assert_eq!(bodies.len(), 2, "one head read and one child read");
+    let mut sort_keys = Vec::new();
+    for body in &bodies {
+        assert!(
+            body["TransactItems"].is_null(),
+            "a scoped point read must not open a read transaction"
+        );
+        assert_eq!(body["ConsistentRead"], true);
+        assert_eq!(body["Key"]["pk"]["S"], format!("SESSION#{}", session()));
+        sort_keys.push(body["Key"]["sk"]["S"].as_str().expect("a sort key"));
+    }
+    // Set-wise: the pair is issued concurrently, so arrival order is not part
+    // of the contract.
+    sort_keys.sort_unstable();
+    let run_sort = format!("RUN#{}", run_id());
+    assert_eq!(sort_keys, ["HEAD", run_sort.as_str()]);
 }
 
 fn dynamo_json_item(item: &aex_session_dynamodb::attr::Item) -> Value {
@@ -92,10 +97,14 @@ fn dynamo_json_item(item: &aex_session_dynamodb::attr::Item) -> Value {
     )
 }
 
-fn scoped_run_response(
+/// The two `GetItem` answers a scoped run read now receives, head first.
+///
+/// The head read is polled first by the concurrent pair, so the scripted
+/// transport pairs it with the first response deterministically.
+fn scoped_run_responses(
     session: &aex_session_domain::Session,
     run: &aex_session_domain::Run,
-) -> String {
+) -> Vec<String> {
     let head = aex_session_dynamodb::authority_codec::encode_session(session)
         .expect("canonical session row");
     let run = aex_session_dynamodb::authority_codec::encode_domain_run(
@@ -104,13 +113,10 @@ fn scoped_run_response(
         session.organization,
     )
     .expect("canonical run row");
-    serde_json::json!({
-        "Responses": [
-            {"Item": dynamo_json_item(&head)},
-            {"Item": dynamo_json_item(&run)}
-        ]
-    })
-    .to_string()
+    vec![
+        serde_json::json!({"Item": dynamo_json_item(&head)}).to_string(),
+        serde_json::json!({"Item": dynamo_json_item(&run)}).to_string(),
+    ]
 }
 
 fn session_head_response(session: &aex_session_domain::Session) -> String {
@@ -193,14 +199,14 @@ async fn a_session_page_uses_two_parent_reads_only_and_reuses_a_resumed_epoch() 
 async fn a_scoped_point_read_hides_foreign_tenants_and_refuses_deleted_parents() {
     let (session, run, _agent, _message) = aex_session_domain::testing::running_session();
 
-    let (client, _replay) = scripted_client(vec![scoped_run_response(&session, &run)]);
+    let (client, _replay) = scripted_client(scoped_run_responses(&session, &run));
     let reads = SessionReads::new(client, &tables().session_authority);
     assert!(matches!(
         reads.load_run(session.workspace, session.id, run.id).await,
         Ok(SessionScoped::Active(Some(found))) if found == run
     ));
 
-    let (client, _replay) = scripted_client(vec![scoped_run_response(&session, &run)]);
+    let (client, _replay) = scripted_client(scoped_run_responses(&session, &run));
     let reads = SessionReads::new(client, &tables().session_authority);
     let another_workspace = aex_session_domain::testing::id(99);
     assert_eq!(
@@ -214,7 +220,7 @@ async fn a_scoped_point_read_hides_foreign_tenants_and_refuses_deleted_parents()
     let mut deleted = session.clone();
     deleted.deletion.state = aex_session_domain::DeletionState::Trashed;
     deleted.status = aex_session_domain::SessionStatus::Trashed;
-    let (client, _replay) = scripted_client(vec![scoped_run_response(&deleted, &run)]);
+    let (client, _replay) = scripted_client(scoped_run_responses(&deleted, &run));
     let reads = SessionReads::new(client, &tables().session_authority);
     assert_eq!(
         reads
