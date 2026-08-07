@@ -269,7 +269,12 @@ pub struct ResultChunk {
     pub operation: HandsOperationId,
     /// Where the chunk starts.
     pub offset: u64,
-    /// The bytes, base64-encoded on the wire by the transport.
+    /// The bytes, base64-encoded on the wire.
+    ///
+    /// Base64 here, not serde's default integer array: a 180 KB pull chunk
+    /// serialized as integers is ~650 KB — brushing the 1 MiB frame bound —
+    /// where base64 is ~240 KB.
+    #[serde(with = "base64_bytes")]
     pub bytes: Vec<u8>,
     /// Whether this is the final chunk.
     pub last: bool,
@@ -321,7 +326,8 @@ pub enum AttachedEvent {
         operation: HandsOperationId,
         /// Which stream.
         stream: OutputStream,
-        /// The bytes.
+        /// The bytes, base64-encoded on the wire. See [`ResultChunk::bytes`].
+        #[serde(with = "base64_bytes")]
         chunk: Vec<u8>,
         /// Whether the guest dropped some.
         truncated: bool,
@@ -430,6 +436,37 @@ pub enum MessageDecodeError {
     },
 }
 
+/// Body bytes as a padded standard-alphabet base64 string on the wire.
+///
+/// The same convention as `aex-model-catalog`'s signature payloads, restated
+/// here rather than imported: this crate is in the credential-free guest
+/// closure and takes no dependency on a catalog crate for one encoder.
+mod base64_bytes {
+    use base64::Engine as _;
+    use base64::engine::general_purpose::STANDARD;
+    use serde::{Deserialize as _, Deserializer, Serializer};
+
+    /// Serializes bytes as a padded standard-alphabet base64 string.
+    ///
+    /// # Errors
+    ///
+    /// Propagates the serializer's own failure only.
+    pub fn serialize<S: Serializer>(value: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&STANDARD.encode(value))
+    }
+
+    /// Deserializes a padded standard-alphabet base64 string.
+    ///
+    /// # Errors
+    ///
+    /// Returns a deserializer error for a malformed encoding.
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+        use serde::de::Error as _;
+        let raw = String::deserialize(deserializer)?;
+        STANDARD.decode(raw.as_bytes()).map_err(D::Error::custom)
+    }
+}
+
 /// The generation binding a frame declares, read without decoding the payload.
 #[derive(Debug, Deserialize)]
 struct BindingPreamble {
@@ -484,4 +521,76 @@ pub fn decode_agent_message<T: HandsMessage>(
         pointer: JsonPointer::root(),
         reason: error.to_string(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AttachedEvent, HandsOperationId, OutputStream, ResultChunk};
+    use aex_wire::Uuid7;
+
+    fn operation() -> HandsOperationId {
+        HandsOperationId(Uuid7::compose(3, [3; 10]))
+    }
+
+    #[test]
+    fn chunk_bytes_ride_the_wire_as_base64_and_never_as_integer_arrays() {
+        let chunk = ResultChunk {
+            operation: operation(),
+            offset: 4,
+            bytes: vec![0, 159, 146, 150],
+            last: true,
+        };
+        let encoded = serde_json::to_value(&chunk).expect("it serializes");
+        assert_eq!(
+            encoded["bytes"],
+            serde_json::Value::String("AJ+Slg==".to_owned()),
+            "padded standard-alphabet base64, working for arbitrary non-UTF-8 bytes"
+        );
+        let decoded: ResultChunk = serde_json::from_value(encoded).expect("it round-trips");
+        assert_eq!(decoded, chunk);
+
+        let event = AttachedEvent::Output {
+            operation: operation(),
+            stream: OutputStream::Stdout,
+            chunk: b"hello".to_vec(),
+            truncated: false,
+        };
+        let encoded = serde_json::to_value(&event).expect("it serializes");
+        assert_eq!(
+            encoded["chunk"],
+            serde_json::Value::String("aGVsbG8=".to_owned())
+        );
+        let decoded: AttachedEvent = serde_json::from_value(encoded).expect("it round-trips");
+        assert_eq!(decoded, event);
+    }
+
+    #[test]
+    fn a_malformed_base64_chunk_is_refused_at_decode() {
+        let raw = serde_json::json!({
+            "operation": operation(),
+            "offset": 0,
+            "bytes": "not base64!!",
+            "last": true,
+        });
+        assert!(serde_json::from_value::<ResultChunk>(raw).is_err());
+    }
+
+    #[test]
+    fn a_result_pull_chunk_stays_well_inside_the_frame_bound() {
+        // 180 KB of body as an integer array is ~650 KB — brushing the 1 MiB
+        // frame bound before the rest of the response is even counted. Base64
+        // keeps it at 4/3 plus padding.
+        let chunk = ResultChunk {
+            operation: operation(),
+            offset: 0,
+            bytes: vec![0xAB; 180_000],
+            last: true,
+        };
+        let encoded = serde_json::to_string(&chunk).expect("it serializes");
+        assert!(
+            encoded.len() < 250_000,
+            "a 180 KB chunk must stay ~240 KB on the wire, found {}",
+            encoded.len()
+        );
+    }
 }
