@@ -80,6 +80,10 @@ pub struct PackageMeta {
     pub name: String,
     /// Absolute path of the package's `Cargo.toml`.
     pub manifest_path: String,
+    /// `[package] description`, which [`crate::description`] projects from the
+    /// entry file's `//!` header rather than letting it be written by hand.
+    #[serde(default)]
+    pub description: Option<String>,
     /// `None` when publishable, `Some(registries)` otherwise; `publish = false`
     /// renders as an empty list.
     #[serde(default)]

@@ -1,6 +1,7 @@
 [package]
 name = "usage-receipt-dispatcher"
 version = "0.1.0"
+description = "`usage-receipt-dispatcher` replays immutable settlement receipts until the regional frontiers converge."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

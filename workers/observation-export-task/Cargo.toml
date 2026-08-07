@@ -1,6 +1,7 @@
 [package]
 name = "observation-export-task"
 version = "0.1.0"
+description = "`observation-export-task` composition root (one-shot Rust OCI task)."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

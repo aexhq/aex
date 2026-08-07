@@ -1,6 +1,7 @@
 [package]
 name = "aex-runtime-control"
 version = "0.1.0"
+description = "`aex-runtime-control` owns the pure Hands lifecycle and true-idle model, including the exact 179999/180000 millisecond idle boundary and generation fencing."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

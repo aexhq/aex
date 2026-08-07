@@ -1,6 +1,7 @@
 [package]
 name = "aex-usage-rating"
 version = "0.1.0"
+description = "`aex-usage-rating` owns the pure exact rating policy: the immutable rate-card schema, exact rational arithmetic and deterministic settlement rounding."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

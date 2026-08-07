@@ -51,11 +51,27 @@ enum Action {
         #[command(subcommand)]
         action: RegistryAction,
     },
+    /// Project every member's `//!` header into `[package] description`.
+    Description {
+        #[command(subcommand)]
+        action: DescriptionAction,
+    },
     /// Scan one lane's output for skips, empty selections and retries.
     Flake {
         #[command(subcommand)]
         action: Box<FlakeAction>,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum DescriptionAction {
+    /// Rewrite every member's `[package] description` from its `//!` header.
+    Build,
+    /// Fail on any member whose description is missing or has drifted.
+    ///
+    /// The same rule rides the default `check`, so this exists for a focused
+    /// run rather than as the gate.
+    Verify,
 }
 
 #[derive(Debug, Subcommand)]
@@ -127,8 +143,78 @@ fn main() -> ExitCode {
         Action::Registry {
             action: RegistryAction::Verify { list },
         } => run_registry(phase, list.as_deref(), false),
+        Action::Description {
+            action: DescriptionAction::Build,
+        } => run_description(true),
+        Action::Description {
+            action: DescriptionAction::Verify,
+        } => run_description(false),
         Action::Flake { action } => run_flake(&action),
     }
+}
+
+fn run_description(write: bool) -> ExitCode {
+    let json = match metadata_json() {
+        Ok(json) => json,
+        Err(error) => return fail(&error),
+    };
+    let metadata = match aex_workspace_check::WorkspaceMetadata::parse(&json) {
+        Ok(metadata) => metadata,
+        Err(error) => return fail(&error.to_string()),
+    };
+    let root = PathBuf::from(&metadata.workspace_root);
+    let members = match aex_workspace_check::description::read_members(&root, &metadata) {
+        Ok(members) => members,
+        Err(error) => return fail(&error.to_string()),
+    };
+
+    if write {
+        // A member whose paragraph is not one sentence is rejected before
+        // anything is written: writing it would produce a description the
+        // verify half then fails on, which is a tool that disagrees with
+        // itself.
+        let unusable: Vec<_> = members
+            .iter()
+            .filter(|member| {
+                member.header.is_empty()
+                    || aex_workspace_check::description::sentence_count(&member.header) != 1
+            })
+            .collect();
+        if !unusable.is_empty() {
+            eprintln!(
+                "aex-workspace-check: {} member(s) cannot be described",
+                unusable.len()
+            );
+            for member in unusable {
+                eprintln!(
+                    "  `{}` — split the opening `//!` paragraph so it is one sentence",
+                    member.name
+                );
+            }
+            return ExitCode::FAILURE;
+        }
+        return match aex_workspace_check::description::build(&root, &members) {
+            Ok(changed) => {
+                println!("aex-workspace-check: wrote {changed} `[package] description` field(s)");
+                ExitCode::SUCCESS
+            }
+            Err(error) => fail(&error.to_string()),
+        };
+    }
+
+    let violations = aex_workspace_check::description::check(&members);
+    if violations.is_empty() {
+        println!(
+            "aex-workspace-check: all {} member description(s) match their `//!` header",
+            members.len()
+        );
+        return ExitCode::SUCCESS;
+    }
+    eprintln!("aex-workspace-check: {} violation(s)", violations.len());
+    for violation in &violations {
+        eprintln!("  {violation}");
+    }
+    ExitCode::FAILURE
 }
 
 fn metadata_json() -> Result<String, String> {

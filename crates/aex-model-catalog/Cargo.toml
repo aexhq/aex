@@ -1,6 +1,7 @@
 [package]
 name = "aex-model-catalog"
 version = "0.1.0"
+description = "`aex-model-catalog` owns the signed immutable model catalog: model, dialect, capability and routing policy plus its content signature."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

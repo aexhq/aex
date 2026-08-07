@@ -1,6 +1,7 @@
 [package]
 name = "finance-ingest"
 version = "0.1.0"
+description = "`finance-ingest` is the Stripe normalized-event inbox and the authoritative finance transition it implies."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

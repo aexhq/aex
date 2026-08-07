@@ -1,6 +1,7 @@
 [package]
 name = "aex-regional-http"
 version = "0.1.0"
+description = "`aex-regional-http` owns the generated finite regional `HTTP` composition: route tables, region assertion extraction, body limits and the public error mapping."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

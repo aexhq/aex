@@ -1,6 +1,7 @@
 [package]
 name = "aex-content-aws"
 version = "0.1.0"
+description = "`aex-content-aws` owns the S3 content object adapter: workspace-scoped addressing, conditional create, multipart upload and completion, presigned download grants, the fenced delete, and the error mapping that turns an S3 condition into a typed product outcome."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

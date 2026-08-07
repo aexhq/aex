@@ -1,6 +1,7 @@
 [package]
 name = "aex-secret-custody-dynamodb"
 version = "0.1.0"
+description = "`aex-secret-custody-dynamodb` owns the `regional-secret-custody` table adapter: ciphertext generations, lineage rows and revocation epochs."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
