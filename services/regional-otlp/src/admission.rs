@@ -224,12 +224,12 @@ impl OtlpRequest {
         };
         let accepted = normalized.observations.len();
 
-        // One gate read per request, made here so a degraded admission can be
-        // counted; the authority still refuses a closed gate on the state it
-        // is handed.
+        // The gate state is read here, through the authority's process-local
+        // cache window, so a degraded admission can be counted per request;
+        // the authority still refuses a closed gate on the state it is handed.
         let gate = service
             .authority
-            .ingress_gate()
+            .ingress_gate_cached()
             .await
             .map_err(|error| authority_error(&error))?;
         if matches!(gate, GateState::Degraded) {

@@ -111,7 +111,7 @@ run "each_owner_has_one_alias_only_payload_v2_integration" {
   }
 }
 
-run "the_request_authorizer_is_exact_and_uncached" {
+run "the_request_authorizer_is_exact_and_briefly_cached" {
   command = plan
 
   assert {
@@ -121,10 +121,11 @@ run "the_request_authorizer_is_exact_and_uncached" {
       && aws_apigatewayv2_authorizer.request.enable_simple_responses
       && length(aws_apigatewayv2_authorizer.request.identity_sources) == 1
       && one(aws_apigatewayv2_authorizer.request.identity_sources) == "$request.header.Authorization"
-      && aws_apigatewayv2_authorizer.request.authorizer_result_ttl_in_seconds == 0
+      && aws_apigatewayv2_authorizer.request.authorizer_result_ttl_in_seconds == 15
+      && aws_apigatewayv2_authorizer.request.authorizer_result_ttl_in_seconds * 2 <= 30
       && strcontains(aws_apigatewayv2_authorizer.request.authorizer_uri, var.authorizer_alias_arn)
     )
-    error_message = "The authorizer must be REQUEST payload v2, simple, uncached, and sourced only from Authorization."
+    error_message = "The authorizer must be REQUEST payload v2, simple, cached for at most half the 30 s assertion validity, and sourced only from Authorization."
   }
 }
 

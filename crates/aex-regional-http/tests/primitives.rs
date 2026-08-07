@@ -13,8 +13,8 @@ use aex_identity_domain::assertion::{
 };
 use aex_internal_contracts::assertion::AssertionAudience;
 use aex_regional_http::assertion::{
-    AssertionSource, AuthFailure, CredentialFloors, PresentedCredential, VerifiedAuthorization,
-    VerifyingAssertionCache, verify,
+    AssertionSource, AuthFailure, CredentialFloors, NEGATIVE_TTL_MS, PresentedCredential,
+    VerifiedAuthorization, VerifyingAssertionCache, verify,
 };
 use aex_regional_http::assertion_flight::{Flight, FlightLeader, FlightRegistry, FlightRole};
 use aex_regional_http::capability::{
@@ -936,6 +936,97 @@ async fn one_hundred_concurrent_first_time_callers_share_one_unavailability() {
     // was down once.
     assert_eq!(calls, 1);
     assert_eq!(outstanding, 0);
+}
+
+#[tokio::test]
+async fn a_refused_credential_costs_one_central_exchange_per_negative_window() {
+    let credential = fixture_credential(5);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let cache = VerifyingAssertionCache::new(
+        RefusingSource {
+            calls: Arc::clone(&calls),
+        },
+        anchors(),
+        audience(AssertionAudience::RegionalSession),
+        4_096,
+    )
+    .expect("cache");
+    let floor = floors(&credential, 4);
+
+    // Sequential bad-key traffic was 1:1 with central invokes for ever; the
+    // window turns it into one exchange per TTL.
+    for _ in 0..5 {
+        assert_eq!(
+            cache.resolve(&credential, &floor, stamp(2_000)).await,
+            Err(AuthFailure::Refused)
+        );
+    }
+    assert_eq!(calls.load(AtomicOrdering::SeqCst), 1);
+
+    let last_inside = 2_000 + i64::try_from(NEGATIVE_TTL_MS).expect("a small TTL") - 1;
+    assert_eq!(
+        cache.resolve(&credential, &floor, stamp(last_inside)).await,
+        Err(AuthFailure::Refused)
+    );
+    assert_eq!(
+        calls.load(AtomicOrdering::SeqCst),
+        1,
+        "the last instant inside the window still answers from memory"
+    );
+
+    assert_eq!(
+        cache
+            .resolve(&credential, &floor, stamp(last_inside + 1))
+            .await,
+        Err(AuthFailure::Refused)
+    );
+    assert_eq!(
+        calls.load(AtomicOrdering::SeqCst),
+        2,
+        "the first request past the window leads a fresh exchange"
+    );
+}
+
+/// A central source that is down for everything it is shown.
+struct UnavailableSource {
+    calls: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl AssertionSource for UnavailableSource {
+    async fn obtain(&self, _credential: &PresentedCredential) -> Result<Assertion, AuthFailure> {
+        self.calls.fetch_add(1, AtomicOrdering::SeqCst);
+        Err(AuthFailure::SourceUnavailable)
+    }
+}
+
+#[tokio::test]
+async fn an_unavailable_authority_is_never_remembered_against_the_credential() {
+    let credential = fixture_credential(5);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let cache = VerifyingAssertionCache::new(
+        UnavailableSource {
+            calls: Arc::clone(&calls),
+        },
+        anchors(),
+        audience(AssertionAudience::RegionalSession),
+        4_096,
+    )
+    .expect("cache");
+    let floor = floors(&credential, 4);
+
+    for attempt in 1..=3 {
+        assert_eq!(
+            cache.resolve(&credential, &floor, stamp(2_000)).await,
+            Err(AuthFailure::SourceUnavailable)
+        );
+        assert_eq!(
+            calls.load(AtomicOrdering::SeqCst),
+            attempt,
+            "an outage must be re-asked, or a recovered authority keeps \
+             refusing a good credential for the TTL"
+        );
+    }
 }
 
 #[tokio::test]

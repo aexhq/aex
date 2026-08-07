@@ -1153,7 +1153,6 @@ mod tests {
                 "eventSeq",
                 "eventId",
                 "type",
-                "bodyInline",
                 "bodyDigest",
                 "occurredAt",
                 "outboxState",
@@ -1167,6 +1166,18 @@ mod tests {
                     "{index_name} omits decoder field `{required}`"
                 );
             }
+            // The regression guard for D2d: an inline body of up to 32 KiB
+            // would otherwise be stored once per event index. An event that
+            // projects neither body attribute is hydrated from the base row
+            // by its reader instead.
+            assert!(
+                !index
+                    .projection
+                    .attributes
+                    .iter()
+                    .any(|name| name == "bodyInline"),
+                "{index_name} must not carry a dense copy of every inline event body"
+            );
         }
     }
 

@@ -332,7 +332,12 @@ fn segment_needs_hydration(
     descriptor: SegmentDescriptor,
     plan: &aex_observation_query::plan::Plan,
 ) -> bool {
+    // A session-authority segment reserves hydration room too: the event
+    // indexes do not project `bodyInline` (D2d), so an inline-bodied event's
+    // base row is fetched beside the projected page and the wave budget must
+    // hold both.
     matches!(descriptor.access, Access::Metric | Access::Trace)
+        || descriptor.access == Access::SessionAuthority
         || (plan.needs_base_fetch && descriptor.access.index_name().is_some())
 }
 
@@ -916,14 +921,24 @@ impl ObservationReader {
             .iter()
             .map(|item| aex_observation_store_aws::store::item_size(item) as u64)
             .sum::<u64>();
-        let resume_keys = batch
-            .items
+        // Event segments hydrate inline bodies from the base session authority
+        // before resume keys are taken, so a row dropped by a purge race never
+        // breaks key alignment.
+        let items = if descriptor.access == Access::SessionAuthority {
+            let (hydrated, fetched_bytes) = self.hydrate_event_bodies(batch.items).await?;
+            bytes_read = bytes_read.saturating_add(fetched_bytes);
+            hydrated
+        } else {
+            batch.items
+        };
+        let resume_keys = items
             .iter()
             .map(|item| item_resume_key(item, descriptor, scope))
             .collect::<Result<Vec<_>, _>>()?;
-        let needs_hydration = segment_needs_hydration(descriptor, plan);
+        let needs_hydration =
+            segment_needs_hydration(descriptor, plan) && descriptor.access.index_name().is_some();
         let items = if needs_hydration {
-            let hydrated = self.hydrate_base_rows(batch.items).await?;
+            let hydrated = self.hydrate_base_rows(items).await?;
             bytes_read = bytes_read.saturating_add(
                 hydrated
                     .iter()
@@ -932,7 +947,7 @@ impl ObservationReader {
             );
             hydrated
         } else {
-            batch.items
+            items
         };
         if items.len() != resume_keys.len() {
             return Err(ReadError::Malformed { attribute: "pk" });
@@ -999,6 +1014,67 @@ impl ObservationReader {
                     .filter_map(|key| hydrated.remove(&key))
                     .collect()
             })
+    }
+
+    /// Hydrates event rows whose projected image carries neither body
+    /// attribute, returning the merged rows and the bytes the fetch added.
+    ///
+    /// The event indexes deliberately do not project `bodyInline` (D2d): an
+    /// inline body of up to 32 KiB would be copied once per index. A projected
+    /// row carrying `bodyDigest` serves as-is; one carrying neither names an
+    /// inline-bodied event, whose base row is fetched instead. The fetch is
+    /// eventually consistent because an event row is immutable and durable
+    /// before its index projection can exist — presence is the only question,
+    /// and the projection already answered it. A base row that has vanished
+    /// names an event mid-purge racing the eventually consistent index; that
+    /// row is dropped rather than failing the page for a resource that no
+    /// longer exists.
+    async fn hydrate_event_bodies(
+        &self,
+        projected: Vec<HashMap<String, AttributeValue>>,
+    ) -> Result<(Vec<HashMap<String, AttributeValue>>, u64), ReadError> {
+        let bodied = |item: &HashMap<String, AttributeValue>| {
+            item.contains_key(aex_session_dynamodb::event::BODY_INLINE)
+                || item.contains_key(aex_session_dynamodb::event::BODY_DIGEST)
+        };
+        let needy: Vec<&HashMap<String, AttributeValue>> =
+            projected.iter().filter(|item| !bodied(item)).collect();
+        if needy.is_empty() {
+            return Ok((projected, 0));
+        }
+        let mut hydrated = HashMap::with_capacity(needy.len());
+        let mut fetched_bytes = 0_u64;
+        for chunk in needy.chunks(BATCH_GET_MAX_KEYS) {
+            let keys = chunk
+                .iter()
+                .map(|item| primary_key(item))
+                .collect::<Result<Vec<_>, _>>()?;
+            let request = aws_sdk_dynamodb::types::KeysAndAttributes::builder()
+                .set_keys(Some(keys))
+                .consistent_read(false)
+                .build()
+                .map_err(|error| ReadError::provider("BatchGetItem", error))?;
+            let returned = drain_batch_get(
+                &self.dynamodb,
+                HashMap::from([(self.session_table.clone(), request)]),
+                "provider repeatedly returned unprocessed event base-row keys",
+            )
+            .await?;
+            for (_, item) in returned {
+                fetched_bytes = fetched_bytes
+                    .saturating_add(aex_observation_store_aws::store::item_size(&item) as u64);
+                hydrated.insert(primary_key_pair(&item)?, item);
+            }
+        }
+        let mut merged = Vec::with_capacity(projected.len());
+        for item in projected {
+            if bodied(&item) {
+                merged.push(item);
+            } else if let Some(base) = hydrated.remove(&primary_key_pair(&item)?) {
+                merged.push(base);
+            }
+        }
+        Ok((merged, fetched_bytes))
     }
 
     /// The non-empty hour buckets one query walks, bounded by its time range.
@@ -2324,6 +2400,91 @@ mod tests {
             filter_row(&hydrated[0])
                 .attributes
                 .contains_key("environment")
+        );
+    }
+
+    #[tokio::test]
+    async fn an_event_without_a_projected_body_hydrates_from_the_session_authority() {
+        let session = session();
+        let event_id = ObservationId::from_uuid7(aex_wire::Uuid7::compose(1, [6; 10]));
+        let pk = format!("SESSION#{session}");
+        let projected = |sk: &str, digest: Option<&str>| {
+            let mut item = HashMap::from([
+                ("pk".to_owned(), AttributeValue::S(pk.clone())),
+                ("sk".to_owned(), AttributeValue::S(sk.to_owned())),
+                (
+                    "itemType".to_owned(),
+                    AttributeValue::S("session_event".to_owned()),
+                ),
+                (
+                    "eventId".to_owned(),
+                    AttributeValue::S(event_id.to_string()),
+                ),
+            ]);
+            if let Some(digest) = digest {
+                item.insert(
+                    "bodyDigest".to_owned(),
+                    AttributeValue::S(digest.to_owned()),
+                );
+            }
+            item
+        };
+        // The reply carries the full base row of the first inline event; the
+        // second inline event's base row is gone (a purge racing the index).
+        let base_row = format!(
+            r#"{{"pk":{{"S":"{pk}"}},"sk":{{"S":"EVT#00000000000000000001"}},"itemType":{{"S":"session_event"}},"eventId":{{"S":"{event_id}"}},"workspaceId":{{"S":"{}"}},"sessionId":{{"S":"{session}"}},"eventSeq":{{"N":"1"}},"type":{{"S":"agent.preview"}},"occurredAt":{{"S":"2026-08-01T09:00:00.000Z"}},"outboxState":{{"S":"pending"}},"bodyInline":{{"B":"e30="}}}}"#,
+            workspace(),
+        );
+        let (reader, replay) = replaying_reader(&format!(
+            r#"{{"Responses":{{"session-authority":[{base_row}]}},"UnprocessedKeys":{{}}}}"#
+        ));
+
+        let digest_backed = projected("EVT#00000000000000000003", Some(&"a".repeat(64)));
+        let (merged, fetched_bytes) = reader
+            .hydrate_event_bodies(vec![
+                digest_backed.clone(),
+                projected("EVT#00000000000000000001", None),
+                projected("EVT#00000000000000000002", None),
+            ])
+            .await
+            .expect("the inline bodies hydrate");
+
+        assert_eq!(
+            merged.len(),
+            2,
+            "the vanished base row is dropped, never an error"
+        );
+        assert_eq!(
+            merged[0], digest_backed,
+            "a digest-backed event serves straight from the projection"
+        );
+        assert!(
+            merged[1].contains_key("bodyInline"),
+            "the inline event now carries its base-row body"
+        );
+        assert!(
+            aex_session_dynamodb::event::decode(&merged[1]).is_ok(),
+            "the hydrated row is the decoder-complete base row"
+        );
+        assert!(fetched_bytes > 0, "the fetch is charged to the byte budget");
+
+        let request = replay.actual_requests().next().expect("one batch get");
+        let body: serde_json::Value =
+            serde_json::from_slice(request.body().bytes().expect("the body is in memory"))
+                .expect("the request body is JSON");
+        let table_request = &body["RequestItems"]["session-authority"];
+        assert!(
+            !table_request.is_null(),
+            "hydration targets the session authority, not the observation table"
+        );
+        assert_eq!(
+            table_request["ConsistentRead"], false,
+            "an event row is immutable and durable before its projection exists"
+        );
+        assert_eq!(
+            table_request["Keys"].as_array().map(Vec::len),
+            Some(2),
+            "only the events with no projected body are fetched"
         );
     }
 

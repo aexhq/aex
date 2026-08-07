@@ -3,10 +3,9 @@
 //! Placement, profile and key authorization rows are written by
 //! `central-control-worker`; effective-limit rows, including the hot admission
 //! subset, are reserved for the regional capacity authority. Every serving
-//! regional role holds `dynamodb:GetItem`, `dynamodb:TransactGetItems` and
-//! `dynamodb:Query` on the table and nothing else, and this module contains no
-//! write operation at all — a source conformance test asserts that, because
-//! "read-only by convention" is not a property.
+//! regional role holds read actions on the table and nothing else, and this
+//! module contains no write operation at all — a source conformance test
+//! asserts that, because "read-only by convention" is not a property.
 //!
 //! [`AuthorizationProjection::read_admission_snapshot`] is the request path.
 //! Everything else here is a cold or diagnostic read.
@@ -126,12 +125,14 @@ pub trait AuthorizationProjection: Send + Sync + 'static {
         api_key: ApiKeyId,
     ) -> Result<KeyAuthorization, StoreError>;
 
-    /// Reads the key, placement and edge-limit rows in one request.
+    /// Reads the key, placement and edge-limit rows together.
     ///
-    /// One `TransactGetItems` rather than three point reads, so the three
-    /// answers describe the same instant. A revocation that lands between two
-    /// separate reads is the failure this closes: the old sequence could see an
-    /// un-revoked key beside a placement written after the revocation.
+    /// Three concurrent point reads. They are not one snapshot: a revocation
+    /// landing between them can produce a torn set, which `reconcile` refuses
+    /// rather than admits, so the race costs one retried request and never an
+    /// admission. The rows change only on operator-paced events, and the
+    /// admission transaction's own `ConditionCheck` on the placement epochs is
+    /// the commit-time fence in any case.
     ///
     /// `workspace` is the identity the presented credential *claims*. It selects
     /// which placement and limit rows are read; whether the claim is true is
@@ -219,6 +220,24 @@ pub trait WorkspaceProjection: Send + Sync + 'static {
     ) -> Result<ProjectedLimitBundle, StoreError>;
 }
 
+/// Which consistency one projection point read requires.
+///
+/// The split is deliberate and per call site, never a constructor default: the
+/// two fence reads ([`AuthorizationProjection::read_frontier`] and
+/// [`WorkspaceProjection::read_limit_bundle_head`], with the bundle payload the
+/// head selects) must observe every acknowledged write, while the per-request
+/// reads serve rows that change on placement or limit *changes* — rare,
+/// operator-paced events — and accept replica lag of at most a second in
+/// exchange for half the read cost and none of the strong read's
+/// single-partition latency tail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Consistency {
+    /// A fence: the read must observe every acknowledged write.
+    Strong,
+    /// A per-request read of a rarely changing row: replica lag is accepted.
+    Eventual,
+}
+
 /// The reader.
 #[derive(Debug, Clone)]
 pub struct ProjectionReader {
@@ -236,16 +255,18 @@ impl ProjectionReader {
         }
     }
 
-    async fn get(&self, pk: &str, sk: &str) -> Result<Option<Item>, StoreError> {
+    async fn get(
+        &self,
+        pk: &str,
+        sk: &str,
+        consistency: Consistency,
+    ) -> Result<Option<Item>, StoreError> {
         let output = self
             .client
             .get_item()
             .table_name(&self.table)
             .set_key(Some(key(pk, sk)))
-            // Every authority point read is strongly consistent. An eventually
-            // consistent authorization read would admit a request against a
-            // placement that was revoked seconds ago.
-            .consistent_read(true)
+            .consistent_read(matches!(consistency, Consistency::Strong))
             .send()
             .await
             .map_err(|error| classify(&error, Idempotence::Read))?;
@@ -272,7 +293,7 @@ impl AuthorizationProjection for ProjectionReader {
     ) -> Result<WorkspacePlacement, StoreError> {
         let (pk, sk) = placement_key(workspace);
         let item = self
-            .get(&pk, &sk)
+            .get(&pk, &sk, Consistency::Eventual)
             .await?
             .ok_or_else(|| StoreError::Misconfigured {
                 table: self.table.clone(),
@@ -285,7 +306,10 @@ impl AuthorizationProjection for ProjectionReader {
         api_key: ApiKeyId,
     ) -> Result<KeyAuthorization, StoreError> {
         let (pk, sk) = authorization_key(api_key);
-        let item = self.get(&pk, &sk).await?.ok_or_else(|| self.absent())?;
+        let item = self
+            .get(&pk, &sk, Consistency::Eventual)
+            .await?
+            .ok_or_else(|| self.absent())?;
         Ok(decode_key_authorization(&item, api_key)?)
     }
 
@@ -294,54 +318,27 @@ impl AuthorizationProjection for ProjectionReader {
         api_key: ApiKeyId,
         workspace: WorkspaceId,
     ) -> Result<AdmissionSnapshot, StoreError> {
-        let keys = [
-            authorization_key(api_key),
-            placement_key(workspace),
-            edge_limits_key(workspace),
-        ];
-        let mut request = self.client.transact_get_items();
-        for (pk, sk) in &keys {
-            request = request.transact_items(
-                aws_sdk_dynamodb::types::TransactGetItem::builder()
-                    .get(
-                        aws_sdk_dynamodb::types::Get::builder()
-                            .table_name(&self.table)
-                            .set_key(Some(key(pk, sk)))
-                            .build()
-                            .map_err(|error| StoreError::Invalid {
-                                detail: error.to_string(),
-                            })?,
-                    )
-                    .build(),
-            );
-        }
-        let output = request
-            .send()
-            .await
-            .map_err(|error| classify(&error, Idempotence::Read))?;
-        // `TransactGetItems` answers positionally, one response per request
-        // item, with an absent item rendered as an empty map. Reading by index
-        // is therefore exact, and a short list is a protocol violation rather
-        // than a missing row.
-        let responses = output.responses.unwrap_or_default();
-        let [key_row, placement_row, limits_row] = responses.as_slice() else {
-            return Err(StoreError::Invalid {
-                detail: format!(
-                    "the snapshot transaction answered {} of 3 items",
-                    responses.len()
-                ),
-            });
-        };
-        let present = |response: &aws_sdk_dynamodb::types::ItemResponse| {
-            response
-                .item
-                .as_ref()
-                .filter(|item| !item.is_empty())
-                .cloned()
-        };
-        let key_item = present(key_row).ok_or_else(|| self.absent())?;
-        let placement_item = present(placement_row).ok_or_else(|| self.absent())?;
-        let limits_item = present(limits_row).ok_or_else(|| self.absent())?;
+        // Three concurrent eventually consistent point reads, not a
+        // `TransactGetItems`: this is the hot admission path, and the
+        // serializable read cost roughly doubled every request for rows that
+        // change only on operator-paced placement, key or limit events. The
+        // reads are no longer one snapshot, so a write landing between them can
+        // produce a torn set - `reconcile` then refuses it (`absent()` ->
+        // `Unauthenticated`) and the caller retries. A torn read is therefore a
+        // transient refusal, never an admission the old sequence would have
+        // denied; the accepted lag on any single row is bounded by the replica
+        // horizon, per the projection-consistency charter.
+        let (auth_pk, auth_sk) = authorization_key(api_key);
+        let (placement_pk, placement_sk) = placement_key(workspace);
+        let (limits_pk, limits_sk) = edge_limits_key(workspace);
+        let (key_item, placement_item, limits_item) = futures::try_join!(
+            self.get(&auth_pk, &auth_sk, Consistency::Eventual),
+            self.get(&placement_pk, &placement_sk, Consistency::Eventual),
+            self.get(&limits_pk, &limits_sk, Consistency::Eventual),
+        )?;
+        let key_item = key_item.ok_or_else(|| self.absent())?;
+        let placement_item = placement_item.ok_or_else(|| self.absent())?;
+        let limits_item = limits_item.ok_or_else(|| self.absent())?;
 
         let key = decode_key_authorization(&key_item, api_key)?;
         let placement = decode_placement(&placement_item, workspace)?;
@@ -352,7 +349,7 @@ impl AuthorizationProjection for ProjectionReader {
     async fn read_frontier(&self) -> Result<FeedFrontier, StoreError> {
         let (pk, sk) = frontier_key();
         let item = self
-            .get(&pk, &sk)
+            .get(&pk, &sk, Consistency::Strong)
             .await?
             .ok_or_else(|| StoreError::Misconfigured {
                 table: self.table.clone(),
@@ -368,7 +365,7 @@ impl WorkspaceProjection for ProjectionReader {
         workspace: WorkspaceId,
     ) -> Result<Option<WorkspaceProfile>, StoreError> {
         let (pk, sk) = profile_key(workspace);
-        self.get(&pk, &sk)
+        self.get(&pk, &sk, Consistency::Eventual)
             .await?
             .as_ref()
             .map(|item| decode_profile(item, workspace).map_err(StoreError::from))
@@ -381,7 +378,7 @@ impl WorkspaceProjection for ProjectionReader {
         limit: LimitId,
     ) -> Result<Option<ProjectedWorkspaceLimit>, StoreError> {
         let (pk, sk) = limit_key(workspace, limit);
-        self.get(&pk, &sk)
+        self.get(&pk, &sk, Consistency::Eventual)
             .await?
             .as_ref()
             .map(|item| decode_limit_at(item, workspace, limit).map_err(StoreError::from))
@@ -405,7 +402,10 @@ impl WorkspaceProjection for ProjectionReader {
             .expression_attribute_values(":pk", crate::attr::s(partition))
             .expression_attribute_values(":prefix", crate::attr::s("LIMIT#"))
             .limit(budget.limit())
-            .consistent_read(true)
+            // A descriptive listing, not a fence: the complete-set answer is
+            // proved by `read_limit_bundle_head`, so this page accepts replica
+            // lag like every other per-request projection read.
+            .consistent_read(false)
             .set_exclusive_start_key(after.map(|position| position.to_exclusive_start(None, None)))
             .send()
             .await
@@ -433,7 +433,7 @@ impl WorkspaceProjection for ProjectionReader {
     ) -> Result<ProjectedLimitBundleHead, StoreError> {
         let (pk, sk) = limit_bundle_head_key(workspace);
         let item = self
-            .get(&pk, &sk)
+            .get(&pk, &sk, Consistency::Strong)
             .await?
             .ok_or_else(|| StoreError::Misconfigured {
                 table: self.table.clone(),
@@ -446,8 +446,10 @@ impl WorkspaceProjection for ProjectionReader {
         workspace: WorkspaceId,
     ) -> Result<ProjectedLimitBundle, StoreError> {
         let (pk, sk) = limit_bundle_key(workspace);
+        // Strong like the head that selects it: an eventual payload read could
+        // serve bytes older than the revision the head just proved complete.
         let item = self
-            .get(&pk, &sk)
+            .get(&pk, &sk, Consistency::Strong)
             .await?
             .ok_or_else(|| StoreError::Misconfigured {
                 table: self.table.clone(),

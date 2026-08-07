@@ -1,6 +1,6 @@
 output "service_arn" {
-  value       = aws_ecs_service.this.id
-  description = "ARN of the service."
+  value       = one(concat(aws_ecs_service.autoscaled[*].id, aws_ecs_service.static[*].id))
+  description = "ARN of the service, whichever variant this configuration materializes."
 }
 
 output "task_definition_arn" {

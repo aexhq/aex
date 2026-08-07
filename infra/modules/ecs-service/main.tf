@@ -49,7 +49,15 @@ resource "aws_ecs_task_definition" "this" {
   ])
 }
 
-resource "aws_ecs_service" "this" {
+# One service, two declarations, because a lifecycle block cannot be
+# conditional. `ignore_changes = [desired_count]` is correct exactly when an
+# autoscaling target owns the count; applied to a fixed-count service it turned
+# a reviewed desired_count raise into a green no-op apply that changed nothing.
+# The `count` guards keep exactly one of the two in any configuration.
+
+resource "aws_ecs_service" "autoscaled" {
+  count = local.autoscaling_enabled ? 1 : 0
+
   name            = var.name
   cluster         = var.cluster_arn
   task_definition = aws_ecs_task_definition.this.arn
@@ -89,8 +97,55 @@ resource "aws_ecs_service" "this" {
   }
 
   lifecycle {
+    # The autoscaling target owns the live count; terraform re-imposing
+    # `desired_count` on every apply would fight it.
     ignore_changes = [desired_count]
   }
+}
+
+resource "aws_ecs_service" "static" {
+  count = local.autoscaling_enabled ? 0 : 1
+
+  name            = var.name
+  cluster         = var.cluster_arn
+  task_definition = aws_ecs_task_definition.this.arn
+  desired_count   = var.desired_count
+  launch_type     = "FARGATE"
+  propagate_tags  = "SERVICE"
+  tags            = var.tags
+
+  # A first deployment whose tasks crash otherwise exits terraform 0 with the
+  # service parked at zero tasks; waiting for steady state fails the apply loudly.
+  wait_for_steady_state = true
+
+  timeouts {
+    create = "15m"
+    update = "15m"
+  }
+
+  deployment_circuit_breaker {
+    enable   = var.circuit_breaker.enable
+    rollback = var.circuit_breaker.rollback
+  }
+
+  network_configuration {
+    subnets          = var.subnets
+    security_groups  = var.security_group_ids
+    assign_public_ip = false
+  }
+
+  dynamic "load_balancer" {
+    for_each = var.target_group_arn == null ? [] : [var.target_group_arn]
+
+    content {
+      target_group_arn = load_balancer.value
+      container_name   = var.name
+      container_port   = var.container_port
+    }
+  }
+
+  # Deliberately no lifecycle block: with no autoscaling target, terraform is
+  # the only writer of desired_count, and a raised count must apply.
 }
 
 resource "aws_appautoscaling_target" "this" {
@@ -101,6 +156,11 @@ resource "aws_appautoscaling_target" "this" {
   resource_id        = "service/${var.cluster_name}/${var.name}"
   min_capacity       = var.autoscaling_bounds.min_capacity
   max_capacity       = var.autoscaling_bounds.max_capacity
+
+  # The resource id is a derived string, so terraform sees no edge to the
+  # service; without this the target can be registered before the service
+  # exists and the apply fails on ordering rather than on substance.
+  depends_on = [aws_ecs_service.autoscaled]
 }
 
 resource "aws_appautoscaling_policy" "this" {

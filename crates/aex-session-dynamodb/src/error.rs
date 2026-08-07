@@ -227,7 +227,13 @@ pub fn classify_code(code: &str, idempotence: Idempotence) -> StoreError {
         | "SlowDown" => StoreError::Throttled {
             retry_after: RetryPolicy::PINNED.base,
         },
-        "TransactionInProgressException" => StoreError::Contended,
+        // A whole-request cancellation reaching this generic table is one
+        // whose per-participant reasons were not decodable at the call site -
+        // a `TransactGetItems` losing to a concurrent writer, or a cancellation
+        // surfaced without its reason vector. Both are contention, and mapping
+        // them to the retryable variant keeps them off the 5xx path; writes
+        // with decodable reasons go through `decode_cancellation` instead.
+        "TransactionInProgressException" | "TransactionCanceledException" => StoreError::Contended,
         "IdempotentParameterMismatchException" => StoreError::IdempotencyConflict,
         "ResourceNotFoundException" => StoreError::Misconfigured {
             table: "an addressed table or index".to_owned(),
@@ -463,6 +469,17 @@ mod tests {
     fn a_reused_token_with_a_different_payload_is_a_conflict() {
         let error = classify_code("IdempotentParameterMismatchException", Idempotence::Read);
         assert_eq!(error, StoreError::IdempotencyConflict);
+    }
+
+    #[test]
+    fn a_cancelled_transactional_read_is_contention_not_an_outage() {
+        // The regression this pins: `TransactionCanceledException` fell to the
+        // catch-all `Unavailable` arm, so a transactional read losing to a
+        // concurrent writer surfaced as a non-retry-coded 5xx instead of the
+        // retryable contention it is.
+        let error = classify_code("TransactionCanceledException", Idempotence::Read);
+        assert_eq!(error, StoreError::Contended);
+        assert!(error.retryable());
     }
 
     #[test]

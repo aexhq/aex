@@ -38,7 +38,7 @@
       "sort": "evSk",
       "sparse": true,
       "projectsRecordBody": true,
-      "rationale": "Only native events carry these attributes. Hour partitions prevent a hot unbounded workspace feed and the session and observation tie-breakers make cross-session ordering total.",
+      "rationale": "Only native events carry these attributes. Hour partitions prevent a hot unbounded workspace feed and the session and observation tie-breakers make cross-session ordering total. bodyInline is deliberately not projected: an inline body of up to 32 KiB would be stored again per event index, so readers hydrate the base row for an event that projects neither body attribute; bodyDigest stays projected because a digest is small and lets digest-bodied events serve without hydration.",
       "projection": {
         "type": "INCLUDE",
         "attributes": [
@@ -50,7 +50,6 @@
           "type",
           "runId",
           "agentId",
-          "bodyInline",
           "bodyDigest",
           "occurredAt",
           "outboxState"
@@ -63,7 +62,7 @@
       "sort": "esSk",
       "sparse": true,
       "projectsRecordBody": true,
-      "rationale": "Only native events carry these attributes. Hour partitions and the canonical observation tuple provide exact event-time pagination for a session without scanning unrelated workspace traffic or changing the journal's sequence-ordered authority key.",
+      "rationale": "Only native events carry these attributes. Hour partitions and the canonical observation tuple provide exact event-time pagination for a session without scanning unrelated workspace traffic or changing the journal's sequence-ordered authority key. bodyInline is deliberately not projected, exactly as on gsi_workspace_events: readers hydrate the base row for an event that projects neither body attribute.",
       "projection": {
         "type": "INCLUDE",
         "attributes": [
@@ -75,7 +74,6 @@
           "type",
           "runId",
           "agentId",
-          "bodyInline",
           "bodyDigest",
           "occurredAt",
           "outboxState"

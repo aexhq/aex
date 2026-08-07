@@ -17,6 +17,7 @@ use aex_wire::types::Timestamp;
 use async_trait::async_trait;
 use aws_sdk_dynamodb::Client;
 use aws_sdk_dynamodb::types::ReturnValuesOnConditionCheckFailure;
+use futures::StreamExt as _;
 
 use crate::codec::{
     self, ContentDescriptor, DownloadGrant, GcEpoch, GrantExpiryCursor, GrantExpiryPosition,
@@ -276,6 +277,31 @@ pub trait ContentMetadataStore: Send + Sync + 'static {
     ) -> Result<RedeemedGrant, StoreError>;
 }
 
+/// Which consistency one content point read requires.
+///
+/// Content-addressed rows — descriptors, inline bodies, tree pages — are
+/// immutable: a present row already holds the only bytes its digest can name,
+/// so the sole question replica lag can change is *presence* moments after a
+/// write, and those reads take the eventual path for half the read cost. The
+/// garbage-collection epoch and the durable expiry cursor are fences and stay
+/// strong, as does the grant read behind `redeem_grant`, whose expiry check is
+/// an authority decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Consistency {
+    /// A fence: the read must observe every acknowledged write.
+    Strong,
+    /// An immutable content-addressed row: replica lag is accepted.
+    Eventual,
+}
+
+/// How many conditional tree-page puts one commit holds open at once.
+///
+/// The bound converts the transport's own concurrency appetite (the shared
+/// HTTP pool) rather than a per-table quota — an on-demand table has none.
+/// Eight keeps a large tree write inside one connection pool without queueing
+/// behind itself.
+const MAX_CONCURRENT_TREE_PAGE_PUTS: usize = 8;
+
 /// The adapter.
 #[derive(Debug, Clone)]
 pub struct ContentStore {
@@ -299,17 +325,56 @@ impl ContentStore {
         &self.table
     }
 
-    async fn get(&self, pk: &str, sk: &str) -> Result<Option<Item>, StoreError> {
+    async fn get(
+        &self,
+        pk: &str,
+        sk: &str,
+        consistency: Consistency,
+    ) -> Result<Option<Item>, StoreError> {
         let output = self
             .client
             .get_item()
             .table_name(&self.table)
             .set_key(Some(key(pk, sk)))
-            .consistent_read(true)
+            .consistent_read(matches!(consistency, Consistency::Strong))
             .send()
             .await
             .map_err(|error| classify(&error, Idempotence::Read))?;
         Ok(output.item)
+    }
+
+    /// Writes one immutable tree page, treating a lost condition as replay.
+    async fn put_tree_page(&self, page: &TreePage) -> Result<(), StoreError> {
+        let builder = expressions::put_tree_page(&self.table, page)?;
+        let built = builder.build().map_err(|error| StoreError::Invalid {
+            detail: error.to_string(),
+        })?;
+        let outcome = self
+            .client
+            .put_item()
+            .table_name(&self.table)
+            .set_item(Some(built.item().clone()))
+            .set_condition_expression(built.condition_expression().map(str::to_owned))
+            .send()
+            .await;
+        match outcome {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                // A page is content addressed, so an existing row holds the
+                // identical bytes and the write is an idempotent success.
+                if matches!(
+                    error.as_service_error(),
+                    Some(
+                        aws_sdk_dynamodb::operation::put_item::PutItemError::ConditionalCheckFailedException(
+                            _
+                        )
+                    )
+                ) {
+                    return Ok(());
+                }
+                Err(classify(&error, Idempotence::Write(Resolution::TargetItem)))
+            }
+        }
     }
 }
 
@@ -321,7 +386,10 @@ impl ContentMetadataStore for ContentStore {
         digest: &ContentHash,
     ) -> Result<Option<ContentDescriptor>, StoreError> {
         let target = keys::descriptor(workspace, digest);
-        match self.get(&target.pk, &target.sk).await? {
+        match self
+            .get(&target.pk, &target.sk, Consistency::Eventual)
+            .await?
+        {
             None => Ok(None),
             Some(item) => Ok(Some(decode_descriptor(&item, workspace)?)),
         }
@@ -333,7 +401,10 @@ impl ContentMetadataStore for ContentStore {
         digest: &ContentHash,
     ) -> Result<Option<SealedBytes>, StoreError> {
         let target = keys::inline_body(workspace, digest);
-        match self.get(&target.pk, &target.sk).await? {
+        match self
+            .get(&target.pk, &target.sk, Consistency::Eventual)
+            .await?
+        {
             None => Ok(None),
             Some(item) => Ok(Some(decode_inline_body(&item, workspace)?)),
         }
@@ -345,51 +416,40 @@ impl ContentMetadataStore for ContentStore {
         page: Blake3Digest,
     ) -> Result<Option<TreePage>, StoreError> {
         let target = keys::tree_page(workspace, page);
-        match self.get(&target.pk, &target.sk).await? {
+        match self
+            .get(&target.pk, &target.sk, Consistency::Eventual)
+            .await?
+        {
             None => Ok(None),
             Some(item) => Ok(Some(decode_tree_page(&item, workspace)?)),
         }
     }
 
     async fn put_tree_pages(&self, pages: &[TreePage]) -> Result<(), StoreError> {
-        for page in pages {
-            let builder = expressions::put_tree_page(&self.table, page)?;
-            let built = builder.build().map_err(|error| StoreError::Invalid {
-                detail: error.to_string(),
-            })?;
-            let outcome = self
-                .client
-                .put_item()
-                .table_name(&self.table)
-                .set_item(Some(built.item().clone()))
-                .set_condition_expression(built.condition_expression().map(str::to_owned))
-                .send()
-                .await;
-            match outcome {
-                Ok(_) => {}
-                Err(error) => {
-                    // A page is content addressed, so an existing row holds the
-                    // identical bytes and the write is an idempotent success.
-                    if matches!(
-                        error.as_service_error(),
-                        Some(
-                            aws_sdk_dynamodb::operation::put_item::PutItemError::ConditionalCheckFailedException(
-                                _
-                            )
-                        )
-                    ) {
-                        continue;
-                    }
-                    return Err(classify(&error, Idempotence::Write(Resolution::TargetItem)));
-                }
-            }
+        // Every put is built before the wave starts (an unpolled future has
+        // issued nothing), then driven at a fixed width instead of serially -
+        // a large tree commit was paying one round trip per page. `buffered`
+        // settles in input order, so the error a caller sees is the earliest
+        // failing page, and dropping the stream on that error cancels the rest;
+        // cancelling a content-addressed conditional put is safe because a
+        // replay writes the identical bytes or loses its condition, which is
+        // treated as success either way.
+        let puts: Vec<_> = pages.iter().map(|page| self.put_tree_page(page)).collect();
+        let mut open = futures::stream::iter(puts).buffered(MAX_CONCURRENT_TREE_PAGE_PUTS);
+        while let Some(outcome) = open.next().await {
+            outcome?;
         }
         Ok(())
     }
 
     async fn load_gc_epoch(&self, workspace: WorkspaceId) -> Result<Option<GcEpoch>, StoreError> {
+        // The sweeper's fence: an epoch served from a lagging replica could
+        // let a sweep proceed under an epoch that has already advanced.
         let target = keys::gc_epoch(workspace);
-        match self.get(&target.pk, &target.sk).await? {
+        match self
+            .get(&target.pk, &target.sk, Consistency::Strong)
+            .await?
+        {
             None => Ok(None),
             Some(item) => Ok(Some(decode_gc_epoch(&item, workspace)?)),
         }
@@ -611,7 +671,9 @@ impl ContentMetadataStore for ContentStore {
             });
         }
         let target = keys::expiry_cursor(shard);
-        let item = self.get(&target.pk, &target.sk).await?;
+        let item = self
+            .get(&target.pk, &target.sk, Consistency::Strong)
+            .await?;
         let Some(item) = item else {
             return Ok(None);
         };
@@ -720,7 +782,7 @@ impl ContentMetadataStore for ContentStore {
             observed: None,
         };
         let item = self
-            .get(&target.pk, &target.sk)
+            .get(&target.pk, &target.sk, Consistency::Strong)
             .await?
             .ok_or_else(refused)?;
         let grant = decode_grant(&item)?;

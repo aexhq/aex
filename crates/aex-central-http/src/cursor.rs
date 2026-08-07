@@ -10,7 +10,7 @@
 //! minted for one principal, endpoint, scope or region fails the comparison
 //! rather than paging over rows its holder may not see.
 
-use aex_control_app::ports::{MAX_PAGE_LIMIT, PageRequest};
+use aex_control_app::ports::{DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT, PageRequest};
 use aex_control_domain::{CursorClaims, CursorSecret, decode_cursor, encode_cursor};
 use aex_wire::types::Region;
 use sha2::{Digest as _, Sha256};
@@ -83,7 +83,7 @@ pub fn page_request(
     limit: Option<u32>,
     now_ms: i64,
 ) -> Result<PageRequest, EdgeError> {
-    let limit = limit.unwrap_or(MAX_PAGE_LIMIT).clamp(1, MAX_PAGE_LIMIT);
+    let limit = limit.unwrap_or(DEFAULT_PAGE_LIMIT).clamp(1, MAX_PAGE_LIMIT);
     let Some(raw) = cursor else {
         return Ok(PageRequest { after: None, limit });
     };
@@ -117,7 +117,7 @@ pub fn next_cursor(
 mod tests {
     use super::{PageBinding, next_cursor, page_request};
     use crate::error::EdgeError;
-    use aex_control_app::ports::MAX_PAGE_LIMIT;
+    use aex_control_app::ports::{DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT};
     use aex_control_domain::CursorSecret;
     use aex_wire::types::Region;
     use uuid::Uuid;
@@ -141,7 +141,10 @@ mod tests {
     fn a_first_page_carries_no_position_and_a_bounded_limit() {
         let page = page_request(&secret(), &binding(), None, None, 2_000).expect("a first page");
         assert_eq!(page.after, None);
-        assert_eq!(page.limit, MAX_PAGE_LIMIT);
+        assert_eq!(
+            page.limit, DEFAULT_PAGE_LIMIT,
+            "an omitted limit is the default, never the ceiling"
+        );
 
         let page = page_request(&secret(), &binding(), None, Some(0), 2_000).expect("a first page");
         assert_eq!(page.limit, 1, "a zero limit is clamped, never zero rows");
@@ -149,6 +152,13 @@ mod tests {
         let page =
             page_request(&secret(), &binding(), None, Some(9_999), 2_000).expect("a first page");
         assert_eq!(page.limit, MAX_PAGE_LIMIT);
+
+        let page = page_request(&secret(), &binding(), None, Some(MAX_PAGE_LIMIT), 2_000)
+            .expect("a first page");
+        assert_eq!(
+            page.limit, MAX_PAGE_LIMIT,
+            "the ceiling stays reachable on explicit request"
+        );
     }
 
     #[test]

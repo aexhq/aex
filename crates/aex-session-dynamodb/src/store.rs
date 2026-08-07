@@ -1058,49 +1058,30 @@ impl SessionReads {
         child: &keys::Key,
     ) -> Result<(SessionScoped<Session>, Option<Item>), StoreError> {
         let head = keys::head(session);
-        let gets = [head, child.clone()]
-            .into_iter()
-            .map(|target| {
-                let get = aws_sdk_dynamodb::types::Get::builder()
-                    .table_name(&self.table)
-                    .set_key(Some(key(&target.pk, &target.sk)))
-                    .build()
-                    .map_err(|error| StoreError::Invalid {
-                        detail: error.to_string(),
-                    })?;
-                Ok(aws_sdk_dynamodb::types::TransactGetItem::builder()
-                    .get(get)
-                    .build())
-            })
-            .collect::<Result<Vec<_>, StoreError>>()?;
-        let output = self
-            .client
-            .transact_get_items()
-            .set_transact_items(Some(gets))
-            .send()
-            .await
-            .map_err(|error| classify(&error, Idempotence::Read))?;
-        let responses = output.responses.unwrap_or_default();
-        if responses.len() != 2 {
-            return Err(StoreError::Invalid {
-                detail: "a two-item transactional read returned another response arity".to_owned(),
-            });
-        }
-        let child = responses[1].item.clone();
-        let Some(item) = responses[0].item.as_ref() else {
-            return Ok((SessionScoped::Missing, child));
+        // Two plain strongly consistent point reads issued together, not a
+        // `TransactGetItems`: a serializable read pair mutually cancels with
+        // this session's own write transactions, so a busy session's runs and
+        // approvals became unreadable exactly when they were being written.
+        // Atomicity across the pair bought nothing the head decode does not
+        // already enforce - a head that stopped admitting work answers
+        // `Deleted`/`Missing` whatever the child read saw, so a torn pair
+        // fails closed rather than publishing anything.
+        let (head_item, child_item) =
+            futures::try_join!(self.get(&head.pk, &head.sk), self.get(&child.pk, &child.sk),)?;
+        let Some(item) = head_item else {
+            return Ok((SessionScoped::Missing, child_item));
         };
-        let decoded = match crate::authority_codec::decode_session(item, workspace) {
+        let decoded = match crate::authority_codec::decode_session(&item, workspace) {
             Ok(decoded) => decoded,
             Err(CodecError::WrongTenant { .. }) => {
-                return Ok((SessionScoped::Missing, child));
+                return Ok((SessionScoped::Missing, child_item));
             }
             Err(error) => return Err(StoreError::Corrupt(error)),
         };
         if decoded.deletion.state.admits_work() {
-            Ok((SessionScoped::Active(decoded), child))
+            Ok((SessionScoped::Active(decoded), child_item))
         } else {
-            Ok((SessionScoped::Deleted, child))
+            Ok((SessionScoped::Deleted, child_item))
         }
     }
 

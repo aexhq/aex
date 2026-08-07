@@ -72,6 +72,8 @@ tokio.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+aws-smithy-http-client.workspace = true
+aws-smithy-types.workspace = true
 # `ServiceExt::oneshot`, so the mount's body-limit contract is provable without
 # a live edge.
 tower.workspace = true

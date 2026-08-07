@@ -420,23 +420,56 @@ pub const fn plane(name: &str) -> Option<Plane> {
     }
 }
 
+/// How long a refusal or verification failure is answered from memory.
+///
+/// A few seconds, judged against the caller's `now`: long enough that a burst
+/// of requests presenting one bad key costs the central authority one exchange
+/// per window instead of one per request (the burst-auth-503 class), short
+/// enough that a key un-revoked or re-issued centrally is admitted again within
+/// a breath. Well under the thirty-second assertion lifetime, so a negative
+/// answer can never outlive the positive one it displaced.
+pub const NEGATIVE_TTL_MS: u64 = 5_000;
+
+/// Whether a failure may be served from the negative cache.
+///
+/// Only a *decision* is cacheable: the authority refused the credential, or its
+/// answer failed verification. An outage ([`AuthFailure::SourceUnavailable`] and
+/// its transport-shaped kin) is never cached — caching it would keep refusing
+/// good credentials for the TTL after the authority recovered.
+const fn caches_negatively(failure: &AuthFailure) -> bool {
+    matches!(failure, AuthFailure::Refused | AuthFailure::Verification(_))
+}
+
+/// One remembered refusal, with the instant it stops being an answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct NegativeEntry {
+    failure: AuthFailure,
+    expires_at_ms: u64,
+}
+
 /// Byte-bounded credential cache with one refresh flight per credential.
 ///
 /// The cache holds a *verified* assertion for at most its own thirty-second
 /// lifetime, and the regional projection is read on every request regardless —
 /// which is the only thing that makes caching an authorization decision safe.
+/// A refusal or verification failure is held for [`NEGATIVE_TTL_MS`] under the
+/// same key, so sequential traffic presenting one bad credential costs one
+/// central exchange per window rather than one per request; an unavailable
+/// authority is never remembered.
 ///
-/// The two structures are bounded independently and clean up independently: a
+/// The structures are bounded independently and clean up independently: a
 /// stored decision is evicted when the byte budget is full or when it stops
-/// being admissible, and a flight is retired when its resolution ends. Neither
-/// event touches the other, so an eviction storm cannot strand a flight and a
-/// cancelled flight cannot drop a decision that is still good.
+/// being admissible, a remembered refusal lapses with its TTL, and a flight is
+/// retired when its resolution ends. No event touches the others, so an
+/// eviction storm cannot strand a flight and a cancelled flight cannot drop a
+/// decision that is still good.
 pub struct VerifyingAssertionCache<S> {
     source: S,
     keys: VerificationKeySet,
     audience: Audience,
     max_entries: usize,
     entries: Mutex<HashMap<CredentialKey, VerifiedAuthorization>>,
+    negatives: Mutex<HashMap<CredentialKey, NegativeEntry>>,
     flights: FlightRegistry,
 }
 
@@ -462,6 +495,7 @@ impl<S: AssertionSource> VerifyingAssertionCache<S> {
             audience,
             max_entries,
             entries: Mutex::new(HashMap::new()),
+            negatives: Mutex::new(HashMap::new()),
             flights: FlightRegistry::new(MAX_ACTIVE_FLIGHTS),
         })
     }
@@ -511,9 +545,17 @@ impl<S: AssertionSource> VerifyingAssertionCache<S> {
         if let Some(hit) = self.cached(key, floors, now).await {
             return Ok(hit);
         }
+        if let Some(failure) = self.negative(key, now).await {
+            return Err(failure);
+        }
         match self.flights.board(key)? {
             FlightRole::Leader(leader) => {
                 let outcome = self.lead(key, credential, floors, now).await;
+                if let Err(failure) = &outcome
+                    && caches_negatively(failure)
+                {
+                    self.store_negative(key, *failure, now).await;
+                }
                 // Publishing before returning is what makes the leader's own
                 // cancellation the only way a waiter can be left without an
                 // answer, and `FlightLeader` covers that case as it drops.
@@ -566,6 +608,49 @@ impl<S: AssertionSource> VerifyingAssertionCache<S> {
             }
         }
         entries.insert(key, *authorization);
+    }
+
+    /// The remembered refusal for this credential, when one is still current.
+    ///
+    /// Expiry is judged against the caller's `now`, exactly as [`admissible`]
+    /// judges a stored decision, so the window is testable and monotone with
+    /// the rest of the cache.
+    async fn negative(&self, key: CredentialKey, now: Timestamp) -> Option<AuthFailure> {
+        let now_ms = u64::try_from(now.unix_millis()).ok()?;
+        let mut negatives = self.negatives.lock().await;
+        let entry = *negatives.get(&key)?;
+        if now_ms >= entry.expires_at_ms {
+            negatives.remove(&key);
+            return None;
+        }
+        Some(entry.failure)
+    }
+
+    /// Remembers a refusal, evicting the nearest to expiry when full.
+    ///
+    /// Bounded by the same entry budget as the positive cache, so a flood of
+    /// distinct bad credentials can displace only each other.
+    async fn store_negative(&self, key: CredentialKey, failure: AuthFailure, now: Timestamp) {
+        let Ok(now_ms) = u64::try_from(now.unix_millis()) else {
+            return;
+        };
+        let mut negatives = self.negatives.lock().await;
+        if negatives.len() >= self.max_entries {
+            let soonest = negatives
+                .iter()
+                .min_by_key(|(_, entry)| entry.expires_at_ms)
+                .map(|(stored, _)| *stored);
+            if let Some(soonest) = soonest {
+                negatives.remove(&soonest);
+            }
+        }
+        negatives.insert(
+            key,
+            NegativeEntry {
+                failure,
+                expires_at_ms: now_ms.saturating_add(NEGATIVE_TTL_MS),
+            },
+        );
     }
 
     async fn cached(

@@ -64,12 +64,12 @@ run "the_circuit_breaker_is_enabled_and_rolls_back" {
   command = plan
 
   assert {
-    condition     = one(aws_ecs_service.this.deployment_circuit_breaker).enable == true
+    condition     = one(aws_ecs_service.autoscaled[0].deployment_circuit_breaker).enable == true
     error_message = "The deployment circuit breaker must be enabled."
   }
 
   assert {
-    condition     = one(aws_ecs_service.this.deployment_circuit_breaker).rollback == true
+    condition     = one(aws_ecs_service.autoscaled[0].deployment_circuit_breaker).rollback == true
     error_message = "A tripped circuit breaker must roll back."
   }
 }
@@ -97,8 +97,13 @@ run "the_apply_waits_for_steady_state" {
   command = plan
 
   assert {
-    condition     = aws_ecs_service.this.wait_for_steady_state == true
+    condition     = aws_ecs_service.autoscaled[0].wait_for_steady_state == true
     error_message = "The apply must wait for the service to reach steady state; without it a first deployment whose tasks crash exits successfully with the service parked at zero tasks."
+  }
+
+  assert {
+    condition     = length(aws_ecs_service.static) == 0
+    error_message = "An autoscaled configuration must materialize only the desired-count-ignoring variant."
   }
 }
 
@@ -106,7 +111,7 @@ run "tasks_never_get_a_public_address" {
   command = plan
 
   assert {
-    condition     = one(aws_ecs_service.this.network_configuration).assign_public_ip == false
+    condition     = one(aws_ecs_service.autoscaled[0].network_configuration).assign_public_ip == false
     error_message = "Service tasks must not be given a public address."
   }
 }
@@ -137,7 +142,7 @@ run "development_brain_mux_runs_one_task_and_drains_for_two_minutes" {
   }
 
   assert {
-    condition     = aws_ecs_service.this.desired_count == 1
+    condition     = aws_ecs_service.autoscaled[0].desired_count == 1
     error_message = "Development brain-mux runs exactly one task."
   }
 
@@ -178,7 +183,7 @@ run "production_brain_mux_runs_the_approved_two_task_floor" {
   }
 
   assert {
-    condition     = aws_ecs_service.this.desired_count == 2
+    condition     = aws_ecs_service.autoscaled[0].desired_count == 2
     error_message = "Production brain-mux must run the approved two-task floor."
   }
 
@@ -408,8 +413,13 @@ run "fixed_count_creates_no_autoscaling_resources" {
   }
 
   assert {
-    condition     = aws_ecs_service.this.desired_count == 2
+    condition     = aws_ecs_service.static[0].desired_count == 2
     error_message = "Fixed-count mode must preserve the reviewed desired task count."
+  }
+
+  assert {
+    condition     = length(aws_ecs_service.autoscaled) == 0 && length(aws_ecs_service.static) == 1
+    error_message = "Fixed-count mode must materialize exactly the variant whose desired_count terraform enforces; the desired-count-ignoring variant would turn a raised count into a green no-op."
   }
 
   assert {
