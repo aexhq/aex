@@ -1594,7 +1594,11 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
                 .expression_attribute_names("#pk", keys::DUE_PK)
                 .expression_attribute_names("#sk", keys::DUE_SK)
                 .expression_attribute_values(":pk", s(keys::due_partition_for_shard(shard)))
-                .expression_attribute_values(":now", s(format!("{}#", now.to_wire())))
+                // The upper bound carries a scalar above every generation-id
+                // byte, so the whole of that millisecond is included. A bare
+                // trailing separator sorts *before* every `#{generationId}` and
+                // would miss generations due at exactly `now`.
+                .expression_attribute_values(":now", s(format!("{}#\u{10ffff}", now.to_wire())))
                 .limit(i32::try_from(limit).unwrap_or(i32::MAX))
                 .send()
                 .await
@@ -1850,9 +1854,11 @@ impl RuntimeActivityDynamoStore {
             .expression_attribute_names("#pk", keys::DUE_PK)
             .expression_attribute_names("#sk", keys::DUE_SK)
             .expression_attribute_values(":pk", s(keys::due_partition_for_shard(shard)))
-            // The upper bound carries the separator so the whole of that
-            // millisecond is included whatever generation follows it.
-            .expression_attribute_values(":now", s(format!("{}#", now.to_wire())))
+            // The upper bound carries a scalar above every generation-id byte,
+            // so the whole of that millisecond is included. A bare trailing
+            // separator sorts *before* every `#{generationId}` and would miss
+            // generations due at exactly `now`.
+            .expression_attribute_values(":now", s(format!("{}#\u{10ffff}", now.to_wire())))
             .limit(budget.limit())
             .send()
             .await

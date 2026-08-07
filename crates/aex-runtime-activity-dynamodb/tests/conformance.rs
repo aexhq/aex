@@ -164,6 +164,47 @@ async fn a_due_scan_reads_one_shard_of_the_index_and_never_a_literal_partition()
         body["KeyConditionExpression"].as_str(),
         Some("#pk = :pk AND #sk <= :now")
     );
+    let upper = body["ExpressionAttributeValues"][":now"]["S"]
+        .as_str()
+        .expect("the due upper bound");
+    assert_eq!(
+        upper,
+        format!("{}#\u{10ffff}", now().to_wire()),
+        "a bare trailing separator sorts before every `#{{generationId}}` and \
+         would miss generations due at exactly `now`"
+    );
+}
+
+/// The reaper path and the runtime-control port must agree on the millisecond
+/// boundary: the sort key is `{ts}#{generationId}`, so an upper bound that
+/// ends at the separator excludes every generation due at the scan instant.
+#[tokio::test]
+async fn the_port_due_scan_includes_the_whole_scan_millisecond() {
+    use aex_runtime_control::store::{
+        PageBudget as PortPageBudget, RuntimeActivityStore, RuntimeShard,
+    };
+
+    let (client, receiver) = capturing_client();
+    let store = RuntimeActivityDynamoStore::new(client, TABLE);
+    // Fully qualified: the adapter also exposes an inherent reaper `scan_due`,
+    // and this case is about the port the runtime-control loop calls.
+    let _ignored = RuntimeActivityStore::scan_due(
+        &store,
+        RuntimeShard(7),
+        now(),
+        PortPageBudget {
+            max_items: 25,
+            max_reads: 100,
+        },
+    )
+    .await;
+
+    let body = captured_body(receiver);
+    assert_eq!(body["IndexName"].as_str(), Some(keys::DUE_INDEX));
+    assert_eq!(
+        body["ExpressionAttributeValues"][":now"]["S"].as_str(),
+        Some(format!("{}#\u{10ffff}", now().to_wire()).as_str())
+    );
 }
 
 #[tokio::test]
