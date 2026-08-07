@@ -1,6 +1,7 @@
 [package]
 name = "aex-central-runtime"
 version = "0.1.0"
+description = "`aex-central-runtime` holds the central plane's non-Aurora port adapters."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

@@ -1,6 +1,7 @@
 [package]
 name = "aex-usage-storage-aws"
 version = "0.1.0"
+description = "`aex-usage-storage-aws` is the `usage-storage-authority` adapter: table expressions, the row codec, the admission transaction and the frontier compare-and-set for `storage.byte_min.v1` facts, plus the rating-queue producer and this category's settlement receipt consumer."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

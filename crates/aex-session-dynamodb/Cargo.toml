@@ -1,6 +1,7 @@
 [package]
 name = "aex-session-dynamodb"
 version = "0.1.0"
+description = "`aex-session-dynamodb` owns the `session-authority` table adapter and, with it, the machinery every regional `DynamoDB` adapter shares: key components, attribute codecs, item measurement, the transaction plan compiler, the store error vocabulary, bounded paging and the idempotent-replay combinator."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

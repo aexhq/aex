@@ -587,8 +587,12 @@ mod tests {
 
     const NOW_MS: i64 = 1_767_225_600_000;
     const PEPPER: [u8; 32] = [11_u8; 32];
-    const TOKEN: &str =
-        "aex_wk_euw1_01kyw2qa4ne00r40r40m30e209_00000000000000000000000000000000000000000000";
+    const TOKEN: &str = concat!(
+        "aex_wk_euw1_",
+        "01kyw2qa4ne00r40r40m30e208_",
+        "01kyw2qa4ne00r40r40m30e209_",
+        "00000000000000000000000000000000000000000000"
+    );
 
     fn now() -> time::OffsetDateTime {
         time::OffsetDateTime::from_unix_timestamp_nanos(i128::from(NOW_MS) * 1_000_000)

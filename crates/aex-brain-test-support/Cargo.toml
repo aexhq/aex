@@ -1,6 +1,7 @@
 [package]
 name = "aex-brain-test-support"
 version = "0.1.0"
+description = "`aex-brain-test-support` owns deterministic Brain, provider, tool, `MCP` and Hands fixtures plus the cleanup ledger for everything an activation creates."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

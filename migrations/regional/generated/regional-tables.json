@@ -1,13 +1,13 @@
 {
   "schema": "aex.regional-tables.v1",
   "generation": 1,
-  "digest": "blake3:eb4280fbd86e61febe8b02441f1e0e29988fd2a799e5b007e20daf38264a96b0",
+  "digest": "blake3:2c6a7c3b3947bcb47e7aec62e0f5f02349d484622eeb845a3e46807e86743fc4",
   "tables": [
     {
       "schema": "aex.regional-table.v1",
       "table": "observation-authority",
       "owner": "observations-usage",
-      "purpose": "The observation authority and its own query engine: immutable OBS# observation revisions, the per-scope accepted frontier and deletion fence, the accepted- and event-time segment directories, staged admission pages and their receipts, the durable spool and usage outbox, series claims and their cardinality counters, workspace ingest quota, the regional ingress gate, telemetry gaps, export state and export checkpoints. There is no downstream projection store and no change-feed rail: this table answers every supported query shape itself.",
+      "purpose": "The observation authority and its own query engine: immutable OBS# observation revisions, the per-scope accepted frontier and deletion fence, the accepted- and event-time segment directories, staged admission pages and their receipts, the durable spool and usage outbox, series claims and their cardinality counters, workspace ingest quota, the regional ingress gate, telemetry gaps and the workspace gap-change hint that says whether they are worth reading, export state and export checkpoints. There is no downstream projection store and no change-feed rail: this table answers every supported query shape itself.",
       "billingMode": "PAY_PER_REQUEST",
       "deletionProtection": true,
       "pointInTimeRecovery": {
@@ -264,6 +264,7 @@
         "usage_outbox",
         "series_claim",
         "telemetry_gap",
+        "gap_change_hint",
         "export",
         "export_checkpoint"
       ],
@@ -386,7 +387,7 @@
       "schema": "aex.regional-table.v1",
       "table": "regional-authz-projection",
       "owner": "regional-stores",
-      "purpose": "Read-only regional projection of workspace placement, descriptive profiles, effective limits, API key revocation and the signed feed frontier. Central control owns placement, profile, revocation and frontier rows; regional capacity alone owns effective-limit rows. Partition-key-scoped IAM keeps those write capabilities disjoint, while every serving regional role holds GetItem and Query only.",
+      "purpose": "Read-only regional projection of workspace placement, descriptive profiles, effective limits, API key authorization and the signed feed frontier. Central control owns placement, profile, key authorization and frontier rows; regional capacity alone owns effective-limit rows, including the hot admission subset a request edge reads. Partition-key-scoped IAM keeps those write capabilities disjoint, while every serving regional role reads only: GetItem, Query, and TransactGetItems for the one-request admission snapshot.",
       "billingMode": "PAY_PER_REQUEST",
       "deletionProtection": true,
       "pointInTimeRecovery": {
@@ -423,7 +424,7 @@
         "enabled": false,
         "attribute": "",
         "appliesTo": [],
-        "rationale": "A revocation row that silently disappeared would fail open, which is the one direction this table must never fail."
+        "rationale": "A key authorization row that silently disappeared would take a live key with it, and an expired one would be indistinguishable from a forged key id. Neither direction is acceptable, so nothing here expires."
       },
       "itemTypes": [
         "workspace_placement",
@@ -431,7 +432,8 @@
         "workspace_limit",
         "workspace_limit_bundle_head",
         "workspace_limit_bundle",
-        "key_revocation",
+        "workspace_edge_limits",
+        "key_authorization",
         "feed_frontier"
       ],
       "iam": [
@@ -455,7 +457,7 @@
           "itemTypes": [
             "workspace_placement",
             "workspace_profile",
-            "key_revocation",
+            "key_authorization",
             "feed_frontier"
           ],
           "condition": {
@@ -479,7 +481,8 @@
           "itemTypes": [
             "workspace_limit",
             "workspace_limit_bundle_head",
-            "workspace_limit_bundle"
+            "workspace_limit_bundle",
+            "workspace_edge_limits"
           ],
           "condition": {
             "operator": "ForAllValues:StringLike",
@@ -493,6 +496,7 @@
           "role": "regional-session-api",
           "actions": [
             "dynamodb:GetItem",
+            "dynamodb:TransactGetItems",
             "dynamodb:Query",
             "dynamodb:ConditionCheckItem"
           ],
@@ -504,6 +508,7 @@
           "role": "regional-secret-api",
           "actions": [
             "dynamodb:GetItem",
+            "dynamodb:TransactGetItems",
             "dynamodb:Query"
           ],
           "resources": [
@@ -514,6 +519,7 @@
           "role": "regional-observation-api",
           "actions": [
             "dynamodb:GetItem",
+            "dynamodb:TransactGetItems",
             "dynamodb:Query"
           ],
           "resources": [
@@ -524,6 +530,7 @@
           "role": "regional-stream",
           "actions": [
             "dynamodb:GetItem",
+            "dynamodb:TransactGetItems",
             "dynamodb:Query"
           ],
           "resources": [
@@ -534,6 +541,7 @@
           "role": "regional-otlp",
           "actions": [
             "dynamodb:GetItem",
+            "dynamodb:TransactGetItems",
             "dynamodb:Query"
           ],
           "resources": [
@@ -1632,6 +1640,7 @@
           "actions": [
             "dynamodb:DescribeTable",
             "dynamodb:GetItem",
+            "dynamodb:BatchGetItem",
             "dynamodb:Query"
           ],
           "resources": [
@@ -1644,6 +1653,7 @@
           "actions": [
             "dynamodb:DescribeTable",
             "dynamodb:GetItem",
+            "dynamodb:BatchGetItem",
             "dynamodb:Query"
           ],
           "resources": [

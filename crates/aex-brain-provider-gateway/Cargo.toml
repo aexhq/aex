@@ -1,6 +1,7 @@
 [package]
 name = "aex-brain-provider-gateway"
 version = "0.1.0"
+description = "`aex-brain-provider-gateway` owns customer-key provider transport and dialect adapters: six direct providers plus two fixed gateway authorities over one shared bounded `HTTP`/`SSE` core."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

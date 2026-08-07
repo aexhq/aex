@@ -20,7 +20,6 @@ use aex_regional_http::assertion::AuthFailure;
 use aex_regional_http::authz::{
     LambdaAssertionSource, ParameterStore, RegionalProjection, TrustError,
 };
-use aex_regional_http::capacity::CapacityProjection;
 use aex_regional_http::config::ConfigError;
 use aex_regional_http::edge::{EdgeBinding, RegionalEdge, SystemClock};
 use aex_regional_http::health::Readiness;
@@ -151,11 +150,10 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
     .map_err(|error| RunError::Runtime(error.to_string()))
 }
 
-/// Builds the shared regional edge over its four resolved inputs.
+/// Builds the shared regional edge over its three resolved inputs.
 type Edge = RegionalEdge<
     LambdaAssertionSource,
     RegionalProjection<aex_session_dynamodb::projection::ProjectionReader>,
-    CapacityProjection<aex_session_dynamodb::projection::ProjectionReader>,
     SystemClock,
 >;
 
@@ -177,8 +175,7 @@ fn build_edge(
             config.region,
         ),
         anchors,
-        RegionalProjection::new(projection.clone(), config.region),
-        CapacityProjection::new(projection),
+        RegionalProjection::new(projection, config.region),
         SystemClock,
         EdgeBinding {
             plane: config.plane,

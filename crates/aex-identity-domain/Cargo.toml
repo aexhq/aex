@@ -1,6 +1,7 @@
 [package]
 name = "aex-identity-domain"
 version = "0.1.0"
+description = "`aex-identity-domain` owns the pure identity state machine — people, provider links, browser sessions, email challenges, device authorizations and account tokens — plus the two codecs the whole platform authenticates through: the credential codec and the 30-second authorization assertion."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

@@ -1,6 +1,7 @@
 [package]
 name = "aex-runtime-activity-dynamodb"
 version = "0.1.0"
+description = "`aex-runtime-activity-dynamodb` owns the `runtime-activity` table adapter: exact Hands generations, lifecycle intents and receipts, true-idle heartbeats and snapshot activity."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

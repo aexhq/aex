@@ -1,6 +1,7 @@
 [package]
 name = "usage-storage-worker"
 version = "0.1.0"
+description = "`usage-storage-worker` composition root (Rust Lambda ZIP)."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

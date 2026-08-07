@@ -38,13 +38,9 @@ use aex_wire::types::Timestamp;
 use aex_wire::{ContentHash, Uuid7};
 
 pub mod catalog_source;
-pub mod deepseek_qualification;
 pub mod evidence;
 pub mod executor;
-pub mod genesis;
 pub mod publisher;
-pub mod qualification_output;
-pub mod tokenizer_oracle;
 
 /// The canonical environment variable carrying a provider's live key.
 ///

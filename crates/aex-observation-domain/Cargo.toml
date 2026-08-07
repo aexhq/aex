@@ -1,6 +1,7 @@
 [package]
 name = "aex-observation-domain"
 version = "0.1.0"
+description = "`aex-observation-domain` owns the pure customer-observation authority model: canonicalization, revision and order, series claims, receipts, gaps, frontiers and deletion."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

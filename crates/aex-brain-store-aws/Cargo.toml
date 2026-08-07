@@ -1,6 +1,7 @@
 [package]
 name = "aex-brain-store-aws"
 version = "0.1.0"
+description = "`aex-brain-store-aws` owns the Brain `DynamoDB` and `SQS` adapter: journal and effect records, activation leases and fences, snapshot pointers, and wake publication."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

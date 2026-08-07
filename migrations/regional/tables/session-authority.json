@@ -165,12 +165,22 @@
     },
     {
       "role": "regional-observation-api",
-      "actions": ["dynamodb:DescribeTable", "dynamodb:GetItem", "dynamodb:Query"],
+      "actions": [
+        "dynamodb:DescribeTable",
+        "dynamodb:GetItem",
+        "dynamodb:BatchGetItem",
+        "dynamodb:Query"
+      ],
       "resources": ["table", "index/*"]
     },
     {
       "role": "regional-stream",
-      "actions": ["dynamodb:DescribeTable", "dynamodb:GetItem", "dynamodb:Query"],
+      "actions": [
+        "dynamodb:DescribeTable",
+        "dynamodb:GetItem",
+        "dynamodb:BatchGetItem",
+        "dynamodb:Query"
+      ],
       "resources": ["table", "index/*"]
     },
     {

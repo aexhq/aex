@@ -402,17 +402,118 @@ pub struct WorkspacePlacement {
     pub updated_at: Timestamp,
 }
 
-// TODO(cross-stream): `aex-workspace-domain` publishes no key revocation. Secret revocation
-// is `aex_secret_domain::revocation::RevocationEpoch`, which this adapter does not link.
-/// One revoked workspace API key.
+/// Whether a projected workspace API key may still authorize.
+///
+/// A closed two-arm vocabulary rather than a boolean, because the stored
+/// spelling is part of the row contract and a corrupt third value must be a
+/// decode failure rather than a silently coerced `false`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum KeyAuthorizationState {
+    /// The key exists and has not been revoked.
+    Active,
+    /// The key was revoked; the row survives with a raised epoch.
+    Revoked,
+}
+
+impl KeyAuthorizationState {
+    /// Every state, in stored order.
+    pub const ALL: [Self; 2] = [Self::Active, Self::Revoked];
+
+    /// The stored spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Revoked => "revoked",
+        }
+    }
+
+    /// Resolves a stored spelling.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|it| it.as_str() == text)
+    }
+}
+
+// TODO(cross-stream): `aex-workspace-domain` publishes no key authorization. Secret
+// revocation is `aex_secret_domain::revocation::RevocationEpoch`, which this adapter does
+// not link.
+/// The projected authorization state of one workspace API key.
+///
+/// This row exists for an **active** key and survives revocation with a raised
+/// state and epoch. The revocation-only row it replaces could only answer "has
+/// this key been revoked", so a region had to learn the key's workspace from a
+/// central assertion before it could read anything else. Carrying the identity
+/// on the row is what makes one snapshot read sufficient.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct KeyRevocation {
+pub struct KeyAuthorization {
     /// Which key.
     pub api_key: ApiKeyId,
-    /// When it was revoked.
-    pub revoked_at: Timestamp,
-    /// The epoch the revocation was published at.
-    pub revoked_epoch: u64,
+    /// The workspace the key authorizes.
+    pub workspace: WorkspaceId,
+    /// The organization that owns that workspace.
+    pub organization: OrganizationId,
+    /// The region the key is pinned to, as the public AWS region name.
+    pub region: String,
+    /// Whether it may still authorize.
+    pub state: KeyAuthorizationState,
+    /// The monotone key epoch floor.
+    pub key_epoch: u64,
+    /// The monotone projection position this row was published at.
+    pub projection_sequence: u64,
+    /// When it was written.
+    pub updated_at: Timestamp,
+}
+
+/// The hot admission subset of one workspace's effective limits.
+///
+/// The full limit bundle stays where it is for the cold APIs that page it. This
+/// row is the four numbers a request edge applies before it parses a body, held
+/// in one item so admission never pays a head read plus a bundle read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EdgeLimits {
+    /// The workspace.
+    pub workspace: WorkspaceId,
+    /// The capacity authority revision this subset was cut from.
+    pub revision: u64,
+    /// The `application/aex+json` body ceiling.
+    pub json_body_bytes: u64,
+    /// The encoded OTLP body ceiling.
+    pub otlp_body_bytes: u64,
+    /// The query page item ceiling.
+    pub query_page_items: u64,
+    /// The query page serialized-byte ceiling.
+    pub query_page_bytes: u64,
+    /// When the authority last changed this subset.
+    pub changed_at: Timestamp,
+}
+
+impl EdgeLimits {
+    /// Whether every ceiling is present and positive.
+    ///
+    /// A zero ceiling admits nothing, so it is indistinguishable from an
+    /// unpopulated row; both are refused rather than enforced.
+    #[must_use]
+    pub const fn is_complete(&self) -> bool {
+        self.json_body_bytes > 0
+            && self.otlp_body_bytes > 0
+            && self.query_page_items > 0
+            && self.query_page_bytes > 0
+    }
+}
+
+/// One snapshot-consistent answer to every question request admission asks.
+///
+/// The three rows are read in one `TransactGetItems`, so they cannot disagree
+/// about a revocation or a placement change that landed between two point reads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdmissionSnapshot {
+    /// The presented key's authorization row.
+    pub key: KeyAuthorization,
+    /// The placement of the workspace that key names.
+    pub placement: WorkspacePlacement,
+    /// That workspace's hot limit subset.
+    pub limits: EdgeLimits,
 }
 
 // TODO(cross-stream): `aex-workspace-domain` publishes no feed frontier.

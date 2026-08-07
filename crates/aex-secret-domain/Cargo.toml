@@ -1,6 +1,7 @@
 [package]
 name = "aex-secret-domain"
 version = "0.1.0"
+description = "`aex-secret-domain` owns the pure secret custody, generation, rotation and revocation model."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

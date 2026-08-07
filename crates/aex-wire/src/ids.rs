@@ -754,8 +754,8 @@ impl<'de> Deserialize<'de> for FilePath {
 /// Why a workspace API key failed to parse.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ApiKeyParseError {
-    /// The value did not have the `aex_wk_<region>_<key>_<secret>` shape.
-    #[error("expected `aex_wk_<region>_<key-suffix>_<secret>`")]
+    /// The value did not have the published shape.
+    #[error("expected `aex_wk_<region>_<workspace-suffix>_<key-suffix>_<secret>`")]
     Shape,
     /// The region code was not one of the five published codes.
     #[error("unknown region code `{found}`")]
@@ -763,9 +763,12 @@ pub enum ApiKeyParseError {
         /// The offending code.
         found: Box<str>,
     },
+    /// The embedded workspace-id suffix was not a `UUIDv7` Crockford suffix.
+    #[error("workspace-id suffix is invalid: {0}")]
+    WorkspaceId(IdParseError),
     /// The embedded key-id suffix was not a `UUIDv7` Crockford suffix.
     #[error("key-id suffix is invalid: {0}")]
-    KeyId(#[from] IdParseError),
+    KeyId(IdParseError),
     /// The secret was not 43 characters of unpadded base64url.
     #[error("secret must be 43 characters of unpadded base64url")]
     Secret,
@@ -776,9 +779,16 @@ pub enum ApiKeyParseError {
 /// The type deliberately has no `Display` and no `Serialize`, and its `Debug`
 /// redacts the secret. Auditing every log site is not a control; making the
 /// secret unrenderable is.
+///
+/// Both public identifiers it carries — the workspace and the key — are named
+/// by the token so a regional endpoint can address every row it must read
+/// before it has spoken to any central authority. Neither is a capability: the
+/// 32 secret bytes are still the only thing that authenticates.
 pub struct WorkspaceApiKey {
     /// Which regional endpoint the key belongs to.
     region: Region,
+    /// The workspace the key authorizes.
+    workspace_id: WorkspaceId,
     /// The key metadata identifier the verifier is looked up by.
     key_id: ApiKeyId,
     /// The 32 CSPRNG secret bytes, zeroized on drop.
@@ -786,30 +796,35 @@ pub struct WorkspaceApiKey {
 }
 
 impl WorkspaceApiKey {
-    /// Parses `aex_wk_<region-code>_<26-char key suffix>_<43-char secret>`.
+    /// Parses
+    /// `aex_wk_<region-code>_<26-char workspace suffix>_<26-char key suffix>_<43-char secret>`.
     ///
     /// # Errors
     ///
     /// Returns [`ApiKeyParseError`] for a wrong shape, an unknown region code,
-    /// an invalid key-id suffix, or a secret that is not 43 characters of
-    /// unpadded base64url.
+    /// an invalid workspace- or key-id suffix, or a secret that is not 43
+    /// characters of unpadded base64url.
     pub fn parse(text: &str) -> Result<Self, ApiKeyParseError> {
         let rest = text
             .strip_prefix("aex_wk_")
             .ok_or(ApiKeyParseError::Shape)?;
-        let mut parts = rest.split('_');
-        let (Some(region), Some(key_suffix), Some(secret), None) =
-            (parts.next(), parts.next(), parts.next(), parts.next())
-        else {
-            return Err(ApiKeyParseError::Shape);
-        };
+        let (region, rest) = rest.split_once('_').ok_or(ApiKeyParseError::Shape)?;
         let region = Region::from_code(region).ok_or_else(|| ApiKeyParseError::UnknownRegion {
             found: region.into(),
         })?;
-        let key_id = ApiKeyId::from_uuid7(Uuid7::decode_suffix(key_suffix.as_bytes())?);
+        let (workspace_suffix, rest) = split_suffix(rest)?;
+        let (key_suffix, secret) = split_suffix(rest)?;
+        let workspace_id = WorkspaceId::from_uuid7(
+            Uuid7::decode_suffix(workspace_suffix.as_bytes())
+                .map_err(ApiKeyParseError::WorkspaceId)?,
+        );
+        let key_id = ApiKeyId::from_uuid7(
+            Uuid7::decode_suffix(key_suffix.as_bytes()).map_err(ApiKeyParseError::KeyId)?,
+        );
         let secret = decode_base64url_32(secret).ok_or(ApiKeyParseError::Secret)?;
         Ok(Self {
             region,
+            workspace_id,
             key_id,
             secret: zeroize::Zeroizing::new(secret),
         })
@@ -819,6 +834,12 @@ impl WorkspaceApiKey {
     #[must_use]
     pub const fn region(&self) -> Region {
         self.region
+    }
+
+    /// The workspace the key authorizes.
+    #[must_use]
+    pub const fn workspace_id(&self) -> WorkspaceId {
+        self.workspace_id
     }
 
     /// The key metadata identifier.
@@ -834,12 +855,27 @@ impl WorkspaceApiKey {
     }
 }
 
+/// Takes one fixed-width id suffix and its separator from the head of `text`.
+///
+/// Canonical base64url legitimately contains `_`, so a searching split would let
+/// a secret's own separator be read as a segment boundary. Every boundary after
+/// the region is therefore taken at a fixed offset.
+fn split_suffix(text: &str) -> Result<(&str, &str), ApiKeyParseError> {
+    let head = text.get(..SUFFIX_LEN).ok_or(ApiKeyParseError::Shape)?;
+    if text.as_bytes().get(SUFFIX_LEN) != Some(&b'_') {
+        return Err(ApiKeyParseError::Shape);
+    }
+    let tail = text.get(SUFFIX_LEN + 1..).ok_or(ApiKeyParseError::Shape)?;
+    Ok((head, tail))
+}
+
 impl fmt::Debug for WorkspaceApiKey {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "WorkspaceApiKey({}, {}, <redacted>)",
+            "WorkspaceApiKey({}, {}, {}, <redacted>)",
             self.region.code(),
+            self.workspace_id,
             self.key_id
         )
     }

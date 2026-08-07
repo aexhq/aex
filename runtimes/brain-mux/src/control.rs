@@ -11,8 +11,9 @@
 //! main runtime does can delay it.
 
 use crate::health::{HealthRoute, LivenessInputs, Probe, ReadinessInputs, liveness, readiness};
+use crate::pressure::PressureState;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 
 /// The state the health responder reads.
 ///
@@ -23,7 +24,10 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 pub struct HealthState {
     supervisors_intact: AtomicBool,
     control_responsive: AtomicBool,
-    reactor_delay_p99_ms: AtomicU32,
+    /// The last rolling summary the sampler published — a summary, never the raw ring and
+    /// never the latest sample. Sequence-stamped so the responder reads a whole one without
+    /// waiting on anything the main runtime holds.
+    reactor: crate::reactor::PublishedSummary,
     reactor_delay_bound_ms: AtomicU32,
     bindings_validated: AtomicBool,
     catalog_verified: AtomicBool,
@@ -32,6 +36,13 @@ pub struct HealthState {
     draining: AtomicBool,
     active_activations: AtomicU32,
     safety_cap: AtomicU32,
+    /// The last state the pressure sampler published, as its declared code.
+    ///
+    /// A copy of the gate rather than the gate itself, so the responder reads only atomics it
+    /// owns — the same reason the reactor's active-activation count is published here rather
+    /// than pulled from admission. The sampler republishes on every sample, so the copy cannot
+    /// outlive the measurement by more than one interval.
+    pressure_state: AtomicU8,
     probes_served: AtomicU64,
 }
 
@@ -77,14 +88,48 @@ impl HealthState {
         self.supervisors_intact.store(false, Ordering::SeqCst);
     }
 
-    /// Records the reactor's observed lateness.
-    pub fn observe_reactor_delay(&self, p99_ms: u32) {
-        self.reactor_delay_p99_ms.store(p99_ms, Ordering::SeqCst);
+    /// Publishes one rolling reactor-delay summary.
+    ///
+    /// Called once a second by the sampler, whatever the summary says. Maximum and missed
+    /// ticks are evidence a guardrail reads even when the rolling p99 is nowhere near its
+    /// bound, so publication is unconditional.
+    pub fn publish_reactor_summary(&self, summary: &crate::reactor::ReactorSummary) {
+        self.reactor.publish(summary);
+    }
+
+    /// The last whole rolling summary published, if there is one.
+    #[must_use]
+    pub fn reactor_summary(&self) -> Option<crate::reactor::ReactorSummary> {
+        self.reactor.read()
+    }
+
+    /// The bound above which a rolling p99 is a wedge.
+    ///
+    /// Read by the sampler when it builds its window, so the bound the window compares
+    /// against and the bound the refusal names are the same value rather than two constants
+    /// that agree today.
+    #[must_use]
+    pub fn reactor_delay_bound_ms(&self) -> u32 {
+        self.reactor_delay_bound_ms.load(Ordering::SeqCst)
     }
 
     /// Records how many activations are running.
     pub fn observe_active(&self, active: u32) {
         self.active_activations.store(active, Ordering::SeqCst);
+    }
+
+    /// Records the memory-pressure state the sampler measured.
+    ///
+    /// Called on every sample, whatever it says. Readiness must never depend on a diagnostic
+    /// emit that a full telemetry queue is entitled to drop.
+    pub fn observe_pressure(&self, state: PressureState) {
+        self.pressure_state.store(state.code(), Ordering::SeqCst);
+    }
+
+    /// The last memory-pressure state published.
+    #[must_use]
+    pub fn pressure_state(&self) -> PressureState {
+        PressureState::from_code(self.pressure_state.load(Ordering::SeqCst))
     }
 
     /// Starts drain. Idempotent.
@@ -112,7 +157,7 @@ impl HealthState {
             HealthRoute::Live => liveness(&LivenessInputs {
                 supervisors: dependency(self.supervisors_intact.load(Ordering::SeqCst)),
                 control_runtime: dependency(self.control_responsive.load(Ordering::SeqCst)),
-                reactor_delay_p99_ms: self.reactor_delay_p99_ms.load(Ordering::SeqCst),
+                reactor: self.reactor.read(),
                 reactor_delay_bound_ms: self.reactor_delay_bound_ms.load(Ordering::SeqCst),
             }),
             HealthRoute::Ready => readiness(&ReadinessInputs {
@@ -123,6 +168,7 @@ impl HealthState {
                 draining: self.draining.load(Ordering::SeqCst),
                 active_activations: self.active_activations.load(Ordering::SeqCst),
                 safety_cap: self.safety_cap.load(Ordering::SeqCst),
+                pressure: self.pressure_state(),
             }),
         }
     }
@@ -224,9 +270,25 @@ pub fn parse_request_line(request: &str) -> Option<(&str, &str)> {
 mod tests {
     use super::{HealthState, parse_request_line};
     use crate::health::{LIVE_PATH, READY_PATH};
+    use crate::pressure::PressureState;
+    use crate::reactor::{ReactorSummary, SUSTAINED_BREACH_SUMMARIES};
 
     fn state() -> std::sync::Arc<HealthState> {
         HealthState::starting(50, 200)
+    }
+
+    /// A full window whose rolling p99 is over the bound for `consecutive_breaches` summaries.
+    fn breaching(consecutive_breaches: u32) -> ReactorSummary {
+        ReactorSummary {
+            p50_ms: 1,
+            p95_ms: 40,
+            rolling_p99_ms: 51,
+            maximum_ms: 51,
+            samples: 300,
+            missed_ticks: 0,
+            window_age_ms: 29_900,
+            consecutive_breaches,
+        }
     }
 
     fn ready(state: &HealthState) {
@@ -282,14 +344,77 @@ mod tests {
         assert_eq!(state.respond("GET", LIVE_PATH).status, 200);
     }
 
+    /// Measured pressure takes the task out of the load balancer's rotation and puts it back
+    /// when the measurement recovers. Liveness never moves: killing a task for holding memory
+    /// would take the effects it is settling with it.
     #[test]
-    fn a_wedged_reactor_fails_liveness() {
+    fn memory_pressure_fails_readiness_only_and_recovers() {
         let state = state();
         ready(&state);
-        state.observe_reactor_delay(51);
-        assert_eq!(state.respond("GET", LIVE_PATH).status, 503);
-        state.observe_reactor_delay(50);
+        state.observe_pressure(PressureState::Warning);
+        assert_eq!(state.respond("GET", READY_PATH).status, 200);
+
+        state.observe_pressure(PressureState::AdmissionStop);
+        assert_eq!(state.respond("GET", READY_PATH).status, 503);
         assert_eq!(state.respond("GET", LIVE_PATH).status, 200);
+        assert!(
+            state
+                .respond("GET", READY_PATH)
+                .body
+                .contains("memory pressure admission-stop")
+        );
+
+        state.observe_pressure(PressureState::Critical);
+        assert_eq!(state.respond("GET", READY_PATH).status, 503);
+        assert_eq!(state.respond("GET", LIVE_PATH).status, 200);
+
+        state.observe_pressure(PressureState::Normal);
+        assert_eq!(state.respond("GET", READY_PATH).status, 200);
+    }
+
+    /// Liveness moves on published summaries, never on one sample. A task with no summary
+    /// yet is live; one breaching summary is not enough; two are; a recovered summary
+    /// restores it.
+    #[test]
+    fn liveness_follows_the_published_window_rather_than_the_latest_sample() {
+        let state = state();
+        ready(&state);
+        assert_eq!(state.reactor_summary(), None);
+        assert_eq!(state.respond("GET", LIVE_PATH).status, 200);
+
+        state.publish_reactor_summary(&breaching(1));
+        assert_eq!(state.respond("GET", LIVE_PATH).status, 200);
+
+        state.publish_reactor_summary(&breaching(SUSTAINED_BREACH_SUMMARIES));
+        assert_eq!(state.respond("GET", LIVE_PATH).status, 503);
+
+        state.publish_reactor_summary(&ReactorSummary {
+            rolling_p99_ms: 50,
+            consecutive_breaches: 0,
+            ..breaching(0)
+        });
+        assert_eq!(state.respond("GET", LIVE_PATH).status, 200);
+    }
+
+    /// A guardrail reads the worst case and the ticks the reactor never gave the sampler,
+    /// and it has to be able to read them while everything is healthy.
+    #[test]
+    fn a_healthy_window_is_still_published_in_full() {
+        let state = state();
+        ready(&state);
+        state.publish_reactor_summary(&ReactorSummary {
+            rolling_p99_ms: 4,
+            maximum_ms: 900,
+            missed_ticks: 9,
+            consecutive_breaches: 0,
+            ..breaching(0)
+        });
+        let summary = state.reactor_summary().expect("a summary was published");
+        assert_eq!(state.respond("GET", LIVE_PATH).status, 200);
+        assert_eq!(summary.maximum_ms, 900);
+        assert_eq!(summary.missed_ticks, 9);
+        assert_eq!(summary.samples, 300);
+        assert_eq!(summary.window_age_ms, 29_900);
     }
 
     /// A stale target group pointing at a superseded path must fail visibly rather than

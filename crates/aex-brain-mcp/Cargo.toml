@@ -1,6 +1,7 @@
 [package]
 name = "aex-brain-mcp"
 version = "0.1.0"
+description = "`aex-brain-mcp` owns the `MCP` protocol and recovery adapter: pinned protocol conformance, task identity, cancellation and reconnect."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

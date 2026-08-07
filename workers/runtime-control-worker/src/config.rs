@@ -133,7 +133,7 @@ pub struct Config {
     /// Optional endpoint override for an explicit test or compatibility endpoint.
     /// Production normally uses the official SDK region endpoint.
     pub provider_endpoint: Option<String>,
-    /// The exact published release catalog.
+    /// The exact eight-image release catalog.
     pub image_catalog: HandsImageCatalog,
     /// How many shards the due index is spread over.
     pub due_shards: u16,
@@ -249,7 +249,7 @@ where
         serde_json::from_str::<std::collections::BTreeMap<String, HandsImageCatalogEntry>>(&raw)
             .map_err(|error| ConfigError::Invalid {
                 name: IMAGE_CATALOG_VAR,
-                reason: format!("expected the closed release JSON catalog: {error}"),
+                reason: format!("expected the closed eight-entry JSON catalog: {error}"),
             })?;
     let catalog =
         HandsImageCatalog::from_entries(entries).map_err(|error| ConfigError::Invalid {
@@ -402,14 +402,15 @@ mod tests {
     }
 
     fn catalog_json(plane: &str, region: &str, account: &str) -> String {
-        // The published set. Browser variants are excluded during prelaunch, so a
-        // fixture carrying them describes no release this worker can be given.
         let variants = [
             ("512mb", 512, false),
             ("1gb", 1_024, false),
             ("2gb", 2_048, false),
+            ("2gb-browser", 2_048, true),
             ("4gb", 4_096, false),
+            ("4gb-browser", 4_096, true),
             ("8gb", 8_192, false),
+            ("8gb-browser", 8_192, true),
         ];
         let rows = variants
             .into_iter()
@@ -443,7 +444,7 @@ mod tests {
         assert_eq!(config.plane, "dev");
         assert_eq!(config.region, Region::EuWest1);
         assert_eq!(config.account_id, "522921482290");
-        assert_eq!(config.image_catalog.image_identifiers().len(), 5);
+        assert_eq!(config.image_catalog.image_identifiers().len(), 8);
         assert_eq!(config.runtime_activity_table, "aex-dev-runtime-activity");
         assert_eq!(config.due_shards, 8);
         assert_eq!(config.page.max_items, 32);
@@ -533,7 +534,10 @@ mod tests {
         let mut partial = complete();
         let mut catalog: serde_json::Value =
             serde_json::from_str(&partial[IMAGE_CATALOG_VAR]).expect("catalog");
-        catalog.as_object_mut().expect("object").remove("8gb");
+        catalog
+            .as_object_mut()
+            .expect("object")
+            .remove("8gb-browser");
         partial.insert(IMAGE_CATALOG_VAR, catalog.to_string());
         assert!(matches!(
             read(&partial),

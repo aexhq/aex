@@ -260,6 +260,12 @@ pub struct CreateApiKeyTx {
     pub pepper_version: u16,
     /// Who minted it.
     pub created_by_user_id: Uuid,
+    /// The regional key-authorization projection, committed with the key.
+    ///
+    /// A region cannot admit a request against a key it has never heard of, so
+    /// announcing the key is part of minting it rather than a second write that
+    /// can fail on its own.
+    pub outbox: OutboxMessage,
     /// The replay identity.
     pub idempotency: IdempotencyRecordKey,
     /// The audit row committed alongside.

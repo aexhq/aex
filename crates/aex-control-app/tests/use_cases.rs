@@ -136,6 +136,7 @@ fn create_api_key() -> CreateApiKeyTx {
         verifier: [9; 32],
         pepper_version: 1,
         created_by_user_id: key.created_by_user_id,
+        outbox: outbox(),
         idempotency: idempotency(),
         audit: audit(),
         now: at(),

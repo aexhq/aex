@@ -1,6 +1,7 @@
 [package]
 name = "finance-settlement-worker"
 version = "0.1.0"
+description = "`finance-settlement-worker` drains the FIFO rating backlog into the money authority, one account at a time."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

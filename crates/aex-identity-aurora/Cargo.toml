@@ -1,6 +1,7 @@
 [package]
 name = "aex-identity-aurora"
 version = "0.1.0"
+description = "`aex-identity-aurora` is the schema-owned SQL for the identity plane."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

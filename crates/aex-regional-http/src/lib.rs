@@ -14,9 +14,9 @@
 //! - the wire types themselves (`aex-wire`)
 
 pub mod assertion;
+pub mod assertion_flight;
 pub mod authz;
 pub mod capability;
-pub mod capacity;
 pub mod config;
 pub mod context;
 pub mod cursor;
@@ -37,9 +37,6 @@ pub use authz::{
     LambdaAssertionSource, ParameterStore, RegionalProjection, TrustError, parse_trust_anchors,
 };
 pub use capability::{CompositionManifest, admit};
-pub use capacity::{
-    CapacityProjection, LimitBundleProjection, LimitProjectionError, LimitResolver,
-};
 pub use config::{ConfigError, Environment, Lookup};
 pub use context::{EffectiveLimits, RegionalAuthorization, RequestContext};
 pub use cursor::{CursorBinding, decode, encode};
