@@ -8,6 +8,7 @@
 //!     meta.json                     operation id, call_hash, request, bounds, deadline, started_at
 //!     out.bin                       captured stdout+stderr, interleaved, bounded
 //!     pid                           process group id and its start time
+//!     cancel.json                   the cancel reason, written before the first signal
 //!     terminal.json                 written once, fsynced, then the directory fsynced
 //! ```
 //!
@@ -32,7 +33,7 @@ use std::io::{Read as _, Seek as _, Write as _};
 use std::path::{Path, PathBuf};
 
 use aex_hands_protocol::operation::{OperationBounds, OperationRequest, TerminalMetadata};
-use aex_hands_protocol::rpc::{CallHash, Fence, HandsOperationId};
+use aex_hands_protocol::rpc::{CallHash, CancelReason, Fence, HandsOperationId};
 use aex_internal_contracts::SchemaVersion;
 use aex_wire::ids::GenerationId;
 use aex_wire::types::Timestamp;
@@ -312,6 +313,39 @@ impl Journal {
         operation: HandsOperationId,
     ) -> Result<Option<ProcessRecord>, JournalError> {
         read_json(&self.operation_dir(operation).join("pid"))
+    }
+
+    /// Records that a cancel was requested, before the first signal is sent.
+    ///
+    /// The marker is how the reap thread and the cancel driver agree on the
+    /// terminal state: whichever writes the terminal first, a reap that finds
+    /// the marker records `Cancelled` rather than reporting the kill it
+    /// observed as an ordinary failure.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`JournalError::Io`] on a write failure.
+    pub fn record_cancel(
+        &self,
+        operation: HandsOperationId,
+        reason: CancelReason,
+    ) -> Result<(), JournalError> {
+        let dir = self.operation_dir(operation);
+        std::fs::create_dir_all(&dir).map_err(io_at(&dir))?;
+        write_json(&dir.join("cancel.json"), &reason)?;
+        sync_directory(&dir)
+    }
+
+    /// The recorded cancel request, if one exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`JournalError::Malformed`] when the record does not decode.
+    pub fn read_cancel(
+        &self,
+        operation: HandsOperationId,
+    ) -> Result<Option<CancelReason>, JournalError> {
+        read_json(&self.operation_dir(operation).join("cancel.json"))
     }
 
     /// Ordering rule 3: creates `terminal.json` exactly once.

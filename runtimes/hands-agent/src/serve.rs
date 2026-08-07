@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use aex_hands_agent::boot::RunHook;
-use aex_hands_agent::journal::{Journal, JournalError};
+use aex_hands_agent::journal::{Journal, JournalError, OperationMeta};
 use aex_hands_agent::session::{LifecycleHook, StartDecision, StartInput, Supervisor};
 use aex_hands_agent::wire::{
     Frame, FrameError, FrameExpectation, RequestPreamble, ResponsePreamble, ResponseStatus, Verb,
@@ -457,18 +457,27 @@ fn answer(
                 .supervisor
                 .cancel(request.operation, request.reason)
                 .map_err(|error| journal_error(&error))?;
-            if let Some(record) = guest
-                .journal
-                .read_process(request.operation)
-                .map_err(|error| journal_error(&error))?
-            {
-                // Best effort by construction: a process that double-forked out of
-                // its group survives, and that is reported honestly rather than
-                // claimed as a clean kill.
-                let _ = guest.executor.runner().signal(
-                    aex_hands_tools::port::Pgid(record.pgid),
-                    aex_hands_protocol::operation::StopSignal::Term,
-                );
+            if matches!(
+                response,
+                aex_hands_protocol::rpc::CancelResponse::Cancelling { .. }
+            ) && let (Some(record), Some(meta)) = (
+                guest
+                    .journal
+                    .read_process(request.operation)
+                    .map_err(|error| journal_error(&error))?,
+                guest
+                    .journal
+                    .read_meta(request.operation)
+                    .map_err(|error| journal_error(&error))?,
+            ) {
+                // The marker precedes the first signal, so a reap thread that
+                // observes the kill also observes why, and records `Cancelled`
+                // rather than an ordinary failure.
+                guest
+                    .journal
+                    .record_cancel(request.operation, request.reason)
+                    .map_err(|error| journal_error(&error))?;
+                spawn_cancel_driver(guest, meta, record.pgid)?;
             }
             serde_json::to_vec(&response).map_err(|_| decode("response"))
         }
@@ -486,6 +495,44 @@ fn answer(
             reason: "attach is a delivery mode on its own stream, not a posted verb".to_owned(),
         }),
     }
+}
+
+/// Hands the cancel ladder to a background thread.
+///
+/// The verb answers `Cancelling` immediately; the thread walks
+/// `TERM → grace → KILL → reap → Cancelled` against the real clock. A driver
+/// that cannot even start is a refused cancel, not a silently polite one: the
+/// error surfaces so Brain retries rather than waiting on an escalation that
+/// will never happen.
+fn spawn_cancel_driver(guest: &Guest, meta: OperationMeta, pgid: i32) -> Result<(), FrameError> {
+    let runner = Arc::clone(guest.executor.runner());
+    let journal = guest.journal.clone();
+    std::thread::Builder::new()
+        .name(format!("cancel-{}", meta.operation.0))
+        .spawn(move || {
+            let started = std::time::Instant::now();
+            let mut pace = |millis: u64| {
+                std::thread::sleep(core::time::Duration::from_millis(millis));
+                u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+            };
+            if let Err(error) = crate::cancel::drive(
+                runner.as_ref(),
+                &journal,
+                &meta,
+                aex_hands_tools::port::Pgid(pgid),
+                &mut pace,
+            ) {
+                eprintln!(
+                    "hands-agent: cancel of {} did not terminalize: {error}",
+                    meta.operation.0
+                );
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| FrameError::Malformed {
+            at: "cancel",
+            reason: format!("the guest cannot drive the cancel ladder: {error}"),
+        })
 }
 
 /// A journal failure, as a frame error.
@@ -552,8 +599,8 @@ mod tests {
         TerminalState,
     };
     use aex_hands_protocol::rpc::{
-        Fence, GenerationBinding, HandsOperationId, ResultRequest, ResultResponse, StartRequest,
-        StatusRequest, StatusResponse,
+        CancelReason, CancelRequest, CancelResponse, Fence, GenerationBinding, HandsOperationId,
+        ResultRequest, ResultResponse, StartRequest, StatusRequest, StatusResponse,
     };
     use aex_hands_tools::port::{Pgid, ProcError};
     use aex_wire::ids::{ContentHash, GenerationId, PrefixedId as _, Uuid7};
@@ -656,6 +703,10 @@ mod tests {
     }
 
     fn guest(dir: &std::path::Path, runner: Arc<FakeRunner>) -> Arc<Guest> {
+        guest_with(dir, runner)
+    }
+
+    fn guest_with(dir: &std::path::Path, runner: Arc<dyn Runner>) -> Arc<Guest> {
         let journal = Journal::open(dir).expect("the journal tree is created");
         let executor = Executor::new(runner, GuestRoot::workspace());
         Arc::new(Guest::new(
@@ -943,6 +994,153 @@ mod tests {
         let chunk = chunk.expect("the body exists");
         assert_eq!(chunk.bytes, b"hello from the guest");
         assert!(chunk.last);
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_detached_exec_is_escalated_and_terminalizes_cancelled() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        /// A group whose reap parks until the cancel ladder signals it.
+        struct ParkedRunner {
+            release: Mutex<Option<std::sync::mpsc::Sender<()>>>,
+            dead: AtomicBool,
+        }
+
+        impl Runner for ParkedRunner {
+            fn start(
+                &self,
+                _spec: &aex_hands_tools::command::SpawnSpec,
+            ) -> Result<Started, ProcError> {
+                let (sender, receiver) = std::sync::mpsc::channel::<()>();
+                *self
+                    .release
+                    .lock()
+                    .expect("the fixture lock is not poisoned") = Some(sender);
+                Ok(Started {
+                    pgid: Pgid(7),
+                    start_time: 1,
+                    reap: Box::new(move |sink: &mut dyn OutputSink| {
+                        // Parked, exactly like a long-running child, until the
+                        // cancel ladder signals the group.
+                        let _ = receiver.recv();
+                        sink.append(b"partial output").map_err(ProcError::Other)?;
+                        Ok(aex_hands_protocol::operation::OperationExit::Signal {
+                            name: "SIG15".to_owned(),
+                        })
+                    }),
+                })
+            }
+
+            fn signal(&self, _group: Pgid, _signal: StopSignal) -> Result<(), ProcError> {
+                self.dead.store(true, Ordering::SeqCst);
+                if let Some(sender) = self
+                    .release
+                    .lock()
+                    .expect("the fixture lock is not poisoned")
+                    .take()
+                {
+                    let _ = sender.send(());
+                }
+                Ok(())
+            }
+
+            fn alive(&self, _group: Pgid) -> Result<bool, ProcError> {
+                Ok(!self.dead.load(Ordering::SeqCst))
+            }
+        }
+
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let runner = Arc::new(ParkedRunner {
+            release: Mutex::new(None),
+            dead: AtomicBool::new(false),
+        });
+        let app = router(guest_with(dir.path(), runner));
+        let (status, _) = post(
+            &app,
+            aex_hands_agent::session::LifecycleHook::Run.path(),
+            aws_run_hook_body(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let start = exec_start(DeliveryMode::Detached);
+        let (status, _) = post(
+            &app,
+            Verb::Start.path(),
+            framed(
+                Verb::Start,
+                &serde_json::to_vec(&start).expect("it serializes"),
+                Fence(1),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let cancel = CancelRequest {
+            binding: start.binding,
+            operation: operation(),
+            reason: CancelReason::CustomerStop,
+        };
+        let (status, body) = post(
+            &app,
+            Verb::Cancel.path(),
+            framed(
+                Verb::Cancel,
+                &serde_json::to_vec(&cancel).expect("it serializes"),
+                Fence(1),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let expectation = FrameExpectation {
+            generation: generation(),
+            min_fence: Fence(0),
+            schema_version: PROTOCOL_V1,
+            max_frame_bytes: 1_048_576,
+        };
+        let frame = decode_response(&body, &expectation).expect("a framed response");
+        let answered: CancelResponse =
+            serde_json::from_slice(frame.payload).expect("a typed cancel response");
+        assert!(
+            matches!(answered, CancelResponse::Cancelling { .. }),
+            "{answered:?}"
+        );
+
+        // The ladder runs on a background thread; poll until it terminalizes.
+        let query = StatusRequest {
+            binding: start.binding,
+            operation: operation(),
+        };
+        let mut terminal = None;
+        for _ in 0..500 {
+            let (_, body) = post(
+                &app,
+                Verb::Status.path(),
+                framed(
+                    Verb::Status,
+                    &serde_json::to_vec(&query).expect("it serializes"),
+                    Fence(1),
+                ),
+            )
+            .await;
+            let frame = decode_response(&body, &expectation).expect("a framed response");
+            let answered: StatusResponse =
+                serde_json::from_slice(frame.payload).expect("a typed status");
+            if let StatusResponse::Terminal {
+                terminal: found, ..
+            } = answered
+            {
+                terminal = Some(found);
+                break;
+            }
+            tokio::time::sleep(core::time::Duration::from_millis(10)).await;
+        }
+        let terminal = terminal.expect("the cancel ladder terminalizes the operation");
+        assert_eq!(
+            terminal.state,
+            TerminalState::Cancelled,
+            "whichever of the ladder and the reap lands first, the state is Cancelled"
+        );
     }
 
     #[tokio::test]

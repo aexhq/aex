@@ -636,9 +636,24 @@ fn spawn_detached_reap(
         .spawn(move || {
             let exit = reap(&mut sink);
             let journal = sink.journal.clone();
+            let ended_at = crate::host::now();
+            // A recorded cancel marker means the exit this reap observed is the
+            // ladder's own kill: the honest terminal is `Cancelled`, not an
+            // ordinary failure. An unreadable marker is customer tampering and
+            // changes nothing.
+            let terminal = match journal.read_cancel(meta.operation) {
+                Ok(Some(_)) => crate::cancel::cancelled_terminal(
+                    &journal,
+                    &meta,
+                    ended_at,
+                    exit.unwrap_or(OperationExit::NonZero { code: -1 }),
+                    sink.truncated,
+                    None,
+                ),
+                _ => Executor::terminal(&journal, &meta, ended_at, exit, sink.truncated),
+            };
             let recorded =
-                Executor::terminal(&journal, &meta, crate::host::now(), exit, sink.truncated)
-                    .and_then(|terminal| journal.record_terminal(meta.operation, &terminal));
+                terminal.and_then(|terminal| journal.record_terminal(meta.operation, &terminal));
             match recorded {
                 // A cancel driver may have terminalized first; its record stands.
                 Ok(()) | Err(aex_hands_agent::journal::JournalError::AlreadyTerminal { .. }) => {}

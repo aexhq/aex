@@ -18,6 +18,7 @@
 //! and `no_guest_billing.rs` fail if any of that changes, and
 //! `tests/boundary.rs` here fails if this binary's own closure changes.
 
+mod cancel;
 mod execute;
 mod host;
 mod image;
