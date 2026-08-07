@@ -309,7 +309,10 @@ fn billing_mode(value: &str) -> Result<BillingMode, UsageTransferWorkerConfigErr
 }
 
 /// Refuses a deployment whose declared mode and rating queue disagree.
-fn check_charging_gate(mode: BillingMode, queue: &str) -> Result<(), UsageTransferWorkerConfigError> {
+fn check_charging_gate(
+    mode: BillingMode,
+    queue: &str,
+) -> Result<(), UsageTransferWorkerConfigError> {
     let shadow_queue = queue.ends_with(SHADOW_QUEUE_SUFFIX);
     match (mode, shadow_queue) {
         (BillingMode::Shadow, true) | (BillingMode::Active, false) => Ok(()),
@@ -341,10 +344,12 @@ where
     F: Fn(&str) -> Option<String>,
 {
     let raw = required(lookup, name)?;
-    let value = raw.parse::<u64>().map_err(|error| UsageTransferWorkerConfigError::Invalid {
-        name,
-        reason: format!("expected a positive integer, got `{raw}`: {error}"),
-    })?;
+    let value = raw
+        .parse::<u64>()
+        .map_err(|error| UsageTransferWorkerConfigError::Invalid {
+            name,
+            reason: format!("expected a positive integer, got `{raw}`: {error}"),
+        })?;
     if value == 0 {
         return Err(UsageTransferWorkerConfigError::Invalid {
             name,
@@ -554,9 +559,9 @@ async fn main() -> ExitCode {
 mod tests {
     use super::{
         AGE_ALARM_VAR, ATTEMPT_ALARM_VAR, AUTHORITY_TABLE_VAR, BACKLOG_CEILING_VAR,
-        BILLING_MODE_VAR, BUDGET_VAR, BillingMode, Config, UsageTransferWorkerConfigError, DispatchError, EventMode,
-        PLANE_VAR, PROJECTION_TABLE_VAR, RATING_QUEUE_VAR, RECEIPT_QUEUE_VAR, REGION_VAR,
-        REPUBLISH_AFTER_VAR, SWEEP_PAGE_VAR,
+        BILLING_MODE_VAR, BUDGET_VAR, BillingMode, Config, DispatchError, EventMode, PLANE_VAR,
+        PROJECTION_TABLE_VAR, RATING_QUEUE_VAR, RECEIPT_QUEUE_VAR, REGION_VAR, REPUBLISH_AFTER_VAR,
+        SWEEP_PAGE_VAR, UsageTransferWorkerConfigError,
     };
     use std::collections::BTreeMap;
 
@@ -593,7 +598,9 @@ mod tests {
         ])
     }
 
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, UsageTransferWorkerConfigError> {
+    fn read(
+        vars: &BTreeMap<&'static str, String>,
+    ) -> Result<Config, UsageTransferWorkerConfigError> {
         Config::from_lookup(|name| vars.get(name).cloned())
     }
 
@@ -661,7 +668,10 @@ mod tests {
                 let mut vars = complete();
                 vars.insert(name, value.to_owned());
                 assert!(
-                    matches!(read(&vars), Err(UsageTransferWorkerConfigError::Invalid { .. })),
+                    matches!(
+                        read(&vars),
+                        Err(UsageTransferWorkerConfigError::Invalid { .. })
+                    ),
                     "`{name}` accepted `{value}`"
                 );
             }

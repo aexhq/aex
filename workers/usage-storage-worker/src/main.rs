@@ -344,7 +344,10 @@ fn billing_mode(value: &str) -> Result<BillingMode, UsageStorageWorkerConfigErro
 }
 
 /// Refuses a deployment whose declared mode and rating queue disagree.
-fn check_charging_gate(mode: BillingMode, queue: &str) -> Result<(), UsageStorageWorkerConfigError> {
+fn check_charging_gate(
+    mode: BillingMode,
+    queue: &str,
+) -> Result<(), UsageStorageWorkerConfigError> {
     let shadow_queue = queue.ends_with(SHADOW_QUEUE_SUFFIX);
     match (mode, shadow_queue) {
         (BillingMode::Shadow, true) | (BillingMode::Active, false) => Ok(()),
@@ -376,10 +379,12 @@ where
     F: Fn(&str) -> Option<String>,
 {
     let raw = required(lookup, name)?;
-    let value = raw.parse::<u64>().map_err(|error| UsageStorageWorkerConfigError::Invalid {
-        name,
-        reason: format!("expected a positive integer, got `{raw}`: {error}"),
-    })?;
+    let value = raw
+        .parse::<u64>()
+        .map_err(|error| UsageStorageWorkerConfigError::Invalid {
+            name,
+            reason: format!("expected a positive integer, got `{raw}`: {error}"),
+        })?;
     if value == 0 {
         return Err(UsageStorageWorkerConfigError::Invalid {
             name,
@@ -651,9 +656,9 @@ async fn main() -> ExitCode {
 mod tests {
     use super::{
         AGE_ALARM_VAR, ATTEMPT_ALARM_VAR, AUTHORITY_TABLE_VAR, BACKLOG_CEILING_VAR,
-        BILLING_MODE_VAR, BUDGET_VAR, BillingMode, Config, UsageStorageWorkerConfigError, DispatchError, EventMode,
-        PLANE_VAR, PROJECTION_TABLE_VAR, RATING_QUEUE_VAR, RECEIPT_QUEUE_VAR, REGION_VAR,
-        REPUBLISH_AFTER_VAR, SWEEP_PAGE_VAR,
+        BILLING_MODE_VAR, BUDGET_VAR, BillingMode, Config, DispatchError, EventMode, PLANE_VAR,
+        PROJECTION_TABLE_VAR, RATING_QUEUE_VAR, RECEIPT_QUEUE_VAR, REGION_VAR, REPUBLISH_AFTER_VAR,
+        SWEEP_PAGE_VAR, UsageStorageWorkerConfigError,
     };
     use std::collections::BTreeMap;
 
@@ -690,7 +695,9 @@ mod tests {
         ])
     }
 
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, UsageStorageWorkerConfigError> {
+    fn read(
+        vars: &BTreeMap<&'static str, String>,
+    ) -> Result<Config, UsageStorageWorkerConfigError> {
         Config::from_lookup(|name| vars.get(name).cloned())
     }
 
@@ -758,7 +765,10 @@ mod tests {
                 let mut vars = complete();
                 vars.insert(name, value.to_owned());
                 assert!(
-                    matches!(read(&vars), Err(UsageStorageWorkerConfigError::Invalid { .. })),
+                    matches!(
+                        read(&vars),
+                        Err(UsageStorageWorkerConfigError::Invalid { .. })
+                    ),
                     "`{name}` accepted `{value}`"
                 );
             }
