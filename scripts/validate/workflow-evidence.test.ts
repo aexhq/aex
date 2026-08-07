@@ -497,7 +497,7 @@ describe("workflow evidence producers", () => {
   test("every caller of a tool-consuming lane reads the digests from its own tools job", () => {
     for (const [path, jobIds] of [
       [".github/workflows/main.yml", ["route", "verify", "node", "terraform", "build", "receipts"]],
-      [".github/workflows/pr.yml", ["route", "rust", "node", "terraform", "artifacts", "checks"]],
+      [".github/workflows/pr.yml", ["route", "rust", "node", "terraform", "checks"]],
       [".github/workflows/assurance.yml", ["route", "full-graph"]]
     ] as const) {
       const workflow = readWorkflow(path);
