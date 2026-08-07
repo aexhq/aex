@@ -7,8 +7,8 @@
 
 use aex_regional_http::capability::Capability as _;
 use aex_regional_http::config::{
-    RegionalHttpConfigError, Lookup, bounded_u64, forbidden, one_of, optional, plane_name, queue_url, region,
-    required,
+    Lookup, RegionalHttpConfigError, bounded_u64, forbidden, one_of, optional, plane_name,
+    queue_url, region, required,
 };
 use aex_wire::types::Region;
 

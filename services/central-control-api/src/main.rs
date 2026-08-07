@@ -222,10 +222,11 @@ where
     F: Fn(&str) -> Option<String>,
 {
     let raw = required(lookup, name)?;
-    raw.parse::<u64>().map_err(|_| CentralControlApiConfigError::Invalid {
-        name,
-        reason: format!("expected an integer, got `{raw}`"),
-    })
+    raw.parse::<u64>()
+        .map_err(|_| CentralControlApiConfigError::Invalid {
+            name,
+            reason: format!("expected an integer, got `{raw}`"),
+        })
 }
 
 /// Parses the `region=lambda-arn` authority map.
@@ -237,13 +238,18 @@ where
 fn functions(raw: &str) -> Result<BTreeMap<Region, String>, CentralControlApiConfigError> {
     let mut map = BTreeMap::new();
     for entry in raw.split(',').filter(|it| !it.trim().is_empty()) {
-        let (region, function) = entry.split_once('=').ok_or_else(|| CentralControlApiConfigError::Invalid {
-            name: keys::REGIONAL_FUNCTIONS,
-            reason: "expected `region=lambda-arn` entries".to_owned(),
-        })?;
-        let parsed = Region::from_name(region.trim()).ok_or_else(|| CentralControlApiConfigError::Invalid {
-            name: keys::REGIONAL_FUNCTIONS,
-            reason: format!("`{region}` is not a launch region"),
+        let (region, function) =
+            entry
+                .split_once('=')
+                .ok_or_else(|| CentralControlApiConfigError::Invalid {
+                    name: keys::REGIONAL_FUNCTIONS,
+                    reason: "expected `region=lambda-arn` entries".to_owned(),
+                })?;
+        let parsed = Region::from_name(region.trim()).ok_or_else(|| {
+            CentralControlApiConfigError::Invalid {
+                name: keys::REGIONAL_FUNCTIONS,
+                reason: format!("`{region}` is not a launch region"),
+            }
         })?;
         let function = function.trim();
         let expected = format!("arn:aws:lambda:{}:", parsed.as_str());
@@ -269,22 +275,30 @@ fn functions(raw: &str) -> Result<BTreeMap<Region, String>, CentralControlApiCon
     Ok(map)
 }
 
-fn api_urls(raw: &str) -> Result<BTreeMap<Region, aex_wire::types::HttpsUrl>, CentralControlApiConfigError> {
+fn api_urls(
+    raw: &str,
+) -> Result<BTreeMap<Region, aex_wire::types::HttpsUrl>, CentralControlApiConfigError> {
     let mut map = BTreeMap::new();
     for entry in raw.split(',').filter(|entry| !entry.trim().is_empty()) {
-        let (region, url) = entry.split_once('=').ok_or_else(|| CentralControlApiConfigError::Invalid {
-            name: keys::API_URLS,
-            reason: "expected `region=https-url` entries".to_owned(),
+        let (region, url) =
+            entry
+                .split_once('=')
+                .ok_or_else(|| CentralControlApiConfigError::Invalid {
+                    name: keys::API_URLS,
+                    reason: "expected `region=https-url` entries".to_owned(),
+                })?;
+        let region = Region::from_name(region.trim()).ok_or_else(|| {
+            CentralControlApiConfigError::Invalid {
+                name: keys::API_URLS,
+                reason: format!("`{region}` is not a launch region"),
+            }
         })?;
-        let region = Region::from_name(region.trim()).ok_or_else(|| CentralControlApiConfigError::Invalid {
-            name: keys::API_URLS,
-            reason: format!("`{region}` is not a launch region"),
-        })?;
-        let url =
-            aex_wire::types::HttpsUrl::parse(url.trim()).map_err(|error| CentralControlApiConfigError::Invalid {
+        let url = aex_wire::types::HttpsUrl::parse(url.trim()).map_err(|error| {
+            CentralControlApiConfigError::Invalid {
                 name: keys::API_URLS,
                 reason: error.to_string(),
-            })?;
+            }
+        })?;
         if map.insert(region, url).is_some() {
             return Err(CentralControlApiConfigError::Invalid {
                 name: keys::API_URLS,
@@ -519,7 +533,9 @@ async fn compose(
     api_peppers
         .probe(PepperPurpose::ApiKey)
         .await
-        .map_err(|error| CentralControlApiRunError::Dependency("api-key-pepper", error.to_string()))?;
+        .map_err(|error| {
+            CentralControlApiRunError::Dependency("api-key-pepper", error.to_string())
+        })?;
     let cursor_peppers = Arc::new(aex_central_aws::SecretsManagerPepperKeystore::new(
         aws_sdk_secretsmanager::Client::new(&aws),
         config.cursor_secret_id.clone(),
@@ -528,11 +544,16 @@ async fn compose(
     cursor_peppers
         .probe(PepperPurpose::Cursor)
         .await
-        .map_err(|error| CentralControlApiRunError::Dependency("cursor-secret", error.to_string()))?;
-    let (_, cursor_material) = cursor_peppers
-        .active(PepperPurpose::Cursor)
-        .await
-        .map_err(|error| CentralControlApiRunError::Dependency("cursor-secret", error.to_string()))?;
+        .map_err(|error| {
+            CentralControlApiRunError::Dependency("cursor-secret", error.to_string())
+        })?;
+    let (_, cursor_material) =
+        cursor_peppers
+            .active(PepperPurpose::Cursor)
+            .await
+            .map_err(|error| {
+                CentralControlApiRunError::Dependency("cursor-secret", error.to_string())
+            })?;
     let cursor_secret = Arc::new(aex_control_domain::CursorSecret::new(
         cursor_material.expose_copy(),
     ));
@@ -607,8 +628,8 @@ async fn main() -> std::process::ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        Config, CentralControlApiConfigError, ControlApi, DEPLOYABLE, PERMISSIONS, Probes, app, keys, manifest,
-        readiness,
+        CentralControlApiConfigError, Config, ControlApi, DEPLOYABLE, PERMISSIONS, Probes, app,
+        keys, manifest, readiness,
     };
     use aex_central_http::authorizer::{CentralAuthorizerContext, ContextPrincipalKind};
     use aex_central_http::capability::{

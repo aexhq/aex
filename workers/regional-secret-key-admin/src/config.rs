@@ -6,7 +6,7 @@
 //! or account, or when **any** product-table variable is bound to it.
 
 use aex_regional_http::config::{
-    Arn, RegionalHttpConfigError, Lookup, arn_in_region, forbidden, plane_name, region, required,
+    Arn, Lookup, RegionalHttpConfigError, arn_in_region, forbidden, plane_name, region, required,
 };
 use aex_wire::ids::{OperationId, PrefixedId as _};
 use aex_wire::types::Region;

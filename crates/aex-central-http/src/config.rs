@@ -238,7 +238,9 @@ impl HttpConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::{CentralServiceId, CentralHttpConfigError, DeploymentPlane, HttpConfig, central_groups};
+    use super::{
+        CentralHttpConfigError, CentralServiceId, DeploymentPlane, HttpConfig, central_groups,
+    };
     use aex_wire::routes::{Plane, ROUTES, RouteId};
     use aex_wire::server::RouteGroup;
     use std::collections::BTreeSet;
@@ -335,11 +337,15 @@ mod tests {
         );
         assert_eq!(
             HttpConfig::resolve("dev", "mars-central-1", "central-control-api", 1, 1),
-            Err(CentralHttpConfigError::UnknownRegion("mars-central-1".to_owned()))
+            Err(CentralHttpConfigError::UnknownRegion(
+                "mars-central-1".to_owned()
+            ))
         );
         assert_eq!(
             HttpConfig::resolve("dev", "eu-west-1", "brain-mux", 1, 1),
-            Err(CentralHttpConfigError::UnknownService("brain-mux".to_owned()))
+            Err(CentralHttpConfigError::UnknownService(
+                "brain-mux".to_owned()
+            ))
         );
         assert!(matches!(
             HttpConfig::resolve("dev", "eu-west-1", "central-authz", 0, 1),

@@ -27,9 +27,7 @@ use aex_brain_app::activation::{
     Activation, ActivationPolicy, AdmissionControl, AdmissionDecision, DispatchControl,
     DispatchDecision, DispatchLane, Ports, WakeLoop,
 };
-use aex_brain_app::kernel::{
-    ActivationRegistry, DrainGate, FoldCache, PermitKind, PermitSet,
-};
+use aex_brain_app::kernel::{ActivationRegistry, DrainGate, FoldCache, PermitKind, PermitSet};
 use aex_brain_app::ports::{
     AgentHead, BoxFuture, CancelToken, CatalogDigest, CatalogError, CatalogPort, Claim, ClaimError,
     ClockPort, CommitError, CommitReceipt, DecisionContext, DispatchTicket, EffectStore,
@@ -904,12 +902,14 @@ pub fn snapshot_binding(
     );
     let context =
         aex_brain_store_dynamodb::SnapshotContentContext::new(&binding.plane, &binding.region)?;
-    Ok(Arc::new(aex_brain_store_dynamodb::AwsFoldSnapshotStore::new(
-        aws_sdk_dynamodb::Client::new(aws),
-        tables,
-        bodies,
-        context,
-    )))
+    Ok(Arc::new(
+        aex_brain_store_dynamodb::AwsFoldSnapshotStore::new(
+            aws_sdk_dynamodb::Client::new(aws),
+            tables,
+            bodies,
+            context,
+        ),
+    ))
 }
 
 /// Real Hands ports sharing one runtime authority and one `MicroVM` client.

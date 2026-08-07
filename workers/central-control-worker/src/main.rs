@@ -172,14 +172,18 @@ impl Config {
         F: Fn(&str) -> Option<String>,
     {
         let plane_raw = required(&lookup, keys::PLANE)?;
-        let plane = DeploymentPlane::parse(&plane_raw).ok_or_else(|| CentralControlWorkerConfigError::Invalid {
-            name: keys::PLANE,
-            reason: format!("expected `dev` or `prd`, got `{plane_raw}`"),
+        let plane = DeploymentPlane::parse(&plane_raw).ok_or_else(|| {
+            CentralControlWorkerConfigError::Invalid {
+                name: keys::PLANE,
+                reason: format!("expected `dev` or `prd`, got `{plane_raw}`"),
+            }
         })?;
         let region_raw = required(&lookup, keys::REGION)?;
-        let region = Region::from_name(&region_raw).ok_or_else(|| CentralControlWorkerConfigError::Invalid {
-            name: keys::REGION,
-            reason: format!("expected a launch region, got `{region_raw}`"),
+        let region = Region::from_name(&region_raw).ok_or_else(|| {
+            CentralControlWorkerConfigError::Invalid {
+                name: keys::REGION,
+                reason: format!("expected a launch region, got `{region_raw}`"),
+            }
         })?;
         let role = required(&lookup, keys::ROLE)?;
         if role != REQUIRED_ROLE {
@@ -268,15 +272,22 @@ where
     }
 }
 
-fn bounded<F>(lookup: &F, name: &'static str, min: u64, max: u64) -> Result<u64, CentralControlWorkerConfigError>
+fn bounded<F>(
+    lookup: &F,
+    name: &'static str,
+    min: u64,
+    max: u64,
+) -> Result<u64, CentralControlWorkerConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     let raw = required(lookup, name)?;
-    let value = raw.parse::<u64>().map_err(|_| CentralControlWorkerConfigError::Invalid {
-        name,
-        reason: format!("expected an integer, got `{raw}`"),
-    })?;
+    let value = raw
+        .parse::<u64>()
+        .map_err(|_| CentralControlWorkerConfigError::Invalid {
+            name,
+            reason: format!("expected an integer, got `{raw}`"),
+        })?;
     if value < min || value > max {
         return Err(CentralControlWorkerConfigError::Invalid {
             name,
@@ -293,13 +304,18 @@ where
 fn functions(raw: &str) -> Result<BTreeMap<Region, String>, CentralControlWorkerConfigError> {
     let mut map = BTreeMap::new();
     for entry in raw.split(',').filter(|it| !it.trim().is_empty()) {
-        let (region, function) = entry.split_once('=').ok_or_else(|| CentralControlWorkerConfigError::Invalid {
-            name: keys::REGIONAL_FUNCTIONS,
-            reason: "expected `region=lambda-arn` entries".to_owned(),
-        })?;
-        let parsed = Region::from_name(region.trim()).ok_or_else(|| CentralControlWorkerConfigError::Invalid {
-            name: keys::REGIONAL_FUNCTIONS,
-            reason: format!("`{region}` is not a launch region"),
+        let (region, function) =
+            entry
+                .split_once('=')
+                .ok_or_else(|| CentralControlWorkerConfigError::Invalid {
+                    name: keys::REGIONAL_FUNCTIONS,
+                    reason: "expected `region=lambda-arn` entries".to_owned(),
+                })?;
+        let parsed = Region::from_name(region.trim()).ok_or_else(|| {
+            CentralControlWorkerConfigError::Invalid {
+                name: keys::REGIONAL_FUNCTIONS,
+                reason: format!("`{region}` is not a launch region"),
+            }
         })?;
         let function = function.trim();
         let expected = format!("arn:aws:lambda:{}:", parsed.as_str());
@@ -328,13 +344,18 @@ fn functions(raw: &str) -> Result<BTreeMap<Region, String>, CentralControlWorker
 fn projections(raw: &str) -> Result<BTreeMap<Region, String>, CentralControlWorkerConfigError> {
     let mut map = BTreeMap::new();
     for entry in raw.split(',').filter(|entry| !entry.trim().is_empty()) {
-        let (region, table) = entry.split_once('=').ok_or_else(|| CentralControlWorkerConfigError::Invalid {
-            name: keys::REGIONAL_PROJECTIONS,
-            reason: "expected `region=table` entries".to_owned(),
-        })?;
-        let region = Region::from_name(region.trim()).ok_or_else(|| CentralControlWorkerConfigError::Invalid {
-            name: keys::REGIONAL_PROJECTIONS,
-            reason: format!("`{region}` is not a launch region"),
+        let (region, table) =
+            entry
+                .split_once('=')
+                .ok_or_else(|| CentralControlWorkerConfigError::Invalid {
+                    name: keys::REGIONAL_PROJECTIONS,
+                    reason: "expected `region=table` entries".to_owned(),
+                })?;
+        let region = Region::from_name(region.trim()).ok_or_else(|| {
+            CentralControlWorkerConfigError::Invalid {
+                name: keys::REGIONAL_PROJECTIONS,
+                reason: format!("`{region}` is not a launch region"),
+            }
         })?;
         if table.trim().is_empty() || map.insert(region, table.trim().to_owned()).is_some() {
             return Err(CentralControlWorkerConfigError::Invalid {
@@ -640,12 +661,15 @@ pub async fn run(
     );
     let aws = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
     let data_config = aex_rds_data::DataApiConfig::new(
-        aex_rds_data::ResourceArn::parse(&config.aurora_cluster_arn)
-            .map_err(|error| CentralControlWorkerRunError::Dependency("aurora", error.to_string()))?,
-        aex_rds_data::SecretArn::parse(&config.aurora_secret_arn)
-            .map_err(|error| CentralControlWorkerRunError::Dependency("aurora", error.to_string()))?,
-        aex_rds_data::DatabaseName::parse(&config.database)
-            .map_err(|error| CentralControlWorkerRunError::Dependency("aurora", error.to_string()))?,
+        aex_rds_data::ResourceArn::parse(&config.aurora_cluster_arn).map_err(|error| {
+            CentralControlWorkerRunError::Dependency("aurora", error.to_string())
+        })?,
+        aex_rds_data::SecretArn::parse(&config.aurora_secret_arn).map_err(|error| {
+            CentralControlWorkerRunError::Dependency("aurora", error.to_string())
+        })?,
+        aex_rds_data::DatabaseName::parse(&config.database).map_err(|error| {
+            CentralControlWorkerRunError::Dependency("aurora", error.to_string())
+        })?,
     );
     let data = aex_rds_data::DataApiClient::new(
         std::sync::Arc::new(aex_rds_data::AwsTransport::new(
@@ -666,17 +690,18 @@ pub async fn run(
         .attribute_names(aws_sdk_sqs::types::QueueAttributeName::QueueArn)
         .send()
         .await
-        .map_err(|error| CentralControlWorkerRunError::Dependency("control-queue", error.to_string()))?;
+        .map_err(|error| {
+            CentralControlWorkerRunError::Dependency("control-queue", error.to_string())
+        })?;
     let ses = aws_sdk_sesv2::Client::new(&aws);
 
     let signing = std::sync::Arc::new(runtime::SecretsSigningAdmin::new(
         aws_sdk_secretsmanager::Client::new(&aws),
         config.signing_secret_prefix.clone(),
     ));
-    signing
-        .probe()
-        .await
-        .map_err(|error| CentralControlWorkerRunError::Dependency("signing-secret-prefix", error))?;
+    signing.probe().await.map_err(|error| {
+        CentralControlWorkerRunError::Dependency("signing-secret-prefix", error)
+    })?;
 
     let mut projections = BTreeMap::new();
     for (region, table) in &config.regional_projections {
@@ -688,10 +713,9 @@ pub async fn run(
             aws_sdk_dynamodb::Client::new(&regional_aws),
             table.clone(),
         );
-        writer
-            .probe()
-            .await
-            .map_err(|error| CentralControlWorkerRunError::Dependency("regional-authz-projection", error))?;
+        writer.probe().await.map_err(|error| {
+            CentralControlWorkerRunError::Dependency("regional-authz-projection", error)
+        })?;
         projections.insert(*region, writer);
     }
     let concrete_store = std::sync::Arc::new(aex_control_aurora::AuroraControlStore::new(data));
@@ -716,7 +740,9 @@ pub async fn run(
     run_lambda(worker).await
 }
 
-async fn run_lambda(worker: std::sync::Arc<runtime::Worker>) -> Result<(), CentralControlWorkerRunError> {
+async fn run_lambda(
+    worker: std::sync::Arc<runtime::Worker>,
+) -> Result<(), CentralControlWorkerRunError> {
     lambda_runtime::run(lambda_runtime::service_fn(
         move |event: lambda_runtime::LambdaEvent<serde_json::Value>| {
             let worker = std::sync::Arc::clone(&worker);
@@ -798,8 +824,8 @@ async fn main() -> std::process::ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        Config, CentralControlWorkerConfigError, Handler, ItemOutcome, PERMISSIONS, Probes, app, keys, manifest,
-        partial_batch_failures, readiness,
+        CentralControlWorkerConfigError, Config, Handler, ItemOutcome, PERMISSIONS, Probes, app,
+        keys, manifest, partial_batch_failures, readiness,
     };
     use aex_central_http::capability::{
         AssertionSign, Capability as _, CapabilityBinding, CompositionError,
@@ -873,7 +899,9 @@ mod tests {
         ])
     }
 
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, CentralControlWorkerConfigError> {
+    fn read(
+        vars: &BTreeMap<&'static str, String>,
+    ) -> Result<Config, CentralControlWorkerConfigError> {
         Config::from_lookup(|name| vars.get(name).cloned())
     }
 

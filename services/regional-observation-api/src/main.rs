@@ -19,7 +19,7 @@ use aex_wire::dispatch::RequestLimits;
 
 use crate::mount::{AUDIENCE, AppState, Edge};
 use regional_observation_api::api::{ObservationService, StreamPolicy, StreamRevalidator};
-use regional_observation_api::config::{Config, RegionalObservationApiConfigError, REQUIRED_VARS};
+use regional_observation_api::config::{Config, REQUIRED_VARS, RegionalObservationApiConfigError};
 use regional_observation_api::reader::ObservationReader;
 
 /// The capability grant this deployable is allowed to hold.
@@ -94,9 +94,14 @@ pub enum RegionalObservationApiRunError {
 /// Returns [`RegionalObservationApiRunError::Capability`] when the process holds a capability its role
 /// must not, and [`RegionalObservationApiRunError::NotReady`] when a declared probe has not passed. A
 /// probe that has not passed is never assumed.
-pub fn compose(observed: &[Capability], passed: &[Probe]) -> Result<(), RegionalObservationApiRunError> {
-    assert_grant(ROLE, observed).map_err(|violation| RegionalObservationApiRunError::Capability {
-        capability: violation.capability.as_str(),
+pub fn compose(
+    observed: &[Capability],
+    passed: &[Probe],
+) -> Result<(), RegionalObservationApiRunError> {
+    assert_grant(ROLE, observed).map_err(|violation| {
+        RegionalObservationApiRunError::Capability {
+            capability: violation.capability.as_str(),
+        }
     })?;
     match readiness(REQUIRED_PROBES, passed) {
         Readiness::Ready => Ok(()),
@@ -282,7 +287,10 @@ mod tests {
     fn a_capability_outside_the_grant_refuses_to_start() {
         for denied in ROLE.denied() {
             let error = compose(&[denied], REQUIRED_PROBES).expect_err("refused");
-            assert!(matches!(error, RegionalObservationApiRunError::Capability { .. }), "{error:?}");
+            assert!(
+                matches!(error, RegionalObservationApiRunError::Capability { .. }),
+                "{error:?}"
+            );
         }
     }
 
@@ -305,7 +313,10 @@ mod tests {
                 forbidden.as_str()
             );
             let error = compose(&[forbidden], REQUIRED_PROBES).expect_err("refused");
-            assert!(matches!(error, RegionalObservationApiRunError::Capability { .. }), "{error:?}");
+            assert!(
+                matches!(error, RegionalObservationApiRunError::Capability { .. }),
+                "{error:?}"
+            );
         }
     }
 
@@ -324,6 +335,9 @@ mod tests {
             &[Probe::ObservationTable, Probe::ObservationBucket],
         )
         .expect_err("refused");
-        assert!(matches!(error, RegionalObservationApiRunError::NotReady { .. }), "{error:?}");
+        assert!(
+            matches!(error, RegionalObservationApiRunError::NotReady { .. }),
+            "{error:?}"
+        );
     }
 }

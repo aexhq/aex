@@ -188,7 +188,12 @@ where
 }
 
 /// Reads a variable that must be an integer inside a closed range.
-fn bounded<F>(lookup: &F, name: &'static str, low: u32, high: u32) -> Result<u32, UsageReceiptDispatcherConfigError>
+fn bounded<F>(
+    lookup: &F,
+    name: &'static str,
+    low: u32,
+    high: u32,
+) -> Result<u32, UsageReceiptDispatcherConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
@@ -203,7 +208,10 @@ where
 }
 
 /// Renders a peer validation failure as this deployable's own refusal.
-fn invalid(name: &'static str, error: &impl std::fmt::Display) -> UsageReceiptDispatcherConfigError {
+fn invalid(
+    name: &'static str,
+    error: &impl std::fmt::Display,
+) -> UsageReceiptDispatcherConfigError {
     UsageReceiptDispatcherConfigError::Invalid {
         name,
         reason: error.to_string(),
@@ -215,8 +223,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        BATCH_SIZE_VAR, CATEGORIES, COMPUTE_QUEUE_VAR, Config, UsageReceiptDispatcherConfigError, DATABASE_ROLE_VAR,
-        NAMESPACE, REQUIRED_VARS,
+        BATCH_SIZE_VAR, CATEGORIES, COMPUTE_QUEUE_VAR, Config, DATABASE_ROLE_VAR, NAMESPACE,
+        REQUIRED_VARS, UsageReceiptDispatcherConfigError,
     };
 
     fn complete() -> BTreeMap<&'static str, String> {
@@ -257,7 +265,9 @@ mod tests {
         ])
     }
 
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, UsageReceiptDispatcherConfigError> {
+    fn read(
+        vars: &BTreeMap<&'static str, String>,
+    ) -> Result<Config, UsageReceiptDispatcherConfigError> {
         Config::from_lookup(|name| vars.get(name).cloned())
     }
 

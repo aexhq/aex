@@ -91,8 +91,8 @@ fn context() -> SnapshotContentContext {
 #[tokio::test]
 async fn selected_pointer_is_read_strongly_and_decoded_exactly() {
     let artifact = artifact();
-    let item =
-        aex_brain_store_dynamodb::snapshot::encode_pointer(artifact.pointer()).expect("pointer encodes");
+    let item = aex_brain_store_dynamodb::snapshot::encode_pointer(artifact.pointer())
+        .expect("pointer encodes");
     let (brain, replay) = super::replaying(vec![serde_json::json!({
         "Item": super::dynamo_item(&item),
     })]);

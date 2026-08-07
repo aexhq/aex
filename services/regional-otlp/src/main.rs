@@ -24,7 +24,7 @@ use aex_wire::dispatch::RequestLimits;
 
 use crate::admission::{CustodyManifests, OtlpService};
 use crate::authority::AdmissionAuthority;
-use crate::config::{Config, RegionalOtlpConfigError, REQUIRED_VARS};
+use crate::config::{Config, REQUIRED_VARS, RegionalOtlpConfigError};
 use crate::mount::{AUDIENCE, AppState};
 
 /// The capability grant this deployable is allowed to hold.
@@ -119,9 +119,12 @@ pub async fn run(config: Config) -> Result<(), RegionalOtlpRunError> {
     );
 
     let mut passed = Vec::new();
-    authority.probe().await.map_err(|error| RegionalOtlpRunError::Probe {
-        reason: error.to_string(),
-    })?;
+    authority
+        .probe()
+        .await
+        .map_err(|error| RegionalOtlpRunError::Probe {
+            reason: error.to_string(),
+        })?;
     passed.push(Probe::ObservationTable);
     passed.push(Probe::ObservationBucket);
 
@@ -217,9 +220,11 @@ async fn resolve_redaction_key(
         .map_err(|error| RegionalOtlpRunError::Probe {
             reason: format!("the redaction key reference did not resolve: {error}"),
         })?;
-    let material = response.secret_string().ok_or_else(|| RegionalOtlpRunError::Probe {
-        reason: "the redaction key reference carries no string value".to_owned(),
-    })?;
+    let material = response
+        .secret_string()
+        .ok_or_else(|| RegionalOtlpRunError::Probe {
+            reason: "the redaction key reference carries no string value".to_owned(),
+        })?;
     let key = base64::engine::general_purpose::STANDARD
         .decode(material.trim())
         .map_err(|_| RegionalOtlpRunError::Probe {
@@ -297,7 +302,10 @@ mod tests {
     fn a_capability_outside_the_grant_refuses_to_start() {
         for denied in ROLE.denied() {
             let error = compose(&[denied], REQUIRED_PROBES).expect_err("refused");
-            assert!(matches!(error, RegionalOtlpRunError::Capability { .. }), "{error:?}");
+            assert!(
+                matches!(error, RegionalOtlpRunError::Capability { .. }),
+                "{error:?}"
+            );
         }
     }
 
@@ -320,7 +328,10 @@ mod tests {
                 forbidden.as_str()
             );
             let error = compose(&[forbidden], REQUIRED_PROBES).expect_err("refused");
-            assert!(matches!(error, RegionalOtlpRunError::Capability { .. }), "{error:?}");
+            assert!(
+                matches!(error, RegionalOtlpRunError::Capability { .. }),
+                "{error:?}"
+            );
         }
     }
 
@@ -334,6 +345,9 @@ mod tests {
         }
         // Proving a prefix is not proving the set.
         let error = compose(ROLE.granted(), &[Probe::ObservationTable]).expect_err("refused");
-        assert!(matches!(error, RegionalOtlpRunError::NotReady { .. }), "{error:?}");
+        assert!(
+            matches!(error, RegionalOtlpRunError::NotReady { .. }),
+            "{error:?}"
+        );
     }
 }

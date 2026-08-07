@@ -181,9 +181,11 @@ impl Config {
             });
         }
         let raw_region = required(&lookup, REGION_VAR)?;
-        let region = Region::from_name(&raw_region).ok_or_else(|| RuntimeControlWorkerConfigError::Invalid {
-            name: REGION_VAR,
-            reason: format!("`{raw_region}` is not one of the five offered regions"),
+        let region = Region::from_name(&raw_region).ok_or_else(|| {
+            RuntimeControlWorkerConfigError::Invalid {
+                name: REGION_VAR,
+                reason: format!("`{raw_region}` is not one of the five offered regions"),
+            }
         })?;
         let account_id = required(&lookup, ACCOUNT_ID_VAR)?;
         if account_id.len() != 12 || !account_id.bytes().all(|byte| byte.is_ascii_digit()) {
@@ -251,11 +253,12 @@ where
                 name: IMAGE_CATALOG_VAR,
                 reason: format!("expected the closed release JSON catalog: {error}"),
             })?;
-    let catalog =
-        HandsImageCatalog::from_entries(entries).map_err(|error| RuntimeControlWorkerConfigError::Invalid {
+    let catalog = HandsImageCatalog::from_entries(entries).map_err(|error| {
+        RuntimeControlWorkerConfigError::Invalid {
             name: IMAGE_CATALOG_VAR,
             reason: error.to_string(),
-        })?;
+        }
+    })?;
     let prefix = format!(
         "arn:aws:lambda:{}:{account_id}:microvm-image:aex-{plane}-",
         region.as_str()
@@ -310,7 +313,11 @@ where
 ///
 /// A queue or control endpoint in another region is a cross-region write nobody
 /// notices until the bill, so the region is checked here rather than assumed.
-fn endpoint<F>(lookup: &F, name: &'static str, region: Region) -> Result<String, RuntimeControlWorkerConfigError>
+fn endpoint<F>(
+    lookup: &F,
+    name: &'static str,
+    region: Region,
+) -> Result<String, RuntimeControlWorkerConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
@@ -338,10 +345,12 @@ where
     T::Err: core::fmt::Display,
 {
     let raw = required(lookup, name)?;
-    let value = raw.parse::<T>().map_err(|error| RuntimeControlWorkerConfigError::Invalid {
-        name,
-        reason: format!("expected a positive integer, got `{raw}`: {error}"),
-    })?;
+    let value = raw
+        .parse::<T>()
+        .map_err(|error| RuntimeControlWorkerConfigError::Invalid {
+            name,
+            reason: format!("expected a positive integer, got `{raw}`: {error}"),
+        })?;
     if value == T::default() {
         return Err(RuntimeControlWorkerConfigError::Invalid {
             name,
@@ -354,9 +363,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        ACCOUNT_ID_VAR, COMPUTE_QUEUE_VAR, Config, RuntimeControlWorkerConfigError, DUE_PAGE_ITEMS_VAR, DUE_SHARDS_VAR,
+        ACCOUNT_ID_VAR, COMPUTE_QUEUE_VAR, Config, DUE_PAGE_ITEMS_VAR, DUE_SHARDS_VAR,
         FORBIDDEN_VARS, IMAGE_CATALOG_VAR, LIFECYCLE_QUEUE_VAR, PLANE_VAR, PROVIDER_ENDPOINT_VAR,
-        REGION_VAR, REQUIRED_VARS, STORAGE_QUEUE_VAR,
+        REGION_VAR, REQUIRED_VARS, RuntimeControlWorkerConfigError, STORAGE_QUEUE_VAR,
     };
     use aex_wire::types::Region;
     use std::collections::BTreeMap;
@@ -433,7 +442,9 @@ mod tests {
         serde_json::to_string(&rows).expect("catalog JSON")
     }
 
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, RuntimeControlWorkerConfigError> {
+    fn read(
+        vars: &BTreeMap<&'static str, String>,
+    ) -> Result<Config, RuntimeControlWorkerConfigError> {
         Config::from_lookup(|name| vars.get(name).cloned())
     }
 

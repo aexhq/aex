@@ -7,7 +7,8 @@
 use aex_operation_domain::TransitionError;
 use aex_secret_domain::CustodyRejection;
 use aex_session_domain::{
-    ApprovalRejection, DeletionRejection, PauseRejection, SessionDomainRunError, SessionError, TerminalRejection,
+    ApprovalRejection, DeletionRejection, PauseRejection, SessionDomainRunError, SessionError,
+    TerminalRejection,
 };
 use aex_wire::canonical::CanonicalError;
 use aex_wire::error::ErrorCode;

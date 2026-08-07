@@ -213,10 +213,11 @@ where
     F: Fn(&str) -> Option<String>,
 {
     let raw = required(lookup, name)?;
-    raw.parse::<u64>().map_err(|_| CentralIdentityApiConfigError::Invalid {
-        name,
-        reason: format!("expected an integer, got `{raw}`"),
-    })
+    raw.parse::<u64>()
+        .map_err(|_| CentralIdentityApiConfigError::Invalid {
+            name,
+            reason: format!("expected an integer, got `{raw}`"),
+        })
 }
 
 /// This binary's capability declaration.
@@ -410,7 +411,9 @@ async fn compose(
     peppers
         .probe(aex_identity_app::ports::PepperPurpose::Identity)
         .await
-        .map_err(|error| CentralIdentityApiRunError::Dependency("identity-pepper", error.to_string()))?;
+        .map_err(|error| {
+            CentralIdentityApiRunError::Dependency("identity-pepper", error.to_string())
+        })?;
 
     let clock: Arc<dyn aex_identity_app::ports::Clock> = Arc::new(aex_central_aws::SystemClock);
     let store = Arc::new(aex_identity_aurora::AuroraIdentityStore::new(
@@ -418,7 +421,9 @@ async fn compose(
         Arc::clone(&peppers) as Arc<dyn aex_identity_app::ports::PepperKeystore>,
     ));
     let verification_uri = aex_wire::types::HttpsUrl::parse(&config.device_verification_uri)
-        .map_err(|error| CentralIdentityApiRunError::Dependency("device-verification-uri", error.to_string()))?;
+        .map_err(|error| {
+            CentralIdentityApiRunError::Dependency("device-verification-uri", error.to_string())
+        })?;
     let api = Arc::new(api::AuthService::new(
         store,
         Arc::clone(&peppers) as Arc<dyn aex_identity_app::ports::PepperKeystore>,
@@ -488,7 +493,8 @@ async fn main() -> std::process::ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        Config, CentralIdentityApiConfigError, DEPLOYABLE, PERMISSIONS, Probes, app, keys, manifest, readiness,
+        CentralIdentityApiConfigError, Config, DEPLOYABLE, PERMISSIONS, Probes, app, keys,
+        manifest, readiness,
     };
     use aex_central_http::capability::{
         AssertionSign, Capability as _, CapabilityBinding, CompositionError, ControlWrite,
@@ -547,7 +553,9 @@ mod tests {
         ])
     }
 
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, CentralIdentityApiConfigError> {
+    fn read(
+        vars: &BTreeMap<&'static str, String>,
+    ) -> Result<Config, CentralIdentityApiConfigError> {
         Config::from_lookup(|name| vars.get(name).cloned())
     }
 

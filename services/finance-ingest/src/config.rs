@@ -171,7 +171,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        CLUSTER_ARN_VAR, Config, FinanceIngestConfigError, DATABASE_ROLE_VAR, NAMESPACE, PLANE_VAR,
+        CLUSTER_ARN_VAR, Config, DATABASE_ROLE_VAR, FinanceIngestConfigError, NAMESPACE, PLANE_VAR,
         REQUIRED_VARS,
     };
 

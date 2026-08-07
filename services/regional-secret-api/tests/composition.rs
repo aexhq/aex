@@ -89,7 +89,10 @@ fn every_required_variable_is_required() {
 fn a_blank_value_is_missing_rather_than_empty() {
     let mut vars = complete();
     vars.insert(config::SECRET_CUSTODY_TABLE, "   ".to_owned());
-    assert!(matches!(read(&vars), Err(RegionalHttpConfigError::Missing { .. })));
+    assert!(matches!(
+        read(&vars),
+        Err(RegionalHttpConfigError::Missing { .. })
+    ));
 }
 
 #[test]

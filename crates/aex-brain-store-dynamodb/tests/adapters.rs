@@ -838,7 +838,9 @@ fn entry(seq: u64, record: &JournalRecord) -> aex_session_dynamodb::attr::Item {
         )
         .set(
             aex_session_dynamodb::attr::SK,
-            s(aex_brain_store_dynamodb::keys::journal_sort_key(JournalSeq(seq))),
+            s(aex_brain_store_dynamodb::keys::journal_sort_key(
+                JournalSeq(seq),
+            )),
         )
         .set("seq", n(seq))
         .set("entryId", s(ContentHash::of(&body).to_hex()))
@@ -862,7 +864,9 @@ fn continuation(seq: u64) -> aex_session_dynamodb::attr::Item {
         ),
         (
             aex_session_dynamodb::attr::SK.to_owned(),
-            s(aex_brain_store_dynamodb::keys::journal_sort_key(JournalSeq(seq))),
+            s(aex_brain_store_dynamodb::keys::journal_sort_key(
+                JournalSeq(seq),
+            )),
         ),
     ])
 }
@@ -1223,14 +1227,19 @@ async fn the_store_probe_reads_a_reserved_absent_key_on_each_table_it_addresses(
     );
     assert_ne!(
         requests[0]["Key"]["pk"]["S"],
-        serde_json::Value::String(aex_brain_store_dynamodb::keys::agent_partition(&key()).expect("v7")),
+        serde_json::Value::String(
+            aex_brain_store_dynamodb::keys::agent_partition(&key()).expect("v7")
+        ),
         "the probe must never address a partition a session could occupy"
     );
     assert_eq!(requests[1]["TableName"], "dev-eu-west-1-regional-work");
     assert_eq!(requests[1]["ConsistentRead"], true);
     assert_eq!(
         requests[1]["Key"]["pk"]["S"],
-        format!("WORK#{}", aex_brain_store_dynamodb::keys::HEALTH_PROBE_WORK_ID)
+        format!(
+            "WORK#{}",
+            aex_brain_store_dynamodb::keys::HEALTH_PROBE_WORK_ID
+        )
     );
     assert_eq!(requests[1]["Key"]["sk"]["S"], "STATE");
 }

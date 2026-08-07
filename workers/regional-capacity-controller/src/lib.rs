@@ -113,7 +113,10 @@ impl Config {
     }
 }
 
-fn required<F>(lookup: &F, name: &'static str) -> Result<String, RegionalCapacityControllerConfigError>
+fn required<F>(
+    lookup: &F,
+    name: &'static str,
+) -> Result<String, RegionalCapacityControllerConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {

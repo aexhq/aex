@@ -198,8 +198,8 @@ impl DataApiConfig {
 #[cfg(test)]
 mod tests {
     use super::{
-        RdsDataConfigError, DATA_API_FIELD_CAP_BYTES, DATA_API_RESULT_CAP_BYTES, DataApiConfig,
-        DatabaseName, ResourceArn, SecretArn,
+        DATA_API_FIELD_CAP_BYTES, DATA_API_RESULT_CAP_BYTES, DataApiConfig, DatabaseName,
+        RdsDataConfigError, ResourceArn, SecretArn,
     };
     use std::time::Duration;
 

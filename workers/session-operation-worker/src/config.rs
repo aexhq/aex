@@ -1,8 +1,8 @@
 //! Validated start-up configuration for `session-operation-worker`.
 
 use aex_regional_http::config::{
-    RegionalHttpConfigError, Lookup, bounded_u64, bounded_usize, forbidden, plane_name, queue_url, region,
-    required,
+    Lookup, RegionalHttpConfigError, bounded_u64, bounded_usize, forbidden, plane_name, queue_url,
+    region, required,
 };
 use aex_wire::types::Region;
 
@@ -184,9 +184,11 @@ impl Config {
                 },
             )?,
             step_deadline_ms: bounded_u64(lookup, STEP_DEADLINE_MS, 1_000, 900_000)?,
-            max_attempts: u32::try_from(max_attempts).map_err(|_| RegionalHttpConfigError::Invalid {
-                name: MAX_ATTEMPTS,
-                reason: "attempt ceiling does not fit a 32-bit counter".to_owned(),
+            max_attempts: u32::try_from(max_attempts).map_err(|_| {
+                RegionalHttpConfigError::Invalid {
+                    name: MAX_ATTEMPTS,
+                    reason: "attempt ceiling does not fit a 32-bit counter".to_owned(),
+                }
             })?,
         })
     }

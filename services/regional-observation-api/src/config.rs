@@ -159,9 +159,11 @@ impl Config {
             }
         })?;
         let raw_region = required(&lookup, REGION_VAR)?;
-        let region = Region::from_name(&raw_region).ok_or_else(|| RegionalObservationApiConfigError::Invalid {
-            name: REGION_VAR,
-            reason: format!("`{raw_region}` is not a regional plane region"),
+        let region = Region::from_name(&raw_region).ok_or_else(|| {
+            RegionalObservationApiConfigError::Invalid {
+                name: REGION_VAR,
+                reason: format!("`{raw_region}` is not a regional plane region"),
+            }
         })?;
 
         // The settle window must dominate both index propagation and the
@@ -263,10 +265,12 @@ where
     F: Fn(&str) -> Option<String>,
 {
     let raw = required(lookup, name)?;
-    let value = raw.parse::<u64>().map_err(|error| RegionalObservationApiConfigError::Invalid {
-        name,
-        reason: format!("expected a positive integer, got `{raw}`: {error}"),
-    })?;
+    let value = raw
+        .parse::<u64>()
+        .map_err(|error| RegionalObservationApiConfigError::Invalid {
+            name,
+            reason: format!("expected a positive integer, got `{raw}`: {error}"),
+        })?;
     if value == 0 {
         return Err(RegionalObservationApiConfigError::Invalid {
             name,
@@ -277,7 +281,11 @@ where
 }
 
 /// Reads a positive count that may not exceed the registered ceiling.
-fn bounded<F>(lookup: &F, name: &'static str, ceiling: u64) -> Result<u64, RegionalObservationApiConfigError>
+fn bounded<F>(
+    lookup: &F,
+    name: &'static str,
+    ceiling: u64,
+) -> Result<u64, RegionalObservationApiConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
@@ -302,10 +310,10 @@ mod tests {
 
     use super::{
         ASSERTION_CACHE_BYTES_VAR, AUTHZ_FUNCTION_ARN_VAR, AUTHZ_PROJECTION_TABLE_VAR,
-        AUTHZ_VERIFY_KEYS_PARAM_VAR, CURSOR_KEY_REF_VAR, Config, RegionalObservationApiConfigError, INDEX_SETTLE_VAR,
+        AUTHZ_VERIFY_KEYS_PARAM_VAR, CURSOR_KEY_REF_VAR, Config, INDEX_SETTLE_VAR,
         METRIC_AGGREGATE_SCAN_VAR, OBSERVATION_BUCKET_VAR, OBSERVATION_TABLE_VAR, PLANE_VAR,
         QUERY_READ_BYTES_VAR, QUERY_SCANNED_ITEMS_VAR, QUERY_SEGMENTS_VAR, REGION_VAR,
-        REQUIRED_VARS, SESSION_TABLE_VAR,
+        REQUIRED_VARS, RegionalObservationApiConfigError, SESSION_TABLE_VAR,
     };
 
     fn complete() -> BTreeMap<&'static str, String> {
@@ -340,7 +348,9 @@ mod tests {
         ])
     }
 
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, RegionalObservationApiConfigError> {
+    fn read(
+        vars: &BTreeMap<&'static str, String>,
+    ) -> Result<Config, RegionalObservationApiConfigError> {
         Config::from_lookup(|name| vars.get(name).cloned())
     }
 

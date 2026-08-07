@@ -79,7 +79,10 @@ pub enum RegionalHttpConfigError {
 /// # Errors
 ///
 /// Returns [`RegionalHttpConfigError::Missing`] when the variable is absent or blank.
-pub fn required<L: Lookup + ?Sized>(lookup: &L, name: &'static str) -> Result<String, RegionalHttpConfigError> {
+pub fn required<L: Lookup + ?Sized>(
+    lookup: &L,
+    name: &'static str,
+) -> Result<String, RegionalHttpConfigError> {
     match lookup.get(name) {
         Some(value) if !value.trim().is_empty() => Ok(value.trim().to_owned()),
         _ => Err(RegionalHttpConfigError::Missing { name }),
@@ -204,7 +207,10 @@ pub fn plane_name<L: Lookup + ?Sized>(
 /// # Errors
 ///
 /// Returns [`RegionalHttpConfigError::Invalid`] for a region outside the closed set.
-pub fn region<L: Lookup + ?Sized>(lookup: &L, name: &'static str) -> Result<Region, RegionalHttpConfigError> {
+pub fn region<L: Lookup + ?Sized>(
+    lookup: &L,
+    name: &'static str,
+) -> Result<Region, RegionalHttpConfigError> {
     let raw = required(lookup, name)?;
     Region::ALL
         .iter()

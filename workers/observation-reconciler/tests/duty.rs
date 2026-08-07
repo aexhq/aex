@@ -21,16 +21,18 @@ use aws_smithy_runtime_api::client::http::HttpClient;
 use aws_smithy_types::body::SdkBody;
 
 use observation_reconciler::config::{
-    Config, ObservationReconcilerConfigError, DUTY_SHARDS_VAR, DUTY_VAR, MAX_ATTEMPTS_VAR, OBSERVATION_BUCKET_VAR,
-    OBSERVATION_TABLE_VAR, PLANE_VAR, RECONCILE_PAGE_VAR, REGION_VAR, REQUIRED_VARS,
-    USAGE_QUEUE_URL_VAR,
+    Config, DUTY_SHARDS_VAR, DUTY_VAR, MAX_ATTEMPTS_VAR, OBSERVATION_BUCKET_VAR,
+    OBSERVATION_TABLE_VAR, ObservationReconcilerConfigError, PLANE_VAR, RECONCILE_PAGE_VAR,
+    REGION_VAR, REQUIRED_VARS, USAGE_QUEUE_URL_VAR,
 };
 use observation_reconciler::duty::{
     BatchOutcome, DueItem, DutyEngine, DutySettings, ItemId, ItemKey,
 };
 use observation_reconciler::handler::{Invocation, classify, partial_batch_body};
 use observation_reconciler::health::{health_body, readiness_body};
-use observation_reconciler::{REQUIRED_PROBES, ROLE, ObservationReconcilerRunError, compose, role_for};
+use observation_reconciler::{
+    ObservationReconcilerRunError, REQUIRED_PROBES, ROLE, compose, role_for,
+};
 
 // --- configuration ----------------------------------------------------------
 
@@ -95,7 +97,10 @@ fn a_blank_resource_identifier_is_missing_rather_than_empty() {
     for name in [OBSERVATION_TABLE_VAR, OBSERVATION_BUCKET_VAR] {
         let mut vars = complete();
         vars.insert(name, "   ".to_owned());
-        assert_eq!(read(&vars), Err(ObservationReconcilerConfigError::Missing { name }));
+        assert_eq!(
+            read(&vars),
+            Err(ObservationReconcilerConfigError::Missing { name })
+        );
     }
 }
 
@@ -105,7 +110,10 @@ fn an_unknown_duty_is_refused_by_name() {
     vars.insert(DUTY_VAR, "materialize".to_owned());
     let error = read(&vars).expect_err("an unknown duty is refused");
     assert!(
-        matches!(error, ObservationReconcilerConfigError::Invalid { name: DUTY_VAR, .. }),
+        matches!(
+            error,
+            ObservationReconcilerConfigError::Invalid { name: DUTY_VAR, .. }
+        ),
         "{error:?}"
     );
 }
@@ -231,7 +239,10 @@ fn only_the_deletion_duty_deployment_may_delete_an_object() {
         assert_eq!(role, ROLE);
         let error = compose(role, &[Capability::DeleteBodies], REQUIRED_PROBES)
             .expect_err("a non-deletion duty must refuse the delete grant");
-        assert!(matches!(error, ObservationReconcilerRunError::Capability { .. }), "{error:?}");
+        assert!(
+            matches!(error, ObservationReconcilerRunError::Capability { .. }),
+            "{error:?}"
+        );
     }
 }
 
@@ -251,7 +262,10 @@ fn no_duty_deployment_may_launch_an_export_task_or_write_an_export_object() {
             );
             let error =
                 compose(role, &[forbidden], REQUIRED_PROBES).expect_err("outside the grant");
-            assert!(matches!(error, ObservationReconcilerRunError::Capability { .. }), "{error:?}");
+            assert!(
+                matches!(error, ObservationReconcilerRunError::Capability { .. }),
+                "{error:?}"
+            );
         }
     }
 }
@@ -280,7 +294,10 @@ fn an_unproven_probe_is_never_assumed() {
         other => panic!("expected a readiness failure, got {other:?}"),
     }
     let error = compose(ROLE, ROLE.granted(), &REQUIRED_PROBES[..1]).expect_err("refused");
-    assert!(matches!(error, ObservationReconcilerRunError::NotReady { .. }), "{error:?}");
+    assert!(
+        matches!(error, ObservationReconcilerRunError::NotReady { .. }),
+        "{error:?}"
+    );
 }
 
 // --- the partial-batch response --------------------------------------------

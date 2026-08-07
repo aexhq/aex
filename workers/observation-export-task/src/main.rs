@@ -86,9 +86,14 @@ pub enum ObservationExportTaskRunError {
 /// Returns [`ObservationExportTaskRunError::Capability`] when the process holds a capability its role
 /// must not, and [`ObservationExportTaskRunError::NotReady`] when a declared probe has not passed. A
 /// probe that has not passed is never assumed.
-pub fn compose(observed: &[Capability], passed: &[Probe]) -> Result<(), ObservationExportTaskRunError> {
-    assert_grant(ROLE, observed).map_err(|violation| ObservationExportTaskRunError::Capability {
-        capability: violation.capability.as_str(),
+pub fn compose(
+    observed: &[Capability],
+    passed: &[Probe],
+) -> Result<(), ObservationExportTaskRunError> {
+    assert_grant(ROLE, observed).map_err(|violation| {
+        ObservationExportTaskRunError::Capability {
+            capability: violation.capability.as_str(),
+        }
     })?;
     match readiness(REQUIRED_PROBES, passed) {
         Readiness::Ready => Ok(()),
@@ -117,13 +122,19 @@ pub async fn run(config: Config) -> Result<(), ObservationExportTaskRunError> {
     let objects = aws::S3ExportObjects::new(s3, config.observation_bucket.clone());
 
     let mut passed = Vec::new();
-    authority.probe().await.map_err(|error| ObservationExportTaskRunError::Probe {
-        reason: error.to_string(),
-    })?;
+    authority
+        .probe()
+        .await
+        .map_err(|error| ObservationExportTaskRunError::Probe {
+            reason: error.to_string(),
+        })?;
     passed.push(Probe::ObservationTable);
-    objects.probe().await.map_err(|error| ObservationExportTaskRunError::Probe {
-        reason: error.to_string(),
-    })?;
+    objects
+        .probe()
+        .await
+        .map_err(|error| ObservationExportTaskRunError::Probe {
+            reason: error.to_string(),
+        })?;
     passed.push(Probe::ObservationBucket);
     compose(ROLE.granted(), &passed)?;
 
@@ -259,7 +270,7 @@ mod tests {
     use aex_observation_store_dynamodb::composition::Capability;
     use aex_observation_store_dynamodb::health::Probe;
 
-    use super::{REQUIRED_PROBES, ROLE, ObservationExportTaskRunError, compose, report};
+    use super::{ObservationExportTaskRunError, REQUIRED_PROBES, ROLE, compose, report};
     use crate::task::ExportOutcome;
 
     #[test]
@@ -279,7 +290,10 @@ mod tests {
     fn a_capability_outside_the_grant_refuses_to_start() {
         for denied in ROLE.denied() {
             let error = compose(&[denied], REQUIRED_PROBES).expect_err("refused");
-            assert!(matches!(error, ObservationExportTaskRunError::Capability { .. }), "{error:?}");
+            assert!(
+                matches!(error, ObservationExportTaskRunError::Capability { .. }),
+                "{error:?}"
+            );
         }
     }
 
@@ -327,7 +341,10 @@ mod tests {
         }
         // Proving a prefix is not proving the set.
         let error = compose(ROLE.granted(), &[Probe::ObservationTable]).expect_err("refused");
-        assert!(matches!(error, ObservationExportTaskRunError::NotReady { .. }), "{error:?}");
+        assert!(
+            matches!(error, ObservationExportTaskRunError::NotReady { .. }),
+            "{error:?}"
+        );
     }
 
     #[test]

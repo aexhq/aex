@@ -72,8 +72,8 @@ pub use pause::{
     pause_gate, project_account,
 };
 pub use run::{
-    DomainError, InterruptReason, QueueRun, Run, RunCommit, SessionDomainRunError, RunOutcome, RunStatus, queue,
-    start,
+    DomainError, InterruptReason, QueueRun, Run, RunCommit, RunOutcome, RunStatus,
+    SessionDomainRunError, queue, start,
 };
 pub use session::{
     MutationGuard, ResolvedConfigAuthority, ResolvedConfigDigest, ResolvedConfigError, Session,

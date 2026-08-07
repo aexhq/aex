@@ -837,7 +837,8 @@ impl ObservationRequest {
             aws_sdk_dynamodb::types::AttributeValue::N(deletion_epoch.to_string()),
         );
         let mut builder = aex_observation_store_dynamodb::expressions::ExpressionBuilder::new();
-        let condition = aex_observation_store_dynamodb::expressions::immutable_condition(&mut builder);
+        let condition =
+            aex_observation_store_dynamodb::expressions::immutable_condition(&mut builder);
         self.service
             .reader
             .put_export_control(item, &condition, builder.names(), builder.values())

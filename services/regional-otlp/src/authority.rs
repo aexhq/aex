@@ -490,7 +490,8 @@ impl AdmissionAuthority {
         // failed create through the durable receipt below; allowing PutItem to
         // overwrite a preparing receipt would execute the paired ADD again and
         // leak the same reservation on every retry.
-        let condition = aex_observation_store_dynamodb::expressions::immutable_condition(&mut builder);
+        let condition =
+            aex_observation_store_dynamodb::expressions::immutable_condition(&mut builder);
         let expires = now.unix_millis() + limits::OBS_PREPARE_TTL_MS;
         let receipt = Put::builder()
             .table_name(&self.table)

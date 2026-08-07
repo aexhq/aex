@@ -79,7 +79,10 @@ async fn main() -> ExitCode {
 }
 
 /// Builds the real adapters, assembles the router and serves it.
-async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Result<(), RegionalSecretApiRunError> {
+async fn run(
+    config: &Config,
+    telemetry: &aex_platform_telemetry::Handle,
+) -> Result<(), RegionalSecretApiRunError> {
     telemetry.emit(
         aex_platform_telemetry::Record::event(
             aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,

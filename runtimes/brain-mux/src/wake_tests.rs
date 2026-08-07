@@ -14,9 +14,7 @@ use aex_brain_app::activation::memory::{
     AbsentHands, CountingIds, FixedCatalog, FixedClock, MemoryQueue, MemoryStore, ProviderScript,
     Recorder, ScriptedProvider, ScriptedTools, wake_for,
 };
-use aex_brain_app::activation::{
-    Activation, ActivationPolicy, Outcome, Ports, Stop, WakeLoop,
-};
+use aex_brain_app::activation::{Activation, ActivationPolicy, Outcome, Ports, Stop, WakeLoop};
 use aex_brain_app::kernel::{ActivationRegistry, DrainGate, PermitKind, PermitSet};
 use aex_brain_app::ports::{
     BoxFuture, CancelToken, ClockPort, DispatchTicket, PreviewSink, ProviderDispatchError,

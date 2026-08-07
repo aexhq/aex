@@ -145,7 +145,10 @@ async fn main() -> ExitCode {
     clippy::too_many_lines,
     reason = "the composition root deliberately keeps every probed authority, wake reader, quota and drain binding visible in one audit surface"
 )]
-async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Result<(), RegionalStreamRunError> {
+async fn run(
+    config: &Config,
+    telemetry: &aex_platform_telemetry::Handle,
+) -> Result<(), RegionalStreamRunError> {
     telemetry.emit(
         aex_platform_telemetry::Record::event(
             aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,
@@ -211,10 +214,14 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
     let wake_hub = WakeHub::default();
     let _wake_readers = if config.wake_mode == WakeMode::DdbStreams {
         let session = config.session_stream.as_ref().ok_or_else(|| {
-            RegionalStreamRunError::Probe("ddb_streams mode omitted the session stream ARN".to_owned())
+            RegionalStreamRunError::Probe(
+                "ddb_streams mode omitted the session stream ARN".to_owned(),
+            )
         })?;
         let observation = config.observation_stream.as_ref().ok_or_else(|| {
-            RegionalStreamRunError::Probe("ddb_streams mode omitted the observation stream ARN".to_owned())
+            RegionalStreamRunError::Probe(
+                "ddb_streams mode omitted the observation stream ARN".to_owned(),
+            )
         })?;
         let endpoint = config
             .dynamodb_streams_endpoint_url
@@ -294,7 +301,9 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
     let address = SocketAddr::from((Ipv6Addr::UNSPECIFIED, config.port));
     let listener = tokio::net::TcpListener::bind(address)
         .await
-        .map_err(|error| RegionalStreamRunError::Listener(format!("cannot bind {address}: {error}")))?;
+        .map_err(|error| {
+            RegionalStreamRunError::Listener(format!("cannot bind {address}: {error}"))
+        })?;
     eprintln!(
         "regional-stream: listening on {address} wake={} tasks={}",
         config.wake_mode.as_str(),
@@ -330,8 +339,9 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
 }
 
 fn quota(value: u64) -> Result<u32, RegionalStreamRunError> {
-    u32::try_from(value)
-        .map_err(|_| RegionalStreamRunError::Probe(format!("connection quota `{value}` exceeds `u32`")))
+    u32::try_from(value).map_err(|_| {
+        RegionalStreamRunError::Probe(format!("connection quota `{value}` exceeds `u32`"))
+    })
 }
 
 fn build_edge(

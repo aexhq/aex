@@ -164,9 +164,11 @@ impl Config {
             });
         }
         let raw_region = required(&lookup, REGION_VAR)?;
-        let region = Region::from_name(&raw_region).ok_or_else(|| ObservationExportTaskConfigError::Invalid {
-            name: REGION_VAR,
-            reason: format!("`{raw_region}` is not a regional plane region"),
+        let region = Region::from_name(&raw_region).ok_or_else(|| {
+            ObservationExportTaskConfigError::Invalid {
+                name: REGION_VAR,
+                reason: format!("`{raw_region}` is not a regional plane region"),
+            }
         })?;
         let export_id = identifier::<ExportId, F>(&lookup, EXPORT_ID_VAR)?;
         let workspace_id = identifier::<WorkspaceId, F>(&lookup, WORKSPACE_ID_VAR)?;
@@ -263,13 +265,13 @@ where
     F: Fn(&str) -> Option<String>,
 {
     let raw = required(lookup, name)?;
-    let value = raw
-        .trim()
-        .parse::<usize>()
-        .map_err(|error| ObservationExportTaskConfigError::Invalid {
-            name,
-            reason: format!("expected a positive integer, got `{raw}`: {error}"),
-        })?;
+    let value =
+        raw.trim()
+            .parse::<usize>()
+            .map_err(|error| ObservationExportTaskConfigError::Invalid {
+                name,
+                reason: format!("expected a positive integer, got `{raw}`: {error}"),
+            })?;
     if value == 0 {
         return Err(ObservationExportTaskConfigError::Invalid {
             name,
@@ -301,7 +303,10 @@ where
 }
 
 /// Reads the working budget and proves it covers every reservation.
-fn memory_budget<F>(lookup: &F, plan: &MemoryPlan) -> Result<usize, ObservationExportTaskConfigError>
+fn memory_budget<F>(
+    lookup: &F,
+    plan: &MemoryPlan,
+) -> Result<usize, ObservationExportTaskConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
@@ -332,13 +337,13 @@ where
     if raw.trim().is_empty() {
         return Ok(None);
     }
-    let port = raw
-        .trim()
-        .parse::<u16>()
-        .map_err(|error| ObservationExportTaskConfigError::Invalid {
-            name: HEALTH_PORT_VAR,
-            reason: format!("expected a TCP port, got `{raw}`: {error}"),
-        })?;
+    let port =
+        raw.trim()
+            .parse::<u16>()
+            .map_err(|error| ObservationExportTaskConfigError::Invalid {
+                name: HEALTH_PORT_VAR,
+                reason: format!("expected a TCP port, got `{raw}`: {error}"),
+            })?;
     if port == 0 {
         // `port = 0` in the unit row means "no listener", not "any port".
         return Ok(None);
@@ -351,9 +356,10 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        Config, ObservationExportTaskConfigError, EXPORT_ID_VAR, HEALTH_PORT_VAR, LEASE_MS_VAR, MEMORY_BUDGET_VAR,
-        OBSERVATION_BUCKET_VAR, OBSERVATION_TABLE_VAR, PAGE_LIMIT_VAR, PART_BYTES_VAR, PLANE_VAR,
-        REGION_VAR, REQUIRED_VARS, ROWGROUP_BYTES_VAR, WORKSPACE_ID_VAR,
+        Config, EXPORT_ID_VAR, HEALTH_PORT_VAR, LEASE_MS_VAR, MEMORY_BUDGET_VAR,
+        OBSERVATION_BUCKET_VAR, OBSERVATION_TABLE_VAR, ObservationExportTaskConfigError,
+        PAGE_LIMIT_VAR, PART_BYTES_VAR, PLANE_VAR, REGION_VAR, REQUIRED_VARS, ROWGROUP_BYTES_VAR,
+        WORKSPACE_ID_VAR,
     };
 
     pub(crate) const EXPORT_FIXTURE: &str = "exp_0000000001e40r2081040g2081";
@@ -375,7 +381,9 @@ mod tests {
         ])
     }
 
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ObservationExportTaskConfigError> {
+    fn read(
+        vars: &BTreeMap<&'static str, String>,
+    ) -> Result<Config, ObservationExportTaskConfigError> {
         Config::from_lookup(|name| vars.get(name).cloned())
     }
 
@@ -566,7 +574,10 @@ mod tests {
         // Removing everything leaves the first required variable named, and no
         // field is silently filled in from a constant.
         let empty = BTreeMap::new();
-        assert_eq!(read(&empty), Err(ObservationExportTaskConfigError::Missing { name: PLANE_VAR }));
+        assert_eq!(
+            read(&empty),
+            Err(ObservationExportTaskConfigError::Missing { name: PLANE_VAR })
+        );
         let mut vars = complete();
         vars.remove(OBSERVATION_TABLE_VAR);
         assert_eq!(

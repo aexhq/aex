@@ -38,10 +38,11 @@ impl Config {
         F: Fn(&str) -> Option<String>,
     {
         let region_raw = required(&lookup, keys::REGION)?;
-        let region = Region::from_name(&region_raw).ok_or_else(|| RegionalControlConfigError::Invalid {
-            name: keys::REGION,
-            reason: format!("`{region_raw}` is not a launch region"),
-        })?;
+        let region =
+            Region::from_name(&region_raw).ok_or_else(|| RegionalControlConfigError::Invalid {
+                name: keys::REGION,
+                reason: format!("`{region_raw}` is not a launch region"),
+            })?;
         Ok(Self {
             region,
             session_table: required(&lookup, keys::SESSION_TABLE)?,

@@ -110,8 +110,14 @@ mod tests {
 
     #[test]
     fn the_health_paths_are_the_shared_cross_stream_constants() {
-        assert_eq!(HEALTH_PATHS[0], aex_observation_store_dynamodb::health::HEALTHZ);
-        assert_eq!(HEALTH_PATHS[1], aex_observation_store_dynamodb::health::READYZ);
+        assert_eq!(
+            HEALTH_PATHS[0],
+            aex_observation_store_dynamodb::health::HEALTHZ
+        );
+        assert_eq!(
+            HEALTH_PATHS[1],
+            aex_observation_store_dynamodb::health::READYZ
+        );
         assert_eq!(HEALTH_PATHS[0], "/internal/healthz");
         assert_eq!(HEALTH_PATHS[1], "/internal/readyz");
     }

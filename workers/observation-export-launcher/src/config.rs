@@ -147,9 +147,11 @@ impl Config {
             });
         }
         let raw_region = required(&lookup, REGION_VAR)?;
-        let region = Region::from_name(&raw_region).ok_or_else(|| ObservationExportLauncherConfigError::Invalid {
-            name: REGION_VAR,
-            reason: format!("`{raw_region}` is not a regional plane region"),
+        let region = Region::from_name(&raw_region).ok_or_else(|| {
+            ObservationExportLauncherConfigError::Invalid {
+                name: REGION_VAR,
+                reason: format!("`{raw_region}` is not a regional plane region"),
+            }
         })?;
 
         let observation_table = required(&lookup, OBSERVATION_TABLE_VAR)?;
@@ -203,7 +205,10 @@ impl Config {
 }
 
 /// Reads a required, non-blank variable.
-fn required<F>(lookup: &F, name: &'static str) -> Result<String, ObservationExportLauncherConfigError>
+fn required<F>(
+    lookup: &F,
+    name: &'static str,
+) -> Result<String, ObservationExportLauncherConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
@@ -217,16 +222,24 @@ where
 ///
 /// Both ends are named in the failure, because "out of range" without the range
 /// is a message an operator cannot act on.
-fn bounded<F, T>(lookup: &F, name: &'static str, low: T, high: T) -> Result<T, ObservationExportLauncherConfigError>
+fn bounded<F, T>(
+    lookup: &F,
+    name: &'static str,
+    low: T,
+    high: T,
+) -> Result<T, ObservationExportLauncherConfigError>
 where
     F: Fn(&str) -> Option<String>,
     T: std::str::FromStr + PartialOrd + std::fmt::Display + Copy,
 {
     let raw = required(lookup, name)?;
-    let value = raw.trim().parse::<T>().map_err(|_| ObservationExportLauncherConfigError::Invalid {
-        name,
-        reason: format!("expected an integer in {low}..={high}, got `{raw}`"),
-    })?;
+    let value =
+        raw.trim()
+            .parse::<T>()
+            .map_err(|_| ObservationExportLauncherConfigError::Invalid {
+                name,
+                reason: format!("expected an integer in {low}..={high}, got `{raw}`"),
+            })?;
     if value < low || value > high {
         return Err(ObservationExportLauncherConfigError::Invalid {
             name,
@@ -338,10 +351,10 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        Config, ObservationExportLauncherConfigError, EXPORT_CLUSTER_VAR, EXPORT_LAUNCH_SHARDS_VAR, EXPORT_LEASE_MS_VAR,
+        Config, EXPORT_CLUSTER_VAR, EXPORT_LAUNCH_SHARDS_VAR, EXPORT_LEASE_MS_VAR,
         EXPORT_MAX_CONCURRENT_VAR, EXPORT_SECURITY_GROUPS_VAR, EXPORT_SUBNETS_VAR,
-        EXPORT_TASK_DEFINITION_VAR, OBSERVATION_TABLE_VAR, PLANE_VAR, REGION_VAR, REQUIRED_VARS,
-        task_definition_family,
+        EXPORT_TASK_DEFINITION_VAR, OBSERVATION_TABLE_VAR, ObservationExportLauncherConfigError,
+        PLANE_VAR, REGION_VAR, REQUIRED_VARS, task_definition_family,
     };
 
     fn complete() -> BTreeMap<&'static str, String> {
@@ -369,7 +382,9 @@ mod tests {
         ])
     }
 
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ObservationExportLauncherConfigError> {
+    fn read(
+        vars: &BTreeMap<&'static str, String>,
+    ) -> Result<Config, ObservationExportLauncherConfigError> {
         Config::from_lookup(|name| vars.get(name).cloned())
     }
 

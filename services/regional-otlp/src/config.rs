@@ -165,10 +165,11 @@ impl Config {
             }
         })?;
         let raw_region = required(&lookup, REGION_VAR)?;
-        let region = Region::from_name(&raw_region).ok_or_else(|| RegionalOtlpConfigError::Invalid {
-            name: REGION_VAR,
-            reason: format!("`{raw_region}` is not a regional plane region"),
-        })?;
+        let region =
+            Region::from_name(&raw_region).ok_or_else(|| RegionalOtlpConfigError::Invalid {
+                name: REGION_VAR,
+                reason: format!("`{raw_region}` is not a regional plane region"),
+            })?;
 
         let registered = OtlpLimits::REGISTERED;
         let encoded_max = bounded(&lookup, ENCODED_MAX_VAR, registered.encoded_max)?;
@@ -275,10 +276,12 @@ where
     F: Fn(&str) -> Option<String>,
 {
     let raw = required(lookup, name)?;
-    let value = raw.parse::<usize>().map_err(|error| RegionalOtlpConfigError::Invalid {
-        name,
-        reason: format!("expected a positive integer, got `{raw}`: {error}"),
-    })?;
+    let value = raw
+        .parse::<usize>()
+        .map_err(|error| RegionalOtlpConfigError::Invalid {
+            name,
+            reason: format!("expected a positive integer, got `{raw}`: {error}"),
+        })?;
     if value == 0 {
         return Err(RegionalOtlpConfigError::Invalid {
             name,
@@ -289,7 +292,11 @@ where
 }
 
 /// Reads a positive count that may not exceed the registered ceiling.
-fn bounded<F>(lookup: &F, name: &'static str, ceiling: usize) -> Result<usize, RegionalOtlpConfigError>
+fn bounded<F>(
+    lookup: &F,
+    name: &'static str,
+    ceiling: usize,
+) -> Result<usize, RegionalOtlpConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
@@ -312,10 +319,10 @@ mod tests {
 
     use super::{
         ASSERTION_CACHE_BYTES_VAR, AUTHZ_FUNCTION_ARN_VAR, AUTHZ_PROJECTION_TABLE_VAR,
-        AUTHZ_VERIFY_KEYS_PARAM_VAR, Config, RegionalOtlpConfigError, DECODED_MAX_VAR, ENCODED_MAX_VAR,
-        MAX_RECORDS_VAR, MEMORY_BUDGET_VAR, OBSERVATION_BUCKET_VAR, OBSERVATION_TABLE_VAR,
-        PLANE_VAR, REDACTION_KEY_REF_VAR, REGION_VAR, REQUIRED_VARS, RESERVE_WAIT_VAR,
-        RESERVED_CONCURRENCY_VAR, SECRET_CUSTODY_TABLE_VAR,
+        AUTHZ_VERIFY_KEYS_PARAM_VAR, Config, DECODED_MAX_VAR, ENCODED_MAX_VAR, MAX_RECORDS_VAR,
+        MEMORY_BUDGET_VAR, OBSERVATION_BUCKET_VAR, OBSERVATION_TABLE_VAR, PLANE_VAR,
+        REDACTION_KEY_REF_VAR, REGION_VAR, REQUIRED_VARS, RESERVE_WAIT_VAR,
+        RESERVED_CONCURRENCY_VAR, RegionalOtlpConfigError, SECRET_CUSTODY_TABLE_VAR,
     };
 
     fn complete() -> BTreeMap<&'static str, String> {

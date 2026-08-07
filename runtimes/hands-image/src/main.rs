@@ -270,7 +270,9 @@ fn run(cli: &Cli) -> Result<(), HandsImageRunError> {
                 println!("built {}", variant.tag());
                 Ok(())
             } else {
-                Err(HandsImageRunError::Build(format!("docker exited with {status}")))
+                Err(HandsImageRunError::Build(format!(
+                    "docker exited with {status}"
+                )))
             }
         }
         Command::Artifact { variant, out } => {
@@ -300,8 +302,8 @@ fn run(cli: &Cli) -> Result<(), HandsImageRunError> {
 fn validate(lock: &Path, observed: &Path) -> Result<(), HandsImageRunError> {
     {
         let encoded = std::fs::read_to_string(lock).map_err(io_at(lock))?;
-        let locked: image::ImageLock =
-            serde_json::from_str(&encoded).map_err(|error| HandsImageRunError::Lock(error.to_string()))?;
+        let locked: image::ImageLock = serde_json::from_str(&encoded)
+            .map_err(|error| HandsImageRunError::Lock(error.to_string()))?;
         let listing = std::fs::read_to_string(observed).map_err(io_at(observed))?;
         let installed: Vec<String> = listing
             .lines()

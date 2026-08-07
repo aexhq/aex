@@ -189,7 +189,12 @@ where
 }
 
 /// Reads a variable that must be an integer inside a closed range.
-fn bounded<F>(lookup: &F, name: &'static str, low: u32, high: u32) -> Result<u32, ProviderCostReconcilerConfigError>
+fn bounded<F>(
+    lookup: &F,
+    name: &'static str,
+    low: u32,
+    high: u32,
+) -> Result<u32, ProviderCostReconcilerConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
@@ -219,7 +224,10 @@ where
 }
 
 /// Renders a peer validation failure as this deployable's own refusal.
-fn invalid(name: &'static str, error: &impl std::fmt::Display) -> ProviderCostReconcilerConfigError {
+fn invalid(
+    name: &'static str,
+    error: &impl std::fmt::Display,
+) -> ProviderCostReconcilerConfigError {
     ProviderCostReconcilerConfigError::Invalid {
         name,
         reason: error.to_string(),
@@ -231,8 +239,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        CUR_PREFIX_VAR, Config, ProviderCostReconcilerConfigError, DATABASE_ROLE_VAR, MARGIN_THRESHOLD_VAR, NAMESPACE,
-        REQUIRED_VARS,
+        CUR_PREFIX_VAR, Config, DATABASE_ROLE_VAR, MARGIN_THRESHOLD_VAR, NAMESPACE,
+        ProviderCostReconcilerConfigError, REQUIRED_VARS,
     };
 
     fn complete() -> BTreeMap<&'static str, String> {
@@ -261,7 +269,9 @@ mod tests {
         ])
     }
 
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ProviderCostReconcilerConfigError> {
+    fn read(
+        vars: &BTreeMap<&'static str, String>,
+    ) -> Result<Config, ProviderCostReconcilerConfigError> {
         Config::from_lookup(|name| vars.get(name).cloned())
     }
 

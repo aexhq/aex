@@ -31,49 +31,338 @@ use crate::rules::Violation;
 /// declaration both fail on their own branch and cannot merge-sum their way
 /// back to green the way the retired module-size baseline could.
 pub const GRANDFATHERED: &[(&str, &[&str])] = &[
-    ("AdmissionError", &["crates/aex-observation-app/src/use_cases.rs", "crates/aex-usage-domain/src/fact.rs", "services/regional-secret-api/src/lib.rs", "services/regional-session-api/src/admission.rs"]),
-    ("AuthorityError", &["services/finance-api/src/authority.rs", "services/regional-otlp/src/authority.rs"]),
-    ("BudgetError", &["crates/aex-brain-domain/src/budget.rs", "tests/support/aex-test-harness/src/budget.rs"]),
-    ("CanonicalError", &["crates/aex-usage-domain/src/intent.rs", "crates/aex-wire/src/canonical.rs"]),
-    ("CatalogError", &["crates/aex-brain-app/src/ports/catalog.rs", "crates/aex-model-catalog/src/qualified.rs", "crates/aex-runtime-control/src/catalog.rs"]),
-    ("ClaimError", &["crates/aex-brain-app/src/ports/store.rs", "workers/session-operation-worker/src/lib.rs"]),
-    ("CommitError", &["crates/aex-brain-app/src/ports/store.rs", "crates/aex-session-app/src/ports.rs", "workers/session-operation-worker/src/lib.rs"]),
-    ("CompositionError", &["crates/aex-central-http/src/capability.rs", "crates/aex-regional-http/src/capability.rs"]),
-    ("CursorError", &["crates/aex-control-domain/src/cursor.rs", "crates/aex-observation-query/src/cursor.rs", "crates/aex-operation-domain/src/cursor.rs", "crates/aex-regional-http/src/cursor.rs", "crates/aex-session-dynamodb/src/paging.rs"]),
-    ("DecodeError", &["crates/aex-rds-data/src/error.rs", "crates/aex-usage-compute-dynamodb/src/codec.rs", "crates/aex-usage-storage-dynamodb/src/codec.rs", "crates/aex-usage-transfer-dynamodb/src/codec.rs"]),
-    ("DispatchError", &["workers/usage-compute-worker/src/main.rs", "workers/usage-receipt-dispatcher/src/outbox.rs", "workers/usage-storage-worker/src/main.rs", "workers/usage-transfer-worker/src/main.rs"]),
-    ("DownloadError", &["services/finance-api/src/download.rs", "tools/aex-cli/src/download.rs"]),
-    ("DrainError", &["crates/aex-usage-app/src/probe/sink.rs", "runtimes/brain-mux/src/drain.rs"]),
-    ("EdgeError", &["crates/aex-central-http/src/error.rs", "crates/aex-regional-http/src/error.rs"]),
-    ("EffectError", &["crates/aex-brain-domain/src/effect.rs", "crates/aex-control-app/src/ports.rs"]),
-    ("EncodeError", &["crates/aex-content-dynamodb/src/codec.rs", "crates/aex-observation-export/src/encoder.rs", "crates/aex-registry-dynamodb/src/codec.rs", "crates/aex-runtime-activity-dynamodb/src/codec.rs", "crates/aex-secret-custody-dynamodb/src/codec.rs", "crates/aex-work-dynamodb/src/codec.rs"]),
-    ("EnvelopeError", &["crates/aex-regional-http/src/envelope.rs", "crates/aex-secret-aws/src/envelope.rs", "crates/aex-usage-domain/src/ingress.rs"]),
-    ("FoldError", &["crates/aex-brain-domain/src/fold.rs", "crates/aex-usage-app/src/projection.rs"]),
-    ("FrameError", &["crates/aex-hands-agent/src/wire.rs", "services/regional-observation-api/src/ndjson.rs"]),
-    ("FrontierError", &["crates/aex-observation-domain/src/frontier.rs", "crates/aex-usage-domain/src/frontier.rs"]),
-    ("HandsError", &["crates/aex-brain-app/src/ports/hands.rs", "crates/aex-brain-hands/src/adapter.rs"]),
-    ("IdentityError", &["crates/aex-identity-app/src/use_cases.rs", "crates/aex-regional-http/src/idempotency.rs", "crates/aex-usage-domain/src/identity.rs"]),
-    ("ImageError", &["runtimes/hands-agent/src/image.rs", "tests/support/aex-test-harness/src/images.rs"]),
-    ("JournalError", &["crates/aex-hands-agent/src/journal.rs", "crates/aex-session-domain/src/journal.rs"]),
-    ("KeyError", &["crates/aex-observation-domain/src/keys.rs", "crates/aex-session-dynamodb/src/component.rs", "crates/aex-usage-domain/src/keys.rs"]),
-    ("MoneyError", &["crates/aex-finance-domain/src/money.rs", "crates/aex-internal-contracts/src/money.rs"]),
-    ("PageError", &["crates/aex-operation-domain/src/cursor.rs", "crates/aex-regional-http/src/page.rs"]),
-    ("PlanError", &["crates/aex-brain-store-dynamodb/src/plan.rs", "crates/aex-session-app/src/plan.rs"]),
-    ("PoolError", &["crates/aex-brain-mcp/src/pool.rs", "crates/aex-brain-provider-gateway/src/pool.rs"]),
-    ("PortError", &["crates/aex-observation-app/src/ports.rs", "crates/aex-session-app/src/ports.rs", "crates/aex-usage-app/src/ports.rs"]),
-    ("PrefixError", &["crates/aex-brain-test-support/src/prefix.rs", "crates/aex-central-test-support/src/prefix.rs", "crates/aex-observation-test-support/src/prefix.rs", "crates/aex-regional-test-support/src/prefix.rs"]),
-    ("ProjectionError", &["crates/aex-regional-http/src/edge.rs", "crates/aex-regional-http/src/projection.rs"]),
-    ("QualificationError", &["crates/aex-brain-mcp/src/client.rs", "tests/live/aex-live-model-catalog/src/deepseek_qualification.rs"]),
-    ("QueryError", &["crates/aex-observation-query/src/ast.rs", "crates/aex-usage-query-dynamodb/src/expressions.rs"]),
-    ("ReadinessError", &["crates/aex-regional-http/src/health.rs", "tests/live/aex-live-model-catalog/src/executor.rs"]),
-    ("ReceiptError", &["crates/aex-hands-protocol/src/lifecycle.rs", "crates/aex-usage-compute-dynamodb/src/stream.rs", "crates/aex-usage-storage-dynamodb/src/stream.rs", "crates/aex-usage-transfer-dynamodb/src/stream.rs", "tests/live/aex-live-model-catalog/src/lib.rs"]),
-    ("RowError", &["crates/aex-usage-compute-dynamodb/src/attribute.rs", "crates/aex-usage-storage-dynamodb/src/attribute.rs", "crates/aex-usage-transfer-dynamodb/src/attribute.rs"]),
-    ("ScopeError", &["crates/aex-control-domain/src/scope.rs", "crates/aex-session-dynamodb/src/replay.rs"]),
-    ("SinkError", &["crates/aex-runtime-control/src/usage.rs", "crates/aex-usage-app/src/probe/sink.rs"]),
-    ("StoreError", &["crates/aex-brain-app/src/ports/store.rs", "crates/aex-identity-app/src/ports.rs", "crates/aex-observation-store-dynamodb/src/store.rs", "crates/aex-session-dynamodb/src/error.rs", "crates/aex-usage-compute-dynamodb/src/expressions.rs", "crates/aex-usage-storage-dynamodb/src/expressions.rs", "crates/aex-usage-transfer-dynamodb/src/expressions.rs"]),
-    ("StreamError", &["crates/aex-usage-compute-dynamodb/src/stream.rs", "crates/aex-usage-storage-dynamodb/src/stream.rs", "crates/aex-usage-transfer-dynamodb/src/stream.rs"]),
-    ("TransitionError", &["crates/aex-observation-domain/src/batch.rs", "crates/aex-operation-domain/src/operation.rs"]),
-    ("ValueError", &["crates/aex-wire/src/types.rs", "crates/aex-workspace-domain/src/registry.rs"]),
+    (
+        "AdmissionError",
+        &[
+            "crates/aex-observation-app/src/use_cases.rs",
+            "crates/aex-usage-domain/src/fact.rs",
+            "services/regional-secret-api/src/lib.rs",
+            "services/regional-session-api/src/admission.rs",
+        ],
+    ),
+    (
+        "AuthorityError",
+        &[
+            "services/finance-api/src/authority.rs",
+            "services/regional-otlp/src/authority.rs",
+        ],
+    ),
+    (
+        "BudgetError",
+        &[
+            "crates/aex-brain-domain/src/budget.rs",
+            "tests/support/aex-test-harness/src/budget.rs",
+        ],
+    ),
+    (
+        "CanonicalError",
+        &[
+            "crates/aex-usage-domain/src/intent.rs",
+            "crates/aex-wire/src/canonical.rs",
+        ],
+    ),
+    (
+        "CatalogError",
+        &[
+            "crates/aex-brain-app/src/ports/catalog.rs",
+            "crates/aex-model-catalog/src/qualified.rs",
+            "crates/aex-runtime-control/src/catalog.rs",
+        ],
+    ),
+    (
+        "ClaimError",
+        &[
+            "crates/aex-brain-app/src/ports/store.rs",
+            "workers/session-operation-worker/src/lib.rs",
+        ],
+    ),
+    (
+        "CommitError",
+        &[
+            "crates/aex-brain-app/src/ports/store.rs",
+            "crates/aex-session-app/src/ports.rs",
+            "workers/session-operation-worker/src/lib.rs",
+        ],
+    ),
+    (
+        "CompositionError",
+        &[
+            "crates/aex-central-http/src/capability.rs",
+            "crates/aex-regional-http/src/capability.rs",
+        ],
+    ),
+    (
+        "CursorError",
+        &[
+            "crates/aex-control-domain/src/cursor.rs",
+            "crates/aex-observation-query/src/cursor.rs",
+            "crates/aex-operation-domain/src/cursor.rs",
+            "crates/aex-regional-http/src/cursor.rs",
+            "crates/aex-session-dynamodb/src/paging.rs",
+        ],
+    ),
+    (
+        "DecodeError",
+        &[
+            "crates/aex-rds-data/src/error.rs",
+            "crates/aex-usage-compute-dynamodb/src/codec.rs",
+            "crates/aex-usage-storage-dynamodb/src/codec.rs",
+            "crates/aex-usage-transfer-dynamodb/src/codec.rs",
+        ],
+    ),
+    (
+        "DispatchError",
+        &[
+            "workers/usage-compute-worker/src/main.rs",
+            "workers/usage-receipt-dispatcher/src/outbox.rs",
+            "workers/usage-storage-worker/src/main.rs",
+            "workers/usage-transfer-worker/src/main.rs",
+        ],
+    ),
+    (
+        "DownloadError",
+        &[
+            "services/finance-api/src/download.rs",
+            "tools/aex-cli/src/download.rs",
+        ],
+    ),
+    (
+        "DrainError",
+        &[
+            "crates/aex-usage-app/src/probe/sink.rs",
+            "runtimes/brain-mux/src/drain.rs",
+        ],
+    ),
+    (
+        "EdgeError",
+        &[
+            "crates/aex-central-http/src/error.rs",
+            "crates/aex-regional-http/src/error.rs",
+        ],
+    ),
+    (
+        "EffectError",
+        &[
+            "crates/aex-brain-domain/src/effect.rs",
+            "crates/aex-control-app/src/ports.rs",
+        ],
+    ),
+    (
+        "EncodeError",
+        &[
+            "crates/aex-content-dynamodb/src/codec.rs",
+            "crates/aex-observation-export/src/encoder.rs",
+            "crates/aex-registry-dynamodb/src/codec.rs",
+            "crates/aex-runtime-activity-dynamodb/src/codec.rs",
+            "crates/aex-secret-custody-dynamodb/src/codec.rs",
+            "crates/aex-work-dynamodb/src/codec.rs",
+        ],
+    ),
+    (
+        "EnvelopeError",
+        &[
+            "crates/aex-regional-http/src/envelope.rs",
+            "crates/aex-secret-aws/src/envelope.rs",
+            "crates/aex-usage-domain/src/ingress.rs",
+        ],
+    ),
+    (
+        "FoldError",
+        &[
+            "crates/aex-brain-domain/src/fold.rs",
+            "crates/aex-usage-app/src/projection.rs",
+        ],
+    ),
+    (
+        "FrameError",
+        &[
+            "crates/aex-hands-agent/src/wire.rs",
+            "services/regional-observation-api/src/ndjson.rs",
+        ],
+    ),
+    (
+        "FrontierError",
+        &[
+            "crates/aex-observation-domain/src/frontier.rs",
+            "crates/aex-usage-domain/src/frontier.rs",
+        ],
+    ),
+    (
+        "HandsError",
+        &[
+            "crates/aex-brain-app/src/ports/hands.rs",
+            "crates/aex-brain-hands/src/adapter.rs",
+        ],
+    ),
+    (
+        "IdentityError",
+        &[
+            "crates/aex-identity-app/src/use_cases.rs",
+            "crates/aex-regional-http/src/idempotency.rs",
+            "crates/aex-usage-domain/src/identity.rs",
+        ],
+    ),
+    (
+        "ImageError",
+        &[
+            "runtimes/hands-agent/src/image.rs",
+            "tests/support/aex-test-harness/src/images.rs",
+        ],
+    ),
+    (
+        "JournalError",
+        &[
+            "crates/aex-hands-agent/src/journal.rs",
+            "crates/aex-session-domain/src/journal.rs",
+        ],
+    ),
+    (
+        "KeyError",
+        &[
+            "crates/aex-observation-domain/src/keys.rs",
+            "crates/aex-session-dynamodb/src/component.rs",
+            "crates/aex-usage-domain/src/keys.rs",
+        ],
+    ),
+    (
+        "MoneyError",
+        &[
+            "crates/aex-finance-domain/src/money.rs",
+            "crates/aex-internal-contracts/src/money.rs",
+        ],
+    ),
+    (
+        "PageError",
+        &[
+            "crates/aex-operation-domain/src/cursor.rs",
+            "crates/aex-regional-http/src/page.rs",
+        ],
+    ),
+    (
+        "PlanError",
+        &[
+            "crates/aex-brain-store-dynamodb/src/plan.rs",
+            "crates/aex-session-app/src/plan.rs",
+        ],
+    ),
+    (
+        "PoolError",
+        &[
+            "crates/aex-brain-mcp/src/pool.rs",
+            "crates/aex-brain-provider-gateway/src/pool.rs",
+        ],
+    ),
+    (
+        "PortError",
+        &[
+            "crates/aex-observation-app/src/ports.rs",
+            "crates/aex-session-app/src/ports.rs",
+            "crates/aex-usage-app/src/ports.rs",
+        ],
+    ),
+    (
+        "PrefixError",
+        &[
+            "crates/aex-brain-test-support/src/prefix.rs",
+            "crates/aex-central-test-support/src/prefix.rs",
+            "crates/aex-observation-test-support/src/prefix.rs",
+            "crates/aex-regional-test-support/src/prefix.rs",
+        ],
+    ),
+    (
+        "ProjectionError",
+        &[
+            "crates/aex-regional-http/src/edge.rs",
+            "crates/aex-regional-http/src/projection.rs",
+        ],
+    ),
+    (
+        "QualificationError",
+        &[
+            "crates/aex-brain-mcp/src/client.rs",
+            "tests/live/aex-live-model-catalog/src/deepseek_qualification.rs",
+        ],
+    ),
+    (
+        "QueryError",
+        &[
+            "crates/aex-observation-query/src/ast.rs",
+            "crates/aex-usage-query-dynamodb/src/expressions.rs",
+        ],
+    ),
+    (
+        "ReadinessError",
+        &[
+            "crates/aex-regional-http/src/health.rs",
+            "tests/live/aex-live-model-catalog/src/executor.rs",
+        ],
+    ),
+    (
+        "ReceiptError",
+        &[
+            "crates/aex-hands-protocol/src/lifecycle.rs",
+            "crates/aex-usage-compute-dynamodb/src/stream.rs",
+            "crates/aex-usage-storage-dynamodb/src/stream.rs",
+            "crates/aex-usage-transfer-dynamodb/src/stream.rs",
+            "tests/live/aex-live-model-catalog/src/lib.rs",
+        ],
+    ),
+    (
+        "RowError",
+        &[
+            "crates/aex-usage-compute-dynamodb/src/attribute.rs",
+            "crates/aex-usage-storage-dynamodb/src/attribute.rs",
+            "crates/aex-usage-transfer-dynamodb/src/attribute.rs",
+        ],
+    ),
+    (
+        "ScopeError",
+        &[
+            "crates/aex-control-domain/src/scope.rs",
+            "crates/aex-session-dynamodb/src/replay.rs",
+        ],
+    ),
+    (
+        "SinkError",
+        &[
+            "crates/aex-runtime-control/src/usage.rs",
+            "crates/aex-usage-app/src/probe/sink.rs",
+        ],
+    ),
+    (
+        "StoreError",
+        &[
+            "crates/aex-brain-app/src/ports/store.rs",
+            "crates/aex-identity-app/src/ports.rs",
+            "crates/aex-observation-store-dynamodb/src/store.rs",
+            "crates/aex-session-dynamodb/src/error.rs",
+            "crates/aex-usage-compute-dynamodb/src/expressions.rs",
+            "crates/aex-usage-storage-dynamodb/src/expressions.rs",
+            "crates/aex-usage-transfer-dynamodb/src/expressions.rs",
+        ],
+    ),
+    (
+        "StreamError",
+        &[
+            "crates/aex-usage-compute-dynamodb/src/stream.rs",
+            "crates/aex-usage-storage-dynamodb/src/stream.rs",
+            "crates/aex-usage-transfer-dynamodb/src/stream.rs",
+        ],
+    ),
+    (
+        "TransitionError",
+        &[
+            "crates/aex-observation-domain/src/batch.rs",
+            "crates/aex-operation-domain/src/operation.rs",
+        ],
+    ),
+    (
+        "ValueError",
+        &[
+            "crates/aex-wire/src/types.rs",
+            "crates/aex-workspace-domain/src/registry.rs",
+        ],
+    ),
 ];
 
 /// Every `*Error` enum a source file declares.
@@ -132,10 +421,11 @@ fn walk(
     if !directory.is_dir() {
         return Ok(());
     }
-    let entries = std::fs::read_dir(directory).map_err(|source| crate::collect::CollectError::Read {
-        path: directory.display().to_string(),
-        source,
-    })?;
+    let entries =
+        std::fs::read_dir(directory).map_err(|source| crate::collect::CollectError::Read {
+            path: directory.display().to_string(),
+            source,
+        })?;
     for entry in entries {
         let entry = entry.map_err(|source| crate::collect::CollectError::Read {
             path: directory.display().to_string(),
@@ -250,7 +540,10 @@ mod tests {
 
     #[test]
     fn an_indented_declaration_is_found() {
-        assert_eq!(declarations("    pub enum InnerError {}"), vec!["InnerError"]);
+        assert_eq!(
+            declarations("    pub enum InnerError {}"),
+            vec!["InnerError"]
+        );
     }
 
     #[test]
@@ -270,7 +563,10 @@ mod tests {
         let mut found = BTreeMap::new();
         found.insert(
             "AError".to_owned(),
-            vec!["crates/a/src/lib.rs".to_owned(), "crates/b/src/lib.rs".to_owned()],
+            vec![
+                "crates/a/src/lib.rs".to_owned(),
+                "crates/b/src/lib.rs".to_owned(),
+            ],
         );
         let violations = check_against(&found, &[]);
         assert_eq!(violations.len(), 1);
@@ -282,7 +578,10 @@ mod tests {
         let mut found = BTreeMap::new();
         found.insert(
             "AError".to_owned(),
-            vec!["crates/a/src/lib.rs".to_owned(), "crates/a/src/lib.rs".to_owned()],
+            vec![
+                "crates/a/src/lib.rs".to_owned(),
+                "crates/a/src/lib.rs".to_owned(),
+            ],
         );
         assert!(check_against(&found, &[]).is_empty());
     }

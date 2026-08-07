@@ -173,7 +173,12 @@ where
 }
 
 /// Reads a variable that must be an integer inside a closed range.
-fn bounded<F>(lookup: &F, name: &'static str, low: u32, high: u32) -> Result<u32, FinanceSettlementWorkerConfigError>
+fn bounded<F>(
+    lookup: &F,
+    name: &'static str,
+    low: u32,
+    high: u32,
+) -> Result<u32, FinanceSettlementWorkerConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
@@ -188,7 +193,10 @@ where
 }
 
 /// Renders a peer validation failure as this deployable's own refusal.
-fn invalid(name: &'static str, error: &impl std::fmt::Display) -> FinanceSettlementWorkerConfigError {
+fn invalid(
+    name: &'static str,
+    error: &impl std::fmt::Display,
+) -> FinanceSettlementWorkerConfigError {
     FinanceSettlementWorkerConfigError::Invalid {
         name,
         reason: error.to_string(),
@@ -200,8 +208,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        Config, FinanceSettlementWorkerConfigError, DATABASE_ROLE_VAR, NAMESPACE, QUEUE_URL_VAR, REQUIRED_VARS,
-        SERIALIZATION_RETRY_VAR,
+        Config, DATABASE_ROLE_VAR, FinanceSettlementWorkerConfigError, NAMESPACE, QUEUE_URL_VAR,
+        REQUIRED_VARS, SERIALIZATION_RETRY_VAR,
     };
 
     fn complete() -> BTreeMap<&'static str, String> {
@@ -232,7 +240,9 @@ mod tests {
         ])
     }
 
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, FinanceSettlementWorkerConfigError> {
+    fn read(
+        vars: &BTreeMap<&'static str, String>,
+    ) -> Result<Config, FinanceSettlementWorkerConfigError> {
         Config::from_lookup(|name| vars.get(name).cloned())
     }
 

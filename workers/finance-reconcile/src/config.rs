@@ -194,7 +194,12 @@ where
 }
 
 /// Reads a variable that must be an integer inside a closed range.
-fn bounded<F>(lookup: &F, name: &'static str, low: u32, high: u32) -> Result<u32, FinanceReconcileConfigError>
+fn bounded<F>(
+    lookup: &F,
+    name: &'static str,
+    low: u32,
+    high: u32,
+) -> Result<u32, FinanceReconcileConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
@@ -221,8 +226,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        ALARM_TOPIC_VAR, Config, FinanceReconcileConfigError, DATABASE_ROLE_VAR, NAMESPACE, REQUIRED_VARS,
-        RETRY_WINDOW_VAR,
+        ALARM_TOPIC_VAR, Config, DATABASE_ROLE_VAR, FinanceReconcileConfigError, NAMESPACE,
+        REQUIRED_VARS, RETRY_WINDOW_VAR,
     };
 
     fn complete() -> BTreeMap<&'static str, String> {

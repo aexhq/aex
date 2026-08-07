@@ -212,7 +212,9 @@ pub fn queue(
         return Err(SessionDomainRunError::Deleted(session.deletion.state));
     }
     if !session.work_admission.is_open() {
-        return Err(SessionDomainRunError::AdmissionClosed(session.work_admission));
+        return Err(SessionDomainRunError::AdmissionClosed(
+            session.work_admission,
+        ));
     }
     if let Some(guard) = session.mutation_guard {
         return Err(SessionDomainRunError::MutationGuardHeld {
@@ -256,7 +258,11 @@ pub fn queue(
 ///
 /// Returns [`SessionDomainRunError::AlreadyTerminal`] for a settled run and the session
 /// guards otherwise.
-pub fn start(run: &Run, session: &Session, now: Timestamp) -> Result<RunCommit, SessionDomainRunError> {
+pub fn start(
+    run: &Run,
+    session: &Session,
+    now: Timestamp,
+) -> Result<RunCommit, SessionDomainRunError> {
     if run.status.is_terminal() {
         return Err(SessionDomainRunError::AlreadyTerminal(run.status));
     }
@@ -270,7 +276,9 @@ pub fn start(run: &Run, session: &Session, now: Timestamp) -> Result<RunCommit, 
         return Err(SessionDomainRunError::Deleted(session.deletion.state));
     }
     if !session.work_admission.is_open() {
-        return Err(SessionDomainRunError::AdmissionClosed(session.work_admission));
+        return Err(SessionDomainRunError::AdmissionClosed(
+            session.work_admission,
+        ));
     }
     let mut next = run.clone();
     next.status = RunStatus::Running;
@@ -288,7 +296,7 @@ mod tests {
     use aex_wire::ids::{MessageId, PrefixedId as _, RunId, Uuid7};
     use aex_wire::types::Timestamp;
 
-    use super::{QueueRun, SessionDomainRunError, RunStatus, queue, start};
+    use super::{QueueRun, RunStatus, SessionDomainRunError, queue, start};
     use crate::ids::ReservationId;
     use crate::session::WorkAdmission;
     use crate::testing::session_fixture;
@@ -324,7 +332,9 @@ mod tests {
         session.work_admission = WorkAdmission::Paused;
         assert_eq!(
             queue(run_id(), &command(), &session, moment(0)),
-            Err(SessionDomainRunError::AdmissionClosed(WorkAdmission::Paused))
+            Err(SessionDomainRunError::AdmissionClosed(
+                WorkAdmission::Paused
+            ))
         );
     }
 

@@ -6,8 +6,8 @@
 //! start-up (RS-05).
 
 use aex_regional_http::config::{
-    Arn, RegionalHttpConfigError, Lookup, arn_in_region, bounded_u64, bounded_usize, forbidden, one_of,
-    plane_name, region, required,
+    Arn, Lookup, RegionalHttpConfigError, arn_in_region, bounded_u64, bounded_usize, forbidden,
+    one_of, plane_name, region, required,
 };
 use aex_wire::types::Region;
 

@@ -209,7 +209,11 @@ where
 }
 
 /// Reads a variable that must be one of a closed set.
-fn one_of<F>(lookup: &F, name: &'static str, permitted: &[&str]) -> Result<String, FinanceApiConfigError>
+fn one_of<F>(
+    lookup: &F,
+    name: &'static str,
+    permitted: &[&str],
+) -> Result<String, FinanceApiConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
@@ -230,10 +234,12 @@ where
     F: Fn(&str) -> Option<String>,
 {
     let raw = required(lookup, name)?;
-    let parsed = raw.parse::<u64>().map_err(|error| FinanceApiConfigError::Invalid {
-        name,
-        reason: format!("expected a positive integer, got `{raw}`: {error}"),
-    })?;
+    let parsed = raw
+        .parse::<u64>()
+        .map_err(|error| FinanceApiConfigError::Invalid {
+            name,
+            reason: format!("expected a positive integer, got `{raw}`: {error}"),
+        })?;
     if parsed == 0 {
         return Err(FinanceApiConfigError::Invalid {
             name,
@@ -256,8 +262,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        CLUSTER_ARN_VAR, Config, FinanceApiConfigError, DATABASE_ROLE_VAR, DOWNLOAD_GRANT_TTL_VAR, NAMESPACE,
-        PAGE_LIMIT_VAR, PLANE_VAR, REQUIRED_VARS,
+        CLUSTER_ARN_VAR, Config, DATABASE_ROLE_VAR, DOWNLOAD_GRANT_TTL_VAR, FinanceApiConfigError,
+        NAMESPACE, PAGE_LIMIT_VAR, PLANE_VAR, REQUIRED_VARS,
     };
 
     pub(crate) fn complete() -> BTreeMap<&'static str, String> {

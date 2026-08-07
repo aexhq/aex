@@ -75,7 +75,10 @@ async fn main() -> ExitCode {
 }
 
 /// Builds the real adapters and serves both triggers.
-async fn run(config: Config, telemetry: &aex_platform_telemetry::Handle) -> Result<(), SessionOperationWorkerRunError> {
+async fn run(
+    config: Config,
+    telemetry: &aex_platform_telemetry::Handle,
+) -> Result<(), SessionOperationWorkerRunError> {
     telemetry.emit(
         aex_platform_telemetry::Record::event(
             aex_telemetry_schema::generated::EVENT_AEX_PROCESS_STARTED,

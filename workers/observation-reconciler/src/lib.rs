@@ -118,9 +118,15 @@ impl From<DutyError> for ObservationReconcilerRunError {
 /// Returns [`ObservationReconcilerRunError::Capability`] when the process holds a capability its role
 /// must not, and [`ObservationReconcilerRunError::NotReady`] when a declared probe has not passed. A
 /// probe that has not passed is never assumed.
-pub fn compose(role: Role, observed: &[Capability], passed: &[Probe]) -> Result<(), ObservationReconcilerRunError> {
-    assert_grant(role, observed).map_err(|violation| ObservationReconcilerRunError::Capability {
-        capability: violation.capability.as_str(),
+pub fn compose(
+    role: Role,
+    observed: &[Capability],
+    passed: &[Probe],
+) -> Result<(), ObservationReconcilerRunError> {
+    assert_grant(role, observed).map_err(|violation| {
+        ObservationReconcilerRunError::Capability {
+            capability: violation.capability.as_str(),
+        }
     })?;
     match readiness(REQUIRED_PROBES, passed) {
         Readiness::Ready => Ok(()),
@@ -220,9 +226,10 @@ mod tests {
     use aex_observation_store_dynamodb::health::Probe;
 
     use super::{
-        DELETION_ROLE, REQUIRED_PROBES, ROLE, ObservationReconcilerRunError, UNRELEASED, compose, refusal, role_for,
+        DELETION_ROLE, ObservationReconcilerRunError, REQUIRED_PROBES, ROLE, UNRELEASED, compose,
+        refusal, role_for,
     };
-    use crate::config::{ObservationReconcilerConfigError, DUTY_VAR};
+    use crate::config::{DUTY_VAR, ObservationReconcilerConfigError};
 
     #[test]
     fn the_deletion_duty_is_the_only_one_that_selects_the_deleting_role() {
@@ -262,7 +269,10 @@ mod tests {
         for denied in Role::ReconcilerDeletion.denied() {
             let error =
                 compose(DELETION_ROLE, &[denied], REQUIRED_PROBES).expect_err("outside the grant");
-            assert!(matches!(error, ObservationReconcilerRunError::Capability { .. }), "{error:?}");
+            assert!(
+                matches!(error, ObservationReconcilerRunError::Capability { .. }),
+                "{error:?}"
+            );
         }
         compose(DELETION_ROLE, DELETION_ROLE.granted(), REQUIRED_PROBES)
             .expect("its own grant starts");
@@ -284,7 +294,10 @@ mod tests {
             &[Probe::ObservationTable, Probe::ObservationBucket]
         );
         let error = compose(ROLE, ROLE.granted(), &[]).expect_err("nothing is proven");
-        assert!(matches!(error, ObservationReconcilerRunError::NotReady { .. }), "{error:?}");
+        assert!(
+            matches!(error, ObservationReconcilerRunError::NotReady { .. }),
+            "{error:?}"
+        );
     }
 
     #[test]

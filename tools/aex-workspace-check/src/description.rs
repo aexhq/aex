@@ -142,11 +142,12 @@ pub fn read_members(
     root: &Path,
     metadata: &WorkspaceMetadata,
 ) -> Result<Vec<MemberDescription>, DescriptionError> {
-    let directories = metadata
-        .member_directories()
-        .map_err(|_| DescriptionError::NoPackageTable {
-            path: "cargo metadata".to_owned(),
-        })?;
+    let directories =
+        metadata
+            .member_directories()
+            .map_err(|_| DescriptionError::NoPackageTable {
+                path: "cargo metadata".to_owned(),
+            })?;
     let mut rows = Vec::new();
     for package in metadata.members() {
         let directory = directories
@@ -424,8 +425,8 @@ mod tests {
     #[test]
     fn the_field_is_inserted_after_version() {
         let text = "[package]\nname = \"aex-a\"\nversion = \"0.1.0\"\npublish = false\n";
-        let rewritten =
-            rewrite_manifest("crates/aex-a/Cargo.toml", text, "`aex-a` owns it.").expect("rewrites");
+        let rewritten = rewrite_manifest("crates/aex-a/Cargo.toml", text, "`aex-a` owns it.")
+            .expect("rewrites");
         assert_eq!(
             rewritten,
             "[package]\nname = \"aex-a\"\nversion = \"0.1.0\"\ndescription = \"`aex-a` owns it.\"\npublish = false\n"
@@ -435,8 +436,7 @@ mod tests {
     #[test]
     fn an_existing_field_is_replaced_in_place() {
         let text = "[package]\nname = \"aex-a\"\ndescription = \"old\"\npublish = false\n";
-        let rewritten =
-            rewrite_manifest("crates/aex-a/Cargo.toml", text, "new").expect("rewrites");
+        let rewritten = rewrite_manifest("crates/aex-a/Cargo.toml", text, "new").expect("rewrites");
         assert!(rewritten.contains("description = \"new\""));
         assert!(!rewritten.contains("old"));
     }
@@ -444,7 +444,8 @@ mod tests {
     #[test]
     fn a_later_tables_description_is_not_touched() {
         let text = "[package]\nname = \"aex-a\"\nversion = \"0.1.0\"\n\n[dependencies.thing]\ndescription = \"not ours\"\n";
-        let rewritten = rewrite_manifest("crates/aex-a/Cargo.toml", text, "ours").expect("rewrites");
+        let rewritten =
+            rewrite_manifest("crates/aex-a/Cargo.toml", text, "ours").expect("rewrites");
         assert!(rewritten.contains("description = \"not ours\""));
         assert!(rewritten.contains("description = \"ours\""));
     }

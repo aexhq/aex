@@ -304,7 +304,11 @@ impl Config {
     }
 }
 
-fn validate_kms_arn(name: &'static str, value: &str, region: &str) -> Result<(), BrainMuxConfigError> {
+fn validate_kms_arn(
+    name: &'static str,
+    value: &str,
+    region: &str,
+) -> Result<(), BrainMuxConfigError> {
     let parts = value.splitn(6, ':').collect::<Vec<_>>();
     let expected_partition = if region.starts_with("cn-") {
         "aws-cn"
@@ -362,10 +366,12 @@ where
     T::Err: core::fmt::Display,
 {
     let raw = required(lookup, name)?;
-    let value = raw.parse::<T>().map_err(|error| BrainMuxConfigError::Invalid {
-        name,
-        reason: format!("expected a positive integer, got `{raw}`: {error}"),
-    })?;
+    let value = raw
+        .parse::<T>()
+        .map_err(|error| BrainMuxConfigError::Invalid {
+            name,
+            reason: format!("expected a positive integer, got `{raw}`: {error}"),
+        })?;
     if value == T::default() {
         return Err(BrainMuxConfigError::Invalid {
             name,
@@ -431,7 +437,10 @@ pub fn compose(config: &Config) -> Result<compose::Composition, BrainMuxRunError
 ///
 /// [`BrainMuxRunError::Composition`] when the configuration does not compose, and
 /// [`BrainMuxRunError::Runtime`] when a runtime or the health listener cannot be created.
-pub fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Result<(), BrainMuxRunError> {
+pub fn run(
+    config: &Config,
+    telemetry: &aex_platform_telemetry::Handle,
+) -> Result<(), BrainMuxRunError> {
     // Readiness starts false and is never defaulted true: a process that reported ready
     // before validating its bindings would admit work it cannot serve.
     let composition = std::sync::Arc::new(compose(config)?);
@@ -616,8 +625,10 @@ fn resolve_production_ports(
     })
 }
 
-fn bind_release_catalog()
--> Result<std::sync::Arc<aex_brain_provider_gateway::catalog_port::VerifiedCatalogPort>, BrainMuxRunError> {
+fn bind_release_catalog() -> Result<
+    std::sync::Arc<aex_brain_provider_gateway::catalog_port::VerifiedCatalogPort>,
+    BrainMuxRunError,
+> {
     // Catalog authority is build/release scoped, never tenant or runtime-env
     // scoped. The exact collection and bounded publisher trust-root set are
     // compiled together and the entire retained chain verifies before lookup.
@@ -699,10 +710,7 @@ async fn run_wake_scheduler<F>(
     mut observe: F,
 ) where
     F: FnMut(
-        &Result<
-            aex_brain_app::activation::PollReport,
-            aex_brain_app::activation::ActivationError,
-        >,
+        &Result<aex_brain_app::activation::PollReport, aex_brain_app::activation::ActivationError>,
     ),
 {
     use futures::stream::{FuturesUnordered, StreamExt as _};
@@ -751,10 +759,7 @@ async fn run_wake_scheduler<F>(
 async fn poll_after(
     pump: &aex_brain_app::activation::WakeLoop,
     delay: core::time::Duration,
-) -> Result<
-    aex_brain_app::activation::PollReport,
-    aex_brain_app::activation::ActivationError,
-> {
+) -> Result<aex_brain_app::activation::PollReport, aex_brain_app::activation::ActivationError> {
     if !delay.is_zero() {
         tokio::time::sleep(delay).await;
     }
@@ -772,9 +777,7 @@ fn emit_due_isolations(
             aex_brain_app::ports::DueRowIsolationReason::MalformedProjection => {
                 "malformed_projection"
             }
-            aex_brain_app::ports::DueRowIsolationReason::BaseKeyMismatch => {
-                "base_key_mismatch"
-            }
+            aex_brain_app::ports::DueRowIsolationReason::BaseKeyMismatch => "base_key_mismatch",
             aex_brain_app::ports::DueRowIsolationReason::ShardMismatch => "shard_mismatch",
             aex_brain_app::ports::DueRowIsolationReason::DuePositionMismatch => {
                 "due_position_mismatch"
@@ -1029,8 +1032,8 @@ fn main() -> std::process::ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        BUDGET_VAR, CONTENT_BUCKET_VAR, CONTENT_EXPECTED_OWNER_VAR, CONTENT_KMS_KEY_ARN_VAR,
-        Config, BrainMuxConfigError, PLANE_VAR, PRICING_VERSION_VAR, REGION_VAR, RESOURCE_VAR,
+        BUDGET_VAR, BrainMuxConfigError, CONTENT_BUCKET_VAR, CONTENT_EXPECTED_OWNER_VAR,
+        CONTENT_KMS_KEY_ARN_VAR, Config, PLANE_VAR, PRICING_VERSION_VAR, REGION_VAR, RESOURCE_VAR,
         RUNTIME_ACTIVITY_TABLE_VAR, RUNTIME_DUE_PAGE_ITEMS_VAR, RUNTIME_DUE_PAGE_READS_VAR,
         RUNTIME_DUE_SHARDS_VAR, SECRET_CUSTODY_TABLE_VAR, SECRET_KMS_KEY_ARN_VAR,
         USAGE_COMPUTE_QUEUE_VAR, USAGE_STORAGE_QUEUE_VAR, WAKE_QUEUE_VAR, WORK_TABLE_VAR, compose,

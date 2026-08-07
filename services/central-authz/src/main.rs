@@ -170,15 +170,17 @@ impl Config {
         F: Fn(&str) -> Option<String>,
     {
         let plane_raw = required(&lookup, keys::PLANE)?;
-        let plane = DeploymentPlane::parse(&plane_raw).ok_or_else(|| CentralAuthzConfigError::Invalid {
-            name: keys::PLANE,
-            reason: format!("expected `dev` or `prd`, got `{plane_raw}`"),
-        })?;
+        let plane =
+            DeploymentPlane::parse(&plane_raw).ok_or_else(|| CentralAuthzConfigError::Invalid {
+                name: keys::PLANE,
+                reason: format!("expected `dev` or `prd`, got `{plane_raw}`"),
+            })?;
         let region_raw = required(&lookup, keys::REGION)?;
-        let region = Region::from_name(&region_raw).ok_or_else(|| CentralAuthzConfigError::Invalid {
-            name: keys::REGION,
-            reason: format!("expected a launch region, got `{region_raw}`"),
-        })?;
+        let region =
+            Region::from_name(&region_raw).ok_or_else(|| CentralAuthzConfigError::Invalid {
+                name: keys::REGION,
+                reason: format!("expected a launch region, got `{region_raw}`"),
+            })?;
         let role = required(&lookup, keys::ROLE)?;
         if role != REQUIRED_ROLE {
             return Err(CentralAuthzConfigError::Invalid {
@@ -187,10 +189,13 @@ impl Config {
             });
         }
         let raw_ttl = required(&lookup, keys::ASSERTION_TTL_MS)?;
-        let assertion_ttl_ms = raw_ttl.parse::<u64>().map_err(|_| CentralAuthzConfigError::Invalid {
-            name: keys::ASSERTION_TTL_MS,
-            reason: format!("expected a positive integer, got `{raw_ttl}`"),
-        })?;
+        let assertion_ttl_ms =
+            raw_ttl
+                .parse::<u64>()
+                .map_err(|_| CentralAuthzConfigError::Invalid {
+                    name: keys::ASSERTION_TTL_MS,
+                    reason: format!("expected a positive integer, got `{raw_ttl}`"),
+                })?;
         if assertion_ttl_ms == 0 || assertion_ttl_ms > ASSERTION_MAX_LIFETIME_MS {
             return Err(CentralAuthzConfigError::Invalid {
                 name: keys::ASSERTION_TTL_MS,
@@ -660,9 +665,11 @@ async fn compose<R: AuthorizationReader>(
     probes.verification_keys = !verification_keys.is_empty();
 
     if active.secret_ref != config.signing_secret_id {
-        return Err(CentralAuthzRunError::Secret(SecretError::UndeclaredSigningSecret {
-            found: active.secret_ref,
-        }));
+        return Err(CentralAuthzRunError::Secret(
+            SecretError::UndeclaredSigningSecret {
+                found: active.secret_ref,
+            },
+        ));
     }
     let material = parse_signing_secret(
         &config.signing_secret_id,
@@ -674,7 +681,9 @@ async fn compose<R: AuthorizationReader>(
         material,
     );
     if signer.public_key() != active.public_key {
-        return Err(CentralAuthzRunError::Secret(SecretError::SigningKeyMismatch));
+        return Err(CentralAuthzRunError::Secret(
+            SecretError::SigningKeyMismatch,
+        ));
     }
     probes.signing_key = true;
 
@@ -781,8 +790,8 @@ async fn main() -> std::process::ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        Composition, Config, CentralAuthzConfigError, IssueRefusal, PERMISSIONS, Probes, issue_for_key, keys,
-        manifest, readiness, signer, unresolved,
+        CentralAuthzConfigError, Composition, Config, IssueRefusal, PERMISSIONS, Probes,
+        issue_for_key, keys, manifest, readiness, signer, unresolved,
     };
     use aex_central_http::capability::{
         AssertionSign, Capability as _, CapabilityBinding, CompositionError, ControlWrite, Declares,
@@ -852,7 +861,10 @@ mod tests {
     fn a_blank_variable_is_missing_rather_than_empty() {
         let mut vars = complete();
         vars.insert(keys::DATABASE, "   ".to_owned());
-        assert_eq!(read(&vars), Err(CentralAuthzConfigError::Missing(keys::DATABASE)));
+        assert_eq!(
+            read(&vars),
+            Err(CentralAuthzConfigError::Missing(keys::DATABASE))
+        );
     }
 
     #[test]
@@ -860,7 +872,9 @@ mod tests {
         let mut vars = complete();
         vars.insert(keys::ROLE, "aex_control_api".to_owned());
         let error = read(&vars).expect_err("a writing role is refused");
-        assert!(matches!(error, CentralAuthzConfigError::Invalid { name, .. } if name == keys::ROLE));
+        assert!(
+            matches!(error, CentralAuthzConfigError::Invalid { name, .. } if name == keys::ROLE)
+        );
     }
 
     #[test]

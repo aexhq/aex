@@ -81,9 +81,14 @@ pub enum ObservationExportLauncherRunError {
 /// Returns [`ObservationExportLauncherRunError::Capability`] when the process holds a capability its role
 /// must not, and [`ObservationExportLauncherRunError::NotReady`] when a declared probe has not passed. A
 /// probe that has not passed is never assumed.
-pub fn compose(observed: &[Capability], passed: &[Probe]) -> Result<(), ObservationExportLauncherRunError> {
-    assert_grant(ROLE, observed).map_err(|violation| ObservationExportLauncherRunError::Capability {
-        capability: violation.capability.as_str(),
+pub fn compose(
+    observed: &[Capability],
+    passed: &[Probe],
+) -> Result<(), ObservationExportLauncherRunError> {
+    assert_grant(ROLE, observed).map_err(|violation| {
+        ObservationExportLauncherRunError::Capability {
+            capability: violation.capability.as_str(),
+        }
     })?;
     match readiness(REQUIRED_PROBES, passed) {
         Readiness::Ready => Ok(()),
@@ -113,9 +118,11 @@ pub async fn run(config: Config) -> Result<(), ObservationExportLauncherRunError
         config.export_cluster.clone(),
     );
 
-    rows.probe().await.map_err(|error| ObservationExportLauncherRunError::Probe {
-        reason: error.to_string(),
-    })?;
+    rows.probe()
+        .await
+        .map_err(|error| ObservationExportLauncherRunError::Probe {
+            reason: error.to_string(),
+        })?;
     tasks
         .probe(&config.export_task_definition)
         .await
@@ -236,7 +243,7 @@ mod tests {
     use aex_observation_store_dynamodb::composition::Capability;
     use aex_observation_store_dynamodb::health::Probe;
 
-    use super::{REQUIRED_PROBES, ROLE, ObservationExportLauncherRunError, compose};
+    use super::{ObservationExportLauncherRunError, REQUIRED_PROBES, ROLE, compose};
 
     #[test]
     fn its_own_grant_and_a_complete_probe_set_start() {
@@ -249,7 +256,10 @@ mod tests {
     fn a_capability_outside_the_grant_refuses_to_start() {
         for denied in ROLE.denied() {
             let error = compose(&[denied], REQUIRED_PROBES).expect_err("refused");
-            assert!(matches!(error, ObservationExportLauncherRunError::Capability { .. }), "{error:?}");
+            assert!(
+                matches!(error, ObservationExportLauncherRunError::Capability { .. }),
+                "{error:?}"
+            );
         }
     }
 
@@ -280,7 +290,9 @@ mod tests {
         let first = REQUIRED_PROBES.first().expect("a probe set is declared");
         let error = compose(ROLE.granted(), &[]).expect_err("refused");
         match error {
-            ObservationExportLauncherRunError::NotReady { probe } => assert_eq!(probe, first.as_str()),
+            ObservationExportLauncherRunError::NotReady { probe } => {
+                assert_eq!(probe, first.as_str())
+            }
             other => panic!("expected a readiness failure, got {other:?}"),
         }
     }
@@ -289,6 +301,9 @@ mod tests {
     fn a_grant_carrying_one_forbidden_capability_among_allowed_ones_still_refuses() {
         let observed = [Capability::LaunchExportTasks, Capability::ReadAuthority];
         let error = compose(&observed, REQUIRED_PROBES).expect_err("refused");
-        assert!(matches!(error, ObservationExportLauncherRunError::Capability { .. }), "{error:?}");
+        assert!(
+            matches!(error, ObservationExportLauncherRunError::Capability { .. }),
+            "{error:?}"
+        );
     }
 }

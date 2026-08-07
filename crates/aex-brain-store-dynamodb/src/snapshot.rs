@@ -9,9 +9,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use aex_brain_app::ports::{
-    BoxFuture, FoldSnapshotStore, SnapshotPublishOutcome, StoreError,
-};
+use aex_brain_app::ports::{BoxFuture, FoldSnapshotStore, SnapshotPublishOutcome, StoreError};
 use aex_brain_domain::snapshot::{
     FOLD_SNAPSHOT_SCHEMA, FoldSnapshotArtifact, FoldSnapshotPointer, MAX_FOLD_SNAPSHOT_BYTES,
 };

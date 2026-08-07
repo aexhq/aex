@@ -28,7 +28,9 @@ use aex_observation_domain::signal::{Signal, SignalSet};
 use aex_observation_store_dynamodb::expressions::{ExpressionBuilder, Index, PK, SK};
 use aex_observation_store_dynamodb::gap::{append_action, decode as decode_gap};
 use aex_observation_store_dynamodb::gap_hint::hint_update_action;
-use aex_observation_store_dynamodb::spool::{GateEvidence, GateState, Pending, SpoolChunk, evaluate};
+use aex_observation_store_dynamodb::spool::{
+    GateEvidence, GateState, Pending, SpoolChunk, evaluate,
+};
 use aex_wire::ids::{PrefixedId, TelemetryGapId, WorkspaceId};
 use aex_wire::models::TelemetryGapReason;
 use aex_wire::types::{Region, Timestamp};

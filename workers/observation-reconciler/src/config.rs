@@ -140,9 +140,11 @@ impl Config {
             });
         }
         let raw_region = required(&lookup, REGION_VAR)?;
-        let region = Region::from_name(&raw_region).ok_or_else(|| ObservationReconcilerConfigError::Invalid {
-            name: REGION_VAR,
-            reason: format!("`{raw_region}` is not a regional plane region"),
+        let region = Region::from_name(&raw_region).ok_or_else(|| {
+            ObservationReconcilerConfigError::Invalid {
+                name: REGION_VAR,
+                reason: format!("`{raw_region}` is not a regional plane region"),
+            }
         })?;
         let observation_table = required(&lookup, OBSERVATION_TABLE_VAR)?;
         let observation_bucket = required(&lookup, OBSERVATION_BUCKET_VAR)?;
@@ -172,12 +174,14 @@ where
     F: Fn(&str) -> Option<String>,
 {
     let raw = required(lookup, DUTY_VAR)?;
-    let parsed = ControlDomain::parse(raw.trim()).ok_or_else(|| ObservationReconcilerConfigError::Invalid {
-        name: DUTY_VAR,
-        reason: format!(
-            "`{raw}` is not one of the {} control domains",
-            ControlDomain::ALL.len()
-        ),
+    let parsed = ControlDomain::parse(raw.trim()).ok_or_else(|| {
+        ObservationReconcilerConfigError::Invalid {
+            name: DUTY_VAR,
+            reason: format!(
+                "`{raw}` is not one of the {} control domains",
+                ControlDomain::ALL.len()
+            ),
+        }
     })?;
     if parsed == FOREIGN_DUTY {
         return Err(ObservationReconcilerConfigError::Invalid {
@@ -205,18 +209,23 @@ where
 }
 
 /// Reads a count inside an inclusive range.
-fn bounded<F>(lookup: &F, name: &'static str, low: u32, high: u32) -> Result<u32, ObservationReconcilerConfigError>
+fn bounded<F>(
+    lookup: &F,
+    name: &'static str,
+    low: u32,
+    high: u32,
+) -> Result<u32, ObservationReconcilerConfigError>
 where
     F: Fn(&str) -> Option<String>,
 {
     let raw = required(lookup, name)?;
-    let value = raw
-        .trim()
-        .parse::<u32>()
-        .map_err(|error| ObservationReconcilerConfigError::Invalid {
-            name,
-            reason: format!("expected an integer in {low}..={high}, got `{raw}`: {error}"),
-        })?;
+    let value =
+        raw.trim()
+            .parse::<u32>()
+            .map_err(|error| ObservationReconcilerConfigError::Invalid {
+                name,
+                reason: format!("expected an integer in {low}..={high}, got `{raw}`: {error}"),
+            })?;
     if value < low || value > high {
         return Err(ObservationReconcilerConfigError::Invalid {
             name,
@@ -264,9 +273,9 @@ mod tests {
     use aex_wire::types::Region;
 
     use super::{
-        Config, ObservationReconcilerConfigError, DUTY_SHARDS_VAR, DUTY_VAR, FOREIGN_DUTY, MAX_ATTEMPTS_VAR,
-        OBSERVATION_BUCKET_VAR, OBSERVATION_TABLE_VAR, PAGE_MAX, PLANE_VAR, RECONCILE_PAGE_VAR,
-        REGION_VAR, REQUIRED_VARS, SHARDS_MAX, USAGE_QUEUE_URL_VAR,
+        Config, DUTY_SHARDS_VAR, DUTY_VAR, FOREIGN_DUTY, MAX_ATTEMPTS_VAR, OBSERVATION_BUCKET_VAR,
+        OBSERVATION_TABLE_VAR, ObservationReconcilerConfigError, PAGE_MAX, PLANE_VAR,
+        RECONCILE_PAGE_VAR, REGION_VAR, REQUIRED_VARS, SHARDS_MAX, USAGE_QUEUE_URL_VAR,
     };
 
     fn complete() -> BTreeMap<&'static str, String> {
@@ -286,7 +295,9 @@ mod tests {
         ])
     }
 
-    fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ObservationReconcilerConfigError> {
+    fn read(
+        vars: &BTreeMap<&'static str, String>,
+    ) -> Result<Config, ObservationReconcilerConfigError> {
         Config::from_lookup(|name| vars.get(name).cloned())
     }
 

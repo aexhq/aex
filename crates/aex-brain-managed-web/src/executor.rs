@@ -476,10 +476,8 @@ mod tests {
         fn resolve<'a>(
             &'a self,
             _ticket: &'a DispatchTicket,
-        ) -> aex_brain_app::ports::BoxFuture<
-            'a,
-            Result<WebSearchCredential, CredentialSourceError>,
-        > {
+        ) -> aex_brain_app::ports::BoxFuture<'a, Result<WebSearchCredential, CredentialSourceError>>
+        {
             Box::pin(async {
                 WebSearchCredential::parse(br#"{"provider":"brave","apiKey":"test-key"}"#)
                     .map_err(|_| CredentialSourceError::Malformed)

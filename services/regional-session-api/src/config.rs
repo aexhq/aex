@@ -6,7 +6,8 @@
 //! then silently writes a tenant's data outside its declared residency.
 
 use aex_regional_http::config::{
-    Arn, RegionalHttpConfigError, Lookup, arn_in_region, bounded_usize, forbidden, plane_name, region, required,
+    Arn, Lookup, RegionalHttpConfigError, arn_in_region, bounded_usize, forbidden, plane_name,
+    region, required,
 };
 use aex_wire::types::{HttpsUrl, Region};
 
