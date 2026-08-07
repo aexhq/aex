@@ -38,6 +38,29 @@ describe("public main-push publication", () => {
     expect(workflow.jobs.build.with.matrix).toBe("${{ needs.route.outputs.artifact_matrix }}");
   });
 
+  test("the pull request lane stays read-only and never calls a write-scoped reusable workflow", () => {
+    // A reusable workflow cannot request more permission than its caller grants.
+    // pr.yml grants `contents: read`, so calling `_build-artifacts.yml` — whose
+    // build job requests `id-token: write` and `attestations: write` — fails the
+    // ENTIRE run at startup, not just that job. That regression left 14 of 15 PR
+    // runs at `startup_failure` between 2026-08-05 and 2026-08-07, so every PR
+    // merged in that window had no checks at all. Keep this lane read-only.
+    const source = read(".github/workflows/pr.yml");
+    const pr = Bun.YAML.parse(source) as {
+      readonly permissions: Record<string, string>;
+      readonly jobs: Record<string, { readonly uses?: string }>;
+    };
+
+    expect(pr.permissions).toEqual({ contents: "read" });
+
+    for (const [jobId, job] of Object.entries(pr.jobs)) {
+      expect(job.uses ?? "", `pr.yml job ${jobId}`).not.toBe("./.github/workflows/_build-artifacts.yml");
+    }
+
+    // No job may widen the workflow-level grant.
+    expect(source).not.toMatch(/^\s+(id-token|attestations|packages|contents|actions):\s*write\s*$/m);
+  });
+
   test("main publication uses the same root gates as pull requests", () => {
     const main = Bun.YAML.parse(read(".github/workflows/main.yml")) as {
       readonly jobs: Record<string, any>;

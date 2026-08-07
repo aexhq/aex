@@ -334,7 +334,10 @@ describe("workflow evidence producers", () => {
     const cases = [
       {
         path: ".github/workflows/pr.yml",
-        resultJobs: ["tools", "route", "gates", "rust", "node", "scenarios", "terraform", "artifacts"],
+        // No `artifacts` here: the PR lane is read-only, so it cannot call
+        // `_build-artifacts.yml` (which requests write scopes) without failing
+        // the whole run at startup. Bytes are proved buildable on main.
+        resultJobs: ["tools", "route", "gates", "rust", "node", "scenarios", "terraform"],
         receiptJobs: ["rust", "node", "terraform"]
       },
       {
@@ -497,7 +500,7 @@ describe("workflow evidence producers", () => {
   test("every caller of a tool-consuming lane reads the digests from its own tools job", () => {
     for (const [path, jobIds] of [
       [".github/workflows/main.yml", ["route", "verify", "node", "terraform", "build", "receipts"]],
-      [".github/workflows/pr.yml", ["route", "rust", "node", "terraform", "artifacts", "checks"]],
+      [".github/workflows/pr.yml", ["route", "rust", "node", "terraform", "checks"]],
       [".github/workflows/assurance.yml", ["route", "full-graph"]]
     ] as const) {
       const workflow = readWorkflow(path);
