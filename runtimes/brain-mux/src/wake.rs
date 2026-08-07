@@ -1589,6 +1589,51 @@ mod tests {
         assert!(matches!(control.admit(0), AdmissionDecision::Shed { .. }));
     }
 
+    /// The composed receive path honours measured memory pressure, so the wake loop stops
+    /// asking for deliveries the task cannot afford — and starts again when the measurement
+    /// recovers, with nothing abandoned in between.
+    #[test]
+    fn admission_stops_receiving_under_measured_memory_pressure() {
+        let permits = Arc::new(PermitSet::new(BTreeMap::from([
+            (PermitKind::Activation, 4_u64),
+            (PermitKind::ContextBytes, 4_u64),
+            (PermitKind::StreamBufferBytes, 4_u64),
+            (PermitKind::ProviderStream, 4_u64),
+            (PermitKind::HandsRpc, 4_u64),
+        ])));
+        let admission = Arc::new(Admission::new(
+            AdmissionBounds {
+                target: 2,
+                safety_cap: 3,
+                offered_ceiling: 8,
+            },
+            permits,
+            Arc::new(DrainGate::new()),
+            activation_resources(1),
+        ));
+        let control = MuxAdmission::new(Arc::clone(&admission), Bindings::production());
+        assert!(control.should_receive());
+
+        let _ = admission.pressure().observe(measured(85));
+        assert!(!control.should_receive());
+        assert!(
+            matches!(control.admit(1), AdmissionDecision::Admitted { .. }),
+            "a delivery already taken is still started rather than hidden locally"
+        );
+
+        let _ = admission.pressure().observe(measured(60));
+        assert!(control.should_receive());
+    }
+
+    /// A reading of exactly `percent` of a declared memory limit.
+    fn measured(percent: u64) -> crate::pressure::MemoryReading {
+        crate::pressure::MemoryReading::Measured {
+            source: crate::pressure::MemorySource::CgroupV2,
+            current_bytes: percent,
+            limit_bytes: 100,
+        }
+    }
+
     /// The application supplies its measured restore-byte ceiling to mux admission. The
     /// context pool holds those bytes before hydration and returns them through RAII when
     /// the activation ends.

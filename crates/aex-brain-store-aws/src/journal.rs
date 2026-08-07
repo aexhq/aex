@@ -79,6 +79,50 @@ impl BrainStore {
         &self.tables.session_authority
     }
 
+    /// Proves both tables this store addresses answer a real read.
+    ///
+    /// A successfully constructed SDK client is not evidence of anything: it resolves no
+    /// endpoint, signs nothing and contacts no service, so a readiness check built on one
+    /// reports ready against a deleted table. This performs the read the serving path
+    /// performs — a strongly consistent `GetItem` on `session-authority` and then on
+    /// `regional-work` — against [`keys::health_probe_agent`] and
+    /// [`keys::HEALTH_PROBE_WORK_ID`], identities no clock can mint.
+    ///
+    /// **A response carrying no item is the success.** It proves the region resolved, the
+    /// credentials signed, the table exists under its configured name and the task role may
+    /// read it, without depending on any tenant's row existing.
+    ///
+    /// Both tables are read because they fail independently: `regional-work` holds the due
+    /// index the backstop scans, and a task that reaches only one of the two can serve only
+    /// part of its work.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Transport`] naming which of the two tables refused.
+    pub async fn probe(&self) -> Result<(), StoreError> {
+        let control =
+            keys::control(&keys::health_probe_agent()).map_err(|error| store_key_error(&error))?;
+        self.client
+            .get_item()
+            .table_name(&self.tables.session_authority)
+            .set_key(Some(item_key(&control.pk, &control.sk)))
+            .consistent_read(true)
+            .send()
+            .await
+            .map_err(|error| transport("probe_session_authority", &error))?;
+        let work = aex_work_dynamodb::keys::work(keys::HEALTH_PROBE_WORK_ID)
+            .map_err(|error| store_key_error(&keys::BrainKeyError::Component(error)))?;
+        self.client
+            .get_item()
+            .table_name(&self.tables.regional_work)
+            .set_key(Some(item_key(&work.pk, &work.sk)))
+            .consistent_read(true)
+            .send()
+            .await
+            .map_err(|error| transport("probe_regional_work", &error))?;
+        Ok(())
+    }
+
     async fn get_control(&self, key: &AgentKey) -> Result<Option<Item>, StoreError> {
         let control = keys::control(key).map_err(|error| store_key_error(&error))?;
         let output = self

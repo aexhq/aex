@@ -69,6 +69,31 @@ impl SqsWakeQueue {
     pub fn queue_url(&self) -> &str {
         &self.queue_url
     }
+
+    /// Proves the configured queue exists and this task may address it.
+    ///
+    /// `GetQueueAttributes` rather than `ReceiveMessage`: a probe that received would take a
+    /// delivery out of the queue, start its visibility timeout and race the pump for the very
+    /// work it is meant to be reporting on. Reading one attribute costs a signed round trip
+    /// and moves nothing.
+    ///
+    /// Requires `sqs:GetQueueAttributes` on the Brain task role. That grant is an
+    /// infrastructure change this crate cannot make; without it a task whose queue is
+    /// perfectly reachable stays unready, and the refusal names the operation.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Transport`] when the queue does not answer or the role may not ask.
+    pub async fn probe(&self) -> Result<(), StoreError> {
+        self.client
+            .get_queue_attributes()
+            .queue_url(&self.queue_url)
+            .attribute_names(aws_sdk_sqs::types::QueueAttributeName::QueueArn)
+            .send()
+            .await
+            .map_err(|error| sqs_error("probe", &error))?;
+        Ok(())
+    }
 }
 
 impl WakeQueue for SqsWakeQueue {

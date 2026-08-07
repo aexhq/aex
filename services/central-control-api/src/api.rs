@@ -23,7 +23,9 @@ use aex_control_domain::{
     Topic, WorkspaceStatus as DomainWorkspaceStatus,
 };
 use aex_identity_app::ports::{Clock, IdFactory, PepperKeystore, PepperPurpose};
-use aex_identity_domain::credential::{CredentialKind, RegionCode, SecretRng, mint, verifier};
+use aex_identity_domain::credential::{
+    CredentialKind, RegionCode, SecretRng, WorkspacePin, mint, verifier,
+};
 use aex_wire::cursor::Cursor;
 use aex_wire::error::{ErrorCode, WireError, WireResult};
 use aex_wire::idempotency::PrincipalScope;
@@ -745,7 +747,10 @@ impl ApiKeysApi for ControlService {
         let key_id = self.ids.next();
         let (secret, digest) = mint(
             CredentialKind::WorkspaceKey,
-            Some(RegionCode::new(workspace.workspace.region)),
+            Some(WorkspacePin {
+                region: RegionCode::new(workspace.workspace.region),
+                workspace: workspace_id,
+            }),
             key_id,
             self.rng.as_ref(),
         );
@@ -765,6 +770,22 @@ impl ApiKeysApi for ControlService {
             verifier: *keyed.as_bytes(),
             pepper_version: pepper_version.get(),
             created_by_user_id: Self::user(cx)?,
+            // Committed with the key itself. A region that never learned the key
+            // exists cannot admit a request against it, so the announcement is
+            // not allowed to be a second, separately-failing write.
+            outbox: self.outbox(
+                Topic::ApiKeyCreated,
+                key_id.to_string(),
+                workspace.workspace.organization_id,
+                serde_json::json!({
+                    "apiKeyId": key_id,
+                    "workspaceId": workspace_id,
+                    "organizationId": workspace.workspace.organization_id,
+                    "region": workspace.workspace.region.as_str(),
+                    "changedAt": timestamp(self.now())?,
+                    "epoch": 0,
+                }),
+            ),
             idempotency: self.idempotency(
                 cx,
                 &body,
@@ -832,7 +853,7 @@ impl ApiKeysApi for ControlService {
                     "workspaceId": key.workspace_id,
                     "organizationId": key.organization_id,
                     "region": key.region.as_str(),
-                    "revokedAt": timestamp(self.now())?,
+                    "changedAt": timestamp(self.now())?,
                 }),
             ),
             audit: self.audit(

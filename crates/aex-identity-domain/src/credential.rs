@@ -4,7 +4,7 @@
 //! credential: invitations carry no secret at all.
 //!
 //! ```text
-//! workspace key      aex_wk_<region>_<26 Crockford>_<43 base64url>
+//! workspace key      aex_wk_<region>_<26 workspace>_<26 key>_<43 base64url>
 //! account token      aex_at_<26>_<43>
 //! dashboard session  aex_ds_<26>_<43>
 //! email challenge    aex_ec_<26>_<43>
@@ -18,6 +18,13 @@
 //! alternate textual spelling of the same bytes is refused. The 26-character
 //! id suffix is Crockford base32 whose leading character is at most `'7'`, so
 //! 130 encoded bits cannot overflow a 128-bit payload.
+//!
+//! A workspace key carries its workspace as well as its region because it is the
+//! one credential presented to a regional host. Both facts have to be readable
+//! from the token itself, or the region cannot name the rows it must read until
+//! after a central round trip has told it which workspace the key belongs to.
+//! Neither segment is a capability: both are public identifiers, and the secret
+//! is still the only thing that authenticates.
 //!
 //! The stored value is `HMAC-SHA256(pepper_v, SHA-256(complete token))`. Two
 //! deliberate strengthenings over the system this replaces: it is a **keyed**
@@ -79,27 +86,42 @@ impl CredentialKind {
         }
     }
 
-    /// Whether the kind carries a region code.
+    /// Whether the kind carries a region code and a workspace id.
     ///
     /// Only a workspace key does: it is the one credential a client presents to
-    /// a regional host, so the region has to be readable without a lookup.
+    /// a regional host, so both have to be readable without a lookup.
     #[must_use]
-    pub const fn carries_region(self) -> bool {
+    pub const fn carries_workspace_pin(self) -> bool {
         matches!(self, Self::WorkspaceKey)
     }
 
     /// The exact character length of a token of this kind.
     ///
     /// A workspace key's length depends on its region code, which is four or
-    /// five characters, so the region is a parameter rather than an assumption.
+    /// five characters, so the pin is a parameter rather than an assumption.
     #[must_use]
-    pub fn token_len(self, region: Option<RegionCode>) -> usize {
+    pub fn token_len(self, pin: Option<WorkspacePin>) -> usize {
         let base = self.prefix().len() + ID_LEN + 1 + SECRET_TEXT_LEN;
-        match region.filter(|_| self.carries_region()) {
-            Some(region) => base + region.as_str().len() + 1,
+        match pin.filter(|_| self.carries_workspace_pin()) {
+            Some(pin) => base + pin.region.as_str().len() + 1 + ID_LEN + 1,
             None => base,
         }
     }
+}
+
+/// Where a workspace key is pinned.
+///
+/// One value rather than two arguments, because the region and the workspace are
+/// never independently true of a credential: a key minted for a workspace is
+/// minted for the region that workspace is placed in, and a caller that could
+/// supply one without the other could mint a token naming a workspace no region
+/// would ever serve.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorkspacePin {
+    /// The regional endpoint that serves the key.
+    pub region: RegionCode,
+    /// The workspace the key authorizes.
+    pub workspace: Uuid,
 }
 
 /// A short region code, as it appears inside a workspace key.
@@ -296,8 +318,8 @@ impl fmt::Debug for MintedSecret {
 pub struct ParsedCredential {
     /// Which kind it is.
     pub kind: CredentialKind,
-    /// Its region, for a workspace key.
-    pub region: Option<RegionCode>,
+    /// Its region and workspace, for a workspace key.
+    pub pin: Option<WorkspacePin>,
     /// The row id to look up. This is a primary-key hit, so a forged id costs
     /// one index miss rather than a scan.
     pub id: Uuid,
@@ -396,16 +418,18 @@ pub fn decode_id(text: &str) -> Option<Uuid> {
 #[must_use]
 pub fn mint(
     kind: CredentialKind,
-    region: Option<RegionCode>,
+    pin: Option<WorkspacePin>,
     id: Uuid,
     rng: &dyn SecretRng,
 ) -> (MintedSecret, PresentedDigest) {
     let mut secret = Zeroizing::new([0_u8; SECRET_BYTES]);
     rng.fill(secret.as_mut());
-    let mut token = String::with_capacity(kind.token_len(region));
+    let mut token = String::with_capacity(kind.token_len(pin));
     token.push_str(kind.prefix());
-    if let Some(region) = region.filter(|_| kind.carries_region()) {
-        token.push_str(region.as_str());
+    if let Some(pin) = pin.filter(|_| kind.carries_workspace_pin()) {
+        token.push_str(pin.region.as_str());
+        token.push('_');
+        token.push_str(&encode_id(pin.workspace));
         token.push('_');
     }
     token.push_str(&encode_id(id));
@@ -426,18 +450,18 @@ pub fn parse(expected: CredentialKind, raw: &str) -> Result<ParsedCredential, Cr
         .strip_prefix(expected.prefix())
         .ok_or(CredentialError::WrongPrefix)?;
 
-    let (region, rest) = if expected.carries_region() {
+    let (pin, rest) = if expected.carries_workspace_pin() {
         let (code, rest) = body.split_once('_').ok_or(CredentialError::BadShape)?;
         let region = RegionCode::parse(code).ok_or(CredentialError::WrongRegionCode)?;
-        (Some(region), rest)
+        let (workspace_text, rest) = split_id(rest)?;
+        let workspace = decode_id(workspace_text).ok_or(CredentialError::BadIdEncoding)?;
+        (Some(WorkspacePin { region, workspace }), rest)
     } else {
         (None, body)
     };
 
-    // Split on the *first* separator only: canonical base64url legitimately
-    // contains `_`, so the secret is whatever follows the fixed-width id.
-    let (id_text, secret_text) = rest.split_once('_').ok_or(CredentialError::BadShape)?;
-    if id_text.len() != ID_LEN || secret_text.len() != SECRET_TEXT_LEN {
+    let (id_text, secret_text) = split_id(rest)?;
+    if secret_text.len() != SECRET_TEXT_LEN {
         return Err(CredentialError::BadLength);
     }
     let id = decode_id(id_text).ok_or(CredentialError::BadIdEncoding)?;
@@ -455,10 +479,26 @@ pub fn parse(expected: CredentialKind, raw: &str) -> Result<ParsedCredential, Cr
 
     Ok(ParsedCredential {
         kind: expected,
-        region,
+        pin,
         id,
         digest: PresentedDigest::of(raw),
     })
+}
+
+/// Takes one fixed-width id segment and its separator from the head of `text`.
+///
+/// Every boundary after the region is taken at a fixed offset rather than by
+/// searching, because canonical base64url legitimately contains `_` and a
+/// searching split would let a secret's own separator be read as a segment
+/// boundary — which, with two id segments, is no longer merely wrong but
+/// ambiguous.
+fn split_id(text: &str) -> Result<(&str, &str), CredentialError> {
+    let head = text.get(..ID_LEN).ok_or(CredentialError::BadLength)?;
+    if text.as_bytes().get(ID_LEN) != Some(&b'_') {
+        return Err(CredentialError::BadLength);
+    }
+    let tail = text.get(ID_LEN + 1..).ok_or(CredentialError::BadLength)?;
+    Ok((head, tail))
 }
 
 /// The domain-separating prefix for a credential verifier.
@@ -510,8 +550,8 @@ pub fn credential_binding(
 mod tests {
     use super::{
         CredentialError, CredentialKind, ID_LEN, Pepper, PresentedDigest, RegionCode,
-        SECRET_TEXT_LEN, SecretRng, credential_binding, decode_id, encode_id, mint, parse,
-        verifier, verify,
+        SECRET_TEXT_LEN, SecretRng, WorkspacePin, credential_binding, decode_id, encode_id, mint,
+        parse, verifier, verify,
     };
     use uuid::Uuid;
 
@@ -528,6 +568,17 @@ mod tests {
         Uuid::from_u128(0x0192_3f2a_1c00_7000_8000_0000_0000_0001)
     }
 
+    fn workspace() -> Uuid {
+        Uuid::from_u128(0x0192_3f2a_1c00_7000_8000_0000_0000_0002)
+    }
+
+    fn pin(region: aex_wire::types::Region) -> WorkspacePin {
+        WorkspacePin {
+            region: RegionCode::new(region),
+            workspace: workspace(),
+        }
+    }
+
     #[test]
     fn every_kind_has_a_distinct_seven_character_prefix() {
         let mut prefixes: Vec<&str> = CredentialKind::ALL.iter().map(|it| it.prefix()).collect();
@@ -538,10 +589,10 @@ mod tests {
     }
 
     #[test]
-    fn only_a_workspace_key_carries_a_region() {
+    fn only_a_workspace_key_carries_a_workspace_pin() {
         for kind in CredentialKind::ALL {
             assert_eq!(
-                kind.carries_region(),
+                kind.carries_workspace_pin(),
                 kind == CredentialKind::WorkspaceKey,
                 "{kind:?}"
             );
@@ -552,17 +603,19 @@ mod tests {
     fn the_golden_shapes_are_exact() {
         let (secret, _) = mint(
             CredentialKind::WorkspaceKey,
-            Some(RegionCode::new(aex_wire::types::Region::EuWest1)),
+            Some(pin(aex_wire::types::Region::EuWest1)),
             id(),
             &Fixed(0),
         );
         let token = secret.expose();
         assert!(token.starts_with("aex_wk_euw1_"), "{token}");
-        assert_eq!(token.len(), 7 + 4 + 1 + ID_LEN + 1 + SECRET_TEXT_LEN);
         assert_eq!(
             token.len(),
-            CredentialKind::WorkspaceKey
-                .token_len(Some(RegionCode::new(aex_wire::types::Region::EuWest1)))
+            7 + 4 + 1 + ID_LEN + 1 + ID_LEN + 1 + SECRET_TEXT_LEN
+        );
+        assert_eq!(
+            token.len(),
+            CredentialKind::WorkspaceKey.token_len(Some(pin(aex_wire::types::Region::EuWest1)))
         );
 
         for kind in [
@@ -583,18 +636,37 @@ mod tests {
     fn mint_parse_verify_round_trips_for_every_kind() {
         let pepper = Pepper::new([9_u8; 32]);
         for kind in CredentialKind::ALL {
-            let region = kind
-                .carries_region()
-                .then(|| RegionCode::new(aex_wire::types::Region::UsWest2));
-            let (secret, digest) = mint(kind, region, id(), &Fixed(7));
+            let pinned = kind
+                .carries_workspace_pin()
+                .then(|| pin(aex_wire::types::Region::UsWest2));
+            let (secret, digest) = mint(kind, pinned, id(), &Fixed(7));
             let parsed = parse(kind, secret.expose()).expect("a minted token parses");
             assert_eq!(parsed.kind, kind);
             assert_eq!(parsed.id, id());
-            assert_eq!(parsed.region, region);
+            assert_eq!(parsed.pin, pinned);
             assert_eq!(parsed.digest, digest);
             let stored = verifier(&pepper, &digest);
             assert!(verify(&pepper, &parsed.digest, &stored));
         }
+    }
+
+    #[test]
+    fn a_secret_bearing_a_separator_never_shifts_a_workspace_key_segment() {
+        // 0xff renders base64url `_____…`, so every fixed-width boundary in the
+        // token is followed and preceded by the secret's own separators.
+        let pinned = pin(aex_wire::types::Region::ApNortheast1);
+        let (secret, _) = mint(
+            CredentialKind::WorkspaceKey,
+            Some(pinned),
+            id(),
+            &Fixed(0xff),
+        );
+        let token = secret.expose();
+        let tail = &token[token.len() - SECRET_TEXT_LEN..];
+        assert!(tail.contains('_'), "{tail}");
+        let parsed = parse(CredentialKind::WorkspaceKey, token).expect("parses");
+        assert_eq!(parsed.pin, Some(pinned));
+        assert_eq!(parsed.id, id());
     }
 
     #[test]
@@ -616,7 +688,7 @@ mod tests {
     fn every_structural_error_is_reachable_from_a_mutated_valid_token() {
         let (secret, _) = mint(
             CredentialKind::WorkspaceKey,
-            Some(RegionCode::new(aex_wire::types::Region::EuWest1)),
+            Some(pin(aex_wire::types::Region::EuWest1)),
             id(),
             &Fixed(3),
         );
@@ -642,21 +714,34 @@ mod tests {
             Err(CredentialError::BadLength)
         );
 
-        let mut mutated = token.clone();
-        let id_start = "aex_wk_euw1_".len();
-        mutated.replace_range(id_start..=id_start, "9");
-        assert_eq!(
-            parse(CredentialKind::WorkspaceKey, &mutated),
-            Err(CredentialError::BadIdEncoding),
-            "a leading Crockford character above `7` overflows 128 bits"
-        );
+        let workspace_start = "aex_wk_euw1_".len();
+        let id_start = workspace_start + ID_LEN + 1;
+        for start in [workspace_start, id_start] {
+            let mut mutated = token.clone();
+            mutated.replace_range(start..=start, "9");
+            assert_eq!(
+                parse(CredentialKind::WorkspaceKey, &mutated),
+                Err(CredentialError::BadIdEncoding),
+                "a leading Crockford character above `7` overflows 128 bits"
+            );
 
+            let mut mutated = token.clone();
+            mutated.replace_range(start..=start, "i");
+            assert_eq!(
+                parse(CredentialKind::WorkspaceKey, &mutated),
+                Err(CredentialError::BadIdEncoding),
+                "the excluded Crockford letters are not folded onto digits"
+            );
+        }
+
+        // Deleting one character from the workspace segment slides the key
+        // segment left; the fixed-width boundary refuses it rather than reading
+        // a different key.
         let mut mutated = token.clone();
-        mutated.replace_range(id_start..=id_start, "i");
+        mutated.remove(workspace_start);
         assert_eq!(
             parse(CredentialKind::WorkspaceKey, &mutated),
-            Err(CredentialError::BadIdEncoding),
-            "the excluded Crockford letters are not folded onto digits"
+            Err(CredentialError::BadLength)
         );
 
         let mut mutated = token;
@@ -733,7 +818,10 @@ mod tests {
     fn the_digest_transmits_and_returns_unchanged() {
         let (_, digest) = mint(
             CredentialKind::WorkspaceKey,
-            Some(RegionCode::ALL[4]),
+            Some(WorkspacePin {
+                region: RegionCode::ALL[4],
+                workspace: workspace(),
+            }),
             id(),
             &Fixed(5),
         );
@@ -750,7 +838,10 @@ mod tests {
     fn the_binding_separates_principal_kind_id_and_digest() {
         let (_, digest) = mint(
             CredentialKind::WorkspaceKey,
-            Some(RegionCode::ALL[4]),
+            Some(WorkspacePin {
+                region: RegionCode::ALL[4],
+                workspace: workspace(),
+            }),
             id(),
             &Fixed(6),
         );

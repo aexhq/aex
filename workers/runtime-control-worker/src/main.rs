@@ -468,13 +468,15 @@ mod tests {
     }
 
     fn catalog_json() -> String {
-        // The published set; browser variants are excluded during prelaunch.
         let variants = [
             ("512mb", 512, false),
             ("1gb", 1_024, false),
             ("2gb", 2_048, false),
+            ("2gb-browser", 2_048, true),
             ("4gb", 4_096, false),
+            ("4gb-browser", 4_096, true),
             ("8gb", 8_192, false),
+            ("8gb-browser", 8_192, true),
         ];
         let rows = variants
             .into_iter()
@@ -485,7 +487,7 @@ mod tests {
                     serde_json::json!({
                         "imageArn": format!(
                             "arn:aws:lambda:eu-west-1:522921482290:microvm-image:aex-dev-{}",
-                            char::from(b'a' + u8::try_from(index).expect("a small catalog")).to_string().repeat(52),
+                            char::from(b'a' + u8::try_from(index).expect("eight rows")).to_string().repeat(52),
                         ),
                         "imageVersion": (index + 1).to_string(),
                         "artifactDigest": format!("sha256:{index:064x}"),
@@ -520,11 +522,8 @@ mod tests {
     }
 
     #[test]
-    fn startup_scopes_the_provider_probe_to_every_published_image() {
-        // Five published variants at four concurrent reads is two waves. What the
-        // assertion protects is that the probe is bounded and covers the whole
-        // catalog, not the particular arithmetic.
-        assert_eq!(config().image_catalog.image_identifiers().len(), 5);
+    fn startup_scopes_the_provider_probe_to_all_eight_images_in_four_read_waves() {
+        assert_eq!(config().image_catalog.image_identifiers().len(), 8);
         assert_eq!(super::IMAGE_PROBE_CONCURRENCY, 4);
     }
 

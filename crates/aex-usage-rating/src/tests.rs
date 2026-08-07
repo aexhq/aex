@@ -37,7 +37,7 @@ fn exact_quanta_match_the_four_published_meters() {
     let expected = [
         (Meter::ComputeMillicpuMs, (1, 14_400)),
         (Meter::MemoryByteMs, (1, 128_849_018_880_i64)),
-        (Meter::StorageByteMin, (5, 940_597_837_824_i64)),
+        (Meter::StorageByteMin, (5000, 940_597_837_824_i64)),
         (Meter::DataTransferEgressByte, (3, 10_000)),
     ];
     for (index, (meter, (num, den))) in expected.into_iter().enumerate() {
@@ -172,7 +172,7 @@ fn rt10_golden_invoice_and_rt13_allocation_are_exact() {
     {
       "egressOneGbMicrousd": 300000,
       "handsOneHourMicrousd": 155000,
-      "storageOneGibMonthMicrousd": 250
+      "storageOneGibMonthMicrousd": 250000
     }
     "###);
 
@@ -317,7 +317,7 @@ fn book_with_rounding(rounding: &str) -> Value {
         BTreeMap::from([
             (Meter::ComputeMillicpuMs.as_str(), ("1", "14400")),
             (Meter::MemoryByteMs.as_str(), ("1", "128849018880")),
-            (Meter::StorageByteMin.as_str(), ("5", "940597837824")),
+            (Meter::StorageByteMin.as_str(), ("5000", "940597837824")),
             (Meter::DataTransferEgressByte.as_str(), ("3", "10000")),
         ]),
     )

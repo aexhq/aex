@@ -96,6 +96,45 @@ cardinality = "bounded"
 visibility = "public"
 max_len = 16
 
+# --- long-lived stream shape --------------------------------------------------
+
+[[attribute]]
+name = "aex.stream.counter"
+brief = "Which per-socket stream counter one aggregate delta reports."
+cardinality = "fixed"
+visibility = "public"
+max_len = 24
+
+# --- measured process pressure -------------------------------------------------
+
+[[attribute]]
+name = "aex.pressure.state"
+brief = "Measured memory-pressure state a task entered: normal, warning, admission-stop or critical."
+cardinality = "fixed"
+visibility = "public"
+max_len = 16
+
+[[attribute]]
+name = "aex.pressure.previous_state"
+brief = "Measured memory-pressure state a task left."
+cardinality = "fixed"
+visibility = "public"
+max_len = 16
+
+[[attribute]]
+name = "aex.memory.source"
+brief = "Interface a memory reading came from, or `unavailable` when none declared a limit."
+cardinality = "fixed"
+visibility = "public"
+max_len = 16
+
+[[attribute]]
+name = "aex.memory.used_percent"
+brief = "Measured percentage of the task memory limit in use. Absent when no limit is declared."
+cardinality = "bounded"
+visibility = "public"
+max_len = 10
+
 # --- provider and meter shape -------------------------------------------------
 
 [[attribute]]
@@ -223,6 +262,20 @@ instrument = "counter"
 unit = "1"
 attributes = ["aex.plane", "aex.region", "aex.deployable", "aex.error.class"]
 
+[[metric]]
+name = "aex.stream.count"
+brief = "Aggregate delta of one named per-socket stream counter since the previous publication."
+instrument = "counter"
+unit = "1"
+attributes = ["aex.plane", "aex.region", "aex.deployable", "aex.stream.counter"]
+
+[[metric]]
+name = "aex.stream.bytes"
+brief = "Aggregate delta of authority bytes returned to open stream sockets since the previous publication."
+instrument = "counter"
+unit = "By"
+attributes = ["aex.plane", "aex.region", "aex.deployable"]
+
 # --- spans --------------------------------------------------------------------
 
 [[span]]
@@ -246,6 +299,11 @@ attributes = ["aex.operation", "aex.outcome", "aex.error.class", "aex.retry.coun
 name = "aex.brain.due_row.isolated"
 brief = "Brain isolated a malformed due-index row while valid siblings continued."
 attributes = ["aex.plane", "aex.region", "aex.deployable", "aex.error.class", "aex.isolation.count", "aex.isolation.fingerprint"]
+
+[[event]]
+name = "aex.brain.memory_pressure.transitioned"
+brief = "Brain crossed a measured memory watermark, or lost or regained the ability to measure one."
+attributes = ["aex.plane", "aex.region", "aex.deployable", "aex.pressure.state", "aex.pressure.previous_state", "aex.memory.source", "aex.memory.used_percent"]
 
 [[event]]
 name = "aex.process.started"
