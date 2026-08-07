@@ -95,7 +95,6 @@ fn request_context() -> RequestContext {
         },
         limits: EffectiveLimits {
             json_body_bytes: 65_536,
-            otlp_body_bytes: 4 * 1_024 * 1_024,
             query_page_items: 100,
             query_page_bytes: 8 * 1024 * 1024,
         },
@@ -543,17 +542,12 @@ fn edge_precedence_is_the_complete_wire_table() {
 }
 
 #[test]
-fn every_generated_regional_route_has_exactly_one_planned_owner() {
+fn every_generated_regional_route_has_exactly_one_owner() {
     use aex_regional_http::router::{RouteOwner, route_owner};
 
     for id in RouteId::ALL {
         if route(*id).plane == Plane::Regional {
-            let owner = route_owner(*id).unwrap_or_else(|| panic!("{id}"));
-            assert_eq!(
-                owner.deployable(),
-                route(*id).serving_artifact,
-                "planned runtime and generated delivery ownership disagree for {id}"
-            );
+            assert!(route_owner(*id).is_some(), "{id}");
         } else {
             assert_eq!(route_owner(*id), None, "{id}");
         }
@@ -575,9 +569,6 @@ fn every_generated_regional_route_has_exactly_one_planned_owner() {
         route_owner(RouteId::SessionObservationsEventsQuery),
         Some(RouteOwner::ObservationApi)
     );
-    for id in [RouteId::WorkspaceLimitGet, RouteId::WorkspaceLimitsList] {
-        assert_eq!(route_owner(id), Some(RouteOwner::SessionApi), "`{id}`");
-    }
 }
 
 #[test]
@@ -976,54 +967,4 @@ async fn health_and_readiness_paths_are_internal_no_store_and_fail_closed() {
     let value: serde_json::Value = serde_json::from_slice(&body).expect("json");
     assert_eq!(value["status"], "not_ready");
     assert_eq!(value["unavailable"].as_array().expect("array").len(), 2);
-}
-
-#[tokio::test]
-async fn public_release_health_is_closed_no_store_and_exactly_release_bound() {
-    for (readiness, expected_status, expected_body) in [
-        (
-            aex_regional_http::health::Readiness::ready(format!("sha256:{}", "a".repeat(64))),
-            http::StatusCode::OK,
-            json!({
-                "schema": "aex.release-health.v1",
-                "releaseId": format!("sha256:{}", "a".repeat(64)),
-                "status": "ready"
-            }),
-        ),
-        (
-            aex_regional_http::health::Readiness::not_ready(
-                format!("sha256:{}", "b".repeat(64)),
-                ["authority_reader"],
-            )
-            .expect("not ready"),
-            http::StatusCode::SERVICE_UNAVAILABLE,
-            json!({
-                "schema": "aex.release-health.v1",
-                "releaseId": format!("sha256:{}", "b".repeat(64)),
-                "status": "not_ready"
-            }),
-        ),
-    ] {
-        let response = aex_regional_http::release_health::router(readiness)
-            .oneshot(
-                http::Request::builder()
-                    .uri("/api/release/health")
-                    .body(axum::body::Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("response");
-        assert_eq!(response.status(), expected_status);
-        assert_eq!(response.headers()["content-type"], "application/json");
-        assert_eq!(response.headers()["cache-control"], "no-store");
-        let body = response
-            .into_body()
-            .collect()
-            .await
-            .expect("body")
-            .to_bytes();
-        let value: serde_json::Value = serde_json::from_slice(&body).expect("json");
-        assert_eq!(value, expected_body);
-        assert_eq!(value.as_object().expect("object").len(), 3);
-    }
 }

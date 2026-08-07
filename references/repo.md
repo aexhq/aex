@@ -26,12 +26,11 @@ related:
 | `services/`, `runtimes/`, `workers/` | Deployable composition roots. |
 | `tools/` | Repository tooling: `aex-cli`, `aex-contract-gen`, `aex-release-tool`, `aex-workspace-check`. |
 | `packages/sdk/` | Public TypeScript SDK, package changelog, and package tests. |
-| `packages/wire/` | Generated TypeScript wire models, strict validators, and identifier helpers. `aex-contract-gen` owns `src/generated/`. |
 | `apps/site/` | Public marketing and documentation website, its deterministic generator, and the shared `apps/site/design/` token system. |
 | `apps/dashboard/` | Stateless dashboard and its BFF. It consumes `apps/site/design/index.css` rather than defining a second palette. |
 | `apps/user-tests/` | Blackbox public SDK/CLI and published-artifact behavior. |
 | `migrations/` | Central SQL migrations and the regional table generation definitions. |
-| `infra/` | Terraform modules and composition examples, including the reusable dedicated model-catalog KMS/OIDC authority. |
+| `infra/` | Terraform modules and composition examples. |
 | `release/` | Deployable units, path map, scenario ownership, policy, and derived evidence registries. |
 | `conformance/` | The generated conformance corpus. |
 | `tests/` | Cross-crate live companions, load workloads, and shared test support. |

@@ -61,8 +61,8 @@ strategy = "publish-only"
 rollback = "none"
 rollback_rationale = "a published version is immutable; deprecation is the only reverse gear"
 
-[kind."microvm-image"]
+[kind.rootfs]
 strategy = "generation-pin"
 # A running guest keeps the image it booted. A new image applies to new
 # generations only, so rollback is a pin change and never a live swap.
-rollback = "previous-image-arn-version"
+rollback = "previous-image-digest"

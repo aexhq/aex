@@ -3,7 +3,6 @@
     {
       "altPrincipal": "workspace_key",
       "bodyClass": "none",
-      "deferredReason": "The central identity composition does not yet mount an authoritative account operational-state read.",
       "errors": [
         "unauthenticated",
         "forbidden",
@@ -26,10 +25,6 @@
       "requiredScope": "account:read",
       "responseSchema": "AccountOperationalState",
       "safeRetry": true,
-      "scenarios": [
-        "SC-IDENTITY-ACCOUNT"
-      ],
-      "servingArtifact": "central-identity-api",
       "successStatus": 200,
       "summary": "Read the account and its operational state.",
       "transport": "unary"
@@ -65,11 +60,6 @@
       "requiredScope": "api_keys:write",
       "responseSchema": "NewApiKey",
       "safeRetry": false,
-      "scenarios": [
-        "SC-CONTROL-WORKSPACE"
-      ],
-      "servedArtifact": "central-control-api",
-      "servingArtifact": "central-control-api",
       "successStatus": 201,
       "summary": "Mint a workspace API key whose value is returned once.",
       "transport": "unary"
@@ -102,11 +92,6 @@
       "requiredScope": "api_keys:write",
       "responseSchema": null,
       "safeRetry": false,
-      "scenarios": [
-        "SC-CONTROL-WORKSPACE"
-      ],
-      "servedArtifact": "central-control-api",
-      "servingArtifact": "central-control-api",
       "successStatus": 204,
       "summary": "Revoke a workspace API key.",
       "transport": "unary"
@@ -139,11 +124,6 @@
       "requiredScope": "api_keys:read",
       "responseSchema": "ApiKeyPage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-CONTROL-WORKSPACE"
-      ],
-      "servedArtifact": "central-control-api",
-      "servingArtifact": "central-control-api",
       "successStatus": 200,
       "summary": "List workspace API key metadata.",
       "transport": "unary"
@@ -173,11 +153,6 @@
       "requiredScope": "billing:read",
       "responseSchema": "AutoTopupPolicy",
       "safeRetry": true,
-      "scenarios": [
-        "SC-FINANCE-INVOICE"
-      ],
-      "servedArtifact": "finance-api",
-      "servingArtifact": "finance-api",
       "successStatus": 200,
       "summary": "Read the automatic top-up policy.",
       "transport": "unary"
@@ -212,11 +187,6 @@
       "requiredScope": "billing:write",
       "responseSchema": "AutoTopupPolicy",
       "safeRetry": false,
-      "scenarios": [
-        "SC-FINANCE-INVOICE"
-      ],
-      "servedArtifact": "finance-api",
-      "servingArtifact": "finance-api",
       "successStatus": 200,
       "summary": "Replace the automatic top-up policy.",
       "transport": "unary"
@@ -247,11 +217,6 @@
       "requiredScope": "billing:read",
       "responseSchema": "BillingBalance",
       "safeRetry": true,
-      "scenarios": [
-        "SC-FINANCE-INVOICE"
-      ],
-      "servedArtifact": "finance-api",
-      "servingArtifact": "finance-api",
       "successStatus": 200,
       "summary": "Read the prepaid balance of an organization.",
       "transport": "unary"
@@ -284,11 +249,6 @@
       "requiredScope": "billing:write",
       "responseSchema": "HostedSession",
       "safeRetry": false,
-      "scenarios": [
-        "SC-FINANCE-INVOICE"
-      ],
-      "servedArtifact": "finance-api",
-      "servingArtifact": "finance-api",
       "successStatus": 201,
       "summary": "Create a hosted billing portal session.",
       "transport": "unary"
@@ -320,11 +280,6 @@
       "requiredScope": "billing:read",
       "responseSchema": "DownloadGrant",
       "safeRetry": false,
-      "scenarios": [
-        "SC-FINANCE-INVOICE"
-      ],
-      "servedArtifact": "finance-api",
-      "servingArtifact": "finance-api",
       "successStatus": 201,
       "summary": "Mint a download grant for an issued statement.",
       "transport": "unary"
@@ -355,11 +310,6 @@
       "requiredScope": "billing:read",
       "responseSchema": "Statement",
       "safeRetry": true,
-      "scenarios": [
-        "SC-FINANCE-INVOICE"
-      ],
-      "servedArtifact": "finance-api",
-      "servingArtifact": "finance-api",
       "successStatus": 200,
       "summary": "Read one immutable issued statement.",
       "transport": "unary"
@@ -393,11 +343,6 @@
       "requiredScope": "billing:read",
       "responseSchema": "StatementSummaryPage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-FINANCE-INVOICE"
-      ],
-      "servedArtifact": "finance-api",
-      "servingArtifact": "finance-api",
       "successStatus": 200,
       "summary": "List issued statements, newest first.",
       "transport": "unary"
@@ -430,11 +375,6 @@
       "requiredScope": "billing:write",
       "responseSchema": "HostedSession",
       "safeRetry": false,
-      "scenarios": [
-        "SC-FINANCE-INVOICE"
-      ],
-      "servedArtifact": "finance-api",
-      "servingArtifact": "finance-api",
       "successStatus": 201,
       "summary": "Create a hosted top-up checkout.",
       "transport": "unary"
@@ -465,11 +405,6 @@
       "requiredScope": "operations:write",
       "responseSchema": "Operation",
       "safeRetry": false,
-      "scenarios": [
-        "SC-CONTROL-WORKSPACE"
-      ],
-      "servedArtifact": "central-control-api",
-      "servingArtifact": "central-control-api",
       "successStatus": 200,
       "summary": "Request cancellation of a central operation.",
       "transport": "unary"
@@ -499,11 +434,6 @@
       "requiredScope": "operations:read",
       "responseSchema": "Operation",
       "safeRetry": true,
-      "scenarios": [
-        "SC-CONTROL-WORKSPACE"
-      ],
-      "servedArtifact": "central-control-api",
-      "servingArtifact": "central-control-api",
       "successStatus": 200,
       "summary": "Read one central durable operation.",
       "transport": "unary"
@@ -540,11 +470,6 @@
       "requiredScope": "operations:read",
       "responseSchema": "OperationPage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-CONTROL-WORKSPACE"
-      ],
-      "servedArtifact": "central-control-api",
-      "servingArtifact": "central-control-api",
       "successStatus": 200,
       "summary": "List central durable operations for one organization.",
       "transport": "unary"
@@ -572,11 +497,6 @@
       "requiredScope": "account:read",
       "responseSchema": "DashboardBootstrap",
       "safeRetry": true,
-      "scenarios": [
-        "SC-CONTROL-WORKSPACE"
-      ],
-      "servedArtifact": "central-control-api",
-      "servingArtifact": "central-control-api",
       "successStatus": 200,
       "summary": "One bounded read that fills the dashboard shell.",
       "transport": "unary"
@@ -603,11 +523,6 @@
       "requiredScope": null,
       "responseSchema": "DeviceAuthorization",
       "safeRetry": false,
-      "scenarios": [
-        "SC-IDENTITY-ACCOUNT"
-      ],
-      "servedArtifact": "central-identity-api",
-      "servingArtifact": "central-identity-api",
       "successStatus": 201,
       "summary": "Begin the CLI device-authorization flow.",
       "transport": "unary"
@@ -637,11 +552,6 @@
       "requiredScope": null,
       "responseSchema": "DeviceToken",
       "safeRetry": true,
-      "scenarios": [
-        "SC-IDENTITY-ACCOUNT"
-      ],
-      "servedArtifact": "central-identity-api",
-      "servingArtifact": "central-identity-api",
       "successStatus": 200,
       "summary": "Exchange an approved device code for an account token.",
       "transport": "unary"
@@ -677,11 +587,6 @@
       "requiredScope": "memberships:write",
       "responseSchema": "Invitation",
       "safeRetry": false,
-      "scenarios": [
-        "SC-CONTROL-WORKSPACE"
-      ],
-      "servedArtifact": "central-control-api",
-      "servingArtifact": "central-control-api",
       "successStatus": 201,
       "summary": "Invite a person to the organization.",
       "transport": "unary"
@@ -715,11 +620,6 @@
       "requiredScope": "memberships:read",
       "responseSchema": "MembershipPage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-CONTROL-WORKSPACE"
-      ],
-      "servedArtifact": "central-control-api",
-      "servingArtifact": "central-control-api",
       "successStatus": 200,
       "summary": "List the memberships of an organization.",
       "transport": "unary"
@@ -750,11 +650,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationFrame",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-STREAM"
-      ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
       "successStatus": 200,
       "summary": "Listen for new workspace events observations.",
       "transport": "ndjson"
@@ -768,7 +663,6 @@
         "invalid_request",
         "invalid_cursor",
         "invalid_query",
-        "telemetry_query_budget_exhausted",
         "account_paused",
         "wrong_workspace_region",
         "observability_unavailable"
@@ -787,11 +681,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationPage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-OBSERVATION-QUERY"
-      ],
-      "servedArtifact": "regional-observation-api",
-      "servingArtifact": "regional-observation-api",
       "successStatus": 200,
       "summary": "Query workspace events observations.",
       "transport": "unary"
@@ -822,11 +711,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationFrame",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-STREAM"
-      ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
       "successStatus": 200,
       "summary": "Stream workspace events observations from one origin.",
       "transport": "ndjson"
@@ -857,11 +741,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationFrame",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-STREAM"
-      ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
       "successStatus": 200,
       "summary": "Listen for new workspace logs observations.",
       "transport": "ndjson"
@@ -875,7 +754,6 @@
         "invalid_request",
         "invalid_cursor",
         "invalid_query",
-        "telemetry_query_budget_exhausted",
         "account_paused",
         "wrong_workspace_region",
         "observability_unavailable"
@@ -894,11 +772,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationPage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-OBSERVATION-QUERY"
-      ],
-      "servedArtifact": "regional-observation-api",
-      "servingArtifact": "regional-observation-api",
       "successStatus": 200,
       "summary": "Query workspace logs observations.",
       "transport": "unary"
@@ -929,11 +802,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationFrame",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-STREAM"
-      ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
       "successStatus": 200,
       "summary": "Stream workspace logs observations from one origin.",
       "transport": "ndjson"
@@ -947,7 +815,6 @@
         "invalid_request",
         "invalid_cursor",
         "invalid_query",
-        "telemetry_query_budget_exhausted",
         "invalid_metric_aggregation",
         "account_paused",
         "wrong_workspace_region",
@@ -967,11 +834,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "MetricAggregationPage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-OBSERVATION-QUERY"
-      ],
-      "servedArtifact": "regional-observation-api",
-      "servingArtifact": "regional-observation-api",
       "successStatus": 200,
       "summary": "Aggregate workspace metric observations.",
       "transport": "unary"
@@ -1002,11 +864,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationFrame",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-STREAM"
-      ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
       "successStatus": 200,
       "summary": "Listen for new workspace metrics observations.",
       "transport": "ndjson"
@@ -1020,7 +877,6 @@
         "invalid_request",
         "invalid_cursor",
         "invalid_query",
-        "telemetry_query_budget_exhausted",
         "account_paused",
         "wrong_workspace_region",
         "observability_unavailable"
@@ -1039,11 +895,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationPage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-OBSERVATION-QUERY"
-      ],
-      "servedArtifact": "regional-observation-api",
-      "servingArtifact": "regional-observation-api",
       "successStatus": 200,
       "summary": "Query workspace metrics observations.",
       "transport": "unary"
@@ -1074,11 +925,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationFrame",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-STREAM"
-      ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
       "successStatus": 200,
       "summary": "Stream workspace metrics observations from one origin.",
       "transport": "ndjson"
@@ -1109,11 +955,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationFrame",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-STREAM"
-      ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
       "successStatus": 200,
       "summary": "Listen for new workspace spans observations.",
       "transport": "ndjson"
@@ -1127,7 +968,6 @@
         "invalid_request",
         "invalid_cursor",
         "invalid_query",
-        "telemetry_query_budget_exhausted",
         "account_paused",
         "wrong_workspace_region",
         "observability_unavailable"
@@ -1146,11 +986,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationPage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-OBSERVATION-QUERY"
-      ],
-      "servedArtifact": "regional-observation-api",
-      "servingArtifact": "regional-observation-api",
       "successStatus": 200,
       "summary": "Query workspace spans observations.",
       "transport": "unary"
@@ -1181,11 +1016,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationFrame",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-STREAM"
-      ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
       "successStatus": 200,
       "summary": "Stream workspace spans observations from one origin.",
       "transport": "ndjson"
@@ -1216,11 +1046,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationFrame",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-STREAM"
-      ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
       "successStatus": 200,
       "summary": "Listen for new workspace telemetry observations.",
       "transport": "ndjson"
@@ -1234,7 +1059,6 @@
         "invalid_request",
         "invalid_cursor",
         "invalid_query",
-        "telemetry_query_budget_exhausted",
         "account_paused",
         "wrong_workspace_region",
         "observability_unavailable"
@@ -1253,11 +1077,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationPage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-OBSERVATION-QUERY"
-      ],
-      "servedArtifact": "regional-observation-api",
-      "servingArtifact": "regional-observation-api",
       "successStatus": 200,
       "summary": "Query workspace telemetry observations.",
       "transport": "unary"
@@ -1288,11 +1107,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationFrame",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-STREAM"
-      ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
       "successStatus": 200,
       "summary": "Stream workspace telemetry observations from one origin.",
       "transport": "ndjson"
@@ -1323,11 +1137,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationFrame",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-STREAM"
-      ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
       "successStatus": 200,
       "summary": "Listen for new workspace traces observations.",
       "transport": "ndjson"
@@ -1341,7 +1150,6 @@
         "invalid_request",
         "invalid_cursor",
         "invalid_query",
-        "telemetry_query_budget_exhausted",
         "account_paused",
         "wrong_workspace_region",
         "observability_unavailable"
@@ -1360,11 +1168,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationPage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-OBSERVATION-QUERY"
-      ],
-      "servedArtifact": "regional-observation-api",
-      "servingArtifact": "regional-observation-api",
       "successStatus": 200,
       "summary": "Query workspace traces observations.",
       "transport": "unary"
@@ -1395,11 +1198,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationFrame",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-STREAM"
-      ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
       "successStatus": 200,
       "summary": "Stream workspace traces observations from one origin.",
       "transport": "ndjson"
@@ -1431,11 +1229,6 @@
       "requiredScope": "organizations:write",
       "responseSchema": "Organization",
       "safeRetry": false,
-      "scenarios": [
-        "SC-CONTROL-WORKSPACE"
-      ],
-      "servedArtifact": "central-control-api",
-      "servingArtifact": "central-control-api",
       "successStatus": 201,
       "summary": "Create an organization whose creator becomes owner.",
       "transport": "unary"
@@ -1465,11 +1258,6 @@
       "requiredScope": "organizations:read",
       "responseSchema": "Organization",
       "safeRetry": true,
-      "scenarios": [
-        "SC-CONTROL-WORKSPACE"
-      ],
-      "servedArtifact": "central-control-api",
-      "servingArtifact": "central-control-api",
       "successStatus": 200,
       "summary": "Read one organization.",
       "transport": "unary"
@@ -1499,11 +1287,6 @@
       "requiredScope": "organizations:read",
       "responseSchema": "OrganizationPage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-CONTROL-WORKSPACE"
-      ],
-      "servedArtifact": "central-control-api",
-      "servingArtifact": "central-control-api",
       "successStatus": 200,
       "summary": "List organizations the caller belongs to.",
       "transport": "unary"
@@ -1515,7 +1298,6 @@
         "unauthenticated",
         "insufficient_scope",
         "idempotency_conflict",
-        "unsupported_media_type",
         "telemetry_payload_too_large",
         "invalid_telemetry",
         "telemetry_quota_exceeded",
@@ -1536,11 +1318,6 @@
       "requiredScope": "telemetry:write",
       "responseSchema": "TelemetryAdmissionReceipt",
       "safeRetry": false,
-      "scenarios": [
-        "SC-OBSERVATION-ADMIT"
-      ],
-      "servedArtifact": "regional-otlp",
-      "servingArtifact": "regional-otlp",
       "successStatus": 200,
       "summary": "Admit an OTLP logs batch.",
       "transport": "unary"
@@ -1552,7 +1329,6 @@
         "unauthenticated",
         "insufficient_scope",
         "idempotency_conflict",
-        "unsupported_media_type",
         "telemetry_payload_too_large",
         "invalid_telemetry",
         "telemetry_quota_exceeded",
@@ -1573,11 +1349,6 @@
       "requiredScope": "telemetry:write",
       "responseSchema": "TelemetryAdmissionReceipt",
       "safeRetry": false,
-      "scenarios": [
-        "SC-OBSERVATION-ADMIT"
-      ],
-      "servedArtifact": "regional-otlp",
-      "servingArtifact": "regional-otlp",
       "successStatus": 200,
       "summary": "Admit an OTLP metrics batch.",
       "transport": "unary"
@@ -1589,7 +1360,6 @@
         "unauthenticated",
         "insufficient_scope",
         "idempotency_conflict",
-        "unsupported_media_type",
         "telemetry_payload_too_large",
         "invalid_telemetry",
         "telemetry_quota_exceeded",
@@ -1610,11 +1380,6 @@
       "requiredScope": "telemetry:write",
       "responseSchema": "TelemetryAdmissionReceipt",
       "safeRetry": false,
-      "scenarios": [
-        "SC-OBSERVATION-ADMIT"
-      ],
-      "servedArtifact": "regional-otlp",
-      "servingArtifact": "regional-otlp",
       "successStatus": 200,
       "summary": "Admit an OTLP traces batch.",
       "transport": "unary"
@@ -1645,11 +1410,6 @@
       "requiredScope": "secrets:read",
       "responseSchema": "ProviderCredential",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-ADMIT"
-      ],
-      "servedArtifact": "regional-session-api",
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "Read one provider-credential binding.",
       "transport": "unary"
@@ -1657,7 +1417,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "First-seal custody and the atomic credential-binding replay transaction are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -1682,10 +1441,6 @@
       "requiredScope": "secrets:write",
       "responseSchema": "ProviderCredential",
       "safeRetry": false,
-      "scenarios": [
-        "SC-SECRET-CUSTODY"
-      ],
-      "servingArtifact": "regional-secret-api",
       "successStatus": 201,
       "summary": "Register a BYOK provider credential; carries plaintext.",
       "transport": "unary"
@@ -1716,11 +1471,6 @@
       "requiredScope": "secrets:revoke",
       "responseSchema": "ProviderCredential",
       "safeRetry": false,
-      "scenarios": [
-        "SC-SESSION-ADMIT"
-      ],
-      "servedArtifact": "regional-session-api",
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "Revoke a provider-credential binding.",
       "transport": "unary"
@@ -1753,11 +1503,6 @@
       "requiredScope": "secrets:read",
       "responseSchema": "ProviderCredentialPage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-ADMIT"
-      ],
-      "servedArtifact": "regional-session-api",
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "List provider-credential binding metadata.",
       "transport": "unary"
@@ -1788,11 +1533,6 @@
       "requiredScope": "operations:write",
       "responseSchema": "Operation",
       "safeRetry": false,
-      "scenarios": [
-        "SC-SESSION-TERMINAL"
-      ],
-      "servedArtifact": "regional-session-api",
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "Request cancellation of a regional operation.",
       "transport": "unary"
@@ -1822,11 +1562,6 @@
       "requiredScope": "operations:read",
       "responseSchema": "Operation",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-TERMINAL"
-      ],
-      "servedArtifact": "regional-session-api",
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "Read one regional durable operation.",
       "transport": "unary"
@@ -1861,11 +1596,6 @@
       "requiredScope": "operations:read",
       "responseSchema": "OperationPage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-TERMINAL"
-      ],
-      "servedArtifact": "regional-session-api",
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "List regional durable operations.",
       "transport": "unary"
@@ -1873,7 +1603,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "Registry mutation and content-lifecycle composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -1896,10 +1625,6 @@
       "requiredScope": "resources:write",
       "responseSchema": null,
       "safeRetry": false,
-      "scenarios": [
-        "SC-SESSION-ADMIT"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 204,
       "summary": "Delete one registered entry from files.",
       "transport": "unary"
@@ -1907,7 +1632,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "No composed content grant and presigning authority exists yet.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -1935,10 +1659,6 @@
       "requiredScope": "resources:read",
       "responseSchema": "DownloadGrant",
       "safeRetry": false,
-      "scenarios": [
-        "SC-SESSION-ADMIT"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 201,
       "summary": "Mint a download grant for a registered file.",
       "transport": "unary"
@@ -1946,7 +1666,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "The registry pointer composition has no plaintext content hydration path.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -1970,10 +1689,6 @@
       "requiredScope": "resources:read",
       "responseSchema": "RegisteredFile",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-ADMIT"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "Read one registered entry from files.",
       "transport": "unary"
@@ -2005,11 +1720,6 @@
       "requiredScope": "resources:read",
       "responseSchema": "RegisteredFilePage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-ADMIT"
-      ],
-      "servedArtifact": "regional-session-api",
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "List registered files.",
       "transport": "unary"
@@ -2017,7 +1727,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "Registry mutation and sealed-content composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2045,10 +1754,6 @@
       "requiredScope": "resources:write",
       "responseSchema": "RegisteredFile",
       "safeRetry": false,
-      "scenarios": [
-        "SC-SESSION-ADMIT"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "Replace one registered entry in files.",
       "transport": "unary"
@@ -2056,7 +1761,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "Registry mutation and content-lifecycle composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2079,10 +1783,6 @@
       "requiredScope": "resources:write",
       "responseSchema": null,
       "safeRetry": false,
-      "scenarios": [
-        "SC-SESSION-ADMIT"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 204,
       "summary": "Delete one registered entry from instructions.",
       "transport": "unary"
@@ -2090,7 +1790,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "The registry pointer composition has no plaintext content hydration path.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2114,10 +1813,6 @@
       "requiredScope": "resources:read",
       "responseSchema": "RegisteredInstruction",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-ADMIT"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "Read one registered entry from instructions.",
       "transport": "unary"
@@ -2149,11 +1844,6 @@
       "requiredScope": "resources:read",
       "responseSchema": "RegisteredInstructionPage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-ADMIT"
-      ],
-      "servedArtifact": "regional-session-api",
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "List registered instructions.",
       "transport": "unary"
@@ -2161,7 +1851,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "Registry mutation and sealed-content composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2189,10 +1878,6 @@
       "requiredScope": "resources:write",
       "responseSchema": "RegisteredInstruction",
       "safeRetry": false,
-      "scenarios": [
-        "SC-SESSION-ADMIT"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "Replace one registered entry in instructions.",
       "transport": "unary"
@@ -2200,7 +1885,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "Registry mutation and content-lifecycle composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2223,10 +1907,6 @@
       "requiredScope": "resources:write",
       "responseSchema": null,
       "safeRetry": false,
-      "scenarios": [
-        "SC-SESSION-ADMIT"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 204,
       "summary": "Delete one registered entry from MCP servers.",
       "transport": "unary"
@@ -2234,7 +1914,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "The registry pointer composition has no plaintext content hydration path.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2258,10 +1937,6 @@
       "requiredScope": "resources:read",
       "responseSchema": "RegisteredMcpServer",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-ADMIT"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "Read one registered entry from MCP servers.",
       "transport": "unary"
@@ -2293,11 +1968,6 @@
       "requiredScope": "resources:read",
       "responseSchema": "RegisteredMcpServerPage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-ADMIT"
-      ],
-      "servedArtifact": "regional-session-api",
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "List registered MCP servers.",
       "transport": "unary"
@@ -2305,7 +1975,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "Registry mutation and sealed-content composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2333,10 +2002,6 @@
       "requiredScope": "resources:write",
       "responseSchema": "RegisteredMcpServer",
       "safeRetry": false,
-      "scenarios": [
-        "SC-SESSION-ADMIT"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "Replace one registered entry in MCP servers.",
       "transport": "unary"
@@ -2344,7 +2009,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "Registry mutation and content-lifecycle composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2367,10 +2031,6 @@
       "requiredScope": "resources:write",
       "responseSchema": null,
       "safeRetry": false,
-      "scenarios": [
-        "SC-SESSION-ADMIT"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 204,
       "summary": "Delete one registered entry from skills.",
       "transport": "unary"
@@ -2378,7 +2038,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "The registry pointer composition has no plaintext content hydration path.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2402,10 +2061,6 @@
       "requiredScope": "resources:read",
       "responseSchema": "RegisteredSkill",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-ADMIT"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "Read one registered entry from skills.",
       "transport": "unary"
@@ -2437,11 +2092,6 @@
       "requiredScope": "resources:read",
       "responseSchema": "RegisteredSkillPage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-ADMIT"
-      ],
-      "servedArtifact": "regional-session-api",
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "List registered skills.",
       "transport": "unary"
@@ -2449,7 +2099,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "Registry mutation and sealed-content composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2477,10 +2126,6 @@
       "requiredScope": "resources:write",
       "responseSchema": "RegisteredSkill",
       "safeRetry": false,
-      "scenarios": [
-        "SC-SESSION-ADMIT"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "Replace one registered entry in skills.",
       "transport": "unary"
@@ -2488,7 +2133,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "Registry mutation and content-lifecycle composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2511,10 +2155,6 @@
       "requiredScope": "resources:write",
       "responseSchema": null,
       "safeRetry": false,
-      "scenarios": [
-        "SC-SESSION-ADMIT"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 204,
       "summary": "Delete one registered entry from tools.",
       "transport": "unary"
@@ -2522,7 +2162,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "The registry pointer composition has no plaintext content hydration path.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2546,10 +2185,6 @@
       "requiredScope": "resources:read",
       "responseSchema": "RegisteredTool",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-ADMIT"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "Read one registered entry from tools.",
       "transport": "unary"
@@ -2581,11 +2216,6 @@
       "requiredScope": "resources:read",
       "responseSchema": "RegisteredToolPage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-ADMIT"
-      ],
-      "servedArtifact": "regional-session-api",
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "List registered tools.",
       "transport": "unary"
@@ -2593,7 +2223,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "Registry mutation and sealed-content composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2621,10 +2250,6 @@
       "requiredScope": "resources:write",
       "responseSchema": "RegisteredTool",
       "safeRetry": false,
-      "scenarios": [
-        "SC-SESSION-ADMIT"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "Replace one registered entry in tools.",
       "transport": "unary"
@@ -2654,11 +2279,6 @@
       "requiredScope": "secrets:write",
       "responseSchema": null,
       "safeRetry": false,
-      "scenarios": [
-        "SC-SECRET-CUSTODY"
-      ],
-      "servedArtifact": "regional-secret-api",
-      "servingArtifact": "regional-secret-api",
       "successStatus": 204,
       "summary": "Delete a secret, affecting future admission only.",
       "transport": "unary"
@@ -2689,11 +2309,6 @@
       "requiredScope": "secrets:read",
       "responseSchema": "SecretMetadata",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SECRET-CUSTODY"
-      ],
-      "servedArtifact": "regional-session-api",
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "Read one secret metadata record.",
       "transport": "unary"
@@ -2701,7 +2316,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "First-seal custody and durable idempotent replay are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2728,10 +2342,6 @@
       "requiredScope": "secrets:write",
       "responseSchema": "SecretMetadata",
       "safeRetry": false,
-      "scenarios": [
-        "SC-SECRET-CUSTODY"
-      ],
-      "servingArtifact": "regional-secret-api",
       "successStatus": 200,
       "summary": "Set a secret value for future admission.",
       "transport": "unary"
@@ -2762,11 +2372,6 @@
       "requiredScope": "secrets:revoke",
       "responseSchema": "SecretRevocation",
       "safeRetry": false,
-      "scenarios": [
-        "SC-SECRET-CUSTODY"
-      ],
-      "servedArtifact": "regional-secret-api",
-      "servingArtifact": "regional-secret-api",
       "successStatus": 200,
       "summary": "Revoke a secret and cancel current custody.",
       "transport": "unary"
@@ -2798,11 +2403,6 @@
       "requiredScope": "secrets:read",
       "responseSchema": "SecretMetadataPage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SECRET-CUSTODY"
-      ],
-      "servedArtifact": "regional-session-api",
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "List secret metadata; values are never readable.",
       "transport": "unary"
@@ -2836,11 +2436,6 @@
       "requiredScope": "sessions:read",
       "responseSchema": "Approval",
       "safeRetry": true,
-      "scenarios": [
-        "SC-BRAIN-TURN"
-      ],
-      "servedArtifact": "regional-session-api",
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "Read one approval and its bound-call record.",
       "transport": "unary"
@@ -2848,7 +2443,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The atomic bound-call approval writer is not composed into the regional service.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2879,10 +2473,6 @@
       "requiredScope": "sessions:write",
       "responseSchema": "Approval",
       "safeRetry": false,
-      "scenarios": [
-        "SC-BRAIN-TURN"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "Decide a pending approval.",
       "transport": "unary"
@@ -2918,11 +2508,6 @@
       "requiredScope": "sessions:read",
       "responseSchema": "ApprovalPage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-BRAIN-TURN"
-      ],
-      "servedArtifact": "regional-session-api",
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "List the approvals of a session.",
       "transport": "unary"
@@ -2930,7 +2515,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The complete session authority and command transaction are not implemented.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2961,11 +2545,6 @@
       "requiredScope": "sessions:write",
       "responseSchema": "Operation",
       "safeRetry": false,
-      "scenarios": [
-        "SC-SESSION-ADMIT",
-        "SC-SESSION-TERMINAL"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 202,
       "summary": "Admit the durable clone operation.",
       "transport": "unary"
@@ -2973,7 +2552,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The complete session authority and create use case are not implemented.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -3005,11 +2583,6 @@
       "requiredScope": "sessions:write",
       "responseSchema": "Session",
       "safeRetry": false,
-      "scenarios": [
-        "SC-SESSION-ADMIT",
-        "SC-SESSION-TERMINAL"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 201,
       "summary": "Create a session.",
       "transport": "unary"
@@ -3017,7 +2590,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The credential-rebind authority and durable command transaction are not implemented.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -3045,11 +2617,6 @@
       "requiredScope": "secrets:write",
       "responseSchema": "Operation",
       "safeRetry": false,
-      "scenarios": [
-        "SC-SESSION-ADMIT",
-        "SC-SESSION-TERMINAL"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 202,
       "summary": "Admit the durable credential-rebind operation.",
       "transport": "unary"
@@ -3057,7 +2624,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The session root, content decryption, and presigning composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -3090,10 +2656,6 @@
       "requiredScope": "files:live",
       "responseSchema": "LiveDownloadGrant",
       "safeRetry": false,
-      "scenarios": [
-        "SC-CONTENT-LIFECYCLE"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 201,
       "summary": "Mint a download grant for a live workspace file.",
       "transport": "unary"
@@ -3101,7 +2663,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The session root and plaintext content projection are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -3131,10 +2692,6 @@
       "requiredScope": "files:live",
       "responseSchema": "LiveFileEntryPage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-CONTENT-LIFECYCLE"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "List live workspace files, optionally waking a retained session.",
       "transport": "unary"
@@ -3142,7 +2699,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The session root and plaintext content projection are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -3172,10 +2728,6 @@
       "requiredScope": "files:live",
       "responseSchema": "LiveFileEntry",
       "safeRetry": true,
-      "scenarios": [
-        "SC-CONTENT-LIFECYCLE"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "Stat one live workspace file.",
       "transport": "unary"
@@ -3183,7 +2735,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The persisted root, content decryption, and presigning composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -3213,10 +2764,6 @@
       "requiredScope": "files:read",
       "responseSchema": "DownloadGrant",
       "safeRetry": false,
-      "scenarios": [
-        "SC-CONTENT-LIFECYCLE"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 201,
       "summary": "Mint a download grant for a persisted session file.",
       "transport": "unary"
@@ -3224,7 +2771,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The persisted root and plaintext content projection are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -3251,10 +2797,6 @@
       "requiredScope": "files:read",
       "responseSchema": "FileEntryPage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-CONTENT-LIFECYCLE"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "List persisted session files; an observational read.",
       "transport": "unary"
@@ -3262,7 +2804,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The persisted root and plaintext content projection are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -3289,10 +2830,6 @@
       "requiredScope": "files:read",
       "responseSchema": "FileEntry",
       "safeRetry": true,
-      "scenarios": [
-        "SC-CONTENT-LIFECYCLE"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "Stat one persisted session file.",
       "transport": "unary"
@@ -3300,7 +2837,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "The stored session head cannot yet produce the complete public session resource.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -3325,11 +2861,6 @@
       "requiredScope": "sessions:read",
       "responseSchema": "Session",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-ADMIT",
-        "SC-SESSION-TERMINAL"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "Read one session, its deleting resource, or its tombstone.",
       "transport": "unary"
@@ -3337,7 +2868,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The wire and domain message vocabularies and durable command path are not reconciled.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -3368,11 +2898,6 @@
       "requiredScope": "sessions:write",
       "responseSchema": "MessageSendResult",
       "safeRetry": false,
-      "scenarios": [
-        "SC-SESSION-ADMIT",
-        "SC-SESSION-TERMINAL"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 201,
       "summary": "Admit a message and queue or start its run.",
       "transport": "unary"
@@ -3380,7 +2905,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "The wire and domain message vocabularies and exact paged read authority are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -3409,11 +2933,6 @@
       "requiredScope": "sessions:read",
       "responseSchema": "MessagePage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-ADMIT",
-        "SC-SESSION-TERMINAL"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "List the messages of a session.",
       "transport": "unary"
@@ -3448,11 +2967,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationFrame",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-STREAM"
-      ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
       "successStatus": 200,
       "summary": "Listen for new session events observations.",
       "transport": "ndjson"
@@ -3468,7 +2982,6 @@
         "invalid_cursor",
         "session_deleted",
         "invalid_query",
-        "telemetry_query_budget_exhausted",
         "account_paused",
         "wrong_workspace_region",
         "observability_unavailable"
@@ -3489,11 +3002,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationPage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-OBSERVATION-QUERY"
-      ],
-      "servedArtifact": "regional-observation-api",
-      "servingArtifact": "regional-observation-api",
       "successStatus": 200,
       "summary": "Query session events observations.",
       "transport": "unary"
@@ -3528,11 +3036,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationFrame",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-STREAM"
-      ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
       "successStatus": 200,
       "summary": "Stream session events observations from one origin.",
       "transport": "ndjson"
@@ -3567,11 +3070,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationFrame",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-STREAM"
-      ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
       "successStatus": 200,
       "summary": "Listen for new session logs observations.",
       "transport": "ndjson"
@@ -3587,7 +3085,6 @@
         "invalid_cursor",
         "session_deleted",
         "invalid_query",
-        "telemetry_query_budget_exhausted",
         "account_paused",
         "wrong_workspace_region",
         "observability_unavailable"
@@ -3608,11 +3105,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationPage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-OBSERVATION-QUERY"
-      ],
-      "servedArtifact": "regional-observation-api",
-      "servingArtifact": "regional-observation-api",
       "successStatus": 200,
       "summary": "Query session logs observations.",
       "transport": "unary"
@@ -3647,11 +3139,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationFrame",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-STREAM"
-      ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
       "successStatus": 200,
       "summary": "Stream session logs observations from one origin.",
       "transport": "ndjson"
@@ -3667,7 +3154,6 @@
         "invalid_cursor",
         "session_deleted",
         "invalid_query",
-        "telemetry_query_budget_exhausted",
         "invalid_metric_aggregation",
         "account_paused",
         "wrong_workspace_region",
@@ -3689,11 +3175,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "MetricAggregationPage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-OBSERVATION-QUERY"
-      ],
-      "servedArtifact": "regional-observation-api",
-      "servingArtifact": "regional-observation-api",
       "successStatus": 200,
       "summary": "Aggregate session metric observations.",
       "transport": "unary"
@@ -3728,11 +3209,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationFrame",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-STREAM"
-      ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
       "successStatus": 200,
       "summary": "Listen for new session metrics observations.",
       "transport": "ndjson"
@@ -3748,7 +3224,6 @@
         "invalid_cursor",
         "session_deleted",
         "invalid_query",
-        "telemetry_query_budget_exhausted",
         "account_paused",
         "wrong_workspace_region",
         "observability_unavailable"
@@ -3769,11 +3244,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationPage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-OBSERVATION-QUERY"
-      ],
-      "servedArtifact": "regional-observation-api",
-      "servingArtifact": "regional-observation-api",
       "successStatus": 200,
       "summary": "Query session metrics observations.",
       "transport": "unary"
@@ -3808,11 +3278,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationFrame",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-STREAM"
-      ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
       "successStatus": 200,
       "summary": "Stream session metrics observations from one origin.",
       "transport": "ndjson"
@@ -3847,11 +3312,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationFrame",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-STREAM"
-      ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
       "successStatus": 200,
       "summary": "Listen for new session spans observations.",
       "transport": "ndjson"
@@ -3867,7 +3327,6 @@
         "invalid_cursor",
         "session_deleted",
         "invalid_query",
-        "telemetry_query_budget_exhausted",
         "account_paused",
         "wrong_workspace_region",
         "observability_unavailable"
@@ -3888,11 +3347,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationPage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-OBSERVATION-QUERY"
-      ],
-      "servedArtifact": "regional-observation-api",
-      "servingArtifact": "regional-observation-api",
       "successStatus": 200,
       "summary": "Query session spans observations.",
       "transport": "unary"
@@ -3927,11 +3381,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationFrame",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-STREAM"
-      ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
       "successStatus": 200,
       "summary": "Stream session spans observations from one origin.",
       "transport": "ndjson"
@@ -3966,11 +3415,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationFrame",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-STREAM"
-      ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
       "successStatus": 200,
       "summary": "Listen for new session telemetry observations.",
       "transport": "ndjson"
@@ -3986,7 +3430,6 @@
         "invalid_cursor",
         "session_deleted",
         "invalid_query",
-        "telemetry_query_budget_exhausted",
         "account_paused",
         "wrong_workspace_region",
         "observability_unavailable"
@@ -4007,11 +3450,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationPage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-OBSERVATION-QUERY"
-      ],
-      "servedArtifact": "regional-observation-api",
-      "servingArtifact": "regional-observation-api",
       "successStatus": 200,
       "summary": "Query session telemetry observations.",
       "transport": "unary"
@@ -4046,11 +3484,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationFrame",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-STREAM"
-      ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
       "successStatus": 200,
       "summary": "Stream session telemetry observations from one origin.",
       "transport": "ndjson"
@@ -4084,11 +3517,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "TraceDetail",
       "safeRetry": true,
-      "scenarios": [
-        "SC-OBSERVATION-QUERY"
-      ],
-      "servedArtifact": "regional-observation-api",
-      "servingArtifact": "regional-observation-api",
       "successStatus": 200,
       "summary": "Read one assembled trace by its W3C identifier.",
       "transport": "unary"
@@ -4123,11 +3551,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationFrame",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-STREAM"
-      ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
       "successStatus": 200,
       "summary": "Listen for new session traces observations.",
       "transport": "ndjson"
@@ -4143,7 +3566,6 @@
         "invalid_cursor",
         "session_deleted",
         "invalid_query",
-        "telemetry_query_budget_exhausted",
         "account_paused",
         "wrong_workspace_region",
         "observability_unavailable"
@@ -4164,11 +3586,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationPage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-OBSERVATION-QUERY"
-      ],
-      "servedArtifact": "regional-observation-api",
-      "servingArtifact": "regional-observation-api",
       "successStatus": 200,
       "summary": "Query session traces observations.",
       "transport": "unary"
@@ -4203,11 +3620,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "ObservationFrame",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-STREAM"
-      ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
       "successStatus": 200,
       "summary": "Stream session traces observations from one origin.",
       "transport": "ndjson"
@@ -4215,7 +3627,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The paged persist operation and commit latch are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -4246,11 +3657,6 @@
       "requiredScope": "files:write",
       "responseSchema": "Operation",
       "safeRetry": false,
-      "scenarios": [
-        "SC-SESSION-ADMIT",
-        "SC-SESSION-TERMINAL"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 202,
       "summary": "Admit the durable persist operation.",
       "transport": "unary"
@@ -4258,7 +3664,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The paged purge operation and commit latch are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -4285,11 +3690,6 @@
       "requiredScope": "sessions:delete",
       "responseSchema": "Operation",
       "safeRetry": false,
-      "scenarios": [
-        "SC-SESSION-ADMIT",
-        "SC-SESSION-TERMINAL"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 202,
       "summary": "Admit the durable purge operation. Purge is irreversible.",
       "transport": "unary"
@@ -4297,7 +3697,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The complete session restore authority and command transaction are not implemented.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -4326,11 +3725,6 @@
       "requiredScope": "sessions:delete",
       "responseSchema": "Operation",
       "safeRetry": false,
-      "scenarios": [
-        "SC-SESSION-ADMIT",
-        "SC-SESSION-TERMINAL"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 202,
       "summary": "Admit the durable restore operation, which is legal only inside the recovery window.",
       "transport": "unary"
@@ -4363,12 +3757,6 @@
       "requiredScope": "sessions:read",
       "responseSchema": "Run",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-ADMIT",
-        "SC-SESSION-TERMINAL"
-      ],
-      "servedArtifact": "regional-session-api",
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "Read one run.",
       "transport": "unary"
@@ -4404,12 +3792,6 @@
       "requiredScope": "sessions:read",
       "responseSchema": "RunPage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-ADMIT",
-        "SC-SESSION-TERMINAL"
-      ],
-      "servedArtifact": "regional-session-api",
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "List the runs of a session.",
       "transport": "unary"
@@ -4417,7 +3799,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The complete session stop authority and command transaction are not implemented.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -4443,11 +3824,6 @@
       "requiredScope": "sessions:write",
       "responseSchema": "Operation",
       "safeRetry": false,
-      "scenarios": [
-        "SC-SESSION-ADMIT",
-        "SC-SESSION-TERMINAL"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 202,
       "summary": "Admit the durable stop operation.",
       "transport": "unary"
@@ -4455,7 +3831,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The durable session export-admission composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -4486,11 +3861,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "Operation",
       "safeRetry": false,
-      "scenarios": [
-        "SC-OBSERVATION-EXPORT",
-        "SC-OBSERVATION-GAP"
-      ],
-      "servingArtifact": "regional-observation-api",
       "successStatus": 202,
       "summary": "Admit the durable session telemetry-export operation.",
       "transport": "unary"
@@ -4528,12 +3898,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "DownloadGrant",
       "safeRetry": false,
-      "scenarios": [
-        "SC-OBSERVATION-EXPORT",
-        "SC-OBSERVATION-GAP"
-      ],
-      "servedArtifact": "regional-observation-api",
-      "servingArtifact": "regional-observation-api",
       "successStatus": 201,
       "summary": "Mint a download grant for a ready session telemetry export.",
       "transport": "unary"
@@ -4567,12 +3931,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "TelemetryExport",
       "safeRetry": true,
-      "scenarios": [
-        "SC-OBSERVATION-EXPORT",
-        "SC-OBSERVATION-GAP"
-      ],
-      "servedArtifact": "regional-observation-api",
-      "servingArtifact": "regional-observation-api",
       "successStatus": 200,
       "summary": "Read one session telemetry export record.",
       "transport": "unary"
@@ -4606,12 +3964,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "TelemetryExport",
       "safeRetry": false,
-      "scenarios": [
-        "SC-OBSERVATION-EXPORT",
-        "SC-OBSERVATION-GAP"
-      ],
-      "servedArtifact": "regional-observation-api",
-      "servingArtifact": "regional-observation-api",
       "successStatus": 200,
       "summary": "Revoke a session telemetry export and its outstanding grants.",
       "transport": "unary"
@@ -4644,12 +3996,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "TelemetryGap",
       "safeRetry": true,
-      "scenarios": [
-        "SC-OBSERVATION-EXPORT",
-        "SC-OBSERVATION-GAP"
-      ],
-      "servedArtifact": "regional-observation-api",
-      "servingArtifact": "regional-observation-api",
       "successStatus": 200,
       "summary": "Read one recorded session telemetry gap.",
       "transport": "unary"
@@ -4684,12 +4030,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "TelemetryGapPage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-OBSERVATION-EXPORT",
-        "SC-OBSERVATION-GAP"
-      ],
-      "servedArtifact": "regional-observation-api",
-      "servingArtifact": "regional-observation-api",
       "successStatus": 200,
       "summary": "Query recorded session telemetry gaps.",
       "transport": "unary"
@@ -4697,7 +4037,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The complete session trash authority and command transaction are not implemented.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -4725,11 +4064,6 @@
       "requiredScope": "sessions:delete",
       "responseSchema": "Operation",
       "safeRetry": false,
-      "scenarios": [
-        "SC-SESSION-ADMIT",
-        "SC-SESSION-TERMINAL"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 202,
       "summary": "Admit the durable trash operation, which starts the recovery window.",
       "transport": "unary"
@@ -4737,7 +4071,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The workspace-discard operation and commit latch are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -4765,11 +4098,6 @@
       "requiredScope": "sessions:write",
       "responseSchema": "Operation",
       "safeRetry": false,
-      "scenarios": [
-        "SC-SESSION-ADMIT",
-        "SC-SESSION-TERMINAL"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 202,
       "summary": "Admit the durable workspace-discard operation.",
       "transport": "unary"
@@ -4777,7 +4105,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "The sparse session head cannot yet produce the complete public collection item.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -4803,11 +4130,6 @@
       "requiredScope": "sessions:read",
       "responseSchema": "SessionListPage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-ADMIT",
-        "SC-SESSION-TERMINAL"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "List sessions in the workspace.",
       "transport": "unary"
@@ -4815,7 +4137,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The durable workspace export-admission composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -4842,11 +4163,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "Operation",
       "safeRetry": false,
-      "scenarios": [
-        "SC-OBSERVATION-EXPORT",
-        "SC-OBSERVATION-GAP"
-      ],
-      "servingArtifact": "regional-observation-api",
       "successStatus": 202,
       "summary": "Admit the durable workspace telemetry-export operation.",
       "transport": "unary"
@@ -4881,12 +4197,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "DownloadGrant",
       "safeRetry": false,
-      "scenarios": [
-        "SC-OBSERVATION-EXPORT",
-        "SC-OBSERVATION-GAP"
-      ],
-      "servedArtifact": "regional-observation-api",
-      "servingArtifact": "regional-observation-api",
       "successStatus": 201,
       "summary": "Mint a download grant for a ready telemetry export.",
       "transport": "unary"
@@ -4917,12 +4227,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "TelemetryExport",
       "safeRetry": true,
-      "scenarios": [
-        "SC-OBSERVATION-EXPORT",
-        "SC-OBSERVATION-GAP"
-      ],
-      "servedArtifact": "regional-observation-api",
-      "servingArtifact": "regional-observation-api",
       "successStatus": 200,
       "summary": "Read one telemetry export record.",
       "transport": "unary"
@@ -4953,12 +4257,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "TelemetryExport",
       "safeRetry": false,
-      "scenarios": [
-        "SC-OBSERVATION-EXPORT",
-        "SC-OBSERVATION-GAP"
-      ],
-      "servedArtifact": "regional-observation-api",
-      "servingArtifact": "regional-observation-api",
       "successStatus": 200,
       "summary": "Revoke a telemetry export and its outstanding grants.",
       "transport": "unary"
@@ -4989,12 +4287,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "TelemetryGap",
       "safeRetry": true,
-      "scenarios": [
-        "SC-OBSERVATION-EXPORT",
-        "SC-OBSERVATION-GAP"
-      ],
-      "servedArtifact": "regional-observation-api",
-      "servingArtifact": "regional-observation-api",
       "successStatus": 200,
       "summary": "Read one recorded telemetry gap.",
       "transport": "unary"
@@ -5025,12 +4317,6 @@
       "requiredScope": "telemetry:read",
       "responseSchema": "TelemetryGapPage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-OBSERVATION-EXPORT",
-        "SC-OBSERVATION-GAP"
-      ],
-      "servedArtifact": "regional-observation-api",
-      "servingArtifact": "regional-observation-api",
       "successStatus": 200,
       "summary": "Query recorded workspace telemetry gaps.",
       "transport": "unary"
@@ -5038,7 +4324,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "The staged-upload authority and durable abort transaction are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -5061,10 +4346,6 @@
       "requiredScope": "resources:write",
       "responseSchema": null,
       "safeRetry": false,
-      "scenarios": [
-        "SC-CONTENT-LIFECYCLE"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 204,
       "summary": "Abort a staged upload.",
       "transport": "unary"
@@ -5072,7 +4353,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The staged-upload authority and durable completion transaction are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -5100,10 +4380,6 @@
       "requiredScope": "resources:write",
       "responseSchema": "Upload",
       "safeRetry": false,
-      "scenarios": [
-        "SC-CONTENT-LIFECYCLE"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "Complete a staged upload.",
       "transport": "unary"
@@ -5111,7 +4387,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The staged-upload authority and multipart presigning composition are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -5135,10 +4410,6 @@
       "requiredScope": "resources:write",
       "responseSchema": "Upload",
       "safeRetry": false,
-      "scenarios": [
-        "SC-CONTENT-LIFECYCLE"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 201,
       "summary": "Stage a large registered-resource value.",
       "transport": "unary"
@@ -5146,7 +4417,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The multipart grant and presigning composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -5173,10 +4443,6 @@
       "requiredScope": "resources:write",
       "responseSchema": "UploadPartGrants",
       "safeRetry": false,
-      "scenarios": [
-        "SC-CONTENT-LIFECYCLE"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "Mint presigned PUT grants for the named parts.",
       "transport": "unary"
@@ -5184,7 +4450,6 @@
     {
       "altPrincipal": "account",
       "bodyClass": "aex_json",
-      "deferredReason": "The store lacks the exact multi-category, arbitrary-range query planner and continuation contract.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -5210,10 +4475,6 @@
       "requiredScope": "billing:read",
       "responseSchema": "UsagePage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-USAGE-SETTLE"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "Query rated usage for this workspace.",
       "transport": "unary"
@@ -5248,11 +4509,6 @@
       "requiredScope": "workspaces:write",
       "responseSchema": "Workspace",
       "safeRetry": false,
-      "scenarios": [
-        "SC-CONTROL-WORKSPACE"
-      ],
-      "servedArtifact": "central-control-api",
-      "servingArtifact": "central-control-api",
       "successStatus": 201,
       "summary": "Create a region-pinned workspace.",
       "transport": "unary"
@@ -5260,7 +4516,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "The signed and projected facts do not supply the complete account operational state.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -5281,10 +4536,6 @@
       "requiredScope": "workspace:read",
       "responseSchema": "Workspace",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-ADMIT"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "Read the workspace this credential is pinned to.",
       "transport": "unary"
@@ -5321,11 +4572,6 @@
       "requiredScope": "workspaces:delete",
       "responseSchema": "Operation",
       "safeRetry": false,
-      "scenarios": [
-        "SC-CONTROL-WORKSPACE"
-      ],
-      "servedArtifact": "central-control-api",
-      "servingArtifact": "central-control-api",
       "successStatus": 202,
       "summary": "Admit the global workspace-deletion operation.",
       "transport": "unary"
@@ -5356,11 +4602,6 @@
       "requiredScope": "workspaces:read",
       "responseSchema": "Workspace",
       "safeRetry": true,
-      "scenarios": [
-        "SC-CONTROL-WORKSPACE"
-      ],
-      "servedArtifact": "central-control-api",
-      "servingArtifact": "central-control-api",
       "successStatus": 200,
       "summary": "Read one workspace.",
       "transport": "unary"
@@ -5368,7 +4609,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "No authoritative regional capacity default and override producer exists yet.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -5391,10 +4631,6 @@
       "requiredScope": "workspace:read",
       "responseSchema": "EffectiveWorkspaceLimit",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-ADMIT"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "Read one effective workspace safety limit.",
       "transport": "unary"
@@ -5402,7 +4638,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "No authoritative regional capacity default and override producer exists yet.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -5426,10 +4661,6 @@
       "requiredScope": "workspace:read",
       "responseSchema": "EffectiveWorkspaceLimitPage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-SESSION-ADMIT"
-      ],
-      "servingArtifact": "regional-session-api",
       "successStatus": 200,
       "summary": "List the effective workspace safety limits.",
       "transport": "unary"
@@ -5460,15 +4691,9 @@
       "requiredScope": "workspaces:read",
       "responseSchema": "WorkspacePage",
       "safeRetry": true,
-      "scenarios": [
-        "SC-CONTROL-WORKSPACE"
-      ],
-      "servedArtifact": "central-control-api",
-      "servingArtifact": "central-control-api",
       "successStatus": 200,
       "summary": "List workspaces the caller can reach.",
       "transport": "unary"
     }
-  ],
-  "schema": "aex.route-registry.v1"
+  ]
 }

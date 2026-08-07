@@ -845,40 +845,10 @@ pub enum MetadataValue {
     Text(String),
     /// A boolean.
     Bool(bool),
-    /// A signed integer, decoded before the floating arm so its exact JSON
-    /// value is not rounded through IEEE-754.
-    Integer(i64),
-    /// An unsigned integer above `i64::MAX`, kept exact for the same reason.
-    UnsignedInteger(u64),
-    /// A non-integral number. This is the one place a caller-supplied float is
-    /// accepted.
+    /// A number. This is the one place a caller-supplied float is accepted.
     Number(f64),
     /// An explicit null.
     Null,
-}
-
-#[cfg(test)]
-mod metadata_value_tests {
-    use super::MetadataValue;
-
-    #[test]
-    fn integers_decode_without_an_ieee_754_round_trip() {
-        let signed: MetadataValue =
-            serde_json::from_str("9007199254740993").expect("signed integer metadata");
-        assert_eq!(signed, MetadataValue::Integer(9_007_199_254_740_993));
-        assert_eq!(
-            serde_json::to_string(&signed).expect("encode"),
-            "9007199254740993"
-        );
-
-        let unsigned: MetadataValue =
-            serde_json::from_str("18446744073709551615").expect("unsigned integer metadata");
-        assert_eq!(unsigned, MetadataValue::UnsignedInteger(u64::MAX));
-        assert_eq!(
-            serde_json::to_string(&unsigned).expect("encode"),
-            "18446744073709551615"
-        );
-    }
 }
 
 // ---------------------------------------------------------------------------

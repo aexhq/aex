@@ -83,10 +83,6 @@ pub fn emit_all(ir: &ContractIr) -> GeneratedTree {
         crate::emit_client::rust_client(ir, &digest),
     );
     tree.insert(
-        "packages/wire/src/generated/models.ts",
-        crate::typescript::typescript_wire(ir, &digest),
-    );
-    tree.insert(
         "conformance/routes/bindings.jsonl",
         route_binding_corpus(ir),
     );
@@ -285,8 +281,7 @@ fn registry_document(ir: &ContractIr, name: &str) -> Value {
             })).collect::<Vec<_>>(),
         }),
         "routes" => json!({
-            "schema": "aex.route-registry.v1",
-            "routes": ir.operations().into_iter().map(route_registry_document).collect::<Vec<_>>(),
+            "routes": ir.operations().into_iter().map(route_document).collect::<Vec<_>>(),
         }),
         "evolution" => json!({
             "openEnums": ir.evolution.open_enums,
@@ -298,38 +293,6 @@ fn registry_document(ir: &ContractIr, name: &str) -> Value {
         }),
         other => json!({ "error": format!("unknown registry `{other}`") }),
     }
-}
-
-/// One operation's release-selection registry row.
-///
-/// Scenario ownership is intentionally added here instead of to
-/// [`route_document`], which is also used by the public contract bundle.
-fn route_registry_document(operation: &OperationIr) -> Value {
-    let mut document = route_document(operation);
-    document
-        .as_object_mut()
-        .expect("route documents are objects")
-        .insert("scenarios".to_owned(), json!(operation.scenarios));
-    document
-        .as_object_mut()
-        .expect("route documents are objects")
-        .insert(
-            "servingArtifact".to_owned(),
-            json!(operation.serving_artifact),
-        );
-    if let Some(served_artifact) = &operation.served_artifact {
-        document
-            .as_object_mut()
-            .expect("route documents are objects")
-            .insert("servedArtifact".to_owned(), json!(served_artifact));
-    }
-    if let Some(reason) = &operation.deferred_reason {
-        document
-            .as_object_mut()
-            .expect("route documents are objects")
-            .insert("deferredReason".to_owned(), json!(reason));
-    }
-    document
 }
 
 /// One operation's registry row.
@@ -986,35 +949,6 @@ fn rust_limits(ir: &ContractIr, digest: &str) -> String {
     source.line("        }");
     source.line("    }");
     source.blank();
-    source.doc(
-        4,
-        "The complete ordered dimension vocabulary for a map limit.",
-    );
-    source.line("    #[must_use]");
-    source.line("    pub const fn dimensions(self) -> &'static [&'static str] {");
-    source.line("        match self {");
-    for row in &ir.limits {
-        let dimensions = row
-            .dimensions
-            .iter()
-            .map(|dimension| quote(dimension))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let value = format!("&[{dimensions}]");
-        let line_width = 12 + "Self::".len() + row.variant.len() + " => ".len() + value.len() + 1;
-        if line_width <= 100 {
-            source.arm(12, &row.variant, &value);
-        } else {
-            source.line(&format!("            Self::{} => &[", row.variant));
-            for dimension in &row.dimensions {
-                source.line(&format!("                {},", quote(dimension)));
-            }
-            source.line("            ],");
-        }
-    }
-    source.line("        }");
-    source.line("    }");
-    source.blank();
     source.doc(4, "Resolves a wire spelling.");
     source.line("    #[must_use]");
     source.line("    pub fn parse(text: &str) -> Option<Self> {");
@@ -1022,37 +956,4 @@ fn rust_limits(ir: &ContractIr, digest: &str) -> String {
     source.line("    }");
     source.line("}");
     source.finish()
-}
-
-#[cfg(test)]
-mod scenario_identity_tests {
-    use super::{bundle_document, registry_document};
-    use crate::{emit, jcs, load};
-
-    #[test]
-    fn delivery_selection_changes_no_wire_byte_or_contract_digest() {
-        let root = load::repo_root();
-        let original = load::load(&root).expect("load contract");
-        let mut changed = original.clone();
-        changed.planes[0].operations[0]
-            .scenarios
-            .push("SC-SELECTION-PROBE".to_owned());
-        changed.planes[0].operations[0].serving_artifact = "selection-probe".to_owned();
-        changed.planes[0].operations[0].served_artifact = Some("selection-probe".to_owned());
-
-        let original_bundle = bundle_document(&original);
-        let changed_bundle = bundle_document(&changed);
-        assert_eq!(
-            jcs::to_pretty(&original_bundle),
-            jcs::to_pretty(&changed_bundle)
-        );
-        assert_eq!(
-            emit::contract_digest(&original),
-            emit::contract_digest(&changed)
-        );
-        assert_ne!(
-            registry_document(&original, "routes"),
-            registry_document(&changed, "routes")
-        );
-    }
 }

@@ -19,10 +19,9 @@
 //!
 //! - [`FenceGuard`] is required by every store write. Holding one is the proof that the
 //!   caller claimed the agent and has not been fenced out.
-//! - [`DispatchTicket`] is minted only from claimed [`SessionAuthority`], a `FenceGuard` and
-//!   the effect it belongs to, and [`ProviderPort::dispatch`] will not accept anything else.
-//!   A caller that tries to send a byte before the guarded `dispatch_started` transaction
-//!   does not compile.
+//! - [`DispatchTicket`] is minted only from a `FenceGuard` plus the effect it belongs to,
+//!   and [`ProviderPort::dispatch`] will not accept anything else. A caller that tries to
+//!   send a byte before the durable `dispatch_started` write does not compile.
 
 pub mod catalog;
 pub mod hands;
@@ -44,18 +43,16 @@ pub use proof::{
     TicketMismatch,
 };
 pub use provider::{
-    ProviderDispatchError, ProviderFailureClass, ProviderFailureKind, ProviderOutcome,
-    ProviderPort, RedactedDetail, UnknownResolution,
+    ProviderDispatchError, ProviderFailureClass, ProviderOutcome, ProviderPort, RedactedDetail,
+    UnknownResolution,
 };
 pub use store::{
     AgentHead, Claim, ClaimError, CommitError, CommitReceipt, ConditionFailure, DecisionContext,
-    DueRowIsolation, DueRowIsolationReason, DueScanCursor, DueScanPage, DurableWake, EffectStore,
-    FoldSnapshotStore, JournalCursor, JournalPage, JournalStore, LeaseStore,
-    MAX_DUE_ROW_ISOLATIONS, MalformedWakeDelivery, MalformedWakeReason, ReadBudget,
-    ReleaseDisposition, SessionAuthority, SnapshotDiagnostic, SnapshotPublishOutcome, StoreError,
-    WakeBatch, WakeDelivery, WakeOrigin, WakeQueue, WakeState,
+    DueScanCursor, DueScanPage, DurableWake, EffectStore, JournalPage, JournalStore, LeaseStore,
+    ReadBudget, ReleaseDisposition, SessionAuthority, StoreError, WakeDelivery, WakeOrigin,
+    WakeQueue, WakeState,
 };
 pub use tool::{
-    ControlStateView, DetachedStatus, PreparedToolCall, ToolAdvertisement, ToolDispatchError,
-    ToolOutcome, ToolPort, ToolResultBody, ToolRoute, ToolRoutingError,
+    ControlStateView, DetachedStatus, PreparedToolCall, ToolDispatchError, ToolOutcome, ToolPort,
+    ToolResultBody, ToolRoute, ToolRoutingError,
 };

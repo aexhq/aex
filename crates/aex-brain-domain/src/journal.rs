@@ -10,15 +10,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::budget::{BudgetDelta, BudgetGrant};
 use crate::child::{ChildOutcome, ChildState, QueuedReason};
-use crate::effect::{DetachedOperationRef, EffectClass, EffectKind, SettledOutcome};
+use crate::effect::{EffectClass, EffectKind, SettledOutcome};
 use crate::ids::{
-    AgentId, ContentHash, EffectId, JoinId, JournalSeq, Timestamp, ToolCallId, WaitId,
+    AgentId, ContentHash, EffectId, JoinId, JournalSeq, ModelSlug, Timestamp, ToolCallId, WaitId,
 };
 use crate::wire_pending::{
-    CanonicalBlock, CompleteAssistantMessage, ContentBlockRef, ContentRef, JoinMode,
-    JournalEnvelope, NormalizedUsage, ResolvedAgentConfig, ToolResultPart,
+    CanonicalBlock, CompleteProof, ContentBlockRef, ContentRef, JoinMode, JournalEnvelope,
+    NormalizedUsage, ProviderId, ResolvedAgentConfig, StopReason,
 };
-use aex_model_catalog::canonical::ProviderReceipt;
 
 /// The inline body boundary.
 ///
@@ -81,7 +80,7 @@ pub enum MessageOrigin {
 
 /// Why an agent is parked.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "park", rename_all = "snake_case", deny_unknown_fields)]
+#[serde(tag = "park", rename_all = "snake_case")]
 pub enum ParkReason {
     /// Waiting for the next user message.
     AwaitingUserMessage,
@@ -89,8 +88,6 @@ pub enum ParkReason {
     AwaitingToolResult {
         /// The call the agent is waiting on.
         call: ToolCallId,
-        /// The executor-bound operation being polled.
-        operation: DetachedOperationRef,
     },
     /// Waiting for a Hands operation.
     AwaitingHandsOperation {
@@ -188,21 +185,27 @@ pub enum JournalRecord {
     },
     /// A **complete** assistant message. Partial deltas can never reach here.
     AssistantMessage {
-        /// The whole provider/model/catalog-bound message and completeness proof.
-        message: CompleteAssistantMessage,
+        /// The whole block set.
+        blocks: Vec<CanonicalBlock>,
         /// Provider-reported usage.
         usage: NormalizedUsage,
-        /// Dispatch identity, byte counts, attempts and binding identity.
-        receipt: Box<ProviderReceipt>,
+        /// Why generation stopped.
+        stop_reason: StopReason,
+        /// The provider that actually served it.
+        provider: ProviderId,
+        /// The model that actually served it.
+        model: ModelSlug,
         /// The effect that produced it.
         effect: EffectId,
+        /// Proof the message is whole.
+        complete: CompleteProof,
     },
     /// The result of one tool call.
     ToolResult {
         /// Which call this answers.
         call: ToolCallId,
-        /// Result content in the canonical non-recursive tool-result vocabulary.
-        content: Vec<ToolResultPart>,
+        /// Result blocks.
+        blocks: Vec<CanonicalBlock>,
         /// Whether the tool reported failure.
         is_error: bool,
         /// Which executor ran it.

@@ -13,11 +13,11 @@
 //! that the one-append case produces exactly [`DECISION_ORDER`]. Sharing the item shapes
 //! matters; sharing one function that cannot express the decision does not.
 
-use aex_brain_application::ports::{DecisionContext, SessionAuthority};
+use aex_brain_application::ports::DecisionContext;
 use aex_brain_domain::budget::{BudgetDelta, Dimension};
 use aex_brain_domain::child::{ChildOutcome, ChildState};
 use aex_brain_domain::commit::{ChildWrite, DecisionCommit, EffectWrite, JoinWrite, WakeCreate};
-use aex_brain_domain::ids::{AgentKey, CancelEpoch};
+use aex_brain_domain::ids::AgentKey;
 use aex_session_dynamodb::attr::{ItemBuilder, n, s, stamp};
 use aex_session_dynamodb::error::StoreError;
 use aex_session_dynamodb::plan::{IMMUTABLE, Participant, TransactionPlan, key};
@@ -59,13 +59,6 @@ pub mod participant {
     pub const MAILBOX: Participant = Participant::new("brain.mailbox");
     /// One paged fanout intent.
     pub const FANOUT_INTENT: Participant = Participant::new("brain.fanout_intent");
-    /// The immutable journal row whose exact hash a snapshot absorbed.
-    pub const FOLD_SNAPSHOT_JOURNAL_POINT: Participant =
-        Participant::new("brain.fold_snapshot.journal_point");
-    /// The agent control row proving the historical point is not ahead of authority.
-    pub const FOLD_SNAPSHOT_CONTROL: Participant = Participant::new("brain.fold_snapshot.control");
-    /// The monotonically selected fold-snapshot pointer.
-    pub const FOLD_SNAPSHOT_POINTER: Participant = Participant::new("brain.fold_snapshot.pointer");
 }
 
 /// The only physical tables Brain's durable store addresses.
@@ -101,34 +94,6 @@ pub enum PlanError {
 /// continuation and leaves band 0 for admission.
 pub const CONTINUATION_PRIORITY: u8 = 1;
 
-/// Builds the canonical session-head condition used by both decisions and pre-dispatch.
-///
-/// The typed claim facts remain the authority: callers supply the cancellation epoch from
-/// their fence guard and the tenant/deletion facts returned by the session-head read.
-/// Keeping the expression here prevents ticket minting and decision commits from growing
-/// subtly different lifecycle guards.
-pub(crate) fn session_head_guard(
-    table: &str,
-    session: aex_wire::ids::SessionId,
-    cancel_epoch: CancelEpoch,
-    authority: &SessionAuthority,
-) -> aws_sdk_dynamodb::types::builders::ConditionCheckBuilder {
-    let head_key = shared::head(session);
-    aws_sdk_dynamodb::types::ConditionCheck::builder()
-        .table_name(table)
-        .set_key(Some(key(&head_key.pk, &head_key.sk)))
-        .condition_expression(
-            "cancelEpoch = :cancelEpoch AND deletionEpoch = :deletionEpoch \
-             AND workspaceId = :workspaceId AND organizationId = :organizationId \
-             AND lifecycle = :active",
-        )
-        .expression_attribute_values(":cancelEpoch", n(cancel_epoch.0))
-        .expression_attribute_values(":deletionEpoch", n(authority.deletion_epoch))
-        .expression_attribute_values(":workspaceId", s(authority.workspace.to_string()))
-        .expression_attribute_values(":organizationId", s(authority.organization.to_string()))
-        .expression_attribute_values(":active", s("active"))
-}
-
 /// Compiles one decision into one transaction plan.
 ///
 /// # Errors
@@ -159,14 +124,25 @@ pub fn compile(
 
     // 1. The session head guard. It reads, never writes: a decision must not serialize
     //    behind every other decision in the session.
+    let head_key = shared::head(session);
     plan.condition_check(
         Participant::SESSION_HEAD_GUARD,
-        session_head_guard(
-            table,
-            session,
-            commit.guard.cancel_epoch,
-            &context.authority,
-        ),
+        aws_sdk_dynamodb::types::ConditionCheck::builder()
+            .table_name(table)
+            .set_key(Some(key(&head_key.pk, &head_key.sk)))
+            .condition_expression(
+                "cancelEpoch = :cancelEpoch AND deletionEpoch = :deletionEpoch \
+                 AND workspaceId = :workspaceId AND organizationId = :organizationId \
+                 AND lifecycle = :active",
+            )
+            .expression_attribute_values(":cancelEpoch", n(commit.guard.cancel_epoch.0))
+            .expression_attribute_values(":deletionEpoch", n(context.authority.deletion_epoch))
+            .expression_attribute_values(":workspaceId", s(context.authority.workspace.to_string()))
+            .expression_attribute_values(
+                ":organizationId",
+                s(context.authority.organization.to_string()),
+            )
+            .expression_attribute_values(":active", s("active")),
     )
     .map_err(PlanError::Store)?;
 
@@ -197,12 +173,6 @@ pub fn compile(
         plan.condition_check(Participant::AGENT_CONTROL, guard)
             .map_err(PlanError::Store)?;
     } else {
-        let next_tail_hash = commit
-            .appends
-            .last()
-            .map(aex_brain_domain::journal::JournalRecord::content_hash)
-            .transpose()
-            .map_err(aex_brain_domain::commit::EnvelopeViolation::from)?;
         let mut control = aws_sdk_dynamodb::types::Update::builder()
             .table_name(table)
             .set_key(Some(key(&control_key.pk, &control_key.sk)))
@@ -228,19 +198,12 @@ pub fn compile(
             .expression_attribute_values(":nextTail", n(commit.control.next_tail.get()))
             .expression_attribute_values(":status", s(commit.control.phase.clone()))
             .expression_attribute_values(":lease", stamp(lease))
-            .expression_attribute_values(":now", stamp(now));
+            .expression_attribute_values(":now", stamp(now))
+            .expression_attribute_values(":hasJournal", aex_session_dynamodb::attr::boolean(true));
         let mut set_clause = "revision = :nextRevision, journalTail = :nextTail, \
-                              #status = :status, leaseExpiresAt = :lease, updatedAt = :now"
+                              #status = :status, leaseExpiresAt = :lease, updatedAt = :now, \
+                              hasJournal = :hasJournal"
             .to_owned();
-        if let Some(hash) = next_tail_hash {
-            set_clause.push_str(", journalTailHash = :nextTailHash, hasJournal = :hasJournal");
-            control = control
-                .expression_attribute_values(":nextTailHash", s(hash.to_hex()))
-                .expression_attribute_values(
-                    ":hasJournal",
-                    aex_session_dynamodb::attr::boolean(true),
-                );
-        }
         if let Some(finish) = commit.control.finish {
             set_clause.push_str(", finishReason = :finish");
             control = control.expression_attribute_values(":finish", s(finish_name(finish)));

@@ -2,7 +2,7 @@
   "schema": "aex.regional-table.v1",
   "table": "regional-authz-projection",
   "owner": "regional-stores",
-  "purpose": "Read-only regional projection of workspace placement, descriptive profiles, effective limits, API key revocation and the signed feed frontier. Central control owns placement, profile, revocation and frontier rows; regional capacity alone owns effective-limit rows. Partition-key-scoped IAM keeps those write capabilities disjoint, while every serving regional role holds GetItem and Query only.",
+  "purpose": "Read-only regional projection of workspace placement, descriptive profiles, effective limits, API key revocation and the signed feed frontier. Written only by central-control-worker; every regional role holds GetItem and Query and nothing else. The item shapes are assumed by the regional stream and must be confirmed by the central stream (G-3).",
   "billingMode": "PAY_PER_REQUEST",
   "deletionProtection": true,
   "pointInTimeRecovery": { "enabled": true, "retentionDays": 35 },
@@ -29,34 +29,12 @@
     "appliesTo": [],
     "rationale": "A revocation row that silently disappeared would fail open, which is the one direction this table must never fail."
   },
-  "itemTypes": ["workspace_placement", "workspace_profile", "workspace_limit", "workspace_limit_bundle_head", "workspace_limit_bundle", "key_revocation", "feed_frontier"],
+  "itemTypes": ["workspace_placement", "workspace_profile", "workspace_limit", "key_revocation", "feed_frontier"],
   "iam": [
     {
       "role": "central-control-worker",
-      "actions": ["dynamodb:GetItem"],
+      "actions": ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:TransactWriteItems"],
       "resources": ["table"]
-    },
-    {
-      "role": "central-control-worker",
-      "actions": ["dynamodb:PutItem"],
-      "resources": ["table"],
-      "itemTypes": ["workspace_placement", "workspace_profile", "key_revocation", "feed_frontier"],
-      "condition": {
-        "operator": "ForAllValues:StringLike",
-        "key": "dynamodb:LeadingKeys",
-        "values": ["WS#*", "KEY#*", "FEED"]
-      }
-    },
-    {
-      "role": "regional-capacity-controller",
-      "actions": ["dynamodb:TransactWriteItems"],
-      "resources": ["table"],
-      "itemTypes": ["workspace_limit", "workspace_limit_bundle_head", "workspace_limit_bundle"],
-      "condition": {
-        "operator": "ForAllValues:StringLike",
-        "key": "dynamodb:LeadingKeys",
-        "values": ["LIMIT#*"]
-      }
     },
     {
       "role": "regional-session-api",

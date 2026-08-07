@@ -360,7 +360,6 @@ impl PageBudget {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "session-authority")]
     use std::collections::HashMap;
 
     use aex_wire::ids::{OrganizationId, PrefixedId, Uuid7, WorkspaceId};
@@ -415,7 +414,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "session-authority")]
     fn an_index_continuation_requires_and_preserves_all_four_key_attributes() {
         let last = HashMap::from([
             (crate::attr::PK.to_owned(), crate::attr::s("OP#one")),

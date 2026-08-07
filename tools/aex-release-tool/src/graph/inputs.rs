@@ -92,18 +92,6 @@ pub struct FargateShape {
     pub port: u16,
 }
 
-/// One AWS Lambda `MicroVM` image variant.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct MicrovmShape {
-    /// Stable variant token used by the image builder and plane binding.
-    pub variant: String,
-    /// Minimum guest memory accepted by this image.
-    pub minimum_memory_mib: u32,
-    /// Whether the optional browser package layer is present.
-    pub browser: bool,
-}
-
 /// One deployable's release registration.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -160,9 +148,6 @@ pub struct Unit {
     /// Fargate task shape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fargate: Option<FargateShape>,
-    /// Lambda `MicroVM` image shape.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub microvm: Option<MicrovmShape>,
 }
 
 /// `release/units.toml`.
@@ -201,21 +186,6 @@ pub struct Scenario {
     pub owner: String,
     /// Nodes this scenario exercises without importing them.
     pub observes: Vec<String>,
-    /// Workspace package that contains the runnable scenario target. This is a
-    /// namespaced graph node such as `cargo:aex-live-demo-api` or
-    /// `npm:@aexhq/user-tests`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub package: Option<String>,
-    /// Exact test target declared by the package's `aex.targets` metadata.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub target: Option<String>,
-    /// Why this scenario has no executable target yet.
-    ///
-    /// A deferral is architecture debt, never evidence. It is mutually
-    /// exclusive with `package`/`target`, is omitted from runnable matrices,
-    /// and remains visible in the graph summary.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub deferred: Option<String>,
     /// Whether this scenario may provision in `prd`, and under which rule.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prd: Option<PrdProvisioning>,
@@ -533,11 +503,12 @@ fn parse_npm(root: &Path, violations: &mut Vec<Violation>) -> Result<Vec<NpmPack
             expand_workspace_glob(root, glob, &mut dirs);
         }
     }
-    // Extra npm inventory comes from `aex-workspace-check` rather than a
-    // second list. The Stripe edges are also literal root workspaces so Bun's
-    // frozen install and this graph read the same manifests; the set de-dupes
-    // their two discovery paths. The path-referenced lint plugin exists only
-    // in the explicit set.
+    // Three npm packages no `workspaces` glob reaches: the lint plugin, which is
+    // referenced by path, and the two Stripe edges, which live under `services/`
+    // beside Cargo members. The list is `aex-workspace-check`'s, not a second
+    // copy: if the two authorities read different package sets they derive
+    // different live targets from the same tree, which is precisely what
+    // `live-target-disagreement` exists to catch.
     for explicit in aex_workspace_check::collect::NPM_EXPLICIT {
         if root.join(explicit).join("package.json").is_file() {
             dirs.insert((*explicit).to_owned());

@@ -95,18 +95,18 @@ mod tests {
         let limits = EffectiveLimits::new();
         assert!(limits.is_empty());
         assert_eq!(
-            limits.require(LimitId::SessionMaterializedAgents),
+            limits.require(LimitId::SessionSubagentConcurrency),
             Err(LimitUnresolved {
-                limit: LimitId::SessionMaterializedAgents
+                limit: LimitId::SessionSubagentConcurrency
             })
         );
 
-        let resolved: EffectiveLimits = [(LimitId::SessionMaterializedAgents, 256)]
+        let resolved: EffectiveLimits = [(LimitId::SessionSubagentConcurrency, 256)]
             .into_iter()
             .collect();
         assert_eq!(resolved.len(), 1);
         assert_eq!(
-            resolved.require(LimitId::SessionMaterializedAgents),
+            resolved.require(LimitId::SessionSubagentConcurrency),
             Ok(256)
         );
     }

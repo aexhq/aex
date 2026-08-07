@@ -46,11 +46,10 @@ impl DeploymentPlane {
 
 /// Which central deployable a composition belongs to.
 ///
-/// [`CentralServiceId::groups`] is the actual mounted group map. Planned
-/// ownership remains in the generated route descriptor; an authored route may
-/// therefore have a planned owner while deliberately belonging to no mounted
-/// group. The generated delivery registry is the actual-mount authority and
-/// the tests below prove this runtime map agrees with it exactly.
+/// [`CentralServiceId::groups`] is the **one** owner map from a central route
+/// group to the binary that serves it. It is a partition, which
+/// `every_central_route_has_exactly_one_owner` asserts, so a route that is
+/// authored and never assigned is a red suite rather than a runtime `404`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CentralServiceId {
     /// `central-identity-api`: the two public device-flow routes.
@@ -59,7 +58,7 @@ pub enum CentralServiceId {
     Authz,
     /// `central-control-api`: organizations, workspaces, keys and operations.
     ControlApi,
-    /// `finance-api`: billing only.
+    /// `finance-api`: billing and the account read.
     FinanceApi,
     /// `finance-ingest`: queue-driven, no public route.
     FinanceIngest,
@@ -110,7 +109,7 @@ impl CentralServiceId {
                 RouteGroup::Organizations,
                 RouteGroup::Workspaces,
             ],
-            Self::FinanceApi => &[RouteGroup::Billing],
+            Self::FinanceApi => &[RouteGroup::Billing, RouteGroup::Identity],
         }
     }
 
@@ -240,11 +239,10 @@ impl HttpConfig {
 mod tests {
     use super::{CentralServiceId, ConfigError, DeploymentPlane, HttpConfig, central_groups};
     use aex_wire::routes::{Plane, ROUTES, RouteId};
-    use aex_wire::server::RouteGroup;
     use std::collections::BTreeSet;
 
     #[test]
-    fn every_actually_served_central_route_has_exactly_one_runtime_owner() {
+    fn every_central_route_has_exactly_one_owner() {
         let mut owned: Vec<RouteId> = CentralServiceId::ALL
             .iter()
             .flat_map(|service| service.routes())
@@ -259,50 +257,25 @@ mod tests {
             .filter(|route| route.plane == Plane::Central)
             .map(|route| route.id)
             .collect();
-        let registry: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../api/generated/registries/routes.json"
-        ))
-        .expect("generated route registry");
-        let actually_served: BTreeSet<RouteId> = registry["routes"]
-            .as_array()
-            .expect("route rows")
-            .iter()
-            .filter(|route| route["plane"] == "central" && route.get("servedArtifact").is_some())
-            .map(|route| {
-                RouteId::parse(route["operationId"].as_str().expect("operation id"))
-                    .expect("generated operation id")
-            })
-            .collect();
         assert_eq!(
             owned.into_iter().collect::<BTreeSet<_>>(),
-            actually_served,
-            "runtime ownership must exactly equal generated actual mounts"
+            central,
+            "the owner map is a partition of the central route table"
         );
         assert_eq!(central.len(), 27);
-        assert_eq!(actually_served.len(), 26);
-        assert!(central.contains(&RouteId::AccountGet));
-        assert!(!actually_served.contains(&RouteId::AccountGet));
-        assert_eq!(
-            aex_wire::routes::route(RouteId::AccountGet).serving_artifact,
-            "central-identity-api",
-            "account retains its planned owner without being mounted"
-        );
     }
 
     #[test]
-    fn the_mounted_group_list_excludes_the_unserved_identity_fragment() {
+    fn the_group_list_is_exactly_the_central_half_of_the_generated_projection() {
         let assigned: BTreeSet<_> = CentralServiceId::ALL
             .iter()
             .flat_map(|service| service.groups().iter().copied())
             .collect();
         assert_eq!(
             assigned,
-            central_groups()
-                .into_iter()
-                .filter(|group| *group != RouteGroup::Identity)
-                .collect::<BTreeSet<_>>()
+            central_groups().into_iter().collect::<BTreeSet<_>>()
         );
-        assert_eq!(assigned.len(), 7);
+        assert_eq!(assigned.len(), 8);
     }
 
     #[test]

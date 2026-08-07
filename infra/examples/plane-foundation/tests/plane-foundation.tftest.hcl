@@ -43,17 +43,23 @@ variables {
     "aex/regional-stream" = { untagged_expire_days = 14 }
   }
 
-  github_role_name         = "aex-dev-release-deploy"
   github_repository        = "example-owner/example-repo"
   github_oidc_provider_arn = "arn:aws:iam::000000000000:oidc-provider/token.actions.githubusercontent.com"
   github_allowed_refs      = ["refs/heads/main"]
   github_allowed_workflows = [".github/workflows/release.yml"]
 
-  profile_statements = {
-    publish  = [{ sid = "Publish", actions = ["s3:PutObject"], resources = ["arn:aws:s3:::aex-infra-artifacts-dev-0a1b2c3d/*"] }]
-    plan     = [{ sid = "Plan", actions = ["s3:GetObject"], resources = ["arn:aws:s3:::aex-tfstate-dev-0a1b2c3d/*"] }]
-    deploy   = [{ sid = "Deploy", actions = ["lambda:UpdateFunctionCode"], resources = ["arn:aws:lambda:eu-west-1:000000000000:function:aex-dev-regional-session-api"] }]
-    readonly = [{ sid = "Read", actions = ["s3:GetObject"], resources = ["arn:aws:s3:::aex-infra-artifacts-dev-0a1b2c3d/*"] }]
+  permission_profiles = {
+    publish  = ["s3:PutObject", "ecr:PutImage"]
+    plan     = ["s3:GetObject"]
+    deploy   = ["lambda:UpdateFunctionCode", "lambda:PublishVersion", "ecs:UpdateService"]
+    readonly = ["s3:GetObject"]
+  }
+
+  profile_resources = {
+    publish  = ["arn:aws:s3:::aex-infra-artifacts-dev-0a1b2c3d/*"]
+    plan     = ["arn:aws:s3:::aex-tfstate-dev-0a1b2c3d/*"]
+    deploy   = ["arn:aws:lambda:eu-west-1:000000000000:function:aex-dev-regional-session-api"]
+    readonly = ["arn:aws:s3:::aex-infra-artifacts-dev-0a1b2c3d/*"]
   }
 
   alarm_specs = [
@@ -102,8 +108,8 @@ run "the_deploy_role_carries_no_publish_action" {
 
   assert {
     condition = length(setintersection(
-      toset(flatten([for statement in var.profile_statements["publish"] : statement.actions])),
-      toset(flatten([for statement in var.profile_statements["deploy"] : statement.actions]))
+      toset(var.permission_profiles["publish"]),
+      toset(var.permission_profiles["deploy"])
     )) == 0
     error_message = "The publish and deploy profiles must stay disjoint."
   }

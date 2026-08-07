@@ -9,9 +9,8 @@
 //! redelivers rather than loses.
 
 use aex_brain_application::ports::{
-    BoxFuture, DueRowIsolation, DueRowIsolationReason, DueScanCursor, DueScanPage, DurableWake,
-    MAX_DUE_ROW_ISOLATIONS, MalformedWakeDelivery, MalformedWakeReason, StoreError, WakeBatch,
-    WakeDelivery, WakeOrigin, WakeQueue, WakeState,
+    BoxFuture, DueScanCursor, DueScanPage, DurableWake, StoreError, WakeDelivery, WakeOrigin,
+    WakeQueue, WakeState,
 };
 use aex_brain_domain::ids::{AgentId, AgentKey, SessionId, Timestamp, WakeId, WorkShard};
 use aex_brain_domain::journal::ParkReason;
@@ -76,7 +75,7 @@ impl WakeQueue for SqsWakeQueue {
         &self,
         max: usize,
         wait: core::time::Duration,
-    ) -> BoxFuture<'_, Result<WakeBatch, StoreError>> {
+    ) -> BoxFuture<'_, Result<Vec<WakeDelivery>, StoreError>> {
         Box::pin(async move {
             let output = self
                 .client
@@ -88,53 +87,12 @@ impl WakeQueue for SqsWakeQueue {
                 .send()
                 .await
                 .map_err(|error| sqs_error("receive", &error))?;
-            Ok(decode_messages(output.messages.unwrap_or_default()))
-        })
-    }
-
-    fn release_malformed(
-        &self,
-        delivery: MalformedWakeDelivery,
-        after: core::time::Duration,
-    ) -> BoxFuture<'_, Result<(), StoreError>> {
-        Box::pin(async move {
-            let receipt = delivery.receipt.ok_or_else(|| {
-                undecodable(
-                    "wake delivery",
-                    "a malformed message carried no receipt handle and cannot be released",
-                )
-            })?;
-            self.client
-                .change_message_visibility()
-                .queue_url(&self.queue_url)
-                .receipt_handle(receipt)
-                .visibility_timeout(i32::try_from(after.as_secs()).unwrap_or(0))
-                .send()
-                .await
-                .map_err(|error| sqs_error("release_malformed", &error))?;
-            Ok(())
-        })
-    }
-
-    fn ack_malformed(
-        &self,
-        delivery: MalformedWakeDelivery,
-    ) -> BoxFuture<'_, Result<(), StoreError>> {
-        Box::pin(async move {
-            let receipt = delivery.receipt.ok_or_else(|| {
-                undecodable(
-                    "wake delivery",
-                    "a malformed message carried no receipt handle and cannot be acknowledged",
-                )
-            })?;
-            self.client
-                .delete_message()
-                .queue_url(&self.queue_url)
-                .receipt_handle(receipt)
-                .send()
-                .await
-                .map_err(|error| sqs_error("ack_malformed", &error))?;
-            Ok(())
+            output
+                .messages
+                .unwrap_or_default()
+                .into_iter()
+                .map(decode_message)
+                .collect()
         })
     }
 
@@ -300,22 +258,9 @@ impl WakeQueue for SqsWakeQueue {
                 wakes: decoded.wakes,
                 next,
                 malformed: decoded.malformed,
-                isolations: decoded.isolations,
             })
         })
     }
-}
-
-fn decode_messages(messages: Vec<aws_sdk_sqs::types::Message>) -> WakeBatch {
-    let mut batch = WakeBatch::default();
-    for message in messages {
-        let malformed = malformed_delivery(&message);
-        match decode_message(message) {
-            Ok(delivery) => batch.deliveries.push(delivery),
-            Err(_) => batch.malformed.push(malformed),
-        }
-    }
-    batch
 }
 
 /// Decodes one queue message into a durable wake.
@@ -352,35 +297,6 @@ pub fn decode_message(message: aws_sdk_sqs::types::Message) -> Result<WakeDelive
             receive_count,
         },
     })
-}
-
-fn malformed_delivery(message: &aws_sdk_sqs::types::Message) -> MalformedWakeDelivery {
-    let reason = if message.receipt_handle.is_none() {
-        MalformedWakeReason::MissingReceipt
-    } else if message.body.is_none() {
-        MalformedWakeReason::MissingBody
-    } else {
-        MalformedWakeReason::InvalidProjection
-    };
-    let receive_count = message
-        .attributes
-        .as_ref()
-        .and_then(|it| it.get(&MessageSystemAttributeName::ApproximateReceiveCount))
-        .and_then(|it| it.parse::<u32>().ok())
-        .unwrap_or(1);
-    let digest = blake3::hash(
-        message
-            .body
-            .as_deref()
-            .unwrap_or("<missing-body>")
-            .as_bytes(),
-    );
-    MalformedWakeDelivery {
-        receipt: message.receipt_handle.clone(),
-        receive_count,
-        reason,
-        fingerprint: digest.to_hex()[..16].to_owned(),
-    }
 }
 
 /// Decodes the wake payload a `regional-work` row projects onto the queue.
@@ -560,7 +476,6 @@ fn cursor_from_key(key: &aex_session_dynamodb::attr::Item) -> Result<DueScanCurs
 struct DecodedDueEntries {
     wakes: Vec<DurableWake>,
     malformed: usize,
-    isolations: Vec<DueRowIsolation>,
 }
 
 fn decode_due_entries<'a>(
@@ -568,57 +483,31 @@ fn decode_due_entries<'a>(
 ) -> DecodedDueEntries {
     let mut wakes = Vec::new();
     let mut malformed = 0;
-    let mut isolations = Vec::new();
     for item in items {
         match decode_due_entry(item) {
             Ok(Some(wake)) => wakes.push(wake),
             Ok(None) => {}
-            Err(reason) => {
-                malformed += 1;
-                if isolations.len() < MAX_DUE_ROW_ISOLATIONS {
-                    isolations.push(DueRowIsolation {
-                        reason,
-                        fingerprint: due_row_fingerprint(item),
-                    });
-                }
-            }
+            Err(_) => malformed += 1,
         }
     }
-    DecodedDueEntries {
-        wakes,
-        malformed,
-        isolations,
-    }
+    DecodedDueEntries { wakes, malformed }
 }
 
 fn decode_due_entry(
     item: &aex_session_dynamodb::attr::Item,
-) -> Result<Option<DurableWake>, DueRowIsolationReason> {
-    let projected_string =
-        |name| due_string(item, name).map_err(|_| DueRowIsolationReason::MalformedProjection);
-    if projected_string("kind")? != "agent.wake" {
+) -> Result<Option<DurableWake>, StoreError> {
+    if due_string(item, "kind")? != "agent.wake" {
         return Ok(None);
     }
-    let work_id = projected_string("workId")?;
-    let due_wire = aex_wire::types::Timestamp::parse(projected_string("dueAt")?)
-        .map_err(|_| DueRowIsolationReason::MalformedProjection)?;
-    let priority = due_priority(item).map_err(|_| DueRowIsolationReason::MalformedProjection)?;
-    validate_due_keys(item, work_id, due_wire, priority)?;
-
-    let state = projected_string("state")?;
-    if state != "pending" {
-        if !aex_work_dynamodb::keys::STATES.contains(&state) {
-            return Err(DueRowIsolationReason::MalformedProjection);
-        }
+    if due_string(item, "state")? != "pending" {
         return Ok(None);
     }
-    let session = parse_session(projected_string("sessionId")?)
-        .map_err(|_| DueRowIsolationReason::MalformedProjection)?;
-    let agent = parse_agent(projected_string("agentId")?)
-        .map_err(|_| DueRowIsolationReason::MalformedProjection)?;
-    let workspace = parse_workspace(projected_string("workspaceId")?)
-        .map_err(|_| DueRowIsolationReason::MalformedProjection)?;
-    let due = crate::translate::from_wire(due_wire);
+    let work_id = due_string(item, "workId")?;
+    let session = parse_session(due_string(item, "sessionId")?)?;
+    let agent = parse_agent(due_string(item, "agentId")?)?;
+    let workspace = parse_workspace(due_string(item, "workspaceId")?)?;
+    let due = parse_timestamp(due_string(item, "dueAt")?, "regional-work/gsi_due")?;
+    let priority = due_priority(item)?;
     Ok(Some(DurableWake {
         id: WakeId(wake_identity(work_id)),
         work_id: work_id.to_owned(),
@@ -629,59 +518,6 @@ fn decode_due_entry(
         priority,
         tenant: workspace.to_string(),
     }))
-}
-
-fn validate_due_keys(
-    item: &aex_session_dynamodb::attr::Item,
-    work_id: &str,
-    due: aex_wire::types::Timestamp,
-    priority: u8,
-) -> Result<(), DueRowIsolationReason> {
-    let expected_base = aex_work_dynamodb::keys::work(work_id)
-        .map_err(|_| DueRowIsolationReason::MalformedProjection)?;
-    if due_string(item, aex_session_dynamodb::attr::PK)
-        .map_err(|_| DueRowIsolationReason::MalformedProjection)?
-        != expected_base.pk
-        || due_string(item, aex_session_dynamodb::attr::SK)
-            .map_err(|_| DueRowIsolationReason::MalformedProjection)?
-            != expected_base.sk
-    {
-        return Err(DueRowIsolationReason::BaseKeyMismatch);
-    }
-
-    if due_string(item, aex_work_dynamodb::keys::DUE_PK)
-        .map_err(|_| DueRowIsolationReason::MalformedProjection)?
-        != aex_work_dynamodb::keys::due_partition(work_id)
-    {
-        return Err(DueRowIsolationReason::ShardMismatch);
-    }
-
-    let effective = aex_work_dynamodb::keys::effective_due_at(due, priority)
-        .map_err(|_| DueRowIsolationReason::MalformedProjection)?;
-    let expected_position = aex_work_dynamodb::keys::due_sort(effective, work_id)
-        .map_err(|_| DueRowIsolationReason::MalformedProjection)?;
-    if due_string(item, aex_work_dynamodb::keys::DUE_SK)
-        .map_err(|_| DueRowIsolationReason::MalformedProjection)?
-        != expected_position
-    {
-        return Err(DueRowIsolationReason::DuePositionMismatch);
-    }
-    Ok(())
-}
-
-fn due_row_fingerprint(item: &aex_session_dynamodb::attr::Item) -> String {
-    let mut hasher = blake3::Hasher::new();
-    for name in DUE_CURSOR_PARTS {
-        hasher.update(name.as_bytes());
-        hasher.update(&[0]);
-        if let Some(value) = item.get(name).and_then(|value| value.as_s().ok()) {
-            hasher.update(value.as_bytes());
-        } else {
-            hasher.update(b"<absent-or-not-string>");
-        }
-        hasher.update(&[0xff]);
-    }
-    hasher.finalize().to_hex()[..16].to_owned()
 }
 
 fn sqs_error<E, R>(operation: &str, error: &aws_sdk_sqs::error::SdkError<E, R>) -> StoreError
@@ -701,9 +537,8 @@ where
 mod tests {
     use super::{
         cursor_from_key, cursor_key, decode_body, decode_due_entries, decode_due_entry,
-        decode_message, decode_messages,
+        decode_message,
     };
-    use aex_brain_application::ports::{DueRowIsolationReason, MAX_DUE_ROW_ISOLATIONS};
     use aex_session_dynamodb::attr::{Item, n, s, stamp};
     use aex_wire::ids::{PrefixedId, Uuid7};
 
@@ -781,54 +616,16 @@ mod tests {
         assert_eq!(delivery.receive_count(), Some(7));
     }
 
-    #[test]
-    fn one_malformed_queue_record_does_not_reject_valid_siblings() {
-        let valid = aws_sdk_sqs::types::Message::builder()
-            .body(body())
-            .receipt_handle("valid-rh")
-            .build();
-        let malformed = aws_sdk_sqs::types::Message::builder()
-            .body("not-json")
-            .receipt_handle("bad-rh")
-            .attributes(
-                aws_sdk_sqs::types::MessageSystemAttributeName::ApproximateReceiveCount,
-                "4",
-            )
-            .build();
-
-        let batch = decode_messages(vec![malformed, valid]);
-        assert_eq!(batch.deliveries.len(), 1);
-        assert_eq!(batch.malformed.len(), 1);
-        assert_eq!(batch.malformed[0].receive_count, 4);
-        assert_eq!(batch.malformed[0].fingerprint.len(), 16);
-        assert_eq!(batch.malformed[0].receipt.as_deref(), Some("bad-rh"));
-    }
-
-    fn due_entry_for(
-        work_id: &str,
-        due_millis: i64,
-    ) -> (Item, aex_brain_domain::ids::AgentKey, String) {
+    fn due_entry() -> (Item, aex_brain_domain::ids::AgentKey, String) {
         let session =
             aex_wire::ids::SessionId::from_uuid7(Uuid7::compose(1_767_225_600_000, [1; 10]));
         let agent = aex_wire::ids::AgentId::from_uuid7(Uuid7::compose(1_767_225_600_001, [2; 10]));
         let workspace =
             aex_wire::ids::WorkspaceId::from_uuid7(Uuid7::compose(1_767_225_600_002, [3; 10]));
-        let due = aex_wire::types::Timestamp::from_unix_millis(due_millis).expect("in range");
-        let base = aex_work_dynamodb::keys::work(work_id).expect("a fixture work key");
-        let effective =
-            aex_work_dynamodb::keys::effective_due_at(due, 3).expect("priority three is valid");
+        let due =
+            aex_wire::types::Timestamp::from_unix_millis(1_767_225_600_000).expect("in range");
         let item = [
-            ("pk".to_owned(), s(base.pk)),
-            ("sk".to_owned(), s(base.sk)),
-            (
-                "dueShardPk".to_owned(),
-                s(aex_work_dynamodb::keys::due_partition(work_id)),
-            ),
-            (
-                "dueShardSk".to_owned(),
-                s(aex_work_dynamodb::keys::due_sort(effective, work_id).expect("a due key")),
-            ),
-            ("workId".to_owned(), s(work_id)),
+            ("workId".to_owned(), s("wrk_due")),
             ("kind".to_owned(), s("agent.wake")),
             ("state".to_owned(), s("pending")),
             ("workspaceId".to_owned(), s(workspace.to_string())),
@@ -847,10 +644,6 @@ mod tests {
             ),
             workspace.to_string(),
         )
-    }
-
-    fn due_entry() -> (Item, aex_brain_domain::ids::AgentKey, String) {
-        due_entry_for("wrk_due", 1_767_225_600_000)
     }
 
     #[test]
@@ -882,99 +675,13 @@ mod tests {
         let (first, _, _) = due_entry();
         let mut malformed = first.clone();
         malformed.remove("agentId");
-        let (last, _, _) = due_entry_for("wrk_after_bad", 1_767_225_600_000);
+        let mut last = first.clone();
+        last.insert("workId".to_owned(), s("wrk_after_bad"));
 
         let decoded = decode_due_entries([&first, &malformed, &last]);
         assert_eq!(decoded.malformed, 1);
-        assert_eq!(decoded.isolations.len(), 1);
-        assert_eq!(
-            decoded.isolations[0].reason,
-            DueRowIsolationReason::MalformedProjection
-        );
-        assert_eq!(decoded.isolations[0].fingerprint.len(), 16);
         assert_eq!(decoded.wakes.len(), 2);
         assert_eq!(decoded.wakes[1].work_id, "wrk_after_bad");
-    }
-
-    #[test]
-    fn a_due_row_must_match_both_parts_of_its_base_key() {
-        for attribute in ["pk", "sk"] {
-            let (mut item, _, _) = due_entry();
-            item.insert(attribute.to_owned(), s("forged"));
-            assert_eq!(
-                decode_due_entry(&item),
-                Err(DueRowIsolationReason::BaseKeyMismatch),
-                "{attribute}"
-            );
-        }
-
-        let (mut forged_work, _, _) = due_entry();
-        forged_work.insert("workId".to_owned(), s("wrk_forged"));
-        assert_eq!(
-            decode_due_entry(&forged_work),
-            Err(DueRowIsolationReason::BaseKeyMismatch)
-        );
-    }
-
-    #[test]
-    fn a_due_row_must_live_in_the_shard_derived_from_its_work_identity() {
-        let (mut item, _, _) = due_entry();
-        item.insert("dueShardPk".to_owned(), s("DUE#9999"));
-        assert_eq!(
-            decode_due_entry(&item),
-            Err(DueRowIsolationReason::ShardMismatch)
-        );
-    }
-
-    #[test]
-    fn a_row_forged_into_an_earlier_position_cannot_wake_future_work() {
-        let (mut item, _, _) = due_entry();
-        let future = aex_wire::types::Timestamp::from_unix_millis(1_767_312_000_000)
-            .expect("the future fixture is in range");
-        item.insert("dueAt".to_owned(), stamp(future));
-        assert_eq!(
-            decode_due_entry(&item),
-            Err(DueRowIsolationReason::DuePositionMismatch)
-        );
-
-        let (mut priority, _, _) = due_entry();
-        priority.insert("priority".to_owned(), n(4));
-        assert_eq!(
-            decode_due_entry(&priority),
-            Err(DueRowIsolationReason::DuePositionMismatch)
-        );
-
-        let (mut identity, _, _) = due_entry();
-        identity.insert(
-            "dueShardSk".to_owned(),
-            s("2025-12-31T23:55:00.000Z#wrk_someone_else"),
-        );
-        assert_eq!(
-            decode_due_entry(&identity),
-            Err(DueRowIsolationReason::DuePositionMismatch)
-        );
-    }
-
-    #[test]
-    fn due_isolation_diagnostics_are_bounded_and_never_expose_row_values() {
-        let rows: Vec<Item> = (0..MAX_DUE_ROW_ISOLATIONS + 3)
-            .map(|index| {
-                let (mut item, _, _) =
-                    due_entry_for(&format!("wrk_bad_{index}"), 1_767_225_600_000);
-                item.remove("agentId");
-                item
-            })
-            .collect();
-        let decoded = decode_due_entries(&rows);
-        assert_eq!(decoded.malformed, MAX_DUE_ROW_ISOLATIONS + 3);
-        assert_eq!(decoded.isolations.len(), MAX_DUE_ROW_ISOLATIONS);
-        assert!(decoded.isolations.iter().all(|isolation| {
-            isolation.fingerprint.len() == 16
-                && isolation
-                    .fingerprint
-                    .bytes()
-                    .all(|byte| byte.is_ascii_hexdigit())
-        }));
     }
 
     #[test]

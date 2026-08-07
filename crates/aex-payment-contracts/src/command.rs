@@ -12,9 +12,7 @@ use aex_wire::types::{Cents, HttpsUrl, Timestamp};
 use serde::{Deserialize, Serialize};
 
 use crate::result::TaxMode;
-use crate::{
-    ProviderChargeRef, ProviderCustomerRef, ProviderMethodRef, ProviderObjectRef, RedactedEmail,
-};
+use crate::{ProviderChargeRef, ProviderCustomerRef, ProviderMethodRef, RedactedEmail};
 
 /// An AEX-admitted provider effect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -175,8 +173,6 @@ pub enum PaymentCommand {
         effect: EffectId,
         /// Which command it was.
         expect: CommandKind,
-        /// Provider object already recorded for the effect, when one is known.
-        provider: Option<ProviderObjectRef>,
     },
     /// Refund a charge.
     RefundCharge {

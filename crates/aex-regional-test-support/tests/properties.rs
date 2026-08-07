@@ -31,37 +31,43 @@ fn every_table_declares_at_least_one_role_and_no_role_holds_a_delete_it_does_not
             if grant.actions.iter().any(|action| {
                 action == "dynamodb:DeleteItem" || action == "dynamodb:BatchWriteItem"
             }) {
-                let allowed = match table.table.as_str() {
-                    "session-authority" | "regional-work" => {
-                        grant.role == "session-operation-worker"
-                    }
-                    "regional-content" => grant.role == "content-lifecycle-worker",
-                    "regional-registry" => grant.role == "regional-session-api",
-                    // Each usage worker deletes exactly one row shape: its own
-                    // OUTBOX# marker, once SendMessage is confirmed.
-                    "usage-storage-authority" => grant.role == "usage-storage-worker",
-                    "usage-compute-authority" => grant.role == "usage-compute-worker",
-                    "usage-transfer-authority" => grant.role == "usage-transfer-worker",
-                    // Runtime activity has two narrow deleters: the control
-                    // worker removes usage outbox rows, while Brain settles its
-                    // own Hands admission marker.
-                    "runtime-activity" => {
-                        matches!(grant.role.as_str(), "runtime-control-worker" | "brain-mux")
-                    }
-                    // The reconciler deletes exactly two shapes: an idle series
-                    // claim and OBS# revisions under a pinned deletion epoch.
-                    "observation-authority" => {
-                        matches!(
-                            grant.role.as_str(),
-                            "observation-reconciler" | "regional-otlp"
-                        )
-                    }
-                    _ => false,
-                };
                 assert!(
-                    allowed,
+                    matches!(
+                        (table.table.as_str(), grant.role.as_str()),
+                        ("session-authority" | "regional-work", "session-operation-worker")
+                            | ("regional-content", "content-lifecycle-worker")
+                            | ("regional-registry", "regional-session-api")
+                            // Each usage worker deletes exactly one row shape:
+                            // its own OUTBOX# marker, once the SendMessage is
+                            // confirmed. No fact, claim, receipt, frontier or
+                            // cursor is deletable by any of them.
+                            | ("usage-storage-authority", "usage-storage-worker")
+                            | ("usage-compute-authority", "usage-compute-worker")
+                            | ("usage-transfer-authority", "usage-transfer-worker")
+                            // Runtime control deletes exactly one immutable
+                            // USAGE# outbox row after the category ingress has
+                            // accepted that draft. Generation heads, intents,
+                            // receipts, pointers and probes are not deletable.
+                            | ("runtime-activity", "runtime-control-worker")
+                            // The reconciler deletes exactly two shapes: an idle
+                            // series claim, released against its cardinality
+                            // counter in one transaction, and OBS# revisions
+                            // under a pinned deletion epoch. The startup
+                            // capability assertion narrows the second to the
+                            // `deletion.execute` deployment alone.
+                            | (
+                                "observation-authority",
+                                "observation-reconciler" | "regional-otlp",
+                            ) // Admission materializes OBS# revisions in batches:
+                              // the commit's action count is independent of the
+                              // record count only because the revisions land
+                              // outside the transaction (G7). It writes them and
+                              // deletes nothing; the immutability condition on
+                              // every OBS# write is what makes a replay converge.
+                    ),
                     "`{}` grants a delete vector to `{}`, which is not on the deletion allow list",
-                    table.table, grant.role
+                    table.table,
+                    grant.role
                 );
             }
         }

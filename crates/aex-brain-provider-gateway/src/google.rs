@@ -44,10 +44,12 @@ use aex_model_catalog::canonical::{
     ToolResultPart, UsageCompleteness, UsageField, UsageFieldSet,
 };
 use aex_model_catalog::document::{
-    CacheMode, Capability, EndpointPin, ModelEntry, ReasoningMode, ReasoningReplay,
-    SamplingSupport, SchemaEncoding, StructuredOutputPolicy, ToolEncoding,
+    AdapterSourceDigest, CacheMode, Capability, EndpointPin, ModelEntry, ReasoningMode,
+    ReasoningReplay, SamplingSupport, SchemaEncoding, StructuredOutputPolicy, ToolEncoding,
 };
-use aex_model_catalog::primitives::{BoundedString, ProviderRequestId, ToolCallId, ToolName};
+use aex_model_catalog::primitives::{
+    Blake3Digest, BoundedString, ProviderRequestId, ToolCallId, ToolName,
+};
 use aex_wire::CanonicalJson;
 use aex_wire::provider::ProviderId;
 use bytes::Bytes;
@@ -64,6 +66,14 @@ use crate::error::{
 use crate::redact::redact;
 use crate::sse::SseEvent;
 use crate::transport::{Accept, AuthScheme, WireRequest};
+
+/// The identity [`ProviderAdapter::source_digest`] is taken over.
+///
+/// `TODO(cross-stream): the release tool replaces this with the blake3 digest of
+/// the adapter source tree it built, which is what a conformance receipt is
+/// bound to (D-06). Until then it is a compiled dialect identity, stable across
+/// a build and distinct per dialect.`
+pub const DIALECT_TAG: &str = "aex-brain-provider-gateway/google/generateContent/1";
 
 /// The media type every Gemini structured-output form takes.
 const JSON_MIME: &str = "application/json";
@@ -281,11 +291,10 @@ impl GoogleAdapter {
             Self::generation_config(entry, view)?,
         );
 
-        let encoded = aex_wire::to_jcs_bytes(&Value::Object(body)).map_err(|_| {
-            RequestBuildError::Encoding {
+        let encoded =
+            serde_json::to_vec(&Value::Object(body)).map_err(|_| RequestBuildError::Encoding {
                 reason: "the request body could not be serialized",
-            }
-        })?;
+            })?;
         let size = u32::try_from(encoded.len()).unwrap_or(u32::MAX);
         if size > entry.limits.request_body_max_bytes {
             return Err(RequestBuildError::BodyTooLarge {
@@ -1416,6 +1425,10 @@ impl ProviderAdapter for GoogleAdapter {
         ProviderId::Google
     }
 
+    fn source_digest(&self) -> AdapterSourceDigest {
+        AdapterSourceDigest(Blake3Digest::of(DIALECT_TAG.as_bytes()))
+    }
+
     fn build_request(
         &self,
         model: &QualifiedModel,
@@ -1537,7 +1550,6 @@ impl ProviderAdapter for GoogleAdapter {
             stop_reason,
             usage: state.usage,
             provider_request_id: state.request_id,
-            gateway_route: None,
         })
     }
 
@@ -1620,7 +1632,8 @@ mod tests {
     use aex_wire::provider::ProviderId;
 
     use super::{
-        ALT_PARAMETER, ALT_SSE, FINISH_REASONS, FinishClass, GeminiRequestView, GoogleAdapter,
+        ALT_PARAMETER, ALT_SSE, DIALECT_TAG, FINISH_REASONS, FinishClass, GeminiRequestView,
+        GoogleAdapter,
     };
     use crate::adapter::{
         BoundedBody, DialectState, FrameDecodeError, FrameOutcome, HeaderView, ProviderAdapter,
@@ -1806,6 +1819,17 @@ mod tests {
         assert_eq!(
             request.endpoint.origin(),
             "https://generativelanguage.googleapis.com"
+        );
+    }
+
+    #[test]
+    fn the_source_digest_is_a_compiled_dialect_identity() {
+        let adapter = GoogleAdapter;
+        assert_eq!(
+            adapter.source_digest(),
+            aex_model_catalog::document::AdapterSourceDigest(
+                aex_model_catalog::primitives::Blake3Digest::of(DIALECT_TAG.as_bytes())
+            )
         );
     }
 

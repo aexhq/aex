@@ -19,8 +19,8 @@ use crate::journal::{
     TypedFailure, WaitResolution,
 };
 use crate::wire_pending::{
-    CanonicalBlock, CanonicalMessage, ContentBlockRef, JoinGroup, JoinMode, NormalizedUsage,
-    ResolvedAgentConfig, Role, StopReason, ToolResultPart,
+    CanonicalBlock, ContentBlockRef, JoinGroup, JoinMode, NormalizedUsage, ResolvedAgentConfig,
+    ResultContent, Turn,
 };
 
 /// Where the agent is in its cycle.
@@ -60,7 +60,7 @@ pub struct PendingCall {
     /// The call's position in the assistant message's tool-use order.
     pub order: u32,
     /// The canonical input.
-    pub input: aex_wire::CanonicalJson,
+    pub input: serde_json::Value,
 }
 
 /// A tool result waiting to be placed in tool-use order.
@@ -69,7 +69,7 @@ pub struct ResolvedCall {
     /// The call's position in the assistant message's tool-use order.
     pub order: u32,
     /// The result blocks.
-    pub content: Vec<ToolResultPart>,
+    pub blocks: Vec<CanonicalBlock>,
     /// Whether the tool reported failure.
     pub is_error: bool,
     /// Which executor ran it.
@@ -86,28 +86,16 @@ pub struct FoldState {
     /// The parent, when this agent is a child.
     pub parent: Option<AgentId>,
     /// Ordered model-visible turns. Only complete messages ever enter it.
-    pub model_history: Vec<CanonicalMessage>,
-    /// The stop reason on the most recently committed assistant message.
-    pub last_stop_reason: Option<StopReason>,
+    pub model_history: Vec<Turn>,
     /// The user turn currently accumulating.
     pub open_user: Vec<ContentBlockRef>,
     /// Tool calls asked for and not yet resolved, keyed by call id.
-    #[serde(with = "ordered_map_entries")]
     pub pending_calls: BTreeMap<ToolCallId, PendingCall>,
     /// Tool results resolved but not yet emitted into a turn.
-    #[serde(with = "ordered_map_entries")]
     pub resolved_calls: BTreeMap<ToolCallId, ResolvedCall>,
     /// Calls already resolved in this turn, so a duplicate result is refused.
     pub retired_calls: BTreeSet<ToolCallId>,
-    /// Canonical arguments of the last successful `todo_write`.
-    ///
-    /// This is derived from the durable assistant tool call plus its matching
-    /// successful result. It is process-independent fold state, not an
-    /// executor cache, and survives journal compaction and snapshots.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub todo_state: Option<aex_wire::CanonicalJson>,
     /// Effects opened and not yet settled.
-    #[serde(with = "ordered_map_entries")]
     pub open_effects: BTreeMap<EffectId, EffectState>,
     /// Effects that have settled, so a settlement without a preparation is refused.
     pub settled_effects: BTreeSet<EffectId>,
@@ -116,13 +104,10 @@ pub struct FoldState {
     /// This agent's budget node.
     pub budget: BudgetNode,
     /// Children, keyed by identity.
-    #[serde(with = "ordered_map_entries")]
     pub children: BTreeMap<AgentId, ChildRecord>,
     /// Join groups this agent opened.
-    #[serde(with = "ordered_map_entries")]
     pub joins: BTreeMap<JoinId, JoinGroup>,
     /// Open durable waits.
-    #[serde(with = "ordered_map_entries")]
     pub waits: BTreeMap<WaitId, ParkReason>,
     /// Where the agent is.
     pub phase: Phase,
@@ -147,42 +132,6 @@ pub struct FoldState {
     pub failure: Option<TypedFailure>,
     /// The structural limits every spawn is checked against.
     pub structural: StructuralLimits,
-}
-
-/// Stable JSON representation for typed-key maps.
-///
-/// JSON object keys can only be strings. Encoding a typed identifier as a string-keyed
-/// object would make its display spelling part of the snapshot contract and would bypass
-/// the identifier's normal serde validation. A sorted array of `(key, value)` pairs keeps
-/// the typed codec, inherits `BTreeMap` ordering, and permits duplicate rejection on read.
-mod ordered_map_entries {
-    use std::collections::BTreeMap;
-
-    use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
-
-    pub fn serialize<K, V, S>(map: &BTreeMap<K, V>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        K: Serialize + Ord,
-        V: Serialize,
-        S: Serializer,
-    {
-        map.iter().collect::<Vec<_>>().serialize(serializer)
-    }
-
-    pub fn deserialize<'de, K, V, D>(deserializer: D) -> Result<BTreeMap<K, V>, D::Error>
-    where
-        K: Deserialize<'de> + Ord,
-        V: Deserialize<'de>,
-        D: Deserializer<'de>,
-    {
-        let entries = Vec::<(K, V)>::deserialize(deserializer)?;
-        let expected = entries.len();
-        let map = entries.into_iter().collect::<BTreeMap<_, _>>();
-        if map.len() != expected {
-            return Err(D::Error::custom("duplicate typed map key"));
-        }
-        Ok(map)
-    }
 }
 
 /// Why a record could not be folded.
@@ -240,18 +189,6 @@ pub enum FoldError {
     /// An assistant message arrived whose completeness proof does not cover its blocks.
     #[error("assistant message at sequence {seq} is not covered by its completeness proof")]
     UnprovenAssistantMessage {
-        /// Where it arrived.
-        seq: JournalSeq,
-    },
-    /// The provider receipt does not name or commit to the assistant outcome.
-    #[error("provider receipt at sequence {seq} does not identify the assistant outcome")]
-    ReceiptMismatch {
-        /// Where it arrived.
-        seq: JournalSeq,
-    },
-    /// A content reference reached the pure fold before the store hydrated it.
-    #[error("placed content at sequence {seq} was not hydrated before folding")]
-    UnhydratedContent {
         /// Where it arrived.
         seq: JournalSeq,
     },
@@ -335,49 +272,6 @@ impl FoldState {
     fn stored_hash(&self, seq: JournalSeq) -> Option<ContentHash> {
         let offset = usize::try_from(seq.get().checked_sub(self.base_seq.get())?).ok()?;
         self.hashes.get(offset).copied()
-    }
-}
-
-#[cfg(test)]
-mod control_projection_tests {
-    use super::{FoldState, PendingCall, project_control_state};
-    use crate::ids::{ToolCallId, ToolName};
-    use crate::journal::ExecutorRoute;
-    use aex_wire::CanonicalJson;
-
-    fn todo_write(input: &str) -> PendingCall {
-        PendingCall {
-            call: ToolCallId::truncating("todo-call"),
-            name: ToolName::parse("todo_write").expect("tool name"),
-            order: 0,
-            input: CanonicalJson::parse(input).expect("canonical input"),
-        }
-    }
-
-    #[test]
-    fn only_a_successful_todo_write_replaces_the_folded_control_state() {
-        let first = todo_write(
-            r#"{"todos":[{"activeForm":"Doing","content":"First","status":"in_progress"}]}"#,
-        );
-        let failed = todo_write(
-            r#"{"todos":[{"activeForm":"Doing","content":"Failed","status":"completed"}]}"#,
-        );
-        let mut state = FoldState::empty();
-
-        project_control_state(&mut state, &first, false, ExecutorRoute::BrainInline);
-        assert_eq!(state.todo_state.as_ref(), Some(&first.input));
-        project_control_state(&mut state, &failed, true, ExecutorRoute::BrainInline);
-        assert_eq!(
-            state.todo_state.as_ref(),
-            Some(&first.input),
-            "a tool-level failure cannot mutate the folded replacement"
-        );
-        project_control_state(&mut state, &failed, false, ExecutorRoute::Hands);
-        assert_eq!(
-            state.todo_state.as_ref(),
-            Some(&first.input),
-            "a result attributed to another executor cannot mutate Brain control state"
-        );
     }
 }
 
@@ -502,27 +396,31 @@ fn apply_record(state: &mut FoldState, entry: &JournalEntry) -> Result<(), FoldE
         }
 
         JournalRecord::AssistantMessage {
-            message,
+            blocks,
             usage,
-            receipt,
+            stop_reason,
+            provider,
+            model,
+            complete,
             ..
         } => {
-            if !message.proof_covers(usage) {
+            if !complete.covers(*stop_reason, blocks) {
                 return Err(FoldError::UnprovenAssistantMessage { seq });
             }
-            if !receipt.matches_outcome(message, usage) {
-                return Err(FoldError::ReceiptMismatch { seq });
-            }
-            close_user_turn(state, seq)?;
-            state.model_history.push(message.as_message());
-            state.last_stop_reason = Some(message.stop_reason);
+            close_user_turn(state);
+            state.model_history.push(Turn::Assistant {
+                blocks: blocks.clone(),
+                provider: *provider,
+                model: model.clone(),
+                stop_reason: *stop_reason,
+            });
             state.usage.add(*usage);
             state.assistant_turns = state.assistant_turns.saturating_add(1);
             state.retired_calls.clear();
             state.resolved_calls.clear();
             state.pending_calls.clear();
             let mut order = 0_u32;
-            for block in &message.blocks {
+            for block in blocks {
                 if let CanonicalBlock::ToolUse { id, name, input } = block {
                     state.pending_calls.insert(
                         id.clone(),
@@ -546,7 +444,7 @@ fn apply_record(state: &mut FoldState, entry: &JournalEntry) -> Result<(), FoldE
 
         JournalRecord::ToolResult {
             call,
-            content,
+            blocks,
             is_error,
             executed_on,
             duration_ms,
@@ -554,7 +452,7 @@ fn apply_record(state: &mut FoldState, entry: &JournalEntry) -> Result<(), FoldE
         } => {
             if state.retired_calls.contains(call) || state.resolved_calls.contains_key(call) {
                 return Err(FoldError::DuplicateToolResult {
-                    call: call.as_str().to_owned(),
+                    call: call.0.clone(),
                 });
             }
             let pending =
@@ -562,14 +460,13 @@ fn apply_record(state: &mut FoldState, entry: &JournalEntry) -> Result<(), FoldE
                     .pending_calls
                     .remove(call)
                     .ok_or_else(|| FoldError::UnknownCall {
-                        call: call.as_str().to_owned(),
+                        call: call.0.clone(),
                     })?;
-            project_control_state(state, &pending, *is_error, *executed_on);
             state.resolved_calls.insert(
                 call.clone(),
                 ResolvedCall {
                     order: pending.order,
-                    content: content.clone(),
+                    blocks: blocks.clone(),
                     is_error: *is_error,
                     executed_on: *executed_on,
                     duration_ms: *duration_ms,
@@ -756,30 +653,25 @@ fn apply_record(state: &mut FoldState, entry: &JournalEntry) -> Result<(), FoldE
 }
 
 /// Closes the accumulating user turn into model-visible history, if there is one.
-fn close_user_turn(state: &mut FoldState, seq: JournalSeq) -> Result<(), FoldError> {
+fn close_user_turn(state: &mut FoldState) {
     if state.open_user.is_empty() {
-        return Ok(());
+        return;
     }
-    if state
-        .open_user
-        .iter()
-        .any(|reference| matches!(reference, ContentBlockRef::Placed { .. }))
-    {
-        return Err(FoldError::UnhydratedContent { seq });
-    }
-    let blocks = state
+    let blocks: Vec<CanonicalBlock> = state
         .open_user
         .drain(..)
-        .filter_map(|reference| match reference {
-            ContentBlockRef::Inline { block } => Some(block),
-            ContentBlockRef::Placed { .. } => None,
+        .map(|reference| match reference {
+            ContentBlockRef::Inline { block } => block,
+            // A placed block is hydrated by the store adapter before the model call; the
+            // pure fold records the turn boundary and leaves hydration to the layer that
+            // owns byte budgets.
+            ContentBlockRef::Placed { body } => CanonicalBlock::Image {
+                media_type: body.media_type.clone(),
+                content: body,
+            },
         })
         .collect();
-    state.model_history.push(CanonicalMessage {
-        role: Role::User,
-        blocks,
-    });
-    Ok(())
+    state.model_history.push(Turn::User { blocks });
 }
 
 /// Emits the resolved tool results as one user turn, in tool-use order.
@@ -797,7 +689,23 @@ fn emit_tool_result_turn(state: &mut FoldState) {
         .iter()
         .map(|(call, result)| CanonicalBlock::ToolResult {
             call: call.clone(),
-            content: result.content.clone(),
+            content: result
+                .blocks
+                .iter()
+                .map(|block| match block {
+                    CanonicalBlock::Image {
+                        media_type,
+                        content,
+                    } => ResultContent::Image {
+                        media_type: media_type.clone(),
+                        content: content.clone(),
+                    },
+                    CanonicalBlock::Text { text } => ResultContent::Text { text: text.clone() },
+                    other => ResultContent::Text {
+                        text: describe(other),
+                    },
+                })
+                .collect(),
             is_error: result.is_error,
         })
         .collect();
@@ -805,23 +713,17 @@ fn emit_tool_result_turn(state: &mut FoldState) {
         state.retired_calls.insert(call);
     }
     state.resolved_calls.clear();
-    state.model_history.push(CanonicalMessage {
-        role: Role::User,
-        blocks,
-    });
+    state.model_history.push(Turn::User { blocks });
 }
 
-fn project_control_state(
-    state: &mut FoldState,
-    pending: &PendingCall,
-    is_error: bool,
-    executed_on: ExecutorRoute,
-) {
-    if pending.name.as_str() == "todo_write"
-        && !is_error
-        && executed_on == ExecutorRoute::BrainInline
-    {
-        state.todo_state = Some(pending.input.clone());
+/// A one-line description of a block that cannot appear inside a tool result.
+fn describe(block: &CanonicalBlock) -> String {
+    match block {
+        CanonicalBlock::Text { text } => text.clone(),
+        CanonicalBlock::Thinking { .. } => "[thinking]".to_owned(),
+        CanonicalBlock::ToolUse { name, .. } => format!("[tool_use {}]", name.0),
+        CanonicalBlock::ToolResult { call, .. } => format!("[tool_result {}]", call.0),
+        CanonicalBlock::Image { media_type, .. } => format!("[image {media_type}]"),
     }
 }
 
@@ -841,11 +743,9 @@ fn apply_compaction(
     // The model-visible prefix is replaced; every counter is carried forward exactly, so a
     // compacted fold agrees with an uncompacted one on budget, usage, children, joins and
     // pending calls.
-    state.model_history = vec![CanonicalMessage {
-        role: Role::User,
+    state.model_history = vec![Turn::User {
         blocks: summary.to_vec(),
     }];
-    state.last_stop_reason = None;
     state.usage = preserved.usage;
     state.assistant_turns = preserved.assistant_turns;
     state.spawn_ordinal = state.spawn_ordinal.max(preserved.spawn_ordinal);

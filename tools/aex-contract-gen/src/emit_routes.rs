@@ -89,10 +89,6 @@ pub fn rust_routes(ir: &ContractIr, digest: &str) -> String {
             quote(&operation.fragment)
         ));
         source.line(&format!(
-            "        serving_artifact: {},",
-            quote(&operation.serving_artifact)
-        ));
-        source.line(&format!(
             "        method: HttpMethod::{},",
             pascal_case(&operation.method.to_lowercase())
         ));

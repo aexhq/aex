@@ -6,24 +6,21 @@
 //! it.
 
 use aex_brain_domain::effect::{
-    DetachedOperationRef, DispatchEvidence, DispatchProof, DispatchStage, DurableEffect,
-    EffectClass, EffectKind, EffectState, RecoveryDecision, recover,
+    DispatchEvidence, DispatchProof, DispatchStage, DurableEffect, EffectClass, EffectKind,
+    EffectState, RecoveryDecision, recover,
 };
 use aex_brain_domain::ids::{
     ContentHash, DetachedOperationId, EffectId, ProviderRequestId, Timestamp,
 };
-use aex_brain_domain::journal::ExecutorRoute;
 use aex_brain_domain::wire_pending::DurableOperationSupport;
 use aex_wire::ids::{GenerationId, PrefixedId as _, Uuid7};
-
-const PROVEN: DurableOperationSupport = DurableOperationSupport::ResultLookup { ttl_ms: 60_000 };
 
 const STATES: [fn() -> EffectState; 6] = [
     || EffectState::Prepared { attempt: 1 },
     || EffectState::DispatchStarted { attempt: 1 },
     || EffectState::ResponseStarted {
         attempt: 1,
-        provider_request_id: Some(ProviderRequestId::truncating("req_1")),
+        provider_request_id: Some(ProviderRequestId("req_1".to_owned())),
     },
     || EffectState::Complete {
         receipt: ContentHash::of(b"receipt"),
@@ -44,7 +41,10 @@ const CLASSES: [EffectClass; 4] = [
     EffectClass::NonReplayable,
 ];
 
-const SUPPORT: [DurableOperationSupport; 2] = [DurableOperationSupport::None, PROVEN];
+const SUPPORT: [DurableOperationSupport; 2] = [
+    DurableOperationSupport::None,
+    DurableOperationSupport::Proven,
+];
 
 const KINDS: [EffectKind; 5] = [
     EffectKind::ModelCall,
@@ -73,19 +73,9 @@ fn effect(
     }
 }
 
-fn with_external_operation(attempt: u16, stage: DispatchStage) -> DispatchEvidence {
+fn with_operation(attempt: u16, stage: DispatchStage) -> DispatchEvidence {
     DispatchEvidence {
-        external_operation: Some(DetachedOperationId("op_1".to_owned())),
-        ..DispatchEvidence::ambiguous(attempt, stage)
-    }
-}
-
-fn with_detached_tool(attempt: u16, stage: DispatchStage) -> DispatchEvidence {
-    DispatchEvidence {
-        detached_tool: Some(DetachedOperationRef {
-            id: DetachedOperationId("op_1".to_owned()),
-            executor: ExecutorRoute::Mcp,
-        }),
+        operation: Some(DetachedOperationId("op_1".to_owned())),
         ..DispatchEvidence::ambiguous(attempt, stage)
     }
 }
@@ -107,8 +97,7 @@ fn the_matrix_is_total_and_deterministic() {
                     for evidence in [
                         None,
                         Some(DispatchEvidence::ambiguous(1, DispatchStage::Dispatched)),
-                        Some(with_external_operation(1, DispatchStage::Dispatched)),
-                        Some(with_detached_tool(1, DispatchStage::Dispatched)),
+                        Some(with_operation(1, DispatchStage::Dispatched)),
                         Some(with_receipt(1, DispatchStage::Streaming)),
                     ] {
                         let subject = effect(build(), class, kind, evidence);
@@ -206,14 +195,14 @@ fn an_ambiguous_model_call_interrupts_rather_than_regenerating() {
 #[test]
 fn a_managed_effect_queries_only_with_proof_and_an_operation_id() {
     let cases = [
-        (PROVEN, true, true),
-        (PROVEN, false, false),
+        (DurableOperationSupport::Proven, true, true),
+        (DurableOperationSupport::Proven, false, false),
         (DurableOperationSupport::None, true, false),
         (DurableOperationSupport::None, false, false),
     ];
     for (support, has_operation, expect_query) in cases {
         let evidence = if has_operation {
-            with_detached_tool(1, DispatchStage::Dispatched)
+            with_operation(1, DispatchStage::Dispatched)
         } else {
             DispatchEvidence::ambiguous(1, DispatchStage::Dispatched)
         };
@@ -225,7 +214,7 @@ fn a_managed_effect_queries_only_with_proof_and_an_operation_id() {
         );
         let decision = recover(&subject, support);
         assert_eq!(
-            matches!(decision, RecoveryDecision::QueryDetachedTool { .. }),
+            matches!(decision, RecoveryDecision::QueryDurableOperation { .. }),
             expect_query,
             "{support:?}/operation={has_operation} produced {decision:?}"
         );
@@ -241,7 +230,7 @@ fn a_detached_effect_queries_its_own_accepted_operation() {
             EffectState::DispatchStarted { attempt: 1 },
             EffectClass::DurableDetached,
             EffectKind::HandsOperation,
-            Some(with_external_operation(1, DispatchStage::Dispatched)),
+            Some(with_operation(1, DispatchStage::Dispatched)),
         );
         assert_eq!(
             recover(&subject, support),
@@ -251,39 +240,6 @@ fn a_detached_effect_queries_its_own_accepted_operation() {
             "{support:?}"
         );
     }
-}
-
-/// A tool operation is bound to its exact executor and conflicting bindings refuse.
-#[test]
-fn a_detached_tool_route_is_durable_and_operation_bindings_are_exclusive() {
-    let detached = effect(
-        EffectState::DispatchStarted { attempt: 1 },
-        EffectClass::DurableDetached,
-        EffectKind::ToolCall,
-        Some(with_detached_tool(1, DispatchStage::Dispatched)),
-    );
-    assert_eq!(
-        recover(&detached, DurableOperationSupport::None),
-        RecoveryDecision::QueryDetachedTool {
-            operation: DetachedOperationRef {
-                id: DetachedOperationId("op_1".to_owned()),
-                executor: ExecutorRoute::Mcp,
-            }
-        }
-    );
-
-    let mut conflicting = with_detached_tool(1, DispatchStage::Dispatched);
-    conflicting.external_operation = Some(DetachedOperationId("provider-op".to_owned()));
-    let conflicting = effect(
-        EffectState::DispatchStarted { attempt: 1 },
-        EffectClass::DurableDetached,
-        EffectKind::ToolCall,
-        Some(conflicting),
-    );
-    assert!(matches!(
-        recover(&conflicting, DurableOperationSupport::None),
-        RecoveryDecision::Interrupt { .. }
-    ));
 }
 
 /// A committed checksummed receipt outranks everything: the outcome is already known and
@@ -381,7 +337,7 @@ fn the_split_phase_transitions_refuse_to_skip() {
 
     subject
         .mark_response_started(DispatchEvidence {
-            provider_request_id: Some(ProviderRequestId::truncating("req_9")),
+            provider_request_id: Some(ProviderRequestId("req_9".to_owned())),
             ..DispatchEvidence::ambiguous(1, DispatchStage::Streaming)
         })
         .expect("a validated byte moves it on");

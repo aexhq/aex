@@ -1,10 +1,8 @@
-//! Central control's write-only regional authorization projection adapter.
+//! Write-only adapter for the regional authorization projection.
 //!
-//! `central-control-worker` enables this module for placement, profile and
-//! revocation publication. Effective-limit construction is deliberately absent:
-//! it belongs to the separately featured regional capacity producer. Every
-//! write here is monotone, so delayed cross-region delivery cannot roll central
-//! control state backwards.
+//! Only `central-control-worker` enables this module. Every write is monotone:
+//! an older feed sequence or revocation epoch loses its `DynamoDB` condition, so
+//! delayed cross-region delivery cannot roll authorization state backwards.
 
 use aex_wire::ids::{ApiKeyId, OrganizationId, WorkspaceId};
 use aex_wire::types::{Region, Timestamp};

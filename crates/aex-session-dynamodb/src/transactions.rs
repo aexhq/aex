@@ -20,7 +20,11 @@ use crate::codec;
 use crate::error::StoreError;
 use crate::keys;
 use crate::plan::{IMMUTABLE, Participant, RegionalTables, TransactionPlan, key};
-use crate::wire_pending::{AgentDecisionPlan, EffectStage, FanoutPagePlan};
+use crate::replay::{Receipt, ReceiptBody};
+use crate::wire_pending::{
+    AdmissionPlan, AgentDecisionPlan, EffectStage, FanoutPagePlan, LifecyclePlan,
+    LifecycleTransition, SessionLifecycle, TerminalPlan,
+};
 
 /// One action whose row shape belongs to another adapter crate.
 #[derive(Debug, Clone)]
@@ -266,11 +270,332 @@ pub fn operation_cancel_requested(
     }
 }
 
+/// The foreign participants of the admission transaction.
+#[derive(Debug, Clone, Default)]
+pub struct AdmissionForeign {
+    /// The projected placement guard, from `regional-authz-projection`.
+    pub placement: Option<Foreign>,
+    /// The staged-body commit and its pin, from `regional-content`.
+    ///
+    /// Empty when the message body fitted inline.
+    pub content: Vec<Foreign>,
+    /// The root wake and its dedupe claim, from `regional-work`.
+    pub work: Vec<Foreign>,
+}
+
+/// The canonical participant order of the admission transaction.
+///
+/// Published so a peer can assert the order it must supply its actions in
+/// without reading this module's source.
+pub const ADMISSION_ORDER: &[Participant] = &[
+    Participant::AUTHZ_PLACEMENT,
+    Participant::CONTENT_COMMIT,
+    Participant::CONTENT_MESSAGE_PIN,
+    Participant::SESSION_HEAD,
+    Participant::SESSION_MESSAGE,
+    Participant::SESSION_RUN,
+    Participant::SESSION_RESERVATION,
+    Participant::AGENT_ROOT_CONTROL,
+    Participant::SESSION_ADMITTED_EVENT,
+    Participant::WORK_ROOT_WAKE,
+    Participant::WORK_DEDUPE,
+    Participant::SESSION_IDEMPOTENCY,
+];
+
+/// Compiles `session.admit_message_and_run`.
+///
+/// The API returns only after this transaction succeeds. It calls no Brain
+/// socket, no Hands provider, no queue and no external provider before
+/// responding, which is what makes an admitted run durable the instant the
+/// caller is told about it.
+///
+/// # Errors
+///
+/// [`StoreError::Invalid`] when a participant is unconditional or incomplete,
+/// [`StoreError::ItemTooLarge`] when a row exceeds the application ceiling, and
+/// [`StoreError::Key`] when a component cannot enter a key.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one contiguous function per transaction keeps participant order readable in one place; splitting it would hide the order it exists to fix"
+)]
+pub fn compile_admission(
+    tables: &RegionalTables,
+    request: &AdmissionPlan,
+    foreign: AdmissionForeign,
+) -> Result<TransactionPlan, StoreError> {
+    let table = tables.session_authority.as_str();
+    let head = &request.head;
+    let mut plan = TransactionPlan::new(request.replay.intent.to_string());
+
+    if let Some(placement) = foreign.placement {
+        placement.push(&mut plan)?;
+    }
+    for action in foreign.content {
+        action.push(&mut plan)?;
+    }
+
+    // 4. The head. Every fence the admission depends on is a top-level
+    // attribute, so one condition covers competing runs, cancellation,
+    // deletion, content re-staging and a changed resolved config.
+    let head_key = keys::head(head.session);
+    plan.update(
+        Participant::SESSION_HEAD,
+        aws_sdk_dynamodb::types::Update::builder()
+            .table_name(table)
+            .set_key(Some(key(&head_key.pk, &head_key.sk)))
+            .condition_expression(
+                "attribute_exists(pk) AND revision = :revision AND #status = :idle \
+                 AND lifecycle = :active AND deletionEpoch = :deletionEpoch \
+                 AND cancelEpoch = :cancelEpoch AND contentAdmissionEpoch = :contentEpoch \
+                 AND resolvedConfigDigest = :configDigest AND attribute_not_exists(activeRunId)",
+            )
+            .update_expression(
+                "SET revision = :nextRevision, #status = :running, activeRunId = :runId, \
+                 updatedAt = :now, agentBudget = :agentBudget",
+            )
+            .expression_attribute_names("#status", "status")
+            .expression_attribute_values(":revision", n(head.revision))
+            .expression_attribute_values(":idle", s("idle"))
+            .expression_attribute_values(":active", s("active"))
+            .expression_attribute_values(":deletionEpoch", n(head.deletion_epoch))
+            .expression_attribute_values(":cancelEpoch", n(head.cancel_epoch))
+            .expression_attribute_values(":contentEpoch", n(head.content_admission_epoch))
+            .expression_attribute_values(":configDigest", s(head.resolved_config_digest.clone()))
+            .expression_attribute_values(":nextRevision", n(head.revision + 1))
+            .expression_attribute_values(":running", s("running"))
+            .expression_attribute_values(":runId", s(request.run.run.to_string()))
+            .expression_attribute_values(":now", stamp(request.now))
+            .expression_attribute_values(":agentBudget", n(head.agent_budget)),
+    )?;
+
+    // 5-7. Three immutable rows. A collision under UUIDv7 means a duplicated
+    // request, which the replay combinator resolves against the receipt.
+    plan.put(
+        Participant::SESSION_MESSAGE,
+        immutable_put(
+            table,
+            codec::encode_message(&request.message, head.workspace, head.organization),
+        ),
+    )?;
+    plan.put(
+        Participant::SESSION_RUN,
+        immutable_put(
+            table,
+            codec::encode_run(&request.run, head.workspace, head.organization),
+        ),
+    )?;
+    let reservation_key = keys::reservation(head.session, &request.run.reservation)?;
+    plan.put(
+        Participant::SESSION_RESERVATION,
+        immutable_put(
+            table,
+            crate::attr::ItemBuilder::new(codec::SPEND_RESERVATION)
+                .set(crate::attr::PK, s(reservation_key.pk))
+                .set(crate::attr::SK, s(reservation_key.sk))
+                .set("reservationId", s(request.run.reservation.clone()))
+                .set("runId", s(request.run.run.to_string()))
+                .set("reservedCents", n(request.run.max_spend_cents))
+                .set("state", s("held"))
+                .set("heldAt", stamp(request.now))
+                .build(),
+        ),
+    )?;
+
+    // 8. The root agent receives its hierarchical child budget here, which is
+    // why no shared agent counter exists anywhere (D-04).
+    let control_key = keys::agent_control(head.session, head.root_agent);
+    plan.update(
+        Participant::AGENT_ROOT_CONTROL,
+        aws_sdk_dynamodb::types::Update::builder()
+            .table_name(table)
+            .set_key(Some(key(&control_key.pk, &control_key.sk)))
+            .condition_expression(
+                "attribute_exists(pk) AND revision = :agentRevision AND fence = :fence",
+            )
+            .update_expression(
+                "SET #status = :queued, revision = :nextAgentRevision, \
+                 childBudgetRemaining = :childBudget, childBudgetGranted = :childBudget, \
+                 updatedAt = :now",
+            )
+            .expression_attribute_names("#status", "status")
+            .expression_attribute_values(":agentRevision", n(request.root_control.revision))
+            .expression_attribute_values(":fence", n(request.root_control.fence))
+            .expression_attribute_values(":queued", s("queued"))
+            .expression_attribute_values(":nextAgentRevision", n(request.root_control.revision + 1))
+            .expression_attribute_values(":childBudget", n(request.child_budget))
+            .expression_attribute_values(":now", stamp(request.now)),
+    )?;
+
+    plan.put(
+        Participant::SESSION_ADMITTED_EVENT,
+        immutable_put(table, codec::encode_event(head.session, &request.event)),
+    )?;
+
+    for action in foreign.work {
+        action.push(&mut plan)?;
+    }
+
+    plan.put(
+        Participant::SESSION_IDEMPOTENCY,
+        immutable_put(table, receipt_item(request)?),
+    )?;
+
+    Ok(plan)
+}
+
+fn receipt_item(request: &AdmissionPlan) -> Result<crate::attr::Item, StoreError> {
+    let receipt = Receipt {
+        scope: request.replay.scope.clone(),
+        key_sha256: crate::replay::key_digest(&request.replay.key),
+        intent: request.replay.intent,
+        response_kind: request.replay.response_kind.clone(),
+        response: ReceiptBody::Inline(request.replay.response.clone()),
+        committed_at: request.now,
+        expires_at: request.replay.expires_at,
+    };
+    Ok(codec::encode_receipt(request.head.workspace, &receipt)?)
+}
+
 fn immutable_put(table: &str, item: crate::attr::Item) -> PutBuilder {
     aws_sdk_dynamodb::types::Put::builder()
         .table_name(table)
         .set_item(Some(item))
         .condition_expression(IMMUTABLE)
+}
+
+/// The canonical participant order of the run terminal barrier.
+pub const TERMINAL_ORDER: &[Participant] = &[
+    Participant::SESSION_RUN,
+    Participant::AGENT_ROOT_CONTROL,
+    Participant::SESSION_HEAD,
+    Participant::SESSION_TERMINAL_EVENT,
+    Participant::SESSION_RESERVATION,
+    Participant::WORK_USAGE_CLOSURE,
+    Participant::WORK_WAKE_DONE,
+];
+
+/// The foreign participants of the terminal barrier.
+#[derive(Debug, Clone, Default)]
+pub struct TerminalForeign {
+    /// The compute-closure usage fact, from `regional-work`.
+    pub usage_closure: Option<Foreign>,
+    /// The fenced retirement of the wake, from `regional-work`.
+    pub wake_done: Option<Foreign>,
+}
+
+/// Compiles `session.commit_run_terminal`.
+///
+/// A `ConditionalCheckFailed` on the first participant means a competing
+/// terminal already won: the loser reads the run, returns the existing terminal
+/// outcome and publishes nothing. There is exactly one terminal truth per run
+/// and no second outcome can ever be written.
+///
+/// # Errors
+///
+/// As [`compile_admission`].
+pub fn compile_terminal(
+    tables: &RegionalTables,
+    request: &TerminalPlan,
+    foreign: TerminalForeign,
+) -> Result<TransactionPlan, StoreError> {
+    let table = tables.session_authority.as_str();
+    let mut plan = TransactionPlan::new(format!("terminal:{}", request.run));
+
+    let run_key = keys::run(request.session, request.run);
+    plan.update(
+        Participant::SESSION_RUN,
+        aws_sdk_dynamodb::types::Update::builder()
+            .table_name(table)
+            .set_key(Some(key(&run_key.pk, &run_key.sk)))
+            .condition_expression("attribute_exists(pk) AND #status IN (:queued, :running)")
+            .update_expression(
+                "SET #status = :terminal, terminalAt = :now, resultDigest = :result, \
+                 usageClosureId = :closure",
+            )
+            .expression_attribute_names("#status", "status")
+            .expression_attribute_values(":queued", s("queued"))
+            .expression_attribute_values(":running", s("running"))
+            .expression_attribute_values(":terminal", s(request.terminal_status))
+            .expression_attribute_values(":now", stamp(request.now))
+            .expression_attribute_values(
+                ":result",
+                request
+                    .result_digest
+                    .clone()
+                    .map_or(aws_sdk_dynamodb::types::AttributeValue::Null(true), s),
+            )
+            .expression_attribute_values(":closure", s(request.usage_closure_id.clone())),
+    )?;
+
+    let control_key = keys::agent_control(request.session, request.root_agent);
+    plan.update(
+        Participant::AGENT_ROOT_CONTROL,
+        aws_sdk_dynamodb::types::Update::builder()
+            .table_name(table)
+            .set_key(Some(key(&control_key.pk, &control_key.sk)))
+            .condition_expression("revision = :agentRevision AND fence = :fence")
+            .update_expression(
+                "SET #status = :terminalAgentStatus, journalTail = :tail, revision = :nextRevision",
+            )
+            .expression_attribute_names("#status", "status")
+            .expression_attribute_values(":agentRevision", n(request.agent_revision))
+            .expression_attribute_values(":fence", n(request.agent_fence))
+            .expression_attribute_values(
+                ":terminalAgentStatus",
+                s(request.terminal_agent_status.clone()),
+            )
+            .expression_attribute_values(":tail", n(request.journal_tail))
+            .expression_attribute_values(":nextRevision", n(request.agent_revision + 1)),
+    )?;
+
+    let head_key = keys::head(request.session);
+    plan.update(
+        Participant::SESSION_HEAD,
+        aws_sdk_dynamodb::types::Update::builder()
+            .table_name(table)
+            .set_key(Some(key(&head_key.pk, &head_key.sk)))
+            .condition_expression(
+                "revision = :revision AND activeRunId = :runId AND deletionEpoch = :deletionEpoch",
+            )
+            .update_expression(
+                "SET revision = :nextRevision, #status = :idle, updatedAt = :now \
+                 REMOVE activeRunId",
+            )
+            .expression_attribute_names("#status", "status")
+            .expression_attribute_values(":revision", n(request.head_revision))
+            .expression_attribute_values(":runId", s(request.run.to_string()))
+            .expression_attribute_values(":deletionEpoch", n(request.deletion_epoch))
+            .expression_attribute_values(":nextRevision", n(request.head_revision + 1))
+            .expression_attribute_values(":idle", s("idle"))
+            .expression_attribute_values(":now", stamp(request.now)),
+    )?;
+
+    plan.put(
+        Participant::SESSION_TERMINAL_EVENT,
+        immutable_put(table, codec::encode_event(request.session, &request.event)),
+    )?;
+
+    let reservation_key = keys::reservation(request.session, &request.reservation)?;
+    plan.update(
+        Participant::SESSION_RESERVATION,
+        aws_sdk_dynamodb::types::Update::builder()
+            .table_name(table)
+            .set_key(Some(key(&reservation_key.pk, &reservation_key.sk)))
+            .condition_expression("#state = :held")
+            .update_expression("SET #state = :released, releasedAt = :now")
+            .expression_attribute_names("#state", "state")
+            .expression_attribute_values(":held", s("held"))
+            .expression_attribute_values(":released", s("released"))
+            .expression_attribute_values(":now", stamp(request.now)),
+    )?;
+
+    if let Some(action) = foreign.usage_closure {
+        action.push(&mut plan)?;
+    }
+    if let Some(action) = foreign.wake_done {
+        action.push(&mut plan)?;
+    }
+    Ok(plan)
 }
 
 /// The canonical participant order of an agent decision.
@@ -291,7 +616,7 @@ pub const DECISION_ORDER: &[Participant] = &[
 ///
 /// # Errors
 ///
-/// As for every conditional transaction compiler in this module.
+/// As [`compile_admission`].
 #[allow(
     clippy::too_many_lines,
     reason = "one contiguous function per transaction keeps participant order readable in one place; splitting it would hide the order it exists to fix"
@@ -332,8 +657,7 @@ pub fn compile_decision(
                  AND fence = :fence",
             )
             .update_expression(
-                "SET revision = :nextRevision, journalTail = :nextTail, \
-                 journalTailHash = :nextTailHash, hasJournal = :hasJournal, #status = :status, \
+                "SET revision = :nextRevision, journalTail = :nextTail, #status = :status, \
                  leaseExpiresAt = :lease, updatedAt = :now",
             )
             .expression_attribute_names("#status", "status")
@@ -348,8 +672,6 @@ pub fn compile_decision(
             .expression_attribute_values(":fence", n(control.fence))
             .expression_attribute_values(":nextRevision", n(control.revision + 1))
             .expression_attribute_values(":nextTail", n(request.entry.seq))
-            .expression_attribute_values(":nextTailHash", s(request.entry.entry_id.clone()))
-            .expression_attribute_values(":hasJournal", crate::attr::boolean(true))
             .expression_attribute_values(":status", s(request.next_status.clone()))
             .expression_attribute_values(":lease", stamp(request.lease_expires_at))
             .expression_attribute_values(":now", stamp(request.now)),
@@ -432,7 +754,7 @@ pub const MAX_FANOUT_ACTIONS: usize = 90;
 /// # Errors
 ///
 /// [`StoreError::Invalid`] when the page would exceed [`MAX_FANOUT_ACTIONS`],
-/// plus the ordinary transaction-plan validation errors.
+/// plus everything [`compile_admission`] can return.
 #[allow(
     clippy::too_many_lines,
     reason = "one contiguous function per transaction keeps participant order readable in one place; splitting it would hide the order it exists to fix"
@@ -518,7 +840,6 @@ pub fn compile_fanout_page(
                     .set("status", s("queued"))
                     .set("revision", n(0))
                     .set("journalTail", n(0))
-                    .set("hasJournal", crate::attr::boolean(false))
                     .set("fence", n(0))
                     .set("childBudgetRemaining", n(child.child_budget))
                     .set("childBudgetGranted", n(child.child_budget))
@@ -548,4 +869,155 @@ pub fn compile_fanout_page(
         wake.push(&mut plan)?;
     }
     Ok(plan)
+}
+
+/// Compiles a trash, restore, purge admission or purge completion.
+///
+/// Every non-purge commit elsewhere conditions on `deletionEpoch`, so an
+/// operation that raced the purge admission cannot commit afterwards. A purged
+/// head keeps its item — stripped, `lifecycle = "purged"`, index attributes
+/// removed — so one point read serves `200`, `410 session_deleting` and
+/// `410 session_deleted`, and the deletion epoch stays conditionable forever.
+///
+/// # Errors
+///
+/// As [`compile_admission`].
+#[allow(
+    clippy::too_many_lines,
+    reason = "one contiguous function per transaction keeps participant order readable in one place; splitting it would hide the order it exists to fix"
+)]
+pub fn compile_lifecycle(
+    tables: &RegionalTables,
+    request: &LifecyclePlan,
+    foreign: Vec<Foreign>,
+) -> Result<TransactionPlan, StoreError> {
+    let table = tables.session_authority.as_str();
+    let head_key = keys::head(request.session);
+    let mut plan = TransactionPlan::new(format!(
+        "lifecycle:{}:{:?}:{}",
+        request.session, request.transition, request.revision
+    ));
+    let next = request.revision + 1;
+    let base = || {
+        aws_sdk_dynamodb::types::Update::builder()
+            .table_name(table)
+            .set_key(Some(key(&head_key.pk, &head_key.sk)))
+    };
+
+    match request.transition {
+        LifecycleTransition::Trash => {
+            plan.update(
+                Participant::SESSION_HEAD,
+                base()
+                    .condition_expression(
+                        "revision = :revision AND lifecycle = :active \
+                         AND attribute_not_exists(activeRunId)",
+                    )
+                    .update_expression(
+                        "SET lifecycle = :trashed, revision = :nextRevision, \
+                         deletionEpoch = deletionEpoch + :one, cancelEpoch = cancelEpoch + :one, \
+                         contentAdmissionEpoch = contentAdmissionEpoch + :one, \
+                         trashedAt = :now, deletionOperationId = :operationId, \
+                         wsIndexPk = :trashedIndexPk",
+                    )
+                    .expression_attribute_values(":revision", n(request.revision))
+                    .expression_attribute_values(":active", s("active"))
+                    .expression_attribute_values(":trashed", s("trashed"))
+                    .expression_attribute_values(":nextRevision", n(next))
+                    .expression_attribute_values(":one", n(1))
+                    .expression_attribute_values(":now", stamp(request.now))
+                    .expression_attribute_values(
+                        ":operationId",
+                        s(operation_id(request)?.to_string()),
+                    )
+                    .expression_attribute_values(
+                        ":trashedIndexPk",
+                        s(keys::workspace_index::session_partition(
+                            request.workspace,
+                            SessionLifecycle::Trashed.as_str(),
+                        )),
+                    ),
+            )?;
+        }
+        LifecycleTransition::Restore => {
+            plan.update(
+                Participant::SESSION_HEAD,
+                base()
+                    .condition_expression("lifecycle = :trashed AND revision = :revision")
+                    .update_expression(
+                        "SET lifecycle = :active, revision = :nextRevision, \
+                         wsIndexPk = :activeIndexPk REMOVE trashedAt",
+                    )
+                    .expression_attribute_values(":trashed", s("trashed"))
+                    .expression_attribute_values(":revision", n(request.revision))
+                    .expression_attribute_values(":active", s("active"))
+                    .expression_attribute_values(":nextRevision", n(next))
+                    .expression_attribute_values(
+                        ":activeIndexPk",
+                        s(keys::workspace_index::session_partition(
+                            request.workspace,
+                            SessionLifecycle::Active.as_str(),
+                        )),
+                    ),
+            )?;
+        }
+        LifecycleTransition::PurgeAdmit => {
+            plan.update(
+                Participant::SESSION_HEAD,
+                base()
+                    .condition_expression(
+                        "lifecycle IN (:active, :trashed) AND revision = :revision",
+                    )
+                    .update_expression(
+                        "SET lifecycle = :purging, revision = :nextRevision, \
+                         deletionEpoch = deletionEpoch + :one, cancelEpoch = cancelEpoch + :one, \
+                         contentAdmissionEpoch = contentAdmissionEpoch + :one, \
+                         deletionOperationId = :operationId",
+                    )
+                    .expression_attribute_values(":active", s("active"))
+                    .expression_attribute_values(":trashed", s("trashed"))
+                    .expression_attribute_values(":revision", n(request.revision))
+                    .expression_attribute_values(":purging", s("purging"))
+                    .expression_attribute_values(":nextRevision", n(next))
+                    .expression_attribute_values(":one", n(1))
+                    .expression_attribute_values(
+                        ":operationId",
+                        s(operation_id(request)?.to_string()),
+                    ),
+            )?;
+        }
+        LifecycleTransition::PurgeComplete => {
+            plan.update(
+                Participant::SESSION_HEAD,
+                base()
+                    .condition_expression(
+                        "lifecycle = :purging AND deletionOperationId = :operationId",
+                    )
+                    .update_expression(
+                        "SET lifecycle = :purged, purgedAt = :now, revision = :nextRevision \
+                         REMOVE wsIndexPk, wsIndexSk, resolvedConfig, initialRootDigest, \
+                         persistedRootDigest, continuity, activeRunId",
+                    )
+                    .expression_attribute_values(":purging", s("purging"))
+                    .expression_attribute_values(
+                        ":operationId",
+                        s(operation_id(request)?.to_string()),
+                    )
+                    .expression_attribute_values(":purged", s("purged"))
+                    .expression_attribute_values(":now", stamp(request.now))
+                    .expression_attribute_values(":nextRevision", n(next)),
+            )?;
+        }
+    }
+
+    for action in foreign {
+        action.push(&mut plan)?;
+    }
+    Ok(plan)
+}
+
+fn operation_id(request: &LifecyclePlan) -> Result<aex_wire::ids::OperationId, StoreError> {
+    request.operation.ok_or(StoreError::Invalid {
+        detail: "this lifecycle transition must name the operation that owns it".to_owned(),
+    })
 }

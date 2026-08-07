@@ -7,8 +7,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::de::{MapAccess, SeqAccess, Visitor};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::Serialize;
 
 use crate::error::{Exit, Result, ToolError, Violation};
 
@@ -27,20 +26,6 @@ pub struct BuiltGraph {
     pub live_targets: BTreeSet<String>,
     /// Repository paths matching no `path-map.toml` rule.
     pub unowned: Vec<String>,
-    /// Explicit architecture work that is not yet runnable or mounted.
-    pub deferred: Vec<DeferredWork>,
-}
-
-/// One explicit, non-evidentiary delivery deferral.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DeferredWork {
-    /// `route` or `scenario`.
-    pub kind: &'static str,
-    /// Exact `operationId` or scenario id.
-    pub id: String,
-    /// Architectural reason authored at the source boundary.
-    pub reason: String,
 }
 
 /// The machine-readable summary `graph build --json` prints.
@@ -56,8 +41,6 @@ pub struct GraphSummary {
     pub live_targets: Vec<String>,
     /// Unowned repository paths.
     pub unowned: Vec<String>,
-    /// Explicit architecture work excluded from runnable release matrices.
-    pub deferred: Vec<DeferredWork>,
 }
 
 /// Build the merged graph from loaded inputs.
@@ -136,6 +119,7 @@ pub fn build(inputs: &GraphInputs) -> Result<BuiltGraph> {
             unowned.push(file.clone());
         }
     }
+
     let live_targets = inputs
         .cargo
         .iter()
@@ -160,41 +144,7 @@ pub fn build(inputs: &GraphInputs) -> Result<BuiltGraph> {
         graph,
         live_targets,
         unowned,
-        deferred: collect_deferred_work(inputs),
     })
-}
-
-fn collect_deferred_work(inputs: &GraphInputs) -> Vec<DeferredWork> {
-    let mut deferred = inputs
-        .scenarios
-        .scenarios
-        .iter()
-        .filter_map(|scenario| {
-            let reason = scenario.deferred.as_deref()?.trim();
-            (!reason.is_empty()).then(|| DeferredWork {
-                kind: "scenario",
-                id: scenario.id.clone(),
-                reason: reason.to_owned(),
-            })
-        })
-        .collect::<Vec<_>>();
-    let routes = inputs.root.join("api/generated/registries/routes.json");
-    if let Ok(text) = std::fs::read_to_string(routes)
-        && let Ok(document) = strict_json(&text)
-        && let Some(entries) = document.get("routes").and_then(serde_json::Value::as_array)
-    {
-        deferred.extend(entries.iter().filter_map(|entry| {
-            let id = entry.get("operationId")?.as_str()?;
-            let reason = entry.get("deferredReason")?.as_str()?.trim();
-            (!reason.is_empty()).then(|| DeferredWork {
-                kind: "route",
-                id: id.to_owned(),
-                reason: reason.to_owned(),
-            })
-        }));
-    }
-    deferred.sort();
-    deferred
 }
 
 /// Run every fail-closed verification rule.
@@ -302,44 +252,9 @@ pub fn verify(inputs: &GraphInputs) -> Result<BuiltGraph> {
         }
     }
 
-    let expected_microvms: BTreeSet<(String, u32, bool)> = [
-        ("512mb", 512, false),
-        ("1gb", 1_024, false),
-        ("2gb", 2_048, false),
-        ("4gb", 4_096, false),
-        ("8gb", 8_192, false),
-    ]
-    .into_iter()
-    .map(|(variant, memory, browser)| (variant.to_owned(), memory, browser))
-    .collect();
-    let actual_microvms: BTreeSet<(String, u32, bool)> = inputs
-        .units
-        .units
-        .iter()
-        .filter(|unit| unit.kind == "microvm-image")
-        .filter_map(|unit| {
-            unit.microvm.as_ref().map(|shape| {
-                (
-                    shape.variant.clone(),
-                    shape.minimum_memory_mib,
-                    shape.browser,
-                )
-            })
-        })
-        .collect();
-    if cargo_names.contains("hands-image") && actual_microvms != expected_microvms {
-        violations.push(Violation::new(
-            "microvm-variant-set",
-            format!(
-                "MicroVM artifacts must declare exactly the five published non-browser variants; found {actual_microvms:?}"
-            ),
-        ));
-    }
-
-    // 3. Scenario rows name real nodes and a runnable package target. Merely
-    //    observing an artifact is selection metadata, not executable evidence.
-    let (scenario_claims, scenario_violations) = verify_scenario_claims(inputs);
-    violations.extend(scenario_violations);
+    // 3. Scenario rows name real nodes. Graph construction already rejects an
+    //    unknown edge target, so this rule reports the case the graph could not
+    //    have been built for at all.
     for scenario in &inputs.scenarios.scenarios {
         if scenario.observes.is_empty() {
             violations.push(Violation::new(
@@ -406,7 +321,7 @@ pub fn verify(inputs: &GraphInputs) -> Result<BuiltGraph> {
     violations.extend(verify_migration_coverage(inputs));
 
     // 7. Every public route has a scenario or contract owner.
-    violations.extend(verify_route_coverage(inputs, &built, &scenario_claims));
+    violations.extend(verify_route_coverage(inputs, &built));
 
     if violations.is_empty() {
         Ok(built)
@@ -414,167 +329,6 @@ pub fn verify(inputs: &GraphInputs) -> Result<BuiltGraph> {
         violations.sort();
         violations.dedup();
         Err(ToolError::many(Exit::GraphVerification, violations))
-    }
-}
-
-/// Verify the graph is structurally sound and has executable cross-service
-/// evidence for a release candidate.
-///
-/// Explicit scenario deferrals are valid architecture records, but they are
-/// not runnable evidence. Ordinary PR and main routing may continue to expose
-/// those records while the product is prelaunch; a release route may not turn
-/// an all-deferred registry into a green empty matrix.
-///
-/// # Errors
-/// Returns [`Exit::GraphVerification`] when normal graph verification fails or
-/// when the verified graph contains no runnable scenario.
-pub fn verify_release_candidate(inputs: &GraphInputs) -> Result<BuiltGraph> {
-    let built = verify(inputs)?;
-    let declared = built
-        .graph
-        .nodes()
-        .iter()
-        .filter(|node| node.kind == NodeKind::Scenario)
-        .count();
-    let deferred = built
-        .deferred
-        .iter()
-        .filter(|entry| entry.kind == "scenario")
-        .count();
-    if declared == deferred {
-        return Err(ToolError::single(
-            Exit::GraphVerification,
-            "release-runnable-scenario-missing",
-            format!(
-                "release routing declares {declared} cross-service scenario(s), but all {deferred} are explicitly deferred; at least one verified package/target claim must be runnable"
-            ),
-        ));
-    }
-    Ok(built)
-}
-
-#[derive(Debug, Default)]
-struct ScenarioClaims {
-    runnable: BTreeSet<String>,
-    deferred: BTreeSet<String>,
-}
-
-fn verify_scenario_claims(inputs: &GraphInputs) -> (ScenarioClaims, Vec<Violation>) {
-    let packages: BTreeMap<String, (&str, Option<&crate::meta::AexMeta>)> = inputs
-        .cargo
-        .iter()
-        .map(|package| {
-            (
-                NodeId::cargo(&package.name).to_string(),
-                (package.dir.as_str(), package.meta.as_ref()),
-            )
-        })
-        .chain(inputs.npm.iter().map(|package| {
-            (
-                NodeId::npm(&package.name).to_string(),
-                (package.dir.as_str(), package.meta.as_ref()),
-            )
-        }))
-        .collect();
-    let mut claims = ScenarioClaims::default();
-    let mut violations = Vec::new();
-    for scenario in &inputs.scenarios.scenarios {
-        let (package, target) = match (&scenario.package, &scenario.target, &scenario.deferred) {
-            (Some(package), Some(target), None) => (package, target),
-            (None, None, Some(reason)) if !reason.trim().is_empty() => {
-                claims.deferred.insert(scenario.id.clone());
-                continue;
-            }
-            (None, None, Some(_)) => {
-                violations.push(Violation::new(
-                    "scenario-deferral-invalid",
-                    format!("scenario `{}` has an empty deferral reason", scenario.id),
-                ));
-                continue;
-            }
-            (Some(_), Some(_), Some(_)) => {
-                violations.push(Violation::new(
-                    "scenario-claim-conflict",
-                    format!(
-                        "scenario `{}` cannot be both runnable and explicitly deferred",
-                        scenario.id
-                    ),
-                ));
-                continue;
-            }
-            _ => {
-                violations.push(Violation::new(
-                    "scenario-runnable-missing",
-                    format!(
-                        "scenario `{}` must declare both runnable `package` and `target`, or a non-empty `deferred` reason",
-                        scenario.id
-                    ),
-                ));
-                continue;
-            }
-        };
-        let Some((dir, meta)) = packages.get(package) else {
-            violations.push(Violation::new(
-                "scenario-package-unknown",
-                format!(
-                    "scenario `{}` names package `{package}`, which is not a Cargo or npm graph node",
-                    scenario.id
-                ),
-            ));
-            continue;
-        };
-        let Some(meta) = meta else {
-            violations.push(Violation::new(
-                "scenario-package-disagreement",
-                format!(
-                    "scenario `{}` names `{dir}`, which has no aex metadata claim",
-                    scenario.id
-                ),
-            ));
-            continue;
-        };
-        let mut sound = true;
-        if !meta.scenarios.contains(&scenario.id) {
-            sound = false;
-            violations.push(Violation::new(
-                "scenario-package-disagreement",
-                format!(
-                    "scenario `{}` names `{dir}`, but that package does not claim it in `aex.scenarios`",
-                    scenario.id
-                ),
-            ));
-        }
-        if let Some(violation) = verify_scenario_target(&scenario.id, target, dir, meta) {
-            sound = false;
-            violations.push(violation);
-        }
-        if sound {
-            claims.runnable.insert(scenario.id.clone());
-        }
-    }
-    (claims, violations)
-}
-
-fn verify_scenario_target(
-    scenario: &str,
-    target: &str,
-    dir: &str,
-    meta: &crate::meta::AexMeta,
-) -> Option<Violation> {
-    match meta.targets.get(target).map(String::as_str) {
-        None => Some(Violation::new(
-            "scenario-target-unknown",
-            format!(
-                "scenario `{scenario}` names target `{target}` in `{dir}`, but `aex.targets` does not declare it"
-            ),
-        )),
-        Some("e2e") => None,
-        Some(layer) => Some(Violation::new(
-            "scenario-target-not-e2e",
-            format!(
-                "scenario `{scenario}` names target `{target}` in `{dir}`, but that target is layer `{layer}`; a runnable cross-service scenario requires `e2e` evidence"
-            ),
-        )),
     }
 }
 
@@ -728,7 +482,6 @@ fn verify_resource_shape(unit: &super::inputs::Unit) -> Vec<Violation> {
     let mut violations = Vec::new();
     let wants_lambda = matches!(unit.kind.as_str(), "rust-lambda" | "ts-lambda");
     let wants_fargate = matches!(unit.kind.as_str(), "rust-oci-service" | "rust-oci-task");
-    let wants_microvm = unit.kind == "microvm-image";
     if wants_lambda {
         match unit.lambda {
             None => violations.push(Violation::new(
@@ -795,15 +548,6 @@ fn verify_resource_shape(unit: &super::inputs::Unit) -> Vec<Violation> {
                         format!("unit `{}` is a service and declares no port", unit.id),
                     ));
                 }
-                if unit.kind == "rust-oci-task" && (shape.desired_count != 0 || shape.port != 0) {
-                    violations.push(Violation::new(
-                        "unit-resource-shape-conflict",
-                        format!(
-                            "unit `{}` is a one-shot task and must declare desired_count = 0 and port = 0",
-                            unit.id
-                        ),
-                    ));
-                }
             }
         }
         if unit.lambda.is_some() {
@@ -815,60 +559,6 @@ fn verify_resource_shape(unit: &super::inputs::Unit) -> Vec<Violation> {
                 ),
             ));
         }
-    }
-    if wants_microvm {
-        match &unit.microvm {
-            None => violations.push(Violation::new(
-                "unit-resource-shape-missing",
-                format!(
-                    "unit `{}` is a MicroVM image and declares no [unit.microvm] shape",
-                    unit.id
-                ),
-            )),
-            Some(shape) => {
-                if unit.id != format!("hands-image-{}", shape.variant) {
-                    violations.push(Violation::new(
-                        "microvm-variant-identity",
-                        format!(
-                            "unit `{}` must be named `hands-image-{}` so its artifact identity cannot be relabelled",
-                            unit.id, shape.variant
-                        ),
-                    ));
-                }
-                if shape.browser != shape.variant.ends_with("-browser") {
-                    violations.push(Violation::new(
-                        "microvm-variant-identity",
-                        format!("unit `{}` has an inconsistent browser capability", unit.id),
-                    ));
-                }
-                if unit.target != "aarch64-unknown-linux-musl" || unit.form != "zip" {
-                    violations.push(Violation::new(
-                        "microvm-artifact-shape",
-                        format!(
-                            "unit `{}` must be an ARM64 musl guest delivered as an AWS service ZIP",
-                            unit.id
-                        ),
-                    ));
-                }
-            }
-        }
-        if unit.lambda.is_some() || unit.fargate.is_some() {
-            violations.push(Violation::new(
-                "unit-resource-shape-conflict",
-                format!(
-                    "unit `{}` is a MicroVM image and declares a runtime compute shape",
-                    unit.id
-                ),
-            ));
-        }
-    } else if unit.microvm.is_some() {
-        violations.push(Violation::new(
-            "unit-resource-shape-conflict",
-            format!(
-                "unit `{}` is not a MicroVM image but declares [unit.microvm]",
-                unit.id
-            ),
-        ));
     }
     // Health paths are one convention workspace-wide.
     for (field, value) in [
@@ -968,568 +658,76 @@ fn verify_migration_coverage(inputs: &GraphInputs) -> Vec<Violation> {
     violations
 }
 
-fn verify_route_coverage(
-    inputs: &GraphInputs,
-    built: &BuiltGraph,
-    scenario_claims: &ScenarioClaims,
-) -> Vec<Violation> {
+fn verify_route_coverage(inputs: &GraphInputs, built: &BuiltGraph) -> Vec<Violation> {
     let mut violations = Vec::new();
     let routes = inputs.root.join("api/generated/registries/routes.json");
-    let bundle = inputs.root.join("api/generated/bundle.json");
-    if !has_authored_route_surface(&inputs.root) && !routes.is_file() && !bundle.is_file() {
-        // A reusable delivery-graph fixture or repository with no authored API
-        // has no route surface to cover. Authored OpenAPI is the sentinel;
-        // generated outputs are deliberately not trusted to announce their own
-        // absence.
+    let Ok(text) = std::fs::read_to_string(&routes) else {
         return violations;
-    }
-    violations.extend(verify_generated_contract_freshness(inputs));
-    let document = match read_strict_route_registry(&routes) {
-        Ok(document) => document,
-        Err(violation) => {
-            violations.push(violation);
-            return violations;
-        }
     };
-    if document.get("schema").and_then(serde_json::Value::as_str) != Some("aex.route-registry.v1") {
+    let Ok(document) = serde_json::from_str::<serde_json::Value>(&text) else {
         violations.push(Violation::new(
-            "route-registry-schema",
-            "route registry schema must be `aex.route-registry.v1`".to_owned(),
-        ));
-    }
-    let Some(registry_operations) = verify_route_entries(
-        &document,
-        &RouteCoverageContext::new(inputs, built, scenario_claims),
-        &mut violations,
-    ) else {
-        return violations;
-    };
-    match generated_contract_operations(&bundle) {
-        Ok(contract_operations) => compare_route_operation_sets(
-            &contract_operations,
-            &registry_operations,
-            &mut violations,
-        ),
-        Err(violation) => violations.push(violation),
-    }
-    violations
-}
-
-fn verify_generated_contract_freshness(inputs: &GraphInputs) -> Vec<Violation> {
-    if !has_authored_route_surface(&inputs.root)
-        && !inputs
-            .root
-            .join("api/generated/registries/routes.json")
-            .is_file()
-        && !inputs.root.join("api/generated/bundle.json").is_file()
-    {
-        return Vec::new();
-    }
-    match aex_contract_gen::check(&inputs.root) {
-        Ok(drift) if drift.is_empty() => Vec::new(),
-        Ok(drift) => vec![Violation::new(
-            "generated-contract-stale",
-            format!(
-                "generated contract output is stale: {}",
-                drift.into_iter().take(8).collect::<Vec<_>>().join(", ")
-            ),
-        )],
-        Err(error) => vec![Violation::new(
-            "generated-contract-unverifiable",
-            format!("generated contract freshness could not be verified: {error}"),
-        )],
-    }
-}
-
-fn has_authored_route_surface(root: &std::path::Path) -> bool {
-    let openapi = root.join("api/openapi");
-    let authored_openapi = walkdir::WalkDir::new(&openapi)
-        .into_iter()
-        .filter_map(std::result::Result::ok)
-        .any(|entry| {
-            entry.file_type().is_file()
-                && entry.path().extension().is_some_and(|extension| {
-                    extension.eq_ignore_ascii_case("yaml") || extension.eq_ignore_ascii_case("yml")
-                })
-        });
-    authored_openapi
-        || root
-            .join("api/schemas/registries/routes-meta.yaml")
-            .is_file()
-}
-
-fn read_strict_route_registry(
-    path: &std::path::Path,
-) -> std::result::Result<serde_json::Value, Violation> {
-    let text = std::fs::read_to_string(path).map_err(|_| {
-        Violation::new(
-            "route-registry-missing",
-            "api/generated/bundle.json exists but api/generated/registries/routes.json does not"
-                .to_owned(),
-        )
-    })?;
-    strict_json(&text).map_err(|_| {
-        Violation::new(
             "route-registry-unparseable",
             "api/generated/registries/routes.json does not parse".to_owned(),
-        )
-    })
-}
-
-struct RouteCoverageContext<'a> {
-    scenarios: BTreeMap<&'a str, &'a super::inputs::Scenario>,
-    runnable_scenarios: &'a BTreeSet<String>,
-    deferred_scenarios: &'a BTreeSet<String>,
-    artifacts: BTreeMap<&'a str, &'a str>,
-}
-
-impl<'a> RouteCoverageContext<'a> {
-    fn new(
-        inputs: &'a GraphInputs,
-        built: &'a BuiltGraph,
-        scenario_claims: &'a ScenarioClaims,
-    ) -> Self {
-        Self {
-            scenarios: inputs
-                .scenarios
-                .scenarios
-                .iter()
-                .map(|scenario| (scenario.id.as_str(), scenario))
-                .collect(),
-            runnable_scenarios: &scenario_claims.runnable,
-            deferred_scenarios: &scenario_claims.deferred,
-            artifacts: inputs
-                .units
-                .units
-                .iter()
-                .map(|unit| (unit.id.as_str(), unit.plane.as_str()))
-                .filter(|(artifact, _)| {
-                    built
-                        .graph
-                        .nodes()
-                        .iter()
-                        .any(|node| node.kind == NodeKind::Artifact && node.id.local() == *artifact)
-                })
-                .collect(),
-        }
-    }
-}
-
-fn verify_route_entries(
-    document: &serde_json::Value,
-    context: &RouteCoverageContext<'_>,
-    violations: &mut Vec<Violation>,
-) -> Option<BTreeSet<String>> {
+        ));
+        return violations;
+    };
+    let declared_scenarios: BTreeSet<&str> = built
+        .graph
+        .nodes()
+        .iter()
+        .filter(|node| node.kind == NodeKind::Scenario)
+        .map(|node| node.id.local())
+        .collect();
+    let covered: BTreeSet<String> = inputs
+        .cargo
+        .iter()
+        .filter_map(|package| package.meta.as_ref())
+        .flat_map(|meta| meta.scenarios.iter().cloned())
+        .collect();
     let Some(entries) = document.get("routes").and_then(serde_json::Value::as_array) else {
-        violations.push(Violation::new(
-            "route-registry-shape",
-            "route registry has no `routes` array".to_owned(),
-        ));
-        return None;
+        return violations;
     };
-    let mut operations = BTreeSet::new();
     for entry in entries {
-        violations.extend(verify_route_entry(entry, context, &mut operations));
-    }
-    Some(operations)
-}
-
-fn verify_route_entry(
-    entry: &serde_json::Value,
-    context: &RouteCoverageContext<'_>,
-    operations: &mut BTreeSet<String>,
-) -> Vec<Violation> {
-    let Some(operation) = entry.get("operationId").and_then(serde_json::Value::as_str) else {
-        return vec![Violation::new(
-            "route-registry-shape",
-            "a route registry row has no string `operationId`".to_owned(),
-        )];
-    };
-    let mut violations = Vec::new();
-    if !operations.insert(operation.to_owned()) {
-        violations.push(Violation::new(
-            "route-registry-duplicate",
-            format!("operationId `{operation}` appears more than once"),
-        ));
-    }
-    let plane = entry
-        .get("plane")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default();
-    let Some(planned_artifact) = entry
-        .get("servingArtifact")
-        .and_then(serde_json::Value::as_str)
-    else {
-        violations.push(Violation::new(
-            "aex-route-owner-invalid",
-            format!("operationId `{operation}` has no planned serving artifact"),
-        ));
-        return violations;
-    };
-    violations.extend(verify_route_artifact(
-        operation,
-        "planned",
-        planned_artifact,
-        plane,
-        context,
-    ));
-    let Some(served_artifact) = entry
-        .get("servedArtifact")
-        .and_then(serde_json::Value::as_str)
-    else {
-        match entry.get("deferredReason") {
-            Some(serde_json::Value::String(reason)) if !reason.trim().is_empty() => {}
-            Some(_) => violations.push(Violation::new(
-                "aex-route-deferral-invalid",
-                format!(
-                    "operationId `{operation}` is not mounted and has no non-empty string `deferredReason`"
-                ),
-            )),
-            None => violations.push(Violation::new(
-                "aex-route-unserved",
-                format!(
-                    "operationId `{operation}` is planned for `{planned_artifact}` but is neither actually mounted nor explicitly deferred"
-                ),
-            )),
-        }
-        return violations;
-    };
-    if entry.get("deferredReason").is_some() {
-        violations.push(Violation::new(
-            "aex-route-state-conflict",
-            format!("operationId `{operation}` cannot be both served and explicitly deferred"),
-        ));
-    }
-    violations.extend(verify_route_artifact(
-        operation,
-        "actual",
-        served_artifact,
-        plane,
-        context,
-    ));
-    if served_artifact != planned_artifact {
-        violations.push(Violation::new(
-            "aex-route-owner-disagreement",
-            format!(
-                "operationId `{operation}` is planned for `{planned_artifact}` but claims it is served by `{served_artifact}`"
-            ),
-        ));
-    }
-    violations.extend(verify_route_scenarios(
-        entry,
-        operation,
-        served_artifact,
-        context,
-    ));
-    violations
-}
-
-fn verify_route_artifact(
-    operation: &str,
-    claim: &str,
-    artifact: &str,
-    plane: &str,
-    context: &RouteCoverageContext<'_>,
-) -> Vec<Violation> {
-    let valid = !artifact.is_empty()
-        && artifact
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-        && artifact
-            .as_bytes()
-            .first()
-            .is_some_and(u8::is_ascii_lowercase)
-        && artifact
-            .as_bytes()
-            .last()
-            .is_some_and(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
-        && !artifact.contains("--");
-    if !valid {
-        return vec![Violation::new(
-            "aex-route-owner-invalid",
-            format!(
-                "operationId `{operation}` has malformed {claim} serving artifact `{artifact}`"
-            ),
-        )];
-    }
-    match context.artifacts.get(artifact) {
-        None => vec![Violation::new(
-            if claim == "actual" {
-                "aex-route-unserved"
-            } else {
-                "aex-route-owner-invalid"
-            },
-            format!(
-                "operationId `{operation}` names unknown {claim} serving artifact `{artifact}`"
-            ),
-        )],
-        Some(artifact_plane) if *artifact_plane != plane => vec![Violation::new(
-            "aex-route-owner-cross-plane",
-            format!(
-                "operationId `{operation}` is on `{plane}` but {claim} serving artifact `{artifact}` is on `{artifact_plane}`"
-            ),
-        )],
-        Some(_) => Vec::new(),
-    }
-}
-
-fn verify_route_scenarios(
-    entry: &serde_json::Value,
-    operation: &str,
-    serving_artifact: &str,
-    context: &RouteCoverageContext<'_>,
-) -> Vec<Violation> {
-    let Some(values) = entry.get("scenarios").and_then(serde_json::Value::as_array) else {
-        return vec![Violation::new(
-            "aex-route-uncovered",
-            format!("operationId `{operation}` has no scenario owner array"),
-        )];
-    };
-    let mut violations = Vec::new();
-    let mut owners = BTreeSet::new();
-    for value in values {
-        let Some(owner) = value.as_str() else {
-            violations.push(Violation::new(
-                "route-registry-shape",
-                format!("operationId `{operation}` has a non-string scenario owner"),
-            ));
+        let Some(operation) = entry.get("operationId").and_then(serde_json::Value::as_str) else {
             continue;
         };
-        if !owners.insert(owner) {
+        let owners = entry
+            .get("scenarios")
+            .and_then(serde_json::Value::as_array)
+            .map(|list| {
+                list.iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if owners.is_empty() {
             violations.push(Violation::new(
-                "route-registry-duplicate",
-                format!("operationId `{operation}` repeats scenario `{owner}`"),
+                "aex-route-uncovered",
+                format!("operationId `{operation}` has no scenario owner"),
             ));
+            continue;
         }
-    }
-    if owners.is_empty() {
-        violations.push(Violation::new(
-            "aex-route-uncovered",
-            format!("operationId `{operation}` has no scenario owner"),
-        ));
-        return violations;
-    }
-    for owner in owners {
-        violations.extend(verify_route_scenario(
-            operation,
-            serving_artifact,
-            owner,
-            context,
-        ));
+        for owner in owners {
+            if !declared_scenarios.contains(owner) {
+                violations.push(Violation::new(
+                    "aex-route-uncovered",
+                    format!(
+                        "operationId `{operation}` names scenario `{owner}`, which is not \
+                         declared in release/scenario-ownership.toml"
+                    ),
+                ));
+            } else if !covered.contains(owner) {
+                violations.push(Violation::new(
+                    "aex-scenario-orphan",
+                    format!(
+                        "scenario `{owner}` covers operationId `{operation}` but no package \
+                         declares it"
+                    ),
+                ));
+            }
+        }
     }
     violations
-}
-
-fn verify_route_scenario(
-    operation: &str,
-    serving_artifact: &str,
-    owner: &str,
-    context: &RouteCoverageContext<'_>,
-) -> Vec<Violation> {
-    let Some(scenario) = context.scenarios.get(owner) else {
-        return vec![Violation::new(
-            "aex-route-uncovered",
-            format!(
-                "operationId `{operation}` names scenario `{owner}`, which is not declared in \
-                 release/scenario-ownership.toml"
-            ),
-        )];
-    };
-    if !context.runnable_scenarios.contains(owner) && !context.deferred_scenarios.contains(owner) {
-        return vec![Violation::new(
-            "aex-route-uncovered",
-            format!(
-                "operationId `{operation}` names scenario `{owner}`, but it has no verified runnable package target"
-            ),
-        )];
-    }
-    let observed = format!("artifact:{serving_artifact}");
-    if scenario.observes.contains(&observed) {
-        return Vec::new();
-    }
-    vec![Violation::new(
-        "aex-route-scenario-disagreement",
-        format!(
-            "operationId `{operation}` is served by `{serving_artifact}`, but scenario `{owner}` \
-             does not observe `artifact:{serving_artifact}` in release/scenario-ownership.toml"
-        ),
-    )]
-}
-
-fn compare_route_operation_sets(
-    contract: &BTreeSet<String>,
-    registry: &BTreeSet<String>,
-    violations: &mut Vec<Violation>,
-) {
-    for missing in contract.difference(registry) {
-        violations.push(Violation::new(
-            "route-registry-incomplete",
-            format!("contract operationId `{missing}` is absent from the route registry"),
-        ));
-    }
-    for extra in registry.difference(contract) {
-        violations.push(Violation::new(
-            "route-registry-extra",
-            format!("route registry operationId `{extra}` is absent from the contract bundle"),
-        ));
-    }
-}
-
-fn generated_contract_operations(
-    path: &std::path::Path,
-) -> std::result::Result<BTreeSet<String>, Violation> {
-    let text = std::fs::read_to_string(path).map_err(|_| {
-        Violation::new(
-            "contract-bundle-missing",
-            "route registry exists but api/generated/bundle.json does not".to_owned(),
-        )
-    })?;
-    let document = strict_json(&text).map_err(|_| {
-        Violation::new(
-            "contract-bundle-unparseable",
-            "api/generated/bundle.json does not parse".to_owned(),
-        )
-    })?;
-    let Some(planes) = document
-        .get("planes")
-        .and_then(serde_json::Value::as_object)
-    else {
-        return Err(Violation::new(
-            "contract-bundle-shape",
-            "contract bundle has no `planes` object".to_owned(),
-        ));
-    };
-    let mut operations = BTreeSet::new();
-    for (plane, value) in planes {
-        let Some(rows) = value
-            .get("operations")
-            .and_then(serde_json::Value::as_array)
-        else {
-            return Err(Violation::new(
-                "contract-bundle-shape",
-                format!("contract bundle plane `{plane}` has no operations array"),
-            ));
-        };
-        for row in rows {
-            let Some(operation) = row.get("operationId").and_then(serde_json::Value::as_str) else {
-                return Err(Violation::new(
-                    "contract-bundle-shape",
-                    format!("contract bundle plane `{plane}` has a row without operationId"),
-                ));
-            };
-            if !operations.insert(operation.to_owned()) {
-                return Err(Violation::new(
-                    "contract-bundle-duplicate",
-                    format!("contract operationId `{operation}` appears more than once"),
-                ));
-            }
-        }
-    }
-    Ok(operations)
-}
-
-/// A JSON value whose deserializer rejects duplicate object members at every
-/// depth. `serde_json::Value` otherwise keeps the last member, which is not a
-/// safe interpretation for release authorities.
-struct StrictJson(serde_json::Value);
-
-impl<'de> Deserialize<'de> for StrictJson {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        deserializer.deserialize_any(StrictJsonVisitor)
-    }
-}
-
-struct StrictJsonVisitor;
-
-impl<'de> Visitor<'de> for StrictJsonVisitor {
-    type Value = StrictJson;
-
-    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("JSON without duplicate object members")
-    }
-
-    fn visit_bool<E>(self, value: bool) -> std::result::Result<Self::Value, E> {
-        Ok(StrictJson(serde_json::Value::Bool(value)))
-    }
-
-    fn visit_i64<E>(self, value: i64) -> std::result::Result<Self::Value, E> {
-        Ok(StrictJson(serde_json::Value::Number(value.into())))
-    }
-
-    fn visit_u64<E>(self, value: u64) -> std::result::Result<Self::Value, E> {
-        Ok(StrictJson(serde_json::Value::Number(value.into())))
-    }
-
-    fn visit_f64<E>(self, value: f64) -> std::result::Result<Self::Value, E>
-    where
-        E: serde::de::Error,
-    {
-        serde_json::Number::from_f64(value)
-            .map(serde_json::Value::Number)
-            .map(StrictJson)
-            .ok_or_else(|| E::custom("non-finite JSON number"))
-    }
-
-    fn visit_str<E>(self, value: &str) -> std::result::Result<Self::Value, E>
-    where
-        E: serde::de::Error,
-    {
-        self.visit_string(value.to_owned())
-    }
-
-    fn visit_string<E>(self, value: String) -> std::result::Result<Self::Value, E> {
-        Ok(StrictJson(serde_json::Value::String(value)))
-    }
-
-    fn visit_none<E>(self) -> std::result::Result<Self::Value, E> {
-        Ok(StrictJson(serde_json::Value::Null))
-    }
-
-    fn visit_unit<E>(self) -> std::result::Result<Self::Value, E> {
-        Ok(StrictJson(serde_json::Value::Null))
-    }
-
-    fn visit_some<D>(self, deserializer: D) -> std::result::Result<Self::Value, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        StrictJson::deserialize(deserializer)
-    }
-
-    fn visit_seq<A>(self, mut sequence: A) -> std::result::Result<Self::Value, A::Error>
-    where
-        A: SeqAccess<'de>,
-    {
-        let mut values = Vec::new();
-        while let Some(value) = sequence.next_element::<StrictJson>()? {
-            values.push(value.0);
-        }
-        Ok(StrictJson(serde_json::Value::Array(values)))
-    }
-
-    fn visit_map<A>(self, mut map: A) -> std::result::Result<Self::Value, A::Error>
-    where
-        A: MapAccess<'de>,
-    {
-        let mut values = serde_json::Map::new();
-        while let Some(key) = map.next_key::<String>()? {
-            if values.contains_key(&key) {
-                return Err(serde::de::Error::custom(format!(
-                    "duplicate JSON member `{key}`"
-                )));
-            }
-            let value = map.next_value::<StrictJson>()?;
-            values.insert(key, value.0);
-        }
-        Ok(StrictJson(serde_json::Value::Object(values)))
-    }
-}
-
-fn strict_json(text: &str) -> std::result::Result<serde_json::Value, serde_json::Error> {
-    serde_json::from_str::<StrictJson>(text).map(|value| value.0)
 }
 
 /// Summarize a built graph for `--json` output.
@@ -1545,6 +743,5 @@ pub fn summarize(built: &BuiltGraph) -> GraphSummary {
         edges: built.graph.forward().len(),
         live_targets: built.live_targets.iter().cloned().collect(),
         unowned: built.unowned.clone(),
-        deferred: built.deferred.clone(),
     }
 }
