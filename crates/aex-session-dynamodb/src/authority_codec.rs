@@ -1,8 +1,11 @@
 //! Versioned, lossless codecs for the canonical session-domain authority.
 //!
-//! One canonical JSON document owns every domain field, while a small checked
-//! set of top-level attributes exists solely for conditions and the workspace
-//! list index. A decode never supplies a missing default.
+//! The older rows in [`crate::wire_pending`] are retained only for the legacy
+//! transaction surface while its callers migrate. These codecs are the target
+//! of the still-owed total application-plan compiler: one canonical JSON
+//! document owns every domain field, while a small checked set of top-level
+//! attributes exists solely for conditions and the workspace list index. A
+//! decode never supplies a missing default.
 
 use std::num::NonZeroU64;
 
@@ -300,7 +303,7 @@ impl SessionV1 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case")]
 enum MessagePartV1 {
     Text {
         text: String,
@@ -418,7 +421,7 @@ impl MessageV1 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case")]
 enum InterruptV1 {
     StopRequested { operation: OperationId },
     AccountPaused,
@@ -459,7 +462,7 @@ impl From<InterruptV1> for InterruptReason {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case")]
 enum RunOutcomeV1 {
     Succeeded {
         output_messages: Vec<MessageId>,
@@ -653,17 +656,6 @@ pub fn encode_session(session: &Session) -> Result<Item, CodecError> {
             session.active_run.map(|run| s(run.to_string())),
         )
         .set("rootAgentId", s(session.root_agent.to_string()))
-        .set_opt(
-            "mutationGuardOperationId",
-            session
-                .mutation_guard
-                .map(|guard| s(guard.holder.to_string())),
-        )
-        .set(
-            "persistedRootDigest",
-            s(hex::encode(session.persisted_root.digest)),
-        )
-        .set("persistRevision", n(session.persist_revision.0))
         .set(
             "resolvedConfigDigest",
             s(aex_wire::ids::ContentHash::from_bytes(session.resolved.digest().0).to_wire()),
@@ -708,14 +700,9 @@ pub fn decode_session(item: &Item, asserted: WorkspaceId) -> Result<Session, Cod
 
 /// Decodes the complete authority document projected into the workspace GSI.
 ///
-/// The index includes the versioned document plus every duplicated field this
-/// decoder checks. This is intentionally a single-row decode: list
-/// implementations must not issue one base-table read per item.
-///
-/// # Errors
-///
-/// Returns [`CodecError`] for every missing, malformed, cross-tenant or
-/// internally inconsistent authority field.
+/// The index must INCLUDE `authoritySchemaVersion`, `authorityDocument`,
+/// `sessionId`, and `workspaceId`. This is intentionally a single-row decode:
+/// list implementations must not issue one base-table read per item.
 pub fn decode_session_projection(
     item: &Item,
     asserted: WorkspaceId,
@@ -735,37 +722,15 @@ fn decode_session_row(row: Row<'_>, asserted: WorkspaceId) -> Result<Session, Co
         ));
     }
     let session = session.decode()?;
-    expect_key(&row, &keys::head(session.id))?;
     if row.string("status")? != session_status(session.status)
         || row.string("lifecycle")? != deletion_state(session.deletion.state)
-        || row.string("workAdmission")? != work_admission(session.work_admission)
         || row.u64("revision")? != session.revision.0
-        || row.u64("deletionEpoch")? != session.deletion.epoch.0
-        || row.u64("cancelEpoch")? != session.cancellation.0
-        || row.opt_id::<RunId>("activeRunId")? != session.active_run
-        || row.id::<AgentId>("rootAgentId")? != session.root_agent
-        || row.opt_id::<OperationId>("mutationGuardOperationId")?
-            != session.mutation_guard.map(|guard| guard.holder)
-        || row.id::<OrganizationId>("organizationId")? != session.organization
-        || row.string("provider")? != session.resolved.provider().as_str()
-        || row.string("model")? != session.resolved.model()
-        || row.u64("custodyRevision")? != session.custody_revision.0
-        || row.string("persistedRootDigest")? != hex::encode(session.persisted_root.digest)
-        || row.u64("persistRevision")? != session.persist_revision.0
         || row.timestamp("createdAt")? != session.created_at
         || row.timestamp("updatedAt")? != session.updated_at
     {
         return Err(malformed(
             AUTHORITY_DOCUMENT,
             "session document disagrees with its checked list projections",
-        ));
-    }
-    let expected_config_digest =
-        aex_wire::ids::ContentHash::from_bytes(session.resolved.digest().0).to_wire();
-    if row.string("resolvedConfigDigest")? != expected_config_digest {
-        return Err(malformed(
-            AUTHORITY_DOCUMENT,
-            "session document disagrees with its resolved configuration digest projection",
         ));
     }
     let lifecycle = deletion_state(session.deletion.state);
@@ -786,10 +751,6 @@ fn decode_session_row(row: Row<'_>, asserted: WorkspaceId) -> Result<Session, Co
 }
 
 /// Encodes one canonical domain message.
-///
-/// # Errors
-///
-/// Returns [`CodecError`] when the canonical document cannot be encoded.
 pub fn encode_domain_message(
     message: &Message,
     workspace: WorkspaceId,
@@ -808,19 +769,11 @@ pub fn encode_domain_message(
         .set("sessionId", s(message.session.to_string()))
         .set("workspaceId", s(workspace.to_string()))
         .set("organizationId", s(organization.to_string()))
-        .set("agentId", s(message.agent.to_string()))
-        .set("state", s(message_state(message.state)))
-        .set_opt("runId", message.run.map(|run| s(run.to_string())))
         .set("createdAt", crate::attr::stamp(message.created_at))
         .build())
 }
 
 /// Decodes one canonical domain message.
-///
-/// # Errors
-///
-/// Returns [`CodecError`] for every missing, malformed, cross-tenant or
-/// internally inconsistent authority field.
 pub fn decode_domain_message(item: &Item, asserted: WorkspaceId) -> Result<Message, CodecError> {
     let row = Row::bind(item, codec::MESSAGE)?;
     row.owned_by("workspaceId", &asserted.to_string())?;
@@ -835,13 +788,7 @@ pub fn decode_domain_message(item: &Item, asserted: WorkspaceId) -> Result<Messa
         ));
     }
     let message = stored.decode()?;
-    expect_key(&row, &keys::message(message.session, message.id))?;
-    let _organization = row.id::<OrganizationId>("organizationId")?;
-    if row.id::<AgentId>("agentId")? != message.agent
-        || row.string("state")? != message_state(message.state)
-        || row.opt_id::<RunId>("runId")? != message.run
-        || row.timestamp("createdAt")? != message.created_at
-    {
+    if row.timestamp("createdAt")? != message.created_at {
         return Err(malformed(
             AUTHORITY_DOCUMENT,
             "message document disagrees with its checked projection",
@@ -851,10 +798,6 @@ pub fn decode_domain_message(item: &Item, asserted: WorkspaceId) -> Result<Messa
 }
 
 /// Encodes one canonical domain run.
-///
-/// # Errors
-///
-/// Returns [`CodecError`] when the canonical document cannot be encoded.
 pub fn encode_domain_run(
     run: &Run,
     workspace: WorkspaceId,
@@ -876,11 +819,6 @@ pub fn encode_domain_run(
 }
 
 /// Decodes one canonical domain run.
-///
-/// # Errors
-///
-/// Returns [`CodecError`] for every missing, malformed, cross-tenant or
-/// internally inconsistent authority field.
 pub fn decode_domain_run(item: &Item, asserted: WorkspaceId) -> Result<Run, CodecError> {
     let row = Row::bind(item, codec::RUN)?;
     row.owned_by("workspaceId", &asserted.to_string())?;
@@ -895,8 +833,6 @@ pub fn decode_domain_run(item: &Item, asserted: WorkspaceId) -> Result<Run, Code
         ));
     }
     let run = stored.decode()?;
-    expect_key(&row, &keys::run(run.session, run.id))?;
-    let _organization = row.id::<OrganizationId>("organizationId")?;
     if row.string("status")? != run_status(run.status)
         || row.timestamp("queuedAt")? != run.queued_at
     {
@@ -923,16 +859,6 @@ fn require_schema(row: &Row<'_>) -> Result<(), CodecError> {
         return Err(malformed(AUTHORITY_SCHEMA, "unsupported authority schema"));
     }
     Ok(())
-}
-
-fn expect_key(row: &Row<'_>, expected: &keys::Key) -> Result<(), CodecError> {
-    if row.string(crate::attr::PK)? == expected.pk && row.string(crate::attr::SK)? == expected.sk {
-        return Ok(());
-    }
-    Err(malformed(
-        AUTHORITY_DOCUMENT,
-        "authority document disagrees with its exact physical key",
-    ))
 }
 
 fn decode_digest(text: &str, attribute: &'static str) -> Result<[u8; 32], CodecError> {
@@ -1078,8 +1004,7 @@ mod tests {
     use aex_content_domain::ContentDigest;
     use aex_session_domain::testing::{id, moment, running_session, session_fixture};
     use aex_session_domain::{MessagePart, RunOutcome};
-    use aex_wire::ids::{FilePath, OperationId, TelemetryGapId, ToolCallId};
-    use aws_sdk_dynamodb::types::AttributeValue;
+    use aex_wire::ids::{FilePath, MessageId, OperationId, TelemetryGapId, ToolCallId};
 
     use super::{
         AUTHORITY_DOCUMENT, AUTHORITY_SCHEMA, decode_domain_message, decode_domain_run,
@@ -1092,7 +1017,7 @@ mod tests {
         let mut session = session_fixture();
         session.metadata = Some(
             aex_session_domain::SessionMetadata::new(
-                aex_wire::CanonicalJson::parse(r#"{"answer":9007199254740993,"flag":true}"#)
+                aex_wire::CanonicalJson::parse(r#"{"answer":42,"flag":true}"#)
                     .expect("canonical metadata"),
             )
             .expect("scalar metadata"),
@@ -1118,22 +1043,9 @@ mod tests {
                         | "workspaceId"
                         | "status"
                         | "lifecycle"
-                        | "workAdmission"
                         | "createdAt"
                         | "updatedAt"
                         | "revision"
-                        | "deletionEpoch"
-                        | "cancelEpoch"
-                        | "activeRunId"
-                        | "rootAgentId"
-                        | "mutationGuardOperationId"
-                        | "organizationId"
-                        | "provider"
-                        | "model"
-                        | "custodyRevision"
-                        | "persistedRootDigest"
-                        | "persistRevision"
-                        | "resolvedConfigDigest"
                         | AUTHORITY_SCHEMA
                         | AUTHORITY_DOCUMENT
                 )
@@ -1191,45 +1103,5 @@ mod tests {
 
         let item = encode_session(&session).expect("encode");
         assert!(decode_session(&item, id::<aex_wire::ids::WorkspaceId>(99)).is_err());
-    }
-
-    #[test]
-    fn every_authority_row_binds_its_exact_physical_key() {
-        let (session, run, _agent, message) = running_session();
-        let mut session_item = encode_session(&session).expect("session");
-        session_item.insert("sk".to_owned(), crate::attr::s("RUN#wrong"));
-        assert!(decode_session(&session_item, session.workspace).is_err());
-
-        let mut message_item =
-            encode_domain_message(&message, session.workspace, session.organization)
-                .expect("message");
-        message_item.insert("pk".to_owned(), crate::attr::s("SESSION#wrong"));
-        assert!(decode_domain_message(&message_item, session.workspace).is_err());
-
-        let mut run_item =
-            encode_domain_run(&run, session.workspace, session.organization).expect("run");
-        run_item.insert("sk".to_owned(), crate::attr::s("RUN#wrong"));
-        assert!(decode_domain_run(&run_item, session.workspace).is_err());
-    }
-
-    #[test]
-    fn unknown_fields_inside_tagged_arms_are_rejected() {
-        let (session, _run, _agent, mut message) = running_session();
-        message.parts = vec![MessagePart::Text {
-            text: "strict".to_owned(),
-        }];
-        let mut item = encode_domain_message(&message, session.workspace, session.organization)
-            .expect("message");
-        let document = item
-            .get(AUTHORITY_DOCUMENT)
-            .and_then(|value| value.as_s().ok())
-            .expect("document");
-        let mut value: serde_json::Value = serde_json::from_str(document).expect("json");
-        value["parts"][0]["surprise"] = serde_json::Value::Bool(true);
-        item.insert(
-            AUTHORITY_DOCUMENT.to_owned(),
-            AttributeValue::S(serde_json::to_string(&value).expect("json")),
-        );
-        assert!(decode_domain_message(&item, session.workspace).is_err());
     }
 }

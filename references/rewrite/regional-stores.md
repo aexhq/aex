@@ -8,7 +8,7 @@ keywords:
   - handoff
 audience: implementation agents and maintainers
 status: accepted
-last_verified: 2026-08-03
+last_verified: 2026-08-02
 related:
   - references/rewrite/test-architecture.md
   - references/rewrite/contracts.md
@@ -285,7 +285,7 @@ are unchanged; everything below is the remaining seven crates.
 | Crate | What landed |
 | --- | --- |
 | `aex-content-dynamodb` | §2.3 in full: workspace-scoped body/root/tree/grant/GC keys, the SHA-256 body vs `BLAKE3` page digest split, root pins, grant rows that hold a reference and a pin, the GC epoch state machine and the fenced sweep. 58 unit + 7 engine cases. |
-| `aex-content-aws` | §5 in full: `{workspace}/{2}/{2}/{sha256}` addressing, conditional create with the HEAD-compare resolution, one-round-trip bounded immutable reads that admit provider `Content-Length` before collecting and then verify metadata/length/SHA-256, the three-fact multipart integrity argument, presigned grants behind `RedactedUrl`, the fenced delete, the S3 error table, and the bucket-policy requirements as data. 54 unit + 7 engine cases. |
+| `aex-content-aws` | §5 in full: `{workspace}/{2}/{2}/{sha256}` addressing, conditional create with the HEAD-compare resolution, the three-fact multipart integrity argument, presigned grants behind `RedactedUrl`, the fenced delete, the S3 error table, and the bucket-policy requirements as data. 52 unit + 7 engine cases. |
 | `aex-registry-dynamodb` | §2.4 in full on `aex-workspace-domain`: pointer/`ETag`/revision, the upload state machine as conditions, native ordered listing with signed continuations, no index and no stream. 43 unit + 5 engine cases. |
 | `aex-secret-custody-dynamodb` | §2.5 plus both additions: metadata and ciphertext in separate partitions, §3.6's four expressions verbatim, the `REDACT#{session}` manifest in its own partition, and the `pcr_` provider-credential directory. 36 unit + 5 engine cases. |
 | `aex-secret-aws` | The OD-33 envelope arm: KMS root key → per-workspace branch key → per-message HKDF-SHA512 wrapping key → AES-256-GCM with the encryption context as AAD, a bounded zeroizing role-partitioned cache, and seal/rewrap/reveal. 39 unit + 3 engine cases. |
@@ -349,7 +349,7 @@ each with a case pinning it:
   atomic idempotent `expire_grant`, the epoch state machine, pin/unpin),
   `store::{ContentMetadataStore, ContentStore, Reachability, GcScanPage,
   GrantExpiryPage}`.
-- **`aex_content_aws`** — `ObjectKey`, `PRESIGN_EXPIRY`, `MAX_SIGNATURE_AGE_MILLIS`, `RedactedUrl`, `BucketBinding`, `ContentObjectStore` (including bounded direct immutable reads), `BoundedObject`, `S3ContentObjects`, `CompletionManifest`, `ContentObjectError`, and `policy::REQUIRED_DENIES` — the bucket-policy `Deny` statements this adapter depends on, as data the infrastructure stream can consume instead of re-deriving.
+- **`aex_content_aws`** — `ObjectKey`, `PRESIGN_EXPIRY`, `MAX_SIGNATURE_AGE_MILLIS`, `RedactedUrl`, `BucketBinding`, `ContentObjectStore`, `S3ContentObjects`, `CompletionManifest`, `ContentObjectError`, and `policy::REQUIRED_DENIES` — the bucket-policy `Deny` statements this adapter depends on, as data the infrastructure stream can consume instead of re-deriving.
 - **`aex_registry_dynamodb`** — `keys`, `codec` (built on `aex_workspace_domain::registry`/`upload`), `expressions` (pointer create/replace/delete, the upload transitions, completion begin/finish, consume), `store::{RegistryStore, RegistryDynamoStore, PointerPage}`.
 - **`aex_secret_custody_dynamodb`** — `keys` (including `redaction_manifest` and `provider_credential`), `codec::{SecretMetadata, StoredGeneration, CustodyHead, CallAuthorization, RedactionManifest, ProviderCredential}`, `expressions::{set, revoke, admit_custody, authorize_managed_call, SET_ORDER, AUTHORIZE_ORDER}`, `store::{SecretCustodyStore, CustodyStore}`.
 - **`aex_secret_aws`** — `context::{kms_pairs, aad_bytes, context_digest, name_digest}`, `envelope::{seal, open, header, BranchKeyMaterial, Entropy}`, `keystore::{BranchKeyProvider, KmsBranchKeys, BranchKeyCache}`, `crypto::{SecretCrypto, EnvelopeCrypto, SealedSecret, IMPLEMENTATION}`.
@@ -544,86 +544,3 @@ cargo nextest run -p aex-secret-custody-dynamodb \
 cargo check --workspace --all-targets                            clean
 cargo run -p aex-workspace-check                                 133 members / 139 packages clean
 ```
-
-## 16. Canonical session read composition (2026-08-03)
-
-`SessionReads` now exposes the complete canonical session, message and run
-documents rather than the removed slim head/run shapes. A `SessionScoped<T>`
-answer makes parent state explicit: absent and cross-workspace sessions are the
-same `Missing` result, a crossed deletion fence is `Deleted`, and only a live
-parent can return `Active(T)`. This prevents a guessed session id from becoming
-a tenant-existence oracle.
-
-Run and approval point reads use one two-item `TransactGetItems` for the session
-head and child. That gives one serializable snapshot and one network round trip;
-three separate strong reads would cost more latency and could cross a deletion
-transition. Collection reads use the only available query-safe sequence: strong
-head read, bounded ascending base-table query, then strong head reread. The
-second read rejects a deletion transition, including trash followed by restore,
-by comparing the monotone deletion epoch. It does not reject unrelated session
-revision movement. This costs two strongly consistent parent reads (and their
-RCUs) plus the query, adding two DynamoDB round trips to each collection page.
-The bounded protocol is explicit: read parent, query once, read parent again.
-It never loops or returns a short/silent page. A resumed request reuses the
-edge's strong parent read, made before its epoch-bound cursor is decoded, as the
-first fence; it therefore still performs only two parent reads total rather
-than three. If the epoch changed while both parent reads are live, the adapter
-returns a nonretryable internal refusal because the current HTTP routes declare
-no retryable snapshot-conflict result.
-
-Every base-table continuation is checked again below the signed HTTP cursor: it
-must name the exact `SESSION#{sessionId}` partition, the route's sort-key range,
-and no secondary-index keys. This is defense in depth against a future cursor
-composition bug; the HTTP signature remains the sole wire cursor authority.
-
-The read adapter does not make the write composition complete. Canonical
-session/message/run `Put` actions have exact item and aggregate transaction-size
-preflight, but the application plan also contains actions owned by work,
-content, registry, custody and runtime adapters. No production
-`ExternalActionCompiler` composes all of those actions or dispatches every
-after-commit hint yet. Resulting-size safety for `Update` actions must remain an
-owner-side preflight over the item already read; the root compiler cannot infer
-the resulting DynamoDB item without adding a race-prone read. No mutating
-session route should mount until that composition is complete.
-
-## 17. Secret branch-key rewrap correction (2026-08-03)
-
-An exact-context audit found that the original `EnvelopeCrypto::rewrap` opened
-the value under the source context and then presented the unchanged KMS-wrapped
-branch-key ciphertext under the destination context. A permissive fake returned
-the same plaintext for every context, and the former cache identity omitted the
-context digest, so both paths could hide the defect. Real KMS ciphertext
-requires the complete, case-sensitive encryption context used when it was
-created.
-
-`BranchKeyProvider` now owns an explicit context-changing rewrap operation. The
-AWS adapter calls KMS `ReEncrypt` with the complete source and destination maps,
-pins both sides to the configured root-key ARN, verifies that both response key
-identities equal that ARN, rejects absent or empty ciphertext, and returns a
-redacting `RewrappedBranchKey` rather than an untyped byte vector. The envelope
-stores those newly emitted bytes, derives their version, and caches the already
-opened branch material under the destination context digest. It does not spend
-a redundant destination `Decrypt`: KMS `ReEncrypt` is the authority that the
-plaintext branch key was preserved while the new ciphertext was authenticated.
-
-The provider future performs no detached work, so dropping it cancels the
-in-flight request. Its caller-supplied AWS client owns the operation/attempt
-deadline and bounded retry configuration. `Decrypt` is a read and `ReEncrypt`
-creates no durable provider-side object; timeout, transport failure and
-throttling are therefore typed as safe to retry within that caller-owned
-budget. Denial, disabled/missing key, wrong root, invalid request and exact
-context mismatch are distinct nonretryable outcomes.
-
-The fake now records the exact context bound to each wrapped ciphertext and
-refuses the same source bytes under a different map. The engine-backed case is
-defined to mirror that assertion against LocalStack KMS and assert that a
-context change returns different wrapped ciphertext that remains revealable
-only under the destination context. This prevents a fake or warm cache from
-serving as evidence for semantics the real provider rejects.
-
-This correction does **not** unblock `secret_put` or
-`provider_credential_register`. `ReEncrypt` transforms an existing wrapped
-branch key; it neither reads nor mints the active key ciphertext required by a
-first seal. The exact remaining route decisions and missing atomic receipt/
-registration plans are recorded in `regional-services.md`; both routes remain
-unserved.

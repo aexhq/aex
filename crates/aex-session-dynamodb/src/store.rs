@@ -10,9 +10,9 @@
 use std::future::Future;
 
 use aex_operation_domain::operation::{CancelRejection, OperationKind, OperationStatus, cancel};
-use aex_session_domain::{DeletionEpoch, Message, Run, Session};
+use aex_session_domain::{Message as DomainMessage, Run as DomainRun, Session as DomainSession};
 use aex_wire::idempotency::IdempotencyKey;
-use aex_wire::ids::{AgentId, ApprovalId, OperationId, SessionId, WorkspaceId};
+use aex_wire::ids::{AgentId, ApprovalId, OperationId, RunId, SessionId, WorkspaceId};
 use aex_wire::types::Timestamp;
 use async_trait::async_trait;
 use aws_sdk_dynamodb::Client;
@@ -26,15 +26,17 @@ use crate::error::{
     decode_cancellation_with_resolution,
 };
 use crate::keys;
-use crate::paging::{CursorError, PageBudget, PagePosition};
+use crate::paging::{CursorBinding, CursorError, CursorKey, PageBudget, PagePosition};
 use crate::plan::{Participant, RegionalTables, TransactionPlan, key};
 use crate::replay::{IdempotencyScope, Receipt, ReceiptStore, key_digest};
 use crate::transactions::{
-    Foreign, OperationCancelRequest, compile_decision, compile_fanout_page, operation_cancel_owned,
-    operation_cancel_requested,
+    AdmissionForeign, Foreign, OperationCancelRequest, TerminalForeign, compile_admission,
+    compile_decision, compile_fanout_page, compile_lifecycle, compile_terminal,
+    operation_cancel_owned, operation_cancel_requested,
 };
 use crate::wire_pending::{
-    AgentControl, AgentDecisionPlan, Approval, FanoutPagePlan, JournalEntry, StoredOperation,
+    AdmissionPlan, AgentControl, AgentDecisionPlan, Approval, FanoutPagePlan, JournalEntry,
+    LifecyclePlan, Run, SessionHead, StoredOperation, TerminalPlan,
 };
 
 const OPERATION_HYDRATION_CONCURRENCY: usize = 16;
@@ -48,6 +50,75 @@ pub struct Page<T> {
     pub next: Option<aex_wire::cursor::Cursor>,
 }
 
+// TODO(cross-stream): `aex-session-app` publishes no `SessionAuthority`. Its commit-side
+// port is `aex_session_app::ports::AuthorityCommitter`, which takes an
+// `aex_session_app::plan::SessionTransaction` and returns `ports::CommitOutcome`; its
+// read side is `ports::SessionReader`.
+/// The session authority.
+#[async_trait]
+pub trait SessionAuthority: Send + Sync + 'static {
+    /// Commits the one public admission transaction.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::PreconditionFailed`] naming the participant that lost, and
+    /// [`StoreError::CommitAmbiguous`] when the outcome is unknown — which the
+    /// caller resolves by reading the receipt and never by writing again.
+    async fn admit_message_and_run(
+        &self,
+        plan: &AdmissionPlan,
+        foreign: AdmissionForeign,
+    ) -> Result<(), StoreError>;
+
+    /// Commits the run terminal barrier.
+    ///
+    /// # Errors
+    ///
+    /// As above.
+    async fn commit_run_terminal(
+        &self,
+        plan: &TerminalPlan,
+        foreign: TerminalForeign,
+    ) -> Result<(), StoreError>;
+
+    /// Commits a trash, restore, purge admission or purge completion.
+    ///
+    /// # Errors
+    ///
+    /// As above.
+    async fn commit_lifecycle(
+        &self,
+        plan: &LifecyclePlan,
+        foreign: Vec<Foreign>,
+    ) -> Result<(), StoreError>;
+
+    /// Reads one session head.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError`] for a transport or decode failure. An absent head is
+    /// `Ok(None)`; a purged head is a decoded head with `lifecycle = purged`,
+    /// because one point read has to serve `200`, `410 session_deleting` and
+    /// `410 session_deleted`.
+    async fn load_head(
+        &self,
+        workspace: WorkspaceId,
+        session: SessionId,
+    ) -> Result<Option<SessionHead>, StoreError>;
+
+    /// Reads one run.
+    ///
+    /// # Errors
+    ///
+    /// As [`SessionAuthority::load_head`].
+    async fn load_run(
+        &self,
+        workspace: WorkspaceId,
+        session: SessionId,
+        run: RunId,
+    ) -> Result<Option<Run>, StoreError>;
+}
+
 // TODO(cross-stream): `aex-session-app` publishes no journal store port. Journal reads are
 // `aex_session_app::ports::SessionReader`, and journal writes are ordinary writes inside an
 // `aex_session_app::plan::SessionTransaction`.
@@ -58,7 +129,7 @@ pub trait AgentJournalStore: Send + Sync + 'static {
     ///
     /// # Errors
     ///
-    /// [`StoreError`] for a validation, conditional-write, or transport failure.
+    /// As [`SessionAuthority::admit_message_and_run`].
     async fn commit_decision(
         &self,
         plan: &AgentDecisionPlan,
@@ -118,41 +189,12 @@ pub struct PositionPage<T> {
     pub next: Option<PagePosition>,
 }
 
-/// One session collection page and the deletion generation under which it was read.
-///
-/// The edge binds this epoch into every continuation. Without it, a cursor
-/// minted before trash and restore could resume into a logically new live
-/// generation of the same session.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SessionPage<T> {
-    /// The rows, in key order.
-    pub items: Vec<T>,
-    /// Where the next page starts, when there is one.
-    pub next: Option<PagePosition>,
-    /// The stable parent deletion epoch observed before and after the query.
-    pub deletion_epoch: DeletionEpoch,
-}
-
-/// A read whose child resource is meaningful only while its parent session is live.
-///
-/// `Missing` deliberately covers both an absent session and a session owned by
-/// another workspace. Giving those cases different shapes would turn a point
-/// read into a tenant-existence oracle.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SessionScoped<T> {
-    /// The session is absent from the asserted workspace.
-    Missing,
-    /// The session crossed its deletion fence.
-    Deleted,
-    /// The session is live and the requested value was read under that fence.
-    Active(T),
-}
-
 /// The narrow durable-operation authority used by continuation workers and
 /// operation point reads.
 ///
-/// A worker that only needs to reload an operation before a fenced step does
-/// not acquire any session mutation capability as a side effect.
+/// It is deliberately separate from [`SessionAuthority`]: a worker that only
+/// needs to reload an operation before a fenced step must not acquire the
+/// session transaction surface as a side effect.
 #[async_trait]
 pub trait OperationAuthority: Send + Sync + 'static {
     /// Strongly reads one operation under its asserted tenant.
@@ -378,18 +420,24 @@ fn malformed_operation(attribute: &'static str, reason: &str) -> StoreError {
 
 fn projected_operation_id(item: &Item, workspace: WorkspaceId) -> Result<OperationId, StoreError> {
     let row = Row::bind_projected(item, codec::OPERATION);
-    let base_pk = row.string(crate::attr::PK)?;
-    let operation = base_pk
-        .strip_prefix("OP#")
-        .and_then(|value| value.parse::<OperationId>().ok())
-        .ok_or_else(|| {
-            malformed_operation(
-                "operationId",
-                "the KEYS_ONLY projection carries no valid operation base key",
-            )
-        })?;
+    row.owned_by("workspaceId", &workspace.to_string())?;
+    let operation = row.id::<OperationId>("operationId")?;
+    let kind = OperationKind::parse(row.string("kind")?).ok_or_else(|| {
+        malformed_operation("kind", "outside the closed operation-kind vocabulary")
+    })?;
+    if !kind.is_public() {
+        return Err(malformed_operation(
+            "kind",
+            "an internal operation entered the sparse public index",
+        ));
+    }
+    OperationStatus::parse(row.string("status")?).ok_or_else(|| {
+        malformed_operation("status", "outside the closed operation-status vocabulary")
+    })?;
+    let created_at = row.timestamp("createdAt")?;
+    let _session = row.opt_id::<SessionId>("sessionId")?;
     let expected = keys::operation(operation);
-    if base_pk != expected.pk || row.string(crate::attr::SK)? != expected.sk {
+    if row.string(crate::attr::PK)? != expected.pk || row.string(crate::attr::SK)? != expected.sk {
         return Err(malformed_operation(
             "operationId",
             "the projected base key does not match the operation identity",
@@ -397,27 +445,8 @@ fn projected_operation_id(item: &Item, workspace: WorkspaceId) -> Result<Operati
     }
     if row.string(keys::workspace_index::PK)?
         != keys::workspace_index::operation_partition(workspace)
-    {
-        return Err(malformed_operation(
-            keys::workspace_index::PK,
-            "the projected index partition does not match the asserted workspace",
-        ));
-    }
-    let index_sort = row.string(keys::workspace_index::SK)?;
-    let Some((created_at, indexed_operation)) = index_sort.rsplit_once('#') else {
-        return Err(malformed_operation(
-            keys::workspace_index::SK,
-            "the projected index sort key is not a timestamp and operation identity",
-        ));
-    };
-    let created_at = Timestamp::parse(created_at).map_err(|_| {
-        malformed_operation(
-            keys::workspace_index::SK,
-            "the projected index sort key has an invalid creation timestamp",
-        )
-    })?;
-    if indexed_operation != operation.to_string()
-        || index_sort != keys::workspace_index::operation_sort(created_at, operation)
+        || row.string(keys::workspace_index::SK)?
+            != keys::workspace_index::operation_sort(created_at, operation)
     {
         return Err(malformed_operation(
             keys::workspace_index::SK,
@@ -894,86 +923,110 @@ mod operation_store_tests {
 
 /// The read-only `session-authority` surface the finite regional API composes.
 ///
-/// There is no method here that commits anything, so a deployable that holds
-/// only this port cannot write the session table however it is wired.
+/// Separate from [`SessionAuthority`] because it is a different capability
+/// statement: there is no method here that commits anything, so a deployable
+/// that holds only this port cannot write the session table however it is
+/// wired. Both surfaces share [`crate::codec`] and [`crate::keys`], so the two
+/// cannot disagree about row shape.
 #[async_trait]
 pub trait SessionQueries: Send + Sync + 'static {
-    /// Reads one complete canonical session authority document.
-    async fn load_session(
-        &self,
-        workspace: WorkspaceId,
-        session: SessionId,
-    ) -> Result<SessionScoped<Session>, StoreError>;
-
-    /// Lists canonical messages under one live session fence.
+    /// Reads one session head.
     ///
-    /// A continuation caller passes the epoch from the strong parent read it
-    /// performed before decoding the cursor. `None` makes this adapter perform
-    /// that initial read itself. Either path always performs the final read.
-    async fn page_messages(
-        &self,
-        workspace: WorkspaceId,
-        session: SessionId,
-        expected_deletion_epoch: Option<DeletionEpoch>,
-        budget: PageBudget,
-        after: Option<&PagePosition>,
-    ) -> Result<SessionScoped<SessionPage<Message>>, StoreError>;
-
-    /// Reads one canonical run under one live session fence.
-    async fn load_run(
-        &self,
-        workspace: WorkspaceId,
-        session: SessionId,
-        run: aex_wire::ids::RunId,
-    ) -> Result<SessionScoped<Option<Run>>, StoreError>;
-
-    /// Lists canonical runs under one live session fence.
+    /// # Errors
     ///
-    /// `expected_deletion_epoch` has the same predecoded-cursor semantics as
-    /// [`SessionQueries::page_messages`].
-    async fn page_runs(
+    /// [`StoreError`] for a transport or decode failure. An absent head is
+    /// `Ok(None)`; a purged head decodes with `lifecycle = purged`, because one
+    /// point read has to serve `200`, `410 session_deleting` and
+    /// `410 session_deleted`.
+    async fn read_head(
         &self,
         workspace: WorkspaceId,
         session: SessionId,
-        expected_deletion_epoch: Option<DeletionEpoch>,
-        budget: PageBudget,
-        after: Option<&PagePosition>,
-    ) -> Result<SessionScoped<SessionPage<Run>>, StoreError>;
+    ) -> Result<Option<SessionHead>, StoreError>;
 
     /// Reads one approval.
     ///
     /// # Errors
     ///
-    /// As for every strongly consistent authority read.
+    /// As [`SessionQueries::read_head`].
     async fn load_approval(
         &self,
         workspace: WorkspaceId,
         session: SessionId,
         approval: ApprovalId,
-    ) -> Result<SessionScoped<Option<Approval>>, StoreError>;
+    ) -> Result<Option<Approval>, StoreError>;
 
     /// Lists one session's approvals, oldest first, from a continuation.
     ///
-    /// `expected_deletion_epoch` has the same predecoded-cursor semantics as
-    /// [`SessionQueries::page_messages`].
-    ///
     /// # Errors
     ///
-    /// As for every strongly consistent authority read.
+    /// As [`SessionQueries::read_head`].
     async fn page_approvals(
         &self,
         workspace: WorkspaceId,
         session: SessionId,
-        expected_deletion_epoch: Option<DeletionEpoch>,
         budget: PageBudget,
         after: Option<&PagePosition>,
-    ) -> Result<SessionScoped<SessionPage<Approval>>, StoreError>;
+    ) -> Result<PositionPage<Approval>, StoreError>;
 }
 
-fn cursor_error(error: &CursorError) -> StoreError {
-    StoreError::Invalid {
-        detail: error.to_string(),
-    }
+/// Canonical strict-v1 session, message, and run reads.
+///
+/// Point reads and session-partition collections are strongly consistent.
+/// Workspace session lists are complete GSI projections: they do not perform
+/// N+1 hydration, and therefore carry DynamoDB's documented eventual index
+/// consistency instead of pretending to be a fence.
+#[async_trait]
+pub trait CanonicalSessionQueries: Send + Sync + 'static {
+    /// Strongly reads one complete session head.
+    async fn read_session(
+        &self,
+        workspace: WorkspaceId,
+        session: SessionId,
+    ) -> Result<Option<DomainSession>, StoreError>;
+
+    /// Strongly reads one complete message.
+    async fn read_message(
+        &self,
+        workspace: WorkspaceId,
+        session: SessionId,
+        message: aex_wire::ids::MessageId,
+    ) -> Result<Option<DomainMessage>, StoreError>;
+
+    /// Strongly reads one complete run.
+    async fn read_domain_run(
+        &self,
+        workspace: WorkspaceId,
+        session: SessionId,
+        run: RunId,
+    ) -> Result<Option<DomainRun>, StoreError>;
+
+    /// Lists complete messages from one session partition.
+    async fn page_messages(
+        &self,
+        workspace: WorkspaceId,
+        session: SessionId,
+        budget: PageBudget,
+        after: Option<&PagePosition>,
+    ) -> Result<PositionPage<DomainMessage>, StoreError>;
+
+    /// Lists complete runs from one session partition.
+    async fn page_runs(
+        &self,
+        workspace: WorkspaceId,
+        session: SessionId,
+        budget: PageBudget,
+        after: Option<&PagePosition>,
+    ) -> Result<PositionPage<DomainRun>, StoreError>;
+
+    /// Lists one lifecycle partition as complete projected session heads.
+    async fn page_sessions(
+        &self,
+        workspace: WorkspaceId,
+        lifecycle: &str,
+        budget: PageBudget,
+        after: Option<&PagePosition>,
+    ) -> Result<PositionPage<DomainSession>, StoreError>;
 }
 
 /// The read-only adapter.
@@ -1016,90 +1069,15 @@ impl SessionReads {
         Ok(output.item)
     }
 
-    async fn get_scoped_item(
+    async fn page_session_partition<T>(
         &self,
         workspace: WorkspaceId,
-        session: SessionId,
-        child: &keys::Key,
-    ) -> Result<(SessionScoped<Session>, Option<Item>), StoreError> {
-        let head = keys::head(session);
-        let gets = [head, child.clone()]
-            .into_iter()
-            .map(|target| {
-                let get = aws_sdk_dynamodb::types::Get::builder()
-                    .table_name(&self.table)
-                    .set_key(Some(key(&target.pk, &target.sk)))
-                    .build()
-                    .map_err(|error| StoreError::Invalid {
-                        detail: error.to_string(),
-                    })?;
-                Ok(aws_sdk_dynamodb::types::TransactGetItem::builder()
-                    .get(get)
-                    .build())
-            })
-            .collect::<Result<Vec<_>, StoreError>>()?;
-        let output = self
-            .client
-            .transact_get_items()
-            .set_transact_items(Some(gets))
-            .send()
-            .await
-            .map_err(|error| classify(&error, Idempotence::Read))?;
-        let responses = output.responses.unwrap_or_default();
-        if responses.len() != 2 {
-            return Err(StoreError::Invalid {
-                detail: "a two-item transactional read returned another response arity".to_owned(),
-            });
-        }
-        let child = responses[1].item.clone();
-        let Some(item) = responses[0].item.as_ref() else {
-            return Ok((SessionScoped::Missing, child));
-        };
-        let decoded = match crate::authority_codec::decode_session(item, workspace) {
-            Ok(decoded) => decoded,
-            Err(CodecError::WrongTenant { .. }) => {
-                return Ok((SessionScoped::Missing, child));
-            }
-            Err(error) => return Err(StoreError::Corrupt(error)),
-        };
-        if decoded.deletion.state.admits_work() {
-            Ok((SessionScoped::Active(decoded), child))
-        } else {
-            Ok((SessionScoped::Deleted, child))
-        }
-    }
-
-    async fn scoped_session(
-        &self,
-        workspace: WorkspaceId,
-        session: SessionId,
-    ) -> Result<SessionScoped<Session>, StoreError> {
-        let key = keys::head(session);
-        let Some(item) = self.get(&key.pk, &key.sk).await? else {
-            return Ok(SessionScoped::Missing);
-        };
-        let decoded = match crate::authority_codec::decode_session(&item, workspace) {
-            Ok(decoded) => decoded,
-            Err(CodecError::WrongTenant { .. }) => return Ok(SessionScoped::Missing),
-            Err(error) => return Err(StoreError::Corrupt(error)),
-        };
-        if decoded.deletion.state.admits_work() {
-            Ok(SessionScoped::Active(decoded))
-        } else {
-            Ok(SessionScoped::Deleted)
-        }
-    }
-
-    async fn query_session_range(
-        &self,
         session: SessionId,
         prefix: &'static str,
         budget: PageBudget,
         after: Option<&PagePosition>,
-    ) -> Result<(Vec<Item>, Option<PagePosition>), StoreError> {
-        if let Some(position) = after {
-            validate_session_position(position, session, prefix)?;
-        }
+        decode: fn(&Item, WorkspaceId) -> Result<T, CodecError>,
+    ) -> Result<PositionPage<T>, StoreError> {
         let output = self
             .client
             .query()
@@ -1111,131 +1089,23 @@ impl SessionReads {
             .expression_attribute_values(":prefix", crate::attr::s(prefix))
             .limit(budget.limit())
             .consistent_read(true)
-            .scan_index_forward(true)
             .set_exclusive_start_key(after.map(|position| position.to_exclusive_start(None, None)))
             .send()
             .await
             .map_err(|error| classify(&error, Idempotence::Read))?;
+        let items = output
+            .items
+            .unwrap_or_default()
+            .into_iter()
+            .map(|item| decode(&item, workspace).map_err(StoreError::from))
+            .collect::<Result<Vec<_>, _>>()?;
         let next = output
             .last_evaluated_key
             .as_ref()
             .map(|last| PagePosition::from_last_evaluated(last, None, None))
             .transpose()
             .map_err(|error| cursor_error(&error))?;
-        if let Some(position) = next.as_ref() {
-            validate_session_position(position, session, prefix)?;
-        }
-        Ok((output.items.unwrap_or_default(), next))
-    }
-
-    async fn finish_scoped<T>(
-        &self,
-        workspace: WorkspaceId,
-        session: SessionId,
-        expected_deletion_epoch: DeletionEpoch,
-        value: T,
-    ) -> Result<SessionScoped<T>, StoreError> {
-        match self.scoped_session(workspace, session).await? {
-            SessionScoped::Missing | SessionScoped::Deleted => Ok(SessionScoped::Deleted),
-            SessionScoped::Active(after) if after.deletion.epoch == expected_deletion_epoch => {
-                Ok(SessionScoped::Active(value))
-            }
-            // A trash followed by a restore can be live again at the second
-            // read. The advanced epoch proves the child read crossed the
-            // deletion fence, so it must not be published. These read routes
-            // do not declare a retryable snapshot-conflict response and this
-            // adapter never loops internally, so fail closed as a nonretryable
-            // internal refusal rather than misclassifying it as contention.
-            SessionScoped::Active(_) => Err(StoreError::Invalid {
-                detail: "the session deletion epoch changed across a collection read".to_owned(),
-            }),
-        }
-    }
-}
-
-fn validate_session_position(
-    position: &PagePosition,
-    session: SessionId,
-    prefix: &'static str,
-) -> Result<(), StoreError> {
-    if position.pk != keys::session_partition(session)
-        || !position.sk.starts_with(prefix)
-        || position.index_pk.is_some()
-        || position.index_sk.is_some()
-    {
-        return Err(StoreError::Invalid {
-            detail: "a continuation does not belong to this session collection".to_owned(),
-        });
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-mod canonical_read_tests {
-    use proptest::prelude::*;
-
-    use super::validate_session_position;
-    use crate::paging::PagePosition;
-
-    #[test]
-    fn a_session_collection_position_is_exactly_base_table_scoped() {
-        let session = aex_session_domain::testing::session_fixture().id;
-        let valid = PagePosition {
-            pk: crate::keys::session_partition(session),
-            sk: format!(
-                "{}{}",
-                crate::keys::run_prefix(),
-                aex_session_domain::testing::id::<aex_wire::ids::RunId>(9)
-            ),
-            index_pk: None,
-            index_sk: None,
-        };
-        assert!(validate_session_position(&valid, session, crate::keys::run_prefix()).is_ok());
-
-        let mut foreign = valid.clone();
-        foreign.pk = crate::keys::session_partition(aex_session_domain::testing::id(99));
-        assert!(validate_session_position(&foreign, session, crate::keys::run_prefix()).is_err());
-
-        let mut wrong_range = valid.clone();
-        wrong_range.sk = format!(
-            "{}{}",
-            crate::keys::message_prefix(),
-            aex_session_domain::testing::id::<aex_wire::ids::MessageId>(8)
-        );
-        assert!(
-            validate_session_position(&wrong_range, session, crate::keys::run_prefix()).is_err()
-        );
-    }
-
-    #[test]
-    fn a_delete_restore_cycle_invalidates_an_in_flight_child_read() {
-        let before = aex_session_domain::testing::session_fixture();
-        let mut restored = before.clone();
-        restored.deletion.epoch = restored.deletion.epoch.next().next();
-        assert_ne!(before.deletion.epoch, restored.deletion.epoch);
-    }
-
-    proptest! {
-        #[test]
-        fn an_index_position_is_never_accepted_by_a_base_collection(
-            index_partition in ".{0,64}",
-            index_sort in ".{0,64}",
-        ) {
-            let session = aex_session_domain::testing::session_fixture().id;
-            let position = PagePosition {
-                pk: crate::keys::session_partition(session),
-                sk: format!(
-                    "{}{}",
-                    crate::keys::run_prefix(),
-                    aex_session_domain::testing::id::<aex_wire::ids::RunId>(9)
-                ),
-                index_pk: Some(index_partition),
-                index_sk: Some(index_sort),
-            };
-            prop_assert!(
-                validate_session_position(&position, session, crate::keys::run_prefix()).is_err()
-            );
-        }
+        Ok(PositionPage { items, next })
     }
 }
 
@@ -1257,104 +1127,16 @@ fn approval_for_session(
 
 #[async_trait]
 impl SessionQueries for SessionReads {
-    async fn load_session(
+    async fn read_head(
         &self,
         workspace: WorkspaceId,
         session: SessionId,
-    ) -> Result<SessionScoped<Session>, StoreError> {
-        self.scoped_session(workspace, session).await
-    }
-
-    async fn page_messages(
-        &self,
-        workspace: WorkspaceId,
-        session: SessionId,
-        expected_deletion_epoch: Option<DeletionEpoch>,
-        budget: PageBudget,
-        after: Option<&PagePosition>,
-    ) -> Result<SessionScoped<SessionPage<Message>>, StoreError> {
-        let deletion_epoch = match expected_deletion_epoch {
-            Some(epoch) => epoch,
-            None => match self.scoped_session(workspace, session).await? {
-                SessionScoped::Active(session) => session.deletion.epoch,
-                SessionScoped::Missing => return Ok(SessionScoped::Missing),
-                SessionScoped::Deleted => return Ok(SessionScoped::Deleted),
-            },
-        };
-        let (rows, next) = self
-            .query_session_range(session, keys::message_prefix(), budget, after)
-            .await?;
-        let items = rows
-            .iter()
-            .map(|item| crate::authority_codec::decode_domain_message(item, workspace))
-            .collect::<Result<Vec<_>, _>>()?;
-        self.finish_scoped(
-            workspace,
-            session,
-            deletion_epoch,
-            SessionPage {
-                items,
-                next,
-                deletion_epoch,
-            },
-        )
-        .await
-    }
-
-    async fn load_run(
-        &self,
-        workspace: WorkspaceId,
-        session: SessionId,
-        run: aex_wire::ids::RunId,
-    ) -> Result<SessionScoped<Option<Run>>, StoreError> {
-        let child = keys::run(session, run);
-        let (scope, item) = self.get_scoped_item(workspace, session, &child).await?;
-        match scope {
-            SessionScoped::Active(_) => {}
-            SessionScoped::Missing => return Ok(SessionScoped::Missing),
-            SessionScoped::Deleted => return Ok(SessionScoped::Deleted),
+    ) -> Result<Option<SessionHead>, StoreError> {
+        let key = keys::head(session);
+        match self.get(&key.pk, &key.sk).await? {
+            None => Ok(None),
+            Some(item) => Ok(Some(codec::decode_head(&item, workspace)?)),
         }
-        let value = item
-            .as_ref()
-            .map(|item| crate::authority_codec::decode_domain_run(item, workspace))
-            .transpose()?;
-        Ok(SessionScoped::Active(value))
-    }
-
-    async fn page_runs(
-        &self,
-        workspace: WorkspaceId,
-        session: SessionId,
-        expected_deletion_epoch: Option<DeletionEpoch>,
-        budget: PageBudget,
-        after: Option<&PagePosition>,
-    ) -> Result<SessionScoped<SessionPage<Run>>, StoreError> {
-        let deletion_epoch = match expected_deletion_epoch {
-            Some(epoch) => epoch,
-            None => match self.scoped_session(workspace, session).await? {
-                SessionScoped::Active(session) => session.deletion.epoch,
-                SessionScoped::Missing => return Ok(SessionScoped::Missing),
-                SessionScoped::Deleted => return Ok(SessionScoped::Deleted),
-            },
-        };
-        let (rows, next) = self
-            .query_session_range(session, keys::run_prefix(), budget, after)
-            .await?;
-        let items = rows
-            .iter()
-            .map(|item| crate::authority_codec::decode_domain_run(item, workspace))
-            .collect::<Result<Vec<_>, _>>()?;
-        self.finish_scoped(
-            workspace,
-            session,
-            deletion_epoch,
-            SessionPage {
-                items,
-                next,
-                deletion_epoch,
-            },
-        )
-        .await
     }
 
     async fn load_approval(
@@ -1362,59 +1144,193 @@ impl SessionQueries for SessionReads {
         workspace: WorkspaceId,
         session: SessionId,
         approval: ApprovalId,
-    ) -> Result<SessionScoped<Option<Approval>>, StoreError> {
-        let child = keys::approval(session, approval);
-        let (scope, item) = self.get_scoped_item(workspace, session, &child).await?;
-        match scope {
-            SessionScoped::Active(_) => {}
-            SessionScoped::Missing => return Ok(SessionScoped::Missing),
-            SessionScoped::Deleted => return Ok(SessionScoped::Deleted),
+    ) -> Result<Option<Approval>, StoreError> {
+        let key = keys::approval(session, approval);
+        match self.get(&key.pk, &key.sk).await? {
+            None => Ok(None),
+            Some(item) => Ok(Some(approval_for_session(&item, workspace, session)?)),
         }
-        let value = item
-            .as_ref()
-            .map(|item| approval_for_session(item, workspace, session))
-            .transpose()?;
-        Ok(SessionScoped::Active(value))
     }
 
     async fn page_approvals(
         &self,
         workspace: WorkspaceId,
         session: SessionId,
-        expected_deletion_epoch: Option<DeletionEpoch>,
         budget: PageBudget,
         after: Option<&PagePosition>,
-    ) -> Result<SessionScoped<SessionPage<Approval>>, StoreError> {
-        let deletion_epoch = match expected_deletion_epoch {
-            Some(epoch) => epoch,
-            None => match self.scoped_session(workspace, session).await? {
-                SessionScoped::Active(session) => session.deletion.epoch,
-                SessionScoped::Missing => return Ok(SessionScoped::Missing),
-                SessionScoped::Deleted => return Ok(SessionScoped::Deleted),
-            },
-        };
+    ) -> Result<PositionPage<Approval>, StoreError> {
         // One `begins_with` range inside the session partition. No index and no
         // filter expression: an approval that belongs to another session is in
         // another partition, so it is unreachable rather than filtered out.
-        let (rows, next) = self
-            .query_session_range(session, keys::approval_prefix(), budget, after)
-            .await?;
+        let output = self
+            .client
+            .query()
+            .table_name(&self.table)
+            .key_condition_expression("#pk = :pk AND begins_with(#sk, :prefix)")
+            .expression_attribute_names("#pk", crate::attr::PK)
+            .expression_attribute_names("#sk", crate::attr::SK)
+            .expression_attribute_values(":pk", crate::attr::s(keys::session_partition(session)))
+            .expression_attribute_values(":prefix", crate::attr::s(keys::approval_prefix()))
+            .limit(budget.limit())
+            .consistent_read(true)
+            .set_exclusive_start_key(after.map(|position| position.to_exclusive_start(None, None)))
+            .send()
+            .await
+            .map_err(|error| classify(&error, Idempotence::Read))?;
 
         let mut items = Vec::new();
-        for item in rows {
+        for item in output.items.unwrap_or_default() {
             items.push(approval_for_session(&item, workspace, session)?);
         }
-        self.finish_scoped(
+        let next = output
+            .last_evaluated_key
+            .as_ref()
+            .map(|last| PagePosition::from_last_evaluated(last, None, None))
+            .transpose()
+            .map_err(|error| cursor_error(&error))?;
+        Ok(PositionPage { items, next })
+    }
+}
+
+#[async_trait]
+impl CanonicalSessionQueries for SessionReads {
+    async fn read_session(
+        &self,
+        workspace: WorkspaceId,
+        session: SessionId,
+    ) -> Result<Option<DomainSession>, StoreError> {
+        let key = keys::head(session);
+        match self.get(&key.pk, &key.sk).await? {
+            None => Ok(None),
+            Some(item) => Ok(Some(crate::authority_codec::decode_session(
+                &item, workspace,
+            )?)),
+        }
+    }
+
+    async fn read_message(
+        &self,
+        workspace: WorkspaceId,
+        session: SessionId,
+        message: aex_wire::ids::MessageId,
+    ) -> Result<Option<DomainMessage>, StoreError> {
+        let key = keys::message(session, message);
+        match self.get(&key.pk, &key.sk).await? {
+            None => Ok(None),
+            Some(item) => Ok(Some(crate::authority_codec::decode_domain_message(
+                &item, workspace,
+            )?)),
+        }
+    }
+
+    async fn read_domain_run(
+        &self,
+        workspace: WorkspaceId,
+        session: SessionId,
+        run: RunId,
+    ) -> Result<Option<DomainRun>, StoreError> {
+        let key = keys::run(session, run);
+        match self.get(&key.pk, &key.sk).await? {
+            None => Ok(None),
+            Some(item) => Ok(Some(crate::authority_codec::decode_domain_run(
+                &item, workspace,
+            )?)),
+        }
+    }
+
+    async fn page_messages(
+        &self,
+        workspace: WorkspaceId,
+        session: SessionId,
+        budget: PageBudget,
+        after: Option<&PagePosition>,
+    ) -> Result<PositionPage<DomainMessage>, StoreError> {
+        self.page_session_partition(
             workspace,
             session,
-            deletion_epoch,
-            SessionPage {
-                items,
-                next,
-                deletion_epoch,
-            },
+            keys::message_prefix(),
+            budget,
+            after,
+            crate::authority_codec::decode_domain_message,
         )
         .await
+    }
+
+    async fn page_runs(
+        &self,
+        workspace: WorkspaceId,
+        session: SessionId,
+        budget: PageBudget,
+        after: Option<&PagePosition>,
+    ) -> Result<PositionPage<DomainRun>, StoreError> {
+        self.page_session_partition(
+            workspace,
+            session,
+            keys::run_prefix(),
+            budget,
+            after,
+            crate::authority_codec::decode_domain_run,
+        )
+        .await
+    }
+
+    async fn page_sessions(
+        &self,
+        workspace: WorkspaceId,
+        lifecycle: &str,
+        budget: PageBudget,
+        after: Option<&PagePosition>,
+    ) -> Result<PositionPage<DomainSession>, StoreError> {
+        if !keys::LIFECYCLES.contains(&lifecycle) || lifecycle == "purged" {
+            return Err(StoreError::Invalid {
+                detail: "session list lifecycle is outside the live sparse index".to_owned(),
+            });
+        }
+        let output = self
+            .client
+            .query()
+            .table_name(&self.table)
+            .index_name(keys::workspace_index::NAME)
+            .key_condition_expression("#pk = :pk")
+            .expression_attribute_names("#pk", keys::workspace_index::PK)
+            .expression_attribute_values(
+                ":pk",
+                crate::attr::s(keys::workspace_index::session_partition(
+                    workspace, lifecycle,
+                )),
+            )
+            .limit(budget.limit())
+            .set_exclusive_start_key(after.map(|position| {
+                position.to_exclusive_start(
+                    Some(keys::workspace_index::PK),
+                    Some(keys::workspace_index::SK),
+                )
+            }))
+            .send()
+            .await
+            .map_err(|error| classify(&error, Idempotence::Read))?;
+        let items = output
+            .items
+            .unwrap_or_default()
+            .into_iter()
+            .map(|item| {
+                crate::authority_codec::decode_session_projection(&item, workspace)
+                    .map_err(StoreError::from)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let next = output
+            .last_evaluated_key
+            .as_ref()
+            .map(|last| {
+                PagePosition::from_last_evaluated(
+                    last,
+                    Some(keys::workspace_index::PK),
+                    Some(keys::workspace_index::SK),
+                )
+            })
+            .transpose()
+            .map_err(|error| cursor_error(&error))?;
+        Ok(PositionPage { items, next })
     }
 }
 
@@ -1423,13 +1339,18 @@ impl SessionQueries for SessionReads {
 pub struct SessionStore {
     client: Client,
     tables: RegionalTables,
+    cursor_key: CursorKey,
 }
 
 impl SessionStore {
-    /// Binds a store to a client and the physical regional table names.
+    /// Binds a store to a client, the physical table names and a cursor key.
     #[must_use]
-    pub fn new(client: Client, tables: RegionalTables) -> Self {
-        Self { client, tables }
+    pub fn new(client: Client, tables: RegionalTables, cursor_key: CursorKey) -> Self {
+        Self {
+            client,
+            tables,
+            cursor_key,
+        }
     }
 
     /// The physical `session-authority` table name.
@@ -1477,6 +1398,155 @@ impl SessionStore {
                     Idempotence::Write(Resolution::IdempotencyReceipt),
                 ))
             }
+        }
+    }
+
+    /// Lists one page of complete session heads over the sparse workspace index.
+    ///
+    /// `lifecycle` selects the index partition, so the query needs no filter
+    /// expression and a purged session is physically absent rather than
+    /// filtered out.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError`] for a transport or decode failure, and
+    /// [`StoreError::Invalid`] for a cursor that is not bound to this
+    /// collection.
+    pub async fn list_sessions(
+        &self,
+        binding: CursorBinding<'_>,
+        lifecycle: &str,
+        budget: PageBudget,
+        cursor: Option<&aex_wire::cursor::Cursor>,
+        now: Timestamp,
+    ) -> Result<Page<DomainSession>, StoreError> {
+        let start = self.resume(binding, cursor, now)?;
+        let output = self
+            .client
+            .query()
+            .table_name(self.table())
+            .index_name(keys::workspace_index::NAME)
+            .key_condition_expression("#pk = :pk")
+            .expression_attribute_names("#pk", keys::workspace_index::PK)
+            .expression_attribute_values(
+                ":pk",
+                crate::attr::s(keys::workspace_index::session_partition(
+                    binding.workspace,
+                    lifecycle,
+                )),
+            )
+            .limit(budget.limit())
+            .set_exclusive_start_key(start.map(|position| {
+                position.to_exclusive_start(
+                    Some(keys::workspace_index::PK),
+                    Some(keys::workspace_index::SK),
+                )
+            }))
+            .send()
+            .await
+            .map_err(|error| classify(&error, Idempotence::Read))?;
+
+        let mut items = Vec::new();
+        for item in output.items.unwrap_or_default() {
+            items.push(crate::authority_codec::decode_session_projection(
+                &item,
+                binding.workspace,
+            )?);
+        }
+        let next = self.continuation(binding, output.last_evaluated_key.as_ref(), now)?;
+        Ok(Page { items, next })
+    }
+
+    fn resume(
+        &self,
+        binding: CursorBinding<'_>,
+        cursor: Option<&aex_wire::cursor::Cursor>,
+        now: Timestamp,
+    ) -> Result<Option<PagePosition>, StoreError> {
+        cursor
+            .map(|cursor| crate::paging::verify(&self.cursor_key, binding, cursor, now))
+            .transpose()
+            .map_err(|error| cursor_error(&error))
+    }
+
+    fn continuation(
+        &self,
+        binding: CursorBinding<'_>,
+        last: Option<&Item>,
+        now: Timestamp,
+    ) -> Result<Option<aex_wire::cursor::Cursor>, StoreError> {
+        let Some(last) = last else {
+            return Ok(None);
+        };
+        let position = PagePosition::from_last_evaluated(
+            last,
+            Some(keys::workspace_index::PK),
+            Some(keys::workspace_index::SK),
+        )
+        .map_err(|error| cursor_error(&error))?;
+        crate::paging::mint(&self.cursor_key, binding, &position, now)
+            .map(Some)
+            .map_err(|error| cursor_error(&error))
+    }
+}
+
+fn cursor_error(error: &CursorError) -> StoreError {
+    StoreError::Invalid {
+        detail: error.to_string(),
+    }
+}
+
+#[async_trait]
+impl SessionAuthority for SessionStore {
+    async fn admit_message_and_run(
+        &self,
+        plan: &AdmissionPlan,
+        foreign: AdmissionForeign,
+    ) -> Result<(), StoreError> {
+        let compiled = compile_admission(&self.tables, plan, foreign)?;
+        self.commit(&compiled).await
+    }
+
+    async fn commit_run_terminal(
+        &self,
+        plan: &TerminalPlan,
+        foreign: TerminalForeign,
+    ) -> Result<(), StoreError> {
+        let compiled = compile_terminal(&self.tables, plan, foreign)?;
+        self.commit(&compiled).await
+    }
+
+    async fn commit_lifecycle(
+        &self,
+        plan: &LifecyclePlan,
+        foreign: Vec<Foreign>,
+    ) -> Result<(), StoreError> {
+        let compiled = compile_lifecycle(&self.tables, plan, foreign)?;
+        self.commit(&compiled).await
+    }
+
+    async fn load_head(
+        &self,
+        workspace: WorkspaceId,
+        session: SessionId,
+    ) -> Result<Option<SessionHead>, StoreError> {
+        let key = keys::head(session);
+        match self.get(&key.pk, &key.sk).await? {
+            None => Ok(None),
+            Some(item) => Ok(Some(codec::decode_head(&item, workspace)?)),
+        }
+    }
+
+    async fn load_run(
+        &self,
+        workspace: WorkspaceId,
+        session: SessionId,
+        run: RunId,
+    ) -> Result<Option<Run>, StoreError> {
+        let key = keys::run(session, run);
+        match self.get(&key.pk, &key.sk).await? {
+            None => Ok(None),
+            Some(item) => Ok(Some(codec::decode_run(&item, workspace)?)),
         }
     }
 }

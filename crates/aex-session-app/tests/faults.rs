@@ -9,8 +9,8 @@ use aex_session_app::testing::{CountingIds, FixedClock, ScriptedPorts, fixture_s
 use aex_session_app::{
     AppError, CommitError, PortError, SendMessage, SessionCommand, admit_message, stop_session,
 };
-use aex_session_domain::testing::{id, moment, session_fixture};
-use aex_session_domain::{MessagePart, WorkAdmission};
+use aex_session_domain::testing::{id, moment, running_session, session_fixture};
+use aex_session_domain::{AgentStatus, MessagePart, WorkAdmission};
 use aex_wire::error::ErrorCode;
 use aex_wire::idempotency::IntentDigest;
 use aex_wire::ids::{MessageId, OperationId, RunId};
@@ -88,6 +88,13 @@ fn a_commit_failure_reports_exactly_which_conditions_failed() {
     assert_eq!(reported, failed);
 }
 
+#[test]
+fn an_ambiguous_commit_is_never_a_blind_retry() {
+    let error = AppError::Commit(CommitError::Ambiguous);
+    assert_eq!(error.code(), ErrorCode::InternalError);
+    assert!(!error.retryable());
+}
+
 #[tokio::test]
 async fn a_refused_command_leaves_no_partial_plan() {
     let mut session = session_fixture();
@@ -124,4 +131,64 @@ async fn a_pause_exempt_command_still_plans_under_a_paused_account() {
     .await
     .expect("stop is pause exempt");
     planned.plan.validate().expect("validates");
+}
+
+#[tokio::test]
+async fn stop_refuses_to_cancel_only_a_prefix_of_agents() {
+    let ports = ScriptedPorts::idle().with_more_agents();
+    let clock = clock();
+    let ids = CountingIds::default();
+    let context = ports.context(&clock, &ids);
+    let session = session_fixture();
+
+    let error = stop_session(
+        &context,
+        &SessionCommand {
+            workspace: session.workspace,
+            session: session.id,
+            operation: id::<OperationId>(31),
+            intent: IntentDigest::from_bytes([31; 32]),
+        },
+    )
+    .await
+    .expect_err("an unbounded cancellation cannot be split");
+    assert!(matches!(
+        error,
+        AppError::Plan(aex_session_app::PlanError::TooManyActions { .. })
+    ));
+}
+
+#[tokio::test]
+async fn stop_never_orphans_the_run_before_the_terminal_barrier() {
+    let (session, run, _agent, _message) = running_session();
+    let ports = ScriptedPorts::idle()
+        .with_session(session.clone())
+        .with_root_status(AgentStatus::Running);
+    let clock = clock();
+    let ids = CountingIds::default();
+    let context = ports.context(&clock, &ids);
+
+    let planned = stop_session(
+        &context,
+        &SessionCommand {
+            workspace: session.workspace,
+            session: session.id,
+            operation: id::<OperationId>(32),
+            intent: IntentDigest::from_bytes([32; 32]),
+        },
+    )
+    .await
+    .expect("cancellation plans");
+    let head = planned
+        .plan
+        .writes
+        .iter()
+        .find_map(|write| match write {
+            aex_session_app::plan::Write::PutSessionHead(head) => Some(head),
+            _ => None,
+        })
+        .expect("head write");
+    assert_eq!(head.active_run, Some(run.id));
+    assert_eq!(head.status, session.status);
+    assert_eq!(head.cancellation, session.cancellation.next());
 }

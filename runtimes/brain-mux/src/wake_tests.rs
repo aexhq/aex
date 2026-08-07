@@ -6,7 +6,7 @@
 //! ports are used here, so a divergence between what the engine promises and what the mux
 //! wires it to shows up as a failure rather than as a difference nobody compared.
 
-use crate::admission::{ActivationResources, Admission, AdmissionBounds};
+use crate::admission::{Admission, AdmissionBounds};
 use crate::drain::Stage;
 use crate::measure::Measurement;
 use crate::wake::{BindingState, Bindings, MuxAdmission};
@@ -19,22 +19,20 @@ use aex_brain_application::activation::{
 };
 use aex_brain_application::kernel::{ActivationRegistry, DrainGate, PermitKind, PermitSet};
 use aex_brain_application::ports::{
-    BoxFuture, CancelToken, ClockPort, DispatchTicket, PreviewSink, ProviderDispatchError,
-    ProviderOutcome, ProviderPort, SteadyInstant, StreamBudget, UnknownResolution, WakeQueue as _,
+    BoxFuture, CancelToken, DispatchTicket, PreviewSink, ProviderDispatchError, ProviderOutcome,
+    ProviderPort, StreamBudget, UnknownResolution, WakeQueue as _,
 };
 use aex_brain_domain::budget::DimensionVector;
 use aex_brain_domain::effect::{DispatchEvidence, DurableEffect};
 use aex_brain_domain::ids::{
-    AgentId, AgentKey, JournalSeq, ModelSlug, SessionId, Timestamp, WakeId, WorkShard,
+    AgentId, AgentKey, CatalogPin, ContentHash, JournalSeq, ModelSlug, SessionId, Timestamp,
 };
 use aex_brain_domain::journal::{FinishReason, JournalEntry, JournalRecord, MessageOrigin};
 use aex_brain_domain::wire_pending::{
-    AgentLimits, CanonicalBlock, CanonicalModelRequest, ContentBlockRef, NormalizedUsage,
-    ProviderId, ResolvedAgentConfig, StopReason,
+    AgentLimits, CanonicalBlock, CanonicalModelRequest, CompleteAssistantMessage, CompleteProof,
+    ContentBlockRef, ModelCapability, NormalizedUsage, ProviderId, ProviderReceipt,
+    ResolvedAgentConfig, StopReason,
 };
-use aex_model_catalog::canonical::{CredentialBindingRef, ProviderReceipt, ReceiptBounds, seal};
-use aex_model_catalog::document::CapabilitySet;
-use aex_model_catalog::{BoundedString, QualifiedModel, fixture};
 use aex_usage_application::probe::{
     ActivationKey, ActivationScoped, CpuInstant, PhysicalCpuSource, ProbeContext, ProbeError,
     ThreadCpuClock,
@@ -44,9 +42,9 @@ use aex_usage_domain::wire_pending::{
     ActivationId, AgentId as UsageAgentId, OrganizationId, PricingVersion, RegionId, ServiceId,
     SessionId as UsageSessionId, WorkspaceId,
 };
-use aex_wire::ids::{GenerationId, PrefixedId as _, ProviderCredentialId, Uuid7};
+use aex_wire::ids::{GenerationId, PrefixedId as _, Uuid7};
 use std::collections::{BTreeMap, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
@@ -60,20 +58,13 @@ fn key() -> AgentKey {
 }
 
 fn model() -> ModelSlug {
-    ModelSlug::truncating("deepseek-chat")
+    ModelSlug("deepseek-chat".to_owned())
 }
 
 fn config() -> ResolvedAgentConfig {
     ResolvedAgentConfig {
-        catalog_pin: capability().catalog(),
+        catalog_pin: CatalogPin(ContentHash::of(b"catalog")),
         provider: ProviderId::Deepseek,
-        credential: aex_brain_domain::wire_pending::SessionCredentialPin::new(
-            ProviderCredentialId::from_uuid7(Uuid7::compose(1, [8; 10])),
-            1,
-            1,
-            0,
-        )
-        .expect("non-zero fixture pin"),
         model: model(),
         system: None,
         tool_manifest_digests: Vec::new(),
@@ -86,16 +77,16 @@ fn config() -> ResolvedAgentConfig {
     }
 }
 
-fn capability() -> QualifiedModel {
-    let mut entry = fixture::entry(
-        ProviderId::Deepseek,
-        "deepseek-chat",
-        CapabilitySet::default(),
-    );
-    entry.limits.context_window_tokens = 64_000;
-    entry.limits.max_output_tokens = 4_096;
-    entry.limits.min_cacheable_prefix_tokens = 0;
-    fixture::qualified(entry)
+fn capability() -> ModelCapability {
+    ModelCapability {
+        provider: ProviderId::Deepseek,
+        model: model(),
+        context_window_tokens: 64_000,
+        max_output_tokens: 4_096,
+        min_cacheable_prefix_tokens: None,
+        supports_tools: true,
+        admitted: true,
+    }
 }
 
 fn history() -> Vec<JournalEntry> {
@@ -118,8 +109,7 @@ fn history() -> Vec<JournalEntry> {
             JournalRecord::UserMessage {
                 content: vec![ContentBlockRef::Inline {
                     block: CanonicalBlock::Text {
-                        text: BoundedString::truncating("summarize this"),
-                        annotations: Vec::new(),
+                        text: "summarize this".to_owned(),
                     },
                 }],
                 origin: MessageOrigin::Submission,
@@ -130,60 +120,28 @@ fn history() -> Vec<JournalEntry> {
 }
 
 fn produced() -> ProviderOutcome {
-    let usage = NormalizedUsage::default();
-    let selected = capability();
-    let message = seal(
-        vec![CanonicalBlock::Text {
-            text: BoundedString::truncating("here is the summary"),
-            annotations: Vec::new(),
-        }],
-        StopReason::EndTurn,
-        &usage,
-        &selected,
-    )
-    .expect("a whole message");
-    let at = fixture::at(START);
-    let receipt = ProviderReceipt {
-        provider: message.provider,
-        model: message.model.clone(),
-        catalog: message.catalog,
-        dialect: selected.dialect(),
-        dialect_revision: selected.dialect_revision(),
-        credential: CredentialBindingRef {
-            id: ProviderCredentialId::from_uuid7(Uuid7::compose(1, [4; 10])),
-            revision: 1,
-            generation: 1,
-        },
-        provider_request_id: None,
-        gateway_route: None,
-        http_status: 200,
-        attempts: 1,
-        started_at: at,
-        first_frame_at: Some(at),
-        completed_at: at,
-        request_bytes: 1,
-        response_bytes: 1,
-        frames: 1,
-        rate_limit: None,
-        response_receipt: Some(message.proof.0),
-        bounds: ReceiptBounds {
-            max_frame_bytes: 1_024,
-            max_response_bytes: 1_024,
-            idle_frame_timeout_ms: 1_000,
-            total_deadline_ms: 10_000,
-        },
-    };
+    let blocks = vec![CanonicalBlock::Text {
+        text: "here is the summary".to_owned(),
+    }];
     ProviderOutcome {
-        message,
-        usage,
-        receipt,
+        message: CompleteAssistantMessage {
+            complete: CompleteProof::mint(StopReason::EndTurn, &blocks).expect("a whole message"),
+            blocks,
+            stop_reason: StopReason::EndTurn,
+        },
+        usage: NormalizedUsage::default(),
+        receipt: ProviderReceipt {
+            provider: ProviderId::Deepseek,
+            model: model(),
+            request_id: None,
+            route_revision: 1,
+        },
     }
 }
 
 fn bound() -> Bindings {
     Bindings {
         store: BindingState::Ready,
-        snapshots: BindingState::Ready,
         provider: BindingState::Ready,
         catalog: BindingState::Ready,
         tools: BindingState::Ready,
@@ -191,17 +149,7 @@ fn bound() -> Bindings {
     }
 }
 
-fn activation_resources(policy: &ActivationPolicy) -> ActivationResources {
-    ActivationResources {
-        context_bytes: policy.restore_resident_bytes,
-        stream_buffer_bytes: u64::try_from(policy.stream_buffer_bytes).unwrap_or(u64::MAX),
-        provider_streams: 1,
-        hands_rpcs: 1,
-    }
-}
-
 fn admission(drain: &Arc<DrainGate>) -> Arc<Admission> {
-    let policy = ActivationPolicy::default();
     Arc::new(Admission::new(
         AdmissionBounds {
             target: 4,
@@ -210,16 +158,9 @@ fn admission(drain: &Arc<DrainGate>) -> Arc<Admission> {
         },
         Arc::new(PermitSet::new(BTreeMap::from([
             (PermitKind::Activation, 8_u64),
-            (PermitKind::ContextBytes, policy.restore_resident_bytes),
-            (
-                PermitKind::StreamBufferBytes,
-                u64::try_from(policy.stream_buffer_bytes).unwrap_or(u64::MAX),
-            ),
-            (PermitKind::ProviderStream, 1_u64),
-            (PermitKind::HandsRpc, 1_u64),
+            (PermitKind::ContextBytes, 64 * 1_024 * 1_024),
         ]))),
         Arc::clone(drain),
-        activation_resources(&policy),
     ))
 }
 
@@ -243,7 +184,6 @@ fn compose_loop(provider: Arc<dyn ProviderPort>) -> Composed {
     let drain = Arc::new(DrainGate::new());
     let ports = Ports {
         journal: Arc::clone(&store) as Arc<_>,
-        snapshots: Arc::clone(&store) as Arc<_>,
         effects: Arc::clone(&store) as Arc<_>,
         leases: Arc::clone(&store) as Arc<_>,
         wakes: Arc::clone(&queue) as Arc<_>,
@@ -288,369 +228,6 @@ async fn the_composed_loop_drives_a_turn_end_to_end() {
     assert_eq!(composed.queue.acked().len(), 1);
 }
 
-#[derive(Debug)]
-struct ConcurrentProvider {
-    target: usize,
-    active: AtomicUsize,
-    maximum: AtomicUsize,
-}
-
-impl ConcurrentProvider {
-    const fn new(target: usize) -> Self {
-        Self {
-            target,
-            active: AtomicUsize::new(0),
-            maximum: AtomicUsize::new(0),
-        }
-    }
-}
-
-impl ProviderPort for ConcurrentProvider {
-    fn dispatch<'a>(
-        &'a self,
-        _ticket: &'a DispatchTicket,
-        _credential: aex_brain_domain::wire_pending::SessionCredentialPin,
-        _request: &'a CanonicalModelRequest,
-        _budget: &'a StreamBudget,
-        _preview: &'a dyn PreviewSink,
-        _cancel: &'a CancelToken,
-    ) -> BoxFuture<'a, Result<ProviderOutcome, ProviderDispatchError>> {
-        let mut entered = false;
-        Box::pin(core::future::poll_fn(move |context| {
-            if !entered {
-                entered = true;
-                let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
-                self.maximum.fetch_max(active, Ordering::SeqCst);
-            }
-            if self.maximum.load(Ordering::SeqCst) >= self.target {
-                self.active.fetch_sub(1, Ordering::SeqCst);
-                return core::task::Poll::Ready(Ok(produced()));
-            }
-            context.waker().wake_by_ref();
-            core::task::Poll::Pending
-        }))
-    }
-
-    fn resolve_unknown<'a>(
-        &'a self,
-        _identity: &'a DurableEffect,
-        _evidence: &'a DispatchEvidence,
-    ) -> BoxFuture<'a, Result<UnknownResolution, ProviderDispatchError>> {
-        Box::pin(async { Ok(UnknownResolution::NoDurableOperation) })
-    }
-}
-
-/// One receive schedules all ten long-effect slots concurrently, bounded by the explicit
-/// drive limit. If the loop regresses to serial execution, the first provider future never
-/// observes the other nine and this test cannot complete.
-#[tokio::test(flavor = "current_thread")]
-async fn ten_long_effects_are_polled_concurrently_under_the_drive_bound() {
-    const COUNT: usize = 10;
-    const COUNT_U32: u32 = 10;
-    const COUNT_U64: u64 = 10;
-    let log = Arc::new(Recorder::default());
-    let clock = Arc::new(FixedClock::at(START));
-    let queue = Arc::new(MemoryQueue::new(Arc::clone(&log)));
-    let store = Arc::new(MemoryStore::new(
-        Arc::clone(&clock),
-        Arc::clone(&queue),
-        Arc::clone(&log),
-    ));
-    for ordinal in 0..COUNT {
-        let ordinal = u128::try_from(ordinal).expect("fixture ordinal fits u128");
-        let key = AgentKey::new(
-            key().session,
-            AgentId(Uuid::from_u128(0xa6e7_3000 + ordinal)),
-        );
-        store.seed(key, history());
-        let mut wake = wake_for(key, &format!("wrk-concurrent-{ordinal}"));
-        wake.id = WakeId(Uuid::from_u128(0x5000 + ordinal));
-        queue.project(wake);
-    }
-    let provider = Arc::new(ConcurrentProvider::new(COUNT));
-    let drain = Arc::new(DrainGate::new());
-    let ports = Ports {
-        journal: Arc::clone(&store) as Arc<_>,
-        snapshots: Arc::clone(&store) as Arc<_>,
-        effects: Arc::clone(&store) as Arc<_>,
-        leases: Arc::clone(&store) as Arc<_>,
-        wakes: Arc::clone(&queue) as Arc<_>,
-        provider: Arc::clone(&provider) as Arc<_>,
-        tools: Arc::new(ScriptedTools::new(Vec::new(), Vec::new())),
-        hands: Arc::new(AbsentHands),
-        catalog: Arc::new(FixedCatalog::with_model(capability())),
-        clock,
-        ids: Arc::new(CountingIds::new()),
-    };
-    let policy = ActivationPolicy {
-        max_concurrent_drives: COUNT,
-        ..ActivationPolicy::default()
-    };
-    let context_bytes = policy.restore_resident_bytes.saturating_mul(COUNT_U64);
-    let stream_buffer_bytes = u64::try_from(policy.stream_buffer_bytes)
-        .unwrap_or(u64::MAX)
-        .saturating_mul(COUNT_U64);
-    let permits = Arc::new(PermitSet::new(BTreeMap::from([
-        (PermitKind::Activation, COUNT_U64),
-        (PermitKind::ContextBytes, context_bytes),
-        (PermitKind::StreamBufferBytes, stream_buffer_bytes),
-        (PermitKind::ProviderStream, COUNT_U64),
-        (PermitKind::HandsRpc, COUNT_U64),
-    ])));
-    let admission = Arc::new(Admission::new(
-        AdmissionBounds {
-            target: COUNT_U32,
-            safety_cap: COUNT_U32,
-            offered_ceiling: COUNT_U32 * 2,
-        },
-        permits,
-        Arc::clone(&drain),
-        activation_resources(&policy),
-    ));
-    let pump = WakeLoop::new(
-        Activation::new(
-            ports,
-            policy,
-            Arc::new(ActivationRegistry::new()),
-            Arc::clone(&drain),
-        ),
-        Arc::new(MuxAdmission::new(admission, bound())),
-    );
-
-    let report = tokio::time::timeout(core::time::Duration::from_secs(1), pump.poll_once())
-        .await
-        .expect("a serial regression must fail promptly instead of waiting for a long effect")
-        .expect("the bounded batch completes");
-    assert_eq!(report.driven, COUNT);
-    assert_eq!(provider.maximum.load(Ordering::SeqCst), COUNT);
-    assert_eq!(provider.active.load(Ordering::SeqCst), 0);
-}
-
-#[derive(Debug)]
-struct RefillProvider {
-    slow: AgentKey,
-    recovered: AgentKey,
-    slow_started: AtomicBool,
-    recovered_started: AtomicBool,
-    active: AtomicUsize,
-    maximum: AtomicUsize,
-}
-
-/// A scheduler test needs production-like sleeping without making durable timestamps depend on
-/// the wall clock of the machine running the suite.
-#[derive(Debug)]
-struct ReactorClock {
-    base: std::time::Instant,
-}
-
-impl ReactorClock {
-    fn new() -> Self {
-        Self {
-            base: std::time::Instant::now(),
-        }
-    }
-}
-
-impl ClockPort for ReactorClock {
-    fn now(&self) -> Timestamp {
-        Timestamp::from_millis(START)
-    }
-
-    fn steady(&self) -> SteadyInstant {
-        SteadyInstant(u64::try_from(self.base.elapsed().as_millis()).unwrap_or(u64::MAX))
-    }
-
-    fn sleep(&self, duration: core::time::Duration) -> BoxFuture<'_, ()> {
-        Box::pin(tokio::time::sleep(duration))
-    }
-}
-
-impl ProviderPort for RefillProvider {
-    fn dispatch<'a>(
-        &'a self,
-        ticket: &'a DispatchTicket,
-        _credential: aex_brain_domain::wire_pending::SessionCredentialPin,
-        _request: &'a CanonicalModelRequest,
-        _budget: &'a StreamBudget,
-        _preview: &'a dyn PreviewSink,
-        cancel: &'a CancelToken,
-    ) -> BoxFuture<'a, Result<ProviderOutcome, ProviderDispatchError>> {
-        let key = ticket.key();
-        Box::pin(async move {
-            let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
-            self.maximum.fetch_max(active, Ordering::SeqCst);
-            if key == self.slow {
-                self.slow_started.store(true, Ordering::SeqCst);
-            }
-            if key == self.recovered {
-                self.recovered_started.store(true, Ordering::SeqCst);
-            }
-
-            if key == self.slow && !cancel.is_cancelled() {
-                while !cancel.is_cancelled() {
-                    tokio::time::sleep(core::time::Duration::from_millis(5)).await;
-                }
-            }
-            self.active.fetch_sub(1, Ordering::SeqCst);
-            Ok(produced())
-        })
-    }
-
-    fn resolve_unknown<'a>(
-        &'a self,
-        _identity: &'a DurableEffect,
-        _evidence: &'a DispatchEvidence,
-    ) -> BoxFuture<'a, Result<UnknownResolution, ProviderDispatchError>> {
-        Box::pin(async { Ok(UnknownResolution::NoDurableOperation) })
-    }
-}
-
-/// A pending provider occupies one aggregate slot, not the whole receive loop. A completed
-/// sibling refills the other slot and recovers a subsequently persisted lost hint while the
-/// first effect is still live. Drain then cancels that structured child and joins the set.
-#[tokio::test(flavor = "current_thread")]
-#[allow(
-    clippy::too_many_lines,
-    reason = "the scheduler refill scenario keeps queue, recovery, and aggregate-cap evidence together"
-)]
-async fn the_scheduler_refills_below_the_aggregate_cap_and_keeps_due_recovery_live() {
-    const CAP: usize = 2;
-    let slow = AgentKey::new(key().session, AgentId(Uuid::from_u128(0xa6e7_4010)));
-    let fast = AgentKey::new(key().session, AgentId(Uuid::from_u128(0xa6e7_4011)));
-    let recovered = AgentKey::new(key().session, AgentId(Uuid::from_u128(0xa6e7_4012)));
-    let log = Arc::new(Recorder::default());
-    let store_clock = Arc::new(FixedClock::at(START));
-    let queue = Arc::new(MemoryQueue::new(Arc::clone(&log)));
-    let store = Arc::new(MemoryStore::new(
-        Arc::clone(&store_clock),
-        Arc::clone(&queue),
-        Arc::clone(&log),
-    ));
-    for key in [slow, fast, recovered] {
-        store.seed(key, history());
-    }
-    for (key, id, work) in [(slow, 0x6100, "wrk-slow"), (fast, 0x6101, "wrk-fast")] {
-        let mut wake = wake_for(key, work);
-        wake.id = WakeId(Uuid::from_u128(id));
-        queue.project(wake);
-    }
-
-    let provider = Arc::new(RefillProvider {
-        slow,
-        recovered,
-        slow_started: AtomicBool::new(false),
-        recovered_started: AtomicBool::new(false),
-        active: AtomicUsize::new(0),
-        maximum: AtomicUsize::new(0),
-    });
-    let drain = Arc::new(DrainGate::new());
-    let ports = Ports {
-        journal: Arc::clone(&store) as Arc<_>,
-        snapshots: Arc::clone(&store) as Arc<_>,
-        effects: Arc::clone(&store) as Arc<_>,
-        leases: Arc::clone(&store) as Arc<_>,
-        wakes: Arc::clone(&queue) as Arc<_>,
-        provider: Arc::clone(&provider) as Arc<_>,
-        tools: Arc::new(ScriptedTools::new(Vec::new(), Vec::new())),
-        hands: Arc::new(AbsentHands),
-        catalog: Arc::new(FixedCatalog::with_model(capability())),
-        clock: Arc::new(ReactorClock::new()),
-        ids: Arc::new(CountingIds::new()),
-    };
-    let policy = ActivationPolicy {
-        receive_batch: 1,
-        max_concurrent_drives: 1,
-        due_shards: 1,
-        due_scan_shards_per_pass: 1,
-        due_scan_page: 1,
-        due_scan_interval: core::time::Duration::ZERO,
-        renew_interval: core::time::Duration::from_millis(10),
-        ..ActivationPolicy::default()
-    };
-    let context_bytes = policy
-        .restore_resident_bytes
-        .saturating_mul(u64::try_from(CAP).expect("the test cap fits u64"));
-    let stream_buffer_bytes = u64::try_from(policy.stream_buffer_bytes)
-        .unwrap_or(u64::MAX)
-        .saturating_mul(u64::try_from(CAP).expect("the test cap fits u64"));
-    let admission = Arc::new(Admission::new(
-        AdmissionBounds {
-            target: u32::try_from(CAP).expect("the test cap fits u32"),
-            safety_cap: u32::try_from(CAP).expect("the test cap fits u32"),
-            offered_ceiling: 4,
-        },
-        Arc::new(PermitSet::new(BTreeMap::from([
-            (
-                PermitKind::Activation,
-                u64::try_from(CAP).expect("the test cap fits u64"),
-            ),
-            (PermitKind::ContextBytes, context_bytes),
-            (PermitKind::StreamBufferBytes, stream_buffer_bytes),
-            (
-                PermitKind::ProviderStream,
-                u64::try_from(CAP).expect("the test cap fits u64"),
-            ),
-            (
-                PermitKind::HandsRpc,
-                u64::try_from(CAP).expect("the test cap fits u64"),
-            ),
-        ]))),
-        Arc::clone(&drain),
-        activation_resources(&policy),
-    ));
-    let pump = WakeLoop::new(
-        Activation::new(
-            ports,
-            policy,
-            Arc::new(ActivationRegistry::new()),
-            Arc::clone(&drain),
-        ),
-        Arc::new(MuxAdmission::new(admission, bound())),
-    );
-    let scheduler = tokio::spawn(crate::run_wake_scheduler(
-        pump,
-        Arc::clone(&drain),
-        CAP,
-        |_| {},
-    ));
-
-    tokio::time::timeout(core::time::Duration::from_secs(1), async {
-        while !provider.slow_started.load(Ordering::SeqCst) {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("the slow provider starts");
-
-    let mut lost_hint = wake_for(recovered, "wrk-recovered");
-    lost_hint.id = WakeId(Uuid::from_u128(0x6102));
-    lost_hint.due = Some(Timestamp::from_millis(START));
-    queue.persist(lost_hint, WorkShard(0));
-
-    tokio::time::timeout(core::time::Duration::from_secs(1), async {
-        while !provider.recovered_started.load(Ordering::SeqCst) {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("a refilled lane recovers the lost hint while its sibling is pending");
-    assert_eq!(provider.maximum.load(Ordering::SeqCst), CAP);
-    assert_eq!(
-        provider.active.load(Ordering::SeqCst),
-        1,
-        "only the deliberately slow dispatch remains"
-    );
-    assert!(!scheduler.is_finished());
-
-    drain.start_drain();
-    tokio::time::timeout(core::time::Duration::from_secs(1), scheduler)
-        .await
-        .expect("drain settles and joins every scheduler lane")
-        .expect("the scheduler task does not panic");
-    assert_eq!(provider.active.load(Ordering::SeqCst), 0);
-    assert!(drain.is_quiesced());
-}
-
 /// A draining task takes nothing off the queue, whatever else it is doing.
 #[tokio::test(flavor = "current_thread")]
 async fn a_draining_composition_receives_nothing() {
@@ -677,29 +254,13 @@ async fn the_drain_sequence_walks_every_stage_in_order() {
             resource: "table".to_owned(),
             wake_queue_url: "https://sqs.invalid/queue".to_owned(),
             work_table: "work".to_owned(),
-            secret_custody_table: "secret-custody".to_owned(),
-            secret_kms_key_arn: "arn:aws:kms:eu-west-1:123456789012:key/fixture".to_owned(),
-            content_bucket: "content".to_owned(),
-            content_expected_owner: "123456789012".to_owned(),
-            content_kms_key_arn: "arn:aws:kms:eu-west-1:123456789012:key/content".to_owned(),
-            runtime_activity_table: "runtime-activity".to_owned(),
-            usage_compute_queue_url: "https://sqs.eu-west-1.amazonaws.com/1/compute".to_owned(),
-            usage_storage_queue_url: "https://sqs.eu-west-1.amazonaws.com/1/storage".to_owned(),
-            runtime_due_shards: 8,
-            runtime_due_page: aex_runtime_control::store::PageBudget {
-                max_items: 32,
-                max_reads: 100,
-            },
-            pricing_version: "synthetic-zero-v1".to_owned(),
             budget: 4,
         })
         .expect("the candidate shape composes"),
     );
     let idle = tokio::spawn(async {});
 
-    let performed = crate::drain_sequence(&composition, idle)
-        .await
-        .expect("an idle pump joins cleanly");
+    let performed = crate::drain_sequence(&composition, idle).await;
     assert_eq!(performed, Stage::ORDER.to_vec());
     assert!(composition.drain.is_draining());
     assert_eq!(
@@ -720,38 +281,6 @@ async fn the_drain_sequence_walks_every_stage_in_order() {
     );
 }
 
-struct PendingUntilDropped(Arc<AtomicBool>);
-
-impl core::future::Future for PendingUntilDropped {
-    type Output = ();
-
-    fn poll(
-        self: core::pin::Pin<&mut Self>,
-        _context: &mut core::task::Context<'_>,
-    ) -> core::task::Poll<Self::Output> {
-        core::task::Poll::Pending
-    }
-}
-
-impl Drop for PendingUntilDropped {
-    fn drop(&mut self) {
-        self.0.store(true, Ordering::SeqCst);
-    }
-}
-
-/// Expiring the cooperative window aborts and joins the exact task. A dropped join handle
-/// would detach this future and leave the flag false after the helper returned.
-#[tokio::test(flavor = "current_thread")]
-async fn an_expired_drain_window_aborts_and_joins_the_pump() {
-    let dropped = Arc::new(AtomicBool::new(false));
-    let pump = tokio::spawn(PendingUntilDropped(Arc::clone(&dropped)));
-
-    crate::join_pump(pump, core::time::Duration::ZERO)
-        .await
-        .expect("explicit cancellation is a joined drain outcome");
-    assert!(dropped.load(Ordering::SeqCst));
-}
-
 /// A provider that is pending exactly once. It stands in for provider HTTP, a tool call and
 /// a durable wait alike: all three are pending between polls.
 #[derive(Debug, Default)]
@@ -763,7 +292,6 @@ impl ProviderPort for PendingProvider {
     fn dispatch<'a>(
         &'a self,
         _ticket: &'a DispatchTicket,
-        _credential: aex_brain_domain::wire_pending::SessionCredentialPin,
         _request: &'a CanonicalModelRequest,
         _budget: &'a StreamBudget,
         _preview: &'a dyn PreviewSink,
@@ -903,7 +431,6 @@ async fn a_handed_back_agent_leaves_a_wake_the_decision_created() {
                 .receive(1, core::time::Duration::ZERO)
                 .await
                 .expect("the queue answers")
-                .deliveries
                 .pop()
                 .expect("a delivery"),
         )

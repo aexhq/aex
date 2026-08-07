@@ -11,219 +11,28 @@ mod support;
 use std::collections::HashMap;
 
 use aex_operation_domain::operation::{OperationKind, OperationStatus};
-use aex_session_dynamodb::attr::s;
+use aex_session_dynamodb::attr::{n, s};
 use aex_session_dynamodb::error::StoreError;
 use aex_session_dynamodb::paging::{PageBudget, PagePosition};
-use aex_session_dynamodb::plan::{Participant, TransactionPlan};
+use aex_session_dynamodb::plan::{Participant, TransactionPlan, key};
 use aex_session_dynamodb::store::{
-    OperationApiStore, OperationAuthority, OperationFilter, OperationStore, SessionQueries,
-    SessionReads, SessionScoped,
+    OperationApiStore, OperationAuthority, OperationFilter, OperationStore,
 };
 use aex_session_dynamodb::transactions::{
-    DECISION_ORDER, Foreign, ForeignAction, OperationCancelRequest, OperationStepCancel,
-    compile_decision, compile_fanout_page, operation_cancel_requested, operation_cancelled,
+    ADMISSION_ORDER, AdmissionForeign, DECISION_ORDER, Foreign, ForeignAction,
+    OperationCancelRequest, OperationStepCancel, TERMINAL_ORDER, TerminalForeign,
+    compile_admission, compile_decision, compile_fanout_page, compile_lifecycle, compile_terminal,
+    operation_cancel_requested, operation_cancelled,
 };
+use aex_session_dynamodb::wire_pending::LifecycleTransition;
 use aex_wire::ids::{OperationId, PrefixedId as _, Uuid7};
 use aex_wire::types::Timestamp;
 use serde_json::Value;
 
 use support::{
-    captured_body, capturing_client, decision, fanout, operation, run_id, scripted_client, session,
-    tables, workspace,
+    admission, captured_body, capturing_client, decision, fanout, lifecycle, operation,
+    scripted_client, tables, terminal, workspace,
 };
-
-#[tokio::test]
-async fn a_canonical_session_point_read_is_strong_and_targets_only_the_head() {
-    let (client, receiver) = capturing_client();
-    let reads = SessionReads::new(client, &tables().session_authority);
-    let _ignored = reads.load_session(workspace(), session()).await;
-
-    let body = captured_body(receiver);
-    assert_eq!(body["ConsistentRead"], true);
-    assert_eq!(body["Key"]["pk"]["S"], format!("SESSION#{}", session()));
-    assert_eq!(body["Key"]["sk"]["S"], "HEAD");
-}
-
-#[tokio::test]
-async fn a_scoped_run_point_read_is_one_atomic_two_item_read() {
-    let (client, receiver) = capturing_client();
-    let reads = SessionReads::new(client, &tables().session_authority);
-    let _ignored = reads.load_run(workspace(), session(), run_id()).await;
-
-    let body = captured_body(receiver);
-    let reads = body["TransactItems"]
-        .as_array()
-        .expect("a transactional point read");
-    assert_eq!(reads.len(), 2);
-    assert_eq!(
-        reads[0]["Get"]["Key"]["pk"]["S"],
-        format!("SESSION#{}", session())
-    );
-    assert_eq!(reads[0]["Get"]["Key"]["sk"]["S"], "HEAD");
-    assert_eq!(
-        reads[1]["Get"]["Key"]["pk"]["S"],
-        format!("SESSION#{}", session())
-    );
-    assert_eq!(
-        reads[1]["Get"]["Key"]["sk"]["S"],
-        format!("RUN#{}", run_id())
-    );
-}
-
-fn dynamo_json_item(item: &aex_session_dynamodb::attr::Item) -> Value {
-    Value::Object(
-        item.iter()
-            .map(|(name, value)| {
-                let value = match value {
-                    aws_sdk_dynamodb::types::AttributeValue::S(value) => {
-                        serde_json::json!({"S": value})
-                    }
-                    aws_sdk_dynamodb::types::AttributeValue::N(value) => {
-                        serde_json::json!({"N": value})
-                    }
-                    aws_sdk_dynamodb::types::AttributeValue::Bool(value) => {
-                        serde_json::json!({"BOOL": value})
-                    }
-                    other => panic!("canonical session fixtures use no {other:?} attribute"),
-                };
-                (name.clone(), value)
-            })
-            .collect(),
-    )
-}
-
-fn scoped_run_response(
-    session: &aex_session_domain::Session,
-    run: &aex_session_domain::Run,
-) -> String {
-    let head = aex_session_dynamodb::authority_codec::encode_session(session)
-        .expect("canonical session row");
-    let run = aex_session_dynamodb::authority_codec::encode_domain_run(
-        run,
-        session.workspace,
-        session.organization,
-    )
-    .expect("canonical run row");
-    serde_json::json!({
-        "Responses": [
-            {"Item": dynamo_json_item(&head)},
-            {"Item": dynamo_json_item(&run)}
-        ]
-    })
-    .to_string()
-}
-
-fn session_head_response(session: &aex_session_domain::Session) -> String {
-    let head = aex_session_dynamodb::authority_codec::encode_session(session)
-        .expect("canonical session row");
-    serde_json::json!({"Item": dynamo_json_item(&head)}).to_string()
-}
-
-fn request_bodies(replay: &aws_smithy_http_client::test_util::StaticReplayClient) -> Vec<Value> {
-    replay
-        .actual_requests()
-        .map(|request| {
-            serde_json::from_slice::<Value>(
-                request
-                    .body()
-                    .bytes()
-                    .expect("the DynamoDB request body is in memory"),
-            )
-            .expect("the request body is JSON")
-        })
-        .collect()
-}
-
-#[tokio::test]
-async fn a_session_page_uses_two_parent_reads_only_and_reuses_a_resumed_epoch() {
-    let session = aex_session_domain::testing::session_fixture();
-    let empty_query = serde_json::json!({"Items": []}).to_string();
-
-    let (client, first_replay) = scripted_client(vec![
-        session_head_response(&session),
-        empty_query.clone(),
-        session_head_response(&session),
-    ]);
-    let reads = SessionReads::new(client, &tables().session_authority);
-    let first = reads
-        .page_runs(
-            session.workspace,
-            session.id,
-            None,
-            PageBudget::new(1).expect("a page"),
-            None,
-        )
-        .await
-        .expect("a fenced first page");
-    assert!(matches!(
-        first,
-        SessionScoped::Active(page) if page.deletion_epoch == session.deletion.epoch
-    ));
-    let first_requests = request_bodies(&first_replay);
-    assert_eq!(first_requests.len(), 3, "parent, query, parent");
-    assert_eq!(first_requests[0]["ConsistentRead"], true);
-    assert_eq!(first_requests[1]["ConsistentRead"], true);
-    assert_eq!(first_requests[2]["ConsistentRead"], true);
-
-    let (client, resumed_replay) =
-        scripted_client(vec![empty_query, session_head_response(&session)]);
-    let reads = SessionReads::new(client, &tables().session_authority);
-    let resumed = reads
-        .page_runs(
-            session.workspace,
-            session.id,
-            Some(session.deletion.epoch),
-            PageBudget::new(1).expect("a page"),
-            None,
-        )
-        .await
-        .expect("a fenced resumed page");
-    assert!(matches!(resumed, SessionScoped::Active(_)));
-    let resumed_requests = request_bodies(&resumed_replay);
-    assert_eq!(
-        resumed_requests.len(),
-        2,
-        "the edge's prevalidated parent is the resumed before-read"
-    );
-    assert_eq!(resumed_requests[0]["ConsistentRead"], true);
-    assert_eq!(resumed_requests[1]["ConsistentRead"], true);
-}
-
-#[tokio::test]
-async fn a_scoped_point_read_hides_foreign_tenants_and_refuses_deleted_parents() {
-    let (session, run, _agent, _message) = aex_session_domain::testing::running_session();
-
-    let (client, _replay) = scripted_client(vec![scoped_run_response(&session, &run)]);
-    let reads = SessionReads::new(client, &tables().session_authority);
-    assert!(matches!(
-        reads.load_run(session.workspace, session.id, run.id).await,
-        Ok(SessionScoped::Active(Some(found))) if found == run
-    ));
-
-    let (client, _replay) = scripted_client(vec![scoped_run_response(&session, &run)]);
-    let reads = SessionReads::new(client, &tables().session_authority);
-    let another_workspace = aex_session_domain::testing::id(99);
-    assert_eq!(
-        reads
-            .load_run(another_workspace, session.id, run.id)
-            .await
-            .expect("a hidden foreign row"),
-        SessionScoped::Missing
-    );
-
-    let mut deleted = session.clone();
-    deleted.deletion.state = aex_session_domain::DeletionState::Trashed;
-    deleted.status = aex_session_domain::SessionStatus::Trashed;
-    let (client, _replay) = scripted_client(vec![scoped_run_response(&deleted, &run)]);
-    let reads = SessionReads::new(client, &tables().session_authority);
-    assert_eq!(
-        reads
-            .load_run(deleted.workspace, deleted.id, run.id)
-            .await
-            .expect("a typed deletion fence"),
-        SessionScoped::Deleted
-    );
-}
 
 #[tokio::test]
 async fn an_operation_authority_read_is_strongly_consistent_and_targets_the_exact_key() {
@@ -318,9 +127,18 @@ fn operation_row(operation: OperationId, created_at: &str) -> Value {
 fn projected_operation_row(operation: OperationId, created_at: &str) -> Value {
     let mut row = operation_row(operation, created_at);
     let object = row.as_object_mut().expect("an item object");
-    object.retain(|attribute, _| {
-        ["pk", "sk", "wsIndexPk", "wsIndexSk"].contains(&attribute.as_str())
-    });
+    for attribute in [
+        "itemType",
+        "intentHash",
+        "scopeKind",
+        "scopeId",
+        "version",
+        "claimsSessionDeletion",
+        "cancelRequested",
+        "resultPresent",
+    ] {
+        object.remove(attribute);
+    }
     row
 }
 
@@ -531,6 +349,190 @@ fn foreign_put(participant: Participant, table: &str) -> Foreign {
     )
 }
 
+fn foreign_guard(participant: Participant, table: &str) -> Foreign {
+    Foreign::new(
+        participant,
+        ForeignAction::ConditionCheck(Box::new(
+            aws_sdk_dynamodb::types::ConditionCheck::builder()
+                .table_name(table)
+                .set_key(Some(key("WS#ws", "PLACEMENT")))
+                .condition_expression(
+                    "#status = :active AND keyEpoch = :keyEpoch AND accountEpoch = :accountEpoch \
+                     AND revocationEpoch = :revocationEpoch",
+                )
+                .expression_attribute_names("#status", "status")
+                .expression_attribute_values(":active", s("active"))
+                .expression_attribute_values(":keyEpoch", n(1))
+                .expression_attribute_values(":accountEpoch", n(2))
+                .expression_attribute_values(":revocationEpoch", n(3)),
+        )),
+    )
+}
+
+fn full_admission_foreign() -> AdmissionForeign {
+    let tables = tables();
+    AdmissionForeign {
+        placement: Some(foreign_guard(
+            Participant::AUTHZ_PLACEMENT,
+            &tables.regional_authz_projection,
+        )),
+        content: vec![
+            Foreign::new(
+                Participant::CONTENT_COMMIT,
+                ForeignAction::Update(Box::new(
+                    aws_sdk_dynamodb::types::Update::builder()
+                        .table_name(&tables.regional_content)
+                        .set_key(Some(key("CONTENT#ws#digest", "DESC")))
+                        .condition_expression(
+                            "#state IN (:staged, :committed) AND digestSha256 = :digest",
+                        )
+                        .update_expression("SET #state = :committed, verifiedAt = :now")
+                        .expression_attribute_names("#state", "state")
+                        .expression_attribute_values(":staged", s("staged"))
+                        .expression_attribute_values(":committed", s("committed"))
+                        .expression_attribute_values(":digest", s("sha256:aa"))
+                        .expression_attribute_values(":now", s("2026-08-01T12:34:56.789Z")),
+                )),
+            ),
+            foreign_put(Participant::CONTENT_MESSAGE_PIN, &tables.regional_content),
+        ],
+        work: vec![
+            foreign_put(Participant::WORK_ROOT_WAKE, &tables.regional_work),
+            foreign_put(Participant::WORK_DEDUPE, &tables.regional_work),
+        ],
+    }
+}
+
+#[test]
+fn the_admission_transaction_compiles_to_exactly_the_declared_participants_in_order() {
+    let plan = compile_admission(&tables(), &admission(), full_admission_foreign())
+        .expect("the admission compiles");
+    assert_eq!(plan.participants(), ADMISSION_ORDER);
+    assert_eq!(plan.len(), 12, "ten to twelve actions, inside the envelope");
+}
+
+#[test]
+fn an_inline_message_admission_omits_the_two_content_participants() {
+    let mut foreign = full_admission_foreign();
+    foreign.content.clear();
+    let plan = compile_admission(&tables(), &admission(), foreign).expect("compiles");
+    let expected: Vec<Participant> = ADMISSION_ORDER
+        .iter()
+        .copied()
+        .filter(|participant| {
+            *participant != Participant::CONTENT_COMMIT
+                && *participant != Participant::CONTENT_MESSAGE_PIN
+        })
+        .collect();
+    assert_eq!(plan.participants(), expected.as_slice());
+}
+
+#[test]
+fn every_admission_action_carries_a_condition_expression() {
+    let plan =
+        compile_admission(&tables(), &admission(), full_admission_foreign()).expect("compiles");
+    for (participant, action) in plan.participants().iter().zip(plan.actions()) {
+        let condition = action
+            .put()
+            .and_then(aws_sdk_dynamodb::types::Put::condition_expression)
+            .or_else(|| {
+                action
+                    .update()
+                    .and_then(aws_sdk_dynamodb::types::Update::condition_expression)
+            })
+            .or_else(|| {
+                action
+                    .delete()
+                    .and_then(aws_sdk_dynamodb::types::Delete::condition_expression)
+            })
+            .or_else(|| {
+                action
+                    .condition_check()
+                    .map(aws_sdk_dynamodb::types::ConditionCheck::condition_expression)
+            });
+        assert!(
+            condition.is_some_and(|expression| !expression.is_empty()),
+            "`{participant}` is unconditional"
+        );
+    }
+}
+
+#[test]
+fn the_admission_head_condition_names_every_fence_the_plan_declares() {
+    let plan =
+        compile_admission(&tables(), &admission(), full_admission_foreign()).expect("compiles");
+    let index = plan
+        .participants()
+        .iter()
+        .position(|participant| *participant == Participant::SESSION_HEAD)
+        .expect("the head is a participant");
+    let condition = plan.actions()[index]
+        .update()
+        .and_then(aws_sdk_dynamodb::types::Update::condition_expression)
+        .expect("the head update is conditional");
+    for fence in [
+        "attribute_exists(pk)",
+        "revision = :revision",
+        "#status = :idle",
+        "lifecycle = :active",
+        "deletionEpoch = :deletionEpoch",
+        "cancelEpoch = :cancelEpoch",
+        "contentAdmissionEpoch = :contentEpoch",
+        "resolvedConfigDigest = :configDigest",
+        "attribute_not_exists(activeRunId)",
+    ] {
+        assert!(
+            condition.contains(fence),
+            "the head condition drops `{fence}`"
+        );
+    }
+}
+
+#[test]
+fn the_terminal_barrier_compiles_to_exactly_the_declared_participants_in_order() {
+    let tables = tables();
+    let foreign = TerminalForeign {
+        usage_closure: Some(foreign_put(
+            Participant::WORK_USAGE_CLOSURE,
+            &tables.regional_work,
+        )),
+        wake_done: Some(Foreign::new(
+            Participant::WORK_WAKE_DONE,
+            ForeignAction::Update(Box::new(
+                aws_sdk_dynamodb::types::Update::builder()
+                    .table_name(&tables.regional_work)
+                    .set_key(Some(key("WORK#w", "STATE")))
+                    .condition_expression(
+                        "fence = :fence AND claimOwner = :owner AND #state = :claimed",
+                    )
+                    .update_expression(
+                        "SET #state = :done, expiresAtEpochSeconds = :ttl \
+                         REMOVE dueShardPk, dueShardSk",
+                    )
+                    .expression_attribute_names("#state", "state")
+                    .expression_attribute_values(":fence", n(2))
+                    .expression_attribute_values(":owner", s("worker-1"))
+                    .expression_attribute_values(":claimed", s("claimed"))
+                    .expression_attribute_values(":done", s("done"))
+                    .expression_attribute_values(":ttl", n(1_754_138_096)),
+            )),
+        )),
+    };
+    let plan = compile_terminal(&tables, &terminal(), foreign).expect("compiles");
+    assert_eq!(plan.participants(), TERMINAL_ORDER);
+}
+
+#[test]
+fn the_terminal_run_condition_admits_only_a_non_terminal_run() {
+    let plan =
+        compile_terminal(&tables(), &terminal(), TerminalForeign::default()).expect("compiles");
+    let condition = plan.actions()[0]
+        .update()
+        .and_then(aws_sdk_dynamodb::types::Update::condition_expression)
+        .expect("conditional");
+    assert!(condition.contains("#status IN (:queued, :running)"));
+}
+
 #[test]
 fn the_decision_transaction_compiles_to_exactly_the_declared_participants_in_order() {
     let tables = tables();
@@ -595,4 +597,157 @@ fn a_fanout_page_too_large_for_one_transaction_is_refused_rather_than_truncated(
     let error = compile_fanout_page(&tables(), &fanout(40), Vec::new())
         .expect_err("40 children exceed the page ceiling");
     assert!(matches!(error, StoreError::Invalid { .. }), "{error}");
+}
+
+#[test]
+fn purge_completion_removes_every_content_bearing_attribute_and_both_index_attributes() {
+    let plan = compile_lifecycle(
+        &tables(),
+        &lifecycle(LifecycleTransition::PurgeComplete),
+        Vec::new(),
+    )
+    .expect("compiles");
+    let update = plan.actions()[0]
+        .update()
+        .map(aws_sdk_dynamodb::types::Update::update_expression)
+        .expect("an update expression");
+    for removed in [
+        "wsIndexPk",
+        "wsIndexSk",
+        "resolvedConfig",
+        "initialRootDigest",
+        "persistedRootDigest",
+        "continuity",
+        "activeRunId",
+    ] {
+        assert!(update.contains(removed), "purge keeps `{removed}`");
+    }
+    assert!(update.contains("lifecycle = :purged"));
+}
+
+#[test]
+fn trash_advances_all_three_epochs_and_moves_the_index_partition() {
+    let plan = compile_lifecycle(
+        &tables(),
+        &lifecycle(LifecycleTransition::Trash),
+        Vec::new(),
+    )
+    .expect("compiles");
+    let update = plan.actions()[0]
+        .update()
+        .map(aws_sdk_dynamodb::types::Update::update_expression)
+        .expect("an update expression");
+    assert!(update.contains("deletionEpoch = deletionEpoch + :one"));
+    assert!(update.contains("cancelEpoch = cancelEpoch + :one"));
+    assert!(update.contains("contentAdmissionEpoch = contentAdmissionEpoch + :one"));
+    assert!(update.contains("wsIndexPk = :trashedIndexPk"));
+}
+
+#[test]
+fn a_lifecycle_transition_with_no_owning_operation_is_refused() {
+    let mut plan = lifecycle(LifecycleTransition::Trash);
+    plan.operation = None;
+    assert!(matches!(
+        compile_lifecycle(&tables(), &plan, Vec::new()),
+        Err(StoreError::Invalid { .. })
+    ));
+}
+
+#[tokio::test]
+async fn the_serialized_admission_carries_the_transport_token_and_all_old_return_values() {
+    let (client, receiver) = capturing_client();
+    let plan =
+        compile_admission(&tables(), &admission(), full_admission_foreign()).expect("compiles");
+    let _ignored = plan
+        .compile(&client)
+        .expect("compiles to a request")
+        .send()
+        .await;
+
+    let body = captured_body(receiver);
+    assert_eq!(
+        body["ClientRequestToken"].as_str(),
+        Some(admission().replay.intent.to_string().as_str()),
+        "the transport deduplication identity is the canonical intent"
+    );
+    let items = body["TransactItems"]
+        .as_array()
+        .expect("a transaction carries items");
+    assert_eq!(items.len(), 12);
+    for item in items {
+        let (_, action) = item
+            .as_object()
+            .expect("one action per entry")
+            .iter()
+            .next()
+            .expect("exactly one action kind");
+        assert_eq!(
+            action["ReturnValuesOnConditionCheckFailure"].as_str(),
+            Some("ALL_OLD"),
+            "a failed condition must return the row it saw"
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_serialized_head_update_is_exactly_the_declared_expression() {
+    let (client, receiver) = capturing_client();
+    let plan =
+        compile_admission(&tables(), &admission(), full_admission_foreign()).expect("compiles");
+    let _ignored = plan.compile(&client).expect("compiles").send().await;
+
+    let body = captured_body(receiver);
+    let update = body["TransactItems"][3]["Update"].clone();
+    assert_eq!(
+        update["TableName"].as_str(),
+        Some("dev-eu-west-1-session-authority")
+    );
+    assert_eq!(
+        update["Key"]["pk"]["S"].as_str(),
+        Some(format!("SESSION#{}", support::session()).as_str())
+    );
+    assert_eq!(update["Key"]["sk"]["S"].as_str(), Some("HEAD"));
+    assert_eq!(
+        update["ExpressionAttributeValues"][":revision"]["N"].as_str(),
+        Some("12")
+    );
+    assert_eq!(
+        update["ExpressionAttributeValues"][":nextRevision"]["N"].as_str(),
+        Some("13")
+    );
+    assert_eq!(
+        update["ExpressionAttributeNames"]["#status"].as_str(),
+        Some("status")
+    );
+}
+
+#[tokio::test]
+async fn the_message_body_is_serialized_onto_exactly_one_row() {
+    let (client, receiver) = capturing_client();
+    let plan =
+        compile_admission(&tables(), &admission(), full_admission_foreign()).expect("compiles");
+    let _ignored = plan.compile(&client).expect("compiles").send().await;
+
+    let body = captured_body(receiver);
+    assert_eq!(
+        count_attribute(&body, "contentInline"),
+        1,
+        "a prompt body must never be duplicated across rows"
+    );
+}
+
+fn count_attribute(value: &Value, attribute: &str) -> usize {
+    match value {
+        Value::Object(members) => members
+            .iter()
+            .map(|(name, member)| {
+                usize::from(name == attribute) + count_attribute(member, attribute)
+            })
+            .sum(),
+        Value::Array(items) => items
+            .iter()
+            .map(|item| count_attribute(item, attribute))
+            .sum(),
+        _ => 0,
+    }
 }

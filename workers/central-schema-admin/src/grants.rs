@@ -19,11 +19,9 @@
 //! checked rather than identifiers a reviewer was trusted to have read.
 
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
-
-const EMBEDDED_GRANTS: &str = include_str!("../../../migrations/central/grants.toml");
 
 /// The only privileges this document uses.
 ///
@@ -152,15 +150,6 @@ impl RoleGrant {
 }
 
 impl GrantSet {
-    /// Parses and validates the allowlist compiled into the executable.
-    ///
-    /// # Errors
-    /// Rejects the same malformed or architecturally invalid document as
-    /// [`GrantSet::load`], without reading a runtime filesystem path.
-    pub fn embedded() -> Result<Self, GrantError> {
-        Self::parse(EMBEDDED_GRANTS)
-    }
-
     /// Parses and validates the committed allowlist.
     ///
     /// # Errors
@@ -417,6 +406,12 @@ fn is_function_signature(text: &str) -> bool {
         && (arguments.is_empty() || arguments.split(", ").all(is_identifier))
 }
 
+/// Committed grant document.
+#[must_use]
+pub fn grants_path() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations/central/grants.toml")
+}
+
 /// Invalid grants document.
 #[derive(Debug, thiserror::Error)]
 pub enum GrantError {
@@ -461,28 +456,13 @@ pub enum GrantError {
 
 #[cfg(test)]
 mod tests {
-    use super::{GrantError, GrantSet};
-
-    fn grants_path() -> std::path::PathBuf {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../migrations/central/grants.toml")
-    }
+    use super::{GrantError, GrantSet, grants_path};
 
     /// The committed document with one substring replaced.
     fn edited(from: &str, to: &str) -> GrantError {
         let text = std::fs::read_to_string(grants_path()).expect("the committed document reads");
         assert!(text.contains(from), "the anchor `{from}` still exists");
         GrantSet::parse(&text.replace(from, to)).expect_err("the edited document is refused")
-    }
-
-    #[test]
-    fn the_embedded_allowlist_is_the_authored_allowlist() {
-        let authored = GrantSet::load(grants_path()).expect("the authored allowlist parses");
-        let embedded = GrantSet::embedded().expect("the embedded allowlist parses");
-        assert_eq!(
-            embedded.render("aex").expect("embedded grants render"),
-            authored.render("aex").expect("authored grants render")
-        );
     }
 
     #[test]

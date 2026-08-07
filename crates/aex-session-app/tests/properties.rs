@@ -334,7 +334,7 @@ async fn admission_is_atomic() {
     let mut has_head = false;
     for write in &plan.writes {
         match write {
-            Write::PutMessage(_) => has_message = true,
+            Write::AppendMessage(_) => has_message = true,
             Write::PutRun(_) => has_run = true,
             Write::PutSessionHead(head) => {
                 has_head = true;
@@ -388,6 +388,7 @@ async fn replaying_an_operation_identity_yields_the_same_projection() {
 
     assert_eq!(first.projected, second.projected);
     assert_eq!(first.plan.intent, second.plan.intent);
+    assert!(second.plan.writes.is_empty());
 }
 
 // ---------------------------------------------------------------------------

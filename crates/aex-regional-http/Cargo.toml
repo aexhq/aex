@@ -77,7 +77,6 @@ aex-workspace-domain = { path = "../aex-workspace-domain" }
 aex-registry-dynamodb = { path = "../aex-registry-dynamodb" }
 aex-secret-domain = { path = "../aex-secret-domain" }
 aex-secret-custody-dynamodb = { path = "../aex-secret-custody-dynamodb" }
-aex-session-domain = { path = "../aex-session-domain" }
 aex-session-dynamodb = { path = "../aex-session-dynamodb", default-features = false, features = [
     "authz-projection",
 ] }

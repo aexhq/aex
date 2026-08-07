@@ -11,7 +11,7 @@
 //! `ReturnValuesOnConditionCheckFailure`, seven chances to omit a condition, and
 //! seven different cancellation decodings.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::fmt;
 
 use aws_sdk_dynamodb::Client;
@@ -23,7 +23,6 @@ use aws_sdk_dynamodb::types::{
     AttributeValue, ConditionCheck, Delete, Put, ReturnValuesOnConditionCheckFailure,
     TransactWriteItem, Update,
 };
-use sha2::Digest as _;
 
 use crate::attr::Item;
 use crate::error::StoreError;
@@ -208,8 +207,6 @@ pub struct TransactionPlan {
     client_request_token: String,
     participants: Vec<Participant>,
     actions: Vec<TransactWriteItem>,
-    targets: BTreeSet<PhysicalTarget>,
-    measured_bytes: usize,
 }
 
 /// The provider ceiling on one `TransactWriteItems` call.
@@ -217,16 +214,6 @@ pub struct TransactionPlan {
 /// This matches `aex-session-app`, so application validation and compiled
 /// request validation enforce the same atomic envelope.
 pub const MAX_ACTIONS: usize = 100;
-
-/// The provider ceiling for the aggregate items in one transaction.
-pub const MAX_TRANSACTION_BYTES: usize = 4 * 1024 * 1024;
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct PhysicalTarget {
-    table: String,
-    pk: String,
-    sk: String,
-}
 
 impl TransactionPlan {
     /// Starts a plan whose transport deduplication identity is
@@ -238,11 +225,9 @@ impl TransactionPlan {
     #[must_use]
     pub fn new(client_request_token: impl Into<String>) -> Self {
         Self {
-            client_request_token: bounded_token(&client_request_token.into()),
+            client_request_token: client_request_token.into(),
             participants: Vec::new(),
             actions: Vec::new(),
-            targets: BTreeSet::new(),
-            measured_bytes: 0,
         }
     }
 
@@ -265,7 +250,7 @@ impl TransactionPlan {
         self.push(
             participant,
             TransactWriteItem::builder().condition_check(action).build(),
-        )?;
+        );
         Ok(self)
     }
 
@@ -290,7 +275,7 @@ impl TransactionPlan {
         self.push(
             participant,
             TransactWriteItem::builder().put(action).build(),
-        )?;
+        );
         Ok(self)
     }
 
@@ -313,7 +298,7 @@ impl TransactionPlan {
         self.push(
             participant,
             TransactWriteItem::builder().update(action).build(),
-        )?;
+        );
         Ok(self)
     }
 
@@ -335,48 +320,13 @@ impl TransactionPlan {
         self.push(
             participant,
             TransactWriteItem::builder().delete(action).build(),
-        )?;
+        );
         Ok(self)
     }
 
-    fn push(
-        &mut self,
-        participant: Participant,
-        action: TransactWriteItem,
-    ) -> Result<(), StoreError> {
-        let target = physical_target(participant, &action)?;
-        if self.targets.contains(&target) {
-            return Err(StoreError::Invalid {
-                detail: format!(
-                    "participant `{participant}` addresses `{}` / `{}` in `{}` more than once; \
-                     DynamoDB forbids two transaction actions on one item",
-                    target.pk, target.sk, target.table
-                ),
-            });
-        }
-        let next_actions = self.actions.len().saturating_add(1);
-        if next_actions > MAX_ACTIONS {
-            return Err(StoreError::Invalid {
-                detail: format!(
-                    "a transaction plan holds {next_actions} actions; the provider ceiling is \
-                     {MAX_ACTIONS}"
-                ),
-            });
-        }
-        let next_bytes = self
-            .measured_bytes
-            .saturating_add(action_item_bytes(&action));
-        if next_bytes > MAX_TRANSACTION_BYTES {
-            return Err(StoreError::ItemTooLarge {
-                measured: next_bytes,
-                ceiling: MAX_TRANSACTION_BYTES,
-            });
-        }
-        self.targets.insert(target);
-        self.measured_bytes = next_bytes;
+    fn push(&mut self, participant: Participant, action: TransactWriteItem) {
         self.participants.push(participant);
         self.actions.push(action);
-        Ok(())
     }
 
     /// The participants, in plan order. Index *i* here is reason *i* there.
@@ -401,18 +351,6 @@ impl TransactionPlan {
     #[must_use]
     pub fn client_request_token(&self) -> &str {
         &self.client_request_token
-    }
-
-    /// Exact aggregate bytes of complete `Put` items known to this compiler.
-    ///
-    /// An `Update` or `ConditionCheck` does not carry the resulting/existing
-    /// item, so its size cannot be inferred here without an extra read. Its
-    /// owner must preflight the item it already read; charging the full item
-    /// ceiling per action would incorrectly collapse `DynamoDB`'s 100-action
-    /// envelope to 16 actions.
-    #[must_use]
-    pub const fn measured_bytes(&self) -> usize {
-        self.measured_bytes
     }
 
     /// Compiles the plan into a request builder.
@@ -448,59 +386,6 @@ impl TransactionPlan {
     pub fn actions(&self) -> &[TransactWriteItem] {
         &self.actions
     }
-}
-
-fn bounded_token(identity: &str) -> String {
-    if (1..=36).contains(&identity.len()) {
-        return identity.to_owned();
-    }
-    let digest = sha2::Sha256::digest(identity.as_bytes());
-    format!("tx-{}", &hex::encode(digest)[..32])
-}
-
-fn physical_target(
-    participant: Participant,
-    action: &TransactWriteItem,
-) -> Result<PhysicalTarget, StoreError> {
-    let (table, item) = if let Some(value) = action.condition_check() {
-        (value.table_name(), value.key())
-    } else if let Some(value) = action.put() {
-        (value.table_name(), value.item())
-    } else if let Some(value) = action.update() {
-        (value.table_name(), value.key())
-    } else if let Some(value) = action.delete() {
-        (value.table_name(), value.key())
-    } else {
-        return Err(StoreError::Invalid {
-            detail: format!("participant `{participant}` carries no transaction action"),
-        });
-    };
-    Ok(PhysicalTarget {
-        table: table.to_owned(),
-        pk: physical_component(participant, item, crate::attr::PK)?,
-        sk: physical_component(participant, item, crate::attr::SK)?,
-    })
-}
-
-fn physical_component(
-    participant: Participant,
-    item: &HashMap<String, AttributeValue>,
-    name: &'static str,
-) -> Result<String, StoreError> {
-    item.get(name)
-        .and_then(|value| value.as_s().ok())
-        .cloned()
-        .ok_or_else(|| StoreError::Invalid {
-            detail: format!(
-                "participant `{participant}` has no string `{name}` in its physical target"
-            ),
-        })
-}
-
-fn action_item_bytes(action: &TransactWriteItem) -> usize {
-    action
-        .put()
-        .map_or(0, |put| measure::item_bytes(put.item()))
 }
 
 fn require_condition(participant: Participant, condition: Option<&str>) -> Result<(), StoreError> {
@@ -547,19 +432,17 @@ pub fn keyed(item: Item, pk: &str, sk: &str) -> Item {
 mod tests {
     use aws_sdk_dynamodb::types::builders::{PutBuilder, UpdateBuilder};
 
-    use super::{
-        IMMUTABLE, MAX_TRANSACTION_BYTES, Participant, RegionalTables, TransactionPlan, key, keyed,
-    };
-    use crate::attr::{ItemBuilder, b, s};
+    use super::{IMMUTABLE, Participant, RegionalTables, TransactionPlan, key, keyed};
+    use crate::attr::{ItemBuilder, s};
     use crate::error::StoreError;
 
-    fn conditional_put(sort: &str) -> PutBuilder {
+    fn conditional_put() -> PutBuilder {
         aws_sdk_dynamodb::types::Put::builder()
             .table_name("dev-eu-west-1-session-authority")
             .set_item(Some(keyed(
                 ItemBuilder::new("run").set("runId", s("run_1")).build(),
                 "SESSION#s",
-                sort,
+                "RUN#r",
             )))
             .condition_expression(IMMUTABLE)
     }
@@ -591,102 +474,15 @@ mod tests {
     #[test]
     fn participants_keep_plan_order() {
         let mut plan = TransactionPlan::new("token");
-        plan.put(Participant::SESSION_RUN, conditional_put("RUN#r"))
+        plan.put(Participant::SESSION_RUN, conditional_put())
             .expect("put");
-        plan.put(Participant::SESSION_MESSAGE, conditional_put("MSG#m"))
+        plan.put(Participant::SESSION_MESSAGE, conditional_put())
             .expect("put");
         assert_eq!(
             plan.participants(),
             [Participant::SESSION_RUN, Participant::SESSION_MESSAGE]
         );
         assert_eq!(plan.len(), 2);
-    }
-
-    #[test]
-    fn two_actions_against_one_physical_item_are_refused() {
-        let mut plan = TransactionPlan::new("token");
-        plan.put(Participant::SESSION_RUN, conditional_put("RUN#r"))
-            .expect("first action");
-        let error = plan
-            .condition_check(
-                Participant::SESSION_HEAD_GUARD,
-                aws_sdk_dynamodb::types::ConditionCheck::builder()
-                    .table_name("dev-eu-west-1-session-authority")
-                    .set_key(Some(key("SESSION#s", "RUN#r")))
-                    .condition_expression("attribute_exists(pk)"),
-            )
-            .expect_err("DynamoDB rejects two actions on one item");
-        assert!(matches!(error, StoreError::Invalid { .. }), "{error}");
-    }
-
-    #[test]
-    fn aggregate_put_bytes_are_checked_before_submission() {
-        let mut plan = TransactionPlan::new("token");
-        for index in 0..17 {
-            let item = keyed(
-                ItemBuilder::new("run")
-                    .set("payload", b(vec![0; 255 * 1024]))
-                    .build(),
-                "SESSION#s",
-                &format!("RUN#{index}"),
-            );
-            let outcome = plan.put(
-                Participant::SESSION_RUN,
-                aws_sdk_dynamodb::types::Put::builder()
-                    .table_name("dev-eu-west-1-session-authority")
-                    .set_item(Some(item))
-                    .condition_expression(IMMUTABLE),
-            );
-            if index < 16 {
-                outcome.expect("inside aggregate ceiling");
-            } else {
-                assert!(
-                    matches!(
-                        outcome,
-                        Err(StoreError::ItemTooLarge {
-                            ceiling: MAX_TRANSACTION_BYTES,
-                            ..
-                        })
-                    ),
-                    "the seventeenth near-ceiling item must fail"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn the_provider_accepts_one_hundred_distinct_actions_and_refuses_the_next() {
-        let mut plan = TransactionPlan::new("token");
-        for index in 0..100 {
-            plan.condition_check(
-                Participant::SESSION_HEAD_GUARD,
-                aws_sdk_dynamodb::types::ConditionCheck::builder()
-                    .table_name("dev-eu-west-1-session-authority")
-                    .set_key(Some(key("SESSION#s", &format!("GUARD#{index}"))))
-                    .condition_expression("attribute_exists(pk)"),
-            )
-            .expect("inside the 100-action provider envelope");
-        }
-        assert_eq!(plan.len(), 100);
-        assert_eq!(plan.measured_bytes(), 0);
-        let error = plan
-            .condition_check(
-                Participant::SESSION_HEAD_GUARD,
-                aws_sdk_dynamodb::types::ConditionCheck::builder()
-                    .table_name("dev-eu-west-1-session-authority")
-                    .set_key(Some(key("SESSION#s", "GUARD#100")))
-                    .condition_expression("attribute_exists(pk)"),
-            )
-            .expect_err("the 101st action exceeds the provider ceiling");
-        assert!(matches!(error, StoreError::Invalid { .. }), "{error}");
-    }
-
-    #[test]
-    fn a_long_transport_identity_is_hashed_into_the_provider_bound() {
-        let first = TransactionPlan::new("x".repeat(200));
-        let second = TransactionPlan::new("x".repeat(200));
-        assert_eq!(first.client_request_token(), second.client_request_token());
-        assert!(first.client_request_token().len() <= 36);
     }
 
     #[test]

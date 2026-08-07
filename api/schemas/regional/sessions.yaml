@@ -210,7 +210,7 @@ schemas:
     doc: One page of sessions.
     type: object
     fields:
-      items: { type: array, max: 100, items: { type: ref, to: SessionListItem }, doc: "The page." }
+      items: { type: array, max: 1000, items: { type: ref, to: SessionListItem }, doc: "The page." }
       nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
 
   DeletingSession:
@@ -299,7 +299,7 @@ schemas:
     doc: One page of messages.
     type: object
     fields:
-      items: { type: array, max: 100, items: { type: ref, to: Message }, doc: "The page." }
+      items: { type: array, max: 1000, items: { type: ref, to: Message }, doc: "The page." }
       nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
 
   MessageSendRequest:
@@ -346,7 +346,7 @@ schemas:
     doc: One page of runs.
     type: object
     fields:
-      items: { type: array, max: 100, items: { type: ref, to: Run }, doc: "The page." }
+      items: { type: array, max: 1000, items: { type: ref, to: Run }, doc: "The page." }
       nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
 
   SessionPersistRequest:

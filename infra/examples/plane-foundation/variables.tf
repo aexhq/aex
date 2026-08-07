@@ -39,11 +39,6 @@ variable "repositories" {
   description = "Container repositories to create, keyed by repository name under the `aex/` namespace."
 }
 
-variable "github_role_name" {
-  type        = string
-  description = "Exact plane-scoped name of the GitHub deploy role."
-}
-
 variable "github_repository" {
   type        = string
   description = "The one repository whose workflows may assume the deploy role."
@@ -64,13 +59,14 @@ variable "github_allowed_workflows" {
   description = "Exact workflow paths permitted to assume the deploy role."
 }
 
-variable "profile_statements" {
-  type = map(list(object({
-    sid       = string
-    actions   = list(string)
-    resources = list(string)
-  })))
-  description = "Independent action/resource statements for each permission profile."
+variable "permission_profiles" {
+  type        = map(list(string))
+  description = "Actions granted by each of the four permission profiles."
+}
+
+variable "profile_resources" {
+  type        = map(list(string))
+  description = "Resources each profile's actions apply to."
 }
 
 variable "ops_topic_arn" {

@@ -82,11 +82,6 @@ pub fn materialized_state() -> MaterializedState {
 }
 
 /// An idle, live session.
-///
-/// # Panics
-///
-/// Panics if the compile-time canonical fixture and its derived projections
-/// disagree. That is a test-authoring defect, not a runtime input path.
 #[must_use]
 pub fn session_fixture() -> Session {
     let id_value: SessionId = id(1);

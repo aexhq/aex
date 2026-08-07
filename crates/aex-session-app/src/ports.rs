@@ -41,7 +41,7 @@ pub struct PageBudget {
     pub limit: u16,
 }
 
-/// One page of agents.
+/// One page of non-root agents.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentPage {
     /// The agents, in canonical order.
@@ -112,7 +112,8 @@ pub trait SessionReader: Send + Sync {
         agent: AgentId,
     ) -> Result<AgentControl, PortError>;
 
-    /// A bounded page of agents.
+    /// A bounded page of non-root agents. The root is already returned by
+    /// [`SessionReader::load_session`] and must not be repeated here.
     async fn list_agents(
         &self,
         session: SessionId,
@@ -300,6 +301,12 @@ pub enum CommitError {
     /// The provider was unavailable.
     #[error("commit provider is unavailable")]
     Unavailable,
+    /// The provider could not establish whether the transaction committed.
+    ///
+    /// A caller must resolve this by a strong receipt or target read. It must
+    /// never turn this arm into a blind write retry.
+    #[error("commit outcome is unknown and must be resolved by reading authority")]
+    Ambiguous,
     /// The plan itself was not submittable. This is an internal fault, never a
     /// customer error.
     #[error(transparent)]

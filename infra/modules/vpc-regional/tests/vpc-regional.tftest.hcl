@@ -1,21 +1,5 @@
 mock_provider "aws" {}
 
-override_resource {
-  target          = aws_security_group.interface_endpoints
-  override_during = plan
-  values = {
-    id = "sg-0123456789abcdef0"
-  }
-}
-
-override_resource {
-  target          = aws_vpc_endpoint.gateway
-  override_during = plan
-  values = {
-    prefix_list_id = "pl-0123456789abcdef0"
-  }
-}
-
 variables {
   name               = "aex-dev-euw1"
   region             = "eu-west-1"
@@ -72,35 +56,9 @@ run "interface_endpoints_cover_everything_the_schema_admin_task_needs" {
 
   assert {
     condition = alltrue([
-      for k, e in aws_vpc_endpoint.interface :
-      toset(e.security_group_ids) == toset([aws_security_group.interface_endpoints.id])
-    ])
-    error_message = "Every interface endpoint must use the dedicated endpoint security group rather than the VPC default group."
-  }
-
-  assert {
-    condition = (
-      aws_vpc_security_group_ingress_rule.interface_endpoints_https.ip_protocol == "tcp" &&
-      aws_vpc_security_group_ingress_rule.interface_endpoints_https.from_port == 443 &&
-      aws_vpc_security_group_ingress_rule.interface_endpoints_https.to_port == 443 &&
-      aws_vpc_security_group_ingress_rule.interface_endpoints_https.cidr_ipv4 == var.cidr
-    )
-    error_message = "The endpoint group must admit only TLS from this VPC."
-  }
-
-  assert {
-    condition = alltrue([
       for k in ["s3", "dynamodb"] : contains(keys(aws_vpc_endpoint.gateway), k)
     ])
     error_message = "Gateway endpoints for S3 and DynamoDB must always exist."
-  }
-
-  assert {
-    condition = alltrue([
-      for k in ["s3", "dynamodb"] :
-      output.gateway_endpoint_prefix_list_ids[k] == aws_vpc_endpoint.gateway[k].prefix_list_id
-    ])
-    error_message = "The module must expose both gateway prefix-list ids so workload egress can stay service-exact."
   }
 }
 

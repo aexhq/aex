@@ -40,8 +40,6 @@
 //! - `capacity-limit-projection-write`: the regional capacity authority's
 //!   effective-limit transport. It owns no defaults or override policy.
 
-#[cfg(feature = "session-authority")]
-pub mod application_plan;
 pub mod attr;
 #[cfg(feature = "session-authority")]
 pub mod authority_codec;

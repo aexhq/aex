@@ -167,8 +167,12 @@ pub fn model_effect_id(agent: crate::ids::AgentId, state: &FoldState) -> EffectI
 }
 
 fn truncated(state: &FoldState) -> bool {
-    matches!(state.last_stop_reason, Some(StopReason::MaxOutputTokens))
-        && state.pending_calls.is_empty()
+    state.model_history.last().is_some_and(|turn| match turn {
+        crate::wire_pending::Turn::Assistant { stop_reason, .. } => {
+            matches!(stop_reason, StopReason::MaxTokens)
+        }
+        crate::wire_pending::Turn::User { .. } => false,
+    }) && state.pending_calls.is_empty()
 }
 
 fn breach(state: &FoldState, policy: &PlanPolicy) -> Option<FinishReason> {
@@ -207,9 +211,9 @@ mod tests {
     use super::{OwedStep, PlanPolicy, plan};
     use crate::budget::{BudgetNode, DimensionVector};
     use crate::fold::{FoldState, Phase};
-    use crate::ids::Timestamp;
+    use crate::ids::{ModelSlug, Timestamp};
     use crate::journal::{FinishReason, ParkReason};
-    use crate::wire_pending::StopReason;
+    use crate::wire_pending::{CanonicalBlock, ProviderId, StopReason, Turn};
 
     fn policy() -> PlanPolicy {
         PlanPolicy {
@@ -228,10 +232,21 @@ mod tests {
         }
     }
 
+    fn assistant(stop_reason: StopReason) -> Turn {
+        Turn::Assistant {
+            blocks: vec![CanonicalBlock::Text {
+                text: "partial".to_owned(),
+            }],
+            provider: ProviderId::Anthropic,
+            model: ModelSlug("m".to_owned()),
+            stop_reason,
+        }
+    }
+
     #[test]
     fn a_truncated_response_finishes_failed_never_completed() {
         let mut folded = state();
-        folded.last_stop_reason = Some(StopReason::MaxOutputTokens);
+        folded.model_history.push(assistant(StopReason::MaxTokens));
         folded.phase = Phase::AwaitingFinish;
         assert_eq!(
             plan(&folded, &policy()),
@@ -244,7 +259,7 @@ mod tests {
     #[test]
     fn a_clean_stop_finishes_completed() {
         let mut folded = state();
-        folded.last_stop_reason = Some(StopReason::EndTurn);
+        folded.model_history.push(assistant(StopReason::EndTurn));
         folded.phase = Phase::AwaitingFinish;
         assert_eq!(
             plan(&folded, &policy()),

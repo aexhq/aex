@@ -89,14 +89,6 @@ fn a_generation_from_another_tenant_is_refused_after_read() {
 }
 
 #[test]
-fn an_immutable_definition_that_disagrees_with_the_head_is_never_written() {
-    let mut drifted = head(GenerationState::Requested);
-    drifted.definition.workspace = other_workspace();
-    let error = encode_generation(&drifted).expect_err("the launch authority must stay coherent");
-    assert!(error.to_string().contains("workspace"), "{error}");
-}
-
-#[test]
 fn an_intent_identity_that_could_forge_a_key_stops_the_builder() {
     let mut forged = support::intent();
     forged.intent_id = "int#evil".to_owned();

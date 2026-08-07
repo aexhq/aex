@@ -15,7 +15,7 @@ use aex_operation_domain::Operation;
 use aex_secret_domain::{SecretName, SessionCustody, TrueIdle, WorkspaceSecret};
 use aex_session_domain::testing::{materialized_state, moment, session_fixture};
 use aex_session_domain::{
-    AccountProjection, AccountRevision, AccountState, AgentControl, EffectiveLimits,
+    AccountProjection, AccountRevision, AccountState, AgentControl, AgentStatus, EffectiveLimits,
     IdempotencyIdentity, IdempotencyReceipt, JournalPage, JournalSeq, ReservationId, Run, Session,
     create_root,
 };
@@ -138,6 +138,7 @@ pub struct ScriptedPorts {
     true_idle: TrueIdle,
     account: AccountProjection,
     limits: EffectiveLimits,
+    more_agents: bool,
 }
 
 impl ScriptedPorts {
@@ -171,9 +172,13 @@ impl ScriptedPorts {
             custody: None,
             secrets: Vec::new(),
             true_idle: TrueIdle::idle(moment(0)),
-            limits: [(LimitId::SessionMaterializedAgents, 8)]
-                .into_iter()
-                .collect(),
+            limits: [
+                (LimitId::SessionSubagentConcurrency, 8),
+                (LimitId::SessionSubagentDepth, 4),
+            ]
+            .into_iter()
+            .collect(),
+            more_agents: false,
         }
     }
 
@@ -190,6 +195,13 @@ impl ScriptedPorts {
     #[must_use]
     pub fn with_session(mut self, session: Session) -> Self {
         self.snapshot.session = session;
+        self
+    }
+
+    /// Replaces the root's scripted lifecycle state.
+    #[must_use]
+    pub fn with_root_status(mut self, status: AgentStatus) -> Self {
+        self.snapshot.root_agent.status = status;
         self
     }
 
@@ -232,6 +244,13 @@ impl ScriptedPorts {
     #[must_use]
     pub fn with_true_idle(mut self, true_idle: TrueIdle) -> Self {
         self.true_idle = true_idle;
+        self
+    }
+
+    /// Reports that the bounded agent page has another row behind it.
+    #[must_use]
+    pub fn with_more_agents(mut self) -> Self {
+        self.more_agents = true;
         self
     }
 
@@ -317,7 +336,7 @@ impl SessionReader for ScriptedPorts {
         self.log.record(PortCall::Read("list_agents"));
         Ok(AgentPage {
             agents: self.snapshot.materialized.clone(),
-            more: false,
+            more: self.more_agents,
         })
     }
 

@@ -1353,7 +1353,7 @@
             "items": {
               "$ref": "aex:schema:Message"
             },
-            "maxItems": 100,
+            "maxItems": 1000,
             "type": "array"
           },
           "nextCursor": {
@@ -1377,14 +1377,6 @@
           {
             "$ref": "aex:schema:MessagePartFile",
             "x-aex-discriminator-value": "file"
-          },
-          {
-            "$ref": "aex:schema:MessagePartToolCall",
-            "x-aex-discriminator-value": "tool_call"
-          },
-          {
-            "$ref": "aex:schema:MessagePartToolResult",
-            "x-aex-discriminator-value": "tool_result"
           }
         ],
         "x-aex-discriminator": "type"
@@ -1427,48 +1419,6 @@
         },
         "required": [
           "text"
-        ],
-        "type": "object"
-      },
-      "MessagePartToolCall": {
-        "additionalProperties": false,
-        "properties": {
-          "argumentsDigest": {
-            "description": "The canonical tool-argument digest.",
-            "pattern": "^sha256:[0-9a-f]{64}$",
-            "type": "string"
-          },
-          "id": {
-            "description": "The call identity.",
-            "pattern": "^tcl_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "tool_call"
-          }
-        },
-        "required": [
-          "argumentsDigest",
-          "id"
-        ],
-        "type": "object"
-      },
-      "MessagePartToolResult": {
-        "additionalProperties": false,
-        "properties": {
-          "id": {
-            "description": "The call identity.",
-            "pattern": "^tcl_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "tool_call"
-          },
-          "resultDigest": {
-            "description": "The canonical tool-result digest.",
-            "pattern": "^sha256:[0-9a-f]{64}$",
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "resultDigest"
         ],
         "type": "object"
       },
@@ -2645,9 +2595,7 @@
           "deepseek",
           "zai",
           "moonshotai",
-          "google",
-          "openrouter",
-          "vercel_ai_gateway"
+          "google"
         ],
         "type": "string"
       },
@@ -3348,7 +3296,7 @@
         "additionalProperties": false,
         "properties": {
           "error": {
-            "$ref": "aex:schema:RunFailure",
+            "$ref": "aex:schema:ApiErrorBody",
             "description": "The terminal failure."
           },
           "id": {
@@ -3432,36 +3380,6 @@
         ],
         "type": "object"
       },
-      "RunFailure": {
-        "additionalProperties": false,
-        "properties": {
-          "code": {
-            "description": "The stable public failure code.",
-            "type": "string",
-            "x-aex-registry": "errors"
-          },
-          "detail": {
-            "description": "Typed customer-safe detail.",
-            "x-aex-canonical-json": true
-          },
-          "message": {
-            "description": "Customer-safe failure detail.",
-            "maxLength": 4096,
-            "minLength": 1,
-            "type": "string"
-          },
-          "retryable": {
-            "description": "Whether the same run step may be retried.",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "code",
-          "message",
-          "retryable"
-        ],
-        "type": "object"
-      },
       "RunPage": {
         "additionalProperties": false,
         "properties": {
@@ -3470,7 +3388,7 @@
             "items": {
               "$ref": "aex:schema:Run"
             },
-            "maxItems": 100,
+            "maxItems": 1000,
             "type": "array"
           },
           "nextCursor": {
@@ -3949,7 +3867,7 @@
             "items": {
               "$ref": "aex:schema:SessionListItem"
             },
-            "maxItems": 100,
+            "maxItems": 1000,
             "type": "array"
           },
           "nextCursor": {
@@ -5820,7 +5738,6 @@
           "invalid_request",
           "invalid_cursor",
           "invalid_query",
-          "telemetry_query_budget_exhausted",
           "account_paused",
           "wrong_workspace_region",
           "observability_unavailable"
@@ -6149,7 +6066,6 @@
           "invalid_request",
           "invalid_cursor",
           "invalid_query",
-          "telemetry_query_budget_exhausted",
           "account_paused",
           "wrong_workspace_region",
           "observability_unavailable"
@@ -6369,7 +6285,6 @@
           "invalid_request",
           "invalid_cursor",
           "invalid_query",
-          "telemetry_query_budget_exhausted",
           "invalid_metric_aggregation",
           "account_paused",
           "wrong_workspace_region",
@@ -6590,7 +6505,6 @@
           "invalid_request",
           "invalid_cursor",
           "invalid_query",
-          "telemetry_query_budget_exhausted",
           "account_paused",
           "wrong_workspace_region",
           "observability_unavailable"
@@ -7051,7 +6965,7 @@
             "name": "limit",
             "required": false,
             "schema": {
-              "maximum": 100,
+              "maximum": 1000,
               "minimum": 1,
               "type": "integer"
             }
@@ -8363,7 +8277,6 @@
           "invalid_cursor",
           "session_deleted",
           "invalid_query",
-          "telemetry_query_budget_exhausted",
           "account_paused",
           "wrong_workspace_region",
           "observability_unavailable"
@@ -9631,7 +9544,6 @@
           "invalid_cursor",
           "session_deleted",
           "invalid_query",
-          "telemetry_query_budget_exhausted",
           "account_paused",
           "wrong_workspace_region",
           "observability_unavailable"
@@ -9819,7 +9731,7 @@
             "name": "limit",
             "required": false,
             "schema": {
-              "maximum": 100,
+              "maximum": 1000,
               "minimum": 1,
               "type": "integer"
             }
@@ -10207,7 +10119,6 @@
           "invalid_cursor",
           "session_deleted",
           "invalid_query",
-          "telemetry_query_budget_exhausted",
           "invalid_metric_aggregation",
           "account_paused",
           "wrong_workspace_region",
@@ -10496,7 +10407,6 @@
           "invalid_cursor",
           "session_deleted",
           "invalid_query",
-          "telemetry_query_budget_exhausted",
           "account_paused",
           "wrong_workspace_region",
           "observability_unavailable"
@@ -11106,7 +11016,7 @@
             "name": "limit",
             "required": false,
             "schema": {
-              "maximum": 100,
+              "maximum": 1000,
               "minimum": 1,
               "type": "integer"
             }
@@ -11615,7 +11525,6 @@
           "invalid_cursor",
           "session_deleted",
           "invalid_query",
-          "telemetry_query_budget_exhausted",
           "account_paused",
           "wrong_workspace_region",
           "observability_unavailable"
@@ -12949,7 +12858,6 @@
           "invalid_cursor",
           "session_deleted",
           "invalid_query",
-          "telemetry_query_budget_exhausted",
           "account_paused",
           "wrong_workspace_region",
           "observability_unavailable"
@@ -13380,7 +13288,6 @@
           "invalid_cursor",
           "session_deleted",
           "invalid_query",
-          "telemetry_query_budget_exhausted",
           "account_paused",
           "wrong_workspace_region",
           "observability_unavailable"
@@ -14131,7 +14038,6 @@
           "invalid_request",
           "invalid_cursor",
           "invalid_query",
-          "telemetry_query_budget_exhausted",
           "account_paused",
           "wrong_workspace_region",
           "observability_unavailable"
@@ -15081,16 +14987,6 @@
             },
             "description": "Error."
           },
-          "415": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
           "429": {
             "content": {
               "application/json": {
@@ -15112,7 +15008,6 @@
           "unauthenticated",
           "insufficient_scope",
           "idempotency_conflict",
-          "unsupported_media_type",
           "telemetry_payload_too_large",
           "invalid_telemetry",
           "telemetry_quota_exceeded",
@@ -15203,16 +15098,6 @@
             },
             "description": "Error."
           },
-          "415": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
           "429": {
             "content": {
               "application/json": {
@@ -15234,7 +15119,6 @@
           "unauthenticated",
           "insufficient_scope",
           "idempotency_conflict",
-          "unsupported_media_type",
           "telemetry_payload_too_large",
           "invalid_telemetry",
           "telemetry_quota_exceeded",
@@ -15325,16 +15209,6 @@
             },
             "description": "Error."
           },
-          "415": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
           "429": {
             "content": {
               "application/json": {
@@ -15356,7 +15230,6 @@
           "unauthenticated",
           "insufficient_scope",
           "idempotency_conflict",
-          "unsupported_media_type",
           "telemetry_payload_too_large",
           "invalid_telemetry",
           "telemetry_quota_exceeded",
@@ -15469,7 +15342,6 @@
           "invalid_request",
           "invalid_cursor",
           "invalid_query",
-          "telemetry_query_budget_exhausted",
           "account_paused",
           "wrong_workspace_region",
           "observability_unavailable"
@@ -15798,7 +15670,6 @@
           "invalid_request",
           "invalid_cursor",
           "invalid_query",
-          "telemetry_query_budget_exhausted",
           "account_paused",
           "wrong_workspace_region",
           "observability_unavailable"

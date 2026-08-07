@@ -44,7 +44,6 @@ session-authority = [
     "dep:aex-operation-domain",
     "dep:aex-runtime-control",
     "dep:aex-secret-domain",
-    "dep:aex-session-app",
     "dep:aex-session-domain",
 ]
 # The read-only `regional-authz-projection` reader. A deployable that needs only
@@ -82,7 +81,6 @@ aex-operation-domain = { path = "../aex-operation-domain", optional = true }
 aex-internal-contracts = { path = "../aex-internal-contracts" }
 aex-runtime-control = { path = "../aex-runtime-control", optional = true }
 aex-secret-domain = { path = "../aex-secret-domain", optional = true }
-aex-session-app = { path = "../aex-session-app", optional = true }
 aex-session-domain = { path = "../aex-session-domain", optional = true }
 futures.workspace = true
 

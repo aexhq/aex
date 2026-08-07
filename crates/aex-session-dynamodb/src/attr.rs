@@ -186,9 +186,9 @@ impl<'a> Row<'a> {
     /// Binds a row read from a secondary index whose projection omits the
     /// discriminator.
     ///
-    /// A `DynamoDB` `INCLUDE` or `KEYS_ONLY` projection can omit the
-    /// discriminator, so [`Row::bind`] can never succeed against one: the
-    /// discriminator is not there to check. Use this only where a **sparse** index key already
+    /// A `DynamoDB` `INCLUDE` projection carries only the attributes it names, so
+    /// [`Row::bind`] can never succeed against one: the discriminator is not
+    /// there to check. Use this only where a **sparse** index key already
     /// restricts the partition to one row family, which is what makes the
     /// missing check safe rather than merely convenient. Every typed accessor
     /// still reports `item_type` in its errors, so a projection missing an
@@ -494,8 +494,8 @@ mod tests {
 
     #[test]
     fn a_projected_row_binds_without_a_discriminator_and_still_decodes() {
-        // A secondary-index projection can omit the discriminator, so it is
-        // absent by construction rather than by corruption.
+        // An `INCLUDE` projection carries only the attributes it names, so the
+        // discriminator is absent by construction rather than by corruption.
         let mut item = row();
         item.remove(ITEM_TYPE);
         let bound = Row::bind_projected(&item, "session_head");

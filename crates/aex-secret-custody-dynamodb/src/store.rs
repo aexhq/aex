@@ -6,7 +6,7 @@
 //! secret" is not a bug that can be written here.
 
 use aex_secret_domain::custody::CustodyRevision;
-use aex_secret_domain::secret::{SecretName, SecretRevision, SourceGeneration};
+use aex_secret_domain::secret::{SecretName, SourceGeneration};
 use aex_session_dynamodb::attr::{Item, s};
 use aex_session_dynamodb::error::{
     Idempotence, Resolution, StoreError, classify, decode_cancellation,
@@ -22,8 +22,7 @@ use aws_sdk_dynamodb::types::ReturnValuesOnConditionCheckFailure;
 use aws_sdk_dynamodb::types::builders::UpdateBuilder;
 
 use crate::codec::{
-    self, CallAuthorization, CustodyBinding, CustodyHead, ProviderCredential, RedactionManifest,
-    SecretMetadata, StoredGeneration,
+    self, CustodyHead, ProviderCredential, RedactionManifest, SecretMetadata, StoredGeneration,
 };
 use crate::keys;
 
@@ -214,69 +213,6 @@ impl CustodyStore {
         &self.table
     }
 
-    /// Reads one provider binding by its complete `DynamoDB` key.
-    ///
-    /// Brain dispatch already knows the provider from its immutable session
-    /// configuration. Preserving it here turns the hot-path lookup into one
-    /// strongly consistent point read instead of probing the eight-provider
-    /// directory.
-    ///
-    /// # Errors
-    ///
-    /// [`StoreError`] for a transport, key, or decode failure.
-    pub async fn load_provider_credential_for_provider(
-        &self,
-        workspace: WorkspaceId,
-        provider: aex_wire::models::ProviderId,
-        credential: ProviderCredentialId,
-    ) -> Result<Option<ProviderCredential>, StoreError> {
-        let target = keys::provider_credential(workspace, provider.as_str(), credential)?;
-        match self.get(&target.pk, &target.sk).await? {
-            None => Ok(None),
-            Some(item) => Ok(Some(codec::decode_provider_credential(&item, workspace)?)),
-        }
-    }
-
-    /// Reads one immutable session binding by its complete custody key.
-    ///
-    /// # Errors
-    ///
-    /// [`StoreError`] for a transport, key, or decode failure.
-    pub async fn load_custody_binding(
-        &self,
-        workspace: WorkspaceId,
-        session: SessionId,
-        revision: CustodyRevision,
-        name: &SecretName,
-    ) -> Result<Option<CustodyBinding>, StoreError> {
-        let target = keys::binding(session, revision, name.as_str())?;
-        match self.get(&target.pk, &target.sk).await? {
-            None => Ok(None),
-            Some(item) => Ok(Some(codec::decode_binding(&item, workspace)?)),
-        }
-    }
-
-    /// Atomically revalidates the mutable secret and custody fences and writes
-    /// one immutable managed-call authorization before any decrypt occurs.
-    ///
-    /// # Errors
-    ///
-    /// [`StoreError::PreconditionFailed`] when revocation, rebind, deletion, or
-    /// a duplicate authorization wins; other variants retain their usual
-    /// transport and corruption meanings.
-    pub async fn authorize_managed_call(
-        &self,
-        authorization: &CallAuthorization,
-        bound_source_revision: SecretRevision,
-    ) -> Result<(), StoreError> {
-        let plan = crate::expressions::authorize_managed_call(
-            &self.table,
-            authorization,
-            bound_source_revision,
-        )?;
-        SecretCustodyStore::commit(self, &plan).await
-    }
-
     async fn get(&self, pk: &str, sk: &str) -> Result<Option<Item>, StoreError> {
         let output = self
             .client
@@ -436,14 +372,12 @@ impl SecretCustodyStore for CustodyStore {
         credential: ProviderCredentialId,
     ) -> Result<Option<ProviderCredential>, StoreError> {
         // The sort key is `CRED#{provider}#{credential}`, so the identity alone
-        // names a suffix rather than a key. Eight providers is a closed set, so the
-        // read is eight bounded point reads and never a scan.
+        // names a suffix rather than a key. Six providers is a closed set, so the
+        // read is six bounded point reads and never a scan.
         for provider in aex_wire::models::ProviderId::ALL {
-            if let Some(binding) = self
-                .load_provider_credential_for_provider(workspace, *provider, credential)
-                .await?
-            {
-                return Ok(Some(binding));
+            let target = keys::provider_credential(workspace, provider.as_str(), credential)?;
+            if let Some(item) = self.get(&target.pk, &target.sk).await? {
+                return Ok(Some(codec::decode_provider_credential(&item, workspace)?));
             }
         }
         Ok(None)

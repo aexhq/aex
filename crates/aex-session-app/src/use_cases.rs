@@ -207,6 +207,7 @@ pub async fn admit_message(
     head.status = SessionStatus::Running;
     head.active_run = Some(command.run);
     head.revision = snapshot.session.revision.next();
+    head.updated_at = now;
 
     let mut conditions = live_conditions(&snapshot.session);
     conditions.push(Condition::SessionActiveRun {
@@ -232,7 +233,7 @@ pub async fn admit_message(
         intent: TransactionIntent::AdmitMessage,
         conditions,
         writes: vec![
-            Write::PutMessage(Box::new(message.clone())),
+            Write::AppendMessage(Box::new(message.clone())),
             Write::PutRun(Box::new(commit.run.clone())),
             Write::PutSessionHead(Box::new(head)),
         ],
@@ -280,10 +281,7 @@ pub async fn start_run(
     let commit = start_run_domain(&stored, &snapshot.session, context.clock.now())?;
 
     let mut conditions = live_conditions(&snapshot.session);
-    conditions.push(Condition::RunNonTerminal {
-        session: command.session,
-        run: command.run,
-    });
+    conditions.push(Condition::RunNonTerminal { run: command.run });
     conditions.push(Condition::SessionActiveRun {
         session: command.session,
         expected: Some(command.run),
@@ -350,14 +348,13 @@ pub async fn commit_terminal(
         commit
             .sealed_messages
             .iter()
-            .map(|message| Write::PutMessage(Box::new(message.clone()))),
+            .map(|message| Write::SealMessage(message.id)),
     );
 
     let plan = SessionTransaction {
         intent: TransactionIntent::CommitTerminal,
         conditions: vec![
             Condition::RunNonTerminal {
-                session: command.session,
                 run: command.attempt.run,
             },
             Condition::SessionActiveRun {
@@ -378,7 +375,6 @@ pub async fn commit_terminal(
                 epoch: snapshot.session.deletion.epoch,
             },
             Condition::AgentFence {
-                session: command.session,
                 agent: agent.id,
                 at_least: agent.fence(),
             },
@@ -433,14 +429,38 @@ pub async fn stop_session(
         &request,
         now,
     )?;
+    if existing.is_some() {
+        return Ok(Planned {
+            plan: empty_plan(TransactionIntent::StopSession),
+            projected: operation,
+        });
+    }
 
+    // Ninety-five non-root rows plus the root leave room for two conditions,
+    // the operation, and the session head under the provider action ceiling.
+    const STOP_AGENT_BUDGET: u16 = 95;
     let page = context
         .sessions
-        .list_agents(command.session, crate::ports::PageBudget { limit: 100 })
+        .list_agents(
+            command.session,
+            crate::ports::PageBudget {
+                limit: STOP_AGENT_BUDGET,
+            },
+        )
         .await?;
+    if page.more {
+        return Err(crate::plan::PlanError::TooManyActions {
+            actions: crate::plan::MAX_ACTIONS + 1,
+            max: crate::plan::MAX_ACTIONS,
+        }
+        .into());
+    }
+    let mut agents = Vec::with_capacity(page.agents.len() + 1);
+    agents.push(snapshot.root_agent.clone());
+    agents.extend(page.agents);
     let cancellation = cancel_session_work(
         &snapshot.session,
-        &page.agents,
+        &agents,
         CancelCause::StopRequested,
         None,
         now,
@@ -450,8 +470,13 @@ pub async fn stop_session(
     head.revision = snapshot.session.revision.next();
     head.cancellation = cancellation.cancellation;
     head.work_admission = cancellation.admission;
-    head.active_run = None;
-    head.status = SessionStatus::Idle;
+    // Cancellation requests ownership to stop; only the terminal barrier may
+    // settle the run and clear `active_run`. Clearing it here would orphan a
+    // non-terminal run and admit a successor before the winner sealed output.
+    if head.active_run.is_none() {
+        head.status = SessionStatus::Idle;
+    }
+    head.updated_at = now;
 
     let mut writes = vec![
         Write::PutOperation(Box::new(operation.clone())),
@@ -554,7 +579,7 @@ pub async fn rebind_credentials(
         now,
     )?;
 
-    let plan = build_rebind_plan(&snapshot.session, command, operation.clone(), prepared);
+    let plan = build_rebind_plan(&snapshot.session, command, operation.clone(), prepared, now);
     plan.validate()?;
 
     Ok(Planned {
@@ -654,10 +679,12 @@ fn build_rebind_plan(
     command: &Rebind,
     operation: aex_operation_domain::Operation,
     prepared: PreparedRebind,
+    now: Timestamp,
 ) -> SessionTransaction {
     let mut head = session.clone();
     head.revision = session.revision.next();
     head.custody_revision = prepared.custody.revision;
+    head.updated_at = now;
 
     let mut conditions = live_conditions(session);
     conditions.extend([
@@ -716,12 +743,6 @@ pub async fn trash_session(
     gate(context, &snapshot.session, CommandClass::PauseExempt).await?;
 
     let now = context.clock.now();
-    let commit = trash(
-        &snapshot.session.deletion,
-        command.operation,
-        now,
-        RECOVERY_WINDOW,
-    )?;
     let existing = context
         .sessions
         .load_operation(command.workspace, command.operation)
@@ -740,12 +761,25 @@ pub async fn trash_session(
         },
         now,
     )?;
+    if existing.is_some() {
+        return Ok(Planned {
+            plan: empty_plan(TransactionIntent::TrashSession),
+            projected: operation,
+        });
+    }
+    let commit = trash(
+        &snapshot.session.deletion,
+        command.operation,
+        now,
+        RECOVERY_WINDOW,
+    )?;
 
     let mut head = snapshot.session.clone();
     head.revision = snapshot.session.revision.next();
     head.deletion = commit.guard;
     head.work_admission = commit.admission;
     head.status = SessionStatus::Trashed;
+    head.updated_at = now;
 
     let plan = SessionTransaction {
         intent: TransactionIntent::TrashSession,
@@ -762,6 +796,7 @@ pub async fn trash_session(
         ],
         writes: vec![
             Write::PutOperation(Box::new(operation.clone())),
+            Write::PutDeletionGuard(Box::new(commit.guard)),
             Write::PutSessionHead(Box::new(head)),
         ],
         after_commit: Vec::new(),
@@ -790,7 +825,6 @@ pub async fn restore_session(
     gate(context, &snapshot.session, CommandClass::PausableMutation).await?;
 
     let now = context.clock.now();
-    let commit = restore(&snapshot.session.deletion, command.operation, now)?;
     let existing = context
         .sessions
         .load_operation(command.workspace, command.operation)
@@ -809,12 +843,20 @@ pub async fn restore_session(
         },
         now,
     )?;
+    if existing.is_some() {
+        return Ok(Planned {
+            plan: empty_plan(TransactionIntent::RestoreSession),
+            projected: operation,
+        });
+    }
+    let commit = restore(&snapshot.session.deletion, command.operation, now)?;
 
     let mut head = snapshot.session.clone();
     head.revision = snapshot.session.revision.next();
     head.deletion = commit.guard;
     head.work_admission = commit.admission;
     head.status = SessionStatus::Idle;
+    head.updated_at = now;
 
     let plan = SessionTransaction {
         intent: TransactionIntent::RestoreSession,
@@ -831,6 +873,7 @@ pub async fn restore_session(
         ],
         writes: vec![
             Write::PutOperation(Box::new(operation.clone())),
+            Write::PutDeletionGuard(Box::new(commit.guard)),
             Write::PutSessionHead(Box::new(head)),
         ],
         after_commit: Vec::new(),
@@ -860,13 +903,6 @@ pub async fn purge_session(
     gate(context, &snapshot.session, CommandClass::PauseExempt).await?;
 
     let now = context.clock.now();
-    let commit = purge(
-        &snapshot.session.deletion,
-        command.command.operation,
-        command.cascade,
-        &command.closure,
-        now,
-    )?;
     let existing = context
         .sessions
         .load_operation(command.command.workspace, command.command.operation)
@@ -885,12 +921,26 @@ pub async fn purge_session(
         },
         now,
     )?;
+    if existing.is_some() {
+        return Ok(Planned {
+            plan: empty_plan(TransactionIntent::PurgeSession),
+            projected: operation,
+        });
+    }
+    let commit = purge(
+        &snapshot.session.deletion,
+        command.command.operation,
+        command.cascade,
+        &command.closure,
+        now,
+    )?;
 
     let mut head = snapshot.session.clone();
     head.revision = snapshot.session.revision.next();
     head.deletion = commit.guard;
     head.work_admission = commit.admission;
     head.status = SessionStatus::Purging;
+    head.updated_at = now;
 
     let plan = SessionTransaction {
         intent: TransactionIntent::PurgeSession,
@@ -907,6 +957,7 @@ pub async fn purge_session(
         ],
         writes: vec![
             Write::PutOperation(Box::new(operation.clone())),
+            Write::PutDeletionGuard(Box::new(commit.guard)),
             Write::PutSessionHead(Box::new(head)),
         ],
         after_commit: Vec::new(),
@@ -936,6 +987,15 @@ fn admitted(
         AdmissionOutcome::SessionPurged { operation } => {
             Err(AppError::Deletion(DeletionRejection::Purged(operation)))
         }
+    }
+}
+
+const fn empty_plan(intent: TransactionIntent) -> SessionTransaction {
+    SessionTransaction {
+        intent,
+        conditions: Vec::new(),
+        writes: Vec::new(),
+        after_commit: Vec::new(),
     }
 }
 

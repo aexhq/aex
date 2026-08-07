@@ -1,4 +1,4 @@
-//! The seven release JSON Schemas, embedded.
+//! The five release JSON Schemas, embedded.
 //!
 //! They live under `api/schemas/release/` so the contract generator needs no
 //! special case, and they are embedded here so `schema print` works from a
@@ -21,12 +21,6 @@ pub const VERIFICATION_STATEMENT: &str =
 /// `aex.environment-binding.v1`.
 pub const ENVIRONMENT_BINDING: &str =
     include_str!("../../../api/schemas/release/environment-binding.json");
-/// `aex.resolved-placement.v1`.
-pub const RESOLVED_PLACEMENT: &str =
-    include_str!("../../../api/schemas/release/resolved-placement.json");
-/// `aex.saved-plan-envelope.v1`.
-pub const SAVED_PLAN_ENVELOPE: &str =
-    include_str!("../../../api/schemas/release/saved-plan-envelope.json");
 /// `aex.evidence-receipt.v1`.
 pub const EVIDENCE_RECEIPT: &str =
     include_str!("../../../api/schemas/release/evidence-receipt.json");
@@ -43,10 +37,6 @@ pub enum SchemaName {
     VerificationStatement,
     /// The environment binding.
     EnvironmentBinding,
-    /// The resolved hosted placement.
-    ResolvedPlacement,
-    /// The saved Terraform plan envelope.
-    SavedPlanEnvelope,
     /// The evidence receipt.
     EvidenceReceipt,
 }
@@ -74,16 +64,6 @@ pub const ALL: &[(SchemaName, &str, &str)] = &[
         ENVIRONMENT_BINDING,
     ),
     (
-        SchemaName::ResolvedPlacement,
-        "resolved-placement",
-        RESOLVED_PLACEMENT,
-    ),
-    (
-        SchemaName::SavedPlanEnvelope,
-        "saved-plan-envelope",
-        SAVED_PLAN_ENVELOPE,
-    ),
-    (
         SchemaName::EvidenceReceipt,
         "evidence-receipt",
         EVIDENCE_RECEIPT,
@@ -98,8 +78,6 @@ pub fn text(name: SchemaName) -> &'static str {
         SchemaName::CompositionManifest => COMPOSITION_MANIFEST,
         SchemaName::VerificationStatement => VERIFICATION_STATEMENT,
         SchemaName::EnvironmentBinding => ENVIRONMENT_BINDING,
-        SchemaName::ResolvedPlacement => RESOLVED_PLACEMENT,
-        SchemaName::SavedPlanEnvelope => SAVED_PLAN_ENVELOPE,
         SchemaName::EvidenceReceipt => EVIDENCE_RECEIPT,
     }
 }

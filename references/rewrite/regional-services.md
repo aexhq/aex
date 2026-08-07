@@ -10,7 +10,7 @@ keywords:
   - idempotency
   - composition
 audience: implementation agents and maintainers
-last_verified: 2026-08-03
+last_verified: 2026-08-02
 related:
   - references/rewrite/regional-domains.md
   - references/rewrite/regional-stores.md
@@ -468,7 +468,7 @@ Every name below is required unless marked. There is no default for any of them.
 | --- | --- |
 | `regional-session-api` | `AEX_AUTHZ_FUNCTION_ARN`, `AEX_AUTHZ_VERIFY_KEYS_PARAM`, `AEX_AUTHZ_PROJECTION_TABLE`, `AEX_SESSION_TABLE`, `AEX_WORK_TABLE`, `AEX_CONTENT_TABLE`, `AEX_REGISTRY_TABLE`, `AEX_SECRET_CUSTODY_TABLE`, `AEX_RUNTIME_ACTIVITY_TABLE`, `AEX_USAGE_QUERY_TABLE`, `AEX_CONTENT_BUCKET`, `AEX_CONTENT_BUCKET_OWNER`, `AEX_CONTENT_KMS_KEY_ARN`, `AEX_CURSOR_SIGNING_KEY_REF`, `AEX_ASSERTION_CACHE_BYTES`, `AEX_MAX_JSON_BODY_BYTES`, `AEX_MAX_PAGE_ITEMS`, `AEX_MAX_PAGE_BYTES` |
 | `regional-secret-api` | `AEX_AUTHZ_FUNCTION_ARN`, `AEX_AUTHZ_VERIFY_KEYS_PARAM`, `AEX_AUTHZ_PROJECTION_TABLE`, `AEX_SECRET_CUSTODY_TABLE`, `AEX_SECRET_KEYSTORE_TABLE`, `AEX_SECRET_KMS_KEY_ARN`, `AEX_SECRET_BRANCH_KEY_CACHE_BYTES`, `AEX_SECRET_BRANCH_KEY_CACHE_TTL_MS`, `AEX_ASSERTION_CACHE_BYTES`, `AEX_MAX_JSON_BODY_BYTES` |
-| `regional-stream` | `AEX_STREAM_PORT`, `AEX_AUTHZ_FUNCTION_ARN`, `AEX_AUTHZ_VERIFY_KEYS_PARAM`, `AEX_AUTHZ_PROJECTION_TABLE`, `AEX_SESSION_TABLE`, `AEX_OBSERVATION_TABLE`, `AEX_CONTENT_BUCKET`, `AEX_CURSOR_SIGNING_KEY_REF`, `AEX_STREAM_WAKE_MODE`, `AEX_STREAM_MAX_TASKS`, `AEX_STREAM_MAX_CONNECTIONS`, `AEX_STREAM_MAX_CONNECTIONS_SESSION`, `AEX_STREAM_MAX_CONNECTIONS_OBSERVATION`, `AEX_STREAM_MAX_CONNECTIONS_PER_WORKSPACE`, `AEX_STREAM_CONNECTION_BUFFER_BYTES`, `AEX_STREAM_WRITE_STALL_MS`, `AEX_STREAM_DRAIN_DEADLINE_MS`, `AEX_ASSERTION_CACHE_BYTES`; plus `AEX_SESSION_TABLE_STREAM_ARN`, `AEX_OBSERVATION_TABLE_STREAM_ARN`, and the endpoint-specific `AEX_DYNAMODB_STREAMS_ENDPOINT_URL` in `ddb_streams` mode only |
+| `regional-stream` | `AEX_STREAM_PORT`, `AEX_AUTHZ_FUNCTION_ARN`, `AEX_AUTHZ_VERIFY_KEYS_PARAM`, `AEX_AUTHZ_PROJECTION_TABLE`, `AEX_SESSION_TABLE`, `AEX_OBSERVATION_TABLE`, `AEX_CONTENT_BUCKET`, `AEX_CURSOR_SIGNING_KEY_REF`, `AEX_STREAM_WAKE_MODE`, `AEX_STREAM_MAX_TASKS`, `AEX_STREAM_MAX_CONNECTIONS`, `AEX_STREAM_MAX_CONNECTIONS_SESSION`, `AEX_STREAM_MAX_CONNECTIONS_OBSERVATION`, `AEX_STREAM_MAX_CONNECTIONS_PER_WORKSPACE`, `AEX_STREAM_CONNECTION_BUFFER_BYTES`, `AEX_STREAM_WRITE_STALL_MS`, `AEX_STREAM_DRAIN_DEADLINE_MS`, `AEX_ASSERTION_CACHE_BYTES`; plus `AEX_SESSION_TABLE_STREAM_ARN` and `AEX_OBSERVATION_TABLE_STREAM_ARN` in `ddb_streams` mode only |
 | `session-operation-worker` | `AEX_OPERATION_QUEUE_URL`, `AEX_OPERATION_DLQ_URL`, `AEX_WORK_TABLE`, `AEX_SESSION_TABLE`, `AEX_CONTENT_TABLE`, `AEX_REGISTRY_TABLE`, `AEX_CONTENT_BUCKET`, `AEX_CONTENT_BUCKET_OWNER`, `AEX_DENIAL_PROJECTION_TABLE`, `AEX_DUE_SCAN_SHARDS`, `AEX_LEASE_MS`, `AEX_STEP_DEADLINE_MS`, `AEX_MAX_ATTEMPTS` |
 | `content-lifecycle-worker` | `AEX_MODE`, `AEX_CONTENT_TABLE`, `AEX_REGISTRY_TABLE`, `AEX_WORK_TABLE`, `AEX_CONTENT_BUCKET`, `AEX_CONTENT_BUCKET_OWNER`, `AEX_DENIAL_PROJECTION_TABLE`, `AEX_GC_STAGE_GRACE_HOURS`, `AEX_UPLOAD_GRACE_HOURS`, `AEX_DECLARED_CAPABILITIES`; plus `AEX_EXPIRY_SCAN_SHARDS` and `AEX_EXPIRY_PAGE_ITEMS` in `expiry` mode, `AEX_CONTENT_QUEUE_URL` and `AEX_CONTENT_DLQ_URL` in `delete` mode, `AEX_MARK_PAGE_ITEMS` and `AEX_SWEEP_PAGE_ITEMS` in `marksweep` mode, and optional `AEX_INVENTORY_BUCKET` in `reconcile` mode |
 | `regional-secret-key-admin` | `AEX_SECRET_KEYSTORE_TABLE`, `AEX_KEYSTORE_LOGICAL_NAME`, `AEX_SECRET_KMS_KEY_ARN`, `AEX_ATTESTATION_OPERATION_ID` |
@@ -631,47 +631,11 @@ on.
 
 | Route(s) | Blocker |
 | --- | --- |
-| `secret_put`, `provider_credential_register` | KMS `ReEncrypt` closes context-changing rewrap only; it requires an existing source ciphertext and does not expose the active branch-key ciphertext that a first seal needs. `SecretCrypto::seal` still takes that ciphertext, while `aex_secret_keystore_dynamodb::ActiveBranchKey` publishes `version`, `create_time`, `kms_arn` and `hierarchy_version` but not `BranchKeyRecord::enc`. `secret_put` also declares `Idempotency-Key`, but `expressions::set` has only generation, metadata and lineage participants and writes no durable receipt, so replay/collision and an ambiguous transaction outcome cannot be resolved honestly. `provider_credential_register` has no register expression or atomic secret-generation + metadata + `pcr_` binding + receipt transaction. Its generated request carries a human label and plaintext but no workspace-secret identity, while OD-23 requires the `pcr_` row to reference one; no accepted record decides the minted secret name, label/name uniqueness, or collision behavior, and the generated route declares no collision error. A retry must also replay the original minted `pcr_` id, which requires the missing receipt transaction. Both routes therefore remain unserved. |
-| `session_create` | The canonical session document now round-trips the complete domain session, but creation authority is still absent. `aex-session-app` has no complete `create_session` use case; no production adapter implements its session/registry/content/custody/limits/commit ports; and the generated handler returns `not_served`. More importantly, the same atomic transaction must establish the root agent, sealed registry manifest/root pin, first custody authority, exact logical Hands generation and current pointer, canonical replay response, idempotency receipt and `session.created` event. `SessionTransaction::validate` deliberately rejects every `CreateSession` intent because its plan vocabulary cannot express those runtime-activity and event participants, while the runtime adapter's generation/current-pointer methods are separate hidden writes. See `regional-domains.md` “Session-create authority closure”. |
-| the other 14 `sessions` routes | Read composition still lacks the `aex-session-app` port adapters and complete projections for each generated response; mutating routes additionally need command-specific transaction/hint ownership. `session_message_send` and message listing retain the separate public/domain `MessagePart` mismatch below. They remain absent rather than returning a partial resource. |
+| `secret_put`, `provider_credential_register` | `SecretCrypto::seal` takes the **wrapped branch key** as an argument, and no port exposes it: `aex_secret_keystore_dynamodb::ActiveBranchKey` publishes `version`, `create_time`, `kms_arn` and `hierarchy_version` but not `BranchKeyRecord::enc`. Nothing can seal a plaintext until it does. `provider_credential_register` is blocked a second time: the request carries a human label plus plaintext but no workspace-secret binding, and OD-23 requires the `pcr_` row to reference one — which secret name a registration mints, and what happens when that name already exists, is decided by no accepted record, and the route declares no error code for the collision. |
+| the 15 `sessions` routes | `aex-session-dynamodb`'s stored `SessionHead` cannot decode into `aex_session_domain::Session`: it holds no `initial_root`, `persisted_root`, `persist_revision`, `last_persisted_at`, `generation`, `work_admission`, `mutation_guard` or `lineage`, so `aex_session_app::ports::SessionReader` has nothing to build a snapshot from, and **no adapter implements any `aex-session-app` port** — a grep for `SessionReader` outside `aex-session-app` finds nothing. `session_get` and `sessions_list` are blocked twice over: the head stores only a `resolvedConfigDigest`, while `Session.resolvedConfig` and `SessionListItem.{model, provider}` need the resolved configuration itself. `session_create` is blocked a third time — `aex-session-app` declares `create_session` as an unwritten use case. |
 | `session_message_send`, `session_messages_list` | **Contract gap.** `aex_wire::models::MessagePart` is `Text` or `File`; `aex_session_domain::MessagePart` is `Text`, `ToolCall` or `ToolResult`. The two vocabularies intersect only at `Text`, so neither direction is total: a wire `File` part has no domain arm and a domain tool part has no wire arm. No adapter work can close this. |
 | the 21 `registry`, 6 `files`, 4 `uploads`, 3 `approvals`, 3 `operations`, 1 `usage` and 3 `workspace` routes | Their adapters exist but no projection was written for them in this pass. They are mechanically the same shape as the four served here — read the row, project, tag, page — and are unblocked. |
 | `provider_credential_revoke` | Servable: the expression, the store method and the projection all exist. It is left unmounted only because the directory cannot be populated until `provider_credential_register` lands, so nothing would exercise it end to end. |
-
-### Session-create and Hands-generation closure
-
-This is a release-blocking product path, not a provider-registration detail.
-Publishing eight immutable Hands images makes them available; it does not give a
-session a generation. The accepted H-LAZY boundary requires session creation to
-allocate and persist the logical generation while making **no** provider call.
-The first Hands operation materializes that already-pinned generation later.
-
-The smallest correct implementation is one owned slice:
-
-1. `aex-session-app::create_session` resolves the request, selects one exact
-   image ARN/version/artifact digest from the deployment's immutable eight-entry
-   catalog, mints the session/root-agent/generation identities once, and returns
-   one closed transaction plan.
-2. The plan vocabulary gains typed runtime-generation and current-pointer
-   writes. `aex-runtime-activity-dynamodb` publishes builders for the initial
-   `requested`, fence-zero, revision-zero rows rather than exposing a second
-   independent commit.
-3. The production session adapters implement the existing application ports and
-   compile the session, runtime, registry/content, custody, receipt and created
-   event participants into one DynamoDB transaction. The receipt identity and
-   deterministic `ClientRequestToken` make an ambiguous retry return the same
-   minted identities.
-4. `regional-session-api` mounts `session_create` only after the transaction and
-   its replay/conflict path pass through the real router and adapter tests.
-
-The alternatives are materially worse. Allocating the generation in a second
-transaction leaves either a session that can never launch Hands or an orphan
-generation after a crash. Allocating it on the first tool call moves catalog
-selection onto a high-concurrency latency path and lets a mutable catalog change
-which image a retry means. A runtime database catalog adds a network read and a
-new availability dependency to every allocation. Selecting from the immutable
-deployment catalog in process is O(1), and the single bounded transaction gives
-one concurrency winner without a compensating repair workflow.
 
 ### The listener is still health-only
 
@@ -984,8 +948,7 @@ Three decisions worth naming:
 - **It stays inside its own stream.** The three usage authority adapters carry
   their own row reader and their own port error rather than linking
   `aex-session-dynamodb`, so this one does too. That is what keeps
-  `crates/aex-usage-query-aws/tests/write_incapability.rs` a fact about this
-  crate's sources alone.
+  `tests/write_incapability.rs` a fact about this crate's sources alone.
 - **`current_generation` answers `Option`.** An absent pointer means the
   projection was never cut over. Substituting `Generation::FIRST` would make a
   never-built projection read as an empty one.
@@ -1441,13 +1404,11 @@ purging partitions in one total order, while the legacy method queries exactly
 one caller-selected lifecycle. Neither requirement can be replaced with a
 `FilterExpression` or an unbounded scan.
 
-The workspace index is now a `KEYS_ONLY` ordered locator, so a reader must
-strongly hydrate every selected base head before filtering or returning it.
-That avoids treating an eventually consistent index projection as session
-truth, but it does not close the response authority gap: the hydrated head
-still carries only `resolvedConfigDigest`, not the required
-`SessionListItem.provider` or `.model`. Extra reads therefore preserve
-correctness without manufacturing either missing value.
+Even after those locator semantics are fixed, the INCLUDE projection carries
+only identity, workspace, status, lifecycle, revision and timestamps. The
+required `SessionListItem.provider` and `.model` are absent. Strongly hydrating
+the selected base heads would still recover only `resolvedConfigDigest`, not
+either value, so extra reads cannot repair the decisive authority gap.
 
 There are also two cursor owners, neither of which justifies a partial route.
 The legacy write-capable `SessionStore::list_sessions` owns its own HMAC cursor
@@ -1516,9 +1477,6 @@ members and 143 packages. The regenerated 13-table bundle digest is
 
 ## Session run-read audit continuation (2026-08-02)
 
-> Historical finding, superseded on 2026-08-03 by the canonical run authority
-> row and the mounted lifecycle-fenced run reads documented below.
-
 `session_run_get` and `session_runs_list` remain absent after a focused audit of
 the generated `Run` model, the run key and codec, both session-store read
 surfaces, regional handler composition, the signed cursor layer and the authored
@@ -1565,10 +1523,6 @@ The routes can mount only after the terminal authority durably commits the full
 public run projection (including a completeness fence for telemetry) in the run
 row or another single exact-read authority.
 ## Session message-list audit continuation (2026-08-02)
-
-> Historical representation finding, superseded in part by the canonical
-> message authority row. The current blocker is Open-message traversal and is
-> documented in the 2026-08-03 audit below.
 
 `session_messages_list` remains absent after auditing the generated message/page
 model, both current message records, the session-table codec and keys, content
@@ -1660,45 +1614,130 @@ through feature unification, that proof turns red. The authored
 `limit_projection` target is registered as unit evidence rather than relying on
 a local command that CI never selects.
 
-## Canonical session route audit (2026-08-03)
+## Canonical session lifecycle/read continuation (2026-08-03)
 
-The canonical authority codec closes the historical field-loss blockers: a
-session head now carries the full resolved configuration, continuity, lineage
-and metadata; messages carry file and tool parts; runs carry typed terminal
-failure and telemetry state. The read-only production composition now binds
-those documents through `SessionReads`. Existing approval point/list routes
-also go through the session lifecycle fence and return the declared
-`session_deleted` response after trash or purge instead of publishing a child
-resource under a deleted parent.
+This continuation supersedes the storage and representation blockers in the
+two 2026-08-02 session audits above. It does not supersede the mutation
+composition blockers recorded here.
 
-Run point/list are now mounted in `SERVED` and generated served metadata. Both
-use the canonical run row, exact projection and the lifecycle-fenced read
-adapter; the list cursor is signed over route, principal, region, workspace,
-session, order and the canonical deletion epoch. A resumed page strongly reads
-the parent before decoding the cursor and reuses that read as the query's first
-fence; the final parent read refuses a concurrent trash/restore. Thus an old
-cursor cannot cross into a new live generation without adding a third parent
-read to the hot path.
+The session domain now owns a content-addressed `ResolvedConfigAuthority`: the
+whole generated strict-v1 `ResolvedConfig` is canonical JSON, SHA-256 addressed,
+and checked against its provider/model index projections. A session also stores
+its update instant and validated scalar-only metadata. Clone lineage now retains
+the source persist revision required by `SessionLineage`. The storage tree
+continues to use its canonical BLAKE3 tuple; the public `ContentHash` is
+`sha256("aex.session.public-root.v1\0" || blake3-root || entries || logical-bytes)`,
+so no BLAKE3 value is mislabeled as SHA-256 and every reader computes one
+stable public root identity from the lossless tuple.
 
-The other core reads remain deliberately absent:
+`aex-session-dynamodb::authority_codec` is the new versioned authority row
+codec. `authoritySchemaVersion = 1` and one canonical `authorityDocument`
+round-trip every session-head field: tenant identities, status, revision,
+active run, work admission, cancellation and deletion fences, mutation guard,
+root agent, live generation, initial and persisted roots, persist revision and
+instant, custody revision, lineage, full resolved configuration, metadata, and
+create/update instants. It similarly round-trips canonical domain messages and
+runs. Message rows keep ordered text, persisted-file, tool-call and tool-result
+parts plus agent/state/seal facts. Run rows keep the admission cancellation
+epoch, typed terminal outcome and reason, output message identities, customer-
+safe failure detail/retryability, and telemetry completeness/gap state. Unknown
+versions, missing fields, mismatched tenant/index identities, configuration
+digest drift, invalid enum spellings, zero spend, and status/outcome drift all
+fail decode rather than defaulting.
 
-- `session_get`'s generated handler returns only `200 WithETag<Session>`, while
-  its contract text and server-side `SessionReadResult` require deleting and
-  tombstone outcomes. That union is not wired into generated dispatch.
-- `session_messages_list` has no wire state for an Open message. Publishing a
-  mutable partial assistant message as if it were a complete message is not an
-  exact projection. Filtering Open rows while advancing the DynamoDB cursor is
-  also incorrect: if a skipped row seals before continuation, it can be
-  permanently omitted from the traversal. A future cursor must also bind the
-  canonical deletion epoch, as the run and approval continuations do now.
-- `sessions_list` must define one ordered cursor across active, trashed and
-  purging index partitions (and the `deleting` status filter). Querying one
-  lifecycle partition or using a DynamoDB filter would not implement that
-  collection.
+Canonical point reads use strongly consistent `GetItem`. Message and run pages
+use strongly consistent, ascending, bounded base-table queries over `MSG#` and
+`RUN#`, preserve the complete last-evaluated key, and do no per-row hydration.
+The workspace GSI now includes the versioned session document, so a session
+list can project complete public fields without N+1 base reads. That GSI is
+explicitly observational and eventually consistent; no command may use it as a
+fence. Its workspace-plus-lifecycle partition can become hot in a very large
+single workspace, and projecting a resolved-config document consumes response
+bytes. The API must therefore keep the existing item and byte budgets when the
+multi-lifecycle public list merge is implemented. That merge and its one signed
+cursor are not yet complete, so `sessions_list` remains unserved.
 
-Mutation routes remain blocked independently of read representation. Stop must
-fence and settle more than 100 agents in bounded durable batches and commit a
-final run/head barrier; terminal commit must include usage closure and spend
-reservation release; trash/restore/purge need their durable continuation
-workers and absorbing fences. None is mounted and `routes-meta.yaml` is
-unchanged for mutations.
+The message contract clean cut adds `tool_call` and `tool_result` arms with
+canonical content digests, while the domain adds the existing wire `file` arm.
+Both admission and response conversions are exhaustive. A durable run failure
+uses a new `RunFailure` resource rather than `ApiErrorBody`, because a stored
+run has no request identity and must not synthesize one. Open assistant messages
+remain non-public until the terminal barrier seals them; a bounded page may be
+short and carry a continuation when it skipped an open row.
+
+Four read routes now have complete production composition paths and are declared
+served by `regional-session-api`: `session_get`, `session_messages_list`,
+`session_run_get`, and `session_runs_list`. Their real-router cases exercise
+generated dispatch, strong parent/child reads, typed projection, ETag on the
+session point resource, sealed-message filtering, run point/list parity, and
+the honest `None` telemetry state before observation settlement. The package
+now declares `SC-SESSION-ADMIT` and `SC-SESSION-TERMINAL` ownership. Purging and
+purged parents return the route's declared `session_deleted`; a trashed session
+remains readable during its recovery window.
+
+Concurrency and transaction decisions in this continuation are fail-closed:
+
+- application and DynamoDB plans share DynamoDB's 100-action transaction
+  ceiling and never split one atomic unit;
+- stop can update the root plus at most 95 non-root agents beside its two
+  conditions, operation and head; if another non-root page exists it returns an
+  over-wide-plan error rather than cancelling only a prefix;
+- stop advances the cancellation authority but leaves an active run attached;
+  only the terminal barrier may settle that run, seal its output and clear the
+  head, so cancellation cannot orphan a non-terminal run or admit a successor;
+- exact stop/trash/restore/purge operation replays return the stored projection
+  with an empty write plan, so no replay advances a revision or deletion epoch;
+- every effective head mutation records `updated_at`; terminal settlement uses
+  the terminal attempt instant;
+- `CommitError::Ambiguous` is distinct and non-retryable. A deployable must
+  resolve it by a strong receipt/target read, never a blind write retry;
+- session revision, active-run, cancellation, deletion, work-admission,
+  mutation-guard and agent-fence conditions remain the authority against
+  concurrent mutation and cancel-versus-Brain lease races.
+
+The following blockers remain, and no route depending on them is mounted:
+
+1. No adapter yet compiles every `aex-session-app::SessionTransaction` condition
+   and write across session, work, content, registry, custody, idempotency and
+   outbox authorities. The legacy admission/lifecycle compilers still accept
+   `wire_pending` plans. Until one total compiler and committer replaces them,
+   create/clone/send/stop/rebind/trash/restore/purge cannot be production writes.
+2. `admit_message` still emits only an after-commit `WakeAgent` hint. The
+   canonical application plan has no durable `agent.wake` write type, while the
+   authoritative row shape currently lives in Brain/work adapters. A lost hint
+   can therefore strand work until another scan/replay. Message admission stays
+   unserved until the wake row (or equivalent replayable work authority) is in
+   the same transaction and the idempotency receipt is written with it.
+3. Create still needs a production resolved-config authority (qualified model,
+   capacity, approval/network/package/registry defaults), exact empty/staged
+   root construction and pins, custody admission, and response receipt. None may
+   be guessed from environment or request omissions.
+4. Clone still needs atomic child head/root-agent/root pins, optional custody
+   copy, an operation result containing the target session for replay recovery,
+   and current-root capture under the true-idle/mutation fence.
+5. Stop above 96 materialized agents needs a continued bounded cancellation
+   protocol or a session cancellation latch that Brain is proved to observe
+   before lease renewal. The current command correctly refuses instead of
+   pretending a partial cancellation is complete.
+6. Purge completion, approval response CAS, and the complete create/clone
+   application use cases are not implemented in this continuation.
+
+Generated artifacts were not rebuilt in this worktree. The available prebuilt
+`aex-contract-gen.exe` predates `servingArtifacts`/`servedOperations` and fails
+while parsing the current `routes-meta.yaml`; the task also explicitly forbids
+Cargo in this divergent worktree. After integration into the root worktree, run
+the current generator, table-bundle generator, formatting, and the focused
+domain/app/DynamoDB/service targets before treating the four served claims as
+release evidence.
+
+```text
+cargo run -p aex-contract-gen -- build
+cargo run -p aex-regional-test-support --example emit-regional-tables
+cargo fmt --all -- --check
+cargo test -p aex-session-domain --all-targets
+cargo test -p aex-session-app --all-targets
+cargo test -p aex-session-dynamodb --all-targets
+cargo test -p regional-session-api --all-targets
+cargo clippy -p aex-session-domain -p aex-session-app -p aex-session-dynamodb -p regional-session-api --all-targets -- -D warnings
+cargo run -p aex-contract-gen -- check
+```

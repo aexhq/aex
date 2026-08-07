@@ -23,7 +23,7 @@ concerns = ["contract", "fault", "security", "performance"]
 seams = ["aws.dynamodb.transact_write", "aws.dynamodb.condition", "aws.s3.conditional_put", "aws.iam.denial", "aws.alb.framing"]
 security_tier = "public_edge"
 risk = ["iam", "untrusted_input"]
-scenarios = []
+scenarios = ["SC-SESSION-ADMIT", "SC-SESSION-TERMINAL"]
 
 [package.metadata.aex.targets]
 admission = "unit"
@@ -55,6 +55,7 @@ aex-session-dynamodb = { path = "../../crates/aex-session-dynamodb", default-fea
     "authz-projection",
     "session-authority",
 ] }
+aex-session-domain = { path = "../../crates/aex-session-domain" }
 async-trait.workspace = true
 aex-wire = { path = "../../crates/aex-wire" }
 aex-identity-domain = { path = "../../crates/aex-identity-domain" }
@@ -69,7 +70,6 @@ thiserror.workspace = true
 
 [dev-dependencies]
 aex-secret-domain = { path = "../../crates/aex-secret-domain" }
-aex-session-domain = { path = "../../crates/aex-session-domain" }
 aex-workspace-domain = { path = "../../crates/aex-workspace-domain" }
 axum.workspace = true
 http-body-util.workspace = true

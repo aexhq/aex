@@ -254,12 +254,21 @@ mod tests {
     }
 
     #[test]
-    fn the_launcher_refuses_every_capability_outside_its_exact_grant() {
+    fn the_launcher_can_never_link_a_read_write_or_delete_capability() {
         // The plan's claim about this deployable is negative: it can read no
-        // observation, write no authority row and delete nothing. Deriving the
-        // refusals from the shared inventory makes adding a capability fail
-        // closed here until the role deliberately grants it.
-        for forbidden in ROLE.denied() {
+        // observation, write no admission and delete nothing. Each of the eight
+        // is refused by name, so widening the grant is a test failure rather
+        // than a deployment nobody notices.
+        for forbidden in [
+            Capability::ReadAuthority,
+            Capability::ReadBodies,
+            Capability::DeleteObservations,
+            Capability::DeleteBodies,
+            Capability::WriteAdmission,
+            Capability::WriteBodies,
+            Capability::WriteExportObjects,
+            Capability::DeliverUsage,
+        ] {
             assert!(
                 !ROLE.granted().contains(&forbidden),
                 "`{}` must not be in the launcher grant",

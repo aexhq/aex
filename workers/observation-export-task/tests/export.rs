@@ -14,7 +14,7 @@ use aex_observation_export::{
 };
 use aex_observation_store_aws::composition::{Capability, Role, assert_grant};
 use aex_observation_store_aws::health::{HEALTHZ, Probe, READYZ};
-use aex_wire::error::ErrorCode;
+use aex_otlp_admission::wire_pending::PendingErrorCode;
 
 /// The role this deployable composes as.
 const ROLE: Role = Role::ExportTask;
@@ -175,10 +175,10 @@ fn parquet_is_a_typed_refusal_rather_than_a_nondeterministic_artifact() {
 }
 
 #[test]
-fn the_capacity_refusal_is_the_registered_code() {
-    let code = ErrorCode::ExportCapacity;
+fn the_capacity_refusal_is_the_registered_pending_code() {
+    let code = PendingErrorCode::ExportCapacity;
     assert_eq!(code.as_str(), "export_capacity");
-    assert_eq!(code.http_status(), 503);
+    assert_eq!(code.status(), 503);
     assert!(code.retryable(), "the launcher may re-run a larger task");
 }
 

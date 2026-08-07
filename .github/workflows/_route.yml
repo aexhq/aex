@@ -17,10 +17,6 @@ on:
         description: affected | full | shadow
         type: string
         required: true
-      artifact_mode:
-        description: affected | full | shadow for the artifact matrix
-        type: string
-        required: true
       lane:
         description: pr | main | assurance | release
         type: string
@@ -35,14 +31,6 @@ on:
         type: number
         required: false
         default: 4
-      release_tool_sha256:
-        description: SHA-256 of the run's prepared aex-release-tool.
-        type: string
-        required: true
-      workspace_check_sha256:
-        description: SHA-256 of the run's prepared aex-workspace-check.
-        type: string
-        required: true
     outputs:
       routing_failed:
         value: ${{ jobs.route.outputs.routing_failed }}
@@ -52,10 +40,6 @@ on:
         value: ${{ jobs.route.outputs.test_matrix }}
       has_test:
         value: ${{ jobs.route.outputs.has_test }}
-      node_matrix:
-        value: ${{ jobs.route.outputs.node_matrix }}
-      has_node:
-        value: ${{ jobs.route.outputs.has_node }}
       artifact_matrix:
         value: ${{ jobs.route.outputs.artifact_matrix }}
       has_artifact:
@@ -83,8 +67,6 @@ jobs:
       repo_wide: ${{ steps.test.outputs.repo_wide }}
       test_matrix: ${{ steps.test.outputs.matrix }}
       has_test: ${{ steps.test.outputs.has_entries }}
-      node_matrix: ${{ steps.node.outputs.matrix }}
-      has_node: ${{ steps.node.outputs.has_entries }}
       artifact_matrix: ${{ steps.artifact.outputs.matrix }}
       has_artifact: ${{ steps.artifact.outputs.has_entries }}
       scenario_matrix: ${{ steps.scenario.outputs.matrix }}
@@ -97,75 +79,37 @@ jobs:
         with:
           fetch-depth: 0
 
-      # The tool is no longer compiled here, but `graph *` still shells out to
-      # `cargo metadata --no-deps`, so the toolchain has to exist. No cargo
-      # cache: `--no-deps` resolves nothing and reads no registry, and the key
-      # this job used to declare was never written by any workflow anyway.
       - name: Install Rust
         uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
         with:
           toolchain: "1.97.1"
 
-      - name: Download the prepared workspace tools
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+      - name: Restore cargo cache
+        uses: Swatinem/rust-cache@bc2d2e71bd35c5549942babaa51a89c586b981d1  # v2.8.1
         with:
-          name: workspace-tools-${{ github.run_id }}
-          path: ${{ runner.temp }}/aex-tools
+          save-if: false
+          shared-key: router
 
-      # The digests arrive through the job-output channel, not inside the
-      # artifact, so an artifact that lies about itself cannot self-certify.
-      - name: Use the prepared workspace tools
-        env:
-          RELEASE_TOOL_SHA256: ${{ inputs.release_tool_sha256 }}
-          WORKSPACE_CHECK_SHA256: ${{ inputs.workspace_check_sha256 }}
-        run: |
-          set -euo pipefail
-          cd "$RUNNER_TEMP/aex-tools"
-          [[ "$RELEASE_TOOL_SHA256" =~ ^[0-9a-f]{64}$ ]]
-          [[ "$WORKSPACE_CHECK_SHA256" =~ ^[0-9a-f]{64}$ ]]
-          printf '%s  %s\n' "$RELEASE_TOOL_SHA256" aex-release-tool > expected.sha256
-          printf '%s  %s\n' "$WORKSPACE_CHECK_SHA256" aex-workspace-check >> expected.sha256
-          sha256sum --check --strict expected.sha256
-          [[ "$(find . -maxdepth 1 -type f ! -name expected.sha256 | wc -l)" -eq 2 ]]
-          chmod 0755 aex-release-tool aex-workspace-check
-          ./aex-release-tool --version | grep -Eq '^aex-release-tool [0-9]+\.[0-9]+\.[0-9]+'
-          ./aex-workspace-check --version | grep -Eq '^aex-workspace-check [0-9]+\.[0-9]+\.[0-9]+'
-          echo "$RUNNER_TEMP/aex-tools" >> "$GITHUB_PATH"
+      - name: Build the release tool
+        run: cargo build --locked --release -p aex-release-tool
 
       - name: Verify the delivery graph
-        env:
-          ROUTING_LANE: ${{ inputs.lane }}
-        run: |
-          set -euo pipefail
-          if [[ "$ROUTING_LANE" == "release" ]]; then
-            aex-release-tool graph verify --release
-          else
-            aex-release-tool graph verify
-          fi
+        run: ./target/release/aex-release-tool graph verify
 
       - name: Select
         run: |
           set -euo pipefail
-          aex-release-tool graph select \
+          ./target/release/aex-release-tool graph select \
             --base "${{ inputs.base_sha }}" --head "${{ inputs.head_sha }}" \
             --mode "${{ inputs.mode }}" --lane "${{ inputs.lane }}" \
             --out selection.json --quiet
-
-      - name: Select artifact graph
-        run: |
-          set -euo pipefail
-          aex-release-tool graph select \
-            --base "${{ inputs.base_sha }}" --head "${{ inputs.head_sha }}" \
-            --mode "${{ inputs.artifact_mode }}" --lane "${{ inputs.lane }}" \
-            --out artifact-selection.json --quiet
 
       - name: Test matrix
         id: test
         run: |
           set -euo pipefail
-          aex-release-tool graph matrix \
+          ./target/release/aex-release-tool graph matrix \
             --selection selection.json --kind test \
-            --artifact-selection artifact-selection.json \
             --partitions "${{ inputs.partitions }}" \
             --github-output "$GITHUB_OUTPUT" --quiet
 
@@ -173,25 +117,15 @@ jobs:
         id: artifact
         run: |
           set -euo pipefail
-          aex-release-tool graph matrix \
-            --selection artifact-selection.json --kind artifact \
-            --github-output "$GITHUB_OUTPUT" --quiet
-
-      - name: Node matrix
-        id: node
-        run: |
-          set -euo pipefail
-          aex-release-tool graph matrix \
-            --selection selection.json --kind node \
-            --artifact-selection artifact-selection.json \
-            --partitions "${{ inputs.partitions }}" \
+          ./target/release/aex-release-tool graph matrix \
+            --selection selection.json --kind artifact \
             --github-output "$GITHUB_OUTPUT" --quiet
 
       - name: Scenario matrix
         id: scenario
         run: |
           set -euo pipefail
-          aex-release-tool graph matrix \
+          ./target/release/aex-release-tool graph matrix \
             --selection selection.json --kind scenario \
             --github-output "$GITHUB_OUTPUT" --quiet
 
@@ -199,14 +133,14 @@ jobs:
         id: terraform
         run: |
           set -euo pipefail
-          aex-release-tool graph matrix \
+          ./target/release/aex-release-tool graph matrix \
             --selection selection.json --kind terraform \
             --github-output "$GITHUB_OUTPUT" --quiet
 
       - name: Summarize the routing decision
         run: |
           set -euo pipefail
-          aex-release-tool graph diff \
+          ./target/release/aex-release-tool graph diff \
             --base "${{ inputs.base_sha }}" --head "${{ inputs.head_sha }}" \
             --format markdown >> "$GITHUB_STEP_SUMMARY"
 
@@ -214,7 +148,5 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: selection-${{ inputs.lane }}
-          path: |
-            selection.json
-            artifact-selection.json
+          path: selection.json
           if-no-files-found: error

@@ -8,11 +8,6 @@ variable "region" {
   description = "AWS region."
 }
 
-variable "permissions_boundary_policy_arn" {
-  type        = string
-  description = "Owner-managed permissions boundary required on every deployable execution role."
-}
-
 variable "vpc_id" {
   type        = string
   description = "VPC from the region foundation."
@@ -99,7 +94,6 @@ variable "stream_service" {
     image              = string
     cpu                = number
     memory             = number
-    desired_count      = number
     stop_timeout       = number
     container_port     = number
     log_group_name     = string

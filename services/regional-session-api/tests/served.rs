@@ -31,16 +31,15 @@ use aex_secret_domain::custody::CustodyRevision;
 use aex_secret_domain::plaintext::SecretPlaintext;
 use aex_secret_domain::revocation::RevocationEpoch;
 use aex_secret_domain::secret::{SecretName, SecretRevision, SecretState, SourceGeneration};
-use aex_session_domain::{Message, Run, Session};
 use aex_session_dynamodb::error::StoreError;
 use aex_session_dynamodb::paging::{PageBudget, PagePosition};
 use aex_session_dynamodb::plan::{Participant, TransactionPlan};
 use aex_session_dynamodb::replay::Receipt;
+use aex_session_dynamodb::store::{CanonicalSessionQueries, PositionPage, SessionQueries};
 use aex_session_dynamodb::store::{OperationApiStore, OperationCancelOutcome, OperationFilter};
-use aex_session_dynamodb::store::{PositionPage, SessionPage, SessionQueries, SessionScoped};
 use aex_session_dynamodb::transactions::operation_cancel_owned;
 use aex_session_dynamodb::wire_pending::{
-    Approval, ApprovalBinding, ApprovalStatus, StoredOperation,
+    Approval, ApprovalBinding, ApprovalStatus, SessionHead, StoredOperation,
 };
 use aex_wire::CanonicalJson;
 use aex_wire::error::{ErrorCode, WireError};
@@ -48,8 +47,8 @@ use aex_wire::idempotency::IntentDigest;
 use aex_wire::idempotency::PrincipalScope;
 use aex_wire::ids::OperationId;
 use aex_wire::ids::{
-    AgentId, ApiKeyId, ApprovalId, GenerationId, PrefixedId, ProviderCredentialId, ResourceName,
-    RunId, SessionId, ToolCallId, Uuid7, WorkspaceId,
+    AgentId, ApiKeyId, ApprovalId, GenerationId, MessageId, PrefixedId, ProviderCredentialId,
+    ResourceName, RunId, SessionId, ToolCallId, Uuid7, WorkspaceId,
 };
 use aex_wire::ids::{ContentHash, UploadId};
 use aex_wire::models;
@@ -311,79 +310,20 @@ impl OperationApiStore for FakeOperations {
 #[derive(Debug, Default)]
 struct FakeSessions {
     approvals: Vec<Approval>,
-    runs: Vec<Run>,
+    session: Option<aex_session_domain::Session>,
+    messages: Vec<aex_session_domain::Message>,
+    runs: Vec<aex_session_domain::Run>,
     next: Option<PagePosition>,
-    deleted: bool,
-    deletion_epoch: u64,
 }
 
 #[async_trait::async_trait]
 impl SessionQueries for FakeSessions {
-    async fn load_session(
-        &self,
-        workspace: WorkspaceId,
-        session: SessionId,
-    ) -> Result<SessionScoped<Session>, StoreError> {
-        if self.deleted {
-            return Ok(SessionScoped::Deleted);
-        }
-        let mut parent = aex_session_domain::testing::session_fixture();
-        parent.id = session;
-        parent.workspace = workspace;
-        parent.deletion.session = session;
-        parent.deletion.epoch = aex_session_domain::DeletionEpoch(self.deletion_epoch);
-        Ok(SessionScoped::Active(parent))
-    }
-
-    async fn page_messages(
+    async fn read_head(
         &self,
         _workspace: WorkspaceId,
         _session: SessionId,
-        _expected_deletion_epoch: Option<aex_session_domain::DeletionEpoch>,
-        _budget: PageBudget,
-        _after: Option<&PagePosition>,
-    ) -> Result<SessionScoped<SessionPage<Message>>, StoreError> {
-        Ok(SessionScoped::Missing)
-    }
-
-    async fn load_run(
-        &self,
-        _workspace: WorkspaceId,
-        session: SessionId,
-        run: RunId,
-    ) -> Result<SessionScoped<Option<Run>>, StoreError> {
-        if self.deleted {
-            return Ok(SessionScoped::Deleted);
-        }
-        Ok(SessionScoped::Active(
-            self.runs
-                .iter()
-                .find(|stored| stored.session == session && stored.id == run)
-                .cloned(),
-        ))
-    }
-
-    async fn page_runs(
-        &self,
-        _workspace: WorkspaceId,
-        session: SessionId,
-        _expected_deletion_epoch: Option<aex_session_domain::DeletionEpoch>,
-        _budget: PageBudget,
-        _after: Option<&PagePosition>,
-    ) -> Result<SessionScoped<SessionPage<Run>>, StoreError> {
-        if self.deleted {
-            return Ok(SessionScoped::Deleted);
-        }
-        Ok(SessionScoped::Active(SessionPage {
-            items: self
-                .runs
-                .iter()
-                .filter(|stored| stored.session == session)
-                .cloned()
-                .collect(),
-            next: self.next.clone(),
-            deletion_epoch: aex_session_domain::DeletionEpoch(self.deletion_epoch),
-        }))
+    ) -> Result<Option<SessionHead>, StoreError> {
+        Ok(None)
     }
 
     async fn load_approval(
@@ -391,34 +331,26 @@ impl SessionQueries for FakeSessions {
         workspace: WorkspaceId,
         session: SessionId,
         approval: ApprovalId,
-    ) -> Result<SessionScoped<Option<Approval>>, StoreError> {
-        if self.deleted {
-            return Ok(SessionScoped::Deleted);
-        }
-        Ok(SessionScoped::Active(
-            self.approvals
-                .iter()
-                .find(|row| {
-                    row.workspace == workspace
-                        && row.binding.session == session
-                        && row.approval == approval
-                })
-                .cloned(),
-        ))
+    ) -> Result<Option<Approval>, StoreError> {
+        Ok(self
+            .approvals
+            .iter()
+            .find(|row| {
+                row.workspace == workspace
+                    && row.binding.session == session
+                    && row.approval == approval
+            })
+            .cloned())
     }
 
     async fn page_approvals(
         &self,
         workspace: WorkspaceId,
         session: SessionId,
-        _expected_deletion_epoch: Option<aex_session_domain::DeletionEpoch>,
         _budget: PageBudget,
         _after: Option<&PagePosition>,
-    ) -> Result<SessionScoped<SessionPage<Approval>>, StoreError> {
-        if self.deleted {
-            return Ok(SessionScoped::Deleted);
-        }
-        Ok(SessionScoped::Active(SessionPage {
+    ) -> Result<PositionPage<Approval>, StoreError> {
+        Ok(PositionPage {
             items: self
                 .approvals
                 .iter()
@@ -426,8 +358,128 @@ impl SessionQueries for FakeSessions {
                 .cloned()
                 .collect(),
             next: self.next.clone(),
-            deletion_epoch: aex_session_domain::DeletionEpoch(self.deletion_epoch),
-        }))
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl CanonicalSessionQueries for FakeSessions {
+    async fn read_session(
+        &self,
+        workspace: WorkspaceId,
+        session: SessionId,
+    ) -> Result<Option<aex_session_domain::Session>, StoreError> {
+        Ok(self
+            .session
+            .as_ref()
+            .filter(|row| row.workspace == workspace && row.id == session)
+            .cloned())
+    }
+
+    async fn read_message(
+        &self,
+        workspace: WorkspaceId,
+        session: SessionId,
+        message: MessageId,
+    ) -> Result<Option<aex_session_domain::Message>, StoreError> {
+        if self
+            .session
+            .as_ref()
+            .is_none_or(|row| row.workspace != workspace)
+        {
+            return Ok(None);
+        }
+        Ok(self
+            .messages
+            .iter()
+            .find(|row| row.session == session && row.id == message)
+            .cloned())
+    }
+
+    async fn read_domain_run(
+        &self,
+        workspace: WorkspaceId,
+        session: SessionId,
+        run: RunId,
+    ) -> Result<Option<aex_session_domain::Run>, StoreError> {
+        if self
+            .session
+            .as_ref()
+            .is_none_or(|row| row.workspace != workspace)
+        {
+            return Ok(None);
+        }
+        Ok(self
+            .runs
+            .iter()
+            .find(|row| row.session == session && row.id == run)
+            .cloned())
+    }
+
+    async fn page_messages(
+        &self,
+        workspace: WorkspaceId,
+        session: SessionId,
+        _budget: PageBudget,
+        _after: Option<&PagePosition>,
+    ) -> Result<PositionPage<aex_session_domain::Message>, StoreError> {
+        Ok(PositionPage {
+            items: self
+                .messages
+                .iter()
+                .filter(|row| {
+                    row.session == session
+                        && self
+                            .session
+                            .as_ref()
+                            .is_some_and(|head| head.workspace == workspace)
+                })
+                .cloned()
+                .collect(),
+            next: self.next.clone(),
+        })
+    }
+
+    async fn page_runs(
+        &self,
+        workspace: WorkspaceId,
+        session: SessionId,
+        _budget: PageBudget,
+        _after: Option<&PagePosition>,
+    ) -> Result<PositionPage<aex_session_domain::Run>, StoreError> {
+        Ok(PositionPage {
+            items: self
+                .runs
+                .iter()
+                .filter(|row| {
+                    row.session == session
+                        && self
+                            .session
+                            .as_ref()
+                            .is_some_and(|head| head.workspace == workspace)
+                })
+                .cloned()
+                .collect(),
+            next: self.next.clone(),
+        })
+    }
+
+    async fn page_sessions(
+        &self,
+        workspace: WorkspaceId,
+        _lifecycle: &str,
+        _budget: PageBudget,
+        _after: Option<&PagePosition>,
+    ) -> Result<PositionPage<aex_session_domain::Session>, StoreError> {
+        Ok(PositionPage {
+            items: self
+                .session
+                .iter()
+                .filter(|row| row.workspace == workspace)
+                .cloned()
+                .collect(),
+            next: self.next.clone(),
+        })
     }
 }
 
@@ -645,7 +697,6 @@ fn context(request_id: RequestId, route_id: RouteId) -> RequestContext {
         },
         limits: EffectiveLimits {
             json_body_bytes: 65_536,
-            otlp_body_bytes: 4 * 1_024 * 1_024,
             query_page_items: 100,
             query_page_bytes: 1_048_576,
         },
@@ -855,7 +906,8 @@ fn build_with_authorities(
         custody: Arc::clone(&custody) as Arc<dyn SecretCustodyStore>,
         custody_table: CUSTODY_TABLE.to_owned(),
         registry: registry as Arc<dyn RegistryStore>,
-        sessions: sessions as Arc<dyn SessionQueries>,
+        sessions: Arc::clone(&sessions) as Arc<dyn SessionQueries>,
+        canonical_sessions: sessions as Arc<dyn CanonicalSessionQueries>,
         operations: operations as Arc<dyn OperationApiStore>,
         cursor_keys: Arc::new(cursor_keys()),
     });
@@ -1010,7 +1062,7 @@ fn the_served_set_exactly_matches_the_generated_actual_mount_authority() {
         })
         .collect();
     assert_eq!(Routes::served(), generated);
-    assert_eq!(generated.len(), 17);
+    assert_eq!(generated.len(), 19);
 
     let session_export = registry["routes"]
         .as_array()
@@ -1071,69 +1123,75 @@ async fn an_owned_but_unserved_route_is_absent_from_the_router() {
     );
 }
 
-/// A session read is not a slim head projection. The published point resource
-/// requires continuity, lineage and the complete resolved configuration, while
-/// the collection requires provider and model. None can be recovered from the
-/// current head or its sparse index projection, so exposing either route would
-/// turn missing authority into a successful partial resource.
 #[tokio::test]
-async fn session_point_and_list_reads_are_absent_until_the_head_is_complete() {
-    let (router, mounted) = router(FakeCustody::default());
-    assert!(!mounted.contains(&RouteId::SessionGet));
+async fn session_point_read_projects_the_complete_authority_and_etag() {
+    let mut session = aex_session_domain::testing::session_fixture();
+    session.workspace = workspace();
+    let sessions = Arc::new(FakeSessions {
+        session: Some(session.clone()),
+        ..FakeSessions::default()
+    });
+    let ((router, mounted), _) = build_with_sessions(
+        Arc::new(FakeCustody::default()),
+        Arc::new(FakeRegistry::default()),
+        sessions,
+    );
+    assert!(mounted.contains(&RouteId::SessionGet));
     assert!(!mounted.contains(&RouteId::SessionsList));
 
-    let session = sample::<SessionId>(31);
-    for path in [
-        "/api/sessions".to_owned(),
-        format!("/api/sessions/{session}"),
-    ] {
-        let (status, etag, body) = get(&router, &path).await;
-        assert!(
-            matches!(
-                status,
-                StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED
-            ),
-            "an incomplete session projection became reachable: {status} {body}"
-        );
-        assert_eq!(etag, None, "an absent route must not mint an entity tag");
-        assert_eq!(body, serde_json::Value::Null);
-    }
-}
-
-/// A create response is not earned by an immutable head alone. The same
-/// provider transaction must also establish the root agent, sealed registry
-/// selection and root pin, first custody authority, exact logical Hands
-/// generation and current pointer, replayable response receipt, and native
-/// creation event. Until the application plan and adapter can name every one of
-/// those participants, the public route must remain absent rather than expose a
-/// session that cannot execute or replay correctly.
-#[test]
-fn session_create_is_absent_until_the_complete_atomic_authority_is_composed() {
-    assert!(!Routes::served().contains(&RouteId::SessionCreate));
-}
-
-/// The stored message body is an opaque inline blob or content digest, while
-/// the published message is an ordered typed-part vector. The domain also has
-/// tool-call/result parts that the wire cannot represent, and the wire has a
-/// persisted-file part that the domain cannot represent. A referenced body is
-/// blocked again because this finite API owns no plaintext/decrypt capability.
-/// None of those gaps may be hidden behind a successful empty or partial page.
-#[tokio::test]
-async fn session_message_list_is_absent_until_every_body_has_an_exact_projection() {
-    let (router, mounted) = router(FakeCustody::default());
-    assert!(!mounted.contains(&RouteId::SessionMessagesList));
-
-    let session = sample::<SessionId>(32);
-    let (status, etag, body) = get(&router, &format!("/api/sessions/{session}/messages")).await;
-    assert!(
-        matches!(
-            status,
-            StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED
-        ),
-        "an incomplete message projection became reachable: {status} {body}"
+    let (status, etag, body) = get(&router, &format!("/api/sessions/{}", session.id)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(etag.is_some(), "the complete session is strongly tagged");
+    let projected: models::Session = serde_json::from_value(body).expect("session schema");
+    assert_eq!(projected.id, session.id);
+    assert_eq!(
+        projected.resolved_config.provider,
+        session.resolved.provider()
     );
-    assert_eq!(etag, None, "an absent route must not mint an entity tag");
+    assert_eq!(projected.resolved_config.model, session.resolved.model());
+
+    let (status, etag, body) = get(&router, "/api/sessions").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(etag.is_none());
     assert_eq!(body, serde_json::Value::Null);
+}
+
+#[tokio::test]
+async fn session_message_list_publishes_sealed_typed_parts_and_hides_open_output() {
+    let (mut session, _run, _agent, open) = aex_session_domain::testing::running_session();
+    session.workspace = workspace();
+    let sealed = aex_session_domain::seal(
+        &aex_session_domain::Message {
+            parts: vec![aex_session_domain::MessagePart::File {
+                path: aex_wire::ids::FilePath::parse("/input.txt").expect("path"),
+                media_type: Some("text/plain".to_owned()),
+            }],
+            ..open.clone()
+        },
+        moment("2026-08-01T12:34:56.789Z"),
+    );
+    let sessions = Arc::new(FakeSessions {
+        session: Some(session.clone()),
+        messages: vec![open, sealed.message],
+        ..FakeSessions::default()
+    });
+    let ((router, mounted), _) = build_with_sessions(
+        Arc::new(FakeCustody::default()),
+        Arc::new(FakeRegistry::default()),
+        sessions,
+    );
+    assert!(mounted.contains(&RouteId::SessionMessagesList));
+
+    let (status, etag, body) =
+        get(&router, &format!("/api/sessions/{}/messages", session.id)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(etag.is_none());
+    let page: models::MessagePage = serde_json::from_value(body).expect("message page");
+    assert_eq!(page.items.len(), 1, "the open message is not public");
+    assert!(matches!(
+        page.items[0].content[0],
+        models::MessagePart::File(_)
+    ));
 }
 
 // --- durable operations ----------------------------------------------------------
@@ -1421,10 +1479,7 @@ async fn approval_get_projects_the_complete_bound_call_and_decision() {
         Arc::new(FakeRegistry::default()),
         Arc::new(FakeSessions {
             approvals: vec![row],
-            runs: Vec::new(),
             next: None,
-            deleted: false,
-            deletion_epoch: 0,
         }),
     );
     assert!(mounted.contains(&RouteId::SessionApprovalGet));
@@ -1461,10 +1516,7 @@ async fn approval_list_publishes_expired_and_binds_continuation_to_the_session()
         Arc::new(FakeRegistry::default()),
         Arc::new(FakeSessions {
             approvals: vec![row],
-            runs: Vec::new(),
             next: Some(next),
-            deleted: false,
-            deletion_epoch: 0,
         }),
     );
     assert!(mounted.contains(&RouteId::SessionApprovalsList));
@@ -1475,26 +1527,6 @@ async fn approval_list_publishes_expired_and_binds_continuation_to_the_session()
     assert!(body["items"][0].get("decision").is_none());
     let cursor = body["nextCursor"].as_str().expect("a continuation");
 
-    let ((restored_router, _), _) = build_with_sessions(
-        Arc::new(FakeCustody::default()),
-        Arc::new(FakeRegistry::default()),
-        Arc::new(FakeSessions {
-            approvals: vec![stored_approval(ApprovalStatus::Expired)],
-            runs: Vec::new(),
-            next: None,
-            deleted: false,
-            // Trash and restore each advance the canonical deletion epoch.
-            deletion_epoch: 2,
-        }),
-    );
-    let (status, _, body) = get(
-        &restored_router,
-        &format!("/api/sessions/{session}/approvals?cursor={cursor}"),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert_eq!(body["error"]["code"], "invalid_cursor");
-
     let other_session = sample::<SessionId>(30);
     let (status, _, body) = get(
         &router,
@@ -1502,36 +1534,6 @@ async fn approval_list_publishes_expired_and_binds_continuation_to_the_session()
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-}
-
-#[tokio::test]
-async fn approval_reads_refuse_a_session_that_crossed_its_deletion_fence() {
-    let row = stored_approval(ApprovalStatus::Pending);
-    let session = row.binding.session;
-    let approval = row.approval;
-    let ((router, _), _) = build_with_sessions(
-        Arc::new(FakeCustody::default()),
-        Arc::new(FakeRegistry::default()),
-        Arc::new(FakeSessions {
-            approvals: vec![row],
-            runs: Vec::new(),
-            next: None,
-            deleted: true,
-            deletion_epoch: 1,
-        }),
-    );
-
-    for path in [
-        format!("/api/sessions/{session}/approvals/{approval}"),
-        format!("/api/sessions/{session}/approvals"),
-    ] {
-        let (status, _, body) = get(&router, &path).await;
-        assert_eq!(status, StatusCode::GONE, "{body}");
-        assert_eq!(
-            body["error"]["code"].as_str(),
-            Some(ErrorCode::SessionDeleted.as_str())
-        );
-    }
 }
 
 /// Resolving only the approval row would acknowledge before the durable Brain
@@ -1548,10 +1550,7 @@ async fn approval_response_is_absent_without_one_atomic_handoff_authority() {
         Arc::new(FakeRegistry::default()),
         Arc::new(FakeSessions {
             approvals: vec![row],
-            runs: Vec::new(),
             next: None,
-            deleted: false,
-            deletion_epoch: 0,
         }),
     );
 
@@ -1988,95 +1987,36 @@ const REGISTRY_POINTS: &[(RouteId, &str)] = &[
 ];
 
 #[tokio::test]
-async fn canonical_run_point_and_list_reads_are_complete_and_reachable() {
-    let (session, run, _agent, _message) = aex_session_domain::testing::running_session();
-    let next = PagePosition {
-        pk: format!("SESSION#{}", session.id),
-        sk: format!("RUN#{}", run.id),
-        index_pk: None,
-        index_sk: None,
-    };
+async fn run_point_and_list_reads_publish_the_same_complete_authority() {
+    let (mut session, run, _agent, _message) = aex_session_domain::testing::running_session();
+    session.workspace = workspace();
+    let sessions = Arc::new(FakeSessions {
+        session: Some(session.clone()),
+        runs: vec![run.clone()],
+        ..FakeSessions::default()
+    });
     let ((router, mounted), _) = build_with_sessions(
         Arc::new(FakeCustody::default()),
         Arc::new(FakeRegistry::default()),
-        Arc::new(FakeSessions {
-            approvals: Vec::new(),
-            runs: vec![run.clone()],
-            next: Some(next),
-            deleted: false,
-            deletion_epoch: 0,
-        }),
+        sessions,
     );
     assert!(mounted.contains(&RouteId::SessionRunGet));
     assert!(mounted.contains(&RouteId::SessionRunsList));
 
-    let (status, etag, point_body) = get(
-        &router,
-        &format!("/api/sessions/{}/runs/{}", session.id, run.id),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{point_body}");
+    let point_path = format!("/api/sessions/{}/runs/{}", session.id, run.id);
+    let (status, etag, body) = get(&router, &point_path).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
     assert!(etag.is_none());
-    let point: models::Run = serde_json::from_value(point_body.clone()).expect("strict wire run");
-    assert_eq!(point.id, run.id);
-    assert_eq!(point.session_id, session.id);
-    assert_eq!(point.max_spend_cents.get(), run.max_spend_cents.get());
-    assert_eq!(point.status, models::RunStatus::Running);
+    let point: models::Run = serde_json::from_value(body).expect("run schema");
     assert_eq!(point.telemetry_complete, None);
+    assert_eq!(point.telemetry_gap_ids, None);
 
-    let (status, etag, page_body) = get(
-        &router,
-        &format!("/api/sessions/{}/runs?limit=1", session.id),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{page_body}");
+    let list_path = format!("/api/sessions/{}/runs?limit=1", session.id);
+    let (status, etag, body) = get(&router, &list_path).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
     assert!(etag.is_none());
-    let page: models::RunPage = serde_json::from_value(page_body).expect("strict wire run page");
+    let page: models::RunPage = serde_json::from_value(body).expect("run page schema");
     assert_eq!(page.items, vec![point]);
-    let cursor = page.next_cursor.expect("a bounded continuation");
-
-    let ((restored_router, _), _) = build_with_sessions(
-        Arc::new(FakeCustody::default()),
-        Arc::new(FakeRegistry::default()),
-        Arc::new(FakeSessions {
-            approvals: Vec::new(),
-            runs: vec![run.clone()],
-            next: None,
-            deleted: false,
-            deletion_epoch: 2,
-        }),
-    );
-    let (status, _, body) = get(
-        &restored_router,
-        &format!(
-            "/api/sessions/{}/runs?cursor={}",
-            session.id,
-            cursor.as_str()
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert_eq!(body["error"]["code"], "invalid_cursor");
-
-    let ((deleted_router, _), _) = build_with_sessions(
-        Arc::new(FakeCustody::default()),
-        Arc::new(FakeRegistry::default()),
-        Arc::new(FakeSessions {
-            approvals: Vec::new(),
-            runs: vec![run.clone()],
-            next: None,
-            deleted: true,
-            deletion_epoch: 3,
-        }),
-    );
-    for path in [
-        format!("/api/sessions/{}/runs/{}", session.id, run.id),
-        format!("/api/sessions/{}/runs", session.id),
-    ] {
-        let (status, _, body) = get(&deleted_router, &path).await;
-        assert_eq!(status, StatusCode::GONE, "{body}");
-        assert_eq!(body["error"]["code"], "session_deleted");
-    }
 }
 
 /// A point read must not be mounted until it can publish the complete value.
