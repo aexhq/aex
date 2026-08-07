@@ -9,6 +9,7 @@ use std::sync::Arc;
 use aex_regional_http::context::{
     AccountState, AuthorizationEpochs, EffectiveLimits, RegionalAuthorization, RequestContext,
 };
+use aex_regional_http::envelope::ENVELOPE_BYTES;
 use aex_regional_http::mount::{
     AdmissionRequest, EdgeAdmission, MountError, UnaryDispatch, mount_unary, not_served,
 };
@@ -344,6 +345,58 @@ async fn a_refused_admission_never_reaches_the_dispatcher() {
             .get("content-type")
             .and_then(|value| value.to_str().ok()),
         Some("application/json")
+    );
+}
+
+#[tokio::test]
+async fn the_declared_envelope_is_the_transport_body_ceiling() {
+    // axum's default extractor cap is 2 MiB — five times smaller than the
+    // 10 MiB provider envelope this crate declares in `envelope::ENVELOPE_BYTES`
+    // and checks before authentication. The mount must raise the transport
+    // limit to the declared ceiling, or a body inside the published contract is
+    // refused at the extractor before admission ever measures it.
+    let mounted = mount_unary(
+        Arc::new(EchoDispatch(RouteOwner::SecretApi)),
+        Arc::new(AlwaysAdmit),
+        RequestLimits::DEFAULT,
+    )
+    .expect("mounts");
+
+    let inside = mounted
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(concrete_path(RouteId::SecretPut))
+                .header("content-type", "application/json")
+                .body(Body::from(vec![b'x'; 3 * 1024 * 1024]))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_ne!(
+        inside.status(),
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "a 3 MiB body is inside the declared envelope and must reach admission"
+    );
+
+    let outside = mounted
+        .router
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(concrete_path(RouteId::SecretPut))
+                .header("content-type", "application/json")
+                .body(Body::from(vec![b'x'; ENVELOPE_BYTES + 1]))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(
+        outside.status(),
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "above the declared envelope the transport still refuses"
     );
 }
 
