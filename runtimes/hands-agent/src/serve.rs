@@ -17,7 +17,7 @@ use aex_hands_agent::wire::{
     Frame, FrameError, FrameExpectation, RequestPreamble, ResponsePreamble, ResponseStatus, Verb,
     decode_request, encode_response,
 };
-use aex_hands_protocol::operation::{DeliveryMode, GuestRoot};
+use aex_hands_protocol::operation::GuestRoot;
 use aex_hands_protocol::rpc::{CancelRequest, Fence, ResultRequest, StartRequest, StatusRequest};
 use aex_internal_contracts::SchemaVersion;
 use aex_wire::types::Timestamp;
@@ -426,9 +426,10 @@ fn answer(
                     .executor
                     .dispatch(&guest.journal, meta, request.delivery, now())
                     .map_err(|error| journal_error(&error))?;
-                if let Dispatch::Terminal(terminal) = dispatched
-                    && request.delivery != DeliveryMode::Detached
-                {
+                // Every synchronous terminal is recorded, whatever the delivery
+                // mode: a detached workspace read finishes right here, and
+                // skipping the record left it polling to its deadline.
+                if let Dispatch::Terminal(terminal) = dispatched {
                     match guest.journal.record_terminal(meta.operation, &terminal) {
                         Ok(()) | Err(JournalError::AlreadyTerminal { .. }) => {}
                         Err(error) => return Err(journal_error(&error)),
@@ -529,15 +530,9 @@ fn protocol_error(guest: &Guest, state: &Bound, verb: Verb, error: &FrameError) 
     frame_response(guest, state, verb, ResponseStatus::ProtocolError, &payload)
 }
 
-/// The guest clock.
+/// The guest clock, shared with the background reap and cancel threads.
 fn now() -> Timestamp {
-    let millis = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()
-        .and_then(|since| i64::try_from(since.as_millis()).ok())
-        .unwrap_or_default();
-    Timestamp::from_unix_millis(millis)
-        .unwrap_or_else(|_| Timestamp::from_unix_millis(0).expect("the epoch is representable"))
+    crate::host::now()
 }
 
 #[cfg(test)]
@@ -553,10 +548,12 @@ mod tests {
         encode_request,
     };
     use aex_hands_protocol::operation::{
-        GuestPath, GuestRoot, OperationBounds, OperationRequest, StopSignal,
+        DeliveryMode, GuestPath, GuestRoot, OperationBounds, OperationRequest, StopSignal,
+        TerminalState,
     };
     use aex_hands_protocol::rpc::{
-        Fence, GenerationBinding, HandsOperationId, StartRequest, StatusRequest, StatusResponse,
+        Fence, GenerationBinding, HandsOperationId, ResultRequest, ResultResponse, StartRequest,
+        StatusRequest, StatusResponse,
     };
     use aex_hands_tools::port::{Pgid, ProcError};
     use aex_wire::ids::{ContentHash, GenerationId, PrefixedId as _, Uuid7};
@@ -683,6 +680,29 @@ mod tests {
         )
     }
 
+    fn exec_start(delivery: DeliveryMode) -> StartRequest {
+        StartRequest {
+            binding: GenerationBinding {
+                schema_version: PROTOCOL_V1,
+                generation: generation(),
+                fence: Fence(1),
+            },
+            operation: operation(),
+            call_hash: aex_hands_protocol::rpc::CallHash(ContentHash::from_bytes([9; 32])),
+            request: OperationRequest::Exec {
+                argv: vec!["/bin/true".to_owned()],
+                cwd: GuestPath::parse(&GuestRoot::workspace(), "/workspace")
+                    .expect("a contained path"),
+                env: Vec::new(),
+                stdin: None,
+            },
+            bounds: bounds(),
+            deadline: aex_wire::types::Timestamp::from_unix_millis(4_102_444_800_000)
+                .expect("a bounded instant"),
+            delivery,
+        }
+    }
+
     async fn post(app: &axum::Router, path: &str, body: Vec<u8>) -> (StatusCode, Vec<u8>) {
         let response = app
             .clone()
@@ -757,26 +777,7 @@ mod tests {
         assert_eq!(ready.status(), StatusCode::OK);
 
         // start
-        let start = StartRequest {
-            binding: GenerationBinding {
-                schema_version: PROTOCOL_V1,
-                generation: generation(),
-                fence: Fence(1),
-            },
-            operation: operation(),
-            call_hash: aex_hands_protocol::rpc::CallHash(ContentHash::from_bytes([9; 32])),
-            request: OperationRequest::Exec {
-                argv: vec!["/bin/true".to_owned()],
-                cwd: GuestPath::parse(&GuestRoot::workspace(), "/workspace")
-                    .expect("a contained path"),
-                env: Vec::new(),
-                stdin: None,
-            },
-            bounds: bounds(),
-            deadline: aex_wire::types::Timestamp::from_unix_millis(4_102_444_800_000)
-                .expect("a bounded instant"),
-            delivery: aex_hands_protocol::operation::DeliveryMode::Attached,
-        };
+        let start = exec_start(DeliveryMode::Attached);
         let (status, body) = post(
             &app,
             Verb::Start.path(),
@@ -834,6 +835,114 @@ mod tests {
             matches!(answered, StatusResponse::Terminal { .. }),
             "the foreground exec ran to completion: {answered:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_detached_exec_reaps_in_the_background_and_its_result_is_pullable() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let runner = Arc::new(FakeRunner::default());
+        let app = router(guest(dir.path(), Arc::clone(&runner)));
+        let (status, _) = post(
+            &app,
+            aex_hands_agent::session::LifecycleHook::Run.path(),
+            aws_run_hook_body(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let start = exec_start(DeliveryMode::Detached);
+        let (status, body) = post(
+            &app,
+            Verb::Start.path(),
+            framed(
+                Verb::Start,
+                &serde_json::to_vec(&start).expect("it serializes"),
+                Fence(1),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let expectation = FrameExpectation {
+            generation: generation(),
+            min_fence: Fence(0),
+            schema_version: PROTOCOL_V1,
+            max_frame_bytes: 1_048_576,
+        };
+        let frame = decode_response(&body, &expectation).expect("a framed response");
+        let accepted: aex_hands_protocol::rpc::StartResponse =
+            serde_json::from_slice(frame.payload).expect("a typed start response");
+        assert!(
+            matches!(
+                accepted,
+                aex_hands_protocol::rpc::StartResponse::Accepted {
+                    existing: false,
+                    ..
+                }
+            ),
+            "{accepted:?}"
+        );
+
+        // The reap runs on a background thread; poll status until it terminalizes.
+        let query = StatusRequest {
+            binding: start.binding,
+            operation: operation(),
+        };
+        let mut terminal = None;
+        for _ in 0..500 {
+            let (status, body) = post(
+                &app,
+                Verb::Status.path(),
+                framed(
+                    Verb::Status,
+                    &serde_json::to_vec(&query).expect("it serializes"),
+                    Fence(1),
+                ),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            let frame = decode_response(&body, &expectation).expect("a framed response");
+            let answered: StatusResponse =
+                serde_json::from_slice(frame.payload).expect("a typed status");
+            if let StatusResponse::Terminal {
+                terminal: found, ..
+            } = answered
+            {
+                terminal = Some(found);
+                break;
+            }
+            tokio::time::sleep(core::time::Duration::from_millis(10)).await;
+        }
+        let terminal = terminal.expect("the background reap terminalizes the operation");
+        assert_eq!(terminal.state, TerminalState::Succeeded);
+        assert_eq!(terminal.body_len, b"hello from the guest".len() as u64);
+
+        // The terminal body is pullable through the result verb.
+        let pull = ResultRequest {
+            binding: start.binding,
+            operation: operation(),
+            from_offset: 0,
+            max_bytes: 1_048_576,
+        };
+        let (status, body) = post(
+            &app,
+            Verb::Result.path(),
+            framed(
+                Verb::Result,
+                &serde_json::to_vec(&pull).expect("it serializes"),
+                Fence(1),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let frame = decode_response(&body, &expectation).expect("a framed response");
+        let answered: ResultResponse =
+            serde_json::from_slice(frame.payload).expect("a typed result");
+        let ResultResponse::Terminal { chunk, .. } = answered else {
+            panic!("a terminal operation pulls: {answered:?}");
+        };
+        let chunk = chunk.expect("the body exists");
+        assert_eq!(chunk.bytes, b"hello from the guest");
+        assert!(chunk.last);
     }
 
     #[tokio::test]

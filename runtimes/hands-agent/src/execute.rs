@@ -25,7 +25,7 @@ use aex_hands_tools::port::{EntryKind, FsError, GuestFs as _, Pgid};
 use aex_wire::ids::ContentHash;
 use aex_wire::types::Timestamp;
 
-use crate::host::{HostFs, OutputSink, Runner};
+use crate::host::{HostFs, OutputSink, Reap, Runner};
 
 /// How deep a recursive listing descends.
 pub const LIST_DEPTH: u32 = 2;
@@ -54,15 +54,18 @@ pub enum Dispatch {
 }
 
 /// Appends captured bytes to one operation's journal, within its bounds.
-struct JournalSink<'a> {
-    journal: &'a Journal,
+///
+/// Owns a journal clone rather than borrowing one, because a detached
+/// operation's sink outlives the request that started it.
+struct JournalSink {
+    journal: Journal,
     operation: HandsOperationId,
     capture: Capture,
     truncated: bool,
     produced: u64,
 }
 
-impl OutputSink for JournalSink<'_> {
+impl OutputSink for JournalSink {
     fn append(&mut self, bytes: &[u8]) -> Result<(), String> {
         self.produced = self.produced.saturating_add(bytes.len() as u64);
         let outcome = self.capture.write(OutputStream::Stdout, bytes);
@@ -259,19 +262,35 @@ impl Executor {
                     start_time: started.start_time,
                 };
                 journal.record_process(meta.operation, record)?;
-                if delivery == DeliveryMode::Detached {
-                    return Ok(Dispatch::Started { record });
-                }
                 let mut sink = JournalSink {
-                    journal,
+                    journal: journal.clone(),
                     operation: meta.operation,
                     capture: Capture::new(&meta.bounds, delivery == DeliveryMode::Attached),
                     truncated: false,
                     produced: 0,
                 };
+                if delivery == DeliveryMode::Detached {
+                    if let Err(reason) = spawn_detached_reap(meta.clone(), started.reap, sink) {
+                        // The reap thread could not start, so nothing would ever
+                        // drain or terminalize the operation. Failing the start
+                        // is the honest answer; the group was signalled nothing
+                        // and the customer can retry.
+                        return Ok(Dispatch::Terminal(Box::new(failed(
+                            meta,
+                            now,
+                            "guest_exhausted",
+                            &format!("the guest cannot supervise the process group: {reason}"),
+                        ))));
+                    }
+                    return Ok(Dispatch::Started { record });
+                }
                 let exit = (started.reap)(&mut sink);
                 Ok(Dispatch::Terminal(Box::new(Self::terminal(
-                    journal, meta, now, exit, &sink,
+                    journal,
+                    meta,
+                    now,
+                    exit,
+                    sink.truncated,
                 )?)))
             }
             _ => unreachable!("dispatch routes only Exec here"),
@@ -524,7 +543,7 @@ impl Executor {
         text: &str,
     ) -> Result<Dispatch, aex_hands_agent::journal::JournalError> {
         let mut sink = JournalSink {
-            journal,
+            journal: journal.clone(),
             operation: meta.operation,
             capture: Capture::new(&meta.bounds, false),
             truncated: false,
@@ -537,7 +556,11 @@ impl Executor {
             Ok(OperationExit::NonZero { code: 1 })
         };
         Ok(Dispatch::Terminal(Box::new(Self::terminal(
-            journal, meta, now, exit, &sink,
+            journal,
+            meta,
+            now,
+            exit,
+            sink.truncated,
         )?)))
     }
 
@@ -550,7 +573,7 @@ impl Executor {
         meta: &OperationMeta,
         now: Timestamp,
         exit: Result<OperationExit, aex_hands_tools::port::ProcError>,
-        sink: &JournalSink<'_>,
+        truncated: bool,
     ) -> Result<TerminalMetadata, aex_hands_agent::journal::JournalError> {
         let retained = journal.read_output(meta.operation, 0, u64::MAX)?;
         let digest = if retained.is_empty() {
@@ -586,10 +609,51 @@ impl Executor {
             ended_at: now,
             body_len: retained.len() as u64,
             digest,
-            truncated: sink.truncated,
+            truncated,
             failure,
         })
     }
+}
+
+/// Hands a detached operation's reap to a dedicated thread.
+///
+/// The reap owns the child and both pipe read ends. Dropping it — which is what
+/// the retired code did — closed the pipes, killed the child on its next write
+/// (`SIGPIPE`), never collected the exit, and left a zombie under PID 1 with no
+/// terminal ever recorded. The thread drains output into the journal as it
+/// arrives, collects the exit, and writes the one terminal record.
+///
+/// A plain OS thread rather than a runtime task: the reap blocks on pipe reads
+/// and `wait`, and the guest's two-worker runtime must stay free to answer
+/// status polls while a background job runs.
+fn spawn_detached_reap(
+    meta: OperationMeta,
+    reap: Reap,
+    mut sink: JournalSink,
+) -> std::io::Result<()> {
+    std::thread::Builder::new()
+        .name(format!("reap-{}", meta.operation.0))
+        .spawn(move || {
+            let exit = reap(&mut sink);
+            let journal = sink.journal.clone();
+            let recorded =
+                Executor::terminal(&journal, &meta, crate::host::now(), exit, sink.truncated)
+                    .and_then(|terminal| journal.record_terminal(meta.operation, &terminal));
+            match recorded {
+                // A cancel driver may have terminalized first; its record stands.
+                Ok(()) | Err(aex_hands_agent::journal::JournalError::AlreadyTerminal { .. }) => {}
+                Err(error) => {
+                    // There is no caller left to answer. The operation stays
+                    // non-terminal and Brain's deadline reports it; inventing a
+                    // terminal the journal refused would be worse.
+                    eprintln!(
+                        "hands-agent: operation {} reaped but not terminalized: {error}",
+                        meta.operation.0
+                    );
+                }
+            }
+        })
+        .map(|_| ())
 }
 
 /// The stable failure code an edit failure is reported as.
