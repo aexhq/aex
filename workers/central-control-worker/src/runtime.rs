@@ -13,8 +13,9 @@ use aex_control_domain::{
 };
 use aex_identity_app::ports::Clock;
 use aex_session_dynamodb::projection_write::{
-    PlacementWrite, ProfileWrite, ProjectionWriter, RevocationWrite,
+    KeyAuthorizationWrite, PlacementWrite, ProfileWrite, ProjectionWriter,
 };
+use aex_session_dynamodb::wire_pending::KeyAuthorizationState;
 use aex_wire::ids::{ApiKeyId, OrganizationId, PrefixedId as _, Uuid7, WorkspaceId};
 use aex_wire::types::{Region, Timestamp};
 use async_trait::async_trait;
@@ -264,7 +265,14 @@ impl Worker {
             Topic::WorkspaceDeleteRequested => self.delete(message).await,
             Topic::AccountStateChanged => self.account_changed(message).await,
             Topic::InvitationEmailRequested => self.invitation(message).await,
-            Topic::AuthorizationEpochChanged => self.revocation(message).await,
+            Topic::ApiKeyCreated => {
+                self.key_authorization(message, KeyAuthorizationState::Active)
+                    .await
+            }
+            Topic::AuthorizationEpochChanged => {
+                self.key_authorization(message, KeyAuthorizationState::Revoked)
+                    .await
+            }
             Topic::AuthorizationSigningKeyPublished => self.signing(message).await,
         }
     }
@@ -403,18 +411,32 @@ impl Worker {
             .await
     }
 
-    async fn revocation(&self, message: &OutboxMessage) -> Result<(), String> {
-        let payload: RevocationPayload = serde_json::from_value(message.payload.clone())
-            .map_err(|_| "invalid_revocation_payload".to_owned())?;
+    /// Projects a key's authorization row, on creation and again on revocation.
+    ///
+    /// Both events carry the whole row rather than a delta, because the two are
+    /// dispatched independently and a delta would need the region to already
+    /// hold the half it is being told to amend.
+    async fn key_authorization(
+        &self,
+        message: &OutboxMessage,
+        state: KeyAuthorizationState,
+    ) -> Result<(), String> {
+        let payload: KeyAuthorizationPayload = serde_json::from_value(message.payload.clone())
+            .map_err(|_| "invalid_key_authorization_payload".to_owned())?;
         let writer = self
             .projections
             .get(&payload.region)
             .ok_or_else(|| "regional_projection_not_configured".to_owned())?;
         writer
-            .put_revocation(&RevocationWrite {
+            .put_key_authorization(&KeyAuthorizationWrite {
                 api_key: api_key(payload.api_key_id)?,
-                revoked_at: timestamp(payload.revoked_at)?,
-                epoch: payload.epoch,
+                workspace: workspace(payload.workspace_id)?,
+                organization: organization(payload.organization_id)?,
+                region: payload.region,
+                state,
+                key_epoch: payload.epoch,
+                projection_sequence: sequence(message.created_at),
+                updated_at: timestamp(payload.changed_at)?,
             })
             .await
     }
@@ -618,14 +640,12 @@ struct InvitationPayload {
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct RevocationPayload {
+struct KeyAuthorizationPayload {
     api_key_id: Uuid,
-    #[allow(dead_code)]
     workspace_id: Uuid,
-    #[allow(dead_code)]
     organization_id: Uuid,
     region: Region,
-    revoked_at: OffsetDateTime,
+    changed_at: OffsetDateTime,
     epoch: u64,
 }
 

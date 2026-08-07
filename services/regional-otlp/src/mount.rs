@@ -25,7 +25,6 @@ use axum::routing::{MethodFilter, on};
 use crate::admission::{OtlpRequest, OtlpService, SESSION_HEADER};
 use aex_internal_contracts::assertion::AssertionAudience;
 use aex_regional_http::authz::{LambdaAssertionSource, RegionalProjection};
-use aex_regional_http::capacity::CapacityProjection;
 use aex_regional_http::edge::{RegionalEdge, SystemClock};
 use aex_regional_http::mount::{AdmissionRequest, EdgeAdmission as _};
 
@@ -49,7 +48,6 @@ pub const AUDIENCE: AssertionAudience = AssertionAudience::RegionalOtlp;
 pub type Edge = RegionalEdge<
     LambdaAssertionSource,
     RegionalProjection<aex_session_dynamodb::projection::ProjectionReader>,
-    CapacityProjection<aex_session_dynamodb::projection::ProjectionReader>,
     SystemClock,
 >;
 

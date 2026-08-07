@@ -12,7 +12,11 @@
 //!   while a bounded cap produced 86.5 ms victim p95 and finished the mixed batch 43 %
 //!   sooner;
 //! - above the safety cap, shed with a typed reason.
+//!
+//! Bands bound the bytes this process *promised*. Measured memory pressure is the second gate
+//! over the bytes it did not — see [`crate::pressure`] — and it acts on receipt only.
 
+use crate::pressure::PressureGate;
 use aex_brain_application::kernel::{DrainGate, PermitKind, PermitSet, PermitSetFull, Reservation};
 use std::sync::Arc;
 
@@ -72,13 +76,26 @@ pub struct AdmissionBounds {
 }
 
 impl Default for AdmissionBounds {
-    /// The launch bands. Slice 11's load gates are the sizing authority; these are the
-    /// starting point those gates confirm or replace.
+    /// The approved first-alpha bands: 16 active activations per task.
+    ///
+    /// The task envelope proves 48 simultaneous worst-case restores and the accepted launch
+    /// profile deliberately does not use them. Sixteen is a decision to observe before raising
+    /// concurrency, not a capacity finding, and the load evidence is what raises it. Production
+    /// runs two tasks, so 32 activations are active across the placement before either task
+    /// queues — a different number from this task's own 32 safety cap, which is the point above
+    /// which one task sheds.
+    ///
+    /// Production derives its bands from `AEX_MAX_ACTIVE_ACTIVATIONS` rather than from here;
+    /// this is the same profile, held where a test can pin it. The deployed value is not a
+    /// root's free choice either: `infra/modules/ecs-service` requires exactly this number
+    /// on a `brain-mux` task definition in both planes, and
+    /// `scripts/validate/brain-mux-launch-profile.test.ts` holds that pin and this target to
+    /// each other so the declared profile and the deployed one cannot drift apart silently.
     fn default() -> Self {
         Self {
-            target: 48,
-            safety_cap: 96,
-            offered_ceiling: 240,
+            target: 16,
+            safety_cap: 32,
+            offered_ceiling: 80,
         }
     }
 }
@@ -165,12 +182,17 @@ pub struct Admission {
     permits: Arc<PermitSet>,
     drain: Arc<DrainGate>,
     resources: ActivationResources,
+    pressure: Arc<PressureGate>,
 }
 
 impl Admission {
-    /// Builds a controller over `permits`.
+    /// Builds a controller over `permits`, minting the pressure gate it consults.
+    ///
+    /// The gate is minted here rather than injected so that no admission controller can exist
+    /// without one. The sampler and the health responder take it from
+    /// [`Admission::pressure`]; a second gate would be a second answer to the same question.
     #[must_use]
-    pub const fn new(
+    pub fn new(
         bounds: AdmissionBounds,
         permits: Arc<PermitSet>,
         drain: Arc<DrainGate>,
@@ -181,6 +203,7 @@ impl Admission {
             permits,
             drain,
             resources,
+            pressure: Arc::new(PressureGate::new()),
         }
     }
 
@@ -188,6 +211,12 @@ impl Admission {
     #[must_use]
     pub const fn bounds(&self) -> AdmissionBounds {
         self.bounds
+    }
+
+    /// The measured-memory-pressure gate this controller consults.
+    #[must_use]
+    pub fn pressure(&self) -> &Arc<PressureGate> {
+        &self.pressure
     }
 
     /// The exact resources every admitted activation holds.
@@ -207,9 +236,17 @@ impl Admission {
     /// Above the target it stops: the local queue still drains, but a task that keeps
     /// receiving while it cannot start anything simply hides work in its own memory where
     /// no other task can take it.
+    ///
+    /// Measured memory pressure stops it for the same reason and with the same effect: the
+    /// durable wake stays on the queue, visible to the other task in the placement, and
+    /// nothing already delivered is abandoned. Pressure deliberately gates *receipt* only. A
+    /// delivery this task has already taken is invisible to every other task until its
+    /// visibility timeout expires, so refusing to admit one would hide work rather than shed
+    /// it — which is the failure the whole module is written to avoid.
     #[must_use]
     pub fn should_receive(&self) -> bool {
         !self.drain.is_draining()
+            && !self.pressure.stops_receiving()
             && self.active() < self.bounds.target
             && self.permits.can_acquire_many(&self.resources.requests())
     }
@@ -263,9 +300,19 @@ const fn shed(full: &PermitSetFull) -> TypedOverload {
 #[cfg(test)]
 mod tests {
     use super::{ActivationResources, Admission, AdmissionBounds, AdmissionOutcome, TypedOverload};
+    use crate::pressure::{MemoryReading, MemorySource, PressureState};
     use aex_brain_application::kernel::{DrainGate, PermitKind, PermitSet};
     use std::collections::BTreeMap;
     use std::sync::Arc;
+
+    /// A reading of exactly `percent` of a declared limit.
+    fn measured_at(percent: u32) -> MemoryReading {
+        MemoryReading::Measured {
+            source: MemorySource::CgroupV2,
+            current_bytes: u64::from(percent),
+            limit_bytes: 100,
+        }
+    }
 
     fn resources(context_bytes: u64) -> ActivationResources {
         ActivationResources {
@@ -301,12 +348,14 @@ mod tests {
         }
     }
 
+    /// The approved first-alpha profile: 16 active per task, and the derived bands the
+    /// composition root computes from it.
     #[test]
-    fn the_launch_bands_are_the_measured_ones() {
+    fn the_launch_bands_are_the_approved_alpha_profile() {
         let default = AdmissionBounds::default();
-        assert_eq!(default.target, 48);
-        assert_eq!(default.safety_cap, 96);
-        assert_eq!(default.offered_ceiling, 240);
+        assert_eq!(default.target, 16);
+        assert_eq!(default.safety_cap, 32);
+        assert_eq!(default.offered_ceiling, 80);
         assert!(default.validate().is_ok());
     }
 
@@ -513,6 +562,106 @@ mod tests {
             admission.admit(),
             AdmissionOutcome::Shed(TypedOverload::Draining)
         ));
+    }
+
+    /// The 80 % watermark stops receipt and nothing else. The task keeps its permits, keeps
+    /// starting the deliveries it already holds, and is not draining: a wake left on the queue
+    /// is visible to the other task in the placement, while an activation killed here would
+    /// leave an effect nobody can settle.
+    #[test]
+    fn measured_pressure_stops_receipt_and_leaves_admitted_work_running() {
+        let admission = admission(8, 0, bounds());
+        let AdmissionOutcome::Admitted(held) = admission.admit() else {
+            panic!("nothing is under pressure yet");
+        };
+        assert!(admission.should_receive());
+
+        let _ = admission
+            .pressure()
+            .observe(measured_at(PressureState::AdmissionStop.entry_percent()));
+        assert!(
+            !admission.should_receive(),
+            "receipt stops at the admission watermark"
+        );
+        assert_eq!(
+            admission.active(),
+            1,
+            "an admitted activation keeps its permits under pressure"
+        );
+        assert!(
+            matches!(admission.admit(), AdmissionOutcome::Admitted(_)),
+            "a delivery already taken is still started"
+        );
+        drop(held);
+    }
+
+    /// Critical pressure is reported and acted on exactly like the stop below it. It never
+    /// terminates the process and never abandons an activation: a Brain task at 90 % is
+    /// usually a task holding a provider call it cannot prove was not sent.
+    #[test]
+    fn critical_pressure_stops_receipt_without_abandoning_anything() {
+        let admission = admission(8, 0, bounds());
+        let AdmissionOutcome::Admitted(held) = admission.admit() else {
+            panic!("nothing is under pressure yet");
+        };
+
+        let _ = admission
+            .pressure()
+            .observe(measured_at(PressureState::Critical.entry_percent()));
+        assert_eq!(admission.pressure().state(), PressureState::Critical);
+        assert!(!admission.should_receive());
+        assert_eq!(admission.active(), 1);
+        assert!(
+            !admission.drain.is_draining(),
+            "pressure never starts a drain of its own"
+        );
+        drop(held);
+        assert_eq!(admission.active(), 0, "the activation released normally");
+    }
+
+    /// Recovery below the lower threshold puts the task back in service. The hysteresis band
+    /// is what stops one completing activation reopening receipt into the same pressure.
+    #[test]
+    fn receipt_resumes_only_once_the_measurement_is_below_the_recovery_threshold() {
+        let admission = admission(8, 0, bounds());
+        let _ = admission
+            .pressure()
+            .observe(measured_at(PressureState::AdmissionStop.entry_percent()));
+        assert!(!admission.should_receive());
+
+        let _ = admission
+            .pressure()
+            .observe(measured_at(PressureState::AdmissionStop.recovery_percent()));
+        assert!(
+            !admission.should_receive(),
+            "at the recovery threshold is not below it"
+        );
+
+        let _ = admission.pressure().observe(measured_at(
+            PressureState::AdmissionStop.recovery_percent() - 1,
+        ));
+        assert!(admission.should_receive());
+    }
+
+    /// A host that declares no memory limit — every development machine, and any deployment
+    /// whose cgroup files move — leaves the conservative activation cap as the only bound, and
+    /// that cap still admits exactly the approved 16 before it stops receiving.
+    #[test]
+    fn a_task_that_cannot_measure_memory_still_admits_no_more_than_the_approved_target() {
+        let bounds = AdmissionBounds::default();
+        let admission = admission(u64::from(bounds.safety_cap), 0, bounds);
+        let _ = admission.pressure().observe(MemoryReading::Unreadable);
+        assert_eq!(admission.pressure().state(), PressureState::Normal);
+
+        let mut held = Vec::new();
+        while admission.should_receive() {
+            let AdmissionOutcome::Admitted(permits) = admission.admit() else {
+                panic!("under the target");
+            };
+            held.push(permits);
+        }
+        assert_eq!(held.len(), 16);
+        assert_eq!(admission.active(), bounds.target);
     }
 
     /// The offered ceiling is survived without loss: every offer ends admitted, deferred or

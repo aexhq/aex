@@ -27,6 +27,7 @@ use aex_observation_domain::limits;
 use aex_observation_domain::signal::{Signal, SignalSet};
 use aex_observation_store_aws::expressions::{ExpressionBuilder, Index, PK, SK};
 use aex_observation_store_aws::gap::{append_action, decode as decode_gap};
+use aex_observation_store_aws::gap_hint::hint_update_action;
 use aex_observation_store_aws::spool::{GateEvidence, GateState, Pending, SpoolChunk, evaluate};
 use aex_wire::ids::{PrefixedId, TelemetryGapId, WorkspaceId};
 use aex_wire::models::TelemetryGapReason;
@@ -717,12 +718,32 @@ impl DutyEngine {
             .set_expression_attribute_values(Some(builder.values()))
             .build()
             .map_err(|error| DutyError::provider("TransactWriteItems", error))?;
-        let mut actions = Vec::with_capacity(gaps.len() + 1);
+        let mut actions = Vec::with_capacity(gaps.len() + 2);
         for gap in gaps {
             actions.push(
                 append_action(&self.settings.table, gap).map_err(|error| {
                     DutyError::unresolved(self.settings.duty, error.to_string())
                 })?,
+            );
+        }
+        // The gap-change hint rides the same transaction that makes the gaps
+        // durable, so a reader is told to look exactly when there is something
+        // to find. One action per distinct workspace, because a transaction may
+        // not act twice on one item — in practice a control item names one
+        // workspace, so this is one action.
+        for workspace in gaps
+            .iter()
+            .map(|gap| gap.workspace)
+            .collect::<BTreeSet<_>>()
+        {
+            let appended = gaps.iter().filter(|gap| gap.workspace == workspace).count();
+            actions.push(
+                hint_update_action(
+                    &self.settings.table,
+                    workspace,
+                    u64::try_from(appended).unwrap_or(u64::MAX),
+                )
+                .map_err(|error| DutyError::unresolved(self.settings.duty, error.to_string()))?,
             );
         }
         actions.push(TransactWriteItem::builder().update(source).build());

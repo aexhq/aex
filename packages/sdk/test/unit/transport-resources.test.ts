@@ -7,7 +7,7 @@ import {
   type WireResponse,
 } from "../../src/index.js";
 
-const KEY = `aex_wk_euw1_0100000000e008000000000000_${"A".repeat(42)}A`;
+const KEY = `aex_wk_euw1_0100000000e008000000000001_0100000000e008000000000000_${"A".repeat(42)}A`;
 
 class ScriptedTransport implements AexTransport {
   readonly requests: WireRequest[] = [];

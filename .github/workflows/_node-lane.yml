@@ -25,14 +25,6 @@ on:
         description: affected | full | shadow
         type: string
         required: true
-      release_tool_sha256:
-        description: SHA-256 of the run's prepared aex-release-tool.
-        type: string
-        required: true
-      workspace_check_sha256:
-        description: SHA-256 of the run's prepared aex-workspace-check.
-        type: string
-        required: true
 
 permissions:
   contents: read
@@ -102,33 +94,16 @@ jobs:
         with:
           bun-version: "1.3.14"
 
-      # No Rust toolchain: this job only ever runs `evidence *`, which reads
-      # and writes files and never shells out to cargo.
-      - name: Download the prepared workspace tools
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
         with:
-          name: workspace-tools-${{ github.run_id }}
-          path: ${{ runner.temp }}/aex-tools
+          toolchain: "1.97.1"
 
-      # The digests arrive through the job-output channel, not inside the
-      # artifact, so an artifact that lies about itself cannot self-certify.
-      - name: Use the prepared workspace tools
-        env:
-          RELEASE_TOOL_SHA256: ${{ inputs.release_tool_sha256 }}
-          WORKSPACE_CHECK_SHA256: ${{ inputs.workspace_check_sha256 }}
-        run: |
-          set -euo pipefail
-          cd "$RUNNER_TEMP/aex-tools"
-          [[ "$RELEASE_TOOL_SHA256" =~ ^[0-9a-f]{64}$ ]]
-          [[ "$WORKSPACE_CHECK_SHA256" =~ ^[0-9a-f]{64}$ ]]
-          printf '%s  %s\n' "$RELEASE_TOOL_SHA256" aex-release-tool > expected.sha256
-          printf '%s  %s\n' "$WORKSPACE_CHECK_SHA256" aex-workspace-check >> expected.sha256
-          sha256sum --check --strict expected.sha256
-          [[ "$(find . -maxdepth 1 -type f ! -name expected.sha256 | wc -l)" -eq 2 ]]
-          chmod 0755 aex-release-tool aex-workspace-check
-          ./aex-release-tool --version | grep -Eq '^aex-release-tool [0-9]+\.[0-9]+\.[0-9]+'
-          ./aex-workspace-check --version | grep -Eq '^aex-workspace-check [0-9]+\.[0-9]+\.[0-9]+'
-          echo "$RUNNER_TEMP/aex-tools" >> "$GITHUB_PATH"
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@bc2d2e71bd35c5549942babaa51a89c586b981d1  # v2.8.1
+        with:
+          save-if: false
+          shared-key: ${{ inputs.lane }}-node-evidence
 
       - name: Install
         run: bun install --frozen-lockfile
@@ -266,15 +241,15 @@ jobs:
               startedAt: $startedAt,
               completedAt: $completedAt
             }' > "$RECEIPT_DIR/context.json"
-          aex-release-tool evidence new \
+          cargo run --locked --release -p aex-release-tool -- evidence new \
             --context "$RECEIPT_DIR/context.json" \
             --junit "$RECEIPT_DIR/junit.xml" \
             --out "$RECEIPT_DIR/receipt.json"
-          aex-release-tool evidence attach \
+          cargo run --locked --release -p aex-release-tool -- evidence attach \
             --receipt "$RECEIPT_DIR/receipt.json" --kind junit \
             --file "$RECEIPT_DIR/junit.xml" \
             --uri "artifact://junit-${RECEIPT_LANE}-node-${PARTITION_INDEX}/junit.xml"
-          aex-release-tool evidence attach \
+          cargo run --locked --release -p aex-release-tool -- evidence attach \
             --receipt "$RECEIPT_DIR/receipt.json" --kind junit \
             --file "$RECEIPT_DIR/declared-junit.xml" \
             --uri "artifact://junit-${RECEIPT_LANE}-node-${PARTITION_INDEX}/declared-junit.xml"
@@ -298,7 +273,7 @@ jobs:
             .inventory.retried == 0 and
             .inventory.flaky == 0
           ' "$RECEIPT_DIR/receipt.json" >/dev/null
-          aex-release-tool evidence verify \
+          cargo run --locked --release -p aex-release-tool -- evidence verify \
             --receipt "$RECEIPT_DIR/receipt.json"
 
       - name: Build and verify semantic and lint receipts
@@ -319,15 +294,15 @@ jobs:
             '.receiptId=$receiptId | .class="lint" | .layer="unit" |
              .concerns=[] | .declared=1 | .startedAt=$startedAt | .completedAt=$completedAt' \
             "$RECEIPT_DIR/context.json" > "$RECEIPT_DIR/lint-context.json"
-          aex-release-tool evidence new-check \
+          cargo run --locked --release -p aex-release-tool -- evidence new-check \
             --context "$RECEIPT_DIR/lint-context.json" \
             --report "$RECEIPT_DIR/lint-report.json" \
             --out "$RECEIPT_DIR/receipt-lint.json"
-          aex-release-tool evidence attach \
+          cargo run --locked --release -p aex-release-tool -- evidence attach \
             --receipt "$RECEIPT_DIR/receipt-lint.json" --kind log \
             --file "$RECEIPT_DIR/typecheck.log" \
             --uri "artifact://lint-${RECEIPT_LANE}-node-${{ matrix.partition }}/typecheck.log"
-          aex-release-tool evidence verify \
+          cargo run --locked --release -p aex-release-tool -- evidence verify \
             --receipt "$RECEIPT_DIR/receipt-lint.json"
 
           mapfile -t producers < <(
@@ -351,13 +326,13 @@ jobs:
                .selection.filterset=$filterset | .selection.partition=null |
                .completedAt=$completedAt' \
               "$RECEIPT_DIR/context.json" > "$RECEIPT_DIR/context-semantic-$unit-$class.json"
-            aex-release-tool evidence new \
+            cargo run --locked --release -p aex-release-tool -- evidence new \
               --context "$RECEIPT_DIR/context-semantic-$unit-$class.json" \
               --junit "$RECEIPT_DIR/junit.xml" --out "$output"
-            aex-release-tool evidence attach \
+            cargo run --locked --release -p aex-release-tool -- evidence attach \
               --receipt "$output" --kind junit --file "$RECEIPT_DIR/junit.xml" \
               --uri "artifact://junit-${RECEIPT_LANE}-node-${class}/junit.xml"
-            aex-release-tool evidence verify \
+            cargo run --locked --release -p aex-release-tool -- evidence verify \
               --receipt "$output"
           done
 

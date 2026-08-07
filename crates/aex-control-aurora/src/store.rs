@@ -1517,6 +1517,13 @@ impl ControlStore for AuroraControlStore {
             Self::insert_idempotency(&mut transaction, &command.idempotency, command.now)
         );
         tx_try!(transaction, Self::insert_api_key(&mut transaction, command));
+        // Atomic with the key row: the announcement a region needs before it can
+        // admit anything is committed by the same transaction that created the
+        // thing being announced.
+        tx_try!(
+            transaction,
+            Self::insert_outbox(&mut transaction, &command.outbox)
+        );
         tx_try!(
             transaction,
             Self::insert_audit(&mut transaction, &command.audit)
