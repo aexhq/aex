@@ -32,10 +32,93 @@ fn an_absent_exporter_is_a_no_op() {
     );
     assert_eq!(handle.exported(), 0);
     assert_eq!(handle.dropped(), 1_000);
+    assert_eq!(handle.accepted(), 0, "nothing is accepted into the queue");
     assert_eq!(
         handle.flush(Duration::from_secs(1)),
         FlushOutcome::NoExporter
     );
+    assert_eq!(handle.stats().emitted(), 1_000);
+}
+
+#[test]
+fn a_snapshot_reports_the_queue_and_every_counter() {
+    let exporter = Arc::new(InMemoryExporter::new());
+    let handle = Handle::install(
+        &Settings::lambda().with_queue_capacity(2),
+        Some(exporter.clone()),
+    );
+    for _ in 0..5 {
+        handle.emit(
+            Record::event(EVENT_AEX_PROCESS_STARTED)
+                .with(AEX_PLANE, "dev")
+                .with(AEX_CUSTOMER_EMAIL, "someone@example.test"),
+        );
+    }
+    let queued = handle.stats();
+    assert_eq!(queued.pending, 2);
+    assert_eq!(queued.queue_capacity, 2);
+    assert_eq!(queued.accepted, 2);
+    assert_eq!(queued.dropped, 3);
+    assert_eq!(queued.emitted(), 5);
+    assert_eq!(queued.exported, 0);
+    assert_eq!(queued.redacted_attributes, 5);
+    assert_eq!(queued.flush_deadline_exceeded, 0);
+
+    assert_eq!(
+        handle.flush(Duration::ZERO),
+        FlushOutcome::DeadlineExceeded { pending: 2 }
+    );
+    let stalled = handle.stats();
+    assert_eq!(stalled.flush_deadline_exceeded, 1);
+
+    assert_eq!(
+        handle.flush(Duration::from_secs(5)),
+        FlushOutcome::Drained { exported: 2 }
+    );
+    let drained = handle.stats();
+    assert_eq!(drained.pending, 0);
+    assert_eq!(drained.exported, 2);
+}
+
+#[test]
+fn every_counter_is_monotonic_across_snapshots() {
+    let exporter = Arc::new(InMemoryExporter::new());
+    let handle = Handle::install(
+        &Settings::lambda().with_queue_capacity(4).with_batch_size(2),
+        Some(exporter.clone()),
+    );
+    let mut previous = handle.stats();
+    for round in 0..50 {
+        for _ in 0..3 {
+            handle.emit(
+                Record::event(EVENT_AEX_PROCESS_STARTED)
+                    .with(AEX_PLANE, "dev")
+                    .with(AEX_SESSION_ID, "018f6a0e-0000-7000-8000-000000000000"),
+            );
+        }
+        let deadline = if round % 2 == 0 {
+            Duration::ZERO
+        } else {
+            Duration::from_secs(5)
+        };
+        let _ = handle.flush(deadline);
+        let current = handle.stats();
+        assert!(current.accepted >= previous.accepted, "round {round}");
+        assert!(current.exported >= previous.exported, "round {round}");
+        assert!(current.dropped >= previous.dropped, "round {round}");
+        assert!(
+            current.redacted_attributes >= previous.redacted_attributes,
+            "round {round}"
+        );
+        assert!(
+            current.flush_deadline_exceeded >= previous.flush_deadline_exceeded,
+            "round {round}"
+        );
+        assert_eq!(current.queue_capacity, 4);
+        previous = current;
+    }
+    assert!(previous.exported > 0, "the loop exported something");
+    assert!(previous.dropped > 0, "the loop dropped something");
 }
 
 #[test]

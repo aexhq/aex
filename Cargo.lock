@@ -636,6 +636,7 @@ version = "0.1.0"
 dependencies = [
  "aex-load-harness",
  "aex-test-harness",
+ "reqwest",
  "tokio",
 ]
 
@@ -988,6 +989,7 @@ version = "0.1.0"
 dependencies = [
  "aex-telemetry-schema",
  "parking_lot",
+ "serde_json",
  "thiserror",
  "tracing",
 ]
@@ -6528,6 +6530,7 @@ dependencies = [
  "aws-sdk-ssm",
  "axum",
  "base64 0.23.0",
+ "futures",
  "http 1.5.0",
  "lambda_http",
  "serde",

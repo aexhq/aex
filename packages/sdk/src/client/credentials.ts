@@ -2,7 +2,12 @@ import { AexConfigError } from "../transport/errors.js";
 
 const BODY = "([0-9a-hjkmnp-tv-z]{26})";
 const SECRET = "([A-Za-z0-9_-]{42}[AEIMQUYcgkosw048])";
-const WORKSPACE_KEY = new RegExp(`^aex_wk_(use1|use2|usw2|apne1|euw1)_${BODY}_${SECRET}$`);
+// `aex_wk_<region>_<workspace>_<key>_<secret>`: a workspace key names both the
+// region that serves it and the workspace it authorizes, so a regional endpoint
+// can address every row it must read without a central round trip first.
+const WORKSPACE_KEY = new RegExp(
+  `^aex_wk_(use1|use2|usw2|apne1|euw1)_${BODY}_${BODY}_${SECRET}$`,
+);
 const ACCOUNT_TOKEN = new RegExp(`^aex_at_${BODY}_${SECRET}$`);
 const CROCKFORD = "0123456789abcdefghjkmnpqrstvwxyz";
 
@@ -38,22 +43,31 @@ abstract class Credential {
 
 export class WorkspaceApiKey extends Credential {
   readonly #region: RegionCode;
+  readonly #workspaceId: string;
 
-  private constructor(value: string, region: RegionCode) {
+  private constructor(value: string, region: RegionCode, workspaceId: string) {
     super(value);
     this.#region = region;
+    this.#workspaceId = workspaceId;
   }
 
   static parse(value: string): WorkspaceApiKey {
     const match = WORKSPACE_KEY.exec(value);
-    if (!match || !isUuid7Body(match[2] ?? "")) {
-      throw new AexConfigError("invalid credential: expected an aex_wk_ workspace key with UUIDv7 id");
+    if (!match || !isUuid7Body(match[2] ?? "") || !isUuid7Body(match[3] ?? "")) {
+      throw new AexConfigError(
+        "invalid credential: expected an aex_wk_ workspace key with UUIDv7 workspace and key ids",
+      );
     }
-    return new WorkspaceApiKey(value, match[1] as RegionCode);
+    return new WorkspaceApiKey(value, match[1] as RegionCode, `wsp_${match[2]}`);
   }
 
   regionCode(): RegionCode {
     return this.#region;
+  }
+
+  /** The workspace the key authorizes, as the public prefixed identifier. */
+  workspaceId(): string {
+    return this.#workspaceId;
   }
 
   regionalBaseUrl(): string {

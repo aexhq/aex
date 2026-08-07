@@ -12,9 +12,26 @@ use sha2::Digest as _;
 use time::OffsetDateTime;
 
 use crate::{
-    BookVerifier, PlaneBilling, RateContext, RatingError, SegmentKey, accumulate, allocate_segment,
-    rate_quantity as try_rate_quantity, settle_segment,
+    BookVerifier, PlaneBilling, RateContext, RatingError, RoundingRule, SegmentKey, accumulate,
+    allocate_segment, rate_quantity as try_rate_quantity, settle_segment,
 };
+
+/// The committed public pricing-context seed.
+///
+/// `finance.pricing_context` has no `INSERT` in `grants.toml`, so this migration
+/// is the table's only writer and the rate book it carries is the only one this
+/// repository publishes. Reading it here rather than restating it keeps the
+/// artifact the database stores and the artifact this loader admits the same
+/// bytes.
+const PRICING_CONTEXT_SEED: &str =
+    include_str!("../../../migrations/central/20260801000900_baseline_seed_pricing_context.sql");
+
+/// The version the seed installs, which every producer and `finance-api`'s
+/// `AEX_FINANCE_API_DEFAULT_PRICING_VERSION` already name.
+const SEEDED_VERSION: &str = "synthetic-zero-v1";
+
+/// The seed's declared non-signature.
+const SEEDED_SIGNATURE: &str = "unsigned:synthetic-zero-v1";
 
 struct Verifier {
     valid: bool,
@@ -37,7 +54,7 @@ fn exact_quanta_match_the_four_published_meters() {
     let expected = [
         (Meter::ComputeMillicpuMs, (1, 14_400)),
         (Meter::MemoryByteMs, (1, 128_849_018_880_i64)),
-        (Meter::StorageByteMin, (5, 940_597_837_824_i64)),
+        (Meter::StorageByteMin, (5000, 940_597_837_824_i64)),
         (Meter::DataTransferEgressByte, (3, 10_000)),
     ];
     for (index, (meter, (num, den))) in expected.into_iter().enumerate() {
@@ -164,15 +181,24 @@ fn rt10_golden_invoice_and_rt13_allocation_are_exact() {
         rate_quantity(&ctx, Meter::DataTransferEgressByte, 1_000_000_000, fact(4)).exact,
     )
     .expect("transfer");
-    insta::assert_json_snapshot!(json!({
-        "handsOneHourMicrousd": hands.rounded.get(),
-        "storageOneGibMonthMicrousd": storage.rounded.get(),
-        "egressOneGbMicrousd": transfer.rounded.get(),
-    }), @r###"
+    // A `BTreeMap`, not `json!`. The snapshot pins three invoice amounts, not a
+    // member order, but `serde_json::Map` serialises in insertion order once
+    // `preserve_order` is on -- and that feature is not this crate's to control:
+    // `aws-smithy-http-client` enables it, so a workspace-wide build flips it on
+    // for every member under feature unification while `cargo test -p
+    // aex-usage-rating` leaves it off. A `json!` literal therefore recorded an
+    // order the build does not fix. A `BTreeMap` iterates in key order under
+    // either map type, so the amounts are asserted and the ordering is not.
+    let invoice = BTreeMap::from([
+        ("handsOneHourMicrousd", hands.rounded.get()),
+        ("storageOneGibMonthMicrousd", storage.rounded.get()),
+        ("egressOneGbMicrousd", transfer.rounded.get()),
+    ]);
+    insta::assert_json_snapshot!(invoice, @r###"
     {
       "egressOneGbMicrousd": 300000,
       "handsOneHourMicrousd": 155000,
-      "storageOneGibMonthMicrousd": 250
+      "storageOneGibMonthMicrousd": 250000
     }
     "###);
 
@@ -279,6 +305,120 @@ fn one_module_owns_big_rational_to_microusd_conversion() {
     assert_eq!(owners, ["rounding"]);
 }
 
+#[test]
+fn the_seeded_pricing_context_is_canonical_zero_and_shadow_only() {
+    // The migration hashes exactly these bytes into `content_sha256`, so they
+    // have to be canonical for that digest to identify anything.
+    let signed = seeded_signed_content();
+    let parsed: Value = serde_json::from_str(signed).expect("the seeded literal is JSON");
+    assert_eq!(
+        to_jcs_bytes(&parsed).expect("the seeded literal canonicalizes"),
+        signed.as_bytes(),
+        "the seeded rate book is not written in canonical JCS form"
+    );
+
+    let context = seed_context(PlaneBilling::Shadow, true).expect("the seeded book loads");
+    assert_eq!(context.rounding(), RoundingRule::HalfEven);
+    assert_eq!(parsed["pricingVersion"], json!(SEEDED_VERSION));
+    assert_eq!(parsed["billingActive"], json!(false));
+
+    // Every meter is priced, and priced at zero: `RateContext::open` refuses a
+    // book missing one, and the largest quantity the wire admits still settles
+    // to nothing.
+    for (index, meter) in Meter::ALL.into_iter().enumerate() {
+        let part = rate_quantity(&context, meter, u128::MAX, fact(index));
+        let rated = settle_segment(&context, key(meter), part.exact).expect("a zero rate settles");
+        assert_eq!(
+            rated.rounded.get(),
+            0,
+            "the public seed prices `{}` above zero",
+            meter.as_str()
+        );
+    }
+
+    assert_eq!(
+        seed_context(PlaneBilling::Active, true).unwrap_err(),
+        RatingError::ZeroBookOnActivePlane,
+        "the seeded book must be unusable on a plane that can post charges"
+    );
+}
+
+#[test]
+fn the_seeded_pricing_context_carries_no_signature_any_verifier_accepts() {
+    // The column is `NOT NULL`, so the absence of a signature has to be spelled.
+    // Spelling it must not become a way to load the book: a verifier that says
+    // no still fails the open, which is what keeps the sentinel worthless.
+    assert_eq!(seeded_book()["signature"], json!(SEEDED_SIGNATURE));
+    assert_eq!(
+        seed_context(PlaneBilling::Shadow, false).unwrap_err(),
+        RatingError::UnsignedRateBook
+    );
+}
+
+#[test]
+fn the_seed_migration_derives_its_digest_and_document_from_one_literal() {
+    // Two literals would let the stored document and the digest of the signed
+    // bytes drift apart silently, which is the whole failure mode a content
+    // hash exists to catch.
+    assert_eq!(
+        PRICING_CONTEXT_SEED.matches("$rate_book$").count(),
+        2,
+        "the rate book is written more than once"
+    );
+    for derived in [
+        "sha256(convert_to(signed_content, 'UTF8'))",
+        "signed_content::jsonb",
+    ] {
+        assert!(
+            PRICING_CONTEXT_SEED.contains(derived),
+            "the seed no longer derives `{derived}` from the single literal"
+        );
+    }
+}
+
+/// Opens the seeded book the way a deployable would, through the production
+/// reader and a verifier that is told whether to accept the signature.
+fn seed_context(plane: PlaneBilling, accepts: bool) -> Result<RateContext, RatingError> {
+    struct SeedVerifier {
+        accepts: bool,
+    }
+
+    impl BookVerifier for SeedVerifier {
+        fn verify(&self, _canonical_payload: &[u8], signature: &str) -> bool {
+            self.accepts && signature == SEEDED_SIGNATURE
+        }
+
+        fn now(&self) -> OffsetDateTime {
+            OffsetDateTime::UNIX_EPOCH
+        }
+    }
+
+    RateContext::open(
+        &to_jcs_bytes(&seeded_book()).expect("the seeded document canonicalizes"),
+        &SeedVerifier { accepts },
+        plane,
+    )
+}
+
+/// The exact bytes the seed migration signs, digests and stores.
+fn seeded_signed_content() -> &'static str {
+    let mut parts = PRICING_CONTEXT_SEED.split("$rate_book$");
+    parts.next().expect("the seed opens the dollar quote");
+    parts.next().expect("the seed closes the dollar quote")
+}
+
+/// The document as the seeded `rate_book` column holds it: the signed bytes plus
+/// the `signature` member the migration concatenates onto them.
+fn seeded_book() -> Value {
+    let mut value: Value =
+        serde_json::from_str(seeded_signed_content()).expect("the seeded literal is JSON");
+    value
+        .as_object_mut()
+        .expect("the seeded literal is an object")
+        .insert("signature".into(), json!(SEEDED_SIGNATURE));
+    value
+}
+
 fn context(value: &Value, plane: PlaneBilling) -> Result<RateContext, RatingError> {
     context_with(value, plane, true, OffsetDateTime::UNIX_EPOCH)
 }
@@ -317,7 +457,7 @@ fn book_with_rounding(rounding: &str) -> Value {
         BTreeMap::from([
             (Meter::ComputeMillicpuMs.as_str(), ("1", "14400")),
             (Meter::MemoryByteMs.as_str(), ("1", "128849018880")),
-            (Meter::StorageByteMin.as_str(), ("5", "940597837824")),
+            (Meter::StorageByteMin.as_str(), ("5000", "940597837824")),
             (Meter::DataTransferEgressByte.as_str(), ("3", "10000")),
         ]),
     )

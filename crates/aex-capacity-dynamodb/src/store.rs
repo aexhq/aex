@@ -2,7 +2,8 @@
 
 use aex_session_dynamodb::attr::{CodecError, Item, ItemBuilder, Row, n, s, stamp};
 use aex_session_dynamodb::capacity_limit_projection_write::{
-    LimitBundleWrite, LimitWrite, limit_bundle_head_put, limit_bundle_put, limit_put,
+    LimitBundleWrite, LimitWrite, edge_limits_put, limit_bundle_head_put, limit_bundle_put,
+    limit_put,
 };
 use aex_session_dynamodb::error::{
     Idempotence, Resolution, StoreError, classify, decode_cancellation_with_resolution,
@@ -26,6 +27,7 @@ const AUDIT_PARTICIPANT: Participant = Participant::new("capacity.audit");
 const PROJECTION_MEMBER_PARTICIPANT: Participant = Participant::new("capacity.projection_member");
 const PROJECTION_BUNDLE_PARTICIPANT: Participant = Participant::new("capacity.projection_bundle");
 const PROJECTION_HEAD_PARTICIPANT: Participant = Participant::new("capacity.projection_head");
+const PROJECTION_EDGE_PARTICIPANT: Participant = Participant::new("capacity.projection_edge");
 
 const CREATE_CONDITION: &str = "attribute_not_exists(#pk)";
 const REPLACE_CONDITION: &str =
@@ -206,6 +208,13 @@ fn build_plan(
         PROJECTION_HEAD_PARTICIPANT,
         limit_bundle_head_put(projection_table, &bundle)?,
     )?;
+    // The hot admission subset is cut from the same bundle in the same
+    // transaction, so a request edge reading it alone can never see a revision
+    // the authority has not committed.
+    plan.put(
+        PROJECTION_EDGE_PARTICIPANT,
+        edge_limits_put(projection_table, &bundle)?,
+    )?;
     Ok(plan)
 }
 
@@ -329,7 +338,7 @@ mod tests {
     use aex_wire::ids::{PrefixedId as _, Uuid7, WorkspaceId};
     use aex_wire::types::Timestamp;
 
-    use super::{AUTHORITY_PARTICIPANT, build_plan, decode_state};
+    use super::{AUTHORITY_PARTICIPANT, PROJECTION_EDGE_PARTICIPANT, build_plan, decode_state};
     use crate::defaults::canonical_defaults;
     use crate::model::{CapacityCommand, plan_capacity_change};
 
@@ -338,7 +347,7 @@ mod tests {
     }
 
     #[test]
-    fn one_commit_contains_authority_audit_complete_members_bundle_and_head() {
+    fn one_commit_contains_authority_audit_complete_members_bundle_head_and_edge_limits() {
         let state = plan_capacity_change(
             None,
             &canonical_defaults().expect("defaults"),
@@ -359,8 +368,14 @@ mod tests {
             },
         )
         .expect("transaction");
-        assert_eq!(plan.len(), 2 + aex_wire::limits::LimitId::ALL.len() + 2);
+        // Authority, audit, every member row, the bundle payload, its head, and
+        // the hot admission subset a request edge reads on its own.
+        assert_eq!(plan.len(), 2 + aex_wire::limits::LimitId::ALL.len() + 3);
         assert_eq!(plan.participants()[0], AUTHORITY_PARTICIPANT);
+        assert!(
+            plan.participants().contains(&PROJECTION_EDGE_PARTICIPANT),
+            "the edge-limit row must be published by the same transaction"
+        );
     }
 
     #[test]

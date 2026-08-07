@@ -14,11 +14,12 @@
 //! | trust anchors ([`ParameterStore::trust_anchors`]) | cold start | once |
 //! | cursor signing ring ([`ParameterStore::cursor_key_ring`]) | cold start | once |
 //! | the assertion ([`LambdaAssertionSource`]) | per credential | once per 30 s |
-//! | the projection ([`RegionalProjection`]) | per request | always |
+//! | the admission snapshot ([`RegionalProjection`]) | per request | always |
 //!
-//! The projection is the only per-request read and it is deliberately never
-//! cached: it is what makes a revoked key or a paused account take effect inside
-//! the 30-second assertion window rather than after it.
+//! The snapshot is the only per-request read — one `TransactGetItems` over the
+//! key authorization row, the placement and the hot limit ceilings — and it is
+//! deliberately never cached: it is what makes a revoked key or a paused account
+//! take effect inside the 30-second assertion window rather than after it.
 
 use aex_control_domain::epoch::Epoch;
 use aex_identity_domain::assertion::{
@@ -30,7 +31,8 @@ use aex_internal_contracts::assertion::{
 };
 use aex_session_dynamodb::error::StoreError;
 use aex_session_dynamodb::projection::AuthorizationProjection;
-use aex_wire::ids::WorkspaceId;
+use aex_session_dynamodb::wire_pending::{EdgeLimits, KeyAuthorizationState};
+use aex_wire::ids::{ApiKeyId, WorkspaceId};
 use aex_wire::types::Region;
 use async_trait::async_trait;
 use base64::Engine as _;
@@ -39,7 +41,7 @@ use uuid::Uuid;
 use zeroize::{Zeroize as _, Zeroizing};
 
 use crate::assertion::{AssertionSource, AuthFailure, PresentedCredential, ProjectedEpochs};
-use crate::context::AccountState;
+use crate::context::{AccountState, EffectiveLimits};
 use crate::cursor::{CursorError, CursorKey, CursorKeyRing};
 use crate::edge::{ProjectedState, ProjectionError, ProjectionReader};
 
@@ -549,8 +551,10 @@ impl AssertionSource for LambdaAssertionSource {
 
 /// The regional authorization projection, over the read-only `DynamoDB` reader.
 ///
-/// The table is written only by `central-control-worker`; every regional role
-/// holds `GetItem` and `Query` on it and nothing else.
+/// Key authorization, placement and profile rows are written only by
+/// `central-control-worker` and limit rows only by the regional capacity
+/// authority; every serving regional role holds `GetItem`, `TransactGetItems`
+/// and `Query` on the table and nothing else.
 #[derive(Debug, Clone)]
 pub struct RegionalProjection<P> {
     projection: P,
@@ -567,62 +571,41 @@ impl<P> RegionalProjection<P> {
 
 #[async_trait]
 impl<P: AuthorizationProjection> ProjectionReader for RegionalProjection<P> {
-    async fn project_key(
+    async fn snapshot(
         &self,
-        key: aex_wire::ids::ApiKeyId,
-    ) -> Result<ProjectedEpochs, ProjectionError> {
-        match self.projection.read_key_revocation(key).await {
-            Ok(None) => Ok(ProjectedEpochs::default()),
-            Ok(Some(revocation)) => Ok(ProjectedEpochs {
-                key: Epoch::new(revocation.revoked_epoch),
-                ..ProjectedEpochs::default()
-            }),
-            Err(_) => Err(ProjectionError::Unavailable),
-        }
-    }
-
-    async fn project(
-        &self,
-        credential: &PresentedCredential,
-    ) -> Result<ProjectedEpochs, ProjectionError> {
-        if credential.region() != self.region {
+        key: ApiKeyId,
+        workspace: WorkspaceId,
+    ) -> Result<ProjectedState, ProjectionError> {
+        let snapshot = self
+            .projection
+            .read_admission_snapshot(key, workspace)
+            .await
+            .map_err(|error| snapshot_failure(&error))?;
+        let placement = &snapshot.placement;
+        // The key row's own region and the placement's must agree, and both must
+        // be this endpoint's. Checking here rather than only at the edge means a
+        // key projected into the wrong region is refused by the reader that
+        // produced it.
+        let region = Region::from_name(&placement.region).ok_or(ProjectionError::Unavailable)?;
+        if snapshot.key.region != placement.region || region != self.region {
             return Err(ProjectionError::Unknown);
         }
-        // The projection holds a revocation row only for a key that has one, so
-        // an absent row is the zero floor rather than a missing answer. A row
-        // that exists raises the key floor above every assertion minted before
-        // the revocation was published, which is what makes a revoked key lose
-        // inside the 30-second assertion window.
-        match self
-            .projection
-            .read_key_revocation(credential.key_id())
-            .await
-        {
-            Ok(None) => Ok(ProjectedEpochs::default()),
-            Ok(Some(revocation)) => Ok(ProjectedEpochs {
-                key: Epoch::new(revocation.revoked_epoch),
-                ..ProjectedEpochs::default()
-            }),
-            Err(_) => Err(ProjectionError::Unavailable),
-        }
-    }
-
-    async fn placement(&self, workspace: WorkspaceId) -> Result<ProjectedState, ProjectionError> {
-        let placement = self
-            .projection
-            .read_placement(workspace)
-            .await
-            .map_err(|error| placement_failure(&error))?;
-        let region = Region::from_name(&placement.region).ok_or(ProjectionError::Unavailable)?;
         Ok(ProjectedState {
+            // The key row carries the floor for the key itself; the placement
+            // carries the two workspace-scoped floors. Taking the key floor from
+            // the row that is raised by revocation is what makes a revoked key
+            // lose inside the 30-second assertion window.
             epochs: ProjectedEpochs {
-                key: Epoch::new(placement.key_epoch),
+                key: Epoch::new(placement.key_epoch.max(snapshot.key.key_epoch)),
                 workspace: Epoch::new(placement.revocation_epoch),
                 account: Epoch::new(placement.account_epoch),
             },
+            workspace_id: snapshot.key.workspace,
             organization_id: raw_id(placement.organization),
+            key_revoked: snapshot.key.state == KeyAuthorizationState::Revoked,
             account_state: account_state(&placement.status)?,
             region,
+            limits: effective(&snapshot.limits)?,
         })
     }
 }
@@ -632,14 +615,30 @@ fn raw_id<I: aex_wire::ids::PrefixedId>(id: I) -> Uuid {
     Uuid::from_bytes(*id.uuid7().as_bytes())
 }
 
-/// An absent placement is "this region has no record of that workspace"; every
-/// other store failure is "this region could not answer". The two are different
-/// to a customer: the first is a `401`, the second a `503`.
-fn placement_failure(error: &StoreError) -> ProjectionError {
+/// An absent or self-contradictory snapshot is "this region has no usable record
+/// of that key"; every other store failure is "this region could not answer".
+/// The two are different to a customer: the first is a `401`, the second a
+/// `503`.
+fn snapshot_failure(error: &StoreError) -> ProjectionError {
     match error {
-        StoreError::Misconfigured { .. } => ProjectionError::Unknown,
+        StoreError::Misconfigured { .. } | StoreError::Corrupt(_) => ProjectionError::Unknown,
         _ => ProjectionError::Unavailable,
     }
+}
+
+/// Narrows the projected ceilings onto the machine-word type the edge applies.
+///
+/// A ceiling that does not fit a `usize` cannot be enforced on this host, and an
+/// unenforceable ceiling is refused rather than saturated: saturating it would
+/// silently admit a body the authority never permitted.
+fn effective(limits: &EdgeLimits) -> Result<EffectiveLimits, ProjectionError> {
+    let width = |value: u64| usize::try_from(value).map_err(|_| ProjectionError::Unavailable);
+    Ok(EffectiveLimits {
+        json_body_bytes: width(limits.json_body_bytes)?,
+        otlp_body_bytes: width(limits.otlp_body_bytes)?,
+        query_page_items: width(limits.query_page_items)?,
+        query_page_bytes: width(limits.query_page_bytes)?,
+    })
 }
 
 /// Projects the stored placement status onto the account policy the edge gates
