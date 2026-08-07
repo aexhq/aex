@@ -6,13 +6,14 @@
 //! have no earned evidence at all.
 
 use std::collections::BTreeMap;
-use std::io::Read as _;
+use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use aex_hands_protocol::operation::{GuestPath, GuestRoot, OperationExit, StopSignal};
 use aex_hands_tools::command::SpawnSpec;
 use aex_hands_tools::port::{DirEntry, EntryKind, FsError, GuestFs, Meta, Pgid, ProcError};
+use aex_wire::types::Timestamp;
 
 /// Whether this build can supervise a process group.
 ///
@@ -299,27 +300,21 @@ impl Runner for HostRunner {
                 .write_all(&bytes)
                 .map_err(|error| ProcError::Other(error.to_string()))?;
         }
-        let mut stdout = child.stdout.take();
-        let mut stderr = child.stderr.take();
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
         let start_time = leader_start_time(pid).unwrap_or(0);
         Ok(Started {
             pgid: Pgid(pid),
             start_time,
             reap: Box::new(move |sink: &mut dyn OutputSink| {
-                let mut buffer = Vec::new();
-                if let Some(handle) = stdout.as_mut() {
-                    handle
-                        .read_to_end(&mut buffer)
-                        .map_err(|error| ProcError::Other(error.to_string()))?;
-                    sink.append(&buffer).map_err(ProcError::Other)?;
-                    buffer.clear();
+                let mut streams: Vec<Box<dyn Read + Send>> = Vec::new();
+                if let Some(handle) = stdout {
+                    streams.push(Box::new(handle));
                 }
-                if let Some(handle) = stderr.as_mut() {
-                    handle
-                        .read_to_end(&mut buffer)
-                        .map_err(|error| ProcError::Other(error.to_string()))?;
-                    sink.append(&buffer).map_err(ProcError::Other)?;
+                if let Some(handle) = stderr {
+                    streams.push(Box::new(handle));
                 }
+                drain_streams(streams, sink)?;
                 let status = child
                     .wait()
                     .map_err(|error| ProcError::Other(error.to_string()))?;
@@ -335,6 +330,87 @@ impl Runner for HostRunner {
     fn alive(&self, group: Pgid) -> Result<bool, ProcError> {
         group_alive(group)
     }
+}
+
+/// Largest single read handed to the sink while draining a stream.
+///
+/// Bounds resident memory during the drain: the capture bound applies at the
+/// sink, so this buffer is the only allocation a chatty child controls. 64 KiB
+/// matches the default pipe capacity, so a full pipe drains in one read.
+const DRAIN_CHUNK_BYTES: usize = 65_536;
+
+/// Drains every stream into the sink concurrently, appending in arrival order.
+///
+/// Concurrency is a correctness requirement, not a performance one: reading
+/// stdout to end before touching stderr deadlocks the moment the child fills
+/// the stderr pipe (~64 KiB) while the supervisor is still blocked on stdout.
+/// One reader thread per stream keeps both pipes moving; the caller's thread
+/// owns the sink so append order is a single interleaved sequence.
+fn drain_streams(
+    streams: Vec<Box<dyn Read + Send>>,
+    sink: &mut dyn OutputSink,
+) -> Result<(), ProcError> {
+    let (chunks, from_readers) = std::sync::mpsc::channel::<Result<Vec<u8>, String>>();
+    let mut readers = Vec::new();
+    for mut stream in streams {
+        let chunks = chunks.clone();
+        readers.push(std::thread::spawn(move || {
+            let mut buffer = vec![0u8; DRAIN_CHUNK_BYTES];
+            loop {
+                match stream.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(read) => {
+                        if chunks.send(Ok(buffer[..read].to_vec())).is_err() {
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        let _ = chunks.send(Err(error.to_string()));
+                        break;
+                    }
+                }
+            }
+        }));
+    }
+    // The readers hold the only remaining senders, so the receive loop ends
+    // exactly when every stream has reached end-of-file or failed.
+    drop(chunks);
+    let mut failure: Option<ProcError> = None;
+    for chunk in from_readers {
+        if failure.is_some() {
+            continue;
+        }
+        match chunk {
+            Ok(bytes) => {
+                if let Err(reason) = sink.append(&bytes) {
+                    failure = Some(ProcError::Other(reason));
+                }
+            }
+            Err(reason) => failure = Some(ProcError::Other(reason)),
+        }
+    }
+    for reader in readers {
+        let _ = reader.join();
+    }
+    match failure {
+        None => Ok(()),
+        Some(error) => Err(error),
+    }
+}
+
+/// The guest clock.
+///
+/// Lives beside the other host capabilities so the request path and the
+/// background reap and cancel threads stamp terminals from one clock.
+#[must_use]
+pub fn now() -> Timestamp {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|since| i64::try_from(since.as_millis()).ok())
+        .unwrap_or_default();
+    Timestamp::from_unix_millis(millis)
+        .unwrap_or_else(|_| Timestamp::from_unix_millis(0).expect("the epoch is representable"))
 }
 
 /// How a finished child is reported.
@@ -459,9 +535,13 @@ pub fn inherited_environment() -> BTreeMap<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{HostFs, PROCESS_GROUPS_AVAILABLE, inherited_environment, stat_field};
+    use super::{
+        DRAIN_CHUNK_BYTES, HostFs, OutputSink, PROCESS_GROUPS_AVAILABLE, drain_streams,
+        inherited_environment, stat_field,
+    };
     use aex_hands_protocol::operation::{GuestPath, GuestRoot};
     use aex_hands_tools::port::{EntryKind, FsError, GuestFs as _};
+    use std::io::Read;
 
     fn fs(dir: &std::path::Path) -> HostFs {
         HostFs::new(GuestRoot::workspace(), dir)
@@ -576,5 +656,56 @@ mod tests {
     #[test]
     fn process_group_supervision_states_whether_this_host_has_it() {
         assert_eq!(PROCESS_GROUPS_AVAILABLE, cfg!(unix));
+    }
+
+    struct VecSink(Vec<u8>);
+
+    impl OutputSink for VecSink {
+        fn append(&mut self, bytes: &[u8]) -> Result<(), String> {
+            self.0.extend_from_slice(bytes);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn the_drain_reads_both_streams_to_completion_in_bounded_chunks() {
+        // Larger than a pipe (~64 KiB) on the second stream: the retired
+        // sequential drain read stdout to end first, which deadlocks against a
+        // child blocked writing stderr. The concurrent drain must consume both.
+        let stdout = vec![b'a'; 10_000];
+        let stderr = vec![b'b'; 4 * DRAIN_CHUNK_BYTES + 17];
+        let mut sink = VecSink(Vec::new());
+        drain_streams(
+            vec![
+                Box::new(std::io::Cursor::new(stdout.clone())),
+                Box::new(std::io::Cursor::new(stderr.clone())),
+            ],
+            &mut sink,
+        )
+        .expect("both streams drain");
+        assert_eq!(sink.0.len(), stdout.len() + stderr.len());
+        assert_eq!(sink.0.iter().filter(|byte| **byte == b'a').count(), 10_000);
+    }
+
+    struct FailingReader;
+
+    impl Read for FailingReader {
+        fn read(&mut self, _buffer: &mut [u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("the pipe collapsed"))
+        }
+    }
+
+    #[test]
+    fn a_stream_read_failure_is_reported_and_never_swallowed() {
+        let mut sink = VecSink(Vec::new());
+        let outcome = drain_streams(
+            vec![
+                Box::new(std::io::Cursor::new(vec![b'x'; 8])),
+                Box::new(FailingReader),
+            ],
+            &mut sink,
+        );
+        let error = outcome.expect_err("the failure surfaces");
+        assert!(error.to_string().contains("the pipe collapsed"), "{error}");
     }
 }

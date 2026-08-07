@@ -544,6 +544,7 @@ version = "0.1.0"
 dependencies = [
  "aex-internal-contracts",
  "aex-wire",
+ "base64 0.23.0",
  "serde",
  "serde_json",
  "sha2 0.11.0",

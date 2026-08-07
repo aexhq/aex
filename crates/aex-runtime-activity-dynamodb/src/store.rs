@@ -12,9 +12,9 @@ use aex_runtime_control::store::{
     GenerationCommit, GenerationPlan, GenerationPointer, GenerationView,
     IdleProbe as CanonicalIdleProbe, LifecycleIntentCommit, LifecycleIntentPlan,
     LifecycleReceipt as CanonicalReceipt, LifecycleReceiptPlan, LifecycleReconcilePlan,
-    LifecycleRequestPlan, OperationAdmissionPlan, OperationSettlementPlan,
-    PageBudget as CanonicalPageBudget, RuntimeActivityStore, RuntimeDuePage, RuntimeShard,
-    RuntimeStoreError, StoreFuture, UsageOutboxEntry,
+    LifecycleRequestPlan, OpenCountRepairPlan, OperationAdmissionPlan, OperationSettlementPlan,
+    PageBudget as CanonicalPageBudget, ReadConsistency, RuntimeActivityStore, RuntimeDuePage,
+    RuntimeShard, RuntimeStoreError, StoreFuture, UsageOutboxEntry,
 };
 use aex_session_dynamodb::attr::{Item, ItemBuilder, PK, SK, n, s, stamp};
 use aex_session_dynamodb::error::{Idempotence, Resolution, StoreError, classify};
@@ -81,12 +81,21 @@ impl RuntimeActivityDynamoStore {
     }
 
     async fn get(&self, pk: &str, sk: &str) -> Result<Option<Item>, StoreError> {
+        self.get_with(pk, sk, true).await
+    }
+
+    async fn get_with(
+        &self,
+        pk: &str,
+        sk: &str,
+        consistent: bool,
+    ) -> Result<Option<Item>, StoreError> {
         let output = self
             .client
             .get_item()
             .table_name(&self.table)
             .set_key(Some(key(pk, sk)))
-            .consistent_read(true)
+            .consistent_read(consistent)
             .send()
             .await
             .map_err(|error| classify(&error, Idempotence::Read))?;
@@ -170,16 +179,29 @@ impl RuntimeActivityDynamoStore {
         &self,
         generation: GenerationId,
     ) -> Result<Option<GenerationRow>, RuntimeStoreError> {
-        let target = keys::head_for_generation(generation);
-        self.get(&target.pk, &target.sk)
+        self.load_canonical_row_with(generation, ReadConsistency::Strong)
             .await
-            .map_err(|error| runtime_error(error, None))?
-            .map(|item| {
-                codec::decode_generation_view(&item).map_err(|error| RuntimeStoreError::Malformed {
-                    reason: error.to_string(),
-                })
+    }
+
+    async fn load_canonical_row_with(
+        &self,
+        generation: GenerationId,
+        consistency: ReadConsistency,
+    ) -> Result<Option<GenerationRow>, RuntimeStoreError> {
+        let target = keys::head_for_generation(generation);
+        self.get_with(
+            &target.pk,
+            &target.sk,
+            consistency == ReadConsistency::Strong,
+        )
+        .await
+        .map_err(|error| runtime_error(error, None))?
+        .map(|item| {
+            codec::decode_generation_view(&item).map_err(|error| RuntimeStoreError::Malformed {
+                reason: error.to_string(),
             })
-            .transpose()
+        })
+        .transpose()
     }
 
     async fn operation_is_admitted(
@@ -257,9 +279,10 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
     fn load_generation_view(
         &self,
         generation: GenerationId,
+        consistency: ReadConsistency,
     ) -> StoreFuture<'_, Option<GenerationView>> {
         Box::pin(async move {
-            self.load_canonical_row(generation)
+            self.load_canonical_row_with(generation, consistency)
                 .await
                 .map(|row| row.map(generation_view))
         })
@@ -1520,22 +1543,16 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
                     reason: error.to_string(),
                 })?;
             let target = keys::head_for_generation(probe.generation);
-            let (update, mut builder) = if let Some(next) = probe.next_evaluate_at {
-                (
-                    "SET idleSince = :idleSince, nextEvaluateAt = :next, rtDueSk = :dueSk, revision = :nextRevision",
-                    Update::builder()
-                        .expression_attribute_values(":next", stamp(next))
-                        .expression_attribute_values(
-                            ":dueSk",
-                            s(keys::due_sort(next, probe.generation)),
-                        ),
-                )
-            } else {
-                (
-                    "SET idleSince = :idleSince, revision = :nextRevision REMOVE nextEvaluateAt, rtDueSk",
-                    Update::builder(),
-                )
-            };
+            // The probe always rearms the due index: a generation that holds
+            // provider compute never leaves it, because the index is also what
+            // enforces the lifetime and re-examines a stale busy count.
+            let update = "SET idleSince = :idleSince, nextEvaluateAt = :next, rtDueSk = :dueSk, revision = :nextRevision";
+            let mut builder = Update::builder()
+                .expression_attribute_values(":next", stamp(probe.next_evaluate_at))
+                .expression_attribute_values(
+                    ":dueSk",
+                    s(keys::due_sort(probe.next_evaluate_at, probe.generation)),
+                );
             let idle_since = probe
                 .assessment
                 .idle_since()
@@ -1568,6 +1585,44 @@ impl RuntimeActivityStore for RuntimeActivityDynamoStore {
                 ),
             )
             .await
+        })
+    }
+
+    fn repair_open_operations<'a>(&'a self, plan: &'a OpenCountRepairPlan) -> StoreFuture<'a, ()> {
+        Box::pin(async move {
+            let target = keys::head_for_generation(plan.generation);
+            // A repair to zero starts the idle clock at the repair instant —
+            // nothing is known about when the leak actually drained, so the
+            // conservative claim is "idle since now". Any other value keeps
+            // the busy evidence and clears a stale idle mark.
+            let update = if plan.open_operations == 0 {
+                "SET openOperations = :open, revision = :nextRevision, idleSince = :at, \
+                 updatedAt = :at, nextEvaluateAt = :next, rtDueSk = :dueSk"
+            } else {
+                "SET openOperations = :open, revision = :nextRevision, updatedAt = :at, \
+                 nextEvaluateAt = :next, rtDueSk = :dueSk REMOVE idleSince"
+            };
+            let builder = Update::builder()
+                .table_name(&self.table)
+                .set_key(Some(key(&target.pk, &target.sk)))
+                .condition_expression("generationId = :generation AND revision = :revision")
+                .update_expression(update)
+                .expression_attribute_values(":generation", s(plan.generation.to_string()))
+                .expression_attribute_values(":revision", n(plan.expected_revision.value()))
+                .expression_attribute_values(
+                    ":nextRevision",
+                    n(plan.expected_revision.next().value()),
+                )
+                .expression_attribute_values(":open", n(u64::from(plan.open_operations)))
+                .expression_attribute_values(":at", stamp(plan.at))
+                .expression_attribute_values(":next", stamp(plan.next_evaluate_at))
+                .expression_attribute_values(
+                    ":dueSk",
+                    s(keys::due_sort(plan.next_evaluate_at, plan.generation)),
+                );
+            self.conditional_update(builder, Participant::RUNTIME_GENERATION)
+                .await
+                .map_err(|error| runtime_error(error, Some(plan.expected_revision)))
         })
     }
 

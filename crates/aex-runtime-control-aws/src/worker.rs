@@ -31,8 +31,8 @@ use aex_runtime_control::lifecycle::{
 use aex_runtime_control::store::{
     CommandBinding, GenerationAccountingPlan, GenerationCommit, GenerationPlan, GenerationView,
     IdleProbe, LifecycleIntentPlan, LifecycleReceiptPlan, LifecycleReconcilePlan,
-    LifecycleRequestPlan, OpenEffectCounter, PageBudget, RuntimeActivityStore, RuntimeShard,
-    RuntimeStoreError, UsageOutboxPlan, bind_command,
+    LifecycleRequestPlan, OpenCountRepairPlan, OpenEffectCounter, PageBudget, ReadConsistency,
+    RuntimeActivityStore, RuntimeShard, RuntimeStoreError, UsageOutboxPlan, bind_command,
 };
 use aex_runtime_control::usage::{
     FactContext, SinkError, SnapshotIo, SnapshotResidence, UsageCategory, UsageFactSink,
@@ -466,7 +466,9 @@ impl RuntimeControl {
         let view = match self
             .ports
             .store
-            .load_generation_view(command.generation())
+            // A lifecycle decision reads strongly: acting on a stale head is a
+            // double effect, and this path runs once per evaluation, not per poll.
+            .load_generation_view(command.generation(), ReadConsistency::Strong)
             .await
         {
             Ok(Some(view)) => view,
@@ -822,6 +824,16 @@ impl RuntimeControl {
             }
             SuspendDecision::Drain { remaining_ms } => self.drain(view, now, remaining_ms).await,
             SuspendDecision::Hold { reason } => {
+                if reason == HoldReason::Busy {
+                    // The authoritative recount also runs on the busy hold: a
+                    // leaked counter would otherwise report `Busy` on every
+                    // evaluation until the provider's eight-hour hard stop.
+                    match self.recount_busy_hold(view, &assessment, now).await {
+                        Ok(Some(settled)) => return CommandOutcome::Settled(settled),
+                        Ok(None) => {}
+                        Err(error) => return store_outcome(&error),
+                    }
+                }
                 if let Err(error) = self.rearm(view, &assessment, now).await {
                     return store_outcome(&error);
                 }
@@ -1473,19 +1485,60 @@ impl RuntimeControl {
     }
 
     /// Rearms the evaluation schedule without changing anything else.
+    ///
+    /// The rearm instant always exists: a busy generation schedules a bounded
+    /// retry rather than leaving the due index, which would orphan it — no
+    /// suspension, no lifetime drain — until the provider's hard stop.
     async fn rearm(
         &self,
         view: &GenerationView,
         assessment: &IdleAssessment,
-        _now: Timestamp,
+        now: Timestamp,
     ) -> Result<(), RuntimeStoreError> {
         let probe = IdleProbe {
             generation: view.head.generation,
             assessment: assessment.clone(),
-            next_evaluate_at: assessment.next_evaluate_at(self.settings.schedule_jitter_ms),
+            next_evaluate_at: assessment.rearm_at(now, self.settings.schedule_jitter_ms),
             expected_revision: view.head.revision,
         };
         self.ports.store.record_probe(&probe).await
+    }
+
+    /// Recounts a busy hold against the authority and repairs a stale counter.
+    ///
+    /// The suspend path recounts after taking the lock; the busy hold never
+    /// reaches the lock, so without this recount a leaked `openOperations`
+    /// count silently converges to nothing. Repairing rearms the due index in
+    /// the same conditional write, so a repaired generation is re-evaluated
+    /// and a raced repair loses cleanly to the concurrent writer.
+    async fn recount_busy_hold(
+        &self,
+        view: &GenerationView,
+        assessment: &IdleAssessment,
+        now: Timestamp,
+    ) -> Result<Option<Settled>, RuntimeStoreError> {
+        let authoritative = self
+            .ports
+            .effects
+            .count_open_hands_effects(view.session, view.head.generation)
+            .await?;
+        if authoritative == view.head.open_operations {
+            return Ok(None);
+        }
+        self.ports
+            .store
+            .repair_open_operations(&OpenCountRepairPlan {
+                generation: view.head.generation,
+                expected_revision: view.head.revision,
+                open_operations: authoritative,
+                next_evaluate_at: assessment.rearm_at(now, self.settings.schedule_jitter_ms),
+                at: now,
+            })
+            .await?;
+        Ok(Some(Settled::CounterRepaired {
+            authoritative_open: authoritative,
+            recorded_open: view.head.open_operations,
+        }))
     }
 
     /// Settles an intent whose dispatch the provider refused outright.
@@ -1798,9 +1851,10 @@ mod tests {
     use aex_runtime_control::store::{
         GenerationCommit, GenerationPlan, GenerationPointer, GenerationView, IdleProbe,
         LifecycleIntentCommit, LifecycleIntentPlan, LifecycleReceipt, LifecycleReceiptPlan,
-        LifecycleReconcilePlan, LifecycleRequestPlan, OpenEffectCounter, OperationAdmissionPlan,
-        OperationSettlementPlan, PageBudget, RuntimeActivityStore, RuntimeDuePage, RuntimeShard,
-        RuntimeStoreError, StoreFuture, UsageOutboxEntry,
+        LifecycleReconcilePlan, LifecycleRequestPlan, OpenCountRepairPlan, OpenEffectCounter,
+        OperationAdmissionPlan, OperationSettlementPlan, PageBudget, ReadConsistency,
+        RuntimeActivityStore, RuntimeDuePage, RuntimeShard, RuntimeStoreError, StoreFuture,
+        UsageOutboxEntry,
     };
     use aex_runtime_control::usage::{SinkError, UsageCategory, UsageFactSink};
     use aex_usage_domain::fact::{FactDraft, FactKind};
@@ -1905,6 +1959,7 @@ mod tests {
         receipts: Vec<LifecycleReceiptPlan>,
         outbox: Vec<UsageOutboxEntry>,
         probes: Vec<IdleProbe>,
+        repairs: Vec<OpenCountRepairPlan>,
         scan_failure: Option<RuntimeStoreError>,
         lose_next_settle_response: bool,
     }
@@ -1942,6 +1997,7 @@ mod tests {
         fn load_generation_view(
             &self,
             _generation: GenerationId,
+            _consistency: ReadConsistency,
         ) -> StoreFuture<'_, Option<GenerationView>> {
             let view = self.lock().view.clone();
             Box::pin(async move { Ok(view) })
@@ -2264,6 +2320,38 @@ mod tests {
 
         fn record_probe<'a>(&'a self, probe: &'a IdleProbe) -> StoreFuture<'a, ()> {
             self.lock().probes.push(probe.clone());
+            Box::pin(async move { Ok(()) })
+        }
+
+        fn repair_open_operations<'a>(
+            &'a self,
+            plan: &'a OpenCountRepairPlan,
+        ) -> StoreFuture<'a, ()> {
+            let mut state = self.lock();
+            let revision = state
+                .view
+                .as_ref()
+                .expect("the fixture has a view")
+                .head
+                .revision;
+            if revision != plan.expected_revision {
+                let expected = plan.expected_revision;
+                let found = Some(revision);
+                drop(state);
+                return Box::pin(async move {
+                    Err(RuntimeStoreError::RevisionConflict { expected, found })
+                });
+            }
+            if let Some(view) = state.view.as_mut() {
+                view.head.open_operations = plan.open_operations;
+                view.head.revision = view.head.revision.next();
+                view.head.idle_since = (plan.open_operations == 0).then_some(plan.at);
+            }
+            if let Some(pointer) = state.pointer.as_mut() {
+                pointer.revision = pointer.revision.next();
+            }
+            state.repairs.push(*plan);
+            drop(state);
             Box::pin(async move { Ok(()) })
         }
 
@@ -2636,6 +2724,89 @@ mod tests {
             );
         }
         assert!(!busy.provider.calls().contains(&"suspend"));
+    }
+
+    #[tokio::test]
+    async fn a_busy_hold_rearms_a_bounded_retry_and_never_leaves_the_due_index() {
+        let busy = fixture(
+            FakeStore::with(view(GenerationState::Running, 2)),
+            FakeProvider::running(),
+            2,
+        );
+        let outcome = busy
+            .control
+            .handle_command(evaluate(), at(BUSY_AT + 3_600_000))
+            .await;
+        assert_eq!(
+            outcome,
+            CommandOutcome::Settled(Settled::Held {
+                reason: HoldReason::Busy
+            })
+        );
+        let state = busy.store.lock();
+        assert!(
+            state.repairs.is_empty(),
+            "an agreeing recount repairs nothing"
+        );
+        assert_eq!(state.probes.len(), 1);
+        assert_eq!(
+            state.probes[0].next_evaluate_at,
+            at(BUSY_AT + 3_600_000 + i64::try_from(TRUE_IDLE_THRESHOLD_MS).expect("bounded")),
+            "a busy generation schedules a bounded retry; removing it from the due \
+             index would orphan it until the provider's hard stop"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_leaked_busy_count_is_repaired_and_converges_to_suspension() {
+        // The head claims three open operations; the session authority holds
+        // none. Without the busy-hold recount this generation answered Busy on
+        // every evaluation and fell out of the due index forever.
+        let leaked = fixture(
+            FakeStore::with(view(GenerationState::Running, 3)),
+            FakeProvider::running(),
+            0,
+        );
+        let outcome = leaked
+            .control
+            .handle_command(evaluate(), at(BUSY_AT + 180_000))
+            .await;
+        assert_eq!(
+            outcome,
+            CommandOutcome::Settled(Settled::CounterRepaired {
+                authoritative_open: 0,
+                recorded_open: 3
+            })
+        );
+        {
+            let state = leaked.store.lock();
+            assert_eq!(state.repairs.len(), 1);
+            assert_eq!(state.repairs[0].open_operations, 0);
+            assert_eq!(
+                state.repairs[0].next_evaluate_at,
+                at(BUSY_AT + 180_000 + i64::try_from(TRUE_IDLE_THRESHOLD_MS).expect("bounded")),
+                "the repair rearms the due index in the same write"
+            );
+            assert_eq!(
+                state
+                    .view
+                    .as_ref()
+                    .expect("the fixture has a view")
+                    .head
+                    .open_operations,
+                0,
+                "the cached counter converges to the authority"
+            );
+        }
+        // The rearmed evaluation then measures true quiescence and suspends.
+        assert_eq!(
+            leaked
+                .control
+                .handle_command(evaluate(), at(BUSY_AT + 360_000))
+                .await,
+            CommandOutcome::Settled(Settled::Suspended),
+            "a repaired generation converges instead of orphaning"
+        );
     }
 
     #[tokio::test]

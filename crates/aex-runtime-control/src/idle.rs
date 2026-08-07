@@ -190,6 +190,23 @@ impl IdleAssessment {
             )
         })
     }
+
+    /// The instant the due index is rearmed to, busy or not.
+    ///
+    /// An idle-measurable generation schedules from its quiescence start. A
+    /// busy one schedules a bounded retry from `now` at the same cadence: a
+    /// generation must **never** leave the due index while it holds provider
+    /// compute, because the due index is also what enforces the eight-hour
+    /// lifetime and what re-examines a busy count that later proves stale.
+    #[must_use]
+    pub fn rearm_at(&self, now: Timestamp, jitter_ms: u64) -> Timestamp {
+        self.next_evaluate_at(jitter_ms).unwrap_or_else(|| {
+            plus_millis(
+                now,
+                TRUE_IDLE_THRESHOLD_MS + jitter_ms.min(IDLE_EVALUATION_JITTER_MS),
+            )
+        })
+    }
 }
 
 #[cfg(test)]
