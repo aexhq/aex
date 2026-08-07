@@ -171,9 +171,12 @@ impl ScriptedPorts {
             custody: None,
             secrets: Vec::new(),
             true_idle: TrueIdle::idle(moment(0)),
-            limits: [(LimitId::SessionMaterializedAgents, 8)]
-                .into_iter()
-                .collect(),
+            limits: [
+                (LimitId::SessionSubagentConcurrency, 8),
+                (LimitId::SessionSubagentDepth, 4),
+            ]
+            .into_iter()
+            .collect(),
         }
     }
 

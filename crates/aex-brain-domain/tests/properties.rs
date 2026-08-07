@@ -11,7 +11,7 @@ use aex_brain_domain::fold::{FoldError, FoldState, Phase, apply, fold};
 use aex_brain_domain::ids::JournalSeq;
 use aex_brain_domain::journal::{JournalEntry, JournalRecord};
 use aex_brain_domain::planner::{OwedStep, PlanPolicy, plan};
-use aex_brain_domain::wire_pending::Role;
+use aex_brain_domain::wire_pending::Turn;
 use aex_brain_test_support::journal_gen::{
     HistoryBuilder, Hostile, agent, arb_any_history, arb_hostile, config, finished, grant, started,
     user_text,
@@ -102,7 +102,7 @@ proptest! {
         let in_history = state
             .model_history
             .iter()
-            .filter(|turn| turn.role == Role::Assistant)
+            .filter(|turn| matches!(turn, Turn::Assistant { .. }))
             .count();
         // A compaction replaces the prefix, so history can hold fewer — never more.
         prop_assert!(in_history <= proved, "{in_history} assistant turns from {proved} messages");
@@ -229,11 +229,8 @@ proptest! {
     fn f11_tool_results_rebuild_in_tool_use_order(history in arb_any_history()) {
         let Ok(state) = fold(&history) else { return Ok(()) };
         for turn in &state.model_history {
-            if turn.role != Role::User {
-                continue;
-            }
-            let calls: Vec<&aex_brain_domain::ids::ToolCallId> = turn
-                .blocks
+            let Turn::User { blocks } = turn else { continue };
+            let calls: Vec<&aex_brain_domain::ids::ToolCallId> = blocks
                 .iter()
                 .filter_map(|block| match block {
                     aex_brain_domain::wire_pending::CanonicalBlock::ToolResult { call, .. } => {

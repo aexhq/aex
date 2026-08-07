@@ -3,14 +3,16 @@
 The central finance cluster: Aurora PostgreSQL Serverless v2 with the Data API
 on and nothing reachable from the internet.
 
-Development may omit a reader. Production may compose exactly one warm failover
-reader. Application reads continue to use the Data API cluster resource rather
-than the reader endpoint, so the failover instance does not introduce a second
-read-consistency path.
+There is no reader instance at launch. A reader would introduce replica lag, and
+the finance read paths do not yet distinguish "not there yet" from "not there".
+`reader_count` exists as a variable validated to zero so that decision is
+explicit in the configuration rather than an omission someone later fills in by
+accident.
 
-The master password is minted and rotated by RDS. The only credential output is
-the ARN of that RDS-managed secret; callers pass it as the Data API `secretArn`.
-The module does not accept a second caller-supplied secret identity.
+The master password is minted and rotated by RDS. `admin_secret_arn` is the
+secret Data API callers pass as `secretArn`; a precondition checks it lives in
+the same region as the cluster, because a cross-region secret fails at runtime
+rather than at plan time.
 
 ## Inputs
 
@@ -25,10 +27,11 @@ The module does not accept a second caller-supplied secret identity.
 | `deletion_protection` | `bool` | Must stay `true`. |
 | `data_api_enabled` | `bool` | Must stay `true`. |
 | `publicly_accessible` | `bool` | Must stay `false`. |
-| `reader_count` | `number` | Zero or one warm failover reader. |
+| `reader_count` | `number` | Must be `0` at launch. |
 | `subnet_ids` | `list(string)` | At least two private subnets. |
 | `vpc_security_group_ids` | `list(string)` | Security groups. |
-| `region` | `string` | AWS region. |
+| `admin_secret_arn` | `string` | Secret ARN Data API callers pass. |
+| `region` | `string` | Region, checked against the secret ARN. |
 | `kms_key_arn` | `string` | Customer-managed key for storage and the managed secret. |
 | `preferred_backup_window` | `string` | Daily backup window in UTC. |
 | `tags` | `map(string)` | Tags. |
@@ -40,7 +43,8 @@ The module does not accept a second caller-supplied secret identity.
 | `cluster_arn` | Data API `resourceArn`. |
 | `endpoint` | Writer endpoint. |
 | `reader_endpoint` | Reader endpoint; resolves to the writer with no reader. |
-| `managed_master_user_secret_arn` | Secret RDS mints for the master user and the Data API `secretArn`. |
+| `admin_secret_arn` | Data API `secretArn`. |
+| `managed_master_user_secret_arn` | Secret RDS mints for the master user. |
 
 ## Policy asserted
 
@@ -48,9 +52,11 @@ The module does not accept a second caller-supplied secret identity.
 - Deletion protection is on; disabling it is rejected.
 - The Data API is on; disabling it is rejected.
 - No instance is publicly accessible; setting it is rejected.
-- At most one warm failover reader is allowed; larger counts are rejected.
+- There is no reader instance at launch; `reader_count = 1` is rejected.
 - Storage is encrypted with the supplied customer-managed key.
 - The master password is RDS-managed and never appears in configuration.
+- The admin secret must be in the cluster's region; a cross-region ARN fails the
+  plan.
 - The engine version must be pinned to a minor.
 
 ## Not asserted here

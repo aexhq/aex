@@ -6,7 +6,7 @@
 //! torn assistant message can never be listed.
 
 use aex_content_domain::ContentDigest;
-use aex_wire::ids::{AgentId, FilePath, MessageId, RunId, SessionId, ToolCallId};
+use aex_wire::ids::{AgentId, MessageId, RunId, SessionId, ToolCallId};
 use aex_wire::types::Timestamp;
 
 use crate::ids::AgentFence;
@@ -49,13 +49,6 @@ pub enum MessagePart {
     Text {
         /// The text.
         text: String,
-    },
-    /// A reference to the persisted workspace tree.
-    File {
-        /// The normalized absolute POSIX path.
-        path: FilePath,
-        /// The declared media type, when one was supplied.
-        media_type: Option<String>,
     },
     /// A tool call the model asked for.
     ToolCall {

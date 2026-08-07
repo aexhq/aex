@@ -30,14 +30,6 @@ integration = "integration"
 [package.metadata.aex.not_applicable]
 
 [dependencies]
-aex-brain-application = { path = "../aex-brain-application" }
-aex-brain-domain = { path = "../aex-brain-domain" }
-aex-brain-tool-catalog = { path = "../aex-brain-tool-catalog" }
-aex-model-catalog = { path = "../aex-model-catalog" }
-aex-secret-aws = { path = "../aex-secret-aws" }
-aex-secret-custody-dynamodb = { path = "../aex-secret-custody-dynamodb" }
-aex-secret-domain = { path = "../aex-secret-domain" }
-aex-session-dynamodb = { path = "../aex-session-dynamodb" }
 aex-wire = { path = "../aex-wire" }
 async-trait.workspace = true
 brotli.workspace = true
@@ -55,7 +47,6 @@ url.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
-uuid.workspace = true
 
 [[test]]
 name = "conformance"

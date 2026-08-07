@@ -909,11 +909,11 @@ would have made the payload check compare the bound parameter to itself.
 Material is held in a bounded (8) zeroizing cache keyed by version id. The bound
 is a security property, not a memory one: an unbounded cache keyed by
 caller-supplied version is how a process ends up holding every pepper that ever
-existed. `crates/aex-central-runtime/tests/security.rs` drives the four
-renderings material has escaped through before — `Debug`, the alternate
-`Debug`, an error `Display`, and a telemetry attribute built from one — including
-a scripted denial whose vendor message quotes the material, which is why the
-service **code** crosses the boundary and the service message never does.
+existed. `tests/security.rs` drives the four renderings material has escaped
+through before — `Debug`, the alternate `Debug`, an error `Display`, and a
+telemetry attribute built from one — including a scripted denial whose vendor
+message quotes the material, which is why the service **code** crosses the
+boundary and the service message never does.
 
 ### 10.3 `MailerPort` is a durable intent, not a send (OD-40)
 
@@ -1109,9 +1109,7 @@ existing regional reader decodes. This producer is exposed only by
   compares revisions; an equal revision is replay success only when identity,
   value, provenance and change instant all match;
 - only a failed condition or a typed commit-ambiguous outcome is resolved by one
-  strongly consistent point read. A provider `InternalServerError` after the
-  write is in that ambiguous class; reads remain unavailable, while an invalid
-  endpoint is definitive unavailability. Denial, validation, throttling and a missing
+  strongly consistent point read. Denial, validation, throttling and a missing
   table return directly; a conflicting equal revision is never overwritten and
   no write is blindly retried;
 - the read and write features share one row decoder, while a producer-only
@@ -1127,13 +1125,6 @@ the Rust feature or the IAM keyspace.
 There is deliberately no call site yet. Calling the producer without an
 authoritative input would convert a missing policy into apparently durable
 truth.
-
-CI exercises the capacity transport as an independent feature build: default
-features are disabled while the crate is checked, clippied and tested, and its
-authored `limit_projection` target is registered in the test inventory. Central
-control's manifest dependency is inspected as structured Cargo metadata, and a
-compiler-fail doctest under `authz-projection-write` proves the capacity module
-is not link-visible. This replaces the former substring-only source assertion.
 
 ### Ordered blocker ledger
 

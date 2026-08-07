@@ -1,0 +1,72 @@
+# Lane class 4 — explicit environment release.
+#
+# One parameterized engine, four operations. Every invocation names a manifest
+# digest, never a branch, a tag, a workflow run or a floating pointer.
+#
+# Concurrency is per plane at the workflow level so two coordinators cannot
+# race, and per Terraform state inside the engine so independent regional roots
+# still proceed in parallel when the declared order allows it.
+
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        type: choice
+        required: true
+        options:
+          - dev-deploy
+          - dev-rehearse
+          - prd-stage
+          - prd-promote
+          - reconcile
+          - rollback
+      manifest_digest:
+        description: The exact composition digest, as sha256 followed by 64 hex.
+        type: string
+        required: true
+      binding_ref:
+        description: The private-repository commit that produced the binding.
+        type: string
+        required: true
+      plane:
+        type: choice
+        required: true
+        options:
+          - dev
+          - prd
+      regions:
+        description: Comma-separated region list, or the word central.
+        type: string
+        required: true
+      execute:
+        type: choice
+        required: true
+        default: plan-only
+        options:
+          - plan-only
+          - apply
+      reason:
+        type: string
+        required: true
+
+concurrency:
+  group: release-${{ inputs.plane }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  engine:
+    name: ${{ inputs.operation }}
+    uses: ./.github/workflows/_release-engine.yml
+    with:
+      operation: ${{ inputs.operation }}
+      manifest_digest: ${{ inputs.manifest_digest }}
+      binding_ref: ${{ inputs.binding_ref }}
+      plane: ${{ inputs.plane }}
+      regions: ${{ inputs.regions }}
+      execute: ${{ inputs.execute }}
+      reason: ${{ inputs.reason }}

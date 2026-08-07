@@ -32,22 +32,20 @@ use aex_secret_custody_dynamodb::store::SecretCustodyStore;
 use aex_session_dynamodb::paging::{PageBudget, PagePosition};
 use aex_session_dynamodb::plan::{Participant, TransactionPlan};
 use aex_session_dynamodb::store::{
-    OperationApiStore, OperationCancelOutcome, OperationFilter, SessionQueries, SessionScoped,
+    OperationApiStore, OperationCancelOutcome, OperationFilter, SessionQueries,
 };
 use aex_session_dynamodb::wire_pending::{Approval, ApprovalStatus, StoredOperation};
 use aex_wire::cursor::Cursor;
 use aex_wire::dispatch::{RawRequest, RawResponse, RequestLimits};
 use aex_wire::error::{ErrorCode, WireError, WireResult};
-use aex_wire::ids::{
-    OperationId, ProviderCredentialId, ResourceName, RunId, SessionId, WorkspaceId,
-};
+use aex_wire::ids::{OperationId, ProviderCredentialId, ResourceName, SessionId, WorkspaceId};
 use aex_wire::models;
 use aex_wire::routes::{RouteId, route};
 use aex_wire::server::{
-    AcceptKind, Accepted, ApprovalsApi, Created, NoContent, ProviderCredentialsApi,
-    RegionalOperationsApi, RegistryApi, RequestContext as WireContext, RouteGroup, SecretsApi,
-    SessionsApi, WithETag, dispatch_approvals, dispatch_provider_credentials,
-    dispatch_regional_operations, dispatch_registry, dispatch_secrets, dispatch_sessions,
+    AcceptKind, ApprovalsApi, Created, NoContent, ProviderCredentialsApi, RegionalOperationsApi,
+    RegistryApi, RequestContext as WireContext, RouteGroup, SecretsApi, WithETag,
+    dispatch_approvals, dispatch_provider_credentials, dispatch_regional_operations,
+    dispatch_registry, dispatch_secrets,
 };
 use aex_wire::types::Timestamp;
 
@@ -136,8 +134,6 @@ const SERVED: &[RouteId] = &[
     RouteId::SecretsList,
     RouteId::SessionApprovalGet,
     RouteId::SessionApprovalsList,
-    RouteId::SessionRunGet,
-    RouteId::SessionRunsList,
 ];
 
 impl std::fmt::Debug for Routes {
@@ -171,53 +167,6 @@ impl Routes {
         session_id: Option<SessionId>,
     ) -> WireResult<CursorBinding> {
         self.cursor_binding_for_query(route, snapshot, session_id, [0; 32])
-    }
-
-    fn cursor_binding_for_session_epoch(
-        &self,
-        route: RouteId,
-        collection: &str,
-        session_id: SessionId,
-        epoch: aex_operation_domain::DeletionEpoch,
-    ) -> WireResult<CursorBinding> {
-        let snapshot = format!("{collection}:{session_id}:deletion-epoch:{}", epoch.0);
-        self.cursor_binding_for_session(route, &snapshot, Some(session_id))
-    }
-
-    async fn resume_session_collection(
-        &self,
-        route: RouteId,
-        collection: &str,
-        session_id: SessionId,
-        cursor: Option<&Cursor>,
-    ) -> WireResult<(
-        Option<PagePosition>,
-        Option<aex_operation_domain::DeletionEpoch>,
-    )> {
-        let Some(cursor) = cursor else {
-            return Ok((None, None));
-        };
-        let parent = match self
-            .shared
-            .sessions
-            .load_session(self.cx.auth.workspace_id, session_id)
-            .await
-            .map_err(|error| authority_failure(&error))?
-        {
-            SessionScoped::Missing => return Err(WireError::new(ErrorCode::NotFound)),
-            SessionScoped::Deleted => return Err(WireError::new(ErrorCode::SessionDeleted)),
-            SessionScoped::Active(parent) => parent,
-        };
-        let binding = self.cursor_binding_for_session_epoch(
-            route,
-            collection,
-            session_id,
-            parent.deletion.epoch,
-        )?;
-        Ok((
-            self.resume(Some(cursor), &binding)?,
-            Some(parent.deletion.epoch),
-        ))
     }
 
     fn cursor_binding_for_query(
@@ -440,19 +389,14 @@ impl ApprovalsApi for Routes {
         session_id: SessionId,
         approval_id: aex_wire::ids::ApprovalId,
     ) -> WireResult<models::Approval> {
-        match self
-            .shared
+        self.shared
             .sessions
             .load_approval(self.cx.auth.workspace_id, session_id, approval_id)
             .await
             .map_err(|error| authority_failure(&error))?
-        {
-            SessionScoped::Missing | SessionScoped::Active(None) => {
-                Err(WireError::new(ErrorCode::NotFound))
-            }
-            SessionScoped::Deleted => Err(WireError::new(ErrorCode::SessionDeleted)),
-            SessionScoped::Active(Some(stored)) => Ok(approval(&stored)),
-        }
+            .as_ref()
+            .map(approval)
+            .ok_or_else(|| WireError::new(ErrorCode::NotFound))
     }
 
     async fn session_approval_respond(
@@ -471,231 +415,28 @@ impl ApprovalsApi for Routes {
         session_id: SessionId,
         query: models::SessionApprovalsListQuery,
     ) -> WireResult<models::ApprovalPage> {
-        let budget = budget(query.limit)?;
-        let (after, expected_deletion_epoch) = self
-            .resume_session_collection(
-                RouteId::SessionApprovalsList,
-                "session.approvals",
-                session_id,
-                query.cursor.as_ref(),
-            )
-            .await?;
-        let page = match self
+        let snapshot = format!("session.approvals:{session_id}");
+        let binding = self.cursor_binding_for_session(
+            RouteId::SessionApprovalsList,
+            &snapshot,
+            Some(session_id),
+        )?;
+        let after = self.resume(query.cursor.as_ref(), &binding)?;
+        let page = self
             .shared
             .sessions
             .page_approvals(
                 self.cx.auth.workspace_id,
                 session_id,
-                expected_deletion_epoch,
-                budget,
+                budget(query.limit)?,
                 after.as_ref(),
             )
             .await
-            .map_err(|error| authority_failure(&error))?
-        {
-            SessionScoped::Missing => return Err(WireError::new(ErrorCode::NotFound)),
-            SessionScoped::Deleted => return Err(WireError::new(ErrorCode::SessionDeleted)),
-            SessionScoped::Active(page) => page,
-        };
-        let binding = self.cursor_binding_for_session_epoch(
-            RouteId::SessionApprovalsList,
-            "session.approvals",
-            session_id,
-            page.deletion_epoch,
-        )?;
-        // The pre-decode parent read and the page's own before/query/after
-        // fence can observe different live generations if trash+restore races
-        // this request. Rechecking the MAC binding refuses that page instead
-        // of silently resuming an old generation.
-        if query.cursor.is_some() {
-            self.resume(query.cursor.as_ref(), &binding)?;
-        }
+            .map_err(|error| authority_failure(&error))?;
         Ok(models::ApprovalPage {
             items: page.items.iter().map(approval).collect(),
             next_cursor: self.continuation(page.next.as_ref(), &binding)?,
         })
-    }
-}
-
-impl SessionsApi for Routes {
-    async fn session_clone(
-        &self,
-        _cx: &WireContext,
-        _session_id: SessionId,
-        _body: models::SessionCloneRequest,
-    ) -> WireResult<Accepted> {
-        Err(not_served(RouteId::SessionClone))
-    }
-
-    async fn session_create(
-        &self,
-        _cx: &WireContext,
-        _body: models::SessionCreateRequest,
-    ) -> WireResult<Created<models::Session>> {
-        Err(not_served(RouteId::SessionCreate))
-    }
-
-    async fn session_credential_rebind(
-        &self,
-        _cx: &WireContext,
-        _session_id: SessionId,
-        _body: models::SessionCredentialRebindRequest,
-    ) -> WireResult<Accepted> {
-        Err(not_served(RouteId::SessionCredentialRebind))
-    }
-
-    async fn session_get(
-        &self,
-        _cx: &WireContext,
-        _session_id: SessionId,
-    ) -> WireResult<WithETag<models::Session>> {
-        Err(not_served(RouteId::SessionGet))
-    }
-
-    async fn session_message_send(
-        &self,
-        _cx: &WireContext,
-        _session_id: SessionId,
-        _body: models::MessageSendRequest,
-    ) -> WireResult<Created<models::MessageSendResult>> {
-        Err(not_served(RouteId::SessionMessageSend))
-    }
-
-    async fn session_messages_list(
-        &self,
-        _cx: &WireContext,
-        _session_id: SessionId,
-        _query: models::SessionMessagesListQuery,
-    ) -> WireResult<models::MessagePage> {
-        Err(not_served(RouteId::SessionMessagesList))
-    }
-
-    async fn session_persist(
-        &self,
-        _cx: &WireContext,
-        _session_id: SessionId,
-        _body: models::SessionPersistRequest,
-    ) -> WireResult<Accepted> {
-        Err(not_served(RouteId::SessionPersist))
-    }
-
-    async fn session_purge(
-        &self,
-        _cx: &WireContext,
-        _session_id: SessionId,
-        _body: models::SessionPurgeRequest,
-    ) -> WireResult<Accepted> {
-        Err(not_served(RouteId::SessionPurge))
-    }
-
-    async fn session_restore(
-        &self,
-        _cx: &WireContext,
-        _session_id: SessionId,
-        _body: models::EmptyRequest,
-    ) -> WireResult<Accepted> {
-        Err(not_served(RouteId::SessionRestore))
-    }
-
-    async fn session_run_get(
-        &self,
-        _cx: &WireContext,
-        session_id: SessionId,
-        run_id: RunId,
-    ) -> WireResult<models::Run> {
-        match self
-            .shared
-            .sessions
-            .load_run(self.cx.auth.workspace_id, session_id, run_id)
-            .await
-            .map_err(|error| authority_failure(&error))?
-        {
-            SessionScoped::Missing | SessionScoped::Active(None) => {
-                Err(WireError::new(ErrorCode::NotFound))
-            }
-            SessionScoped::Deleted => Err(WireError::new(ErrorCode::SessionDeleted)),
-            SessionScoped::Active(Some(run)) => Ok(projection::session_run(&run)),
-        }
-    }
-
-    async fn session_runs_list(
-        &self,
-        _cx: &WireContext,
-        session_id: SessionId,
-        query: models::SessionRunsListQuery,
-    ) -> WireResult<models::RunPage> {
-        let budget = budget(query.limit)?;
-        let (after, expected_deletion_epoch) = self
-            .resume_session_collection(
-                RouteId::SessionRunsList,
-                "session.runs",
-                session_id,
-                query.cursor.as_ref(),
-            )
-            .await?;
-        let page = match self
-            .shared
-            .sessions
-            .page_runs(
-                self.cx.auth.workspace_id,
-                session_id,
-                expected_deletion_epoch,
-                budget,
-                after.as_ref(),
-            )
-            .await
-            .map_err(|error| authority_failure(&error))?
-        {
-            SessionScoped::Missing => return Err(WireError::new(ErrorCode::NotFound)),
-            SessionScoped::Deleted => return Err(WireError::new(ErrorCode::SessionDeleted)),
-            SessionScoped::Active(page) => page,
-        };
-        let binding = self.cursor_binding_for_session_epoch(
-            RouteId::SessionRunsList,
-            "session.runs",
-            session_id,
-            page.deletion_epoch,
-        )?;
-        if query.cursor.is_some() {
-            self.resume(query.cursor.as_ref(), &binding)?;
-        }
-        let next = self.continuation(page.next.as_ref(), &binding)?;
-        Ok(projection::session_run_page(&page.items, next))
-    }
-
-    async fn session_stop(
-        &self,
-        _cx: &WireContext,
-        _session_id: SessionId,
-        _body: models::EmptyRequest,
-    ) -> WireResult<Accepted> {
-        Err(not_served(RouteId::SessionStop))
-    }
-
-    async fn session_trash(
-        &self,
-        _cx: &WireContext,
-        _session_id: SessionId,
-        _body: models::EmptyRequest,
-    ) -> WireResult<Accepted> {
-        Err(not_served(RouteId::SessionTrash))
-    }
-
-    async fn session_workspace_discard(
-        &self,
-        _cx: &WireContext,
-        _session_id: SessionId,
-        _body: models::SessionWorkspaceDiscardRequest,
-    ) -> WireResult<Accepted> {
-        Err(not_served(RouteId::SessionWorkspaceDiscard))
-    }
-
-    async fn sessions_list(
-        &self,
-        _cx: &WireContext,
-        _query: models::SessionsListQuery,
-    ) -> WireResult<models::SessionListPage> {
-        Err(not_served(RouteId::SessionsList))
     }
 }
 
@@ -1217,7 +958,6 @@ impl UnaryDispatch for Routes {
             "operations" => dispatch_regional_operations(self, &wire, raw, limits).await?,
             "registry" => dispatch_registry(self, &wire, raw, limits).await?,
             "approvals" => dispatch_approvals(self, &wire, raw, limits).await?,
-            "sessions" => dispatch_sessions(self, &wire, raw, limits).await?,
             _ => return Err(not_served(raw.route)),
         };
         match outcome {

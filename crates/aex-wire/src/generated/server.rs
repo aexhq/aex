@@ -3,7 +3,7 @@
 //! The server traits and the total dispatch surface, one group per authoring fragment.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:5f927d858c412e8f9e20404b8564015430127f926b3b725e2d11777d37d563c4`.
+//! `sha256:1186e3b9ca9d4778ac1fea9788954f5bbfd78a2e88749cd41e198288d1206c18`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -3124,7 +3124,7 @@ pub async fn dispatch_sessions<A: SessionsApi + ?Sized>(
             let session_id = path_param::<SessionId>(&raw, "sessionId")?;
             let query = SessionMessagesListQuery {
                 cursor: reader.optional("cursor")?,
-                limit: reader.optional_bounded("limit", 1, 100)?,
+                limit: reader.optional_bounded("limit", 1, 1000)?,
             };
             expect_no_body(&raw)?;
             let handled = api.session_messages_list(cx, session_id, query);
@@ -3164,7 +3164,7 @@ pub async fn dispatch_sessions<A: SessionsApi + ?Sized>(
             let session_id = path_param::<SessionId>(&raw, "sessionId")?;
             let query = SessionRunsListQuery {
                 cursor: reader.optional("cursor")?,
-                limit: reader.optional_bounded("limit", 1, 100)?,
+                limit: reader.optional_bounded("limit", 1, 1000)?,
             };
             expect_no_body(&raw)?;
             let handled = api.session_runs_list(cx, session_id, query);
@@ -3195,7 +3195,7 @@ pub async fn dispatch_sessions<A: SessionsApi + ?Sized>(
         RouteId::SessionsList => {
             let query = SessionsListQuery {
                 cursor: reader.optional("cursor")?,
-                limit: reader.optional_bounded("limit", 1, 100)?,
+                limit: reader.optional_bounded("limit", 1, 1000)?,
                 status: reader.optional("status")?,
             };
             expect_no_body(&raw)?;

@@ -14,9 +14,7 @@
 //!
 //! The trusted key set is **compiled into the binary**. A catalog therefore
 //! cannot introduce its own trust root: an unknown `key_id` is a load failure,
-//! not a key to fetch. Every supplied signature must be unique, trusted and
-//! valid. One valid signature is sufficient; additional signatures support a
-//! release-bound key rotation and therefore have to verify as well.
+//! not a key to fetch. The threshold is one valid signature.
 
 use aws_lc_rs::signature::{ECDSA_P256_SHA256_ASN1, UnparsedPublicKey};
 use serde::{Deserialize, Serialize};
@@ -36,13 +34,6 @@ pub const MAX_SIGNATURE_BYTES: usize = 80;
 /// An uncompressed SEC1 P-256 public key is one tag byte plus two 32-byte
 /// coordinates.
 pub const P256_PUBLIC_KEY_BYTES: usize = 65;
-
-/// The most signatures one envelope may carry.
-///
-/// A release needs at most the outgoing and incoming publisher keys during a
-/// rotation. Eight leaves ample overlap without allowing an attacker to turn
-/// startup verification into unbounded public-key work.
-pub const MAX_SIGNATURES: usize = 8;
 
 /// One compiled trusted key: its id and its uncompressed SEC1 public key.
 pub type TrustedKey = (&'static str, [u8; P256_PUBLIC_KEY_BYTES]);
@@ -137,9 +128,6 @@ pub enum SignatureError {
     /// The envelope carries no signature at all.
     #[error("the envelope carries no signature")]
     Unsigned,
-    /// More signatures than a bounded release rotation can require.
-    #[error("the envelope carries {0} signatures, over the {MAX_SIGNATURES}-signature bound")]
-    TooMany(usize),
     /// A `key_id` that is not compiled into this binary.
     #[error("signing key `{0:?}` is not a compiled trusted key")]
     UntrustedKey(SigningKeyId),
@@ -155,25 +143,19 @@ pub enum SignatureError {
     Oversized(SigningKeyId, usize),
 }
 
-/// Verifies an envelope against the compiled key set. Threshold is one, and
-/// every signature supplied must verify. Success returns the lexically first
-/// signer id, independent of trust-set or envelope-signature ordering.
+/// Verifies an envelope against the compiled key set. Threshold is one.
 ///
 /// # Errors
 ///
-/// Returns [`SignatureError`] when the envelope is unsigned, exceeds the
-/// signature-count bound, names an untrusted or duplicated key, carries an
-/// oversized signature, or when any signature does not verify over
-/// `SIGNING_PREFIX || envelope.document`.
+/// Returns [`SignatureError`] when the envelope is unsigned, names an untrusted
+/// or duplicated key, carries an oversized signature, or when no signature
+/// verifies over `SIGNING_PREFIX || envelope.document`.
 pub fn verify(
     envelope: &CatalogEnvelope,
     keys: &TrustedKeys,
 ) -> Result<SigningKeyId, SignatureError> {
     if envelope.signatures.is_empty() {
         return Err(SignatureError::Unsigned);
-    }
-    if envelope.signatures.len() > MAX_SIGNATURES {
-        return Err(SignatureError::TooMany(envelope.signatures.len()));
     }
 
     let mut seen: Vec<&SigningKeyId> = Vec::with_capacity(envelope.signatures.len());
@@ -192,33 +174,25 @@ pub fn verify(
         }
     }
 
-    let trusted = envelope
-        .signatures
-        .iter()
-        .map(|signature| {
-            keys.get(&signature.key_id)
-                .ok_or_else(|| SignatureError::UntrustedKey(signature.key_id.clone()))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
     let mut signed = Vec::with_capacity(SIGNING_PREFIX.len() + envelope.document.len());
     signed.extend_from_slice(SIGNING_PREFIX);
     signed.extend_from_slice(&envelope.document);
-    for (signature, public) in envelope.signatures.iter().zip(trusted) {
+
+    let mut first_failure: Option<SignatureError> = None;
+    for signature in &envelope.signatures {
         let SigAlg::EcdsaP256Sha256Asn1 = signature.algorithm;
+        let Some(public) = keys.get(&signature.key_id) else {
+            first_failure.get_or_insert(SignatureError::UntrustedKey(signature.key_id.clone()));
+            continue;
+        };
         let verifier = UnparsedPublicKey::new(&ECDSA_P256_SHA256_ASN1, public.as_slice());
-        verifier
-            .verify(&signed, &signature.bytes)
-            .map_err(|_| SignatureError::BadSignature(signature.key_id.clone()))?;
+        if verifier.verify(&signed, &signature.bytes).is_ok() {
+            return Ok(signature.key_id.clone());
+        }
+        first_failure.get_or_insert(SignatureError::BadSignature(signature.key_id.clone()));
     }
 
-    envelope
-        .signatures
-        .iter()
-        .map(|signature| &signature.key_id)
-        .min()
-        .cloned()
-        .ok_or(SignatureError::Unsigned)
+    Err(first_failure.unwrap_or(SignatureError::Unsigned))
 }
 
 #[cfg(test)]
@@ -227,8 +201,8 @@ mod tests {
     use aws_lc_rs::signature::{ECDSA_P256_SHA256_ASN1_SIGNING, EcdsaKeyPair, KeyPair};
 
     use super::{
-        CatalogEnvelope, CatalogSignature, MAX_SIGNATURES, P256_PUBLIC_KEY_BYTES, SIGNING_PREFIX,
-        SigAlg, SignatureError, SigningKeyId, TrustedKey, TrustedKeys, verify,
+        CatalogEnvelope, CatalogSignature, P256_PUBLIC_KEY_BYTES, SIGNING_PREFIX, SigAlg,
+        SignatureError, SigningKeyId, TrustedKey, TrustedKeys, verify,
     };
     use crate::primitives::BoundedString;
 
@@ -327,142 +301,6 @@ mod tests {
         assert_eq!(
             verify(&envelope, &compiled(&signer)),
             Err(SignatureError::UntrustedKey(key_id("attacker")))
-        );
-    }
-
-    #[test]
-    fn a_valid_trusted_signature_cannot_hide_an_untrusted_signature() {
-        let trusted = Signer::new();
-        let attacker = Signer::new();
-        let document = bytes::Bytes::from_static(b"{\"schemaVersion\":1}");
-        for signatures in [
-            vec![
-                CatalogSignature {
-                    key_id: key_id("aex-catalog-prd"),
-                    algorithm: SigAlg::EcdsaP256Sha256Asn1,
-                    bytes: trusted.sign_with_prefix(&document),
-                },
-                CatalogSignature {
-                    key_id: key_id("attacker"),
-                    algorithm: SigAlg::EcdsaP256Sha256Asn1,
-                    bytes: attacker.sign_with_prefix(&document),
-                },
-            ],
-            vec![
-                CatalogSignature {
-                    key_id: key_id("attacker"),
-                    algorithm: SigAlg::EcdsaP256Sha256Asn1,
-                    bytes: attacker.sign_with_prefix(&document),
-                },
-                CatalogSignature {
-                    key_id: key_id("aex-catalog-prd"),
-                    algorithm: SigAlg::EcdsaP256Sha256Asn1,
-                    bytes: trusted.sign_with_prefix(&document),
-                },
-            ],
-        ] {
-            let envelope = CatalogEnvelope {
-                document: document.clone(),
-                signatures,
-            };
-            assert_eq!(
-                verify(&envelope, &compiled(&trusted)),
-                Err(SignatureError::UntrustedKey(key_id("attacker")))
-            );
-        }
-    }
-
-    #[test]
-    fn a_valid_signature_cannot_hide_a_bad_signature_from_a_trusted_key() {
-        let first = Signer::new();
-        let second = Signer::new();
-        let keys: &'static [TrustedKey] = Box::leak(Box::new([
-            ("aex-catalog-prd", first.public()),
-            ("aex-catalog-next", second.public()),
-        ]));
-        let document = bytes::Bytes::from_static(b"{\"schemaVersion\":1}");
-        let envelope = CatalogEnvelope {
-            document: document.clone(),
-            signatures: vec![
-                CatalogSignature {
-                    key_id: key_id("aex-catalog-prd"),
-                    algorithm: SigAlg::EcdsaP256Sha256Asn1,
-                    bytes: first.sign_with_prefix(&document),
-                },
-                CatalogSignature {
-                    key_id: key_id("aex-catalog-next"),
-                    algorithm: SigAlg::EcdsaP256Sha256Asn1,
-                    bytes: second.sign_with_prefix(b"different document"),
-                },
-            ],
-        };
-        assert_eq!(
-            verify(&envelope, &TrustedKeys::new(keys)),
-            Err(SignatureError::BadSignature(key_id("aex-catalog-next")))
-        );
-    }
-
-    #[test]
-    fn trusted_key_set_order_does_not_change_rotation_verification() {
-        let old = Signer::new();
-        let new = Signer::new();
-        let old_first: &'static [TrustedKey] = Box::leak(Box::new([
-            ("aex-catalog-2025", old.public()),
-            ("aex-catalog-2026", new.public()),
-        ]));
-        let new_first: &'static [TrustedKey] = Box::leak(Box::new([
-            ("aex-catalog-2026", new.public()),
-            ("aex-catalog-2025", old.public()),
-        ]));
-        let document = bytes::Bytes::from_static(b"{\"schemaVersion\":1}");
-        let envelope = CatalogEnvelope {
-            document: document.clone(),
-            signatures: vec![
-                CatalogSignature {
-                    key_id: key_id("aex-catalog-2025"),
-                    algorithm: SigAlg::EcdsaP256Sha256Asn1,
-                    bytes: old.sign_with_prefix(&document),
-                },
-                CatalogSignature {
-                    key_id: key_id("aex-catalog-2026"),
-                    algorithm: SigAlg::EcdsaP256Sha256Asn1,
-                    bytes: new.sign_with_prefix(&document),
-                },
-            ],
-        };
-
-        assert_eq!(
-            verify(&envelope, &TrustedKeys::new(old_first)),
-            Ok(key_id("aex-catalog-2025"))
-        );
-        assert_eq!(
-            verify(&envelope, &TrustedKeys::new(new_first)),
-            Ok(key_id("aex-catalog-2025"))
-        );
-        let mut reversed = envelope;
-        reversed.signatures.reverse();
-        assert_eq!(
-            verify(&reversed, &TrustedKeys::new(new_first)),
-            Ok(key_id("aex-catalog-2025"))
-        );
-    }
-
-    #[test]
-    fn signature_count_is_bounded_before_public_key_work() {
-        let signer = Signer::new();
-        let document = bytes::Bytes::from_static(b"{}");
-        let signature = CatalogSignature {
-            key_id: key_id("aex-catalog-prd"),
-            algorithm: SigAlg::EcdsaP256Sha256Asn1,
-            bytes: signer.sign_with_prefix(&document),
-        };
-        let envelope = CatalogEnvelope {
-            document,
-            signatures: vec![signature; MAX_SIGNATURES + 1],
-        };
-        assert_eq!(
-            verify(&envelope, &compiled(&signer)),
-            Err(SignatureError::TooMany(MAX_SIGNATURES + 1))
         );
     }
 

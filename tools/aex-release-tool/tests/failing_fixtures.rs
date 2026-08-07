@@ -10,9 +10,7 @@ use std::collections::BTreeMap;
 
 use aex_release_tool::admit::{AdmissionInputs, OperationalReadiness, Plane, admit};
 use aex_release_tool::artifact::ArtifactEnvelope;
-use aex_release_tool::evidence::{
-    DeclaredProducers, FreshnessPolicy, ProducerInstance, Receipt, aggregate,
-};
+use aex_release_tool::evidence::{DeclaredJobs, FreshnessPolicy, Receipt, aggregate};
 use aex_release_tool::graph::inputs::GraphInputs;
 use aex_release_tool::graph::select::{Lane, Mode, select};
 use aex_release_tool::graph::verify;
@@ -65,30 +63,10 @@ fn receipt(class: &str) -> Receipt {
     let mut value = valid_receipt();
     value["class"] = serde_json::json!(class);
     value["receiptId"] = serde_json::json!(format!("rc_{class}"));
-    let artifact_subject_digest = if class == "arch-qualification" {
-        let envelope: ArtifactEnvelope = serde_json::from_value(valid_envelope()).unwrap();
-        envelope.seal().unwrap().artifact_subject_digest
-    } else {
-        digest(1)
-    };
     value["subject"] = serde_json::json!({
-        "artifactSubjectDigest": artifact_subject_digest,
+        "artifactEnvelopeDigest": digest(1),
         "unitIds": [UNIT]
     });
-    if class == "arch-qualification" {
-        value["architectureQualification"] = serde_json::json!({
-            "artifactDigest": digest(5),
-            "target": "aarch64",
-            "hostIdentity": "arm64-test-host",
-            "executorIdentity": "arm64-test-executor",
-            "executorKind": "emulated",
-            "bootstrapResult": "passed",
-            "dependencyLoaderResult": "passed",
-            "observedAt": "2026-08-01T00:00:00Z",
-            "expiresAt": "2026-08-08T00:00:00Z",
-            "workloadSmokes": [{"id": "bootstrap-start", "result": "passed"}]
-        });
-    }
     serde_json::from_value::<Receipt>(value)
         .unwrap()
         .seal()
@@ -157,6 +135,16 @@ fn skipped_test_exits_41() {
     assert_eq!(err.exit.code(), 41, "{err}");
 }
 
+/// `retry-to-green/` — a second attempt with no preserved first failure.
+#[test]
+fn retry_to_green_exits_41() {
+    let mut receipt = receipt("unit");
+    receipt.source.run_attempt = 2;
+    let err = receipt.verify().unwrap_err();
+    assert_eq!(err.exit.code(), 41, "{err}");
+    assert!(err.rules().contains(&"flake-first-failure-lost"));
+}
+
 /// `stale-evidence/` — a release-bound receipt older than its class permits.
 #[test]
 fn stale_evidence_exits_42() {
@@ -217,7 +205,6 @@ fn unsigned_manifest_exits_43() {
         receipt("sbom"),
         receipt("license"),
         receipt("vulnerability"),
-        receipt("arch-qualification"),
     ];
     let err = run_admit(&receipts, None, Plane::Prd, &manifest()).unwrap_err();
     assert_eq!(err.exit.code(), 43, "{err}");
@@ -257,7 +244,7 @@ fn mutable_tag_exits_31() {
 #[test]
 fn an_environment_identity_exits_31() {
     let mut value = valid_manifest();
-    value["units"][UNIT]["location"]["uri"] =
+    value["infra"]["sourceArchiveUri"] =
         serde_json::json!("arn:aws:s3:::aex-prd-artifacts/modules.tar.gz");
     let manifest = serde_json::from_value::<CompositionManifest>(value)
         .unwrap()
@@ -349,15 +336,10 @@ fn missing_scenario_owner_exits_10() {
 /// green skipped required job.
 #[test]
 fn empty_matrix_silent_pass_exits_40() {
-    let declared = DeclaredProducers {
-        schema: "aex.declared-producers.v1".to_owned(),
+    let declared = DeclaredJobs {
+        schema: "aex.declared-jobs.v1".to_owned(),
         lane: "pr".to_owned(),
-        producers: vec![ProducerInstance {
-            job_name: "rust".to_owned(),
-            package: "aex-wire".to_owned(),
-            partition: None,
-            class: "unit".to_owned(),
-        }],
+        jobs: vec!["route".to_owned(), "rust".to_owned()],
     };
     let err = aggregate(&[], &declared).unwrap_err();
     assert_eq!(err.exit.code(), 40, "{err}");
@@ -401,7 +383,6 @@ fn head_mismatch_exits_32() {
         receipt("sbom"),
         receipt("license"),
         receipt("vulnerability"),
-        receipt("arch-qualification"),
     ];
     let err = run_admit(&receipts, None, Plane::Dev, &manifest).unwrap_err();
     assert_eq!(err.exit.code(), 32, "{err}");
@@ -454,6 +435,7 @@ fn the_deliberate_failure_table_covers_every_declared_entry() {
     let entries = [
         "missing-receipt",
         "skipped-test",
+        "retry-to-green",
         "stale-evidence",
         "stale-graph-edge",
         "altered-artifact",
@@ -467,6 +449,6 @@ fn the_deliberate_failure_table_covers_every_declared_entry() {
         "head-mismatch",
         "nonmonotone-selector",
     ];
-    assert_eq!(entries.len(), 14);
+    assert_eq!(entries.len(), 15);
     let _ = SOUND_SCENARIOS;
 }

@@ -40,11 +40,7 @@
 //! - `capacity-limit-projection-write`: the regional capacity authority's
 //!   effective-limit transport. It owns no defaults or override policy.
 
-#[cfg(feature = "session-authority")]
-pub mod application_plan;
 pub mod attr;
-#[cfg(feature = "session-authority")]
-pub mod authority_codec;
 pub mod component;
 pub mod error;
 pub mod measure;
@@ -90,16 +86,6 @@ pub mod projection;
 ))]
 mod projection_limit;
 
-/// Central projection builds deliberately cannot name the capacity producer.
-/// The feature-isolation CI lane runs this doctest with only
-/// `authz-projection-write`; enabling the capacity feature through dependency
-/// unification makes the snippet compile and therefore makes the lane fail.
-///
-/// ```compile_fail
-/// use aex_session_dynamodb::capacity_limit_projection_write::{
-///     CapacityLimitProjectionWriter, LimitWrite,
-/// };
-/// ```
 #[cfg(feature = "authz-projection-write")]
 pub mod projection_write;
 

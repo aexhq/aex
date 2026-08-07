@@ -7,6 +7,8 @@
 
 use aex_wire::error::ErrorCode;
 
+use crate::wire_pending::PendingErrorCode;
+
 /// Which OTLP signal a request carried.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum OtlpSignal {
@@ -60,6 +62,35 @@ impl RecordPointer {
     #[must_use]
     pub fn to_path(self) -> String {
         format!("/{}/{}/{}", self.resource, self.scope, self.record)
+    }
+}
+
+/// Either a registered public error code or one the contracts stream still owes.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum AdmissionCode {
+    /// A code the generated wire already carries.
+    Registered(ErrorCode),
+    /// A code the observation stream needs and contracts has not registered.
+    Pending(PendingErrorCode),
+}
+
+impl AdmissionCode {
+    /// The wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Registered(code) => code.as_str(),
+            Self::Pending(code) => code.as_str(),
+        }
+    }
+
+    /// The HTTP status.
+    #[must_use]
+    pub const fn status(self) -> u16 {
+        match self {
+            Self::Registered(code) => code.http_status(),
+            Self::Pending(code) => code.status(),
+        }
     }
 }
 
@@ -173,23 +204,25 @@ pub enum OtlpError {
 impl OtlpError {
     /// The public error code this failure maps to.
     #[must_use]
-    pub const fn code(&self) -> ErrorCode {
+    pub const fn code(&self) -> AdmissionCode {
         match self {
             Self::EncodedTooLarge { .. }
             | Self::DecodedTooLarge { .. }
-            | Self::RatioExceeded { .. } => ErrorCode::TelemetryPayloadTooLarge,
+            | Self::RatioExceeded { .. } => {
+                AdmissionCode::Registered(ErrorCode::TelemetryPayloadTooLarge)
+            }
             Self::UnsupportedCoding { .. } | Self::UnsupportedContentType { .. } => {
-                ErrorCode::UnsupportedMediaType
+                AdmissionCode::Pending(PendingErrorCode::UnsupportedMediaType)
             }
             Self::MemoryUnavailable { .. } | Self::RedactionBudgetExhausted { .. } => {
-                ErrorCode::ObservabilityUnavailable
+                AdmissionCode::Registered(ErrorCode::ObservabilityUnavailable)
             }
             Self::Malformed { .. }
             | Self::UnknownField { .. }
             | Self::TooManyRecords { .. }
             | Self::RecordBound { .. }
             | Self::ReservedAttribute { .. }
-            | Self::ScopeHierarchy { .. } => ErrorCode::InvalidTelemetry,
+            | Self::ScopeHierarchy { .. } => AdmissionCode::Registered(ErrorCode::InvalidTelemetry),
         }
     }
 
@@ -205,7 +238,7 @@ impl OtlpError {
 
 #[cfg(test)]
 mod tests {
-    use super::{OtlpError, OtlpSignal, RecordPointer};
+    use super::{AdmissionCode, OtlpError, OtlpSignal, RecordPointer};
     use aex_wire::error::ErrorCode;
 
     #[test]
@@ -214,21 +247,24 @@ mod tests {
             observed: 1,
             limit: 0,
         };
-        assert_eq!(too_large.code(), ErrorCode::TelemetryPayloadTooLarge);
-        assert_eq!(too_large.code().http_status(), 413);
+        assert_eq!(
+            too_large.code(),
+            AdmissionCode::Registered(ErrorCode::TelemetryPayloadTooLarge)
+        );
+        assert_eq!(too_large.code().status(), 413);
         assert!(!too_large.retryable());
 
         let unavailable = OtlpError::MemoryUnavailable { requested: 8 };
-        assert_eq!(unavailable.code().http_status(), 503);
+        assert_eq!(unavailable.code().status(), 503);
         assert!(unavailable.retryable());
     }
 
     #[test]
-    fn an_unsupported_coding_is_the_registered_415() {
+    fn an_unsupported_coding_is_the_pending_415() {
         let error = OtlpError::UnsupportedCoding {
             coding: "br".into(),
         };
-        assert_eq!(error.code().http_status(), 415);
+        assert_eq!(error.code().status(), 415);
         assert_eq!(error.code().as_str(), "unsupported_media_type");
     }
 
