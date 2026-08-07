@@ -15,6 +15,8 @@
 //!   never retried blindly.
 
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use aex_observation_domain::canonical::{CanonicalValue, canonical_bytes, sha256_hex};
 use aex_observation_domain::frontier::DeletionState;
@@ -38,6 +40,25 @@ use crate::staging::{BodyPlacement, BodyStager, S3BodySink, STAGING_BYTE_BUDGET}
 
 /// How many observations one materialization write carries.
 pub const MATERIALIZE_CHUNK: usize = 25;
+
+/// How many materialization chunks one batch drives at once.
+///
+/// Inside the planned 4-8 window. The chunks were written serially, so a
+/// 2,000-record batch paid eighty sequential `BatchWriteItem` round trips;
+/// six holds the tail to a handful of waves without out-shouting the body
+/// staging that shares the client's connection pool. Replay safety is
+/// unchanged: every item is an idempotent full put of an immutable revision,
+/// so neither order nor interleaving is observable.
+const MATERIALIZE_CONCURRENCY: usize = 6;
+
+/// How long one successfully read gate state answers admissions from memory.
+///
+/// The gate dwells in a state for at least `OBS_GATE_HYSTERESIS_MS` (120 s) by
+/// construction, so a two-second cache is stale for under 2% of the shortest
+/// dwell while removing one strong point read from every admitted batch. Only
+/// a successful read is cached; a failed gate read must refuse the batch, not
+/// serve yesterday's answer.
+const GATE_CACHE_TTL: Duration = Duration::from_secs(2);
 
 /// How many accepted-frontier point reads one batch may hold open at once.
 ///
@@ -212,6 +233,9 @@ pub struct AdmissionAuthority {
     table: String,
     bucket: String,
     region: Region,
+    /// The last successfully read gate state, shared across clones so every
+    /// handler on one process reads through one window.
+    gate_cache: Arc<Mutex<Option<(GateState, Instant)>>>,
 }
 
 impl AdmissionAuthority {
@@ -230,6 +254,7 @@ impl AdmissionAuthority {
             table: table.into(),
             bucket: bucket.into(),
             region,
+            gate_cache: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -287,6 +312,33 @@ impl AdmissionAuthority {
             "degraded" => GateState::Degraded,
             _ => GateState::Open,
         })
+    }
+
+    /// The gate, through the process-local [`GATE_CACHE_TTL`] window.
+    ///
+    /// Successes only: a read failure propagates uncached, because "the gate
+    /// could not be read" is itself a reason to refuse admission and must not
+    /// be papered over by an earlier answer. The reconciler holds the gate in
+    /// any state for at least `OBS_GATE_HYSTERESIS_MS`, so the staleness this
+    /// admits is a fraction of the shortest legal dwell.
+    async fn ingress_gate_cached(&self) -> Result<GateState, AuthorityError> {
+        {
+            let cached = self
+                .gate_cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some((state, read_at)) = *cached
+                && read_at.elapsed() < GATE_CACHE_TTL
+            {
+                return Ok(state);
+            }
+        }
+        let state = self.ingress_gate().await?;
+        *self
+            .gate_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((state, Instant::now()));
+        Ok(state)
     }
 
     /// Reads the scope's deletion epoch, refusing a fenced scope.
@@ -350,10 +402,19 @@ impl AdmissionAuthority {
         request: &AdmissionRequest,
         now: Timestamp,
     ) -> Result<AdmissionReceipt, AuthorityError> {
-        if self.ingress_gate().await?.refuses_customer_admission() {
+        // The gate answer is process-cached; the deletion fence is read fresh
+        // for every batch and pinned into transaction C's `ConditionCheck`, so
+        // the concurrency here trades no correctness. The gate result is
+        // evaluated first so a batch that is both fenced and gated reports the
+        // gate, exactly as the serial sequence did.
+        let (gate, pinned_epoch) = futures::join!(
+            self.ingress_gate_cached(),
+            self.deletion_epoch(&request.scope),
+        );
+        if gate?.refuses_customer_admission() {
             return Err(AuthorityError::GateClosed { state: "closed" });
         }
-        let pinned_epoch = self.deletion_epoch(&request.scope).await?;
+        let pinned_epoch = pinned_epoch?;
 
         let mut signals = SignalSet::EMPTY;
         let mut staged = Vec::with_capacity(request.observations.len());
@@ -932,30 +993,44 @@ impl AdmissionAuthority {
         self.batch_write(writes).await
     }
 
-    /// Writes a bounded batch, retrying only the unprocessed remainder.
+    /// Writes a bounded batch as concurrent waves of bounded chunks.
+    ///
+    /// The chunk futures are built before the first is polled, then driven
+    /// through the same bounded-ordered helper the body staging uses, at
+    /// [`MATERIALIZE_CONCURRENCY`]. The failure a caller sees is the earliest
+    /// failing chunk by batch position, and a failure cancels what is still
+    /// open — safe, because every write is an idempotent put of an immutable
+    /// revision and the whole step replays from the committed receipt.
     async fn batch_write(&self, writes: Vec<WriteRequest>) -> Result<(), AuthorityError> {
-        for chunk in writes.chunks(MATERIALIZE_CHUNK) {
-            let mut pending: Vec<WriteRequest> = chunk.to_vec();
-            let mut attempts = 0u32;
-            while !pending.is_empty() {
-                let response = self
-                    .dynamodb
-                    .batch_write_item()
-                    .request_items(self.table.clone(), pending.clone())
-                    .send()
-                    .await
-                    .map_err(|error| AuthorityError::provider("BatchWriteItem", error))?;
-                pending = response
-                    .unprocessed_items()
-                    .and_then(|items| items.get(&self.table))
-                    .cloned()
-                    .unwrap_or_default();
-                attempts += 1;
-                if attempts > limits::OBS_SPOOL_MAX_ATTEMPTS {
-                    return Err(AuthorityError::Store(StoreError::Unavailable {
-                        reason: "BatchWriteItem never drained its unprocessed items".into(),
-                    }));
-                }
+        let waves: Vec<_> = writes
+            .chunks(MATERIALIZE_CHUNK)
+            .map(|chunk| self.write_chunk(chunk.to_vec()))
+            .collect();
+        crate::staging::settle_bounded_ordered(waves, MATERIALIZE_CONCURRENCY).await?;
+        Ok(())
+    }
+
+    /// Drives one chunk to durability, retrying only the unprocessed remainder.
+    async fn write_chunk(&self, mut pending: Vec<WriteRequest>) -> Result<(), AuthorityError> {
+        let mut attempts = 0u32;
+        while !pending.is_empty() {
+            let response = self
+                .dynamodb
+                .batch_write_item()
+                .request_items(self.table.clone(), pending)
+                .send()
+                .await
+                .map_err(|error| AuthorityError::provider("BatchWriteItem", error))?;
+            pending = response
+                .unprocessed_items()
+                .and_then(|items| items.get(&self.table))
+                .cloned()
+                .unwrap_or_default();
+            attempts += 1;
+            if attempts > limits::OBS_SPOOL_MAX_ATTEMPTS {
+                return Err(AuthorityError::Store(StoreError::Unavailable {
+                    reason: "BatchWriteItem never drained its unprocessed items".into(),
+                }));
             }
         }
         Ok(())
@@ -2045,6 +2120,178 @@ mod tests {
         assert_ne!(BODY_PREFIX, "content");
         assert_eq!(MATERIALIZE_CHUNK, 25);
         const { assert!(BUCKET_SHARDS >= 1) }
+    }
+
+    #[test]
+    fn materialization_concurrency_stays_inside_the_planned_window() {
+        const {
+            assert!(
+                super::MATERIALIZE_CONCURRENCY >= 4 && super::MATERIALIZE_CONCURRENCY <= 8,
+                "the plan allows four to eight concurrent materialization waves"
+            );
+        }
+    }
+
+    #[test]
+    fn the_gate_cache_is_a_fraction_of_the_shortest_gate_dwell() {
+        let ttl = i64::try_from(super::GATE_CACHE_TTL.as_millis()).expect("a small TTL");
+        assert!(
+            ttl * 10 <= aex_observation_domain::limits::OBS_GATE_HYSTERESIS_MS,
+            "a cached gate answer must be stale for at most a tenth of the \
+             shortest dwell the reconciler's hysteresis permits"
+        );
+    }
+
+    fn replay_authority(
+        responses: Vec<&str>,
+    ) -> (
+        super::AdmissionAuthority,
+        aws_smithy_http_client::test_util::StaticReplayClient,
+    ) {
+        use aws_smithy_http_client::test_util::{ReplayEvent, StaticReplayClient};
+        use aws_smithy_types::body::SdkBody;
+
+        let replay = StaticReplayClient::new(
+            responses
+                .into_iter()
+                .map(|body| {
+                    ReplayEvent::new(
+                        http::Request::builder()
+                            .method("POST")
+                            .uri("https://dynamodb.eu-west-1.amazonaws.com/")
+                            .body(SdkBody::empty())
+                            .expect("a request"),
+                        http::Response::builder()
+                            .status(200)
+                            .body(SdkBody::from(body.to_owned()))
+                            .expect("a response"),
+                    )
+                })
+                .collect(),
+        );
+        let credentials = aws_sdk_dynamodb::config::Credentials::new(
+            "AKIDTESTTESTTESTTEST",
+            "test-secret",
+            None,
+            None,
+            "aex-tests",
+        );
+        let dynamodb = aws_sdk_dynamodb::Client::from_conf(
+            aws_sdk_dynamodb::config::Builder::new()
+                .behavior_version(aws_sdk_dynamodb::config::BehaviorVersion::latest())
+                .region(aws_sdk_dynamodb::config::Region::new("eu-west-1"))
+                .credentials_provider(credentials.clone())
+                .http_client(replay.clone())
+                .build(),
+        );
+        let s3 = aws_sdk_s3::Client::from_conf(
+            aws_sdk_s3::config::Builder::new()
+                .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+                .region(aws_sdk_s3::config::Region::new("eu-west-1"))
+                .credentials_provider(credentials)
+                .http_client(replay.clone())
+                .build(),
+        );
+        (
+            super::AdmissionAuthority::new(
+                dynamodb,
+                s3,
+                "observation-authority",
+                "observation-bodies",
+                aex_wire::types::Region::EuWest1,
+            ),
+            replay,
+        )
+    }
+
+    #[tokio::test]
+    async fn the_gate_answers_from_one_read_per_cache_window() {
+        let (authority, replay) = replay_authority(vec![
+            r#"{"Item":{"state":{"S":"closed"}}}"#,
+            r#"{"Item":{"state":{"S":"open"}}}"#,
+        ]);
+        let first = authority.ingress_gate_cached().await.expect("a gate read");
+        let second = authority.ingress_gate_cached().await.expect("a gate read");
+        assert_eq!(first, aex_observation_store_aws::spool::GateState::Closed);
+        assert_eq!(
+            second, first,
+            "inside the window the second admission reuses the first answer"
+        );
+        assert_eq!(
+            replay.actual_requests().count(),
+            1,
+            "one strong point read serves the whole window"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_gate_read_propagates_and_is_never_cached() {
+        use aws_smithy_http_client::test_util::{ReplayEvent, StaticReplayClient};
+        use aws_smithy_types::body::SdkBody;
+
+        let error = serde_json::json!({
+            "__type": "com.amazonaws.dynamodb.v20120810#InternalServerError",
+            "message": "fixture"
+        })
+        .to_string();
+        let replay = StaticReplayClient::new(
+            (0..2)
+                .map(|_| {
+                    ReplayEvent::new(
+                        http::Request::builder()
+                            .method("POST")
+                            .uri("https://dynamodb.eu-west-1.amazonaws.com/")
+                            .body(SdkBody::empty())
+                            .expect("a request"),
+                        http::Response::builder()
+                            .status(500)
+                            .body(SdkBody::from(error.clone()))
+                            .expect("a response"),
+                    )
+                })
+                .collect(),
+        );
+        let credentials = aws_sdk_dynamodb::config::Credentials::new(
+            "AKIDTESTTESTTESTTEST",
+            "test-secret",
+            None,
+            None,
+            "aex-tests",
+        );
+        let dynamodb = aws_sdk_dynamodb::Client::from_conf(
+            aws_sdk_dynamodb::config::Builder::new()
+                .behavior_version(aws_sdk_dynamodb::config::BehaviorVersion::latest())
+                .region(aws_sdk_dynamodb::config::Region::new("eu-west-1"))
+                .credentials_provider(credentials.clone())
+                .http_client(replay.clone())
+                .retry_config(aws_sdk_dynamodb::config::retry::RetryConfig::disabled())
+                .build(),
+        );
+        let s3 = aws_sdk_s3::Client::from_conf(
+            aws_sdk_s3::config::Builder::new()
+                .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+                .region(aws_sdk_s3::config::Region::new("eu-west-1"))
+                .credentials_provider(credentials)
+                .http_client(replay.clone())
+                .build(),
+        );
+        let authority = super::AdmissionAuthority::new(
+            dynamodb,
+            s3,
+            "observation-authority",
+            "observation-bodies",
+            aex_wire::types::Region::EuWest1,
+        );
+
+        authority
+            .ingress_gate_cached()
+            .await
+            .expect_err("a failed gate read refuses");
+        authority
+            .ingress_gate_cached()
+            .await
+            .expect_err("the failure was not cached; the gate is re-read");
+        assert_eq!(replay.actual_requests().count(), 2);
     }
 
     #[test]

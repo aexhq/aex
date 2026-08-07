@@ -6530,6 +6530,8 @@ dependencies = [
  "aws-sdk-s3",
  "aws-sdk-secretsmanager",
  "aws-sdk-ssm",
+ "aws-smithy-http-client",
+ "aws-smithy-types",
  "axum",
  "base64 0.23.0",
  "futures",
