@@ -20,10 +20,9 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::artifact::{
-    Adjacent, ArtifactEnvelope, BaseImage, BuildCommand, BuildPlan, Catalogs, Composition,
-    Identities, Inputs, Licenses, Location, MODEL_CATALOG_COLLECTION_SHA256_VAR, Media,
-    MigrationIdentity, Output, Provenance, ReceiptRef, Retention, Signature, Source,
-    TOOL_CATALOG_SHA256_VAR, Target, Toolchain, UnitIdentity, Vulnerabilities, Workflow,
+    Adjacent, ArtifactEnvelope, BaseImage, BuildCommand, BuildPlan, Composition, Identities,
+    Inputs, Licenses, Location, Media, MigrationIdentity, Output, Provenance, ReceiptRef,
+    Retention, Signature, Source, Target, Toolchain, UnitIdentity, Vulnerabilities, Workflow,
 };
 use crate::error::{Exit, Result, ToolError, io};
 use crate::graph::inputs::Unit;
@@ -378,14 +377,7 @@ fn build_envelope(
             config_schema_version: build.unit.config_schema_version,
             config_env_namespace: Some(build.unit.config_env_namespace.clone()),
             migration: migration_identity(&build.unit.id, &build.closure)?,
-            catalogs: (build.unit.id == "brain-mux").then(|| Catalogs {
-                model: build
-                    .plan
-                    .env
-                    .get(MODEL_CATALOG_COLLECTION_SHA256_VAR)
-                    .cloned(),
-                tool: build.plan.env.get(TOOL_CATALOG_SHA256_VAR).cloned(),
-            }),
+            catalogs: None,
         },
         composition: Composition {
             minimum: Vec::new(),
@@ -418,7 +410,6 @@ fn build_envelope(
             unapproved_high: 0,
             approved_exceptions: Vec::new(),
         },
-        supply_chain_deferred: false,
         provenance: Provenance {
             predicate_type: "https://slsa.dev/provenance/v1".to_owned(),
             bundle_digest: String::new(),

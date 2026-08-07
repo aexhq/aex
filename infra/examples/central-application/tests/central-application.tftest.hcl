@@ -7,14 +7,13 @@ mock_provider "aws" {
 }
 
 variables {
-  plane                           = "dev"
-  region                          = "eu-west-1"
-  permissions_boundary_policy_arn = "arn:aws:iam::000000000000:policy/aex-dev-application-boundary"
-  subnet_ids                      = ["subnet-0123456789abcdef0", "subnet-0123456789abcdef1"]
-  security_group_ids              = ["sg-0123456789abcdef0"]
-  kms_key_arn                     = "arn:aws:kms:eu-west-1:000000000000:key/00000000-0000-4000-8000-000000000000"
-  artifact_bucket                 = "aex-infra-artifacts-dev-0a1b2c3d"
-  schedule_group_name             = "aex-dev-central"
+  plane               = "dev"
+  region              = "eu-west-1"
+  subnet_ids          = ["subnet-0123456789abcdef0", "subnet-0123456789abcdef1"]
+  security_group_ids  = ["sg-0123456789abcdef0"]
+  kms_key_arn         = "arn:aws:kms:eu-west-1:000000000000:key/00000000-0000-4000-8000-000000000000"
+  artifact_bucket     = "aex-infra-artifacts-dev-0a1b2c3d"
+  schedule_group_name = "aex-dev-central"
 
   finance_api = {
     function_name           = "aex-dev-finance-api"
@@ -53,7 +52,6 @@ variables {
     image              = "000000000000.dkr.ecr.eu-west-1.amazonaws.com/aex/central-schema-admin@sha256:0000000000000000000000000000000000000000000000000000000000000000"
     cpu                = 1024
     memory             = 2048
-    stop_timeout       = 120
     log_group_name     = "/aex/dev/central-schema-admin"
     execution_role_arn = "arn:aws:iam::000000000000:role/aex-dev-ecs-execution"
     secret_env = {
@@ -128,6 +126,7 @@ run "the_central_application_plans" {
     condition     = length(module.role) == 2
     error_message = "One execution role must be created per deployable."
   }
+
 
   assert {
     condition     = jsondecode(module.role["finance-api"].inline_policy_json).Statement[1].Condition["ForAllValues:StringLike"]["dynamodb:LeadingKeys"] == ["EXPORT#*"]

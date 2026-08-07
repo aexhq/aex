@@ -48,7 +48,6 @@ time.workspace = true
 uuid.workspace = true
 aex-brain-application = { path = "../aex-brain-application" }
 aex-brain-domain = { path = "../aex-brain-domain" }
-aex-content-aws = { path = "../aex-content-aws" }
 # The shared regional store machinery: key templates, row codecs, item
 # measurement, the one transaction-plan compiler and the error vocabulary. Brain
 # calls these rather than forking the item shapes they own.

@@ -5,8 +5,7 @@ use std::sync::Arc;
 
 use aex_brain_application::ports::{
     BoxFuture, CancelToken, DetachedStatus, DispatchTicket, PreparedToolCall, ProviderFailureKind,
-    RedactedDetail, ToolAdvertisement, ToolDispatchError, ToolOutcome, ToolPort, ToolRoute,
-    ToolRoutingError,
+    RedactedDetail, ToolDispatchError, ToolOutcome, ToolPort, ToolRoute, ToolRoutingError,
 };
 use aex_brain_domain::effect::DetachedOperationRef;
 use aex_brain_domain::effect::{DispatchProof, DispatchStage};
@@ -14,22 +13,12 @@ use aex_brain_domain::ids::{
     CatalogPin, ContentHash, DetachedOperationId, Fence, ToolName as DomainToolName,
 };
 use aex_brain_domain::journal::ExecutorRoute as DomainExecutorRoute;
-use aex_model_catalog::BoundedString;
-use aex_model_catalog::canonical::CanonicalToolDef;
 
-use crate::manifest::{Determinism, EntryState, ToolManifestEntry};
-use crate::readiness::AdvertisedCatalog;
+use crate::manifest::{EntryState, ToolManifestEntry};
 use crate::wire_pending::ExecutorRoute;
 
 /// One executor linked into the mux composition.
 pub trait ToolExecutor: Send + Sync + 'static {
-    /// Whether this executor implements the exact installed tool.
-    ///
-    /// Composition checks this for every active catalog row before the router
-    /// can be published. A coarse route object is not readiness evidence for
-    /// tools it would only reject after a durable dispatch-started commit.
-    fn supports(&self, tool: &DomainToolName) -> bool;
-
     /// Invokes one already-routed call.
     fn invoke<'a>(
         &'a self,
@@ -58,16 +47,10 @@ struct InstalledRoute {
     admitted: bool,
 }
 
-#[derive(Debug, Clone)]
-struct InstalledCatalog {
-    routes: BTreeMap<DomainToolName, InstalledRoute>,
-    advertisement: ToolAdvertisement,
-}
-
 /// Immutable catalog routes plus exactly one executor per coarse Brain route.
 /// Runtime dispatch never discovers or re-routes a tool.
 pub struct CompositeToolRouter {
-    catalogs: BTreeMap<CatalogPin, InstalledCatalog>,
+    catalogs: BTreeMap<CatalogPin, BTreeMap<DomainToolName, InstalledRoute>>,
     executors: [Option<Arc<dyn ToolExecutor>>; 4],
 }
 
@@ -119,7 +102,6 @@ impl CompositeToolRouter {
         pin: CatalogPin,
         digest: ContentHash,
         entries: &[ToolManifestEntry],
-        advertised: &AdvertisedCatalog,
     ) -> Result<(), RouterBuildError> {
         let mut candidates = BTreeMap::new();
         for entry in entries {
@@ -130,22 +112,16 @@ impl CompositeToolRouter {
                 executor: coarse_route(entry.descriptor.route),
                 class: entry.descriptor.effect,
                 timeout_ms: entry.descriptor.bounds.timeout_ms,
-                concurrency_weight: entry.descriptor.bounds.concurrency_weight,
                 manifest_digest: digest,
             };
-            let admitted = advertised.contains(name.as_str());
-            if admitted
-                && !self.executors[executor_slot(route.executor)]
-                    .as_ref()
-                    .is_some_and(|executor| executor.supports(&name))
-            {
-                return Err(RouterBuildError::UnsupportedTool {
-                    name: name.as_str().to_owned(),
-                    route: route.executor,
-                });
-            }
             if candidates
-                .insert(name.clone(), InstalledRoute { route, admitted })
+                .insert(
+                    name.clone(),
+                    InstalledRoute {
+                        route,
+                        admitted: matches!(entry.state, EntryState::Active),
+                    },
+                )
                 .is_some()
             {
                 return Err(RouterBuildError::DuplicateTool {
@@ -153,51 +129,14 @@ impl CompositeToolRouter {
                 });
             }
         }
-        if self.catalogs.contains_key(&pin) {
-            return Err(RouterBuildError::DuplicateCatalog { pin });
+        if let Some(routes) = self.catalogs.get(&pin)
+            && let Some(name) = candidates.keys().find(|name| routes.contains_key(*name))
+        {
+            return Err(RouterBuildError::DuplicateTool {
+                name: name.as_str().to_owned(),
+            });
         }
-        for advertised_entry in &advertised.entries {
-            if !entries
-                .iter()
-                .any(|entry| entry == advertised_entry && matches!(entry.state, EntryState::Active))
-            {
-                return Err(RouterBuildError::AdvertisementMismatch {
-                    name: advertised_entry.descriptor.name.as_str().to_owned(),
-                });
-            }
-        }
-        let mut definitions = advertised
-            .entries
-            .iter()
-            .map(|entry| {
-                Ok(CanonicalToolDef {
-                    name: aex_wire::ids::ResourceName::parse(entry.descriptor.name.as_str())
-                        .map_err(|_| RouterBuildError::InvalidToolName)?,
-                    description: BoundedString::new(entry.descriptor.description.to_string())
-                        .map_err(|_| RouterBuildError::DescriptionTooLong {
-                            name: entry.descriptor.name.as_str().to_owned(),
-                        })?,
-                    input_schema: entry.descriptor.input_schema.clone(),
-                    strict: false,
-                })
-            })
-            .collect::<Result<Vec<_>, RouterBuildError>>()?;
-        definitions.sort_by(|left, right| left.name.cmp(&right.name));
-        let parallel_safe = advertised.entries.iter().all(|entry| {
-            entry.descriptor.effect == aex_brain_domain::effect::EffectClass::Pure
-                && entry.descriptor.determinism == Determinism::Deterministic
-                && entry.descriptor.bounds.concurrency_weight == 0
-        });
-        self.catalogs.insert(
-            pin,
-            InstalledCatalog {
-                routes: candidates,
-                advertisement: ToolAdvertisement {
-                    definitions,
-                    parallel_safe,
-                },
-            },
-        );
+        self.catalogs.entry(pin).or_default().extend(candidates);
         Ok(())
     }
 
@@ -220,13 +159,6 @@ impl CompositeToolRouter {
 }
 
 impl ToolPort for CompositeToolRouter {
-    fn advertise(&self, pin: &CatalogPin) -> Result<ToolAdvertisement, ToolRoutingError> {
-        self.catalogs
-            .get(pin)
-            .map(|catalog| catalog.advertisement.clone())
-            .ok_or(ToolRoutingError::UnknownPin { pin: *pin })
-    }
-
     fn route(
         &self,
         pin: &CatalogPin,
@@ -236,12 +168,9 @@ impl ToolPort for CompositeToolRouter {
             .catalogs
             .get(pin)
             .ok_or(ToolRoutingError::UnknownPin { pin: *pin })?;
-        let installed = catalog
-            .routes
-            .get(name)
-            .ok_or_else(|| ToolRoutingError::Unknown {
-                name: name.as_str().to_owned(),
-            })?;
+        let installed = catalog.get(name).ok_or_else(|| ToolRoutingError::Unknown {
+            name: name.as_str().to_owned(),
+        })?;
         if !installed.admitted {
             return Err(ToolRoutingError::NotAdmitted {
                 name: name.as_str().to_owned(),
@@ -363,35 +292,9 @@ pub enum RouterBuildError {
         /// Duplicate name.
         name: String,
     },
-    /// The same immutable model-catalog pin was installed twice.
-    #[error("catalog pin {pin} is already installed")]
-    DuplicateCatalog {
-        /// Duplicate pin.
-        pin: CatalogPin,
-    },
     /// A signed manifest carried a name outside the shared resource-name grammar.
     #[error("catalog contains a tool name outside the shared resource-name grammar")]
     InvalidToolName,
-    /// A model-visible description exceeded the provider-neutral bound.
-    #[error("tool `{name}` description exceeds the provider-neutral bound")]
-    DescriptionTooLong {
-        /// Tool whose description cannot be represented.
-        name: String,
-    },
-    /// Advertisement did not come from the exact full immutable manifest.
-    #[error("advertised tool `{name}` is not an Active row in the installed manifest")]
-    AdvertisementMismatch {
-        /// Provider-visible mismatched name.
-        name: String,
-    },
-    /// An active row has no executor that implements its exact behavior.
-    #[error("active tool `{name}` has no implementation on {route:?}")]
-    UnsupportedTool {
-        /// Tool that would otherwise be advertised.
-        name: String,
-        /// Coarse route whose executor lacks the tool.
-        route: DomainExecutorRoute,
-    },
 }
 
 #[cfg(test)]
@@ -409,16 +312,6 @@ mod tests {
 
     use super::{CompositeToolRouter, ToolExecutor};
     use crate::catalog::builtin_entries;
-    use crate::readiness::AdvertisedCatalog;
-
-    fn advertise_all(entries: &[crate::manifest::ToolManifestEntry]) -> AdvertisedCatalog {
-        let mut entries = entries.to_vec();
-        entries.sort_by(|left, right| left.descriptor.name.cmp(&right.descriptor.name));
-        AdvertisedCatalog {
-            entries,
-            digest: aex_wire::ids::ContentHash::of(b"test advertisement"),
-        }
-    }
 
     #[derive(Debug)]
     struct RecordingExecutor {
@@ -447,10 +340,6 @@ mod tests {
     }
 
     impl ToolExecutor for RecordingExecutor {
-        fn supports(&self, _tool: &ToolName) -> bool {
-            true
-        }
-
         fn invoke<'a>(
             &'a self,
             _ticket: &'a DispatchTicket,
@@ -513,20 +402,9 @@ mod tests {
         let digest = ContentHash([7; 32]);
         let pin = CatalogPin(Blake3Digest::of(b"model catalog"));
         let mut router = CompositeToolRouter::new();
-        for route in [
-            ExecutorRoute::BrainInline,
-            ExecutorRoute::ManagedWeb,
-            ExecutorRoute::Mcp,
-            ExecutorRoute::Hands,
-        ] {
-            router
-                .register_executor(route, Arc::new(RecordingExecutor::new(route)))
-                .expect("one executor per route");
-        }
         let entries = builtin_entries().expect("built-in fixture");
-        let advertised = advertise_all(&entries);
         router
-            .install_catalog(pin, digest, &entries, &advertised)
+            .install_catalog(pin, digest, &entries)
             .expect("catalog install");
         let name = ToolName::parse("web_fetch").expect("tool name");
         let route = router.route(&pin, &name).expect("active route");
@@ -538,68 +416,6 @@ mod tests {
                 &ToolName::parse("web_fetch").expect("tool name")
             ),
             Err(ToolRoutingError::UnknownPin { .. })
-        ));
-    }
-
-    #[test]
-    fn active_rows_require_exact_executor_coverage_before_install() {
-        #[derive(Debug)]
-        struct MissingTodoWrite;
-
-        impl ToolExecutor for MissingTodoWrite {
-            fn supports(&self, tool: &ToolName) -> bool {
-                tool.as_str() != "todo_write"
-            }
-
-            fn invoke<'a>(
-                &'a self,
-                _ticket: &'a DispatchTicket,
-                _call: &'a PreparedToolCall,
-                _cancel: &'a CancelToken,
-            ) -> BoxFuture<'a, Result<ToolOutcome, ToolDispatchError>> {
-                unreachable!("composition test")
-            }
-
-            fn query<'a>(
-                &'a self,
-                _operation: &'a DetachedOperationId,
-            ) -> BoxFuture<'a, Result<DetachedStatus, ToolDispatchError>> {
-                unreachable!("composition test")
-            }
-
-            fn cancel<'a>(
-                &'a self,
-                _operation: &'a DetachedOperationId,
-                _fence: Fence,
-            ) -> BoxFuture<'a, Result<(), ToolDispatchError>> {
-                unreachable!("composition test")
-            }
-        }
-
-        let mut router = CompositeToolRouter::new();
-        router
-            .register_executor(ExecutorRoute::BrainInline, Arc::new(MissingTodoWrite))
-            .expect("inline executor");
-        for route in [
-            ExecutorRoute::ManagedWeb,
-            ExecutorRoute::Mcp,
-            ExecutorRoute::Hands,
-        ] {
-            router
-                .register_executor(route, Arc::new(RecordingExecutor::new(route)))
-                .expect("one executor per route");
-        }
-        let entries = builtin_entries().expect("built-in fixture");
-        let advertised = advertise_all(&entries);
-        assert!(matches!(
-            router.install_catalog(
-                CatalogPin(Blake3Digest::of(b"model catalog")),
-                ContentHash::of(b"tool catalog"),
-                &entries,
-                &advertised,
-            ),
-            Err(super::RouterBuildError::UnsupportedTool { name, route })
-                if name == "todo_write" && route == ExecutorRoute::BrainInline
         ));
     }
 

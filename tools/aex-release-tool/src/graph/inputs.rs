@@ -209,13 +209,6 @@ pub struct Scenario {
     /// Exact test target declared by the package's `aex.targets` metadata.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
-    /// Why this scenario has no executable target yet.
-    ///
-    /// A deferral is architecture debt, never evidence. It is mutually
-    /// exclusive with `package`/`target`, is omitted from runnable matrices,
-    /// and remains visible in the graph summary.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub deferred: Option<String>,
     /// Whether this scenario may provision in `prd`, and under which rule.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prd: Option<PrdProvisioning>,

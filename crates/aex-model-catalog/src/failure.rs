@@ -123,7 +123,7 @@ pub enum ProviderFailureClass {
 /// Bounded provider failure detail that is safe to persist or log.
 ///
 /// This type is the single redacted failure vocabulary shared by the Brain
-/// port and all eight provider-authority adapters. It deliberately accepts only bounded
+/// port and all six provider adapters. It deliberately accepts only bounded
 /// strings; adapters must redact provider bytes before constructing it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

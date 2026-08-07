@@ -3,7 +3,7 @@
 //! The closed v1 public error vocabulary.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:5f927d858c412e8f9e20404b8564015430127f926b3b725e2d11777d37d563c4`.
+//! `sha256:27ff123b8074defd5769c3f7cbc70855d6ea869e1745cef8cb9d473cbd700054`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]

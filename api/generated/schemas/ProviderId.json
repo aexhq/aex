@@ -1,16 +1,14 @@
 {
   "$id": "https://schemas.aex.dev/v1/ProviderId.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "The eight customer-owned BYOK authorities. Gateway authorities use fixed endpoints; arbitrary base URLs are not accepted.",
+  "description": "The six direct BYOK providers. There is no gateway and no arbitrary base URL.",
   "enum": [
     "openai",
     "anthropic",
     "deepseek",
     "zai",
     "moonshotai",
-    "google",
-    "openrouter",
-    "vercel_ai_gateway"
+    "google"
   ],
   "title": "ProviderId",
   "type": "string"

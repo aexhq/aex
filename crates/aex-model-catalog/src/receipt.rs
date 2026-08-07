@@ -1,9 +1,9 @@
 //! The conformance receipt and its probe registry (plan 08 §8).
 //!
-//! A receipt turns a signed compatibility claim into an observed fact. Receipts
-//! are external assurance evidence: they bind an exact catalog-entry digest to
-//! an adapter source tree and probe run, but do not control catalog loading,
-//! admission or serviceability.
+//! A receipt turns a documentation claim into an observed fact. The gate is a
+//! **document load invariant** (D-05): an `Active` entry whose declared
+//! capabilities are not all covered by passing probes, or whose receipt was
+//! earned against a different adapter source tree, cannot be loaded at all.
 
 use aex_wire::types::Timestamp;
 use aex_wire::{ContentHash, Uuid7};
@@ -202,8 +202,9 @@ impl ProbeId {
             .is_some_and(|capability| capabilities.has(capability))
     }
 
-    /// Which probe provides direct assurance for a capability. Capabilities
-    /// with no dedicated probe are covered by the unconditional set.
+    /// Which probe proves a capability, for the `CapabilityWithoutProbe` load
+    /// invariant. Capabilities with no dedicated probe are proved by the
+    /// unconditional set.
     #[must_use]
     pub const fn proving(capability: Capability) -> Option<Self> {
         match capability {
@@ -246,7 +247,7 @@ pub enum ProbeOutcome {
 }
 
 impl ProbeOutcome {
-    /// Whether the probe produced passing assurance evidence.
+    /// Whether the outcome permits an `Active` entry.
     #[must_use]
     pub const fn is_pass(&self) -> bool {
         matches!(self, Self::Pass)
@@ -277,7 +278,7 @@ pub struct ProbeResult {
     pub duration_ms: u32,
 }
 
-/// External assurance evidence for one exact catalog entry.
+/// The evidence that makes an entry admissible.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConformanceReceipt {
@@ -287,12 +288,11 @@ pub struct ConformanceReceipt {
     pub probe_suite_revision: ProbeSuiteRevision,
     /// Which adapter source tree produced it.
     pub adapter_source: AdapterSourceDigest,
-    /// The digest of the exact compatibility metadata this run exercised.
+    /// The digest of the entry this receipt sits inside, excluding the receipt.
     pub catalog_entry_digest: ContentHash,
     /// When the suite ran.
     pub ran_at: Timestamp,
-    /// When monitoring should refresh this evidence. This is not an admission
-    /// or catalog-expiry gate.
+    /// When the evidence goes stale. Freshness is seven days (Area 7).
     pub expires_at: Timestamp,
     /// Which plane ran it.
     pub plane: PlaneId,
@@ -308,7 +308,7 @@ pub struct ConformanceReceipt {
     pub evidence_digest: ContentHash,
 }
 
-/// The monitoring refresh window for a receipt, in milliseconds. Seven days.
+/// The freshness window for a receipt, in milliseconds. Seven days (Area 7).
 pub const RECEIPT_FRESHNESS_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 
 impl ConformanceReceipt {
@@ -320,8 +320,9 @@ impl ConformanceReceipt {
 
     /// An empty receipt: every probe recorded as a failure with the reason.
     ///
-    /// This is a positive external record that evidence has not been earned,
-    /// never an absence. It is not embedded in a catalog document.
+    /// This is the shape the launch catalog ships with, and it is exactly why
+    /// every launch entry is `Staged` (OD-24). It is a positive record that the
+    /// evidence has not been earned, never an absence.
     ///
     /// # Panics
     ///

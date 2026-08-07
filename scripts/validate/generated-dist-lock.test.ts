@@ -11,7 +11,6 @@ const lockDir = join(fixtureRepoRoot, ".aex-generated-dist.lock");
 const secondLockDir = join(secondFixtureRepoRoot, ".aex-generated-dist.lock");
 const breakerDir = `${lockDir}.breaker`;
 const probeRoot = join(tmpdir(), `aex-generated-dist-probe-${process.pid}`);
-const overlapRelease = join(probeRoot, "release-overlap-probes");
 const sourceLockScript = join(sourceRepoRoot, "scripts", "with-generated-dist-lock.mjs");
 const lockScript = join(fixtureRepoRoot, "scripts", "with-generated-dist-lock.mjs");
 const secondLockScript = join(secondFixtureRepoRoot, "scripts", "with-generated-dist-lock.mjs");
@@ -40,41 +39,31 @@ describe("generated dist lock", () => {
     await utimes(join(lockDir, "owner.json"), old, old);
     await mkdir(probeRoot, { recursive: true });
 
-    // Four simultaneous contenders exercise stale-lock reclamation and mutual
-    // exclusion without making this process-spawning test depend on eight
-    // nested Bun startups fitting inside a short Windows scheduler window.
-    await settleProbes(Array.from({ length: 4 }, () => runLockedProbe()));
+    await Promise.all(Array.from({ length: 8 }, () => runLockedProbe()));
 
     const entries = await readdir(probeRoot);
     expect(entries.filter((name) => name.startsWith("overlap-"))).toEqual([]);
-  }, 45_000);
+  }, 20_000);
 
   it("lets independent output trees build concurrently without a shared temp lock", async () => {
     await mkdir(probeRoot, { recursive: true });
 
-    const builds = [
-      runLockedProbe({ script: lockScript, cwd: fixtureRepoRoot, releasePath: overlapRelease }),
-      runLockedProbe({ script: secondLockScript, cwd: secondFixtureRepoRoot, releasePath: overlapRelease })
-    ];
-    let outputScopedLocks: readonly boolean[] = [];
-    try {
-      await waitFor(async () => {
-        try {
-          return (await readdir(join(probeRoot, "active"))).length === 2;
-        } catch {
-          return false;
-        }
-      });
-      outputScopedLocks = await Promise.all([
-        access(lockDir).then(() => true, () => false),
-        access(secondLockDir).then(() => true, () => false)
-      ]);
-    } finally {
-      // A failed overlap observation must not let afterEach delete fixtures
-      // beneath child processes that are still running.
-      await writeFile(overlapRelease, "release", "utf8");
-      await settleProbes(builds);
-    }
+    const builds = Promise.all([
+      runLockedProbe({ script: lockScript, cwd: fixtureRepoRoot, holdMs: 1_000 }),
+      runLockedProbe({ script: secondLockScript, cwd: secondFixtureRepoRoot, holdMs: 1_000 })
+    ]);
+    await waitFor(async () => {
+      try {
+        return (await readdir(join(probeRoot, "active"))).length === 2;
+      } catch {
+        return false;
+      }
+    });
+    const outputScopedLocks = await Promise.all([
+      access(lockDir).then(() => true, () => false),
+      access(secondLockDir).then(() => true, () => false)
+    ]);
+    await builds;
 
     const entries = await readdir(probeRoot);
     expect(outputScopedLocks).toEqual([true, true]);
@@ -107,32 +96,20 @@ describe("generated dist lock", () => {
 });
 
 function runLockedProbe(
-  options: {
-    readonly script?: string;
-    readonly cwd?: string;
-    readonly holdMs?: number;
-    readonly releasePath?: string;
-  } = {}
+  options: { readonly script?: string; readonly cwd?: string; readonly holdMs?: number } = {}
 ): Promise<void> {
   const script = options.script ?? lockScript;
   const cwd = options.cwd ?? fixtureRepoRoot;
   return new Promise((resolveRun, rejectRun) => {
     const child = spawn(
       process.execPath,
-      [
-        script,
-        process.execPath,
-        probeScript,
-        probeRoot,
-        String(options.holdMs ?? 100),
-        ...(options.releasePath ? [options.releasePath] : [])
-      ],
+      [script, process.execPath, probeScript, probeRoot, String(options.holdMs ?? 100)],
       {
         cwd,
         env: {
           ...process.env,
           AEX_GENERATED_DIST_LOCK_STALE_MS: "100",
-          AEX_GENERATED_DIST_LOCK_TIMEOUT_MS: "30000"
+          AEX_GENERATED_DIST_LOCK_TIMEOUT_MS: "10000"
         },
         stdio: "pipe"
       }
@@ -145,14 +122,6 @@ function runLockedProbe(
       else rejectRun(new Error(`locked probe exited ${code}: ${stderr}`));
     });
   });
-}
-
-async function settleProbes(probes: readonly Promise<void>[]): Promise<void> {
-  const outcomes = await Promise.allSettled(probes);
-  const failures = outcomes.flatMap((outcome) =>
-    outcome.status === "rejected" ? [outcome.reason] : []
-  );
-  if (failures.length > 0) throw new AggregateError(failures, "generated-dist lock probe failed");
 }
 
 async function waitFor(predicate: () => Promise<boolean>): Promise<void> {

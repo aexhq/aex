@@ -11,10 +11,9 @@
 //! - a model absent from the catalog is not routable, whatever a request asks for
 //! - an unknown field or unknown enum member anywhere in the document is a load
 //!   failure, never an ignored value
-//! - signed `Active` compatibility metadata is admission authority; provider
-//!   availability and live qualification evidence cannot expire a catalog
-//! - conformance receipts remain external assurance evidence bound to an exact
-//!   canonical entry digest, not embedded runtime authority
+//! - an `Active` entry without passing conformance evidence cannot be loaded at
+//!   all, so "not admissible until proved" is a document invariant rather than a
+//!   runtime check
 //!
 //! # Purity
 //!
@@ -31,7 +30,6 @@
 
 pub mod canonical;
 pub mod catalog;
-pub mod collection;
 pub mod document;
 pub mod failure;
 pub mod fixture;
@@ -42,10 +40,6 @@ pub mod signature;
 pub mod wire_pending;
 
 pub use catalog::{Catalog, CatalogHead, CatalogLoadError};
-pub use collection::{
-    CATALOG_COLLECTION_SCHEMA, CatalogArtifact, CatalogCollection, CatalogCollectionError,
-    VerifiedCatalogCollection,
-};
 pub use failure::{ProviderFailureClass, ProviderFailureKind, RedactedDetail};
 pub use primitives::{
     Blake3Digest, BoundError, BoundedString, ModelSlug, ProviderRequestId, ToolCallId, ToolName,

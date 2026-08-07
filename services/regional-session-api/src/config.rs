@@ -234,7 +234,6 @@ impl Config {
     pub const fn limits(&self) -> aex_regional_http::context::EffectiveLimits {
         aex_regional_http::context::EffectiveLimits {
             json_body_bytes: self.max_json_body_bytes,
-            otlp_body_bytes: 4 * 1_024 * 1_024,
             query_page_items: self.max_page_items,
             query_page_bytes: self.max_page_bytes,
         }

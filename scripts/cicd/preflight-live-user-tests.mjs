@@ -82,7 +82,7 @@ export async function checkLiveUserTestsPreflight(options = {}) {
   const timeoutMs = envInt(env, "LIVE_USER_TEST_PREFLIGHT_TIMEOUT_MS", DEFAULT_TIMEOUT_MS, 120_000);
   const baseDelayMs = envInt(env, "LIVE_USER_TEST_PREFLIGHT_RETRY_BASE_MS", DEFAULT_BASE_DELAY_MS, 60_000);
   const maxDelayMs = envInt(env, "LIVE_USER_TEST_PREFLIGHT_RETRY_MAX_MS", DEFAULT_MAX_DELAY_MS, 120_000);
-  const url = new URL("/api/workspace/files?limit=1", apiUrl);
+  const url = new URL("/api/sessions?limit=1", apiUrl);
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
@@ -96,24 +96,24 @@ export async function checkLiveUserTestsPreflight(options = {}) {
             maxDelayMs
           });
           err.write(
-            `live-user-tests /api/workspace/files transient HTTP ${response.status} ` +
+            `live-user-tests /api/sessions transient HTTP ${response.status} ` +
               `(requestId=${requestId}, host=${url.host}) attempt ${attempt}/${attempts}; retrying in ${delay}ms\n`
           );
           await sleepFn(delay);
           continue;
         }
         throw new PreflightFatalError(
-          `live-user-tests /api/workspace/files preflight failed ` +
+          `live-user-tests /api/sessions preflight failed ` +
             `(status=${response.status}, requestId=${requestId}, bodyCode=${bodyCodeOf(body)}).`
         );
       }
       if (!Array.isArray(body.items)) {
         throw new PreflightFatalError(
-          `live-user-tests /api/workspace/files response did not contain an items array (requestId=${requestId}).`
+          `live-user-tests /api/sessions response did not contain an items array (requestId=${requestId}).`
         );
       }
       out.write(
-        `live-user-tests /api/workspace/files preflight passed ` +
+        `live-user-tests /api/sessions preflight passed ` +
           `(status=${response.status}, requestId=${requestId}, attempt=${attempt}/${attempts}).\n`
       );
       return { status: response.status, requestId, attempt, attempts };
@@ -122,7 +122,7 @@ export async function checkLiveUserTestsPreflight(options = {}) {
       if (attempt < attempts && isRetryableFetchFailure(error)) {
         const delay = retryDelayMs(attempt, { baseDelayMs, maxDelayMs });
         err.write(
-          `live-user-tests /api/workspace/files transient fetch failure ` +
+          `live-user-tests /api/sessions transient fetch failure ` +
             `(code=${fetchFailureCode(error)}, host=${url.host}) attempt ${attempt}/${attempts}; retrying in ${delay}ms\n`
         );
         await sleepFn(delay);
@@ -131,7 +131,7 @@ export async function checkLiveUserTestsPreflight(options = {}) {
       throw error;
     }
   }
-  throw new Error("live-user-tests /api/workspace/files preflight retry loop exhausted.");
+  throw new Error("live-user-tests /api/sessions preflight retry loop exhausted.");
 }
 
 async function fetchWithTimeout(fetchImpl, url, token, timeoutMs) {

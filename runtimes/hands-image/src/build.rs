@@ -20,17 +20,10 @@
 //! own `/etc/os-release` produced the release date.
 
 use crate::image::{
-    AGENT_PATH, ARCHITECTURE, BASE_IMAGE_ARN_TEMPLATE, CONTAINER_BASE, FORBIDDEN_INSTALL_PACKAGES,
-    FORBIDDEN_ROOTFS_PATHS, GUEST_TARGET, HOOK_PORT, JOURNAL_PATH, OS_CAPABILITIES, PackageGroup,
-    ROOTFS_CONTRACT, SBOM_DIR, WORKSPACE_PATH,
+    AGENT_PATH, ARCHITECTURE, BASE_IMAGE_ARN_TEMPLATE, CONTAINER_BASE, CURL_SWAP, Capability,
+    FORBIDDEN_INSTALL_PACKAGES, FORBIDDEN_ROOTFS_PATHS, GUEST_TARGET, HOOK_PORT, JOURNAL_PATH,
+    OS_CAPABILITIES, PackageGroup, ROOTFS_CONTRACT, SBOM_DIR, WORKSPACE_PATH,
 };
-use serde::{Deserialize, Serialize};
-
-/// The machine-readable registration contract carried by every service ZIP.
-pub const REGISTRATION_DESCRIPTOR_FILENAME: &str = "microvm-image-registration.json";
-
-/// The schema of [`MicrovmImageRegistration`].
-pub const REGISTRATION_SCHEMA: &str = "aex.microvm-image-registration.v1";
 use aex_hands_agent::image_contract::{AGENT_SBOM_PATH, IMAGE_LOCK_PATH, RPM_LIST_PATH};
 
 /// The digest the container base is pinned to.
@@ -64,27 +57,39 @@ pub fn pinned_base() -> String {
 pub struct Variant {
     /// The compute shape token.
     pub size: String,
+    /// Whether the browser layer is included.
+    pub browser: bool,
 }
 
 impl Variant {
-    /// Parses one of the five published non-browser variants.
+    /// Parses a variant name such as `1gb` or `4gb-browser`.
     ///
     /// # Errors
     ///
     /// Returns the offered variant names when the name is not one of them.
     pub fn parse(name: &str) -> Result<Self, String> {
+        let (size, browser) = name
+            .strip_suffix("-browser")
+            .map_or((name, false), |size| (size, true));
         let offered = crate::image::variants();
-        let matched = offered.iter().any(|variant| variant.size == name);
+        let matched = offered.iter().any(|variant| {
+            variant.size == size && variant.capabilities.contains(&Capability::Browser) == browser
+        });
         if matched {
             Ok(Self {
-                size: name.to_owned(),
+                size: size.to_owned(),
+                browser,
             })
         } else {
             Err(format!(
-                "`{name}` is not an offered variant; the five are {}",
+                "`{name}` is not an offered variant; the eight are {}",
                 offered
                     .iter()
-                    .map(|variant| variant.size.to_owned())
+                    .map(|variant| if variant.capabilities.is_empty() {
+                        variant.size.to_owned()
+                    } else {
+                        format!("{}-browser", variant.size)
+                    })
                     .collect::<Vec<_>>()
                     .join(", ")
             ))
@@ -94,26 +99,20 @@ impl Variant {
     /// The image tag this variant builds to.
     #[must_use]
     pub fn tag(&self) -> String {
-        format!("aex-hands:{}", self.size)
-    }
-
-    /// The public variant token used by the release manifest and registration record.
-    #[must_use]
-    pub fn name(&self) -> String {
-        self.size.clone()
-    }
-
-    /// The minimum memory the provider must persist on the image version.
-    #[must_use]
-    pub fn minimum_memory_mib(&self) -> u32 {
-        match self.size.as_str() {
-            "512mb" => 512,
-            "1gb" => 1_024,
-            "2gb" => 2_048,
-            "4gb" => 4_096,
-            "8gb" => 8_192,
-            _ => unreachable!("Variant::parse admits exactly five sizes"),
+        if self.browser {
+            format!("aex-hands:{}-browser", self.size)
+        } else {
+            format!("aex-hands:{}", self.size)
         }
+    }
+
+    /// The package groups this variant installs.
+    #[must_use]
+    pub fn groups(&self) -> Vec<PackageGroup> {
+        PackageGroup::ALL
+            .into_iter()
+            .filter(|group| self.browser || !group.is_browser_layer())
+            .collect()
     }
 
     /// Every package this variant installs, in group order.
@@ -122,144 +121,12 @@ impl Variant {
     /// install list is what reaches `dnf`, and `curl` in particular aborts the
     /// whole transaction rather than failing on its own.
     #[must_use]
-    pub fn packages() -> Vec<&'static str> {
-        PackageGroup::ALL
+    pub fn packages(&self) -> Vec<&'static str> {
+        self.groups()
             .into_iter()
             .flat_map(|group| group.packages().iter().copied())
             .filter(|package| !FORBIDDEN_INSTALL_PACKAGES.contains(package))
             .collect()
-    }
-}
-
-/// One provider CPU configuration in the registration descriptor.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct CpuConfiguration {
-    /// AWS Lambda `MicroVM` architecture token.
-    pub architecture: String,
-}
-
-/// One provider resource floor in the registration descriptor.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ImageResources {
-    /// Minimum memory accepted by `RunMicrovm` for this variant.
-    pub minimum_memory_in_mi_b: u32,
-}
-
-/// Guest lifecycle hooks persisted on an image version.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct MicrovmHooks {
-    /// Enables the run hook.
-    pub run: String,
-    /// Run-hook timeout.
-    pub run_timeout_in_seconds: u32,
-    /// Enables the resume hook.
-    pub resume: String,
-    /// Resume-hook timeout.
-    pub resume_timeout_in_seconds: u32,
-    /// Enables the suspend hook.
-    pub suspend: String,
-    /// Suspend-hook timeout.
-    pub suspend_timeout_in_seconds: u32,
-    /// Enables the terminate hook.
-    pub terminate: String,
-    /// Terminate-hook timeout.
-    pub terminate_timeout_in_seconds: u32,
-}
-
-/// Image-build hooks persisted on an image version.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct MicrovmImageHooks {
-    /// Enables the ready hook.
-    pub ready: String,
-    /// Ready-hook timeout.
-    pub ready_timeout_in_seconds: u32,
-    /// Enables the validate hook.
-    pub validate: String,
-    /// Validate-hook timeout.
-    pub validate_timeout_in_seconds: u32,
-}
-
-/// All hooks persisted on an image version.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ImageHooks {
-    /// The only port on which the guest serves provider hooks.
-    pub port: u16,
-    /// Guest lifecycle hooks.
-    #[serde(rename = "microvmHooks")]
-    pub microvm: MicrovmHooks,
-    /// Image-build hooks.
-    #[serde(rename = "microvmImageHooks")]
-    pub image: MicrovmImageHooks,
-}
-
-/// Plane-neutral `CreateMicrovmImage` configuration authenticated by the ZIP digest.
-///
-/// The private release lane supplies only custody-bound fields: the content-addressed
-/// S3 URI, build role, image name, logging destination, tags and client token.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct MicrovmImageRegistration {
-    /// Descriptor schema.
-    pub schema: String,
-    /// Public variant token.
-    pub variant: String,
-    /// Whether a browser layer is present. The published set is currently false.
-    pub browser: bool,
-    /// Region-templated AWS-managed base image ARN.
-    pub base_image_arn_template: String,
-    /// Provider CPU configurations.
-    pub cpu_configurations: Vec<CpuConfiguration>,
-    /// Provider resource floors.
-    pub resources: Vec<ImageResources>,
-    /// Additional guest OS capabilities.
-    pub additional_os_capabilities: Vec<String>,
-    /// Provider lifecycle hooks.
-    pub hooks: ImageHooks,
-    /// Provider-visible variant description.
-    pub description: String,
-}
-
-/// The plane-neutral registration record packaged with one variant.
-#[must_use]
-pub fn registration_descriptor(variant: &Variant) -> MicrovmImageRegistration {
-    let enabled = "ENABLED".to_owned();
-    MicrovmImageRegistration {
-        schema: REGISTRATION_SCHEMA.to_owned(),
-        variant: variant.name(),
-        browser: false,
-        base_image_arn_template: BASE_IMAGE_ARN_TEMPLATE.to_owned(),
-        cpu_configurations: vec![CpuConfiguration {
-            architecture: ARCHITECTURE.to_owned(),
-        }],
-        resources: vec![ImageResources {
-            minimum_memory_in_mi_b: variant.minimum_memory_mib(),
-        }],
-        additional_os_capabilities: vec![OS_CAPABILITIES.to_owned()],
-        hooks: ImageHooks {
-            port: HOOK_PORT,
-            microvm: MicrovmHooks {
-                run: enabled.clone(),
-                run_timeout_in_seconds: 60,
-                resume: enabled.clone(),
-                resume_timeout_in_seconds: 60,
-                suspend: enabled.clone(),
-                suspend_timeout_in_seconds: 60,
-                terminate: enabled.clone(),
-                terminate_timeout_in_seconds: 60,
-            },
-            image: MicrovmImageHooks {
-                ready: enabled.clone(),
-                ready_timeout_in_seconds: 300,
-                validate: enabled,
-                validate_timeout_in_seconds: 120,
-            },
-        },
-        description: format!("aex.variant={}", variant.tag()),
     }
 }
 
@@ -269,20 +136,22 @@ pub fn registration_descriptor(variant: &Variant) -> MicrovmImageRegistration {
 /// lockfile comparison use, so the built image and the checked contract cannot
 /// describe different trees.
 #[must_use]
-pub fn containerfile(_variant: &Variant) -> String {
+pub fn containerfile(variant: &Variant) -> String {
     use core::fmt::Write as _;
 
-    let packages = Variant::packages().join(" ");
+    let packages = variant.packages().join(" ");
     let mut out = String::new();
     let _ = writeln!(
         out,
         "# Generated by `hands-image context`. Do not edit.\n\
          # Base pinned by digest; package source pinned to the AL2023 {RELEASEVER} snapshot.\n\
          FROM --platform=linux/arm64 {base}\n\n\
-         # Keep the pinned base package set intact: it already supplies bash, grep,\n\
-         # sed, gawk, ca-certificates, `curl-minimal`, and `coreutils-single`.\n\
-         # Do not reinstall those packages or replace the minimal variants.\n\n\
-         RUN dnf --releasever={RELEASEVER} --setopt=install_weak_deps=0 -y install \\\n    \
+         # The base ships `dnf` as a symlink to `microdnf`, which has no\n\
+         # --allowerasing. Listing `curl` in the install set therefore aborts the\n\
+         # whole transaction with `curl-minimal conflicts with curl`. The swap runs\n\
+         # first and `curl` never appears below.\n\
+         RUN {CURL_SWAP}\n\n\
+         RUN dnf --releasever={RELEASEVER} --setopt=install_weak_deps=False -y install \\\n    \
          {packages} \\\n && dnf clean all\n",
         base = pinned_base(),
     );
@@ -328,6 +197,32 @@ pub fn containerfile(_variant: &Variant) -> String {
     out
 }
 
+/// The `CreateMicrovmImage` inputs one variant is published with.
+#[must_use]
+pub fn create_image_inputs(
+    variant: &Variant,
+    region: &str,
+    minimum_memory_mib: u32,
+) -> Vec<String> {
+    vec![
+        format!(
+            "--base-image-arn {}",
+            BASE_IMAGE_ARN_TEMPLATE.replace("{region}", region)
+        ),
+        format!("--cpu-configurations architecture={ARCHITECTURE}"),
+        // Retained for customer capability — namespaces, mounts, containers — and
+        // no longer for a firewall, which is deleted along with the uid isolation
+        // it presupposed.
+        format!("--additional-os-capabilities {OS_CAPABILITIES}"),
+        format!("--resources minimumMemoryInMiB={minimum_memory_mib}"),
+        format!(
+            "--hooks {{port:{HOOK_PORT}, microvmHooks{{run,resume,suspend,terminate @60s}}, \
+             microvmImageHooks{{ready @300s, validate @120s}}}}"
+        ),
+        format!("--description aex.variant={}", variant.tag()),
+    ]
+}
+
 /// The build inputs, rendered for a build record.
 #[must_use]
 pub fn build_inputs(variant: &Variant) -> Vec<String> {
@@ -344,7 +239,7 @@ pub fn build_inputs(variant: &Variant) -> Vec<String> {
 mod tests {
     use super::{
         BASE_IMAGE_DIGEST, RELEASEVER, SOURCE_DATE_EPOCH, Variant, build_inputs, containerfile,
-        pinned_base, registration_descriptor,
+        create_image_inputs, pinned_base,
     };
 
     #[test]
@@ -376,37 +271,45 @@ mod tests {
             generated.contains(&format!("--releasever={RELEASEVER}")),
             "an unpinned dnf resolves against whatever the mirror serves today"
         );
-        assert!(generated.contains("--setopt=install_weak_deps=0"));
+        assert!(generated.contains("--setopt=install_weak_deps=False"));
     }
 
     #[test]
-    fn the_base_minimal_packages_stay_untouched_and_full_packages_are_never_listed() {
+    fn curl_is_swapped_before_any_install_and_never_listed() {
         let generated = containerfile(&Variant::parse("1gb").expect("an offered variant"));
-        assert!(!generated.contains("dnf swap"), "{generated}");
-        assert!(generated.contains("-y install"), "{generated}");
+        let swap = generated
+            .find("dnf swap curl-minimal curl")
+            .expect("the swap is present");
+        let install = generated
+            .find("-y install")
+            .expect("the install is present");
+        assert!(
+            swap < install,
+            "listing curl in the install set aborts the whole microdnf transaction"
+        );
         assert!(!generated.contains(" curl \\"), "{generated}");
-        assert!(!Variant::packages().contains(&"coreutils"));
-        for package in ["bash", "grep", "sed", "gawk", "ca-certificates"] {
-            assert!(!Variant::packages().contains(&package), "{package}");
-        }
     }
 
     #[test]
-    fn browser_variants_are_refused_before_a_context_can_be_built() {
+    fn the_browser_layer_is_only_in_the_browser_variants() {
         let base = Variant::parse("4gb").expect("an offered variant");
-        assert!(!Variant::packages().contains(&"chromium-headless"));
+        let browser = Variant::parse("4gb-browser").expect("an offered variant");
+        assert!(!base.packages().contains(&"chromium-headless"));
+        assert!(browser.packages().contains(&"chromium-headless"));
         assert_eq!(base.tag(), "aex-hands:4gb");
-        for name in [
-            "512mb-browser",
-            "1gb-browser",
-            "2gb-browser",
-            "4gb-browser",
-            "8gb-browser",
-        ] {
+        assert_eq!(browser.tag(), "aex-hands:4gb-browser");
+    }
+
+    #[test]
+    fn chromium_is_not_offered_below_a_two_gigabyte_baseline() {
+        for name in ["512mb-browser", "1gb-browser"] {
             assert!(
                 Variant::parse(name).is_err(),
-                "{name} must remain unavailable until a pinned ARM64 browser layer exists"
+                "{name} is not one of the eight published variants"
             );
+        }
+        for name in ["2gb-browser", "4gb-browser", "8gb-browser"] {
+            assert!(Variant::parse(name).is_ok(), "{name}");
         }
     }
 
@@ -414,8 +317,7 @@ mod tests {
     fn an_unknown_variant_is_refused_with_the_offered_set() {
         let error = Variant::parse("16gb").expect_err("there is no sixth shape");
         assert!(error.contains("512mb"), "{error}");
-        assert!(error.contains("8gb"), "{error}");
-        assert!(!error.contains("browser"), "{error}");
+        assert!(error.contains("8gb-browser"), "{error}");
     }
 
     #[test]
@@ -475,25 +377,19 @@ mod tests {
     }
 
     #[test]
-    fn the_registration_descriptor_is_an_exact_provider_configuration() {
-        let descriptor =
-            registration_descriptor(&Variant::parse("8gb").expect("an offered variant"));
-        assert_eq!(descriptor.schema, "aex.microvm-image-registration.v1");
-        assert_eq!(descriptor.variant, "8gb");
-        assert!(!descriptor.browser);
-        assert_eq!(descriptor.resources[0].minimum_memory_in_mi_b, 8_192);
-        assert_eq!(descriptor.cpu_configurations[0].architecture, "ARM_64");
-        assert_eq!(descriptor.additional_os_capabilities, ["ALL"]);
-        assert_eq!(descriptor.hooks.port, 8_080);
-        assert_eq!(descriptor.hooks.microvm.run, "ENABLED");
-        assert_eq!(descriptor.hooks.microvm.run_timeout_in_seconds, 60);
-        assert_eq!(descriptor.hooks.image.ready, "ENABLED");
-        assert_eq!(descriptor.hooks.image.ready_timeout_in_seconds, 300);
-        assert_eq!(descriptor.hooks.image.validate_timeout_in_seconds, 120);
+    fn the_publish_inputs_are_pinned_and_carry_no_execution_role() {
+        let inputs = create_image_inputs(
+            &Variant::parse("2gb").expect("an offered variant"),
+            "eu-west-1",
+            2_048,
+        );
+        let rendered = inputs.join(" ");
+        assert!(rendered.contains("architecture=ARM_64"));
+        assert!(rendered.contains("minimumMemoryInMiB=2048"));
+        assert!(rendered.contains("port:8080"));
         assert!(
-            serde_json::to_string(&descriptor)
-                .expect("fixed descriptor serializes")
-                .contains("\"minimumMemoryInMiB\":8192")
+            !rendered.contains("role"),
+            "H-BOUNDARY B1: there is nowhere to put an execution role"
         );
     }
 

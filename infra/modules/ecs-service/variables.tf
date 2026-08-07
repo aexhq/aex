@@ -159,10 +159,15 @@ variable "autoscaling_metrics" {
     statistic    = string
     target_value = number
   }))
-  description = "Target-tracking metrics. An empty list selects fixed-count mode. When metrics are supplied, at least one must be service-published: CPU alone does not describe a queueing workload, so scaling on it alone hides saturation."
+  description = "Target-tracking metrics. At least one must be a service-published metric: CPU alone does not describe a queueing workload, so scaling on it alone hides saturation."
 
   validation {
-    condition     = length(var.autoscaling_metrics) == 0 || anytrue([for m in var.autoscaling_metrics : m.namespace != "AWS/ECS"])
+    condition     = length(var.autoscaling_metrics) > 0
+    error_message = "At least one autoscaling metric is required."
+  }
+
+  validation {
+    condition     = anytrue([for m in var.autoscaling_metrics : m.namespace != "AWS/ECS"])
     error_message = "At least one autoscaling metric must be a custom, service-published metric; CPU alone is not an acceptable scaling signal."
   }
 
@@ -186,7 +191,7 @@ variable "autoscaling_bounds" {
     min_capacity = 1
     max_capacity = 1
   }
-  description = "Capacity bounds. Without autoscaling metrics, both values must equal `desired_count`."
+  description = "Autoscaling bounds. They collapse to a single task whenever `desired_count` is pinned."
 
   validation {
     condition     = var.autoscaling_bounds.min_capacity >= 1 && var.autoscaling_bounds.max_capacity >= var.autoscaling_bounds.min_capacity
@@ -196,17 +201,6 @@ variable "autoscaling_bounds" {
   validation {
     condition     = var.name != "brain-mux" || var.autoscaling_bounds.max_capacity == 1
     error_message = "`brain-mux` is pinned to a single task, so its autoscaling ceiling must also be 1."
-  }
-
-  validation {
-    condition = (
-      length(var.autoscaling_metrics) > 0
-      || (
-        var.autoscaling_bounds.min_capacity == var.desired_count
-        && var.autoscaling_bounds.max_capacity == var.desired_count
-      )
-    )
-    error_message = "Without autoscaling metrics, minimum and maximum capacity must both equal desired_count."
   }
 }
 

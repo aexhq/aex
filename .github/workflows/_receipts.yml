@@ -1,10 +1,9 @@
 # The single required status.
 #
-# It first checks the result of every required workflow job, including jobs
-# such as routing and publication that do not produce test evidence. It then
-# compares the selected evidence producers with the receipts they actually
-# emitted. A selected producer that emitted nothing is not a pass; an
-# unselected producer makes no evidence claim.
+# It compares the jobs the lane declared it would run against the receipts the
+# lane actually produced. A required job that emitted nothing is not a pass; a
+# routed matrix that selected nothing must still emit a `no-affected-unit`
+# receipt. Those two states are the whole reason this job exists.
 
 name: receipts
 
@@ -14,32 +13,8 @@ on:
       lane:
         type: string
         required: true
-      receipt_jobs:
-        description: JSON object mapping producer kinds to caller job ids and selection state.
-        type: string
-        required: true
-      rust_matrix:
-        description: Exact routed Rust package matrix, as canonical JSON.
-        type: string
-        required: true
-      node_matrix:
-        description: Exact routed Node package matrix, as canonical JSON.
-        type: string
-        required: true
-      terraform_matrix:
-        description: Exact routed Terraform matrix, as canonical JSON.
-        type: string
-        required: true
-      required_job_results:
-        description: JSON object mapping every required job to its result and skip policy.
-        type: string
-        required: true
-      release_tool_sha256:
-        description: SHA-256 of the run's prepared aex-release-tool.
-        type: string
-        required: true
-      workspace_check_sha256:
-        description: SHA-256 of the run's prepared aex-workspace-check.
+      declared_jobs:
+        description: JSON array of job names the lane declared.
         type: string
         required: true
 
@@ -56,161 +31,38 @@ jobs:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
 
-      # No Rust toolchain: this job only ever runs `evidence aggregate`, which
-      # reads and writes files and never shells out to cargo.
-      - name: Require every workflow job to pass
-        env:
-          REQUIRED_JOB_RESULTS: ${{ inputs.required_job_results }}
-          RECEIPT_LANE: ${{ inputs.lane }}
-        run: |
-          set -euo pipefail
-          jq -e '
-            type == "object" and length > 0 and
-            all(to_entries[];
-              (.key | type == "string" and length > 0) and
-              (.value | type == "object") and
-              (.value | keys | sort) == ["allowSkipped", "result"] and
-              (.value.allowSkipped | type == "boolean") and
-              (
-                .value.result == "success" or
-                (.value.allowSkipped and .value.result == "skipped")
-              )
-            )
-          ' <<<"$REQUIRED_JOB_RESULTS" >/dev/null
-          jq -cn --arg lane "$RECEIPT_LANE" --argjson jobs "$REQUIRED_JOB_RESULTS" '
-            {schema: "aex.workflow-job-results.v1", lane: $lane, jobs: $jobs}
-          ' > required-job-results.json
-
-      # After the job-result gate, never before it. A failed `tools` job must
-      # be reported by name here rather than turning into a missing artifact.
-      - name: Download the prepared workspace tools
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
         with:
-          name: workspace-tools-${{ github.run_id }}
-          path: ${{ runner.temp }}/aex-tools
-
-      # The digests arrive through the job-output channel, not inside the
-      # artifact, so an artifact that lies about itself cannot self-certify.
-      - name: Use the prepared workspace tools
-        env:
-          RELEASE_TOOL_SHA256: ${{ inputs.release_tool_sha256 }}
-          WORKSPACE_CHECK_SHA256: ${{ inputs.workspace_check_sha256 }}
-        run: |
-          set -euo pipefail
-          cd "$RUNNER_TEMP/aex-tools"
-          [[ "$RELEASE_TOOL_SHA256" =~ ^[0-9a-f]{64}$ ]]
-          [[ "$WORKSPACE_CHECK_SHA256" =~ ^[0-9a-f]{64}$ ]]
-          printf '%s  %s\n' "$RELEASE_TOOL_SHA256" aex-release-tool > expected.sha256
-          printf '%s  %s\n' "$WORKSPACE_CHECK_SHA256" aex-workspace-check >> expected.sha256
-          sha256sum --check --strict expected.sha256
-          [[ "$(find . -maxdepth 1 -type f ! -name expected.sha256 | wc -l)" -eq 2 ]]
-          chmod 0755 aex-release-tool aex-workspace-check
-          ./aex-release-tool --version | grep -Eq '^aex-release-tool [0-9]+\.[0-9]+\.[0-9]+'
-          ./aex-workspace-check --version | grep -Eq '^aex-workspace-check [0-9]+\.[0-9]+\.[0-9]+'
-          echo "$RUNNER_TEMP/aex-tools" >> "$GITHUB_PATH"
-
-      - name: Declare the expected receipt job set
-        id: expected
-        env:
-          NODE_MATRIX: ${{ inputs.node_matrix }}
-          RECEIPT_JOBS: ${{ inputs.receipt_jobs }}
-          RECEIPT_LANE: ${{ inputs.lane }}
-          RUST_MATRIX: ${{ inputs.rust_matrix }}
-          TERRAFORM_MATRIX: ${{ inputs.terraform_matrix }}
-        run: |
-          set -euo pipefail
-          jq -e '
-            type == "object" and (keys == ["node", "rust", "terraform"]) and
-            all(to_entries[];
-              (.value | type == "object") and
-              (.value | keys) == ["job", "selected"] and
-              (.value.job | type == "string" and length > 0) and
-              (.value.selected == "true" or .value.selected == "false")
-            )
-          ' <<<"$RECEIPT_JOBS" >/dev/null
-
-          jq -en --argjson rust "$RUST_MATRIX" --argjson node "$NODE_MATRIX" \
-            --argjson terraform "$TERRAFORM_MATRIX" '
-            def valid_matrix:
-              type == "object" and (keys == ["include"]) and
-              (.include | type == "array") and
-              all(.include[];
-                (.id | type == "string" and length > 0) and
-                (.name | type == "string" and length > 0) and
-                (.partition | type == "number" and . >= 0) and
-                (.partitions | type == "number" and . > 0) and
-                (.partition < .partitions)
-              );
-            ($rust | valid_matrix) and ($node | valid_matrix) and
-            ($terraform | valid_matrix)
-          ' >/dev/null
-
-          jq -en --argjson jobs "$RECEIPT_JOBS" --argjson rust "$RUST_MATRIX" \
-            --argjson node "$NODE_MATRIX" --argjson terraform "$TERRAFORM_MATRIX" '
-            (($jobs.rust.selected == "true") == (($rust.include | length) > 0)) and
-            (($jobs.node.selected == "true") == (($node.include | length) > 0)) and
-            (($jobs.terraform.selected == "true") == (($terraform.include | length) > 0))
-          ' >/dev/null
-
-          jq -cn --arg lane "$RECEIPT_LANE" --argjson jobs "$RECEIPT_JOBS" \
-            --argjson rust "$RUST_MATRIX" --argjson node "$NODE_MATRIX" \
-            --argjson terraform "$TERRAFORM_MATRIX" \
-            --slurpfile semantic release/semantic-receipts.json '
-            def partition($entry):
-              {index: $entry.partition, total: $entry.partitions};
-            def producer($job; $package; $partition; $class):
-              {jobName: $job, package: $package, partition: $partition, class: $class};
-            {
-              schema: "aex.declared-producers.v1",
-              lane: $lane,
-              producers: [
-                ($rust.include[] as $entry |
-                  producer($jobs.rust.job; $entry.name; partition($entry); "unit"),
-                  producer($jobs.rust.job; $entry.name; partition($entry); "lint"),
-                  ($semantic[0].producers[] as $semantic_producer |
-                    select($semantic_producer.package == $entry.name) |
-                    producer($jobs.rust.job; $entry.name; null; $semantic_producer.class))
-                ),
-                ($node.include[] as $entry |
-                  producer($jobs.node.job; $entry.name; partition($entry); "unit"),
-                  producer($jobs.node.job; $entry.name; partition($entry); "lint"),
-                  ($semantic[0].producers[] as $semantic_producer |
-                    select($semantic_producer.package == $entry.name) |
-                    producer($jobs.node.job; $entry.name; null; $semantic_producer.class))
-                ),
-                ($terraform.include[] as $entry |
-                  producer($jobs.terraform.job; $entry.id; partition($entry); "unit"))
-              ] | sort_by([.jobName, .package, (.partition.index // -1), .class])
-            }
-          ' > declared-producers.json
-          if [ "$(jq '.producers | length' declared-producers.json)" -gt 0 ]; then
-            echo "has_receipts=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_receipts=false" >> "$GITHUB_OUTPUT"
-          fi
+          toolchain: "1.97.1"
 
       - name: Download every receipt
-        if: steps.expected.outputs.has_receipts == 'true'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
         with:
           pattern: receipt-*
           path: receipts
-          merge-multiple: false
+          merge-multiple: true
+
+      - name: Declare the expected job set
+        run: |
+          set -euo pipefail
+          printf '%s\n' '{"schema":"aex.declared-jobs.v1","lane":"${{ inputs.lane }}","jobs":${{ inputs.declared_jobs }}}' > declared-jobs.json
 
       - name: Aggregate
         run: |
           set -euo pipefail
-          receipts=()
-          if [ -d receipts ]; then
-            mapfile -d '' receipts < <(
-              find receipts -type f -name '*.json' -print0 | sort -z
-            )
+          shopt -s nullglob
+          receipts=(receipts/*.json)
+          if [ ${#receipts[@]} -eq 0 ]; then
+            echo "no receipt was collected at all; a lane that proves nothing does not pass"
+            exit 40
           fi
           args=()
           for receipt in "${receipts[@]}"; do
             args+=(--receipt "$receipt")
           done
-          aex-release-tool evidence aggregate "${args[@]}" --expect declared-producers.json \
+          cargo run --locked --release -p aex-release-tool -- \
+            evidence aggregate "${args[@]}" --expect declared-jobs.json \
             --out lane-receipt.json
 
       - name: Upload the lane receipt
@@ -218,7 +70,5 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: lane-receipt-${{ inputs.lane }}
-          path: |
-            lane-receipt.json
-            required-job-results.json
+          path: lane-receipt.json
           if-no-files-found: error

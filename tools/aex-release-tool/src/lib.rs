@@ -16,9 +16,7 @@
 pub mod admit;
 pub mod artifact;
 pub mod canon;
-pub mod certification;
 pub mod certify;
-pub mod composition_inputs;
 pub mod describe;
 pub mod error;
 pub mod evidence;

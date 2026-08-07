@@ -16,7 +16,7 @@ use aex_release_tool::artifact::{self, ArtifactEnvelope, Form};
 use aex_release_tool::canon;
 use aex_release_tool::describe;
 use aex_release_tool::error::{Exit, Result, ToolError, Violation, io, usage};
-use aex_release_tool::evidence::{self, DeclaredProducers, FreshnessPolicy, Receipt};
+use aex_release_tool::evidence::{self, DeclaredJobs, FreshnessPolicy, Receipt};
 use aex_release_tool::graph::inputs::GraphInputs;
 use aex_release_tool::graph::matrix::{self, MatrixKind};
 use aex_release_tool::graph::select::{self, Lane, Mode};
@@ -120,11 +120,7 @@ enum GraphCommand {
         out: Option<PathBuf>,
     },
     /// Run every fail-closed verification rule.
-    Verify {
-        /// Also require executable cross-service evidence for a release route.
-        #[arg(long)]
-        release: bool,
-    },
+    Verify,
     /// Decide what runs.
     Select {
         /// Base commit of the diff.
@@ -175,9 +171,6 @@ enum GraphCommand {
         /// The selection document.
         #[arg(long)]
         selection: PathBuf,
-        /// Artifact selection whose owning packages must emit validation receipts.
-        #[arg(long)]
-        artifact_selection: Option<PathBuf>,
         /// Which slice.
         #[arg(long)]
         kind: MatrixKind,
@@ -217,8 +210,6 @@ enum ArtifactCommand {
         #[arg(long)]
         out: PathBuf,
     },
-    /// Print the snapshot-bound immutable tool catalogue identity.
-    ToolCatalog,
     /// Print every build recipe.
     Recipes {
         /// Restrict to one unit.
@@ -440,77 +431,17 @@ enum ArtifactCommand {
         file: Option<PathBuf>,
         /// `CycloneDX` JSON SBOM.
         #[arg(long)]
-        sbom: Option<PathBuf>,
+        sbom: PathBuf,
         /// Complete licence inventory from the passing scan.
         #[arg(long)]
-        license_inventory: Option<PathBuf>,
-        /// Complete vulnerability verdict from the passing artifact scan.
-        #[arg(long)]
-        vulnerability_verdict: Option<PathBuf>,
-        /// Defer scanner-derived supply-chain evidence outside the startup release path.
-        #[arg(long)]
-        defer_supply_chain: bool,
+        license_inventory: PathBuf,
         /// Official GitHub attestation bundle.
         #[arg(long)]
         provenance_bundle: PathBuf,
-        /// Verified Sigstore blob-signature bundle, required for `rust-binary`.
-        #[arg(long)]
-        signature_bundle: Option<PathBuf>,
         /// Passing evidence receipts, repeated.
         #[arg(long = "receipt")]
         receipts: Vec<PathBuf>,
         /// Where to write the certified envelope.
-        #[arg(long)]
-        out: PathBuf,
-    },
-    /// Record exact evidence gaps without minting a weaker envelope.
-    DeferCertification {
-        /// Local draft emitted by `artifact describe`.
-        #[arg(long)]
-        draft: PathBuf,
-        /// Unearned-field ledger emitted beside the draft.
-        #[arg(long)]
-        unearned: PathBuf,
-        /// Passing same-run receipts already bound to the artifact, repeated.
-        #[arg(long = "receipt")]
-        receipts: Vec<PathBuf>,
-        /// Positive protected workflow run id.
-        #[arg(long)]
-        workflow_run_id: String,
-        /// Positive protected workflow run attempt.
-        #[arg(long)]
-        workflow_run_attempt: u32,
-        /// Artifact-builder matrix job name.
-        #[arg(long)]
-        job_name: String,
-        /// Protected workflow builder identity.
-        #[arg(long)]
-        builder_id: String,
-        /// Where to write the canonical deferral.
-        #[arg(long)]
-        out: PathBuf,
-    },
-    /// Exhaustively account for certified and explicitly deferred units.
-    CertificationInventory {
-        /// Certified envelope files, repeated.
-        #[arg(long = "envelope")]
-        envelopes: Vec<PathBuf>,
-        /// Certification deferral files, repeated.
-        #[arg(long = "deferred")]
-        deferrals: Vec<PathBuf>,
-        /// Exact GitHub `owner/repository`.
-        #[arg(long)]
-        repository: String,
-        /// Exact lowercase 40-character source commit.
-        #[arg(long)]
-        commit_sha: String,
-        /// Positive GitHub Actions run id.
-        #[arg(long)]
-        workflow_run_id: String,
-        /// Positive GitHub Actions run attempt.
-        #[arg(long)]
-        workflow_run_attempt: u32,
-        /// Where to write the inventory before deferred units fail the gate.
         #[arg(long)]
         out: PathBuf,
     },
@@ -578,39 +509,6 @@ enum ManifestCommand {
         /// Where to write the unit-id-to-envelope artifact store.
         #[arg(long)]
         store_out: PathBuf,
-    },
-    /// Derive non-envelope composition identities from source and published bytes.
-    Inputs {
-        /// Certified envelope files, exactly one per registered deployable.
-        #[arg(long = "envelope")]
-        envelopes: Vec<PathBuf>,
-        /// Raw acquired release-tool executable.
-        #[arg(long)]
-        release_tool: PathBuf,
-        /// Acquired deterministic Terraform module bundle.
-        #[arg(long)]
-        module_bundle: PathBuf,
-        /// Acquired generated regional table bundle.
-        #[arg(long)]
-        regional_tables: PathBuf,
-        /// Exact GitHub `owner/repository`.
-        #[arg(long)]
-        repository: String,
-        /// Exact lowercase 40-character source commit.
-        #[arg(long)]
-        commit_sha: String,
-        /// Positive GitHub Actions run id.
-        #[arg(long)]
-        workflow_run_id: String,
-        /// Positive GitHub Actions run attempt.
-        #[arg(long)]
-        workflow_run_attempt: u64,
-        /// Version reported by the acquired release tool.
-        #[arg(long)]
-        release_tool_version: String,
-        /// Where to write canonical `composition-inputs.json`.
-        #[arg(long)]
-        out: PathBuf,
     },
     /// Compare two compositions.
     Diff {
@@ -696,18 +594,6 @@ enum EvidenceCommand {
         /// Cargo output produced with `--message-format=json`.
         #[arg(long)]
         messages: PathBuf,
-        /// Where to write the receipt.
-        #[arg(long)]
-        out: PathBuf,
-    },
-    /// Build a receipt from a closed machine-readable check report.
-    NewCheck {
-        /// The check context: identity, source, selection and hygiene.
-        #[arg(long)]
-        context: PathBuf,
-        /// Closed report emitted after the named checks completed.
-        #[arg(long)]
-        report: PathBuf,
         /// Where to write the receipt.
         #[arg(long)]
         out: PathBuf,
@@ -1099,12 +985,8 @@ fn run_graph(cli: &Cli, root: &Path, command: &GraphCommand) -> Result<()> {
                 emit(cli, &summary)
             }
         }
-        GraphCommand::Verify { release } => {
-            let built = if *release {
-                verify::verify_release_candidate(&inputs)?
-            } else {
-                verify::verify(&inputs)?
-            };
+        GraphCommand::Verify => {
+            let built = verify::verify(&inputs)?;
             emit(cli, &verify::summarize(&built))
         }
         GraphCommand::Select {
@@ -1161,19 +1043,24 @@ fn run_graph(cli: &Cli, root: &Path, command: &GraphCommand) -> Result<()> {
         }
         GraphCommand::Matrix {
             selection,
-            artifact_selection,
             kind,
             partitions,
             shard_durations,
             github_output,
         } => {
-            let output = build_graph_matrix(
-                &inputs,
-                selection,
-                artifact_selection.as_deref(),
+            let selection: select::Selection = read_json(selection)?;
+            let durations: BTreeMap<String, u64> = match shard_durations {
+                Some(path) => read_json(path)?,
+                None => BTreeMap::new(),
+            };
+            let output = matrix::build(
+                &selection,
                 *kind,
                 *partitions,
-                shard_durations.as_deref(),
+                &durations,
+                &inputs.scenarios,
+                &inputs.units,
+                &inputs.npm,
             )?;
             if let Some(path) = github_output {
                 append_text(path, &matrix::to_github_output(&output)?)?;
@@ -1183,38 +1070,10 @@ fn run_graph(cli: &Cli, root: &Path, command: &GraphCommand) -> Result<()> {
     }
 }
 
-fn build_graph_matrix(
-    inputs: &GraphInputs,
-    selection: &Path,
-    artifact_selection: Option<&Path>,
-    kind: MatrixKind,
-    partitions: usize,
-    shard_durations: Option<&Path>,
-) -> Result<matrix::MatrixOutput> {
-    let selection: select::Selection = read_json(selection)?;
-    let artifact_selection: Option<select::Selection> =
-        artifact_selection.map(read_json).transpose()?;
-    let durations: BTreeMap<String, u64> = match shard_durations {
-        Some(path) => read_json(path)?,
-        None => BTreeMap::new(),
-    };
-    matrix::build_with_artifacts(
-        &selection,
-        artifact_selection.as_ref(),
-        kind,
-        partitions,
-        &durations,
-        &inputs.scenarios,
-        &inputs.units,
-        &inputs.npm,
-    )
-}
-
 fn run_artifact(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()> {
     match command {
         ArtifactCommand::ModuleBundle { out } => run_module_bundle(cli, root, out),
         ArtifactCommand::RegionalTables { out } => run_regional_tables(cli, root, out),
-        ArtifactCommand::ToolCatalog => run_tool_catalog(cli, root),
         ArtifactCommand::Recipes { unit } => {
             let units = read_units(root)?;
             let plans = artifact::release_recipes(&units, root)?;
@@ -1277,12 +1136,6 @@ fn run_artifact(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()>
         | ArtifactCommand::OciVisibility { .. }) => run_artifact_oci(cli, root, command),
         ArtifactCommand::Describe { .. } => run_artifact_describe(cli, root, command),
         ArtifactCommand::Certify { .. } => run_artifact_certify(cli, root, command),
-        ArtifactCommand::DeferCertification { .. } => {
-            run_artifact_defer_certification(cli, root, command)
-        }
-        ArtifactCommand::CertificationInventory { .. } => {
-            run_artifact_certification_inventory(cli, root, command)
-        }
         ArtifactCommand::Verify {
             envelope,
             file,
@@ -1301,18 +1154,6 @@ fn run_artifact(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()>
         }
         ArtifactCommand::AssetName { .. } => run_artifact_asset_name(cli, root, command),
     }
-}
-
-fn run_tool_catalog(cli: &Cli, root: &Path) -> Result<()> {
-    let digest = artifact::tool_catalog_digest(root)?;
-    emit(
-        cli,
-        &serde_json::json!({
-            "schema": "aex.tool-catalog-identity.v1",
-            "digest": digest,
-            "source": "crates/aex-brain-tool-catalog/src/catalog.rs",
-        }),
-    )
 }
 
 fn run_artifact_describe(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()> {
@@ -1503,10 +1344,7 @@ fn run_artifact_certify(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Re
         file,
         sbom,
         license_inventory,
-        vulnerability_verdict,
-        defer_supply_chain,
         provenance_bundle,
-        signature_bundle,
         receipts,
         out,
     } = command
@@ -1532,12 +1370,9 @@ fn run_artifact_certify(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Re
         claims,
         aex_release_tool::certify::CertificationFiles {
             artifact: file.as_deref(),
-            sbom: sbom.as_deref(),
-            license_inventory: license_inventory.as_deref(),
-            vulnerability_verdict: vulnerability_verdict.as_deref(),
+            sbom,
+            license_inventory,
             provenance_bundle,
-            signature_bundle: signature_bundle.as_deref(),
-            defer_supply_chain: *defer_supply_chain,
         },
         &receipts,
         &freshness,
@@ -1553,103 +1388,6 @@ fn run_artifact_certify(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Re
             "location": envelope.output.location,
         }),
     )
-}
-
-fn run_artifact_defer_certification(
-    cli: &Cli,
-    root: &Path,
-    command: &ArtifactCommand,
-) -> Result<()> {
-    let ArtifactCommand::DeferCertification {
-        draft,
-        unearned,
-        receipts,
-        workflow_run_id,
-        workflow_run_attempt,
-        job_name,
-        builder_id,
-        out,
-    } = command
-    else {
-        return Err(usage(
-            "internal artifact certification-deferral dispatch mismatch",
-        ));
-    };
-    let draft: ArtifactEnvelope = read_json(draft)?;
-    let units = read_units(root)?;
-    let unit = units
-        .units
-        .iter()
-        .find(|candidate| candidate.id == draft.unit.id)
-        .ok_or_else(|| usage(format!("`{}` is not in release/units.toml", draft.unit.id)))?;
-    let unearned = read_json(unearned)?;
-    let receipts = receipts
-        .iter()
-        .map(|path| read_json(path))
-        .collect::<Result<Vec<_>>>()?;
-    let freshness: FreshnessPolicy = read_toml(&root.join("release/policy/freshness.toml"))?;
-    let workflow = aex_release_tool::artifact::Workflow {
-        repository: draft.source.repository.clone(),
-        r#ref: "refs/heads/main".to_owned(),
-        path: ".github/workflows/_build-artifacts.yml".to_owned(),
-        run_id: workflow_run_id.clone(),
-        run_attempt: *workflow_run_attempt,
-        job_name: job_name.clone(),
-        builder_id: builder_id.clone(),
-    };
-    let deferral = aex_release_tool::certification::defer(
-        &draft, unit, workflow, unearned, &receipts, &freshness,
-    )?;
-    write_canonical(out, &deferral)?;
-    emit(cli, &deferral)
-}
-
-fn run_artifact_certification_inventory(
-    cli: &Cli,
-    root: &Path,
-    command: &ArtifactCommand,
-) -> Result<()> {
-    let ArtifactCommand::CertificationInventory {
-        envelopes,
-        deferrals,
-        repository,
-        commit_sha,
-        workflow_run_id,
-        workflow_run_attempt,
-        out,
-    } = command
-    else {
-        return Err(usage(
-            "internal artifact certification-inventory dispatch mismatch",
-        ));
-    };
-    let registry = read_units(root)?;
-    let envelopes = envelopes
-        .iter()
-        .map(|path| read_json(path))
-        .collect::<Result<Vec<_>>>()?;
-    let deferrals = deferrals
-        .iter()
-        .map(|path| read_json(path))
-        .collect::<Result<Vec<_>>>()?;
-    let report = aex_release_tool::certification::inventory(
-        &registry,
-        &envelopes,
-        &deferrals,
-        &aex_release_tool::certification::ExpectedSource {
-            repository,
-            commit_sha,
-            run_id: workflow_run_id,
-            run_attempt: *workflow_run_attempt,
-        },
-    )?;
-    write_canonical(out, &report)?;
-    emit(cli, &report)?;
-    if let Some(error) = report.blocking_error() {
-        Err(error)
-    } else {
-        Ok(())
-    }
 }
 
 fn run_artifact_asset_name(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()> {
@@ -1831,7 +1569,7 @@ fn run_manifest_new(
     if !holes.is_empty() {
         return Err(ToolError::many(Exit::CompositionIncompatible, holes));
     }
-    let manifest = aex_release_tool::manifest::new_manifest(inputs, &described, &registry)?;
+    let manifest = aex_release_tool::manifest::new_manifest(inputs, &described)?;
     write_canonical(out, &manifest)?;
     emit(
         cli,
@@ -1879,7 +1617,7 @@ fn run_manifest_handoff(
         ));
     }
     let inputs: aex_release_tool::manifest::CompositionInputs = read_json(composition)?;
-    let manifest = aex_release_tool::manifest::new_handoff_manifest(inputs, &store, &registry)?;
+    let manifest = aex_release_tool::manifest::new_handoff_manifest(inputs, &store)?;
     let manifest_digest = canon::digest_bytes(&canon::to_file_bytes(&manifest)?);
     let store_digest = canon::digest_bytes(&canon::to_file_bytes(&store)?);
 
@@ -1899,75 +1637,6 @@ fn run_manifest_handoff(
     )
 }
 
-fn run_manifest_inputs(
-    cli: &Cli,
-    root: &Path,
-    envelope_paths: &[PathBuf],
-    files: aex_release_tool::composition_inputs::PublicInputFiles<'_>,
-    run: &aex_release_tool::composition_inputs::PublicRunIdentity,
-    out: &Path,
-) -> Result<()> {
-    let envelopes = envelope_paths
-        .iter()
-        .map(|path| read_json(path))
-        .collect::<Result<Vec<ArtifactEnvelope>>>()?;
-    let registry = read_units(root)?;
-    let (_, authorities) =
-        aex_release_tool::composition_inputs::envelope_authorities(&registry, envelopes)?;
-    let inputs =
-        aex_release_tool::composition_inputs::produce(root, &registry, files, run, authorities)?;
-    let digest = canon::digest_bytes(&canon::to_file_bytes(&inputs)?);
-    write_canonical(out, &inputs)?;
-    emit(
-        cli,
-        &serde_json::json!({
-            "schema": "aex.composition-inputs.v1",
-            "digest": digest,
-            "packages": inputs.packages.len(),
-            "catalogs": inputs.catalogs.len(),
-            "providers": inputs.infra.provider_versions.len(),
-            "path": out.display().to_string(),
-        }),
-    )
-}
-
-fn run_manifest_inputs_command(cli: &Cli, root: &Path, command: &ManifestCommand) -> Result<()> {
-    let ManifestCommand::Inputs {
-        envelopes,
-        release_tool,
-        module_bundle,
-        regional_tables,
-        repository,
-        commit_sha,
-        workflow_run_id,
-        workflow_run_attempt,
-        release_tool_version,
-        out,
-    } = command
-    else {
-        unreachable!("manifest inputs command arm only");
-    };
-    let run = aex_release_tool::composition_inputs::PublicRunIdentity {
-        repository: repository.clone(),
-        commit_sha: commit_sha.clone(),
-        workflow_run_id: workflow_run_id.clone(),
-        workflow_run_attempt: *workflow_run_attempt,
-        release_tool_version: release_tool_version.clone(),
-    };
-    run_manifest_inputs(
-        cli,
-        root,
-        envelopes,
-        aex_release_tool::composition_inputs::PublicInputFiles {
-            release_tool,
-            module_bundle,
-            regional_tables,
-        },
-        &run,
-        out,
-    )
-}
-
 fn run_manifest(cli: &Cli, root: &Path, command: &ManifestCommand) -> Result<()> {
     match command {
         ManifestCommand::New {
@@ -1982,7 +1651,6 @@ fn run_manifest(cli: &Cli, root: &Path, command: &ManifestCommand) -> Result<()>
             manifest_out,
             store_out,
         } => run_manifest_handoff(cli, root, envelopes, composition, manifest_out, store_out),
-        ManifestCommand::Inputs { .. } => run_manifest_inputs_command(cli, root, command),
         ManifestCommand::Diff { from, to } => {
             let from: CompositionManifest = read_json(from)?;
             let to: CompositionManifest = read_json(to)?;
@@ -2044,7 +1712,6 @@ fn run_manifest(cli: &Cli, root: &Path, command: &ManifestCommand) -> Result<()>
     }
 }
 
-#[allow(clippy::too_many_lines)]
 fn run_evidence(cli: &Cli, command: &EvidenceCommand) -> Result<()> {
     match command {
         EvidenceCommand::New {
@@ -2077,25 +1744,6 @@ fn run_evidence(cli: &Cli, command: &EvidenceCommand) -> Result<()> {
                 .map_err(|err| io(&messages.display().to_string(), &err))?;
             let summary = evidence::parse_cargo_messages(&messages)?;
             let receipt = evidence::new_command_receipt(context, summary)?;
-            write_canonical(out, &receipt)?;
-            emit(
-                cli,
-                &serde_json::json!({
-                    "receiptId": receipt.receipt_id,
-                    "receiptDigest": receipt.receipt_digest,
-                    "conclusion": receipt.conclusion,
-                    "inventory": receipt.inventory,
-                }),
-            )
-        }
-        EvidenceCommand::NewCheck {
-            context,
-            report,
-            out,
-        } => {
-            let context: evidence::RunContext = read_json(context)?;
-            let report: evidence::CheckReport = read_json(report)?;
-            let receipt = evidence::new_check_receipt(context, &report)?;
             write_canonical(out, &receipt)?;
             emit(
                 cli,
@@ -2150,7 +1798,7 @@ fn run_evidence(cli: &Cli, command: &EvidenceCommand) -> Result<()> {
                 .iter()
                 .map(|path| read_json(path))
                 .collect::<Result<_>>()?;
-            let declared: DeclaredProducers = read_json(expect)?;
+            let declared: DeclaredJobs = read_json(expect)?;
             let lane = evidence::aggregate(&receipts, &declared)?;
             if let Some(path) = out {
                 write_canonical(path, &lane)?;
@@ -2301,9 +1949,15 @@ fn run_admit(cli: &Cli, root: &Path, args: &AdmitArgs) -> Result<()> {
 fn required_receipts_by_kind(manifest: &CompositionManifest) -> BTreeMap<String, Vec<String>> {
     let mut required: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for entry in manifest.units.values() {
-        required
-            .entry(entry.kind.clone())
-            .or_insert_with(|| vec!["unit".to_owned(), "lint".to_owned()]);
+        required.entry(entry.kind.clone()).or_insert_with(|| {
+            vec![
+                "unit".to_owned(),
+                "lint".to_owned(),
+                "sbom".to_owned(),
+                "license".to_owned(),
+                "vulnerability".to_owned(),
+            ]
+        });
     }
     required
 }

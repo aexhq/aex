@@ -19,10 +19,9 @@ resource "aws_ecs_task_definition" "this" {
 
   container_definitions = jsonencode([
     {
-      name        = var.family
-      image       = var.image
-      essential   = true
-      stopTimeout = var.stop_timeout
+      name      = var.family
+      image     = var.image
+      essential = true
 
       environment = [
         for k, v in var.env : { name = k, value = v }

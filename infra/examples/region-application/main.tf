@@ -102,7 +102,6 @@ module "stream_service" {
   image          = var.stream_service.image
   cpu            = var.stream_service.cpu
   memory         = var.stream_service.memory
-  desired_count  = var.stream_service.desired_count
   stop_timeout   = var.stream_service.stop_timeout
   container_port = var.stream_service.container_port
 
