@@ -27,6 +27,8 @@ use aex_wire::types::{DecimalU128, Timestamp};
 use aws_sdk_dynamodb::types::AttributeValue;
 
 use crate::authority::{AdmissionAuthority, AdmissionRequest, AuthorityError, PreparedObservation};
+use crate::counters::{AdmissionCounter, AdmissionTelemetry};
+use aex_observation_store_aws::spool::GateState;
 use aex_regional_http::context::RequestContext as EdgeContext;
 
 /// The header naming the session an in-guest collector is emitting for.
@@ -43,6 +45,7 @@ pub struct OtlpService {
     budget: MemoryBudget,
     reserve_wait: Duration,
     redaction_key: Vec<u8>,
+    telemetry: AdmissionTelemetry,
 }
 
 impl std::fmt::Debug for OtlpService {
@@ -70,6 +73,7 @@ impl OtlpService {
         budget: MemoryBudget,
         reserve_wait: Duration,
         redaction_key: Vec<u8>,
+        telemetry: AdmissionTelemetry,
     ) -> Self {
         Self {
             authority,
@@ -78,6 +82,7 @@ impl OtlpService {
             budget,
             reserve_wait,
             redaction_key,
+            telemetry,
         }
     }
 }
@@ -210,7 +215,7 @@ impl OtlpRequest {
         let now = Timestamp::from_datetime_trunc_ms(time::OffsetDateTime::now_utc())
             .map_err(|_| WireError::new(ErrorCode::InternalError))?;
         let request = AdmissionRequest {
-            batch_id: mint_batch_id(),
+            batch_id: batch_id_for(&digest),
             organization: self.authorized.auth.organization_id,
             workspace: self.authorized.auth.workspace_id,
             scope: scope_key,
@@ -218,11 +223,35 @@ impl OtlpRequest {
             observations,
         };
         let accepted = normalized.observations.len();
-        let receipt = service
+
+        // One gate read per request, made here so a degraded admission can be
+        // counted; the authority still refuses a closed gate on the state it
+        // is handed.
+        let gate = service
             .authority
-            .admit(&request, now)
+            .ingress_gate()
             .await
             .map_err(|error| authority_error(&error))?;
+        if matches!(gate, GateState::Degraded) {
+            service
+                .telemetry
+                .count(AdmissionCounter::DegradedGateAdmission, 1);
+        }
+
+        let receipt = match service.authority.admit(&request, now, gate).await {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                if matches!(error, AuthorityError::MaterializeExhausted { .. }) {
+                    service
+                        .telemetry
+                        .count(AdmissionCounter::MaterializeRetryExhausted, 1);
+                }
+                return Err(authority_error(&error));
+            }
+        };
+        service
+            .telemetry
+            .count(AdmissionCounter::RecordsAdmitted, receipt.accepted);
         drop(lease);
         Ok(TelemetryAdmissionReceipt {
             accepted: DecimalU128::new(accepted as u128),
@@ -243,12 +272,20 @@ impl OtlpRequest {
             // product never claims arbitrary customer bytes can be recognised.
             return apply(&NoManagedSecrets, batch).map_err(|error| otlp_error(&error));
         };
-        let manifest = self
-            .service
-            .custody
-            .manifest(session)
-            .await
-            .map_err(|error| authority_error(&error))?;
+        let manifest = match self.service.custody.manifest(session).await {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                if let AuthorityError::CustodyMalformed { malformed } = &error {
+                    // Attempts, not drops: each occurrence is a batch that
+                    // failed closed rather than an entry that silently left
+                    // the redaction set.
+                    self.service
+                        .telemetry
+                        .count(AdmissionCounter::CustodyEntriesMalformed, *malformed as u64);
+                }
+                return Err(authority_error(&error));
+            }
+        };
         if manifest.entries.is_empty() {
             return apply(&NoManagedSecrets, batch).map_err(|error| otlp_error(&error));
         }
@@ -352,6 +389,19 @@ fn authority_error(error: &AuthorityError) -> WireError {
     match error {
         AuthorityError::GateClosed { .. } => WireError::new(ErrorCode::ObservabilityUnavailable)
             .with_retry_after(Duration::from_secs(30)),
+        // Fail closed, retryably: the custody stream owns the manifest row and
+        // rewrites it on its next revision, so the same batch can succeed
+        // later without any change on the caller's side.
+        AuthorityError::CustodyMalformed { .. } => {
+            WireError::new(ErrorCode::ObservabilityUnavailable)
+                .with_retry_after(Duration::from_secs(30))
+        }
+        // The commit is durable and the batch identity content-addressed, so a
+        // retry resumes materialization from the receipt.
+        AuthorityError::MaterializeExhausted { .. } => {
+            WireError::new(ErrorCode::ObservabilityUnavailable)
+                .with_retry_after(Duration::from_secs(1))
+        }
         AuthorityError::Fenced { .. } => WireError::new(ErrorCode::SessionDeleted),
         AuthorityError::IntentConflict { .. } => WireError::new(ErrorCode::IdempotencyConflict),
         AuthorityError::ClockSkew { .. } | AuthorityError::Malformed { .. } => {
@@ -373,11 +423,32 @@ fn principal_id(cx: &RequestContext) -> String {
     serde_json::to_string(&cx.principal).unwrap_or_else(|_| "unknown".to_owned())
 }
 
-/// Mints one batch identity.
-fn mint_batch_id() -> TelemetryBatchId {
-    let bytes = *uuid::Uuid::now_v7().as_bytes();
-    let id = Uuid7::from_bytes(bytes).unwrap_or_else(|_| Uuid7::compose(0, [0u8; 10]));
-    TelemetryBatchId::from_uuid7(id)
+/// Derives the batch identity from the batch intent digest.
+///
+/// Content-addressed on purpose. An exporter retry after a lost response — and
+/// a retry of this service's own retryable `503` — re-presents the same bound
+/// content, so deriving the identity from the intent digest makes every
+/// equal-content retry converge on one `(workspace, batchId)` receipt row.
+/// That convergence is what makes the staged-commit idempotency machinery
+/// reachable at all: a clock-minted id gave every retry a fresh receipt, new
+/// sequences and undedupable duplicates.
+///
+/// The value still parses as a `UUIDv7`, but its embedded 48-bit timestamp is
+/// digest bytes, not a clock reading. Nothing reads it as time or as an order:
+/// the receipt and staging rows key on the `BATCH#` partition alone, the spool
+/// sort key orders by the admission wall clock, and the observation order
+/// tuple (`aex-observation-domain::order`) uses ids only as a tie-break after
+/// its own time component. `stable_observation_id` inherits the same
+/// pseudo-time, with the same non-dependence.
+fn batch_id_for(digest: &aex_wire::idempotency::IntentDigest) -> TelemetryBatchId {
+    let bytes = digest.as_bytes();
+    let mut millis = 0u64;
+    for byte in &bytes[..6] {
+        millis = (millis << 8) | u64::from(*byte);
+    }
+    let mut entropy = [0u8; 10];
+    entropy.copy_from_slice(&bytes[6..16]);
+    TelemetryBatchId::from_uuid7(Uuid7::compose(millis, entropy))
 }
 
 /// The `regional-secret-custody` redaction manifest reader.
@@ -413,9 +484,11 @@ impl CustodyManifests {
     ///
     /// # Errors
     ///
-    /// Returns [`AuthorityError::Provider`] when the read fails. The batch then
-    /// fails closed: admitting unredacted bytes is never an acceptable
-    /// degradation.
+    /// Returns [`AuthorityError::Provider`] when the read fails and
+    /// [`AuthorityError::CustodyMalformed`] when any entry cannot be parsed.
+    /// Both fail the batch closed: admitting unredacted bytes — or bytes
+    /// checked against a silently emptier redaction set — is never an
+    /// acceptable degradation.
     pub async fn manifest(
         &self,
         session: SessionId,
@@ -440,6 +513,8 @@ impl CustodyManifests {
                 entries: Vec::new(),
             });
         };
+        let entries = parse_entries(&item)
+            .map_err(|malformed| AuthorityError::CustodyMalformed { malformed })?;
         Ok(SecretDigestManifest {
             session,
             custody_revision: item
@@ -447,19 +522,31 @@ impl CustodyManifests {
                 .and_then(|value| value.as_n().ok())
                 .and_then(|text| text.parse().ok())
                 .unwrap_or(0),
-            entries: parse_entries(&item),
+            entries,
         })
     }
 }
 
 /// Reads the `{len, hmac}` rows of one manifest item.
-fn parse_entries(item: &HashMap<String, AttributeValue>) -> Vec<SecretDigest> {
+///
+/// An unreadable entry refuses the whole manifest rather than being filtered
+/// away: a `filter_map` here silently emptied the redaction set, which is how
+/// an injected secret would have reached storage unredacted.
+///
+/// # Errors
+///
+/// Returns how many entries could not be parsed.
+fn parse_entries(item: &HashMap<String, AttributeValue>) -> Result<Vec<SecretDigest>, usize> {
     let Some(list) = item.get("entries").and_then(|value| value.as_l().ok()) else {
-        return Vec::new();
+        // An absent list is a manifest that names no secrets, not a malformed
+        // one: the custody stream writes the item with an empty list before
+        // the first injection.
+        return Ok(Vec::new());
     };
-    list.iter()
-        .filter_map(|entry| {
-            let map = entry.as_m().ok()?;
+    let mut entries = Vec::with_capacity(list.len());
+    let mut malformed = 0usize;
+    for entry in list {
+        let parsed = entry.as_m().ok().and_then(|map| {
             let len = map
                 .get("len")
                 .and_then(|value| value.as_n().ok())
@@ -469,18 +556,28 @@ fn parse_entries(item: &HashMap<String, AttributeValue>) -> Vec<SecretDigest> {
                 .and_then(|value| value.as_b().ok())
                 .and_then(|blob| <[u8; 32]>::try_from(blob.as_ref()).ok())?;
             Some(SecretDigest { len, hmac })
-        })
-        .collect()
+        });
+        match parsed {
+            Some(digest) => entries.push(digest),
+            None => malformed += 1,
+        }
+    }
+    if malformed > 0 {
+        return Err(malformed);
+    }
+    Ok(entries)
 }
 
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
+    use aex_observation_domain::canonical::{BatchBinding, CanonicalValue, batch_intent_digest};
     use aex_otlp_admission::{MemoryBudget, OtlpError};
     use aex_wire::error::ErrorCode;
+    use aex_wire::ids::PrefixedId as _;
 
-    use super::{CustodyManifests, authority_error, otlp_error, reserve};
+    use super::{CustodyManifests, authority_error, batch_id_for, otlp_error, reserve};
     use crate::authority::AuthorityError;
 
     #[test]
@@ -550,12 +647,151 @@ mod tests {
         assert_eq!(error.code, ErrorCode::IdempotencyConflict);
     }
 
+    /// One manifest item whose entry list is exactly `entries`.
+    fn manifest_item(
+        entries: Vec<aws_sdk_dynamodb::types::AttributeValue>,
+    ) -> std::collections::HashMap<String, aws_sdk_dynamodb::types::AttributeValue> {
+        use aws_sdk_dynamodb::types::AttributeValue;
+        std::collections::HashMap::from([
+            ("custodyRevision".to_owned(), AttributeValue::N("3".into())),
+            ("entries".to_owned(), AttributeValue::L(entries)),
+        ])
+    }
+
+    /// One well-formed `{len, hmac}` entry.
+    fn custody_entry() -> aws_sdk_dynamodb::types::AttributeValue {
+        use aws_sdk_dynamodb::types::AttributeValue;
+        AttributeValue::M(std::collections::HashMap::from([
+            ("len".to_owned(), AttributeValue::N("12".into())),
+            (
+                "hmac".to_owned(),
+                AttributeValue::B(aws_sdk_dynamodb::primitives::Blob::new(vec![7u8; 32])),
+            ),
+        ]))
+    }
+
+    #[test]
+    fn a_malformed_custody_entry_refuses_the_manifest_rather_than_shrinking_it() {
+        use aws_sdk_dynamodb::types::AttributeValue;
+        // The pre-fix `filter_map` dropped what it could not parse, so a
+        // corrupt entry silently emptied the redaction set and an injected
+        // secret would have reached storage unredacted.
+        let truncated_hmac = AttributeValue::M(std::collections::HashMap::from([
+            ("len".to_owned(), AttributeValue::N("12".into())),
+            (
+                "hmac".to_owned(),
+                AttributeValue::B(aws_sdk_dynamodb::primitives::Blob::new(vec![7u8; 16])),
+            ),
+        ]));
+        let missing_len = AttributeValue::M(std::collections::HashMap::from([(
+            "hmac".to_owned(),
+            AttributeValue::B(aws_sdk_dynamodb::primitives::Blob::new(vec![7u8; 32])),
+        )]));
+        let outcome = super::parse_entries(&manifest_item(vec![
+            custody_entry(),
+            truncated_hmac,
+            missing_len,
+        ]));
+        assert_eq!(
+            outcome.expect_err("two unreadable entries refuse the manifest"),
+            2,
+            "every attempt is counted, not only the first"
+        );
+    }
+
+    #[test]
+    fn a_well_formed_manifest_and_an_absent_list_both_parse() {
+        let entries =
+            super::parse_entries(&manifest_item(vec![custody_entry()])).expect("parses whole");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].len, 12);
+        assert_eq!(entries[0].hmac, [7u8; 32]);
+
+        // An absent list is a manifest that names no secrets, not a malformed
+        // one.
+        let empty = super::parse_entries(&std::collections::HashMap::new())
+            .expect("an absent list is empty");
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn a_malformed_custody_manifest_fails_the_batch_closed_and_retryably() {
+        let error = AuthorityError::CustodyMalformed { malformed: 2 };
+        assert!(
+            error.retryable(),
+            "the custody stream rewrites the row; the caller retries unchanged"
+        );
+        let wire = authority_error(&error);
+        assert_eq!(wire.code, ErrorCode::ObservabilityUnavailable);
+        assert!(wire.retry_after.is_some(), "fail closed, never fail open");
+    }
+
+    #[test]
+    fn exhausted_materialization_is_a_retryable_five_zero_three() {
+        let error = AuthorityError::MaterializeExhausted { attempts: 9 };
+        assert!(
+            error.retryable(),
+            "the receipt is durable; a retry resumes materialization"
+        );
+        let wire = authority_error(&error);
+        assert_eq!(wire.code, ErrorCode::ObservabilityUnavailable);
+        assert!(wire.retry_after.is_some());
+    }
+
     #[test]
     fn the_manifest_key_is_the_published_redact_family() {
-        use aex_wire::ids::PrefixedId as _;
         let session = aex_wire::ids::SessionId::from_uuid7(aex_wire::Uuid7::compose(1, [4; 10]));
         let key = CustodyManifests::partition_key(session);
         assert!(key.starts_with("REDACT#"), "{key}");
         assert!(key.ends_with(&session.to_string()));
+    }
+
+    /// The binding of one fixture batch.
+    fn binding() -> BatchBinding<'static> {
+        BatchBinding {
+            principal_id: "{\"kind\":\"workspaceKey\"}",
+            method: "POST",
+            canonical_route: "/api/telemetry/otlp/v1/logs",
+            workspace_id: "wsp_01h455vb4pex5vsknk084sn02q",
+            scope: "WS#wsp_01h455vb4pex5vsknk084sn02q",
+        }
+    }
+
+    #[test]
+    fn an_equal_content_retry_converges_on_one_batch_identity() {
+        // The whole idempotency guarantee hangs on this derivation: the same
+        // bound content — same principal, route, workspace, scope and bodies —
+        // must resolve to the same `(workspace, batchId)` receipt on every
+        // retry, and different content must not.
+        let bodies = vec![CanonicalValue::Str("one log line".into())];
+        let first = batch_intent_digest(&binding(), &bodies).expect("a digest");
+        let second = batch_intent_digest(&binding(), &bodies).expect("a digest");
+        assert_eq!(batch_id_for(&first), batch_id_for(&second));
+
+        let other_bodies = vec![CanonicalValue::Str("a different line".into())];
+        let different = batch_intent_digest(&binding(), &other_bodies).expect("a digest");
+        assert_ne!(batch_id_for(&first), batch_id_for(&different));
+
+        let reordered =
+            batch_intent_digest(&binding(), &[other_bodies[0].clone(), bodies[0].clone()])
+                .expect("a digest");
+        assert_ne!(
+            batch_id_for(&different),
+            batch_id_for(&reordered),
+            "the observation list is ordered; reordering is a different batch"
+        );
+    }
+
+    #[test]
+    fn a_derived_batch_identity_is_a_parseable_uuid7() {
+        // `Uuid7::compose` forces the version and variant nibbles, so a digest
+        // -derived identity must survive the same encode/parse round trip a
+        // clock-minted one did.
+        let digest =
+            batch_intent_digest(&binding(), &[CanonicalValue::Str("x".into())]).expect("a digest");
+        let id = batch_id_for(&digest);
+        let parsed = aex_wire::ids::TelemetryBatchId::parse(id.encode().as_str())
+            .expect("a derived identity round-trips");
+        assert_eq!(parsed, id);
     }
 }

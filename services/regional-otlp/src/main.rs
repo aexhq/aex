@@ -12,6 +12,7 @@
 mod admission;
 mod authority;
 mod config;
+mod counters;
 mod mount;
 mod staging;
 
@@ -25,6 +26,7 @@ use aex_wire::dispatch::RequestLimits;
 use crate::admission::{CustodyManifests, OtlpService};
 use crate::authority::AdmissionAuthority;
 use crate::config::{Config, ConfigError, REQUIRED_VARS};
+use crate::counters::AdmissionTelemetry;
 use crate::mount::{AUDIENCE, AppState};
 
 /// The capability grant this deployable is allowed to hold.
@@ -101,7 +103,10 @@ pub fn compose(observed: &[Capability], passed: &[Probe]) -> Result<(), RunError
 ///
 /// Returns the typed failure of the first start-up stage that refused. Nothing
 /// is served before every declared probe has actually passed.
-pub async fn run(config: Config) -> Result<(), RunError> {
+pub async fn run(
+    config: Config,
+    telemetry: aex_platform_telemetry::Handle,
+) -> Result<(), RunError> {
     let aws = aws_config::from_env()
         .region(aws_config::Region::new(config.region.as_str()))
         .load()
@@ -181,6 +186,7 @@ pub async fn run(config: Config) -> Result<(), RunError> {
         MemoryBudget::new(config.memory_budget_bytes),
         config.reserve_wait,
         redaction_key,
+        AdmissionTelemetry::new(telemetry, config.plane.as_str(), config.region.as_str()),
     );
     let state = Arc::new(AppState {
         edge: Arc::new(edge),
@@ -266,7 +272,7 @@ async fn main() -> std::process::ExitCode {
             config.region.as_str().to_owned(),
         ),
     );
-    let outcome = run(config).await;
+    let outcome = run(config, telemetry.clone()).await;
     if let aex_platform_telemetry::FlushOutcome::DeadlineExceeded { pending } =
         telemetry.flush(settings.flush_deadline)
     {

@@ -293,7 +293,13 @@ async fn one_workspace_parking_does_not_stall_another() {
     assert!(harness.authority.frontier_of(&workspace()).is_quarantined());
 
     // A different partition key is a different batch and a different frontier.
-    let other = WorkspaceId::parse("ws-2").expect("workspace");
+    // Canonical spelling, because the outbox boundary parses it onto the wire.
+    let other = {
+        use aex_wire::ids::PrefixedId as _;
+        let wire =
+            aex_wire::ids::WorkspaceId::from_uuid7(aex_wire::ids::Uuid7::compose(3, [11; 10]));
+        WorkspaceId::parse(wire.encode().as_str()).expect("workspace")
+    };
     let mut second = fact(Category::Storage, 1);
     second.workspace = other.clone();
     let records = stream(&harness, std::slice::from_ref(&second));
@@ -518,7 +524,13 @@ async fn a_duplicate_receipt_is_absorbed_rather_than_settling_twice() {
 }
 
 #[tokio::test]
-async fn a_correction_withdraws_its_target_through_the_whole_pipeline() {
+async fn a_correction_projects_its_withdrawal_and_is_quarantined_at_the_wire() {
+    // The projection half of a void works end to end: the rollup is restated
+    // and the detail row stays visible as withdrawn. The central contract
+    // cannot carry a correction yet, so the publish half is a typed refusal
+    // that parks the fact rather than a message the settlement worker cannot
+    // decode. The correction producer owns extending the contract and
+    // restoring publication before any live path mints a void.
     let harness = harness(Category::Compute);
     let target = fact(Category::Compute, 1);
     let void = void_fact(Category::Compute, 2, &target.fact_id);
@@ -529,7 +541,12 @@ async fn a_correction_withdraws_its_target_through_the_whole_pipeline() {
         .handle_stream(&records)
         .await
         .expect("handles");
-    assert!(report.is_clean(), "{report:?}");
+    assert_eq!(report.folded, 2);
+    assert_eq!(report.published, 1, "the measured target still settles");
+    assert_eq!(
+        report.quarantined, 1,
+        "the void is parked loudly, never garbled onto the wire"
+    );
     assert_eq!(
         harness.projection.hourly_total(),
         0,
@@ -546,6 +563,9 @@ async fn a_correction_withdraws_its_target_through_the_whole_pipeline() {
 
 #[tokio::test]
 async fn a_zero_dollar_observability_fact_advances_the_frontier_and_bills_nothing() {
+    // Same posture as the correction above: projected and frontier-advanced,
+    // but parked at the wire until the contract can express a zero-dollar
+    // observability count.
     let harness = harness(Category::Compute);
     let records = stream(&harness, &[observability_fact(1)]);
 
@@ -554,11 +574,11 @@ async fn a_zero_dollar_observability_fact_advances_the_frontier_and_bills_nothin
         .handle_stream(&records)
         .await
         .expect("handles");
-    assert!(report.is_clean(), "{report:?}");
     assert_eq!(report.folded, 1);
+    assert_eq!(report.published, 0);
     assert_eq!(
-        report.published, 1,
-        "it is still money evidence and is sent"
+        report.quarantined, 1,
+        "unrepresentable money evidence parks; it is never dropped or garbled"
     );
     assert_eq!(harness.projection.hourly_total(), 0);
     assert_eq!(harness.projection.detail_rows(), 0);

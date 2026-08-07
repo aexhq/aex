@@ -1,19 +1,13 @@
 //! Pure settlement delivery contracts and partial-batch accounting.
 
-use aex_finance_domain::IntentHash;
-use aex_internal_contracts::usage::{FactId, Meter, UsageFact};
+use aex_internal_contracts::usage::{FactId, UsageFact};
+use aex_wire::idempotency::IntentDigest;
 use aex_wire::ids::{OrganizationId, PrefixedId as _};
-use serde::{Deserialize, Serialize};
 
-/// Body delivered from a regional usage outbox to central rating.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct RatingRequest {
-    /// Immutable regional fact.
-    pub fact: UsageFact,
-    /// Canonical producer intent digest.
-    pub intent_hash: IntentHash,
-}
+// The wire body is declared once, in the contracts crate, and consumed here.
+// Declaring a second `RatingRequest` in this crate is how the producer and the
+// consumer came to serialize two different facts for one queue.
+pub use aex_internal_contracts::usage::RatingRequest;
 
 /// Transport-independent SQS FIFO producer contract.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,8 +23,8 @@ pub struct FifoRatingMessage {
 impl FifoRatingMessage {
     /// Derives every identity from the immutable fact; callers supply none.
     #[must_use]
-    pub fn new(fact: UsageFact, intent_hash: IntentHash) -> Self {
-        let category = category(fact.meter);
+    pub fn new(fact: UsageFact, intent_hash: IntentDigest) -> Self {
+        let category = fact.meter.category();
         let message_group_id = fact.organization.encode().as_str().to_owned();
         let message_deduplication_id =
             format!("{}:{category}:{}", fact.region.as_str(), fact.fact_id);
@@ -67,12 +61,4 @@ pub fn partial_batch_failures(
         })
         .map(|(item_id, _)| item_id.clone())
         .collect()
-}
-
-const fn category(meter: Meter) -> &'static str {
-    match meter {
-        Meter::ComputeMillicpuMs | Meter::MemoryByteMs => "compute",
-        Meter::StorageByteMin => "storage",
-        Meter::DataTransferEgressByte => "transfer",
-    }
 }

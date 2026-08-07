@@ -42,7 +42,9 @@ serde_json.workspace = true
 thiserror.workspace = true
 time.workspace = true
 uuid.workspace = true
+aex-internal-contracts = { path = "../aex-internal-contracts" }
 aex-usage-domain = { path = "../aex-usage-domain" }
+aex-wire = { path = "../aex-wire" }
 bytes = { workspace = true, optional = true }
 http-body = { workspace = true, optional = true }
 pin-project-lite = { workspace = true, optional = true }

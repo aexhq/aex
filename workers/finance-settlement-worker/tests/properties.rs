@@ -5,13 +5,13 @@
 //! response. Both are asserted over arbitrary batches rather than examples.
 
 use aex_finance_app::use_cases::RatingRequest;
-use aex_finance_domain::IntentHash;
 use aex_internal_contracts::usage::{
     Attribution, AuthorityKind, FactAuthority, FactBasis, FactId, FactIdempotency, Meter,
     ServiceTime, SourceReceipt, UsageFact,
 };
 use aex_internal_contracts::{PricingVersion, SchemaVersion};
 use aex_wire::PrefixedId as _;
+use aex_wire::idempotency::IntentDigest;
 use aex_wire::ids::{OrganizationId, WorkspaceId};
 use aex_wire::types::{DecimalU128, Region, Timestamp};
 use finance_settlement_worker::backlog::{Delivered, chunks, partition, uncommitted};
@@ -70,7 +70,7 @@ fn delivered(index: usize, seed: u8) -> Delivered {
         group: organization.encode().as_str().to_owned(),
         request: RatingRequest {
             fact,
-            intent_hash: IntentHash::new([1u8; 32]),
+            intent_hash: IntentDigest::from_bytes([1u8; 32]),
         },
     }
 }

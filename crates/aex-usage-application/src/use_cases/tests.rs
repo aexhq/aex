@@ -321,7 +321,10 @@ async fn settling_copies_the_settled_position_into_the_coverage_row() {
         .expect("settles");
 
     let coverage = projection
-        .row("G0000#ws-1#storage", "COVERAGE")
+        .row(
+            &format!("G0000#{}#storage", crate::testing::workspace()),
+            "COVERAGE",
+        )
         .expect("the coverage row exists");
     assert_eq!(
         coverage.values["settledSequence"],

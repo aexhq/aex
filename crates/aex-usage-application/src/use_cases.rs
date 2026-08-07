@@ -115,8 +115,13 @@ impl UseCaseError {
             // internally consistent but the history it names is not.
             Self::TargetUnknown { .. } | Self::Fold(_) => Some(PoisonReason::InvariantViolated),
             Self::ReceiptMismatch { .. } => Some(PoisonReason::PricingVersionMismatch),
+            // A fact the central contract cannot express never becomes
+            // expressible by redelivery. Retrying it forever is the poison
+            // loop; parking is the honest third option, exactly as for a
+            // decode failure.
+            Self::Outbox(_) => Some(PoisonReason::InvariantViolated),
             Self::Port(error) if error.terminal() => Some(PoisonReason::Undecodable),
-            Self::SequenceGap { .. } | Self::Frontier(_) | Self::Outbox(_) | Self::Port(_) => None,
+            Self::SequenceGap { .. } | Self::Frontier(_) | Self::Port(_) => None,
         }
     }
 }
@@ -670,6 +675,12 @@ pub struct SweepReport {
     pub deferred: u64,
     /// Rows whose attempt count crossed the alarm threshold.
     pub alarming: u64,
+    /// Rows whose fact the central contract cannot express.
+    ///
+    /// Counted and stepped over rather than aborting the shard: every row
+    /// behind an unrepresentable fact is deliverable money, and the row itself
+    /// stays durable until the contract grows to carry it.
+    pub unpublishable: u64,
     /// The oldest undelivered row's age in milliseconds.
     pub oldest_age_ms: u64,
 }
@@ -722,17 +733,23 @@ impl<A: AuthorityStore, Q: RatingQueue, C: Clock> SweepOutbox<A, Q, C> {
                     id: entry.fact_id.to_string(),
                 }));
             };
-            let message = OutboxMessage::for_fact(&fact)?;
             let attempts = entry.attempts.saturating_add(1);
             if attempts > attempt_alarm {
                 report.alarming += 1;
             }
-            match self.queue.publish(&message).await {
-                Ok(()) => report.republished += 1,
-                Err(error) if error.retryable() => {
-                    report.deferred += 1;
-                }
-                Err(error) => return Err(error.into()),
+            match OutboxMessage::for_fact(&fact) {
+                Ok(message) => match self.queue.publish(&message).await {
+                    Ok(()) => report.republished += 1,
+                    Err(error) if error.retryable() => {
+                        report.deferred += 1;
+                    }
+                    Err(error) => return Err(error.into()),
+                },
+                // A fact the contract cannot express must not abort the shard:
+                // every row behind it is deliverable money. It is counted, its
+                // attempt is noted so its age keeps alarming, and its row stays
+                // durable until the contract grows to carry it.
+                Err(_) => report.unpublishable += 1,
             }
             self.authority
                 .note_outbox_attempt(&entry.workspace, entry.accepted_sequence, attempts, now)

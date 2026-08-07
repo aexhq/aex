@@ -91,6 +91,15 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
     }
     debug_assert_eq!(declared.len(), owned_routes().len());
     router
+        // The registry pins a 4 MiB encoded OTLP ceiling, but `axum`'s
+        // extractor default is 2 MiB — without this layer a 2–4 MiB batch died
+        // as a bare framework `413` before the handler ever ran, despite the
+        // pinned contract. The layer only raises the framework guard to the
+        // configured ceiling; the admission path still enforces the exact
+        // per-workspace bound with the typed refusal.
+        .layer(axum::extract::DefaultBodyLimit::max(
+            state.limits.max_otlp_body_bytes,
+        ))
         .with_state(Arc::clone(&state))
         .merge(health_router(state))
 }
@@ -321,10 +330,142 @@ pub fn owned_routes() -> &'static [RouteId] {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use aex_otlp_admission::{MemoryBudget, OtlpLimits};
+    use aex_wire::dispatch::RequestLimits;
     use aex_wire::routes::{BodyClass, Plane, RouteId, TransportKind, route};
     use aex_wire::server::RouteGroup;
+    use axum::http::StatusCode;
 
-    use super::{GROUP, mounted_templates, owned_routes};
+    use super::{AUDIENCE, AppState, GROUP, mounted_templates, owned_routes};
+    use crate::admission::{CustodyManifests, OtlpService};
+    use crate::authority::AdmissionAuthority;
+    use crate::counters::AdmissionTelemetry;
+
+    /// A fully composed state whose clients never reach a network.
+    ///
+    /// The two body-limit cases below never get past admission stage 1–2: an
+    /// over-limit body is refused by the framework guard before the handler
+    /// runs, and an in-limit body carries no credential so the edge refuses it
+    /// locally before any provider client is exercised.
+    fn offline_state() -> Arc<AppState> {
+        let region = aex_wire::types::Region::from_name("eu-west-1").expect("a region");
+        let dynamodb = aws_sdk_dynamodb::Client::from_conf(
+            aws_sdk_dynamodb::Config::builder()
+                .behavior_version(aws_sdk_dynamodb::config::BehaviorVersion::latest())
+                .region(aws_sdk_dynamodb::config::Region::new("eu-west-1"))
+                .build(),
+        );
+        let s3 = aws_sdk_s3::Client::from_conf(
+            aws_sdk_s3::Config::builder()
+                .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+                .region(aws_sdk_s3::config::Region::new("eu-west-1"))
+                .build(),
+        );
+        let lambda = aws_sdk_lambda::Client::from_conf(
+            aws_sdk_lambda::Config::builder()
+                .behavior_version(aws_sdk_lambda::config::BehaviorVersion::latest())
+                .region(aws_sdk_lambda::config::Region::new("eu-west-1"))
+                .build(),
+        );
+        let edge = aex_regional_http::edge::RegionalEdge::new(
+            aex_regional_http::authz::LambdaAssertionSource::new(
+                lambda,
+                "arn:aws:lambda:eu-west-1:000000000000:function:central-authz".to_owned(),
+                AUDIENCE,
+                region,
+            ),
+            aex_identity_domain::assertion::VerificationKeySet::default(),
+            aex_regional_http::authz::RegionalProjection::new(
+                aex_session_dynamodb::projection::ProjectionReader::new(
+                    dynamodb.clone(),
+                    "test-authz-projection".to_owned(),
+                ),
+                region,
+            ),
+            aex_regional_http::edge::SystemClock,
+            aex_regional_http::edge::EdgeBinding {
+                plane: aex_identity_domain::assertion::Plane::Dev,
+                audience: AUDIENCE,
+                region,
+                cache_budget_bytes: 64 * 1024,
+            },
+        )
+        .expect("the edge composes");
+        let service = OtlpService::new(
+            AdmissionAuthority::new(
+                dynamodb.clone(),
+                s3,
+                "test-observation-authority",
+                "test-observation-bucket",
+                region,
+            ),
+            CustodyManifests::new(dynamodb, "test-secret-custody"),
+            OtlpLimits::REGISTERED,
+            MemoryBudget::new(32 * 1024 * 1024),
+            Duration::from_millis(5),
+            vec![0u8; 32],
+            AdmissionTelemetry::new(
+                aex_platform_telemetry::Handle::install(
+                    &aex_platform_telemetry::Settings::default(),
+                    None,
+                ),
+                "dev",
+                "eu-west-1",
+            ),
+        );
+        Arc::new(AppState {
+            edge: Arc::new(edge),
+            service: Arc::new(service),
+            limits: RequestLimits {
+                max_json_body_bytes: RequestLimits::DEFAULT_JSON_BODY_BYTES,
+                max_otlp_body_bytes: OtlpLimits::REGISTERED.encoded_max,
+            },
+            ready: true,
+            release_digest: "test".to_owned(),
+        })
+    }
+
+    /// One OTLP ingest request carrying `bytes` of body and no credential.
+    fn ingest_request(bytes: usize) -> axum::http::Request<axum::body::Body> {
+        let template = route(owned_routes()[0]).template;
+        axum::http::Request::builder()
+            .method("POST")
+            .uri(template)
+            .header("content-type", "application/x-protobuf")
+            .body(axum::body::Body::from(vec![0u8; bytes]))
+            .expect("a request builds")
+    }
+
+    #[tokio::test]
+    async fn the_mount_admits_bodies_up_to_the_pinned_ceiling_and_refuses_past_it() {
+        use tower::ServiceExt as _;
+        let router = super::router(offline_state());
+
+        // 3 MiB is inside the pinned 4 MiB contract but past `axum`'s 2 MiB
+        // extractor default: without the explicit limit this died as a bare
+        // framework `413` before the handler ever ran.
+        let inside = router
+            .clone()
+            .oneshot(ingest_request(3 * 1024 * 1024))
+            .await
+            .expect("served");
+        assert_ne!(
+            inside.status(),
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "a body inside the pinned contract must reach admission, not die \
+             at the framework guard"
+        );
+
+        // Past the configured ceiling the framework guard still refuses.
+        let refused = router
+            .oneshot(ingest_request(5 * 1024 * 1024))
+            .await
+            .expect("served");
+        assert_eq!(refused.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
 
     #[test]
     fn every_route_of_the_group_is_mounted() {

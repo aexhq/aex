@@ -110,6 +110,23 @@ fn the_staging_bounds_are_declared_and_derived_from_the_registry() {
 }
 
 #[test]
+fn the_batch_identity_is_content_addressed_never_clock_minted() {
+    // A clock-minted batch id makes every exporter retry a fresh admission:
+    // new receipt, new sequences, undedupable duplicates — and the whole
+    // staged-commit idempotency machinery unreachable. The identity must be
+    // derived from the batch intent digest and nothing else.
+    let admission = include_str!("../src/admission.rs");
+    assert!(
+        !admission.contains("now_v7"),
+        "a clock mint in admission.rs is the duplicate-receipt defect coming back"
+    );
+    assert!(
+        admission.contains("fn batch_id_for(digest: &aex_wire::idempotency::IntentDigest)"),
+        "the batch identity is a pure function of the intent digest"
+    );
+}
+
+#[test]
 fn no_clickhouse_or_kinesis_dependency_can_reach_this_binary() {
     let manifest = include_str!("../Cargo.toml");
     for banned in ["clickhouse", "kinesis"] {
