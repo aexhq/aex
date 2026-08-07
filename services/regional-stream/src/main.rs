@@ -245,6 +245,10 @@ async fn run(config: &Config, telemetry: &aex_platform_telemetry::Handle) -> Res
                     },
                 ],
                 wake_hub.clone(),
+                // The published stream counters are the readers' health
+                // surface: stderr alone cannot be alarmed on, and a degraded
+                // reader silently demotes every consumer to fallback polling.
+                Arc::clone(&counters),
             )
             .await
             .map_err(|error| RunError::Probe(error.to_string()))?,

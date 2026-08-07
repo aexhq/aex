@@ -19,6 +19,7 @@ use aws_sdk_dynamodbstreams::error::DisplayErrorContext;
 use aws_sdk_dynamodbstreams::types::{
     AttributeValue, Record, Shard, ShardIteratorType, StreamStatus, StreamViewType,
 };
+use regional_observation_api::counters::{ReadCounter, ReadCounters};
 use regional_observation_api::wake::WakeHub;
 
 const DISCOVERY_INTERVAL: Duration = Duration::from_mins(1);
@@ -26,6 +27,39 @@ const EMPTY_SHARD_POLL: Duration = Duration::from_secs(1);
 const RETRY_MIN: Duration = Duration::from_secs(1);
 const RETRY_MAX: Duration = Duration::from_secs(30);
 const SESSION_CACHE_ENTRIES: usize = 4_096;
+
+/// Escalating retry delay for one shard reader.
+///
+/// Only a successful `GetRecords` proves the shard readable, so only success
+/// restores the floor. Resetting after `GetShardIterator` — the shape this
+/// replaced — pinned a persistent `GetRecords` failure at [`RETRY_MIN`]:
+/// every cycle re-acquired an iterator, reset, failed and slept the minimum
+/// again, so [`RETRY_MAX`] was unreachable on exactly the failure that
+/// needed it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Backoff {
+    delay: Duration,
+}
+
+impl Backoff {
+    const fn new() -> Self {
+        Self { delay: RETRY_MIN }
+    }
+
+    /// The delay to sleep before the next attempt. Each failure doubles the
+    /// following one, up to [`RETRY_MAX`].
+    fn failure(&mut self) -> Duration {
+        let delay = self.delay;
+        self.delay = self.delay.saturating_mul(2).min(RETRY_MAX);
+        delay
+    }
+
+    /// A successful `GetRecords` — an empty page included — proves the shard
+    /// readable and restores the floor.
+    fn success(&mut self) {
+        self.delay = RETRY_MIN;
+    }
+}
 
 /// Which authority emitted one `KEYS_ONLY` record.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -94,6 +128,7 @@ pub async fn start(
     session_table: String,
     specs: Vec<StreamSpec>,
     hub: WakeHub,
+    counters: Arc<ReadCounters>,
 ) -> Result<WakeReaders, WakeError> {
     let resolver = WorkspaceResolver::new(table, session_table);
     let mut tasks = Vec::with_capacity(specs.len());
@@ -105,6 +140,7 @@ pub async fn start(
             hub.clone(),
             resolver.clone(),
             shards,
+            Arc::clone(&counters),
         )));
     }
     Ok(WakeReaders { tasks })
@@ -157,14 +193,24 @@ async fn supervise(
     hub: WakeHub,
     resolver: WorkspaceResolver,
     initial: Vec<Shard>,
+    counters: Arc<ReadCounters>,
 ) {
     let mut known = BTreeSet::new();
-    spawn_new_shards(&client, &spec, &hub, &resolver, &mut known, initial);
+    spawn_new_shards(
+        &client, &spec, &hub, &resolver, &mut known, initial, &counters,
+    );
     loop {
         tokio::time::sleep(DISCOVERY_INTERVAL).await;
         match describe(&client, &spec).await {
-            Ok(shards) => spawn_new_shards(&client, &spec, &hub, &resolver, &mut known, shards),
-            Err(error) => eprintln!("regional-stream: wake discovery degraded: {error}"),
+            Ok(shards) => {
+                spawn_new_shards(
+                    &client, &spec, &hub, &resolver, &mut known, shards, &counters,
+                );
+            }
+            Err(error) => {
+                counters.record(ReadCounter::WakeReaderDegraded);
+                eprintln!("regional-stream: wake discovery degraded: {error}");
+            }
         }
     }
 }
@@ -176,6 +222,7 @@ fn spawn_new_shards(
     resolver: &WorkspaceResolver,
     known: &mut BTreeSet<String>,
     shards: Vec<Shard>,
+    counters: &Arc<ReadCounters>,
 ) {
     for shard in shards {
         let Some(shard_id) = shard.shard_id().map(str::to_owned) else {
@@ -190,6 +237,7 @@ fn spawn_new_shards(
             shard_id,
             hub.clone(),
             resolver.clone(),
+            Arc::clone(counters),
         ));
     }
 }
@@ -200,8 +248,9 @@ async fn read_shard(
     shard_id: String,
     hub: WakeHub,
     resolver: WorkspaceResolver,
+    counters: Arc<ReadCounters>,
 ) {
-    let mut retry = RETRY_MIN;
+    let mut retry = Backoff::new();
     loop {
         let iterator = client
             .get_shard_iterator()
@@ -211,25 +260,27 @@ async fn read_shard(
             .send()
             .await;
         let Ok(output) = iterator else {
+            counters.record(ReadCounter::WakeReaderDegraded);
             eprintln!(
                 "regional-stream: cannot acquire {:?} shard iterator: {}",
                 spec.authority,
                 DisplayErrorContext(&iterator.expect_err("the result is known to be an error"))
             );
-            tokio::time::sleep(retry).await;
-            retry = retry.saturating_mul(2).min(RETRY_MAX);
+            tokio::time::sleep(retry.failure()).await;
             continue;
         };
         let Some(mut iterator) = output.shard_iterator().map(str::to_owned) else {
+            counters.record(ReadCounter::WakeReaderDegraded);
             eprintln!(
                 "regional-stream: {:?} omitted a shard iterator",
                 spec.authority
             );
-            tokio::time::sleep(retry).await;
-            retry = retry.saturating_mul(2).min(RETRY_MAX);
+            tokio::time::sleep(retry.failure()).await;
             continue;
         };
-        retry = RETRY_MIN;
+        // The backoff is deliberately not reset here. An acquired iterator
+        // proves nothing about reading records, and a reset on acquisition
+        // pinned a persistent `GetRecords` failure at the floor for ever.
         loop {
             let result = client
                 .get_records()
@@ -238,6 +289,7 @@ async fn read_shard(
                 .send()
                 .await;
             let Ok(output) = result else {
+                counters.record(ReadCounter::WakeReaderDegraded);
                 eprintln!(
                     "regional-stream: {:?} wake read degraded: {}",
                     spec.authority,
@@ -245,6 +297,7 @@ async fn read_shard(
                 );
                 break;
             };
+            retry.success();
             for record in output.records() {
                 if let Some(scope) = classify(record, spec.authority) {
                     resolver.notify(&hub, scope).await;
@@ -259,8 +312,7 @@ async fn read_shard(
                 tokio::time::sleep(EMPTY_SHARD_POLL).await;
             }
         }
-        tokio::time::sleep(retry).await;
-        retry = retry.saturating_mul(2).min(RETRY_MAX);
+        tokio::time::sleep(retry.failure()).await;
     }
 }
 
@@ -354,12 +406,126 @@ impl WorkspaceResolver {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::time::Duration;
+
     use aex_observation_domain::keys::{BucketHour, ScopeKey, observation_pk};
     use aex_observation_domain::signal::Signal;
     use aex_wire::ids::{PrefixedId as _, SessionId, Uuid7};
     use aws_sdk_dynamodbstreams::types::{AttributeValue, Record, StreamRecord, StreamViewType};
+    use aws_smithy_http_client::test_util::{ReplayEvent, StaticReplayClient, capture_request};
+    use aws_smithy_types::body::SdkBody;
+    use regional_observation_api::counters::{ReadCounter, ReadCounters};
+    use regional_observation_api::wake::WakeHub;
 
-    use super::{AuthorityStream, classify};
+    use super::{
+        AuthorityStream, Backoff, RETRY_MIN, StreamSpec, WorkspaceResolver, classify, read_shard,
+    };
+
+    #[test]
+    fn backoff_escalates_to_its_ceiling_and_only_success_restores_the_floor() {
+        let mut retry = Backoff::new();
+        let observed: Vec<u64> = (0..7).map(|_| retry.failure().as_secs()).collect();
+        assert_eq!(
+            observed,
+            [1, 2, 4, 8, 16, 30, 30],
+            "failures escalate and hold the ceiling"
+        );
+        retry.success();
+        assert_eq!(retry.failure(), RETRY_MIN);
+    }
+
+    fn event(status: u16, body: &str) -> ReplayEvent {
+        ReplayEvent::new(
+            http::Request::builder()
+                .method("POST")
+                .uri("https://streams.dynamodb.eu-west-1.amazonaws.com/")
+                .body(SdkBody::empty())
+                .expect("a request"),
+            http::Response::builder()
+                .status(status)
+                .body(SdkBody::from(body.to_owned()))
+                .expect("a response"),
+        )
+    }
+
+    fn streams_client(events: Vec<ReplayEvent>) -> aws_sdk_dynamodbstreams::Client {
+        let config = aws_sdk_dynamodbstreams::config::Builder::new()
+            .behavior_version(aws_sdk_dynamodbstreams::config::BehaviorVersion::latest())
+            .region(aws_sdk_dynamodbstreams::config::Region::new("eu-west-1"))
+            .credentials_provider(aws_sdk_dynamodbstreams::config::Credentials::new(
+                "AKIDTESTTESTTESTTEST",
+                "test-secret",
+                None,
+                None,
+                "aex-tests",
+            ))
+            .http_client(StaticReplayClient::new(events))
+            .retry_config(aws_sdk_dynamodbstreams::config::retry::RetryConfig::disabled())
+            .build();
+        aws_sdk_dynamodbstreams::Client::from_conf(config)
+    }
+
+    /// The regression this pins: a persistent `GetRecords` failure must walk
+    /// the backoff ladder even though every intervening `GetShardIterator`
+    /// succeeds. The pre-fix shape reset the delay on acquisition, so three
+    /// straight read failures slept 1+1+1 s for ever; with the reset placed
+    /// after a successful read they sleep 1+2+4 s, and every failed provider
+    /// call publishes one degradation.
+    #[tokio::test(start_paused = true)]
+    async fn a_persistent_record_read_failure_escalates_past_the_floor() {
+        let iterator_ok = r#"{"ShardIterator":"iter"}"#;
+        let read_failed =
+            r#"{"__type":"com.amazonaws.dynamodb#InternalServerError","message":"unavailable"}"#;
+        let client = streams_client(vec![
+            event(200, iterator_ok),
+            event(500, read_failed),
+            event(200, iterator_ok),
+            event(500, read_failed),
+            event(200, iterator_ok),
+            event(500, read_failed),
+            event(200, iterator_ok),
+            // A terminal page: records without a next iterator end the shard.
+            event(200, r#"{"Records":[]}"#),
+        ]);
+        let (table_http, _requests) = capture_request(None);
+        let table = aws_sdk_dynamodb::Client::from_conf(
+            aws_sdk_dynamodb::config::Builder::new()
+                .behavior_version(aws_sdk_dynamodb::config::BehaviorVersion::latest())
+                .region(aws_sdk_dynamodb::config::Region::new("eu-west-1"))
+                .credentials_provider(aws_sdk_dynamodb::config::Credentials::new(
+                    "AKIDTESTTESTTESTTEST",
+                    "test-secret",
+                    None,
+                    None,
+                    "aex-tests",
+                ))
+                .http_client(table_http)
+                .build(),
+        );
+        let counters = Arc::new(ReadCounters::default());
+
+        let started = tokio::time::Instant::now();
+        read_shard(
+            client,
+            StreamSpec {
+                arn: "arn:aws:dynamodb:eu-west-1:000000000000:table/t/stream/1".to_owned(),
+                authority: AuthorityStream::Session,
+            },
+            "shard-0".to_owned(),
+            WakeHub::default(),
+            WorkspaceResolver::new(table, "session-authority".to_owned()),
+            Arc::clone(&counters),
+        )
+        .await;
+
+        assert_eq!(
+            started.elapsed(),
+            Duration::from_secs(7),
+            "three read failures back off 1+2+4 s; the pre-fix reset made this 3 s"
+        );
+        assert_eq!(counters.total(ReadCounter::WakeReaderDegraded), 3);
+    }
 
     fn session(seed: u8) -> SessionId {
         SessionId::from_uuid7(Uuid7::compose(1, [seed; 10]))

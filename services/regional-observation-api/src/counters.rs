@@ -69,6 +69,11 @@ pub enum ReadCounter {
     SocketClosed,
     /// Frames abandoned because the transport did not accept them in time.
     WriteStall,
+    /// Wake-reader provider calls that failed — discovery, iterator
+    /// acquisition or a record read. Wakes are latency hints, so a degraded
+    /// reader silently demotes every consumer to fallback polling; this
+    /// counter is what makes that demotion observable.
+    WakeReaderDegraded,
 }
 
 impl ReadCounter {
@@ -87,6 +92,7 @@ impl ReadCounter {
         Self::SocketOpened,
         Self::SocketClosed,
         Self::WriteStall,
+        Self::WakeReaderDegraded,
     ];
 
     /// How many counters exist.
@@ -109,6 +115,7 @@ impl ReadCounter {
             Self::SocketOpened => "socket_opened",
             Self::SocketClosed => "socket_closed",
             Self::WriteStall => "write_stall",
+            Self::WakeReaderDegraded => "wake_reader_degraded",
         }
     }
 

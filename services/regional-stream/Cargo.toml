@@ -63,6 +63,12 @@ serde_json.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 
+[dev-dependencies]
+aws-smithy-http-client.workspace = true
+aws-smithy-types.workspace = true
+http.workspace = true
+tokio = { workspace = true, features = ["macros", "test-util"] }
+
 [[test]]
 name = "streaming"
 path = "tests/streaming.rs"
