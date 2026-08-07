@@ -426,10 +426,15 @@ jobs:
           aex-release-tool artifact oci-compare \
             --first "$RELEASE_DIR/identity-1.json" \
             --second "$RELEASE_DIR/identity-2.json"
+          # `packagings`, not `builds`. One compile now feeds both contexts, so
+          # what these two independent `docker buildx build --no-cache` runs
+          # prove is that packaging the same ELF twice reaches the same digest.
+          # The id is the machine-readable claim; a verifier diffing receipts
+          # across commits has no other way to see that it narrowed.
           jq -n \
             --arg producer "aex-release-tool $(aex-release-tool --version | awk '{print $2}')" \
             '{schema:"aex.check-report.v1",producer:$producer,checks:[
-              {id:"independent-oci-builds-match",status:"passed"},
+              {id:"independent-oci-packagings-match",status:"passed"},
               {id:"inspected-manifest-digests-match",status:"passed"}
             ]}' > "$RELEASE_DIR/package-integrity-report.json"
 
@@ -450,7 +455,7 @@ jobs:
         if: ${{ !startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
         run: |
           set -euo pipefail
-          input="$(jq -r .input "$RELEASE_DIR/recipe.json")"
+          input="$(jq -er .input "$RELEASE_DIR/recipe.json")"
           if [ ! -e "$input" ]; then
             echo "the authoritative build output does not exist: $input" >&2
             exit 30

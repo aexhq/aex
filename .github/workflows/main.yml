@@ -24,8 +24,14 @@ permissions:
 
 jobs:
   # The head of the graph. Every job below runs the exact bytes this one built
-  # and published the digest of, so `gates` deliberately depends on `tools`
-  # rather than on `route`: a broken router must not hide a policy finding.
+  # and published the digest of.
+  #
+  # `gates` depends on this rather than on `route`, so a broken router cannot
+  # hide a policy finding. It does mean a broken `tools` hides all of them,
+  # including the secret scan, which needs no tool at all. That is a feedback
+  # narrowing, not a false green: `receipts` requires `gates` to have succeeded
+  # with `allowSkipped: false`, so a skipped `gates` fails the run. Splitting
+  # the two tool-independent steps into their own unblocked job is owed.
   tools:
     name: Tools
     uses: ./.github/workflows/_tools.yml
