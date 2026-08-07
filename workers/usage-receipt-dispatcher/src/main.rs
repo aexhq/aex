@@ -1,6 +1,7 @@
 //! `usage-receipt-dispatcher` composition root (Rust Lambda ZIP, scheduled).
 
 use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use aex_platform_telemetry::{FlushOutcome, Handle, Record, Settings};
 use aex_rds_data::{AwsTransport, DataApiClient};
@@ -9,7 +10,7 @@ use aex_telemetry_schema::generated::{
     EVENT_AEX_PROCESS_STARTED,
 };
 use lambda_runtime::{LambdaEvent, service_fn};
-use usage_receipt_dispatcher::config::Config;
+use usage_receipt_dispatcher::config::{Config, DEADLINE_SAFETY_MARGIN};
 use usage_receipt_dispatcher::handler::{DispatchRequest, handle};
 use usage_receipt_dispatcher::outbox::{
     AuroraReceiptOutbox, ReceiptOutbox as _, SqsReceiptPublisher,
@@ -90,6 +91,7 @@ async fn run(config: Config) -> Result<(), lambda_runtime::Error> {
         let publisher = Arc::clone(&publisher);
         let categories = categories.clone();
         async move {
+            let stop = drain_stop(event.context.deadline);
             // A scheduled rule may carry an EventBridge envelope this worker has
             // no use for; an unrecognised payload is the ordinary drain.
             let request = serde_json::from_value::<DispatchRequest>(event.payload)
@@ -101,10 +103,26 @@ async fn run(config: Config) -> Result<(), lambda_runtime::Error> {
                 &categories,
                 page_limit,
                 max_attempts,
+                stop,
             )
             .await
             .map_err(|error| lambda_runtime::Error::from(error.to_string()))
         }
     }))
     .await
+}
+
+/// Where paging must stop: the runtime's own deadline minus the margin.
+///
+/// The runtime hands each invocation its deadline as epoch milliseconds. A
+/// deadline at or before now yields a stop that has already passed, which the
+/// drain treats as "one guaranteed page per category" rather than zero work.
+fn drain_stop(deadline_epoch_ms: u64) -> Instant {
+    let now_epoch_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| {
+            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+        });
+    let remaining = Duration::from_millis(deadline_epoch_ms.saturating_sub(now_epoch_ms));
+    Instant::now() + remaining.saturating_sub(DEADLINE_SAFETY_MARGIN)
 }
