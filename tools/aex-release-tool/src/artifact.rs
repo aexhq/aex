@@ -2,7 +2,7 @@
 //!
 //! An artifact's identity is its bytes. The envelope records everything that
 //! shaped those bytes — source commit, toolchain, lockfile, build argv,
-//! input-closure digest, base image — plus the startup supply-chain state and
+//! input-closure digest, base image — plus the supply-chain verdicts and the
 //! receipts earned before publication. Post-deployment evidence is deliberately
 //! absent: an artifact cannot contain proof that only exists once it is
 //! deployed, so smoke, e2e, user, capacity and soak receipts live in the
@@ -11,7 +11,6 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::canon;
@@ -78,8 +77,6 @@ pub struct ModelCatalogBuildInputs {
     pub collection_file: String,
     /// SHA-256 of the exact collection bytes.
     pub collection_sha256: String,
-    /// SHA-256 of the immutable built-in tool catalogue compiled into Brain.
-    pub tool_catalog_sha256: String,
 }
 
 /// Build-time canonical publisher trust-root-set variable.
@@ -90,8 +87,6 @@ pub const MODEL_CATALOG_TRUST_ROOTS_SHA256_VAR: &str = "AEX_MODEL_CATALOG_TRUST_
 pub const MODEL_CATALOG_COLLECTION_FILE_VAR: &str = "AEX_MODEL_CATALOG_COLLECTION_FILE";
 /// Build-time exact collection digest variable.
 pub const MODEL_CATALOG_COLLECTION_SHA256_VAR: &str = "AEX_MODEL_CATALOG_COLLECTION_SHA256";
-/// Build-time exact built-in tool catalogue digest variable.
-pub const TOOL_CATALOG_SHA256_VAR: &str = "AEX_TOOL_CATALOG_SHA256";
 
 const MODEL_CATALOG_TRUST_ROOTS_SCHEMA: &str = "aex.model-catalog-trust-roots.v1";
 const MAX_MODEL_CATALOG_TRUST_ROOTS: usize = 8;
@@ -310,10 +305,6 @@ pub fn plan_with_model_catalog(
             MODEL_CATALOG_COLLECTION_SHA256_VAR.to_owned(),
             catalog.collection_sha256.clone(),
         );
-        build.env.insert(
-            TOOL_CATALOG_SHA256_VAR.to_owned(),
-            catalog.tool_catalog_sha256.clone(),
-        );
         build.digest = build_plan_digest(&build)?;
     }
     Ok(build)
@@ -336,41 +327,35 @@ pub fn model_catalog_inputs_from_environment(
             nonempty_environment(MODEL_CATALOG_TRUST_ROOTS_SHA256_VAR),
             nonempty_environment(MODEL_CATALOG_COLLECTION_FILE_VAR),
             nonempty_environment(MODEL_CATALOG_COLLECTION_SHA256_VAR),
-            nonempty_environment(TOOL_CATALOG_SHA256_VAR),
         ],
     )
 }
 
 fn model_catalog_inputs(
     workspace_root: &Path,
-    bindings: [Option<String>; 5],
+    bindings: [Option<String>; 4],
 ) -> Result<Option<ModelCatalogBuildInputs>> {
     let [
         trust_roots_json,
         trust_roots_sha256,
         collection_file,
         collection_sha256,
-        tool_catalog_sha256,
     ] = bindings;
-    let catalog_present = [
+    let present = [
         trust_roots_json.is_some(),
         trust_roots_sha256.is_some(),
         collection_file.is_some(),
         collection_sha256.is_some(),
     ];
-    if !catalog_present.iter().any(|value| *value) {
-        return Ok(None);
-    }
-    if !catalog_present.iter().all(|value| *value) || tool_catalog_sha256.is_none() {
+    if present.iter().any(|value| *value) && !present.iter().all(|value| *value) {
         return Err(ToolError::single(
             Exit::Usage,
             "model-catalog-build-binding-partial",
             format!(
                 "{MODEL_CATALOG_TRUST_ROOTS_JSON_VAR}, \
                  {MODEL_CATALOG_TRUST_ROOTS_SHA256_VAR}, \
-                 {MODEL_CATALOG_COLLECTION_FILE_VAR}, \
-                 {MODEL_CATALOG_COLLECTION_SHA256_VAR} and \
-                 {TOOL_CATALOG_SHA256_VAR} must be supplied together"
+                 {MODEL_CATALOG_COLLECTION_FILE_VAR} and \
+                 {MODEL_CATALOG_COLLECTION_SHA256_VAR} must be supplied together"
             ),
         ));
     }
@@ -379,13 +364,11 @@ fn model_catalog_inputs(
         Some(trust_roots_sha256),
         Some(collection_file),
         Some(collection_sha256),
-        Some(tool_catalog_sha256),
     ) = (
         trust_roots_json,
         trust_roots_sha256,
         collection_file,
         collection_sha256,
-        tool_catalog_sha256,
     )
     else {
         return Ok(None);
@@ -395,20 +378,8 @@ fn model_catalog_inputs(
         trust_roots_sha256,
         collection_file,
         collection_sha256,
-        tool_catalog_sha256,
     };
     validate_model_catalog_build_inputs(&inputs)?;
-    let actual_tool_catalog = tool_catalog_digest(workspace_root)?;
-    if inputs.tool_catalog_sha256 != actual_tool_catalog {
-        return Err(ToolError::single(
-            Exit::Usage,
-            "tool-catalog-build-digest-mismatch",
-            format!(
-                "the release-bound tool catalogue is {actual_tool_catalog}, not {}",
-                inputs.tool_catalog_sha256
-            ),
-        ));
-    }
     let canonical_root = std::fs::canonicalize(workspace_root)
         .map_err(|error| io(&workspace_root.display().to_string(), &error))?;
     let logical_collection = workspace_root.join(&inputs.collection_file);
@@ -507,7 +478,6 @@ fn validate_model_catalog_build_inputs(inputs: &ModelCatalogBuildInputs) -> Resu
         MODEL_CATALOG_COLLECTION_SHA256_VAR,
         &inputs.collection_sha256,
     )?;
-    validate_sha256(TOOL_CATALOG_SHA256_VAR, &inputs.tool_catalog_sha256)?;
     if inputs.trust_roots_json.len() > MAX_MODEL_CATALOG_TRUST_ROOTS_BYTES {
         return Err(ToolError::single(
             Exit::Usage,
@@ -573,41 +543,6 @@ fn validate_model_catalog_build_inputs(inputs: &ModelCatalogBuildInputs) -> Resu
         ));
     }
     Ok(())
-}
-
-/// Read the snapshot-bound immutable tool-catalogue digest from Brain source.
-///
-/// The catalogue crate proves in its property suite that this constant equals
-/// the SHA-256 of its canonical built-in rows. Reading the source constant here
-/// avoids coupling the small release tool to Brain's runtime dependency graph.
-///
-/// # Errors
-/// Returns a classified refusal if the source omits or ambiguously declares
-/// the snapshot identity.
-///
-/// # Panics
-/// The regular expression is a compile-time constant; construction can only
-/// fail if this source is changed to contain an invalid expression.
-pub fn tool_catalog_digest(workspace_root: &Path) -> Result<String> {
-    let path = workspace_root.join("crates/aex-brain-tool-catalog/src/catalog.rs");
-    let source =
-        std::fs::read_to_string(&path).map_err(|error| io(&path.display().to_string(), &error))?;
-    let pattern = Regex::new(
-        r#"(?s)pub\s+const\s+BUILTIN_CATALOG_DIGEST\s*:\s*&str\s*=\s*"(sha256:[0-9a-f]{64})"\s*;"#,
-    )
-    .expect("static tool catalogue identity regex");
-    let digests = pattern
-        .captures_iter(&source)
-        .map(|capture| capture[1].to_owned())
-        .collect::<Vec<_>>();
-    if digests.len() != 1 {
-        return Err(ToolError::single(
-            Exit::Usage,
-            "tool-catalog-snapshot-ambiguous",
-            "Brain source must declare exactly one lowercase snapshot-bound tool catalogue digest",
-        ));
-    }
-    Ok(digests[0].clone())
 }
 
 fn validate_workspace_relative_path(path: &str) -> Result<()> {
@@ -678,7 +613,7 @@ fn validate_trust_root(root: &ModelCatalogTrustRoot) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn build_plan_digest(build: &BuildPlan) -> Result<String> {
+fn build_plan_digest(build: &BuildPlan) -> Result<String> {
     canon::digest_document(&serde_json::json!({
         "argv": build.argv,
         "env": build.env,
@@ -831,9 +766,6 @@ pub struct ArtifactEnvelope {
     pub schema: String,
     /// Self-digest over the canonical bytes with this field removed.
     pub envelope_digest: String,
-    /// Receipt-independent identity of the artifact bytes and everything that
-    /// shaped them.
-    pub artifact_subject_digest: String,
     /// What was built.
     pub unit: UnitIdentity,
     /// How it is encoded.
@@ -854,10 +786,6 @@ pub struct ArtifactEnvelope {
     pub licenses: Licenses,
     /// Advisory verdict.
     pub vulnerabilities: Vulnerabilities,
-    /// Whether startup-mode publication deliberately deferred dependency,
-    /// licence, vulnerability and SBOM analysis off the release critical path.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub supply_chain_deferred: bool,
     /// Build provenance.
     pub provenance: Provenance,
     /// Signature, where one applies.
@@ -967,7 +895,7 @@ pub struct BuildCommand {
 }
 
 /// A digest-pinned base image.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BaseImage {
     /// Human-readable reference.
@@ -1020,7 +948,7 @@ pub struct Target {
 }
 
 /// Where the bytes are stored.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Location {
     /// Storage kind.
@@ -1064,12 +992,6 @@ pub struct Output {
     /// The child digest ECS actually runs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oci_child_digest: Option<String>,
-    /// The image configuration digest.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub oci_config_digest: Option<String>,
-    /// Every compressed image layer digest, in order.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub oci_layer_digests: Vec<String>,
     /// Where the bytes live.
     pub location: Location,
     /// Detached symbols.
@@ -1183,12 +1105,12 @@ pub struct Sbom {
 }
 
 /// Licence verdict.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Licenses {
     /// Digest of the policy that produced the verdict.
     pub policy_digest: String,
-    /// `allowed` when scanned, or the explicit startup deferral sentinel.
+    /// Always `allowed`; a denial is a failed build, not a recorded state.
     pub verdict: String,
     /// Always empty.
     pub denials: Vec<String>,
@@ -1212,7 +1134,7 @@ pub struct AdvisoryException {
 }
 
 /// Advisory verdict.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Vulnerabilities {
     /// Scanner identity.
@@ -1221,9 +1143,9 @@ pub struct Vulnerabilities {
     pub database: String,
     /// When the scan ran.
     pub scanned_at: String,
-    /// Zero for certified or deferred startup publication.
+    /// Always zero.
     pub unapproved_critical: u32,
-    /// Zero for certified or deferred startup publication.
+    /// Always zero.
     pub unapproved_high: u32,
     /// Time-boxed, attributed exceptions.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1332,66 +1254,11 @@ const LOCATION_KINDS: &[&str] = &[
 ];
 
 impl ArtifactEnvelope {
-    /// Recompute the receipt-independent artifact subject identity.
-    ///
-    /// The subject deliberately excludes the workflow run, publication
-    /// location, supply-chain verdicts and receipt references. Those fields
-    /// describe who certified or where content-addressed bytes are stored; they
-    /// do not change the bytes, source or build-input closure a receipt tested.
-    /// The complete output identity remains in the projection, including OCI
-    /// manifest, config and layer digests.
-    ///
-    /// # Errors
-    /// Propagates serialization or canonicalization failure.
-    pub fn compute_artifact_subject_digest(&self) -> Result<String> {
-        let mut source = serde_json::to_value(&self.source).map_err(|err| {
-            ToolError::single(
-                Exit::EnvelopeInvalid,
-                "artifact-subject-unserializable",
-                err.to_string(),
-            )
-        })?;
-        let source = source.as_object_mut().ok_or_else(|| {
-            ToolError::single(
-                Exit::EnvelopeInvalid,
-                "artifact-subject-source-shape",
-                "artifact source did not serialize as an object",
-            )
-        })?;
-        source.remove("workflow");
-
-        let mut output = serde_json::to_value(&self.output).map_err(|err| {
-            ToolError::single(
-                Exit::EnvelopeInvalid,
-                "artifact-subject-unserializable",
-                err.to_string(),
-            )
-        })?;
-        let output = output.as_object_mut().ok_or_else(|| {
-            ToolError::single(
-                Exit::EnvelopeInvalid,
-                "artifact-subject-output-shape",
-                "artifact output did not serialize as an object",
-            )
-        })?;
-        output.remove("location");
-
-        canon::digest_document(&serde_json::json!({
-            "schema": "aex.artifact-subject.v1",
-            "unit": &self.unit,
-            "media": &self.media,
-            "source": source,
-            "inputs": &self.inputs,
-            "output": output,
-        }))
-    }
-
     /// Recompute and set the self-digest.
     ///
     /// # Errors
     /// Propagates canonicalization failure.
     pub fn seal(mut self) -> Result<Self> {
-        self.artifact_subject_digest = self.compute_artifact_subject_digest()?;
         "sha256:0".clone_into(&mut self.envelope_digest);
         let value = serde_json::to_value(&self).map_err(|err| {
             ToolError::single(
@@ -1539,106 +1406,13 @@ impl ArtifactEnvelope {
             }
             _ => {}
         }
-        let is_oci = self.unit.kind.starts_with("rust-oci-");
-        let oci_identity_valid = self.output.oci_index_digest.is_none()
-            && self.output.oci_child_digest.as_deref() == Some(&self.output.digest)
-            && self
-                .output
-                .oci_config_digest
-                .as_deref()
-                .is_some_and(valid_sha256_digest)
-            && !self.output.oci_layer_digests.is_empty()
-            && self
-                .output
-                .oci_layer_digests
-                .iter()
-                .all(|digest| valid_sha256_digest(digest));
-        if is_oci && !oci_identity_valid {
-            structural.push(Violation::new(
-                "envelope-oci-identity",
-                "single-platform OCI output must bind its manifest, config and every layer digest",
-            ));
-        }
-        if !is_oci
-            && (self.output.oci_index_digest.is_some()
-                || self.output.oci_child_digest.is_some()
-                || self.output.oci_config_digest.is_some()
-                || !self.output.oci_layer_digests.is_empty())
-        {
-            structural.push(Violation::new(
-                "envelope-oci-identity",
-                "blob output cannot carry OCI manifest, config or layer identities",
-            ));
-        }
         if self.receipts.is_empty() {
             structural.push(Violation::new(
                 "envelope-no-receipts",
                 "the envelope carries no receipt; publication would prove nothing",
             ));
         }
-        let deferred_supply_chain_shape = self.sbom.format == "deferred-startup"
-            && self.sbom.digest.is_empty()
-            && self.sbom.uri.is_empty()
-            && self.sbom.component_count == 0
-            && self.licenses.policy_digest.is_empty()
-            && self.licenses.verdict == "deferred-startup"
-            && self.licenses.denials.is_empty()
-            && self.licenses.inventory_digest.is_none()
-            && self.vulnerabilities.scanner == "deferred-startup"
-            && self.vulnerabilities.database.is_empty()
-            && self.vulnerabilities.scanned_at.is_empty()
-            && self.vulnerabilities.unapproved_critical == 0
-            && self.vulnerabilities.unapproved_high == 0
-            && self.vulnerabilities.approved_exceptions.is_empty();
-        let scanned_supply_chain_shape =
-            matches!(self.sbom.format.as_str(), "spdx-2.3" | "cyclonedx-1.6")
-                && valid_sha256_digest(&self.sbom.digest)
-                && valid_sha256_digest(&self.licenses.policy_digest)
-                && self.licenses.verdict != "deferred-startup"
-                && self
-                    .licenses
-                    .inventory_digest
-                    .as_deref()
-                    .is_none_or(valid_sha256_digest)
-                && !self.vulnerabilities.scanner.is_empty()
-                && self.vulnerabilities.scanner != "deferred-startup"
-                && !self.vulnerabilities.database.is_empty()
-                && time::OffsetDateTime::parse(
-                    &self.vulnerabilities.scanned_at,
-                    &time::format_description::well_known::Rfc3339,
-                )
-                .is_ok();
-        if self.supply_chain_deferred && !deferred_supply_chain_shape {
-            structural.push(Violation::new(
-                "envelope-deferred-supply-chain-shape",
-                "a deferred supply chain must carry only the exact startup deferral sentinels",
-            ));
-        } else if !self.supply_chain_deferred && deferred_supply_chain_shape {
-            structural.push(Violation::new(
-                "envelope-deferred-supply-chain-flag",
-                "the startup deferral sentinels require supplyChainDeferred=true",
-            ));
-        } else if !self.supply_chain_deferred && !scanned_supply_chain_shape {
-            structural.push(Violation::new(
-                "envelope-scanned-supply-chain-shape",
-                "a non-deferred supply chain must carry complete scanner-backed evidence",
-            ));
-        }
         for receipt in &self.receipts {
-            if self.supply_chain_deferred
-                && matches!(
-                    receipt.class.as_str(),
-                    "deny" | "sbom" | "license" | "vulnerability"
-                )
-            {
-                structural.push(Violation::new(
-                    "envelope-deferred-supply-chain-receipt",
-                    format!(
-                        "deferred supply-chain envelope cannot claim a `{}` receipt",
-                        receipt.class
-                    ),
-                ));
-            }
             if receipt.conclusion != "passed" {
                 structural.push(Violation::new(
                     "envelope-receipt-not-passed",
@@ -1671,16 +1445,6 @@ impl ArtifactEnvelope {
                     ),
                 ));
             }
-        }
-        let recomputed_subject = self.compute_artifact_subject_digest()?;
-        if recomputed_subject != self.artifact_subject_digest {
-            structural.push(Violation::new(
-                "artifact-subject-digest-mismatch",
-                format!(
-                    "recorded artifactSubjectDigest `{}` does not match the canonical artifact subject `{recomputed_subject}`",
-                    self.artifact_subject_digest
-                ),
-            ));
         }
         let recomputed = {
             let value = serde_json::to_value(self).map_err(|err| {
@@ -1757,9 +1521,7 @@ impl ArtifactEnvelope {
         }
 
         let mut supply = Vec::new();
-        if !self.supply_chain_deferred
-            && (self.licenses.verdict != "allowed" || !self.licenses.denials.is_empty())
-        {
+        if self.licenses.verdict != "allowed" || !self.licenses.denials.is_empty() {
             supply.push(Violation::new(
                 "license-denied",
                 format!(
@@ -1769,9 +1531,7 @@ impl ArtifactEnvelope {
                 ),
             ));
         }
-        if !self.supply_chain_deferred
-            && (self.vulnerabilities.unapproved_critical > 0
-                || self.vulnerabilities.unapproved_high > 0)
+        if self.vulnerabilities.unapproved_critical > 0 || self.vulnerabilities.unapproved_high > 0
         {
             supply.push(Violation::new(
                 "advisory-denied",
@@ -1783,7 +1543,7 @@ impl ArtifactEnvelope {
                 ),
             ));
         }
-        if !self.supply_chain_deferred && self.sbom.component_count == 0 {
+        if self.sbom.component_count == 0 {
             supply.push(Violation::new(
                 "sbom-empty",
                 format!("unit `{}` has an SBOM with no components", self.unit.id),
@@ -1795,15 +1555,6 @@ impl ArtifactEnvelope {
             Err(ToolError::many(Exit::SupplyChainDenied, supply))
         }
     }
-}
-
-fn valid_sha256_digest(value: &str) -> bool {
-    value.strip_prefix("sha256:").is_some_and(|bare| {
-        bare.len() == 64
-            && bare
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-    })
 }
 
 /// The immutable destination an artifact publishes to.
@@ -1905,29 +1656,17 @@ alarm_spec = "regional-session-api"
         .expect("canonical trust roots")
     }
 
-    fn bindings(root: &std::path::Path) -> [Option<String>; 5] {
+    fn bindings(root: &std::path::Path) -> [Option<String>; 4] {
         let relative = "release-inputs/catalog.json";
         let collection = root.join(relative);
         std::fs::create_dir_all(collection.parent().expect("collection parent")).unwrap();
         std::fs::write(&collection, b"signed collection").unwrap();
-        let catalog_source = root.join("crates/aex-brain-tool-catalog/src/catalog.rs");
-        std::fs::create_dir_all(catalog_source.parent().expect("catalog parent")).unwrap();
-        std::fs::write(
-            catalog_source,
-            "pub const BUILTIN_CATALOG_DIGEST: &str = \
-             \"sha256:b3cae3e3b5cb64b3ca274f22f67c3ba1e305ac4ca14084967348f06d0ba0fdec\";",
-        )
-        .unwrap();
         let roots = trust_roots();
         [
             Some(roots.clone()),
             Some(canon::digest_bytes(roots.as_bytes())),
             Some(relative.to_owned()),
             Some(canon::digest_bytes(b"signed collection")),
-            Some(
-                "sha256:b3cae3e3b5cb64b3ca274f22f67c3ba1e305ac4ca14084967348f06d0ba0fdec"
-                    .to_owned(),
-            ),
         ]
     }
 
@@ -1981,7 +1720,7 @@ alarm_spec = "regional-session-api"
     fn partial_and_digest_mismatched_release_inputs_fail_closed() {
         let temp = tempfile::tempdir().unwrap();
         let roots = trust_roots();
-        let error = model_catalog_inputs(temp.path(), [Some(roots), None, None, None, None])
+        let error = model_catalog_inputs(temp.path(), [Some(roots), None, None, None])
             .expect_err("partial inputs must fail");
         assert_eq!(error.rules(), vec!["model-catalog-build-binding-partial"]);
 
@@ -2002,30 +1741,6 @@ alarm_spec = "regional-session-api"
             error.rules(),
             vec!["model-catalog-collection-digest-mismatch"]
         );
-    }
-
-    #[test]
-    fn a_tool_catalog_digest_alone_does_not_misreport_a_partial_model_catalog() {
-        let temp = tempfile::tempdir().unwrap();
-        let inputs = model_catalog_inputs(
-            temp.path(),
-            [
-                None,
-                None,
-                None,
-                None,
-                Some(
-                    "sha256:b3cae3e3b5cb64b3ca274f22f67c3ba1e305ac4ca14084967348f06d0ba0fdec"
-                        .to_owned(),
-                ),
-            ],
-        )
-        .expect("the independently derived tool catalog is not a partial model catalog");
-        assert!(inputs.is_none());
-
-        let error = publication_plan_with_model_catalog(&brain_unit(), inputs.as_ref())
-            .expect_err("publication must still fail closed without a signed model catalog");
-        assert_eq!(error.rules(), vec!["model-catalog-build-binding-missing"]);
     }
 
     #[test]
@@ -2069,8 +1784,6 @@ alarm_spec = "regional-session-api"
             trust_roots_json: unsorted,
             collection_file: "release-inputs/catalog.json".to_owned(),
             collection_sha256: canon::digest_bytes(b"signed collection"),
-            tool_catalog_sha256:
-                "sha256:b3cae3e3b5cb64b3ca274f22f67c3ba1e305ac4ca14084967348f06d0ba0fdec".to_owned(),
         };
         let error = plan_with_model_catalog(&brain_unit(), Some(&inputs))
             .expect_err("unsorted roots must fail");
@@ -2081,8 +1794,6 @@ alarm_spec = "regional-session-api"
             trust_roots_json: format!("{roots}\n"),
             collection_file: "release-inputs/catalog.json".to_owned(),
             collection_sha256: canon::digest_bytes(b"signed collection"),
-            tool_catalog_sha256:
-                "sha256:b3cae3e3b5cb64b3ca274f22f67c3ba1e305ac4ca14084967348f06d0ba0fdec".to_owned(),
         };
         let error = plan_with_model_catalog(&brain_unit(), Some(&noncanonical))
             .expect_err("trailing bytes must fail");

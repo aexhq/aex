@@ -43,7 +43,6 @@ use crate::ports::{
     HandsError, HandsPort, IdPort, JournalStore, LeaseStore, ProviderPort, ReadBudget,
     SnapshotDiagnostic, StoreError, ToolPort, ToolRoutingError, WakeQueue,
 };
-use aex_brain_domain::child::QueuedReason;
 use aex_brain_domain::context::ContextPolicy;
 use aex_brain_domain::fold::FoldError;
 use aex_brain_domain::ids::WorkShard;
@@ -278,39 +277,6 @@ pub enum AdmissionDecision {
     },
 }
 
-/// The bounded local resource needed immediately before an external dispatch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DispatchLane {
-    /// A model-provider stream.
-    Provider,
-    /// Managed web or MCP network I/O.
-    Network,
-    /// An authenticated Hands guest RPC.
-    Hands,
-}
-
-/// Non-blocking phase-specific dispatch admission.
-///
-/// The implementation may hold only process-local permits. A refusal is converted into a
-/// durable typed continuation while the effect remains `prepared`; activation never waits
-/// locally with a lease and never crosses the pre-send fence without a permit.
-pub trait DispatchControl: core::fmt::Debug + Send + Sync + 'static {
-    /// Tries to acquire the exact weighted lane immediately.
-    fn admit(&self, lane: DispatchLane, weight: u16) -> DispatchDecision;
-}
-
-/// What phase-specific dispatch admission decided.
-#[derive(Debug)]
-pub enum DispatchDecision {
-    /// Dispatch may proceed while these RAII reservations remain alive.
-    ///
-    /// `None` is used by the application default when no process-local dispatch gate is
-    /// installed; a configured gate returns exactly one reservation without allocating.
-    Admitted(Option<crate::kernel::Reservation>),
-    /// Dispatch must hand back through a durable typed continuation.
-    Deferred(QueuedReason),
-}
-
 /// Why an activation gave the delivery back instead of acking it.
 ///
 /// Every arm leaves the durable wake in place, so the worst any of them costs is a
@@ -411,14 +377,6 @@ pub enum ActivationError {
     /// commit to the same canonical outcome.
     #[error("provider outcome proof, usage and receipt do not match")]
     InvalidProviderOutcome,
-    /// A truthful tool surface exceeded the selected model's declaration bound.
-    #[error("tool surface has {advertised} definitions; selected model permits {max}")]
-    ToolLimitExceeded {
-        /// Provider-visible definitions in the immutable advertisement.
-        advertised: usize,
-        /// Maximum declarations accepted by the selected model.
-        max: u16,
-    },
     /// A system instruction reference reached activation without content hydration.
     #[error("system instruction content was not hydrated before provider request construction")]
     UnhydratedSystem,

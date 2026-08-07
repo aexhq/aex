@@ -16,27 +16,30 @@
 use aex_brain_application::kernel::{DrainGate, PermitKind, PermitSet, PermitSetFull, Reservation};
 use std::sync::Arc;
 
-/// The process resources held for one activation's lifetime.
+/// The complete process resources held for one activation's lifetime.
 ///
-/// External-I/O permits remain part of the validated task envelope, but are acquired by the
-/// phase-specific dispatch gate only after durable preparation. A refusal writes a typed
-/// continuation and releases the lease; it never waits locally while owning the session.
+/// Provider and Hands permits are acquired before the claim even though a particular turn
+/// may use only one. Waiting for either after the claim would hold a durable lease while
+/// local capacity was unavailable, and acquiring only on the effect path would let restore
+/// memory admit more work than the external-I/O pools can actually serve.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActivationResources {
     /// Peak resident bytes reserved before any snapshot or journal body is read.
     pub context_bytes: u64,
     /// Maximum provider stream buffer held by one activation.
     pub stream_buffer_bytes: u64,
-    /// Provider streams required by one provider/network dispatch.
+    /// Provider streams reserved per activation.
     pub provider_streams: u64,
-    /// Hands RPC slots required by one Hands dispatch.
+    /// Hands RPC slots reserved per activation.
     pub hands_rpcs: u64,
 }
 
 impl ActivationResources {
-    const fn requests(self) -> [(PermitKind, u64); 3] {
+    const fn requests(self) -> [(PermitKind, u64); 5] {
         [
             (PermitKind::Activation, 1),
+            (PermitKind::ProviderStream, self.provider_streams),
+            (PermitKind::HandsRpc, self.hands_rpcs),
             (PermitKind::ContextBytes, self.context_bytes),
             (PermitKind::StreamBufferBytes, self.stream_buffer_bytes),
         ]
@@ -414,8 +417,8 @@ mod tests {
         let permits = Arc::new(PermitSet::new(BTreeMap::from([
             (PermitKind::Activation, 2_u64),
             (PermitKind::ContextBytes, 2_u64),
-            (PermitKind::StreamBufferBytes, 0_u64),
-            (PermitKind::ProviderStream, 2_u64),
+            (PermitKind::StreamBufferBytes, 2_u64),
+            (PermitKind::ProviderStream, 0_u64),
             (PermitKind::HandsRpc, 2_u64),
         ])));
         let admission = Admission::new(
@@ -428,7 +431,10 @@ mod tests {
         assert!(!admission.should_receive());
         assert!(matches!(
             admission.admit(),
-            AdmissionOutcome::Deferred { .. }
+            AdmissionOutcome::Shed(TypedOverload::ResourceExhausted {
+                kind: PermitKind::ProviderStream,
+                ..
+            })
         ));
         for kind in [
             PermitKind::Activation,
@@ -441,9 +447,9 @@ mod tests {
         }
     }
 
-    /// Restore resources stay held until the RAII bundle drops; dispatch lanes remain free.
+    /// Every declared per-activation resource stays held until the RAII bundle drops.
     #[test]
-    fn admitted_activation_holds_only_the_restore_resource_bundle() {
+    fn admitted_activation_holds_the_complete_resource_bundle() {
         let permits = Arc::new(PermitSet::new(BTreeMap::from([
             (PermitKind::Activation, 1_u64),
             (PermitKind::ContextBytes, 64_u64),
@@ -473,8 +479,8 @@ mod tests {
             (PermitKind::Activation, 1),
             (PermitKind::ContextBytes, 64),
             (PermitKind::StreamBufferBytes, 8),
-            (PermitKind::ProviderStream, 0),
-            (PermitKind::HandsRpc, 0),
+            (PermitKind::ProviderStream, 1),
+            (PermitKind::HandsRpc, 1),
         ] {
             assert_eq!(permits.held(kind), units, "{kind:?} was not reserved");
         }

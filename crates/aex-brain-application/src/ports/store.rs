@@ -218,7 +218,7 @@ pub trait JournalStore: Send + Sync + 'static {
 ///
 /// This is an acceleration port, not journal authority. Implementations publish the body
 /// conditionally through the regional content authority, then advance a pointer only after
-/// proving the immutable journal row at `artifact.pointer().absorbed` has the exact hash and
+/// proving the immutable journal row at `artifact.pointer.absorbed` has the exact hash and
 /// the current control tail is not behind it. The current head may be ahead: requiring an
 /// exact current head would starve snapshots for a continuously active agent.
 pub trait FoldSnapshotStore: Send + Sync + 'static {
@@ -240,9 +240,8 @@ pub trait FoldSnapshotStore: Send + Sync + 'static {
         max_bytes: usize,
     ) -> BoxFuture<'a, Result<Vec<u8>, StoreError>>;
 
-    /// Conditionally publishes one opaque workspace-scoped fold produced only by a
-    /// sequence-zero [`SnapshotReplay`](aex_brain_domain::snapshot::SnapshotReplay) using
-    /// the same domain [`apply`](aex_brain_domain::fold::apply) as restore.
+    /// Conditionally publishes one workspace-scoped fold produced by the same domain
+    /// [`apply`](aex_brain_domain::fold::apply) used by restore.
     fn publish<'a>(
         &'a self,
         workspace: WorkspaceId,

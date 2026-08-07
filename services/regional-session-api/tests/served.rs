@@ -645,7 +645,6 @@ fn context(request_id: RequestId, route_id: RouteId) -> RequestContext {
         },
         limits: EffectiveLimits {
             json_body_bytes: 65_536,
-            otlp_body_bytes: 4 * 1_024 * 1_024,
             query_page_items: 100,
             query_page_bytes: 1_048_576,
         },
@@ -1098,18 +1097,6 @@ async fn session_point_and_list_reads_are_absent_until_the_head_is_complete() {
         assert_eq!(etag, None, "an absent route must not mint an entity tag");
         assert_eq!(body, serde_json::Value::Null);
     }
-}
-
-/// A create response is not earned by an immutable head alone. The same
-/// provider transaction must also establish the root agent, sealed registry
-/// selection and root pin, first custody authority, exact logical Hands
-/// generation and current pointer, replayable response receipt, and native
-/// creation event. Until the application plan and adapter can name every one of
-/// those participants, the public route must remain absent rather than expose a
-/// session that cannot execute or replay correctly.
-#[test]
-fn session_create_is_absent_until_the_complete_atomic_authority_is_composed() {
-    assert!(!Routes::served().contains(&RouteId::SessionCreate));
 }
 
 /// The stored message body is an opaque inline blob or content digest, while

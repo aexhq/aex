@@ -30,15 +30,12 @@ pub struct RegionalTablesIdentity {
     pub size_bytes: u64,
     /// BLAKE3 identity over the canonical table-definition array.
     pub definitions_digest: String,
-    /// Authored monotone regional schema generation.
-    pub generation: u32,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RegionalTablesDocument {
     schema: String,
-    generation: u32,
     digest: String,
     tables: Vec<serde_json::Value>,
 }
@@ -88,42 +85,15 @@ pub fn github_release_unit_uri(
 /// digest.
 pub fn ghcr_unit_uri(repository: &str, unit: &str, digest: &str) -> Result<String> {
     validate_public_identity(repository, &"a".repeat(40), "1", 1, unit, digest)?;
-    Ok(format!(
-        "oci://{}@{digest}",
-        ghcr_unit_repository(repository, unit)?
-    ))
-}
-
-/// Closed GHCR repository for one public OCI unit, without a mutable tag.
-///
-/// # Errors
-/// Returns [`Exit::EnvelopeInvalid`] for an invalid repository or unit id.
-pub fn ghcr_unit_repository(repository: &str, unit: &str) -> Result<String> {
-    let valid_segment = |segment: &str| {
-        !segment.is_empty()
-            && segment
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
-    };
-    let repository_valid = repository
-        .split_once('/')
-        .is_some_and(|(owner, repo)| valid_segment(owner) && valid_segment(repo));
-    if !repository_valid || !safe_unit_id(unit) {
-        return Err(ToolError::single(
+    let (owner, repo) = repository.split_once('/').ok_or_else(|| {
+        ToolError::single(
             Exit::EnvelopeInvalid,
-            "publication-oci-repository",
-            "OCI publication requires exact `owner/repository` and a safe unit id",
-        ));
-    }
-    let Some((owner, repo)) = repository.split_once('/') else {
-        return Err(ToolError::single(
-            Exit::EnvelopeInvalid,
-            "publication-oci-repository",
-            "OCI publication requires exact `owner/repository` and a safe unit id",
-        ));
-    };
+            "publication-repository",
+            "the repository must have exact `owner/repo` form",
+        )
+    })?;
     Ok(format!(
-        "ghcr.io/{}/{}-units/{unit}",
+        "oci://ghcr.io/{}/{}-units/{unit}@{digest}",
         owner.to_ascii_lowercase(),
         repo.to_ascii_lowercase()
     ))
@@ -437,21 +407,19 @@ pub fn regional_tables_bundle(root: &Path) -> Result<(Vec<u8>, RegionalTablesIde
         )
     })?;
     if document.schema != "aex.regional-tables.v1"
-        || document.generation == 0
         || document.tables.is_empty()
         || !valid_blake3(&document.digest)
     {
         return Err(ToolError::single(
             Exit::Usage,
             "regional-tables-identity",
-            "the generated regional bundle requires schema `aex.regional-tables.v1`, a positive generation, a non-empty table array and one lowercase BLAKE3 digest",
+            "the generated regional bundle requires schema `aex.regional-tables.v1`, a non-empty table array and one lowercase BLAKE3 digest",
         ));
     }
     let identity = RegionalTablesIdentity {
         digest: canon::digest_bytes(&bytes),
         size_bytes: bytes.len() as u64,
         definitions_digest: document.digest,
-        generation: document.generation,
     };
     Ok((bytes, identity))
 }
@@ -467,7 +435,6 @@ pub fn verify_regional_tables_bundle(
     digest: &str,
     size_bytes: u64,
     definitions_digest: &str,
-    generation: u32,
 ) -> Result<()> {
     let bytes = std::fs::read(path).map_err(|err| {
         ToolError::single(
@@ -505,8 +472,6 @@ pub fn verify_regional_tables_bundle(
         )
     })?;
     if document.schema != "aex.regional-tables.v1"
-        || document.generation == 0
-        || document.generation != generation
         || document.tables.is_empty()
         || !valid_blake3(&document.digest)
         || document.digest != definitions_digest

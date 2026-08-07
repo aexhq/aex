@@ -33,4 +33,18 @@ describe("managed-gateway user-test policy", () => {
       expect(namedSource(path)).not.toMatch(retiredCredential);
     }
   });
+
+  it("keeps the declared dev smoke on the managed model surface", () => {
+    const path = join(liveRoot, "v1-session.user.test.ts");
+    const source = readFileSync(path, "utf8");
+    expect(source).toContain('"anthropic/claude-haiku-4-5"');
+    expect(source).not.toContain('provider: "anthropic"');
+    expect(source).not.toMatch(/\bapiKeys\s*:/);
+  });
+
+  it("keeps the clean-installed CLI coverage free of removed provider flags", () => {
+    const source = readFileSync(join(userTestsRoot, "test", "offline", "packed-v1.test.ts"), "utf8");
+    expect(source).toContain('join(install.cliDir, "dist", "cli.mjs")');
+    expect(source).not.toMatch(/--provider\b|--[a-z0-9-]+-api-key\b/);
+  });
 });

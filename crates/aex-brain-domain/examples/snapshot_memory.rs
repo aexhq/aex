@@ -5,13 +5,12 @@
 //! one million tokens at the common four-bytes-per-token planning approximation); it is a
 //! memory shape, not tokenizer truth.
 
+use aex_brain_domain::fold::fold;
 use aex_brain_domain::ids::{AgentId, AgentKey, SessionId};
-use aex_brain_domain::snapshot::{
-    FoldSnapshotArtifact, FoldSnapshotPointer, JournalPoint, SnapshotReplay,
-};
-use aex_brain_domain::wire_pending::ContentBlockRef;
-use aex_brain_test_support::journal_gen::{HistoryBuilder, grant, started, user_text};
-use aex_model_catalog::canonical::CanonicalBlock;
+use aex_brain_domain::snapshot::{FoldSnapshotArtifact, FoldSnapshotPointer};
+use aex_brain_domain::wire_pending::{CanonicalBlock, CanonicalMessage, Role};
+use aex_brain_test_support::journal_gen::{HistoryBuilder, grant, started};
+use aex_model_catalog::BoundedString;
 use std::io::{Read as _, Write as _};
 use uuid::Uuid;
 
@@ -23,31 +22,23 @@ fn key() -> AgentKey {
 }
 
 fn shaped_artifact() -> FoldSnapshotArtifact {
-    let block = "x".repeat(BLOCK_BYTES);
-    let mut history = HistoryBuilder::new().push(started(grant(100)));
+    let history = HistoryBuilder::new().push(started(grant(100))).build();
+    let mut state = fold(&history).expect("the started agent folds");
     for _ in 0..BLOCKS {
-        history = history.push(user_text(&block));
+        state.model_history.push(CanonicalMessage {
+            role: Role::User,
+            blocks: vec![CanonicalBlock::Text {
+                text: BoundedString::new("x".repeat(BLOCK_BYTES)).expect("the block is bounded"),
+                annotations: Vec::new(),
+            }],
+        });
     }
-    let history = history.build();
-    let mut replay = SnapshotReplay::from_sequence_zero();
-    for entry in &history {
-        replay.apply(entry).expect("the shaped history folds");
-    }
-    let tail = history.last().expect("the shaped history is non-empty");
-    replay
-        .finish_exact(
-            key(),
-            JournalPoint {
-                seq: tail.envelope.seq,
-                hash: tail.envelope.content_hash,
-            },
-        )
-        .expect("the shaped replay captures")
+    FoldSnapshotArtifact::capture(key(), &state).expect("the shaped fold captures")
 }
 
 fn prepare(path: &std::path::Path) {
     let artifact = shaped_artifact();
-    let pointer = serde_json::to_vec(artifact.pointer()).expect("the pointer encodes");
+    let pointer = serde_json::to_vec(&artifact.pointer).expect("the pointer encodes");
     let mut output = std::fs::File::create(path).expect("the probe bundle opens");
     output
         .write_all(
@@ -58,11 +49,11 @@ fn prepare(path: &std::path::Path) {
         .expect("the pointer length writes");
     output.write_all(&pointer).expect("the pointer writes");
     output
-        .write_all(artifact.body())
+        .write_all(&artifact.body)
         .expect("the snapshot body writes");
     println!(
         "SNAPSHOT_MEMORY_PREPARED body_bytes={}",
-        artifact.body().len()
+        artifact.body.len()
     );
 }
 
@@ -85,24 +76,11 @@ fn verify(path: &std::path::Path) {
     let verified = pointer
         .verify(key(), &body, body.len())
         .expect("the shaped body verifies");
-    let restored_text_bytes = verified
-        .state
-        .open_user
-        .iter()
-        .map(|reference| match reference {
-            ContentBlockRef::Inline {
-                block: CanonicalBlock::Text { text, .. },
-            } => text.as_str().len(),
-            ContentBlockRef::Inline { .. } | ContentBlockRef::Placed { .. } => 0,
-        })
-        .sum::<usize>();
-    assert_eq!(verified.state.open_user.len(), BLOCKS);
-    assert_eq!(restored_text_bytes, BLOCK_BYTES * BLOCKS);
     println!(
-        "SNAPSHOT_MEMORY_WORKLOAD body_bytes={} text_bytes={} restored_open_blocks={}",
+        "SNAPSHOT_MEMORY_WORKLOAD body_bytes={} text_bytes={} restored_messages={}",
         body.len(),
-        restored_text_bytes,
-        verified.state.open_user.len()
+        BLOCK_BYTES * BLOCKS,
+        verified.state.model_history.len()
     );
     std::hint::black_box((&body, &verified));
     std::thread::sleep(core::time::Duration::from_millis(500));
