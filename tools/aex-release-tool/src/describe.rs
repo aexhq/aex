@@ -20,12 +20,11 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::artifact::{
-    Adjacent, ArtifactEnvelope, BaseImage, BuildCommand, BuildPlan, Catalogs, Composition,
-    Identities, Inputs, Licenses, Location, MODEL_CATALOG_COLLECTION_SHA256_VAR, Media,
-    MigrationIdentity, Output, Provenance, ReceiptRef, Retention, Signature, Source,
-    TOOL_CATALOG_SHA256_VAR, Target, Toolchain, UnitIdentity, Vulnerabilities, Workflow,
+    Adjacent, ArtifactEnvelope, BuildCommand, BuildPlan, Composition, Identities, Inputs, Licenses,
+    Location, Media, Output, Provenance, ReceiptRef, Retention, Signature, Source, Target,
+    Toolchain, UnitIdentity, Vulnerabilities, Workflow,
 };
-use crate::error::{Exit, Result, ToolError, io};
+use crate::error::{Result, io};
 use crate::graph::inputs::Unit;
 
 /// The value every field a local build cannot establish carries.
@@ -54,9 +53,6 @@ pub struct LocalBuild<'a> {
     pub plan: &'a BuildPlan,
     /// The packaged artifact bytes.
     pub artifact: &'a Path,
-    /// Verified OCI layout identity when the artifact bytes are an image
-    /// manifest rather than a packaged blob.
-    pub oci_identity: Option<&'a crate::oci::OciImageIdentity>,
     /// `owner/repo`.
     pub repository: String,
     /// The commit built.
@@ -136,7 +132,6 @@ pub fn target_of(recorded: &str) -> Target {
 pub fn describe(build: &LocalBuild<'_>) -> Result<(ArtifactEnvelope, Vec<UnearnedField>)> {
     let bytes = std::fs::read(build.artifact)
         .map_err(|err| io(&build.artifact.display().to_string(), &err))?;
-    validate_oci_identity(build, &bytes)?;
     let closure_digest = crate::artifact::input_closure_digest(
         &build.closure,
         build.plan,
@@ -165,65 +160,6 @@ pub fn describe(build: &LocalBuild<'_>) -> Result<(ArtifactEnvelope, Vec<Unearne
     Ok((envelope, unearned))
 }
 
-fn validate_oci_identity(build: &LocalBuild<'_>, bytes: &[u8]) -> Result<()> {
-    let is_oci = build.unit.kind.starts_with("rust-oci-");
-    let Some(identity) = build.oci_identity else {
-        return if is_oci {
-            Err(crate::error::ToolError::single(
-                crate::error::Exit::ArtifactMismatch,
-                "oci-identity-missing",
-                format!(
-                    "OCI unit `{}` requires an inspected reproducible image identity",
-                    build.unit.id
-                ),
-            ))
-        } else {
-            Ok(())
-        };
-    };
-    if !is_oci {
-        return Err(crate::error::ToolError::single(
-            crate::error::Exit::Usage,
-            "oci-identity-unexpected",
-            format!(
-                "non-OCI unit `{}` cannot use an OCI identity",
-                build.unit.id
-            ),
-        ));
-    }
-    let expected_base = build.unit.base_image.as_deref().and_then(|reference| {
-        reference.rsplit_once('@').map(|(_, digest)| BaseImage {
-            r#ref: reference.to_owned(),
-            digest: digest.to_owned(),
-        })
-    });
-    let valid = identity.unit == build.unit.id
-        && identity.kind == build.unit.kind
-        && identity.bin.as_str() == build.unit.bin.as_deref().unwrap_or_default()
-        && identity.target == build.unit.target
-        && identity.source.repository == build.repository
-        && identity.source.commit_sha == build.commit_sha
-        && Some(&identity.base_image) == expected_base.as_ref()
-        && identity.build_plan_digest == build.plan.digest
-        && identity.recipe_digest == identity.toolchain.recipe_digest(build.plan)?
-        && identity.toolchain_digest == identity.toolchain.digest()?
-        && identity.output_digest == identity.manifest.digest
-        && identity.manifest.size_bytes == bytes.len() as u64
-        && identity.manifest.digest == crate::canon::digest_bytes(bytes);
-    if valid {
-        Ok(())
-    } else {
-        Err(crate::error::ToolError::single(
-            crate::error::Exit::ArtifactMismatch,
-            "oci-identity-mismatch",
-            format!(
-                "OCI identity does not bind the exact unit, source, recipe, base and manifest for `{}`",
-                build.unit.id
-            ),
-        ))
-    }
-}
-
 /// Every envelope field no local build can fill, and why.
 fn unearned_fields() -> Vec<UnearnedField> {
     vec![
@@ -241,8 +177,8 @@ fn unearned_fields() -> Vec<UnearnedField> {
         },
         UnearnedField {
             pointer: "/output/location".to_owned(),
-            reason: "the bytes have not reached their immutable public location, so the local \
-                     filesystem path is not a publication identity"
+            reason: "the artifact bucket does not exist, so the bytes live on a local filesystem \
+                     and the location is not immutable"
                 .to_owned(),
         },
         UnearnedField {
@@ -287,11 +223,9 @@ fn build_envelope(
     bytes: &[u8],
     closure_digest: String,
 ) -> Result<ArtifactEnvelope> {
-    let oci = build.oci_identity;
     ArtifactEnvelope {
         schema: "aex.artifact-envelope.v1".to_owned(),
         envelope_digest: "sha256:0".to_owned(),
-        artifact_subject_digest: "sha256:0".to_owned(),
         unit: UnitIdentity {
             id: build.unit.id.clone(),
             kind: build.unit.kind.clone(),
@@ -327,41 +261,20 @@ fn build_envelope(
                     .clone()
                     .unwrap_or_else(|| build.plan.argv.clone()),
                 env: build.plan.env.clone(),
-                digest: oci.map_or_else(
-                    || build.plan.digest.clone(),
-                    |image| image.recipe_digest.clone(),
-                ),
+                digest: build.plan.digest.clone(),
             },
             input_closure_digest: closure_digest,
             input_closure_count: Some(build.closure.len() as u64),
-            base_image: build.unit.base_image.as_ref().and_then(|reference| {
-                reference.rsplit_once('@').map(|(_, digest)| BaseImage {
-                    r#ref: reference.clone(),
-                    digest: digest.to_owned(),
-                })
-            }),
-            build_args: oci.map_or_else(BTreeMap::new, |image| image.toolchain.build_args()),
+            base_image: None,
+            build_args: BTreeMap::new(),
             source_date_epoch: Some(0),
         },
         output: Output {
-            digest: oci.map_or_else(
-                || crate::canon::digest_bytes(bytes),
-                |image| image.output_digest.clone(),
-            ),
+            digest: crate::canon::digest_bytes(bytes),
             size_bytes: bytes.len() as u64,
             target: target_of(&build.unit.target),
             oci_index_digest: None,
-            oci_child_digest: oci.map(|image| image.manifest.digest.clone()),
-            oci_config_digest: oci.map(|image| image.config.digest.clone()),
-            oci_layer_digests: oci
-                .map(|image| {
-                    image
-                        .layers
-                        .iter()
-                        .map(|layer| layer.digest.clone())
-                        .collect()
-                })
-                .unwrap_or_default(),
+            oci_child_digest: None,
             location: Location {
                 kind: "local".to_owned(),
                 uri: build.location_uri.clone(),
@@ -377,15 +290,8 @@ fn build_envelope(
             telemetry_schema_digest: None,
             config_schema_version: build.unit.config_schema_version,
             config_env_namespace: Some(build.unit.config_env_namespace.clone()),
-            migration: migration_identity(&build.unit.id, &build.closure)?,
-            catalogs: (build.unit.id == "brain-mux").then(|| Catalogs {
-                model: build
-                    .plan
-                    .env
-                    .get(MODEL_CATALOG_COLLECTION_SHA256_VAR)
-                    .cloned(),
-                tool: build.plan.env.get(TOOL_CATALOG_SHA256_VAR).cloned(),
-            }),
+            migration: None,
+            catalogs: None,
         },
         composition: Composition {
             minimum: Vec::new(),
@@ -418,7 +324,6 @@ fn build_envelope(
             unapproved_high: 0,
             approved_exceptions: Vec::new(),
         },
-        supply_chain_deferred: false,
         provenance: Provenance {
             predicate_type: "https://slsa.dev/provenance/v1".to_owned(),
             bundle_digest: String::new(),
@@ -442,53 +347,17 @@ fn build_envelope(
     .seal()
 }
 
-fn migration_identity(
-    unit: &str,
-    closure: &BTreeMap<String, String>,
-) -> Result<Option<MigrationIdentity>> {
-    if unit != "central-schema-admin" {
-        return Ok(None);
-    }
-    let digest = closure
-        .get("migrations/central/bundle.lock.json")
-        .filter(|digest| {
-            digest
-                .strip_prefix("sha256:")
-                .is_some_and(|value| {
-                    value.len() == 64
-                        && value
-                            .bytes()
-                            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-                })
-        })
-        .ok_or_else(|| {
-            ToolError::single(
-                Exit::ArtifactMismatch,
-                "central-migration-identity-missing",
-                "central-schema-admin's input closure must contain the canonical central bundle lock",
-            )
-        })?;
-    Ok(Some(MigrationIdentity {
-        required_central_head: None,
-        central_bundle_digest: Some(digest.clone()),
-        regional_bundle_digest: None,
-        regional_generation: None,
-    }))
-}
-
 fn media_type_of(form: &str) -> &'static str {
     match form {
         "lambda-zip" | "microvm-zip" => "application/zip",
-        "oci" => "application/vnd.oci.image.manifest.v1+json",
+        "oci" => "application/vnd.oci.image.index.v1+json",
         _ => "application/gzip",
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
-    use super::{UNEARNED, migration_identity, target_of};
+    use super::{UNEARNED, target_of};
 
     #[test]
     fn a_rust_triple_with_a_glibc_floor_keeps_the_floor() {
@@ -526,31 +395,5 @@ mod tests {
         assert!(!UNEARNED.starts_with("sha256:"));
         assert!(!UNEARNED.starts_with("https://"));
         assert!(UNEARNED.parse::<u64>().is_err());
-    }
-
-    #[test]
-    fn the_schema_admin_envelope_requires_the_embedded_bundle_identity() {
-        let missing = migration_identity("central-schema-admin", &BTreeMap::new())
-            .expect_err("an image with no central bundle input has no valid envelope");
-        assert!(
-            missing
-                .rules()
-                .contains(&"central-migration-identity-missing")
-        );
-
-        let digest = format!("sha256:{}", "a".repeat(64));
-        let identity = migration_identity(
-            "central-schema-admin",
-            &BTreeMap::from([(
-                "migrations/central/bundle.lock.json".to_owned(),
-                digest.clone(),
-            )]),
-        )
-        .expect("the exact input identity is accepted")
-        .expect("schema admin carries migration identity");
-        assert_eq!(
-            identity.central_bundle_digest.as_deref(),
-            Some(digest.as_str())
-        );
     }
 }

@@ -315,10 +315,6 @@ fn build_edge(
     dynamodb: &aws_sdk_dynamodb::Client,
     anchors: aex_identity_domain::assertion::VerificationKeySet,
 ) -> Result<Edge, RunError> {
-    let projection = aex_session_dynamodb::projection::ProjectionReader::new(
-        dynamodb.clone(),
-        config.authz_projection_table.clone(),
-    );
     RegionalEdge::new(
         LambdaAssertionSource::new(
             aws_sdk_lambda::Client::new(aws),
@@ -327,14 +323,25 @@ fn build_edge(
             config.region,
         ),
         anchors,
-        RegionalProjection::new(projection.clone(), config.region),
-        aex_regional_http::capacity::CapacityProjection::new(projection),
+        RegionalProjection::new(
+            aex_session_dynamodb::projection::ProjectionReader::new(
+                dynamodb.clone(),
+                config.authz_projection_table.clone(),
+            ),
+            config.region,
+        ),
         SystemClock,
         EdgeBinding {
             plane: config.plane,
             audience: AUDIENCE,
             region: config.region,
             cache_budget_bytes: config.assertion_cache_bytes,
+            limits: aex_regional_http::context::EffectiveLimits {
+                json_body_bytes: RequestLimits::DEFAULT_JSON_BODY_BYTES,
+                query_page_items: usize::from(config.observation_budget.max_returned),
+                query_page_bytes: usize::try_from(config.observation_budget.max_bytes_read)
+                    .unwrap_or(usize::MAX),
+            },
         },
     )
     .map_err(RunError::Edge)
@@ -344,11 +351,11 @@ fn build_edge(
 async fn wait_for_termination() {
     #[cfg(unix)]
     {
-        let Ok(mut terminate) =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        else {
-            return std::future::pending().await;
-        };
+        let mut terminate =
+            match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+                Ok(signal) => signal,
+                Err(_) => return std::future::pending().await,
+            };
         tokio::select! {
             _ = terminate.recv() => {}
             _ = tokio::signal::ctrl_c() => {}

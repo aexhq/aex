@@ -21,14 +21,7 @@ use aex_brain_store_aws::{BrainStore, BrainTables, DueScan, SqsWakeQueue};
 use aex_session_dynamodb::attr::{ItemBuilder, b, n, s, stamp};
 use aex_session_dynamodb::plan::Participant;
 use aex_wire::ids::{GenerationId, PrefixedId, Uuid7};
-use aws_smithy_http_client::test_util::{
-    CaptureRequestReceiver, ReplayEvent, StaticReplayClient, capture_request,
-};
-use aws_smithy_types::body::SdkBody;
-use base64::Engine as _;
-
-#[path = "adapters/snapshots.rs"]
-mod snapshots;
+use aws_smithy_http_client::test_util::{CaptureRequestReceiver, capture_request};
 
 fn v7(millis: u64, seed: u8) -> uuid::Uuid {
     uuid::Uuid::from_bytes(*Uuid7::compose(millis, [seed; 10]).as_bytes())
@@ -75,43 +68,6 @@ fn capturing() -> (BrainStore, CaptureRequestReceiver) {
     )
 }
 
-fn replaying(responses: Vec<serde_json::Value>) -> (BrainStore, StaticReplayClient) {
-    let events = responses
-        .into_iter()
-        .map(|response| {
-            ReplayEvent::new(
-                http::Request::builder()
-                    .method("POST")
-                    .uri("https://dynamodb.eu-west-1.amazonaws.com/")
-                    .body(SdkBody::empty())
-                    .expect("a request"),
-                http::Response::builder()
-                    .status(200)
-                    .body(SdkBody::from(response.to_string()))
-                    .expect("a response"),
-            )
-        })
-        .collect();
-    let replay = StaticReplayClient::new(events);
-    let config = aws_sdk_dynamodb::Config::builder()
-        .behavior_version_latest()
-        .region(aws_sdk_dynamodb::config::Region::new("eu-west-1"))
-        .credentials_provider(aws_sdk_dynamodb::config::Credentials::for_tests())
-        .http_client(replay.clone())
-        .retry_config(aws_sdk_dynamodb::config::retry::RetryConfig::disabled())
-        .build();
-    (
-        BrainStore::new(
-            aws_sdk_dynamodb::Client::from_conf(config),
-            BrainTables {
-                session_authority: "dev-eu-west-1-session-authority".to_owned(),
-                regional_work: "dev-eu-west-1-regional-work".to_owned(),
-            },
-        ),
-        replay,
-    )
-}
-
 fn capturing_wake_queue() -> (SqsWakeQueue, CaptureRequestReceiver) {
     let (dynamo_http, receiver) = capture_request(None);
     let dynamo = aws_sdk_dynamodb::Config::builder()
@@ -145,21 +101,6 @@ fn captured(receiver: CaptureRequestReceiver) -> serde_json::Value {
     let body = std::str::from_utf8(request.body().bytes().unwrap_or_default())
         .expect("the request body is UTF-8");
     serde_json::from_str(body).expect("the request body is JSON")
-}
-
-fn captured_requests(replay: &StaticReplayClient) -> Vec<serde_json::Value> {
-    replay
-        .actual_requests()
-        .map(|request| {
-            serde_json::from_slice(
-                request
-                    .body()
-                    .bytes()
-                    .expect("the DynamoDB request body is in memory"),
-            )
-            .expect("the DynamoDB request body is JSON")
-        })
-        .collect()
 }
 
 fn head() -> AgentHead {
@@ -324,10 +265,6 @@ async fn every_release_disposition_expires_the_exact_owned_lease_immediately() {
 /// This rejects cancellation/deletion and a stale owner while allowing a successor to
 /// dispatch the same prepared identity.
 #[tokio::test]
-#[allow(
-    clippy::too_many_lines,
-    reason = "the transaction-shape test audits every participant and condition together"
-)]
 async fn the_pre_send_write_atomically_checks_current_control_and_takes_over_the_effect() {
     let (store, receiver) = capturing();
     let guard = FenceGuard::new(
@@ -443,7 +380,7 @@ async fn the_pre_send_write_atomically_checks_current_control_and_takes_over_the
 }
 
 /// Once the application classifies a page stable and installs its cursor, the adapter must
-/// return that cursor verbatim as `DynamoDB`'s native `ExclusiveStartKey`. Transient pages
+/// return that cursor verbatim as DynamoDB's native `ExclusiveStartKey`. Transient pages
 /// retain their previous cursor in the application and never reach this adapter assertion.
 #[tokio::test]
 async fn a_due_scan_resumes_from_the_native_per_shard_continuation() {
@@ -472,15 +409,13 @@ async fn a_due_scan_resumes_from_the_native_per_shard_continuation() {
     );
 }
 
-/// Every attribute the decoder reads back is written. A detached id and executor are one
-/// closed binding: without the route a restarted mux cannot address the accepting backend.
+/// Every attribute the decoder reads back is written. The operation id in particular is the
+/// whole `DurableDetached` arm of the recovery matrix: without it a detached effect decodes
+/// with no operation, and `recover` interrupts a run the upstream is still working on.
 #[tokio::test]
 async fn a_response_start_records_the_evidence_the_decoder_reads_back() {
-    use aex_brain_domain::effect::{
-        DetachedOperationRef, DispatchEvidence, DispatchProof, DispatchStage,
-    };
+    use aex_brain_domain::effect::{DispatchEvidence, DispatchProof, DispatchStage};
     use aex_brain_domain::ids::{ContentHash, DetachedOperationId, ProviderRequestId};
-    use aex_brain_domain::journal::ExecutorRoute;
 
     let (store, receiver) = capturing();
     let guard = FenceGuard::new(
@@ -494,8 +429,6 @@ async fn a_response_start_records_the_evidence_the_decoder_reads_back() {
     );
     let ticket = DispatchTicket::mint(
         &guard,
-        authority().workspace,
-        authority().organization,
         EffectId([9; 16]),
         1,
         Timestamp::from_millis(1_767_225_600_000),
@@ -508,12 +441,8 @@ async fn a_response_start_records_the_evidence_the_decoder_reads_back() {
                 stage: DispatchStage::Streaming,
                 proof: DispatchProof::ResponseStarted,
                 attempt: 1,
-                provider_request_id: Some(ProviderRequestId::truncating("req-1")),
-                external_operation: None,
-                detached_tool: Some(DetachedOperationRef {
-                    id: DetachedOperationId("op-1".to_owned()),
-                    executor: ExecutorRoute::Mcp,
-                }),
+                provider_request_id: Some(ProviderRequestId("req-1".to_owned())),
+                operation: Some(DetachedOperationId("op-1".to_owned())),
                 receipt: Some(receipt),
                 detail: None,
             },
@@ -521,72 +450,16 @@ async fn a_response_start_records_the_evidence_the_decoder_reads_back() {
         .await;
     let body = captured(receiver);
     let update = body["UpdateExpression"].as_str().expect("an update");
-    assert!(
-        update.contains("detachedOperationId = :detachedOperation"),
-        "{update}"
-    );
-    assert!(
-        update.contains("detachedExecutor = :detachedExecutor"),
-        "{update}"
-    );
+    assert!(update.contains("operationId = :operation"), "{update}");
     assert!(
         update.contains("providerRequestId = :providerRequestId"),
         "{update}"
     );
     assert!(update.contains("receiptHash = :receipt"), "{update}");
     let values = &body["ExpressionAttributeValues"];
-    assert_eq!(values[":detachedOperation"]["S"], "op-1");
-    assert_eq!(values[":detachedExecutor"]["S"], "Mcp");
+    assert_eq!(values[":operation"]["S"], "op-1");
     assert_eq!(values[":providerRequestId"]["S"], "req-1");
     assert_eq!(values[":receipt"]["S"], receipt.to_hex());
-}
-
-#[tokio::test]
-async fn a_response_start_refuses_two_operation_authorities_before_aws() {
-    use aex_brain_domain::effect::{
-        DetachedOperationRef, DispatchEvidence, DispatchProof, DispatchStage,
-    };
-    use aex_brain_domain::ids::DetachedOperationId;
-    use aex_brain_domain::journal::ExecutorRoute;
-
-    let (store, _receiver) = capturing();
-    let guard = FenceGuard::new(
-        key(),
-        OwnerToken(uuid::Uuid::from_u128(5)),
-        Fence(7),
-        AgentRevision(2),
-        Some(JournalSeq(4)),
-        CancelEpoch(0),
-        CancelToken::new(),
-    );
-    let ticket = DispatchTicket::mint(
-        &guard,
-        authority().workspace,
-        authority().organization,
-        EffectId([9; 16]),
-        1,
-        Timestamp::from_millis(1_767_225_600_000),
-    );
-    let error = store
-        .mark_response_started(
-            &ticket,
-            &DispatchEvidence {
-                stage: DispatchStage::Streaming,
-                proof: DispatchProof::ResponseStarted,
-                attempt: 1,
-                provider_request_id: None,
-                external_operation: Some(DetachedOperationId("external".to_owned())),
-                detached_tool: Some(DetachedOperationRef {
-                    id: DetachedOperationId("tool".to_owned()),
-                    executor: ExecutorRoute::Mcp,
-                }),
-                receipt: None,
-                detail: None,
-            },
-        )
-        .await
-        .expect_err("one effect cannot be recovered through two authorities");
-    assert!(format!("{error}").contains("mutually exclusive"), "{error}");
 }
 
 /// Evidence a dispatch did not produce is not written as an empty string: an absent optional
@@ -607,8 +480,6 @@ async fn absent_evidence_is_left_absent_rather_than_written_empty() {
     );
     let ticket = DispatchTicket::mint(
         &guard,
-        authority().workspace,
-        authority().organization,
         EffectId([9; 16]),
         1,
         Timestamp::from_millis(1_767_225_600_000),
@@ -621,8 +492,7 @@ async fn absent_evidence_is_left_absent_rather_than_written_empty() {
         .await;
     let body = captured(receiver);
     let update = body["UpdateExpression"].as_str().expect("an update");
-    assert!(!update.contains("OperationId"), "{update}");
-    assert!(!update.contains("detachedExecutor"), "{update}");
+    assert!(!update.contains("operationId"), "{update}");
     assert!(!update.contains("receiptHash"), "{update}");
 }
 
@@ -692,69 +562,6 @@ async fn a_journal_page_carries_the_complete_native_continuation() {
     );
 }
 
-/// `Limit` is not a page-length promise: `DynamoDB` stops at one service page and returns a
-/// `LastEvaluatedKey` even when fewer entries than requested fit. The next read must use
-/// that complete key and return each contiguous sequence exactly once.
-#[tokio::test]
-async fn an_early_service_page_boundary_resumes_without_skipping_or_repeating() {
-    let record = finished();
-    let first = entry(4, &record);
-    let second = entry(5, &record);
-    let last = continuation(4);
-    let (store, replay) = replaying(vec![
-        serde_json::json!({
-            "Items": [dynamo_item(&first)],
-            "Count": 1,
-            "ScannedCount": 1,
-            "LastEvaluatedKey": dynamo_item(&last),
-        }),
-        serde_json::json!({
-            "Items": [dynamo_item(&second)],
-            "Count": 1,
-            "ScannedCount": 1,
-        }),
-    ]);
-    let budget = budget(25, 1 << 20);
-
-    let first_page = store
-        .read_page(&key(), JournalSeq(4), budget, None)
-        .await
-        .expect("the short first service page decodes");
-    assert_eq!(first_page.entries.len(), 1, "the Limit was 25, not one");
-    let continuation = first_page.next.expect("the service supplied a LEK");
-    assert_eq!(continuation.next(), JournalSeq(5));
-
-    let second_page = store
-        .read_page(&key(), JournalSeq(5), budget, Some(continuation))
-        .await
-        .expect("the native continuation resumes the query");
-    let sequences = first_page
-        .entries
-        .iter()
-        .chain(&second_page.entries)
-        .map(|entry| entry.envelope.seq)
-        .collect::<Vec<_>>();
-    assert_eq!(sequences, [JournalSeq(4), JournalSeq(5)]);
-    assert_eq!(second_page.next, None);
-
-    let requests = captured_requests(&replay);
-    assert_eq!(requests.len(), 2);
-    for request in &requests {
-        assert_eq!(request["ConsistentRead"], true);
-        assert_eq!(request["Limit"], 25);
-        assert!(request["FilterExpression"].is_null());
-        assert_eq!(
-            request["ExpressionAttributeValues"][":from"]["S"], "J#00000000000000000004",
-            "a resumed query retains the original key condition"
-        );
-    }
-    assert_eq!(
-        requests[1]["ExclusiveStartKey"],
-        dynamo_item(&last),
-        "the complete service continuation is returned verbatim"
-    );
-}
-
 // ---------------------------------------------------------------------------
 // page rules
 // ---------------------------------------------------------------------------
@@ -795,31 +602,6 @@ fn continuation(seq: u64) -> aex_session_dynamodb::attr::Item {
             s(aex_brain_store_aws::keys::journal_sort_key(JournalSeq(seq))),
         ),
     ])
-}
-
-fn dynamo_item(item: &aex_session_dynamodb::attr::Item) -> serde_json::Value {
-    serde_json::Value::Object(
-        item.iter()
-            .map(|(name, value)| {
-                let value = match value {
-                    aws_sdk_dynamodb::types::AttributeValue::S(value) => {
-                        serde_json::json!({"S": value})
-                    }
-                    aws_sdk_dynamodb::types::AttributeValue::N(value) => {
-                        serde_json::json!({"N": value})
-                    }
-                    aws_sdk_dynamodb::types::AttributeValue::B(value) => serde_json::json!({
-                        "B": base64::prelude::BASE64_STANDARD.encode(value.as_ref())
-                    }),
-                    aws_sdk_dynamodb::types::AttributeValue::Bool(value) => {
-                        serde_json::json!({"BOOL": value})
-                    }
-                    other => panic!("the journal fixture uses no {other:?} attribute"),
-                };
-                (name.clone(), value)
-            })
-            .collect(),
-    )
 }
 
 fn partition() -> String {
@@ -944,25 +726,6 @@ fn a_page_that_exhausts_its_byte_budget_says_so_rather_than_truncating() {
 }
 
 #[test]
-fn a_response_that_exceeds_the_entry_budget_is_refused_rather_than_truncated() {
-    let record = finished();
-    let items = [entry(4, &record), entry(5, &record)];
-    let error = aex_brain_store_aws::journal::decode_page(
-        &items,
-        None,
-        &partition(),
-        JournalSeq(4),
-        JournalSeq(4),
-        budget(1, 1 << 20),
-    )
-    .expect_err("an over-limit response cannot be silently treated as EOF");
-    assert!(
-        matches!(error, StoreError::ReadBudgetExhausted { entries: 2, .. }),
-        "{error:?}"
-    );
-}
-
-#[test]
 fn a_short_page_with_a_last_evaluated_key_reports_where_to_resume() {
     let record = finished();
     let items = [entry(4, &record), entry(5, &record)];
@@ -999,22 +762,6 @@ fn a_full_page_without_a_native_continuation_is_eof() {
 }
 
 #[test]
-fn an_empty_native_continuation_is_the_service_eof_sentinel() {
-    let items = [entry(4, &finished())];
-    let empty = aex_session_dynamodb::attr::Item::new();
-    let page = aex_brain_store_aws::journal::decode_page(
-        &items,
-        Some(&empty),
-        &partition(),
-        JournalSeq(4),
-        JournalSeq(4),
-        budget(25, 1 << 20),
-    )
-    .expect("DynamoDB defines an empty LEK as the last page");
-    assert_eq!(page.next, None);
-}
-
-#[test]
 fn every_native_continuation_component_is_required_and_validated() {
     let items = [entry(4, &finished())];
     let mut missing_sk = continuation(4);
@@ -1045,31 +792,6 @@ fn every_native_continuation_component_is_required_and_validated() {
     )
     .expect_err("a continuation for another partition is unusable");
     assert!(matches!(wrong, StoreError::Undecodable { .. }));
-
-    let wrong_tail = continuation(5);
-    let wrong = aex_brain_store_aws::journal::decode_page(
-        &items,
-        Some(&wrong_tail),
-        &partition(),
-        JournalSeq(4),
-        JournalSeq(4),
-        budget(25, 1 << 20),
-    )
-    .expect_err("the LEK must identify the last decoded row");
-    assert!(matches!(wrong, StoreError::Undecodable { .. }));
-
-    let mut extra = continuation(4);
-    extra.insert("anotherKey".to_owned(), s("not part of the table key"));
-    let extra = aex_brain_store_aws::journal::decode_page(
-        &items,
-        Some(&extra),
-        &partition(),
-        JournalSeq(4),
-        JournalSeq(4),
-        budget(25, 1 << 20),
-    )
-    .expect_err("an expanded native key shape is not silently accepted");
-    assert!(matches!(extra, StoreError::Undecodable { .. }));
 }
 
 /// Every named participant maps to exactly one precondition failure, and the four answers

@@ -3,7 +3,7 @@
 //! The public request, response and query models.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:5f927d858c412e8f9e20404b8564015430127f926b3b725e2d11777d37d563c4`.
+//! `sha256:dc5fae9485a95d96436a4eb5634619ca95fc42eb3aebb8eeafd4668e26041ad2`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -2039,8 +2039,7 @@ pub struct ModelSelection {
     pub provider: ProviderId,
 }
 
-/// The eight customer-owned BYOK authorities. Gateway authorities use fixed endpoints; arbitrary
-/// base URLs are not accepted.
+/// The six direct BYOK providers. There is no gateway and no arbitrary base URL.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderId {
@@ -2056,10 +2055,6 @@ pub enum ProviderId {
     Moonshotai,
     /// Google.
     Google,
-    /// `OpenRouter`, authenticated with the customer's `OpenRouter` key.
-    Openrouter,
-    /// `Vercel AI Gateway`, authenticated with the customer's `AI Gateway` key.
-    VercelAiGateway,
 }
 
 impl ProviderId {
@@ -2071,8 +2066,6 @@ impl ProviderId {
         ProviderId::Zai,
         ProviderId::Moonshotai,
         ProviderId::Google,
-        ProviderId::Openrouter,
-        ProviderId::VercelAiGateway,
     ];
 
     /// The wire spelling.
@@ -2085,8 +2078,6 @@ impl ProviderId {
             Self::Zai => "zai",
             Self::Moonshotai => "moonshotai",
             Self::Google => "google",
-            Self::Openrouter => "openrouter",
-            Self::VercelAiGateway => "vercel_ai_gateway",
         }
     }
 }
@@ -2841,10 +2832,6 @@ pub enum MessagePart {
     Text(MessagePartText),
     /// A persisted file reference.
     File(MessagePartFile),
-    /// A canonical tool call.
-    ToolCall(MessagePartToolCall),
-    /// A canonical tool result.
-    ToolResult(MessagePartToolResult),
 }
 
 /// A reference to a persisted file.
@@ -2866,26 +2853,6 @@ pub struct MessagePartFile {
 pub struct MessagePartText {
     /// The text.
     pub text: String,
-}
-
-/// A tool call emitted by the model.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct MessagePartToolCall {
-    /// The canonical tool-argument digest.
-    pub arguments_digest: ContentHash,
-    /// The call identity.
-    pub id: ToolCallId,
-}
-
-/// The canonical result of a tool call.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct MessagePartToolResult {
-    /// The call identity.
-    pub id: ToolCallId,
-    /// The canonical tool-result digest.
-    pub result_digest: ContentHash,
 }
 
 /// Who produced a message.
@@ -3448,7 +3415,7 @@ pub struct ResolvedNetwork {
 pub struct Run {
     /// The terminal failure.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<RunFailure>,
+    pub error: Option<ApiErrorBody>,
     /// Identity.
     pub id: RunId,
     /// The effective spend ceiling.
@@ -3476,21 +3443,6 @@ pub struct Run {
     /// When it reached a terminal status.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal_at: Option<Timestamp>,
-}
-
-/// A durable run failure with no synthetic request identity.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct RunFailure {
-    /// The stable public failure code.
-    pub code: ObservedErrorCode,
-    /// Typed customer-safe detail.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub detail: Option<CanonicalJson>,
-    /// Customer-safe failure detail.
-    pub message: String,
-    /// Whether the same run step may be retried.
-    pub retryable: bool,
 }
 
 /// One page of runs.

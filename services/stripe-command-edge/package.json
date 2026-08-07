@@ -2,7 +2,6 @@
   "name": "@aexhq/stripe-command-edge",
   "version": "0.1.0",
   "private": true,
-  "license": "Apache-2.0",
   "type": "module",
   "aex": {
     "owner": "central-finance",
@@ -23,8 +22,7 @@
     }
   },
   "scripts": {
-    "test": "bun run test:unit",
-    "test:unit": "bun test --isolate",
+    "test": "bun test",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

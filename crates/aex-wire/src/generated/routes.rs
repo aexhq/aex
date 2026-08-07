@@ -3,7 +3,7 @@
 //! The route registry: one row per public operation.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:5f927d858c412e8f9e20404b8564015430127f926b3b725e2d11777d37d563c4`.
+//! `sha256:dc5fae9485a95d96436a4eb5634619ca95fc42eb3aebb8eeafd4668e26041ad2`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]

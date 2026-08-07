@@ -7,11 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::fold::FoldState;
-use aex_model_catalog::primitives::BoundedString;
-
-use crate::wire_pending::{
-    CanonicalBlock, CanonicalMessage, NormalizedUsage, QualifiedModel, Role, ToolResultPart,
-};
+use crate::wire_pending::{CanonicalBlock, ModelCapability, NormalizedUsage, ResultContent, Turn};
 
 /// The text a cleared block is replaced by.
 ///
@@ -82,12 +78,12 @@ pub struct ContextDecision {
 #[must_use]
 pub fn decide(
     state: &FoldState,
-    model: &QualifiedModel,
+    capability: &ModelCapability,
     policy: &ContextPolicy,
     hydrated_bytes: usize,
 ) -> ContextDecision {
     let prompt_tokens = state.usage.prompt_tokens();
-    let window = u64::from(model.limits().context_window_tokens).max(1);
+    let window = capability.context_window_tokens.max(1);
     let trigger = window.saturating_mul(u64::from(policy.trigger_percent_of_window)) / 100;
     let target = window.saturating_mul(u64::from(policy.target_percent_of_window)) / 100;
     let mandatory = hydrated_bytes > policy.max_hydrated_context_bytes;
@@ -97,8 +93,9 @@ pub fn decide(
         compaction_mandatory: mandatory,
         prompt_tokens,
         target_tokens: target,
-        anchor_cacheable: model.limits().min_cacheable_prefix_tokens == 0
-            || stable_prefix >= u64::from(model.limits().min_cacheable_prefix_tokens),
+        anchor_cacheable: capability
+            .min_cacheable_prefix_tokens
+            .is_none_or(|minimum| stable_prefix >= minimum),
         protected_turns: state.model_history.len().min(PROTECTED_TAIL_TURNS),
     }
 }
@@ -123,11 +120,7 @@ fn stable_prefix_tokens(state: &FoldState, prompt_tokens: u64) -> u64 {
 /// The result is a *view*: the journal is untouched, and calling this twice on the same
 /// fold produces identical bytes.
 #[must_use]
-pub fn view(
-    state: &FoldState,
-    policy: &ContextPolicy,
-    clear_before: usize,
-) -> Vec<CanonicalMessage> {
+pub fn view(state: &FoldState, policy: &ContextPolicy, clear_before: usize) -> Vec<Turn> {
     let protected_from = state
         .model_history
         .len()
@@ -147,26 +140,47 @@ pub fn view(
         .collect()
 }
 
-fn cleared(turn: &CanonicalMessage) -> CanonicalMessage {
-    CanonicalMessage {
-        role: turn.role,
-        blocks: vec![CanonicalBlock::Text {
-            text: BoundedString::truncating(CLEARED_PLACEHOLDER),
-            annotations: Vec::new(),
-        }],
+fn cleared(turn: &Turn) -> Turn {
+    match turn {
+        Turn::User { .. } => Turn::User {
+            blocks: vec![CanonicalBlock::Text {
+                text: CLEARED_PLACEHOLDER.to_owned(),
+            }],
+        },
+        Turn::Assistant {
+            provider,
+            model,
+            stop_reason,
+            ..
+        } => Turn::Assistant {
+            blocks: vec![CanonicalBlock::Text {
+                text: CLEARED_PLACEHOLDER.to_owned(),
+            }],
+            provider: *provider,
+            model: model.clone(),
+            stop_reason: *stop_reason,
+        },
     }
 }
 
-fn capped(turn: &CanonicalMessage, tool_result_bytes: usize) -> CanonicalMessage {
-    CanonicalMessage {
-        role: turn.role,
-        blocks: match turn.role {
-            Role::User => turn
-                .blocks
+fn capped(turn: &Turn, tool_result_bytes: usize) -> Turn {
+    match turn {
+        Turn::User { blocks } => Turn::User {
+            blocks: blocks
                 .iter()
                 .map(|block| cap_block(block, tool_result_bytes))
                 .collect(),
-            Role::Assistant => turn.blocks.clone(),
+        },
+        Turn::Assistant {
+            blocks,
+            provider,
+            model,
+            stop_reason,
+        } => Turn::Assistant {
+            blocks: blocks.clone(),
+            provider: *provider,
+            model: model.clone(),
+            stop_reason: *stop_reason,
         },
     }
 }
@@ -184,30 +198,18 @@ fn cap_block(block: &CanonicalBlock, limit: usize) -> CanonicalBlock {
     let capped = content
         .iter()
         .map(|piece| match piece {
-            ToolResultPart::Text { text } => {
+            ResultContent::Text { text } => {
                 let remaining = limit.saturating_sub(spent);
                 spent = spent.saturating_add(text.len());
                 if text.len() <= remaining {
-                    ToolResultPart::Text { text: text.clone() }
+                    ResultContent::Text { text: text.clone() }
                 } else {
-                    ToolResultPart::Text {
-                        text: truncate_on_char_boundary(text.as_str(), remaining),
+                    ResultContent::Text {
+                        text: truncate_on_char_boundary(text, remaining),
                     }
                 }
             }
-            ToolResultPart::Json { value } => {
-                let remaining = limit.saturating_sub(spent);
-                spent = spent.saturating_add(value.as_str().len());
-                if value.as_str().len() <= remaining {
-                    ToolResultPart::Json {
-                        value: value.clone(),
-                    }
-                } else {
-                    ToolResultPart::Text {
-                        text: BoundedString::truncating(CLEARED_PLACEHOLDER),
-                    }
-                }
-            }
+            other @ ResultContent::Image { .. } => other.clone(),
         })
         .collect();
     CanonicalBlock::ToolResult {
@@ -223,12 +225,9 @@ fn cap_block(block: &CanonicalBlock, limit: usize) -> CanonicalBlock {
 /// appended, a capped result would be `limit + marker` bytes long, a second pass would find
 /// it over the limit and cut it again, and the cap would not be idempotent — so a retried
 /// request would send the model a different prompt than the first attempt did.
-fn truncate_on_char_boundary(
-    text: &str,
-    limit: usize,
-) -> BoundedString<{ aex_model_catalog::canonical::TEXT_MAX }> {
+fn truncate_on_char_boundary(text: &str, limit: usize) -> String {
     if text.len() <= limit {
-        return BoundedString::truncating(text);
+        return text.to_owned();
     }
     // `CLEARED_PLACEHOLDER` is ASCII, so every byte index inside it is a character
     // boundary and the final clamp can never split a character.
@@ -240,7 +239,7 @@ fn truncate_on_char_boundary(
     let mut truncated = text[..end].to_owned();
     truncated.push_str(CLEARED_PLACEHOLDER);
     truncated.truncate(limit);
-    BoundedString::truncating(&truncated)
+    truncated
 }
 
 /// The usage a compaction must carry forward.
@@ -256,26 +255,21 @@ mod tests {
         decide, view,
     };
     use crate::fold::FoldState;
-    use crate::ids::ToolCallId;
+    use crate::ids::{ModelSlug, ToolCallId};
     use crate::wire_pending::{
-        CanonicalBlock, CanonicalMessage, NormalizedUsage, ProviderId, Role, ToolResultPart,
+        CanonicalBlock, ModelCapability, NormalizedUsage, ProviderId, ResultContent, StopReason,
+        Turn,
     };
-    use aex_model_catalog::document::CapabilitySet;
-    use aex_model_catalog::{BoundedString, QualifiedModel, fixture};
 
-    fn capability(window: u64, minimum_cacheable: Option<u64>) -> QualifiedModel {
-        let mut entry = fixture::entry(ProviderId::Anthropic, "m", CapabilitySet::default());
-        entry.limits.context_window_tokens = u32::try_from(window).expect("fixture window fits");
-        entry.limits.min_cacheable_prefix_tokens = minimum_cacheable.map_or(0, |tokens| {
-            u32::try_from(tokens).expect("fixture cache threshold fits")
-        });
-        fixture::qualified(entry)
-    }
-
-    fn text(value: &str) -> CanonicalBlock {
-        CanonicalBlock::Text {
-            text: BoundedString::truncating(value),
-            annotations: Vec::new(),
+    fn capability(window: u64, minimum_cacheable: Option<u64>) -> ModelCapability {
+        ModelCapability {
+            provider: ProviderId::Anthropic,
+            model: ModelSlug("m".to_owned()),
+            context_window_tokens: window,
+            max_output_tokens: 4_096,
+            min_cacheable_prefix_tokens: minimum_cacheable,
+            supports_tools: true,
+            admitted: true,
         }
     }
 
@@ -283,13 +277,21 @@ mod tests {
         let mut state = FoldState::empty();
         state.usage = usage;
         for index in 0..turns {
-            state.model_history.push(CanonicalMessage {
-                role: if index % 2 == 0 {
-                    Role::User
-                } else {
-                    Role::Assistant
-                },
-                blocks: vec![text(&format!("turn{index}"))],
+            state.model_history.push(if index % 2 == 0 {
+                Turn::User {
+                    blocks: vec![CanonicalBlock::Text {
+                        text: format!("u{index}"),
+                    }],
+                }
+            } else {
+                Turn::Assistant {
+                    blocks: vec![CanonicalBlock::Text {
+                        text: format!("a{index}"),
+                    }],
+                    provider: ProviderId::Anthropic,
+                    model: ModelSlug("m".to_owned()),
+                    stop_reason: StopReason::EndTurn,
+                }
             });
         }
         state
@@ -299,8 +301,8 @@ mod tests {
     fn the_trigger_counts_cache_creation_and_cache_read_not_input_alone() {
         let cached = NormalizedUsage {
             input_tokens: 10,
-            cache_write_input_tokens: 400,
-            cache_read_input_tokens: 400,
+            cache_creation_tokens: 400,
+            cache_read_tokens: 400,
             ..NormalizedUsage::default()
         };
         let decision = decide(
@@ -372,8 +374,11 @@ mod tests {
         let rendered = view(&state, &ContextPolicy::default(), 10);
         let tail = &rendered[rendered.len() - PROTECTED_TAIL_TURNS..];
         for turn in tail {
+            let blocks = match turn {
+                Turn::User { blocks } | Turn::Assistant { blocks, .. } => blocks,
+            };
             assert!(
-                !matches!(&turn.blocks[0], CanonicalBlock::Text { text, .. } if text.as_str() == CLEARED_PLACEHOLDER),
+                !matches!(&blocks[0], CanonicalBlock::Text { text } if text == CLEARED_PLACEHOLDER),
                 "{turn:?}"
             );
         }
@@ -387,27 +392,28 @@ mod tests {
         assert_eq!(once, twice);
     }
 
-    fn only_text(turns: &[CanonicalMessage]) -> &str {
-        assert_eq!(turns[0].role, Role::User);
-        let CanonicalBlock::ToolResult { content, .. } = &turns[0].blocks[0] else {
+    fn only_text(turns: &[Turn]) -> &str {
+        let Turn::User { blocks } = &turns[0] else {
+            panic!("a user turn");
+        };
+        let CanonicalBlock::ToolResult { content, .. } = &blocks[0] else {
             panic!("a tool result");
         };
-        let ToolResultPart::Text { text } = &content[0] else {
+        let ResultContent::Text { text } = &content[0] else {
             panic!("text content");
         };
-        text.as_str()
+        text
     }
 
     #[test]
     fn a_tool_result_is_capped_at_the_effective_limit_and_capping_is_idempotent() {
         let limit = CLEARED_PLACEHOLDER.len() + 16;
         let mut state = FoldState::empty();
-        state.model_history.push(CanonicalMessage {
-            role: Role::User,
+        state.model_history.push(Turn::User {
             blocks: vec![CanonicalBlock::ToolResult {
-                call: ToolCallId::truncating("c1"),
-                content: vec![ToolResultPart::Text {
-                    text: BoundedString::truncating(&"x".repeat(200)),
+                call: ToolCallId("c1".to_owned()),
+                content: vec![ResultContent::Text {
+                    text: "x".repeat(200),
                 }],
                 is_error: false,
             }],
@@ -439,12 +445,11 @@ mod tests {
     #[test]
     fn a_result_already_inside_the_limit_is_returned_untouched() {
         let mut state = FoldState::empty();
-        state.model_history.push(CanonicalMessage {
-            role: Role::User,
+        state.model_history.push(Turn::User {
             blocks: vec![CanonicalBlock::ToolResult {
-                call: ToolCallId::truncating("c1"),
-                content: vec![ToolResultPart::Text {
-                    text: BoundedString::truncating("small"),
+                call: ToolCallId("c1".to_owned()),
+                content: vec![ResultContent::Text {
+                    text: "small".to_owned(),
                 }],
                 is_error: false,
             }],

@@ -29,7 +29,6 @@
 //!   of a lost unit of work.
 
 pub mod decide;
-pub mod restore;
 pub mod run;
 
 #[cfg(any(test, feature = "testing"))]
@@ -39,11 +38,10 @@ pub mod memory;
 mod tests;
 
 use crate::ports::{
-    CatalogError, CatalogPort, ClaimError, ClockPort, CommitError, EffectStore, FoldSnapshotStore,
-    HandsError, HandsPort, IdPort, JournalStore, LeaseStore, ProviderPort, ReadBudget,
-    SnapshotDiagnostic, StoreError, ToolPort, ToolRoutingError, WakeQueue,
+    CatalogError, CatalogPort, ClaimError, ClockPort, CommitError, EffectStore, HandsError,
+    HandsPort, IdPort, JournalStore, LeaseStore, ProviderPort, ReadBudget, StoreError, ToolPort,
+    ToolRoutingError, WakeQueue,
 };
-use aex_brain_domain::child::QueuedReason;
 use aex_brain_domain::context::ContextPolicy;
 use aex_brain_domain::fold::FoldError;
 use aex_brain_domain::ids::WorkShard;
@@ -51,7 +49,6 @@ use aex_brain_domain::journal::FinishReason;
 use std::sync::Arc;
 
 pub use decide::{Draft, phase_tag};
-pub use restore::{RestoreSource, RestoredFold};
 pub use run::{Activation, PollReport, WakeLoop};
 
 /// The strict activation-wide ceiling for cold journal restore.
@@ -64,10 +61,7 @@ pub use run::{Activation, PollReport, WakeLoop};
 pub struct RestoreBudget {
     /// The most entries one activation may retain while rebuilding its fold.
     pub max_entries: usize,
-    /// The most canonical inline journal-body bytes one activation may retain.
-    ///
-    /// This is a payload ceiling, not a claim about the exact heap footprint of the decoded
-    /// fold or `DynamoDB`'s response encoding.
+    /// The most hydrated journal bytes one activation may retain while rebuilding its fold.
     pub max_bytes: usize,
 }
 
@@ -80,8 +74,6 @@ pub struct RestoreBudget {
 pub struct Ports {
     /// The agent's journal: head, pages and the one decision transaction.
     pub journal: Arc<dyn JournalStore>,
-    /// Immutable fold snapshots and their monotonic durable pointer.
-    pub snapshots: Arc<dyn FoldSnapshotStore>,
     /// The durable effect record's two pre-settlement transitions.
     pub effects: Arc<dyn EffectStore>,
     /// Activation ownership.
@@ -126,14 +118,6 @@ pub struct ActivationPolicy {
     pub read: ReadBudget,
     /// The strict total journal restore ceiling across every page.
     pub restore: RestoreBudget,
-    /// Largest canonical immutable fold snapshot this build will parse.
-    pub max_snapshot_bytes: usize,
-    /// Peak resident bytes reserved before snapshot/journal hydration.
-    ///
-    /// This is intentionally separate from canonical payload bytes. A reproducible
-    /// process-RSS probe bounds decode/fold amplification; token counts and `DynamoDB`
-    /// response bytes are not substitutes.
-    pub restore_resident_bytes: u64,
     /// The context view policy.
     pub context: ContextPolicy,
     /// How long one external effect attempt may run, in milliseconds.
@@ -190,16 +174,13 @@ impl Default for ActivationPolicy {
                 max_entries: 256,
                 max_bytes: 8 * 1_024 * 1_024,
             },
-            // A verified snapshot plus bounded suffix is the path for histories above this
-            // canonical payload ceiling. Admission separately reserves decoded working set.
+            // This fail-closed ceiling is intentionally small enough that the candidate
+            // mux's 1 GiB context pool can reserve it at the 100-activation target. A
+            // verified snapshot plus bounded suffix is the path for histories above it.
             restore: RestoreBudget {
                 max_entries: 4_096,
                 max_bytes: 8 * 1_024 * 1_024,
             },
-            max_snapshot_bytes: 8 * 1_024 * 1_024,
-            // Conservative until the production-shape allocator/RSS campaign tightens it.
-            // Correct typed deferral is preferable to overcommitting a 1M-context mux.
-            restore_resident_bytes: 64 * 1_024 * 1_024,
             context: ContextPolicy::default(),
             effect_deadline_ms: 600_000,
             stream_buffer_bytes: 1_024 * 1_024,
@@ -278,39 +259,6 @@ pub enum AdmissionDecision {
     },
 }
 
-/// The bounded local resource needed immediately before an external dispatch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DispatchLane {
-    /// A model-provider stream.
-    Provider,
-    /// Managed web or MCP network I/O.
-    Network,
-    /// An authenticated Hands guest RPC.
-    Hands,
-}
-
-/// Non-blocking phase-specific dispatch admission.
-///
-/// The implementation may hold only process-local permits. A refusal is converted into a
-/// durable typed continuation while the effect remains `prepared`; activation never waits
-/// locally with a lease and never crosses the pre-send fence without a permit.
-pub trait DispatchControl: core::fmt::Debug + Send + Sync + 'static {
-    /// Tries to acquire the exact weighted lane immediately.
-    fn admit(&self, lane: DispatchLane, weight: u16) -> DispatchDecision;
-}
-
-/// What phase-specific dispatch admission decided.
-#[derive(Debug)]
-pub enum DispatchDecision {
-    /// Dispatch may proceed while these RAII reservations remain alive.
-    ///
-    /// `None` is used by the application default when no process-local dispatch gate is
-    /// installed; a configured gate returns exactly one reservation without allocating.
-    Admitted(Option<crate::kernel::Reservation>),
-    /// Dispatch must hand back through a durable typed continuation.
-    Deferred(QueuedReason),
-}
-
 /// Why an activation gave the delivery back instead of acking it.
 ///
 /// Every arm leaves the durable wake in place, so the worst any of them costs is a
@@ -382,16 +330,6 @@ pub enum ActivationError {
     /// The journal did not fold.
     #[error(transparent)]
     Fold(#[from] FoldError),
-    /// Snapshot restore failed and the bounded authoritative sequence-zero fallback did too.
-    #[error(
-        "fold snapshot fallback failed ({snapshot}); sequence-zero restore failed ({fallback})"
-    )]
-    SnapshotFallbackFailed {
-        /// Why the acceleration path could not be used.
-        snapshot: SnapshotDiagnostic,
-        /// Why replaying the authoritative journal under the same ceiling also refused.
-        fallback: Box<ActivationError>,
-    },
     /// A capability lookup failed.
     #[error(transparent)]
     Catalog(#[from] CatalogError),
@@ -404,27 +342,6 @@ pub enum ActivationError {
     /// A record or a request could not be canonicalized, so its identity is unknown.
     #[error(transparent)]
     Canonical(#[from] aex_brain_domain::canonical::CanonicalizeError),
-    /// The canonical provider request could not be sealed.
-    #[error(transparent)]
-    ProviderCanonical(#[from] aex_model_catalog::canonical::SealError),
-    /// The provider returned message, usage and receipt values that do not
-    /// commit to the same canonical outcome.
-    #[error("provider outcome proof, usage and receipt do not match")]
-    InvalidProviderOutcome,
-    /// A truthful tool surface exceeded the selected model's declaration bound.
-    #[error("tool surface has {advertised} definitions; selected model permits {max}")]
-    ToolLimitExceeded {
-        /// Provider-visible definitions in the immutable advertisement.
-        advertised: usize,
-        /// Maximum declarations accepted by the selected model.
-        max: u16,
-    },
-    /// A system instruction reference reached activation without content hydration.
-    #[error("system instruction content was not hydrated before provider request construction")]
-    UnhydratedSystem,
-    /// A placed user block reached activation without content hydration.
-    #[error("placed user content was not hydrated before provider request construction")]
-    UnhydratedContent,
     /// The same effect identity arrived carrying a different request.
     ///
     /// The agent quarantines rather than dispatching either one: two requests under one

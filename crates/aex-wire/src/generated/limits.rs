@@ -3,7 +3,7 @@
 //! The effective-limit registry.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:5f927d858c412e8f9e20404b8564015430127f926b3b725e2d11777d37d563c4`.
+//! `sha256:dc5fae9485a95d96436a4eb5634619ca95fc42eb3aebb8eeafd4668e26041ad2`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -27,78 +27,97 @@ pub enum LimitShape {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LimitId {
-    /// `context.tool_result_bytes` — Largest tool result admitted into the next model context.
-    #[serde(rename = "context.tool_result_bytes")]
-    ContextToolResultBytes,
-    /// `session.materialized_agents` — Root-plus-subagents concurrently materialized in one
-    /// session.
-    #[serde(rename = "session.materialized_agents")]
-    SessionMaterializedAgents,
-    /// `api.json_body` — Largest accepted encoded JSON request body.
-    #[serde(rename = "api.json_body")]
-    ApiJsonBody,
-    /// `telemetry.batch` — Encoded, decoded, record and normalized-observation admission bounds.
-    #[serde(rename = "telemetry.batch")]
-    TelemetryBatch,
-    /// `telemetry.ingest_rate` — Sustained and burst byte and request rates per workspace.
-    #[serde(rename = "telemetry.ingest_rate")]
-    TelemetryIngestRate,
-    /// `telemetry.metric_series` — Exact active metric-series ceiling per workspace.
-    #[serde(rename = "telemetry.metric_series")]
-    TelemetryMetricSeries,
-    /// `query.filter` — Structural bounds of an observation query filter.
-    #[serde(rename = "query.filter")]
-    QueryFilter,
-    /// `query.page` — Largest accepted collection page in items and serialized bytes.
+    /// `query.page` — Largest accepted collection page size.
     #[serde(rename = "query.page")]
     QueryPage,
-    /// `stream.frame` — Largest NDJSON records frame in observations and encoded bytes.
+    /// `request.body_bytes` — Largest accepted encoded JSON request body.
+    #[serde(rename = "request.body_bytes")]
+    RequestBodyBytes,
+    /// `otlp.body_bytes` — Largest accepted encoded and decoded OTLP body.
+    #[serde(rename = "otlp.body_bytes")]
+    OtlpBodyBytes,
+    /// `stream.frame` — Largest NDJSON records frame in observations and bytes.
     #[serde(rename = "stream.frame")]
     StreamFrame,
-    /// `metric.aggregate` — Interval, grouping, calculation, bucket and row aggregation bounds.
-    #[serde(rename = "metric.aggregate")]
-    MetricAggregate,
-    /// `content.bundle_expand` — Expanded bytes, entries and path length admitted from a bundle.
-    #[serde(rename = "content.bundle_expand")]
-    ContentBundleExpand,
-    /// `tools.io_safety` — Per-tool byte, traversal and listing safety bounds.
-    #[serde(rename = "tools.io_safety")]
-    ToolsIoSafety,
+    /// `session.concurrent` — Concurrently non-idle sessions in the workspace.
+    #[serde(rename = "session.concurrent")]
+    SessionConcurrent,
+    /// `session.subagent_depth` — Deepest subagent nesting inside one run.
+    #[serde(rename = "session.subagent_depth")]
+    SessionSubagentDepth,
+    /// `session.subagent_concurrency` — Concurrently admitted subagents inside one run.
+    #[serde(rename = "session.subagent_concurrency")]
+    SessionSubagentConcurrency,
+    /// `upload.part_bytes` — Largest single staged upload part.
+    #[serde(rename = "upload.part_bytes")]
+    UploadPartBytes,
+    /// `upload.object_bytes` — Largest staged upload object.
+    #[serde(rename = "upload.object_bytes")]
+    UploadObjectBytes,
+    /// `download.range_bytes` — Largest byte range one download grant may sign.
+    #[serde(rename = "download.range_bytes")]
+    DownloadRangeBytes,
+    /// `registry.value_bytes` — Largest registered resource value.
+    #[serde(rename = "registry.value_bytes")]
+    RegistryValueBytes,
+    /// `registry.entries` — Registered resource count per kind.
+    #[serde(rename = "registry.entries")]
+    RegistryEntries,
+    /// `secret.value_bytes` — Largest accepted secret value.
+    #[serde(rename = "secret.value_bytes")]
+    SecretValueBytes,
+    /// `telemetry.retention_days` — Days an admitted observation is retained.
+    #[serde(rename = "telemetry.retention_days")]
+    TelemetryRetentionDays,
+    /// `telemetry.export_bytes` — Largest telemetry export artifact.
+    #[serde(rename = "telemetry.export_bytes")]
+    TelemetryExportBytes,
+    /// `observation.filter` — Structural bounds of an observation filter.
+    #[serde(rename = "observation.filter")]
+    ObservationFilter,
 }
 
 impl LimitId {
     /// Every limit, in registry order.
     pub const ALL: &'static [LimitId] = &[
-        LimitId::ContextToolResultBytes,
-        LimitId::SessionMaterializedAgents,
-        LimitId::ApiJsonBody,
-        LimitId::TelemetryBatch,
-        LimitId::TelemetryIngestRate,
-        LimitId::TelemetryMetricSeries,
-        LimitId::QueryFilter,
         LimitId::QueryPage,
+        LimitId::RequestBodyBytes,
+        LimitId::OtlpBodyBytes,
         LimitId::StreamFrame,
-        LimitId::MetricAggregate,
-        LimitId::ContentBundleExpand,
-        LimitId::ToolsIoSafety,
+        LimitId::SessionConcurrent,
+        LimitId::SessionSubagentDepth,
+        LimitId::SessionSubagentConcurrency,
+        LimitId::UploadPartBytes,
+        LimitId::UploadObjectBytes,
+        LimitId::DownloadRangeBytes,
+        LimitId::RegistryValueBytes,
+        LimitId::RegistryEntries,
+        LimitId::SecretValueBytes,
+        LimitId::TelemetryRetentionDays,
+        LimitId::TelemetryExportBytes,
+        LimitId::ObservationFilter,
     ];
 
     /// The wire spelling.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::ContextToolResultBytes => "context.tool_result_bytes",
-            Self::SessionMaterializedAgents => "session.materialized_agents",
-            Self::ApiJsonBody => "api.json_body",
-            Self::TelemetryBatch => "telemetry.batch",
-            Self::TelemetryIngestRate => "telemetry.ingest_rate",
-            Self::TelemetryMetricSeries => "telemetry.metric_series",
-            Self::QueryFilter => "query.filter",
             Self::QueryPage => "query.page",
+            Self::RequestBodyBytes => "request.body_bytes",
+            Self::OtlpBodyBytes => "otlp.body_bytes",
             Self::StreamFrame => "stream.frame",
-            Self::MetricAggregate => "metric.aggregate",
-            Self::ContentBundleExpand => "content.bundle_expand",
-            Self::ToolsIoSafety => "tools.io_safety",
+            Self::SessionConcurrent => "session.concurrent",
+            Self::SessionSubagentDepth => "session.subagent_depth",
+            Self::SessionSubagentConcurrency => "session.subagent_concurrency",
+            Self::UploadPartBytes => "upload.part_bytes",
+            Self::UploadObjectBytes => "upload.object_bytes",
+            Self::DownloadRangeBytes => "download.range_bytes",
+            Self::RegistryValueBytes => "registry.value_bytes",
+            Self::RegistryEntries => "registry.entries",
+            Self::SecretValueBytes => "secret.value_bytes",
+            Self::TelemetryRetentionDays => "telemetry.retention_days",
+            Self::TelemetryExportBytes => "telemetry.export_bytes",
+            Self::ObservationFilter => "observation.filter",
         }
     }
 
@@ -106,72 +125,22 @@ impl LimitId {
     #[must_use]
     pub const fn shape(self) -> LimitShape {
         match self {
-            Self::ContextToolResultBytes => LimitShape::Scalar,
-            Self::SessionMaterializedAgents => LimitShape::Scalar,
-            Self::ApiJsonBody => LimitShape::Scalar,
-            Self::TelemetryBatch => LimitShape::Map,
-            Self::TelemetryIngestRate => LimitShape::Map,
-            Self::TelemetryMetricSeries => LimitShape::Scalar,
-            Self::QueryFilter => LimitShape::Map,
-            Self::QueryPage => LimitShape::Map,
+            Self::QueryPage => LimitShape::Scalar,
+            Self::RequestBodyBytes => LimitShape::Scalar,
+            Self::OtlpBodyBytes => LimitShape::Map,
             Self::StreamFrame => LimitShape::Map,
-            Self::MetricAggregate => LimitShape::Map,
-            Self::ContentBundleExpand => LimitShape::Map,
-            Self::ToolsIoSafety => LimitShape::Map,
-        }
-    }
-
-    /// The complete ordered dimension vocabulary for a map limit.
-    #[must_use]
-    pub const fn dimensions(self) -> &'static [&'static str] {
-        match self {
-            Self::ContextToolResultBytes => &[],
-            Self::SessionMaterializedAgents => &[],
-            Self::ApiJsonBody => &[],
-            Self::TelemetryBatch => &[
-                "encoded_bytes",
-                "decoded_bytes",
-                "records",
-                "observation_bytes",
-                "attributes",
-                "attribute_key_bytes",
-                "attribute_value_bytes",
-                "array_elements",
-            ],
-            Self::TelemetryIngestRate => &[
-                "sustained_bytes_per_second",
-                "burst_bytes",
-                "sustained_requests_per_second",
-                "burst_requests",
-            ],
-            Self::TelemetryMetricSeries => &[],
-            Self::QueryFilter => &[
-                "depth",
-                "leaves",
-                "children_per_boolean",
-                "in_values",
-                "string_bytes",
-            ],
-            Self::QueryPage => &["items", "serialized_bytes"],
-            Self::StreamFrame => &["records", "encoded_bytes"],
-            Self::MetricAggregate => &[
-                "interval_min_seconds",
-                "interval_max_seconds",
-                "group_fields",
-                "calculations",
-                "buckets_per_series",
-                "rows",
-            ],
-            Self::ContentBundleExpand => &["expanded_bytes", "entries", "path_bytes"],
-            Self::ToolsIoSafety => &[
-                "web_fetch_bytes",
-                "shell_output_bytes",
-                "grep_input_bytes",
-                "head_tail_input_bytes",
-                "walk_files",
-                "list_entries",
-                "list_depth",
-            ],
+            Self::SessionConcurrent => LimitShape::Scalar,
+            Self::SessionSubagentDepth => LimitShape::Scalar,
+            Self::SessionSubagentConcurrency => LimitShape::Scalar,
+            Self::UploadPartBytes => LimitShape::Scalar,
+            Self::UploadObjectBytes => LimitShape::Scalar,
+            Self::DownloadRangeBytes => LimitShape::Scalar,
+            Self::RegistryValueBytes => LimitShape::Scalar,
+            Self::RegistryEntries => LimitShape::Map,
+            Self::SecretValueBytes => LimitShape::Scalar,
+            Self::TelemetryRetentionDays => LimitShape::Scalar,
+            Self::TelemetryExportBytes => LimitShape::Scalar,
+            Self::ObservationFilter => LimitShape::Map,
         }
     }
 

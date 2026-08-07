@@ -6,7 +6,7 @@
 //! ports are used here, so a divergence between what the engine promises and what the mux
 //! wires it to shows up as a failure rather than as a difference nobody compared.
 
-use crate::admission::{ActivationResources, Admission, AdmissionBounds};
+use crate::admission::{Admission, AdmissionBounds};
 use crate::drain::Stage;
 use crate::measure::Measurement;
 use crate::wake::{BindingState, Bindings, MuxAdmission};
@@ -25,16 +25,15 @@ use aex_brain_application::ports::{
 use aex_brain_domain::budget::DimensionVector;
 use aex_brain_domain::effect::{DispatchEvidence, DurableEffect};
 use aex_brain_domain::ids::{
-    AgentId, AgentKey, JournalSeq, ModelSlug, SessionId, Timestamp, WakeId, WorkShard,
+    AgentId, AgentKey, CatalogPin, ContentHash, JournalSeq, ModelSlug, SessionId, Timestamp,
+    WakeId, WorkShard,
 };
 use aex_brain_domain::journal::{FinishReason, JournalEntry, JournalRecord, MessageOrigin};
 use aex_brain_domain::wire_pending::{
-    AgentLimits, CanonicalBlock, CanonicalModelRequest, ContentBlockRef, NormalizedUsage,
-    ProviderId, ResolvedAgentConfig, StopReason,
+    AgentLimits, CanonicalBlock, CanonicalModelRequest, CompleteAssistantMessage, CompleteProof,
+    ContentBlockRef, ModelCapability, NormalizedUsage, ProviderId, ProviderReceipt,
+    ResolvedAgentConfig, StopReason,
 };
-use aex_model_catalog::canonical::{CredentialBindingRef, ProviderReceipt, ReceiptBounds, seal};
-use aex_model_catalog::document::CapabilitySet;
-use aex_model_catalog::{BoundedString, QualifiedModel, fixture};
 use aex_usage_application::probe::{
     ActivationKey, ActivationScoped, CpuInstant, PhysicalCpuSource, ProbeContext, ProbeError,
     ThreadCpuClock,
@@ -44,7 +43,7 @@ use aex_usage_domain::wire_pending::{
     ActivationId, AgentId as UsageAgentId, OrganizationId, PricingVersion, RegionId, ServiceId,
     SessionId as UsageSessionId, WorkspaceId,
 };
-use aex_wire::ids::{GenerationId, PrefixedId as _, ProviderCredentialId, Uuid7};
+use aex_wire::ids::{GenerationId, PrefixedId as _, Uuid7};
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -60,20 +59,13 @@ fn key() -> AgentKey {
 }
 
 fn model() -> ModelSlug {
-    ModelSlug::truncating("deepseek-chat")
+    ModelSlug("deepseek-chat".to_owned())
 }
 
 fn config() -> ResolvedAgentConfig {
     ResolvedAgentConfig {
-        catalog_pin: capability().catalog(),
+        catalog_pin: CatalogPin(ContentHash::of(b"catalog")),
         provider: ProviderId::Deepseek,
-        credential: aex_brain_domain::wire_pending::SessionCredentialPin::new(
-            ProviderCredentialId::from_uuid7(Uuid7::compose(1, [8; 10])),
-            1,
-            1,
-            0,
-        )
-        .expect("non-zero fixture pin"),
         model: model(),
         system: None,
         tool_manifest_digests: Vec::new(),
@@ -86,16 +78,16 @@ fn config() -> ResolvedAgentConfig {
     }
 }
 
-fn capability() -> QualifiedModel {
-    let mut entry = fixture::entry(
-        ProviderId::Deepseek,
-        "deepseek-chat",
-        CapabilitySet::default(),
-    );
-    entry.limits.context_window_tokens = 64_000;
-    entry.limits.max_output_tokens = 4_096;
-    entry.limits.min_cacheable_prefix_tokens = 0;
-    fixture::qualified(entry)
+fn capability() -> ModelCapability {
+    ModelCapability {
+        provider: ProviderId::Deepseek,
+        model: model(),
+        context_window_tokens: 64_000,
+        max_output_tokens: 4_096,
+        min_cacheable_prefix_tokens: None,
+        supports_tools: true,
+        admitted: true,
+    }
 }
 
 fn history() -> Vec<JournalEntry> {
@@ -118,8 +110,7 @@ fn history() -> Vec<JournalEntry> {
             JournalRecord::UserMessage {
                 content: vec![ContentBlockRef::Inline {
                     block: CanonicalBlock::Text {
-                        text: BoundedString::truncating("summarize this"),
-                        annotations: Vec::new(),
+                        text: "summarize this".to_owned(),
                     },
                 }],
                 origin: MessageOrigin::Submission,
@@ -130,60 +121,28 @@ fn history() -> Vec<JournalEntry> {
 }
 
 fn produced() -> ProviderOutcome {
-    let usage = NormalizedUsage::default();
-    let selected = capability();
-    let message = seal(
-        vec![CanonicalBlock::Text {
-            text: BoundedString::truncating("here is the summary"),
-            annotations: Vec::new(),
-        }],
-        StopReason::EndTurn,
-        &usage,
-        &selected,
-    )
-    .expect("a whole message");
-    let at = fixture::at(START);
-    let receipt = ProviderReceipt {
-        provider: message.provider,
-        model: message.model.clone(),
-        catalog: message.catalog,
-        dialect: selected.dialect(),
-        dialect_revision: selected.dialect_revision(),
-        credential: CredentialBindingRef {
-            id: ProviderCredentialId::from_uuid7(Uuid7::compose(1, [4; 10])),
-            revision: 1,
-            generation: 1,
-        },
-        provider_request_id: None,
-        gateway_route: None,
-        http_status: 200,
-        attempts: 1,
-        started_at: at,
-        first_frame_at: Some(at),
-        completed_at: at,
-        request_bytes: 1,
-        response_bytes: 1,
-        frames: 1,
-        rate_limit: None,
-        response_receipt: Some(message.proof.0),
-        bounds: ReceiptBounds {
-            max_frame_bytes: 1_024,
-            max_response_bytes: 1_024,
-            idle_frame_timeout_ms: 1_000,
-            total_deadline_ms: 10_000,
-        },
-    };
+    let blocks = vec![CanonicalBlock::Text {
+        text: "here is the summary".to_owned(),
+    }];
     ProviderOutcome {
-        message,
-        usage,
-        receipt,
+        message: CompleteAssistantMessage {
+            complete: CompleteProof::mint(StopReason::EndTurn, &blocks).expect("a whole message"),
+            blocks,
+            stop_reason: StopReason::EndTurn,
+        },
+        usage: NormalizedUsage::default(),
+        receipt: ProviderReceipt {
+            provider: ProviderId::Deepseek,
+            model: model(),
+            request_id: None,
+            route_revision: 1,
+        },
     }
 }
 
 fn bound() -> Bindings {
     Bindings {
         store: BindingState::Ready,
-        snapshots: BindingState::Ready,
         provider: BindingState::Ready,
         catalog: BindingState::Ready,
         tools: BindingState::Ready,
@@ -191,17 +150,7 @@ fn bound() -> Bindings {
     }
 }
 
-fn activation_resources(policy: &ActivationPolicy) -> ActivationResources {
-    ActivationResources {
-        context_bytes: policy.restore_resident_bytes,
-        stream_buffer_bytes: u64::try_from(policy.stream_buffer_bytes).unwrap_or(u64::MAX),
-        provider_streams: 1,
-        hands_rpcs: 1,
-    }
-}
-
 fn admission(drain: &Arc<DrainGate>) -> Arc<Admission> {
-    let policy = ActivationPolicy::default();
     Arc::new(Admission::new(
         AdmissionBounds {
             target: 4,
@@ -210,16 +159,9 @@ fn admission(drain: &Arc<DrainGate>) -> Arc<Admission> {
         },
         Arc::new(PermitSet::new(BTreeMap::from([
             (PermitKind::Activation, 8_u64),
-            (PermitKind::ContextBytes, policy.restore_resident_bytes),
-            (
-                PermitKind::StreamBufferBytes,
-                u64::try_from(policy.stream_buffer_bytes).unwrap_or(u64::MAX),
-            ),
-            (PermitKind::ProviderStream, 1_u64),
-            (PermitKind::HandsRpc, 1_u64),
+            (PermitKind::ContextBytes, 64 * 1_024 * 1_024),
         ]))),
         Arc::clone(drain),
-        activation_resources(&policy),
     ))
 }
 
@@ -243,7 +185,6 @@ fn compose_loop(provider: Arc<dyn ProviderPort>) -> Composed {
     let drain = Arc::new(DrainGate::new());
     let ports = Ports {
         journal: Arc::clone(&store) as Arc<_>,
-        snapshots: Arc::clone(&store) as Arc<_>,
         effects: Arc::clone(&store) as Arc<_>,
         leases: Arc::clone(&store) as Arc<_>,
         wakes: Arc::clone(&queue) as Arc<_>,
@@ -309,7 +250,6 @@ impl ProviderPort for ConcurrentProvider {
     fn dispatch<'a>(
         &'a self,
         _ticket: &'a DispatchTicket,
-        _credential: aex_brain_domain::wire_pending::SessionCredentialPin,
         _request: &'a CanonicalModelRequest,
         _budget: &'a StreamBudget,
         _preview: &'a dyn PreviewSink,
@@ -371,7 +311,6 @@ async fn ten_long_effects_are_polled_concurrently_under_the_drive_bound() {
     let drain = Arc::new(DrainGate::new());
     let ports = Ports {
         journal: Arc::clone(&store) as Arc<_>,
-        snapshots: Arc::clone(&store) as Arc<_>,
         effects: Arc::clone(&store) as Arc<_>,
         leases: Arc::clone(&store) as Arc<_>,
         wakes: Arc::clone(&queue) as Arc<_>,
@@ -382,20 +321,14 @@ async fn ten_long_effects_are_polled_concurrently_under_the_drive_bound() {
         clock,
         ids: Arc::new(CountingIds::new()),
     };
-    let policy = ActivationPolicy {
-        max_concurrent_drives: COUNT,
-        ..ActivationPolicy::default()
-    };
-    let context_bytes = policy.restore_resident_bytes.saturating_mul(COUNT_U64);
-    let stream_buffer_bytes = u64::try_from(policy.stream_buffer_bytes)
-        .unwrap_or(u64::MAX)
+    let mut policy = ActivationPolicy::default();
+    policy.max_concurrent_drives = COUNT;
+    let context_bytes = u64::try_from(policy.restore.max_bytes)
+        .expect("the restore budget fits u64")
         .saturating_mul(COUNT_U64);
     let permits = Arc::new(PermitSet::new(BTreeMap::from([
         (PermitKind::Activation, COUNT_U64),
         (PermitKind::ContextBytes, context_bytes),
-        (PermitKind::StreamBufferBytes, stream_buffer_bytes),
-        (PermitKind::ProviderStream, COUNT_U64),
-        (PermitKind::HandsRpc, COUNT_U64),
     ])));
     let admission = Arc::new(Admission::new(
         AdmissionBounds {
@@ -405,7 +338,6 @@ async fn ten_long_effects_are_polled_concurrently_under_the_drive_bound() {
         },
         permits,
         Arc::clone(&drain),
-        activation_resources(&policy),
     ));
     let pump = WakeLoop::new(
         Activation::new(
@@ -469,7 +401,6 @@ impl ProviderPort for RefillProvider {
     fn dispatch<'a>(
         &'a self,
         ticket: &'a DispatchTicket,
-        _credential: aex_brain_domain::wire_pending::SessionCredentialPin,
         _request: &'a CanonicalModelRequest,
         _budget: &'a StreamBudget,
         _preview: &'a dyn PreviewSink,
@@ -509,10 +440,6 @@ impl ProviderPort for RefillProvider {
 /// sibling refills the other slot and recovers a subsequently persisted lost hint while the
 /// first effect is still live. Drain then cancels that structured child and joins the set.
 #[tokio::test(flavor = "current_thread")]
-#[allow(
-    clippy::too_many_lines,
-    reason = "the scheduler refill scenario keeps queue, recovery, and aggregate-cap evidence together"
-)]
 async fn the_scheduler_refills_below_the_aggregate_cap_and_keeps_due_recovery_live() {
     const CAP: usize = 2;
     let slow = AgentKey::new(key().session, AgentId(Uuid::from_u128(0xa6e7_4010)));
@@ -546,7 +473,6 @@ async fn the_scheduler_refills_below_the_aggregate_cap_and_keeps_due_recovery_li
     let drain = Arc::new(DrainGate::new());
     let ports = Ports {
         journal: Arc::clone(&store) as Arc<_>,
-        snapshots: Arc::clone(&store) as Arc<_>,
         effects: Arc::clone(&store) as Arc<_>,
         leases: Arc::clone(&store) as Arc<_>,
         wakes: Arc::clone(&queue) as Arc<_>,
@@ -557,21 +483,16 @@ async fn the_scheduler_refills_below_the_aggregate_cap_and_keeps_due_recovery_li
         clock: Arc::new(ReactorClock::new()),
         ids: Arc::new(CountingIds::new()),
     };
-    let policy = ActivationPolicy {
-        receive_batch: 1,
-        max_concurrent_drives: 1,
-        due_shards: 1,
-        due_scan_shards_per_pass: 1,
-        due_scan_page: 1,
-        due_scan_interval: core::time::Duration::ZERO,
-        renew_interval: core::time::Duration::from_millis(10),
-        ..ActivationPolicy::default()
-    };
-    let context_bytes = policy
-        .restore_resident_bytes
-        .saturating_mul(u64::try_from(CAP).expect("the test cap fits u64"));
-    let stream_buffer_bytes = u64::try_from(policy.stream_buffer_bytes)
-        .unwrap_or(u64::MAX)
+    let mut policy = ActivationPolicy::default();
+    policy.receive_batch = 1;
+    policy.max_concurrent_drives = 1;
+    policy.due_shards = 1;
+    policy.due_scan_shards_per_pass = 1;
+    policy.due_scan_page = 1;
+    policy.due_scan_interval = core::time::Duration::ZERO;
+    policy.renew_interval = core::time::Duration::from_millis(10);
+    let context_bytes = u64::try_from(policy.restore.max_bytes)
+        .expect("the restore budget fits u64")
         .saturating_mul(u64::try_from(CAP).expect("the test cap fits u64"));
     let admission = Arc::new(Admission::new(
         AdmissionBounds {
@@ -585,18 +506,8 @@ async fn the_scheduler_refills_below_the_aggregate_cap_and_keeps_due_recovery_li
                 u64::try_from(CAP).expect("the test cap fits u64"),
             ),
             (PermitKind::ContextBytes, context_bytes),
-            (PermitKind::StreamBufferBytes, stream_buffer_bytes),
-            (
-                PermitKind::ProviderStream,
-                u64::try_from(CAP).expect("the test cap fits u64"),
-            ),
-            (
-                PermitKind::HandsRpc,
-                u64::try_from(CAP).expect("the test cap fits u64"),
-            ),
         ]))),
         Arc::clone(&drain),
-        activation_resources(&policy),
     ));
     let pump = WakeLoop::new(
         Activation::new(
@@ -677,20 +588,6 @@ async fn the_drain_sequence_walks_every_stage_in_order() {
             resource: "table".to_owned(),
             wake_queue_url: "https://sqs.invalid/queue".to_owned(),
             work_table: "work".to_owned(),
-            secret_custody_table: "secret-custody".to_owned(),
-            secret_kms_key_arn: "arn:aws:kms:eu-west-1:123456789012:key/fixture".to_owned(),
-            content_bucket: "content".to_owned(),
-            content_expected_owner: "123456789012".to_owned(),
-            content_kms_key_arn: "arn:aws:kms:eu-west-1:123456789012:key/content".to_owned(),
-            runtime_activity_table: "runtime-activity".to_owned(),
-            usage_compute_queue_url: "https://sqs.eu-west-1.amazonaws.com/1/compute".to_owned(),
-            usage_storage_queue_url: "https://sqs.eu-west-1.amazonaws.com/1/storage".to_owned(),
-            runtime_due_shards: 8,
-            runtime_due_page: aex_runtime_control::store::PageBudget {
-                max_items: 32,
-                max_reads: 100,
-            },
-            pricing_version: "synthetic-zero-v1".to_owned(),
             budget: 4,
         })
         .expect("the candidate shape composes"),
@@ -763,7 +660,6 @@ impl ProviderPort for PendingProvider {
     fn dispatch<'a>(
         &'a self,
         _ticket: &'a DispatchTicket,
-        _credential: aex_brain_domain::wire_pending::SessionCredentialPin,
         _request: &'a CanonicalModelRequest,
         _budget: &'a StreamBudget,
         _preview: &'a dyn PreviewSink,

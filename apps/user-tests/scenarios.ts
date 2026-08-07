@@ -71,7 +71,6 @@ export const USER_SCENARIOS: readonly UserScenario[] = Object.freeze([
   scenario("live.limits-and-errors", ["sdk", "cli"], [], 60),
   scenario("live.cli-parity", ["sdk", "cli"], ["session_create", "session_get"], 120),
   scenario("live.no-dashboard-availability", ["sdk", "cli"], ["session_get"], 30),
-  scenario("live.registry-list", ["sdk"], ["registry_files_list"], 30),
   scenario("browser.signin-oauth", ["dashboard"], [], 60),
   scenario("browser.csrf", ["dashboard"], [], 30),
   scenario("browser.authz-negative", ["dashboard"], [], 60),

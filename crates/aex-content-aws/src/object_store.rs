@@ -77,15 +77,6 @@ pub struct ObjectHead {
     pub declared_digest: Option<String>,
 }
 
-/// One immutable body read only after its provider-declared length was admitted.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BoundedObject {
-    /// Exact object bytes.
-    pub body: Vec<u8>,
-    /// The provider-declared length checked before the stream was collected.
-    pub declared_bytes: u64,
-}
-
 /// A presigned read.
 #[derive(Debug, Clone)]
 pub struct PresignedGet {
@@ -140,24 +131,6 @@ pub trait ContentObjectStore: Send + Sync + 'static {
     ///
     /// [`ContentObjectError::ContentMissing`] when it is absent.
     async fn head(&self, key: &ObjectKey) -> Result<ObjectHead, ContentObjectError>;
-
-    /// Reads one content-addressed object after checking the response's declared length.
-    ///
-    /// The response stream is not collected until `Content-Length` is within `max_bytes`.
-    /// The stored digest metadata, exact received length and SHA-256 body identity are then
-    /// verified before bytes leave the adapter.
-    ///
-    /// # Errors
-    ///
-    /// [`ContentObjectError::InvalidRange`] when the declared length exceeds the caller's
-    /// bound and [`ContentObjectError::IntegrityMismatch`] when stored metadata or bytes do
-    /// not match the content-addressed identity.
-    async fn read_bounded(
-        &self,
-        workspace: WorkspaceId,
-        digest: &ContentHash,
-        max_bytes: u64,
-    ) -> Result<BoundedObject, ContentObjectError>;
 
     /// Presigns a bounded read.
     ///
@@ -281,10 +254,10 @@ impl ContentObjectStore for S3ContentObjects {
     ) -> Result<ObjectCommit, ContentObjectError> {
         let key = ObjectKey::new(request.workspace, request.digest);
         let digest_hex = hex::encode(request.digest.as_bytes());
-        let body_bytes = request.body.len();
-        let length = i64::try_from(body_bytes).map_err(|_| ContentObjectError::Invalid {
-            detail: "a body longer than i64::MAX cannot be described".to_owned(),
-        })?;
+        let length =
+            i64::try_from(request.body.len()).map_err(|_| ContentObjectError::Invalid {
+                detail: "a body longer than i64::MAX cannot be described".to_owned(),
+            })?;
         let outcome = self
             .client
             .put_object()
@@ -307,7 +280,7 @@ impl ContentObjectStore for S3ContentObjects {
                 METADATA_PLAINTEXT_BYTES,
                 request.plaintext_bytes.to_string(),
             )
-            .body(ByteStream::from(request.body))
+            .body(ByteStream::from(request.body.clone()))
             .send()
             .await;
 
@@ -330,7 +303,7 @@ impl ContentObjectStore for S3ContentObjects {
                 // the identical body — an idempotent success — or evidence of a
                 // key-derivation bug or a substituted object, which is hard.
                 let head = self.head(&key).await?;
-                let stored = u64::try_from(body_bytes).unwrap_or(u64::MAX);
+                let stored = u64::try_from(request.body.len()).unwrap_or(u64::MAX);
                 let same = head.content_length == stored
                     && head.declared_digest.as_deref() == Some(digest_hex.as_str());
                 if same {
@@ -368,70 +341,6 @@ impl ContentObjectStore for S3ContentObjects {
                 .metadata
                 .as_ref()
                 .and_then(|metadata| metadata.get(METADATA_DIGEST).cloned()),
-        })
-    }
-
-    async fn read_bounded(
-        &self,
-        workspace: WorkspaceId,
-        digest: &ContentHash,
-        max_bytes: u64,
-    ) -> Result<BoundedObject, ContentObjectError> {
-        let key = ObjectKey::new(workspace, digest);
-        let response = self
-            .client
-            .get_object()
-            .bucket(&self.binding.bucket)
-            .key(key.as_str())
-            .expected_bucket_owner(&self.binding.expected_owner)
-            .send()
-            .await
-            .map_err(|error| {
-                let mapped = classify(&error, ObjectIdempotence::Read);
-                match mapped {
-                    ContentObjectError::ContentMissing { .. } => {
-                        ContentObjectError::ContentMissing {
-                            digest: digest.to_wire(),
-                        }
-                    }
-                    other => other,
-                }
-            })?;
-        let declared_bytes =
-            admit_declared_length(response.content_length.unwrap_or_default(), max_bytes)?;
-        let expected_digest = hex::encode(digest.as_bytes());
-        if response
-            .metadata
-            .as_ref()
-            .and_then(|metadata| metadata.get(METADATA_DIGEST))
-            .map(String::as_str)
-            != Some(expected_digest.as_str())
-        {
-            return Err(ContentObjectError::IntegrityMismatch {
-                detail: "the stored digest metadata does not match its object key".to_owned(),
-            });
-        }
-        let bytes = response
-            .body
-            .collect()
-            .await
-            .map_err(|_| ContentObjectError::Unavailable {
-                detail: "the bounded response stream did not complete".to_owned(),
-            })?
-            .into_bytes();
-        if u64::try_from(bytes.len()).ok() != Some(declared_bytes) {
-            return Err(ContentObjectError::IntegrityMismatch {
-                detail: "the received body length differs from Content-Length".to_owned(),
-            });
-        }
-        if ContentHash::of(&bytes) != *digest {
-            return Err(ContentObjectError::IntegrityMismatch {
-                detail: "the received body does not match its content-addressed key".to_owned(),
-            });
-        }
-        Ok(BoundedObject {
-            body: bytes.to_vec(),
-            declared_bytes,
         })
     }
 
@@ -667,40 +576,5 @@ impl ContentObjectStore for S3ContentObjects {
                 )),
             },
         }
-    }
-}
-
-fn admit_declared_length(declared: i64, max_bytes: u64) -> Result<u64, ContentObjectError> {
-    let declared = u64::try_from(declared).map_err(|_| ContentObjectError::IntegrityMismatch {
-        detail: "the service returned a negative content length".to_owned(),
-    })?;
-    if declared > max_bytes {
-        return Err(ContentObjectError::InvalidRange {
-            requested: declared,
-            ceiling: max_bytes,
-        });
-    }
-    Ok(declared)
-}
-
-#[cfg(test)]
-mod bounded_read_tests {
-    use super::admit_declared_length;
-    use crate::ContentObjectError;
-
-    #[test]
-    fn provider_length_is_admitted_before_stream_collection() {
-        assert_eq!(admit_declared_length(16, 16), Ok(16));
-        assert_eq!(
-            admit_declared_length(17, 16),
-            Err(ContentObjectError::InvalidRange {
-                requested: 17,
-                ceiling: 16,
-            })
-        );
-        assert!(matches!(
-            admit_declared_length(-1, 16),
-            Err(ContentObjectError::IntegrityMismatch { .. })
-        ));
     }
 }

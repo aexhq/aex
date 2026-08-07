@@ -11,12 +11,12 @@ use central_schema_admin::connect::{
     ConnectError, Endpoint, apply_timeouts, connect, resolve_credential, take_outer_lock,
 };
 use central_schema_admin::grants::GrantSet;
-use central_schema_admin::migration;
 use central_schema_admin::migration::MigrationBundle;
 use central_schema_admin::runner::{
     RunnerError, applied_head, apply_grants, backfill_cursor, check_conservation, diff_grants,
     expect_applied_head, migrate,
 };
+use central_schema_admin::{grants, migration};
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 
@@ -239,10 +239,14 @@ async fn open(cli: &Cli) -> Result<sqlx::postgres::PgConnection, (Exit, String)>
 )]
 async fn run(cli: &Cli) -> Result<String, (Exit, String)> {
     debug_assert_eq!(Exit::ALL.len(), 10);
-    let bundle =
-        MigrationBundle::embedded().map_err(|error| (Exit::ChecksumDrift, error.to_string()))?;
-    let migrator = migration::native_migrator();
-    let grant_set = GrantSet::embedded().map_err(|error| (Exit::GrantDrift, error.to_string()))?;
+    let bundle_path = migration::bundle_path();
+    let bundle = MigrationBundle::load(&bundle_path)
+        .map_err(|error| (Exit::ChecksumDrift, error.to_string()))?;
+    let migrator = migration::native_migrator()
+        .await
+        .map_err(|error| (Exit::ChecksumDrift, error.to_string()))?;
+    let grant_set = GrantSet::load(grants::grants_path())
+        .map_err(|error| (Exit::GrantDrift, error.to_string()))?;
     grant_set
         .role("aex_provider_cost")
         .ok_or_else(|| (Exit::GrantDrift, "provider-cost role is absent".to_owned()))?;
@@ -415,7 +419,7 @@ async fn run(cli: &Cli) -> Result<String, (Exit, String)> {
 
         Command::Repair { migration, confirm } => {
             let repair = bundle
-                .repair_sql(*migration)
+                .repair_sql(&bundle_path, *migration)
                 .map_err(|error| (Exit::PreconditionFailed, error.to_string()))?;
             if confirm != &MigrationBundle::repair_token(*migration) {
                 return Err((
@@ -458,11 +462,7 @@ mod tests {
     use clap::Parser as _;
 
     use super::{ADVISORY_LOCK_KEY, Cli, Exit, run};
-    use central_schema_admin::migration::{MigrationBundle, native_migrator};
-
-    fn bundle_path() -> std::path::PathBuf {
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations/central")
-    }
+    use central_schema_admin::migration::{MigrationBundle, bundle_path, native_migrator};
 
     fn plan_args() -> Vec<&'static str> {
         vec![
@@ -519,9 +519,7 @@ mod tests {
     fn bundle_is_linear_and_every_header_parses() {
         let path = bundle_path();
         let bundle = MigrationBundle::load(&path).expect("committed bundle is valid");
-        let embedded =
-            MigrationBundle::embedded().expect("the executable embeds the canonical lock");
-        assert_eq!(bundle.head(), 20_260_801_000_800);
+        assert_eq!(bundle.head(), 20_260_801_000_700);
         assert_eq!(
             bundle.versions(),
             vec![
@@ -533,12 +531,8 @@ mod tests {
                 20_260_801_000_500,
                 20_260_801_000_600,
                 20_260_801_000_700,
-                20_260_801_000_800,
             ]
         );
-        assert_eq!(embedded.versions(), bundle.versions());
-        assert_eq!(embedded.head(), bundle.head());
-        assert_eq!(embedded.has_destructive(), bundle.has_destructive());
         assert!(
             !Path::new(&bundle_path())
                 .join("approved-checksum-transitions.toml")
@@ -548,21 +542,13 @@ mod tests {
 
     #[tokio::test]
     async fn native_sqlx_migrator_uses_dedicated_history_schema() {
-        let migrator = native_migrator();
-        let embedded = MigrationBundle::embedded().expect("the embedded lock parses");
+        let migrator = native_migrator()
+            .await
+            .expect("SQLx parses committed SQL files");
         assert_eq!(migrator.table_name, "schema_admin._sqlx_migrations");
         assert_eq!(migrator.create_schemas.as_ref(), ["schema_admin"]);
         assert!(!migrator.ignore_missing);
         assert!(migrator.locking);
-        assert_eq!(
-            migrator
-                .migrations
-                .iter()
-                .map(|migration| migration.version)
-                .collect::<Vec<_>>(),
-            embedded.versions(),
-            "the SQLx payload and the embedded bundle lock name the same chain"
-        );
     }
 
     #[test]

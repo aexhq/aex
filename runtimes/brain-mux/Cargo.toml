@@ -35,33 +35,15 @@ path = "src/main.rs"
 aex-brain-application = { path = "../../crates/aex-brain-application" }
 aex-brain-domain = { path = "../../crates/aex-brain-domain" }
 aex-brain-hands = { path = "../../crates/aex-brain-hands" }
-aex-brain-managed-web = { path = "../../crates/aex-brain-managed-web" }
-aex-content-aws = { path = "../../crates/aex-content-aws" }
-aex-hands-control-aws = { path = "../../crates/aex-hands-control-aws" }
-aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }
-aex-brain-provider-custody = { path = "../../crates/aex-brain-provider-custody" }
-aex-brain-provider-gateway = { path = "../../crates/aex-brain-provider-gateway" }
 aex-brain-store-aws = { path = "../../crates/aex-brain-store-aws" }
-aex-model-catalog = { path = "../../crates/aex-model-catalog" }
-aex-runtime-activity-dynamodb = { path = "../../crates/aex-runtime-activity-dynamodb" }
-aex-runtime-control = { path = "../../crates/aex-runtime-control" }
-aex-runtime-control-aws = { path = "../../crates/aex-runtime-control-aws" }
-aex-secret-aws = { path = "../../crates/aex-secret-aws" }
-aex-secret-custody-dynamodb = { path = "../../crates/aex-secret-custody-dynamodb" }
-aex-secret-domain = { path = "../../crates/aex-secret-domain" }
-aex-session-dynamodb = { path = "../../crates/aex-session-dynamodb", features = ["session-authority"] }
-# The composed `ToolPort`. Production binds only executors with exact per-tool
-# coverage; catalog installation refuses any active row without an earned
-# implementation.
+# The composed `ToolPort`. It is linked with no executor registered, because nothing
+# implements `ToolExecutor` yet; the router then refuses by its own typed error
+# rather than by one invented in this composition.
 aex-brain-tool-catalog = { path = "../../crates/aex-brain-tool-catalog" }
 aws-config.workspace = true
 aws-sdk-dynamodb.workspace = true
-aws-sdk-kms.workspace = true
-aws-sdk-lambdamicrovms.workspace = true
-aws-sdk-s3.workspace = true
 aws-sdk-sqs.workspace = true
 futures.workspace = true
-serde_json.workspace = true
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
 # The METER-02 probe library. A11-MUX imports `ActivationMeter`, `MemoryBudget`,
@@ -80,13 +62,3 @@ tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "sign
 # The engine's own in-memory ports, so the composition is asserted against exactly the
 # behaviour the activation is asserted against rather than a second set of fixtures.
 aex-brain-application = { path = "../../crates/aex-brain-application", features = ["testing"] }
-serde.workspace = true
-toml.workspace = true
-
-[build-dependencies]
-hex.workspace = true
-p256.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-sha2.workspace = true
-toml.workspace = true
