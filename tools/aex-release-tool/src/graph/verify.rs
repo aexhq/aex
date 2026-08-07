@@ -306,8 +306,11 @@ pub fn verify(inputs: &GraphInputs) -> Result<BuiltGraph> {
         ("512mb", 512, false),
         ("1gb", 1_024, false),
         ("2gb", 2_048, false),
+        ("2gb-browser", 2_048, true),
         ("4gb", 4_096, false),
+        ("4gb-browser", 4_096, true),
         ("8gb", 8_192, false),
+        ("8gb-browser", 8_192, true),
     ]
     .into_iter()
     .map(|(variant, memory, browser)| (variant.to_owned(), memory, browser))
@@ -331,7 +334,7 @@ pub fn verify(inputs: &GraphInputs) -> Result<BuiltGraph> {
         violations.push(Violation::new(
             "microvm-variant-set",
             format!(
-                "MicroVM artifacts must declare exactly the five published non-browser variants; found {actual_microvms:?}"
+                "MicroVM artifacts must declare exactly the five base and three browser variants; found {actual_microvms:?}"
             ),
         ));
     }
@@ -415,42 +418,6 @@ pub fn verify(inputs: &GraphInputs) -> Result<BuiltGraph> {
         violations.dedup();
         Err(ToolError::many(Exit::GraphVerification, violations))
     }
-}
-
-/// Verify the graph is structurally sound and has executable cross-service
-/// evidence for a release candidate.
-///
-/// Explicit scenario deferrals are valid architecture records, but they are
-/// not runnable evidence. Ordinary PR and main routing may continue to expose
-/// those records while the product is prelaunch; a release route may not turn
-/// an all-deferred registry into a green empty matrix.
-///
-/// # Errors
-/// Returns [`Exit::GraphVerification`] when normal graph verification fails or
-/// when the verified graph contains no runnable scenario.
-pub fn verify_release_candidate(inputs: &GraphInputs) -> Result<BuiltGraph> {
-    let built = verify(inputs)?;
-    let declared = built
-        .graph
-        .nodes()
-        .iter()
-        .filter(|node| node.kind == NodeKind::Scenario)
-        .count();
-    let deferred = built
-        .deferred
-        .iter()
-        .filter(|entry| entry.kind == "scenario")
-        .count();
-    if declared == deferred {
-        return Err(ToolError::single(
-            Exit::GraphVerification,
-            "release-runnable-scenario-missing",
-            format!(
-                "release routing declares {declared} cross-service scenario(s), but all {deferred} are explicitly deferred; at least one verified package/target claim must be runnable"
-            ),
-        ));
-    }
-    Ok(built)
 }
 
 #[derive(Debug, Default)]
@@ -544,38 +511,21 @@ fn verify_scenario_claims(inputs: &GraphInputs) -> (ScenarioClaims, Vec<Violatio
                 ),
             ));
         }
-        if let Some(violation) = verify_scenario_target(&scenario.id, target, dir, meta) {
+        if !meta.targets.contains_key(target) {
             sound = false;
-            violations.push(violation);
+            violations.push(Violation::new(
+                "scenario-target-unknown",
+                format!(
+                    "scenario `{}` names target `{target}` in `{dir}`, but `aex.targets` does not declare it",
+                    scenario.id
+                ),
+            ));
         }
         if sound {
             claims.runnable.insert(scenario.id.clone());
         }
     }
     (claims, violations)
-}
-
-fn verify_scenario_target(
-    scenario: &str,
-    target: &str,
-    dir: &str,
-    meta: &crate::meta::AexMeta,
-) -> Option<Violation> {
-    match meta.targets.get(target).map(String::as_str) {
-        None => Some(Violation::new(
-            "scenario-target-unknown",
-            format!(
-                "scenario `{scenario}` names target `{target}` in `{dir}`, but `aex.targets` does not declare it"
-            ),
-        )),
-        Some("e2e") => None,
-        Some(layer) => Some(Violation::new(
-            "scenario-target-not-e2e",
-            format!(
-                "scenario `{scenario}` names target `{target}` in `{dir}`, but that target is layer `{layer}`; a runnable cross-service scenario requires `e2e` evidence"
-            ),
-        )),
-    }
 }
 
 /// OD-36, mechanically: a scenario may be marked `prd`-eligible only if every

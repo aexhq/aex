@@ -15,8 +15,6 @@ related:
   - references/repo.md
   - references/contributing.md
   - references/ghcr-visibility-bootstrap.md
-  - references/model-catalog-authority.md
-  - references/release-evidence.md
 ---
 
 # Public repository development
@@ -51,30 +49,17 @@ The sole manual publication setup is the one-time, fail-closed
 only digest-addressed package content; normal publication never changes package
 visibility.
 
-The signed model-catalog is a separate protected authority. Public main reads
-the one canonical `AEX_MODEL_CATALOG_BINDING_JSON` repository variable
-documented in [`model-catalog-authority.md`](model-catalog-authority.md); its
-absence intentionally leaves the published `brain-mux` gate failing. Do not
-populate it with fixtures, an application KMS key, or a moving asset URL.
-
-[`model-catalog-publish.yml`](../.github/workflows/model-catalog-publish.yml)
-runs when one reviewed `release/model-catalog/*.source.json` changes on `main`
-and also permits exact manual dispatch. It uses the dedicated protected
-KMS/OIDC authority and emits a canonical build-binding asset for independent,
-atomic installation. It never edits repository variables or secrets, and live
-provider monitoring is not a publication input.
-
 ## Main-push artifact evidence
 
-Pull requests build and package affected candidates without publishing. The
-protected main workflow preserves exact GitHub provenance, publishes
-content-addressed unit/signature assets, and certifies all 36 deployable rows
-before composition. `release/units.toml` declares the required build/test
-receipt classes and `release/semantic-receipts.json` declares the real package
-selections for semantic classes. Missing producers, build/test receipts,
-package identity, provenance, signatures, or model-catalog bindings remain
-publication failures. Supply-chain scanners and their derived receipt classes
-are explicitly deferred during startup; see [`backlog.md`](backlog.md).
+Pull requests build and package candidates without publishing. The protected
+main workflow additionally preserves exact GitHub provenance, runs the pinned
+artifact scanners, publishes content-addressed unit/SBOM/signature assets, and
+certifies all 39 deployable rows before composition. `release/units.toml`
+declares the required receipt classes and `release/semantic-receipts.json`
+declares the real package selections for semantic classes. These registries
+must stay exhaustive together. A missing producer, missing receipt, empty SBOM,
+license denial, high/critical advisory, package mismatch, or provenance failure
+is a failed main push, not a certification deferral.
 
 ## Live user tests
 
@@ -87,13 +72,6 @@ are no runtime-kind or capability matrices.
 `apps/user-tests/artifacts.ts` resolves what a run exercises. Selection accepts
 either an exact paired SDK/CLI version or a paired tarball/archive, never a
 mixture.
-
-Hosted E2E and user receipts are earned only by the exact-coordinate workflow
-and fail-closed evidence gates documented in
-[`release-evidence.md`](release-evidence.md). They bind the private
-`VERIFYING` continuation and prove the exact deployed release ready both before
-and after the suites. An ordinary live preflight or a registry-only test is not
-a release receipt.
 
 Add a scenario by adding its row. Before making it a `live` row, check whether it
 needs a remote plane at all: behavior that can be proved against the packed SDK

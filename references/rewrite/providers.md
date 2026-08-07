@@ -84,8 +84,8 @@ The implemented correctness-preserving vertical slice is:
    `api/schemas/provider/provider.yaml`; the Rust, TypeScript, JSON Schema and
    OpenAPI bindings are generated from it.
 2. `aex-model-catalog` owns the two closed origins and two distinct gateway
-   chat dialects. Future entries remain `Staged` until reviewed compatibility
-   metadata explicitly promotes them in signed source.
+   chat dialects. Fixture and future published entries remain `Staged` until
+   their exact receipts pass.
 3. Two adapters share only bounded OpenAI-compatible chat encoding/decoding;
    each owns its provider identity, fixed path, request-id headers and error
    classification. Both are part of the source-build digest and the router's
@@ -96,15 +96,15 @@ The implemented correctness-preserving vertical slice is:
    journal.
 5. Provider seams and the live key registry include
    `AEX_LIVE_PROVIDER_KEY_OPENROUTER` and
-   `AEX_LIVE_PROVIDER_KEY_VERCEL_AI_GATEWAY`; the 23-probe matrix can monitor
-   gateway compatibility without controlling catalog admission.
-6. Public user documentation is gated on the runtime composition and reviewed
-   signed compatibility support, not transient provider availability.
+   `AEX_LIVE_PROVIDER_KEY_VERCEL_AI_GATEWAY`; the same 23-probe matrix must run
+   for every gateway model proposed for `Active`.
+6. Public user documentation remains gated until at least one exact pair has
+   a real signed conformance receipt and the runtime composition is ready.
 
 The adapters are usable only through a catalog-qualified pair and keep staged
-pairs inadmissible, so widening the enum does not fabricate supported model
-metadata. Compile-time exhaustiveness covers the catalog fixture, router and
-live-key registry, but remains distinct from external conformance evidence.
+pairs inadmissible, so widening the enum does not fabricate live model support.
+Compile-time exhaustiveness covers the catalog fixture, router and live-key
+registry, but remains distinct from the external conformance evidence.
 
 The trade-offs are specific. A gateway adds one selected network intermediary
 and its latency/outage domain, but offers same-model upstream routing and quota
@@ -142,18 +142,17 @@ reason to alias gateway identities.
 
 Two invariants are worth naming because they are the reason the crate exists:
 
-- **Signed compatibility metadata is admission authority.** An `Active` entry
-  loads only when its closed provider, model, dialect revision, compiled
-  endpoint, capabilities, limits and retry policy pass the catalog's static
-  validation. Provider reachability and transient behaviour are request-time
-  concerns, not binary or catalog validity.
-- **Live receipts are external assurance evidence.** They may bind an exact
-  entry and adapter-source digest for monitoring, but they are not embedded in
-  `ModelEntry`, do not expire a catalog and cannot block build or startup.
+- **The receipt gate is a document load invariant, not a runtime check.** An
+  `Active` entry whose declared `CapabilitySet` has any capability without a
+  passing probe cannot be loaded at all. There is no runtime check to forget,
+  because there is no runtime check.
+- **Every receipt is bound to an `AdapterSourceDigest`.** Editing an adapter and
+  shipping the old catalog fails at process start, not at the first customer
+  request.
 
-The launch source explicitly activates the reviewed
-`deepseek/deepseek-v4-flash` compatibility entry. A provider outage produces a
-typed provider failure; it does not withdraw the signed entry.
+The launch document ships every `(provider, model)` pair `Staged`, so a fresh
+`brain-mux` admits zero models until live evidence exists (OD-24).
+`Catalog::active_len()` answers `0` and a test pins it.
 
 ### `aex-brain-provider-gateway`
 
@@ -170,7 +169,7 @@ typed provider failure; it does not withdraw the signed entry.
 | `adapter` | the `ProviderAdapter` trait, `DialectState`, `RequestBuildError`, `FrameOutcome`, `FrameDecodeError` |
 | `openai` `anthropic` `deepseek` `zai` `moonshotai` `google` | the six native dialect adapters |
 | `openrouter` `vercel_ai_gateway` | fixed-origin gateway adapters with distinct identity/error/receipt handling over the bounded chat core |
-| `build_identity` | one compile-time source-tree identity available to external qualification evidence; it is not runtime catalog authority |
+| `build_identity` | one compile-time source-tree identity for the complete eight-adapter build; runtime environment variables cannot relabel it |
 | `catalog_port` | bounded signed-collection loading into an immutable content-addressed revision cache, with explicit still-live session-pin coverage |
 | `router` | the total eight-authority route, credential affinity/revocation, isolated pool, in-call retry, bounded stream, durable response-start evidence, sealing and receipt |
 
@@ -212,21 +211,21 @@ Three properties are structural rather than conventional:
 - **Catalog startup verifies a collection, not merely its newest head.** The
   release supplies an oldest-to-newest contiguous chain plus a sorted unique
   list produced by exact still-live session-retention accounting. Aggregate
-  bytes, revision count, envelope bytes, signatures, content addresses, chain
-  and signed compatibility policy must all pass before the immutable
-  synchronous lookup cache exists. Every declared live pin must be present;
-  the loader never guesses a retention window or accepts last-N.
+  bytes, revision count, envelope bytes, signatures, content addresses, chain,
+  adapter identity and every `Active` receipt gate must all pass before the
+  immutable synchronous lookup cache exists. Every declared live pin must be
+  present; the loader never guesses a retention window or accepts last-N.
 - **Signature verification is all-supplied strict.** An envelope needs at least
   one signature, and every supplied signature must be unique, bounded, trusted
   and valid. A valid trusted signature cannot hide an unknown or bad extra in
   either order. Release rotation is an overlapping, sorted, unique 1–8-key
   compiled trust-root set that can verify old live-pin artifacts and the new
   head together; it is not an any-valid relaxation.
-- **The adapter identity is source-derived for assurance evidence.** The
-  gateway build script hashes the complete recursively sorted Rust source tree
-  with explicit path/content length framing and asserts all eight provider
-  modules are in scope. A monitoring receipt may name that digest, but ordinary
-  adapter edits do not invalidate the signed compatibility catalog.
+- **The adapter identity is source-derived for every build.** The gateway build
+  script hashes the complete recursively sorted Rust source tree with explicit
+  path/content length framing and asserts all eight provider modules are in
+  scope. Runtime environment cannot relabel it, and the catalog receipt must
+  name that exact digest.
 
 ### `aex-brain-provider-custody`
 
@@ -243,11 +242,9 @@ is stored in `brain-mux`.
 ### `tests/live/aex-live-model-catalog`
 
 The probe registry (derived from `ProbeId::ALL`, never hand-listed), the
-per-provider key resolution, the provider-profile/capability ceiling, the
-P-01–P-23 matrix slots, `ReceiptBuilder` and the staging diff remain available
-for external assurance. Any future provider-specific monitor must remain
-separate from signed compatibility authority and non-gating for builds,
-publication, startup, and request admission.
+per-provider key resolution, `ReceiptBuilder`, `earns_active` and the staging
+diff. `ReceiptBuilder::build` refuses a receipt missing any probe run;
+`stage` only ever emits `Staged`.
 
 ---
 
@@ -255,58 +252,59 @@ publication, startup, and request admission.
 
 | Gap | How it is handled |
 | --- | --- |
-| Provider adapter fixtures | `openai.rs` and `anthropic.rs` both use `fixture::qualified`; adapter unit tests do not carry an offline catalog signature that must be regenerated when the document shape changes. |
-| Z.AI's path is recorded two ways in plan 08 §5.4 | The row gives the base as `https://api.z.ai/api/paas/v4` and the path as `POST /paas/v4/chat/completions`, which cannot both be right. The adapter and reviewed compatibility metadata follow the explicit path, producing `https://api.z.ai/paas/v4/chat/completions`; monitoring can detect drift without becoming release authority. |
+| `anthropic.rs` pins an offline P-256 public key and signature in its test module | `openai.rs` was migrated to `fixture::qualified`; `anthropic.rs` still loads a signed fixture document, which breaks loudly (`"re-sign it if the document shape changed"`) if `document.rs` or `fixture::entry` moves. Migrating it is a mechanical follow-up now that `fixture::qualified` exists. |
+| Z.AI's path is recorded two ways in plan 08 §5.4 | The row gives the base as `https://api.z.ai/api/paas/v4` and the path as `POST /paas/v4/chat/completions`, which cannot both be right. The adapter follows the explicit path, producing `https://api.z.ai/paas/v4/chat/completions`. Probe P-01 settles it before any Z.AI pair can go `Active`; until then every Z.AI entry is `Staged`, so nothing dispatches. |
 | `decode`, `finish` and `classify_http` are not handed the `QualifiedModel` | Each adapter therefore compiles its own stop-token and error tables rather than reading `entry.stop_reason_map` / `entry.error_map`. For these eight dialects both are provider-invariant, and `anthropic.rs` asserts the compiled table and the catalog's copy agree. But it means the catalog's copies are documentation for the decode path rather than its source of truth. Widening the trait to take the model would make them authoritative. |
-| The 23 probes need a real customer key per provider | The `[[test]]` targets stay undeclared and the manifest keeps `not_applicable.targets` naming OD-07. The harness now exposes one explicit profile and matrix slot per provider/probe, but `PendingProbeExecutor` fails closed until a protected runner performs the calls. Every provider has one authoritative `AEX_LIVE_PROVIDER_KEY_*` name. Anthropic and DeepSeek additionally accept only their documented legacy `ANTHROPIC_API_KEY` and `DEEPSEEK_API_KEY` aliases, after the authoritative name; the other six providers accept no guessed alias. Missing or empty inputs fail loudly, with tests pinning the complete accepted-name list. |
-| Additional provider/model compatibility entries | Discovery may propose `Staged` entries, but the reviewed versioned source is the only path to signed `Active` metadata. Provider model-list output never silently changes authority. |
+| The 23 probes need a real customer key per provider | The `[[test]]` targets stay undeclared and the manifest keeps `not_applicable.targets` naming OD-07. The harness is compiled and unit-tested; adding the target is one change. `ProviderKeys::require` panics with the variable name, proved by a `#[should_panic]` case. |
+| No `(provider, model)` pair can ship `Active` | Every launch entry is `Staged` with an `unearned()` receipt — a positive record that the evidence has not been earned, not an absence. |
 | Provider credential registration | The existing `pcr_` row is a reference to one workspace-secret generation. Exact provider-qualified reads, mutable binding/secret revalidation, and KMS reveal are composed through `aex-brain-provider-custody`; registration remains unmounted because the request has no decided workspace-secret name/collision contract and the active wrapped branch key is not exposed by a port. There is **no** plaintext-from-environment path — not disabled, absent. |
 | `resolve_unknown` | Returns `UnknownResolution::NoDurableOperation` for all eight. Implemented, not stubbed: no authority in this set documents a result lookup for a completed streaming generation under AEX's fixed dialects. Anthropic is stateless; OpenAI's `GET /v1/responses/{id}` requires `store: true`, which AEX disables; Gemini Interactions is not the launch dialect. |
 | Brain session credential pin | Complete for runtime: `ResolvedAgentConfig` journals a required four-scalar `SessionCredentialPin`, `ProviderPort` requires it, and `DispatchTicket` carries workspace plus organization authority. Revision and generation are non-zero at construction and serde boundaries; epoch zero remains the valid initial epoch. Missing prelaunch pins fail decode; mismatched scope, revision, generation, provider, context digest, binding state, or revocation epoch fails before the next provider send. Session-create admission still has to mint the pin from an explicit credential selection. |
-| Installed production catalog binding | `brain-mux` composes a verified immutable collection when the canonical `AEX_MODEL_CATALOG_BINDING_JSON` supplies the exact trust roots, immutable collection URI and both SHA-256 identities. The protected publisher deterministically renders reviewed versioned source, signs only its digest through KMS, verifies genesis or append-only extension and publishes the next candidate. Failed candidates leave the installed last-good binding untouched. |
+| Real production catalog release inputs | `brain-mux` now composes a verified immutable collection when its exact canonical trust-root set and signed collection are build-bound with independent SHA-256 digests. The release plan records those values using a stable workspace-relative collection path; runtime environment is never consulted. Ordinary local builds carry an exact blocker and stay unready. Protected publication invokes the required-input preflight before compilation. This repository still has no real publisher set or signed collection, and the launch catalog has no `Active` entry, so publication/readiness correctly remain blocked rather than inventing authority. |
 | Brain content hydration | Canonical requests carry inline user turns. A configured system reference or placed user block fails before dispatch because the application has no content-hydration port yet. |
 | `trybuild` type-level leak test | The workspace has no `trybuild` dependency. The same property is asserted by construction — `ProviderApiKey` implements none of `Clone`, `Debug`, `Display`, `Serialize`, `Deref`, and `WireRequest` has no field that can hold one — plus runtime cases over `Debug` output, error bodies and receipts. Adding `trybuild` is a workspace-manifest change and belongs to whoever owns that decision. |
 | `miri` over the `credential` module | Not run: the module contains no `unsafe` and the crate forbids it, so `miri` would add build time without a proposition to test. |
 
 ### Closing the production catalog authority
 
-The single canonical `AEX_MODEL_CATALOG_BINDING_JSON` Actions variable is an
-atomic pointer to already-published signed compatibility metadata, not a way to
-create catalog authority. It must remain unset until all of the following exist
-together:
+The four `AEX_MODEL_CATALOG_*` Actions variables are bindings to already-earned
+release evidence, not a way to create catalog authority. They must remain
+unset until all of the following exist together:
 
 1. A dedicated AWS KMS `ECC_NIST_P256` / `SIGN_VERIFY` publisher key and a
    reviewed signing role. Only its uncompressed SEC1 public key enters the
    canonical `aex.model-catalog-trust-roots.v1` document; the private key and
    signing permission never enter public CI.
-2. A canonical reviewed `release/model-catalog/*.source.json` document whose
-   closed compatibility policy passes the same static loader invariants as the
-   runtime. No provider call or live receipt participates in this step.
-3. The protected publisher executable prepares the SHA-256 digest of
-   `aex-model-catalog/v1\n || document` for KMS `MessageType=DIGEST`, binds the
-   closed KMS response, and assembles a canonical genesis or verified
-   append-only `aex.model-catalog-collection.v1`. Extension retains all prior
-   pins conservatively until a later pruning authority is introduced.
-4. The exact collection bytes at the normalized workspace-relative path before
-   `artifact plan` runs. The build workflow now downloads only a same-repository
-   immutable GitHub release asset and verifies its configured SHA-256 before
-   exposing the downloaded workspace-relative collection file to the release
-   tool.
+2. A complete live conformance receipt for at least one `(provider, model)`
+   pair, bound to the exact adapter-source digest. The 23-probe harness must
+   earn every capability that pair declares before the entry can become
+   `Active`; a provider model-list result cannot promote it.
+3. A deterministic publisher that emits the JCS catalog document, signs
+   `aex-model-catalog/v1\n || document`, and assembles the closed
+   `aex.model-catalog-collection.v1` chain with the exact admission pin and all
+   still-live session pins. The repository currently has the verifier and
+   conformance harness, but no production publisher or signed collection.
+4. The exact collection bytes at a normalized workspace-relative path before
+   `artifact plan` runs. The current workflow performs no catalog download, so
+   this means a reviewed tracked release input unless the workflow first gains
+   a separate immutable, digest-verified acquisition step.
 
-Only then may promotion atomically replace `AEX_MODEL_CATALOG_BINDING_JSON`.
-The workflow derives the legacy release-tool inputs and local collection path
-from that one closed value after download; a runner-specific file path is not a
-release binding.
+Only then may publication configure
+`AEX_MODEL_CATALOG_TRUST_ROOTS_JSON`, its SHA-256,
+`AEX_MODEL_CATALOG_COLLECTION_FILE`, and its SHA-256 as repository variables.
 `AEX_TOOL_CATALOG_SHA256` is derived from the checked-out source by the
 workflow. The release tool revalidates canonical roots, both digests, the
 workspace-relative path, and the built-in tool-catalog digest before compiling
 `brain-mux`; startup then verifies the complete signed collection and requires
 at least one serviceable `Active` model.
 
-The dedicated signing authority is provisioned in `eu-west-1` and the
-protected publisher environment is configured. The remaining bootstrap is to
-publish the reviewed source once and install its canonical build binding; no
-provider health result is part of that authority.
+The 2026-08-04 protected publication failure is therefore an external
+authority blocker, not missing boilerplate configuration. The public
+repository has no configured values, the workspace plane environments carry
+none, the hosted composition declares the same readiness blocker, and the live
+AWS workload/state regions contain no catalog-signing KMS key. Deriving values
+from the existing encryption keys, test fixtures, or staged launch entries
+would manufacture a trust root and must remain impossible.
 
 ---
 
@@ -398,7 +396,7 @@ aex_model_catalog::document::{ModelEntry, ModelLimits, CapabilitySet, Capability
 | D-35 | The SSE decoder joins `data:` lines by append-newline-then-strip, per the SSE grammar, rather than by separator | A separator join silently drops an empty `data:` line. An empty payload line is a real frame shape, not padding. |
 | D-36 | The redactor masks any run of ≥ 20 credential-alphabet characters containing a digit, in addition to the keys AEX currently holds | A provider can echo a key AEX is *not* dispatching under — a customer's other key, pasted into a prompt. Redacting only known secrets would miss it. Truncation runs after masking, so a bound can never leave a prefix of a secret behind. |
 | D-37 | `StreamBudget::narrowed_to` lets a catalog entry only **shrink** a shared-safety default, never widen one | Otherwise a mistaken publish could raise the process's own memory ceiling from data. |
-| D-38 | `aex-model-catalog` ships an always-on `fixture` module rather than a feature-gated one | `aex_wire::testing` sets the precedent, and rule 9 of the test architecture forbids test-only build features. `entry()` produces `Staged`; `promote()` is explicit and the static catalog policy gate still validates the resulting signed metadata. |
+| D-38 | `aex-model-catalog` ships an always-on `fixture` module rather than a feature-gated one | `aex_wire::testing` sets the precedent, and rule 9 of the test architecture forbids test-only build features. Nothing in `fixture` can promote an unproved entry: `entry()` always produces `Staged` with an `unearned()` receipt, and `promote()` is an explicit call that a document invariant still re-checks at load. |
 
 ---
 

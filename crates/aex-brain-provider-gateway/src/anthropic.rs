@@ -1674,6 +1674,7 @@ mod tests {
         ReasoningRequest, ReasoningToken, Role, StopReason, StructuredOutputRequest, SystemBlock,
         ToolChoice, ToolResultPart, UsageCompleteness,
     };
+    use aex_model_catalog::catalog::Catalog;
     use aex_model_catalog::document::{
         CacheMode, CachePolicy, CacheReadSemantics, Capability, CapabilitySet, CodeClassRule,
         Dialect, EndpointPin, EntryState, ErrorClassMap, ModelEntry, NamePattern,
@@ -1683,8 +1684,12 @@ mod tests {
         ToolPolicy, UsageMapping,
     };
     use aex_model_catalog::primitives::{BoundedString, ToolCallId, ToolName};
+    use aex_model_catalog::signature::{
+        CatalogEnvelope, CatalogSignature, P256_PUBLIC_KEY_BYTES, SigAlg, SigningKeyId, TrustedKey,
+        TrustedKeys,
+    };
     use aex_model_catalog::{QualifiedModel, fixture};
-    use aex_wire::provider::ProviderId;
+    use aex_wire::provider::{ModelSelection, ProviderId};
     use aex_wire::{CanonicalJson, ContentHash};
 
     use super::{
@@ -1701,8 +1706,18 @@ mod tests {
     use crate::transport::{Accept, AuthScheme};
 
     // -----------------------------------------------------------------------
-    // fixture catalog entries
+    // fixture catalog
+    //
+    // `Catalog::load` is the only public way to mint a `QualifiedModel`, and it
+    // demands a real P-256 signature over the exact canonical document bytes.
+    // This crate has no signing dependency, so the key pair and the signature
+    // below were produced once, offline, over the bytes `document()` renders.
+    // Every variant this file needs is a separate model slug inside that one
+    // document, so there is exactly one signature to keep in step.
     // -----------------------------------------------------------------------
+
+    const NOW_MS: i64 = 1_800_000_000_000;
+    const PUBLISHER: &str = "aex-catalog-test";
 
     /// The full-capability pair every happy-path test uses.
     const FULL: &str = "claude-opus-5";
@@ -1720,6 +1735,36 @@ mod tests {
     const NARROW: &str = "claude-narrow";
     /// Reasoning that forbids sampling, the `SamplingWithReasoning` path.
     const NO_SAMPLING: &str = "claude-thinking-only";
+
+    /// The uncompressed P-256 point of the throwaway fixture key.
+    const PUBLIC_KEY_HEX: &str = concat!(
+        "043108269ad7e7682d85f54d725f45fb627a06dd41b0f441621a98bf990fd83849",
+        "70fca0edc09b1d3d18e54493af8add656c926e2f3c5215505af5ae2b80810906"
+    );
+    /// `ECDSA_P256_SHA256_ASN1` over `SIGNING_PREFIX || canonical_bytes(document())`.
+    ///
+    /// Regenerate by dumping `fixture::canonical_bytes(&document())`, prefixing
+    /// `aex-model-catalog/v1\n`, and signing with the matching private key.
+    const SIGNATURE_HEX: &str = concat!(
+        "3046022100eed6cba7ebbdf1a6797b2bc8050d0a6aee2268d68437bdea92ba476d",
+        "f1a602b5022100e3ccfae14f6f78e4721aca5e8aaada3793138f8a0fab0c000a2c",
+        "1b89c5c681c2"
+    );
+
+    fn from_hex(text: &str) -> Vec<u8> {
+        assert!(
+            text.len().is_multiple_of(2),
+            "a hex literal has even length"
+        );
+        text.as_bytes()
+            .chunks_exact(2)
+            .map(|pair| {
+                let high = char::from(pair[0]).to_digit(16).expect("hex digit");
+                let low = char::from(pair[1]).to_digit(16).expect("hex digit");
+                u8::try_from((high << 4) | low).expect("a byte")
+            })
+            .collect()
+    }
 
     fn anthropic_stop_map() -> StopReasonMap {
         StopReasonMap {
@@ -1875,12 +1920,49 @@ mod tests {
         ]
     }
 
+    fn document() -> aex_model_catalog::document::CatalogDocument {
+        fixture::document(
+            PUBLISHER,
+            1,
+            entries(),
+            fixture::at(NOW_MS),
+            fixture::adapter("fixture-adapter"),
+        )
+    }
+
+    fn catalog() -> &'static Catalog {
+        static LOADED: std::sync::OnceLock<Catalog> = std::sync::OnceLock::new();
+        LOADED.get_or_init(|| {
+            let mut public = [0u8; P256_PUBLIC_KEY_BYTES];
+            public.copy_from_slice(&from_hex(PUBLIC_KEY_HEX));
+            let compiled: &'static [TrustedKey] = Box::leak(Box::new([(PUBLISHER, public)]));
+            let envelope = CatalogEnvelope {
+                document: fixture::canonical_bytes(&document()),
+                signatures: vec![CatalogSignature {
+                    key_id: SigningKeyId(fixture::bounded(PUBLISHER)),
+                    algorithm: SigAlg::EcdsaP256Sha256Asn1,
+                    bytes: bytes::Bytes::from(from_hex(SIGNATURE_HEX)),
+                }],
+            };
+            Catalog::load(
+                &envelope,
+                &TrustedKeys::new(compiled),
+                fixture::at(NOW_MS),
+                None,
+                fixture::adapter("fixture-adapter"),
+            )
+            .expect("the fixture catalog loads; re-sign it if the document shape changed")
+        })
+    }
+
     fn qualified(model: &str) -> QualifiedModel {
-        let entry = entries()
-            .into_iter()
-            .find(|entry| entry.provider == ProviderId::Anthropic && entry.model.as_str() == model)
-            .unwrap_or_else(|| panic!("the fixture carries no Anthropic entry for `{model}`"));
-        fixture::qualified(entry)
+        catalog()
+            .qualified(&ModelSelection {
+                credential_id: None,
+                model: model.to_owned(),
+                provider: ProviderId::Anthropic,
+            })
+            .expect("the fixture catalog carries the pair")
     }
 
     // -----------------------------------------------------------------------

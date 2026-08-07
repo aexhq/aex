@@ -1441,13 +1441,11 @@ purging partitions in one total order, while the legacy method queries exactly
 one caller-selected lifecycle. Neither requirement can be replaced with a
 `FilterExpression` or an unbounded scan.
 
-The workspace index is now a `KEYS_ONLY` ordered locator, so a reader must
-strongly hydrate every selected base head before filtering or returning it.
-That avoids treating an eventually consistent index projection as session
-truth, but it does not close the response authority gap: the hydrated head
-still carries only `resolvedConfigDigest`, not the required
-`SessionListItem.provider` or `.model`. Extra reads therefore preserve
-correctness without manufacturing either missing value.
+Even after those locator semantics are fixed, the INCLUDE projection carries
+only identity, workspace, status, lifecycle, revision and timestamps. The
+required `SessionListItem.provider` and `.model` are absent. Strongly hydrating
+the selected base heads would still recover only `resolvedConfigDigest`, not
+either value, so extra reads cannot repair the decisive authority gap.
 
 There are also two cursor owners, neither of which justifies a partial route.
 The legacy write-capable `SessionStore::list_sessions` owns its own HMAC cursor

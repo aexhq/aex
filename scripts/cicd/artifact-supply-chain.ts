@@ -96,23 +96,12 @@ export const inspectSupplyChain = (inputs: {
   if (inputs.rawSbom.bomFormat !== "CycloneDX" || inputs.rawSbom.specVersion !== "1.6") {
     throw new Error("Syft must emit CycloneDX 1.6");
   }
-  const metadata = object(inputs.rawSbom.metadata ?? {}, "SBOM metadata");
-  const subjectComponent = metadata.component === undefined
-    ? null
-    : object(metadata.component, "SBOM metadata component");
-  const detectedComponents = inputs.rawSbom.components === undefined
-    ? []
-    : array(inputs.rawSbom.components, "SBOM components").map((entry, index) =>
-        object(entry, `component ${index}`)
-      );
-  const components = [
-    ...(subjectComponent === null
-      ? []
-      : [{ component: subjectComponent, source: "metadata.component" as const }]),
-    ...detectedComponents.map((component) => ({ component, source: "components" as const }))
-  ];
+  const components = array(inputs.rawSbom.components, "SBOM components").map((entry, index) =>
+    object(entry, `component ${index}`)
+  );
   if (components.length === 0) throw new Error("the exact artifact SBOM is empty");
 
+  const metadata = object(inputs.rawSbom.metadata ?? {}, "SBOM metadata");
   const properties = Array.isArray(metadata.properties) ? metadata.properties : [];
   metadata.properties = [
     ...properties.filter(
@@ -139,14 +128,10 @@ export const inspectSupplyChain = (inputs: {
     if (licenses.size === 0) throw new Error(`license exception ${key} has no allow list`);
     exceptions.set(key, licenses);
   }
-  const inventory = components.map(({ component, source }) => {
+  const inventory = components.map((component) => {
     const name = string(component.name, "component name");
     const version = typeof component.version === "string" ? component.version : null;
-    const licenseEvidence = component.licenses === undefined ? "not-declared" : "declared";
-    if (source === "components" && licenseEvidence === "not-declared") {
-      throw new Error(`component ${name} licenses must be an array`);
-    }
-    const licenses = licenseEvidence === "declared" ? licensesOf(component) : [];
+    const licenses = licensesOf(component);
     const componentAllowed = new Set(allowed);
     if (version !== null) {
       for (const license of exceptions.get(`${name}@${version}`) ?? []) {
@@ -156,7 +141,7 @@ export const inspectSupplyChain = (inputs: {
     const denied = licenses.filter(
       (expression) => !expressionAllowed(name, expression, componentAllowed, clarified)
     );
-    return { source, name, version, licenseEvidence, licenses, denied };
+    return { name, version, licenses, denied };
   });
   const denials = inventory.flatMap((component) =>
     component.denied.map((license) => `${component.name}: ${license}`)

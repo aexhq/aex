@@ -9,7 +9,7 @@ keywords:
   - site
   - user tests
 audience: implementation agents and maintainers
-last_verified: 2026-08-05
+last_verified: 2026-08-01
 related:
   - references/rewrite/contracts.md
   - references/rewrite/delivery.md
@@ -54,12 +54,6 @@ Plan of record: `references/rust-native-rewrite-2026-07-31/plans/13-clients-dash
   typed 47-row `USER_SCENARIOS` registry across packed, local, live, browser,
   money, and operator suites. Artifact selection accepts either an exact paired
   SDK/CLI version or a paired tarball/archive, never a mixture.
-- Added real packed-SDK journeys for Node and Bun. Each builds one SDK tarball,
-  installs it in a clean temporary consumer with its package manager in offline
-  mode, resolves the package through that consumer's `node_modules`, checks the
-  published root exports, and executes deterministic SDK behavior. These are
-  local artifact tests and earn no registry, network, provider, or deployed-plane
-  evidence.
 - Added fail-loud dashboard and site smoke/e2e companions. Remote targets require
   the explicit `live` feature and use `aex_test_harness::required_env!`; there is
   no skip or missing-environment success path.
@@ -139,9 +133,8 @@ unearned and is recorded as such in the generated evidence registry:
   Workspaces core and three temporary route descriptors. Content, observations,
   billing, operations, uploads, complete stream recovery, and one-method-per-wire
   operation await the generated TypeScript boundary. The full shared
-  conformance/property corpus is not implemented. The packed Node/Bun
-  clean-install lanes cover the current root exports and two deterministic
-  helpers, not that future complete surface.
+  conformance/property corpus and packed Node/Bun clean-install lanes are not
+  implemented.
 - The CLI command tree and policies compile and are tested, but network command
   dispatch, device authorization, actual atomic download I/O, signal handling,
   completion goldens, and signed archive assembly are deferred on the generated
@@ -153,9 +146,8 @@ unearned and is recorded as such in the generated evidence registry:
 - The dashboard is the authority-free security core, not the complete product:
   OAuth composition, the central/regional passthrough handlers, device and
   invitation flows, shell panels, budget checks, and browser journeys remain.
-- The 47 scenario identities and selection contract are present, but only the
-  two packed SDK install identities have black-box journey bodies. External
-  artifact-selection wiring, the other 45 journeys, signed CLI archive
+- The 47 scenario identities and selection contract are present, but the 47
+  black-box journey bodies, clean external installs, signed archive
   verification, deployed-plane execution, cleanup receipts, and routing/shard
   integration remain.
 - Live tests were compiled with `--features live` but not executed because no

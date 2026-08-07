@@ -20,9 +20,9 @@
 //! own `/etc/os-release` produced the release date.
 
 use crate::image::{
-    AGENT_PATH, ARCHITECTURE, BASE_IMAGE_ARN_TEMPLATE, CONTAINER_BASE, FORBIDDEN_INSTALL_PACKAGES,
-    FORBIDDEN_ROOTFS_PATHS, GUEST_TARGET, HOOK_PORT, JOURNAL_PATH, OS_CAPABILITIES, PackageGroup,
-    ROOTFS_CONTRACT, SBOM_DIR, WORKSPACE_PATH,
+    AGENT_PATH, ARCHITECTURE, BASE_IMAGE_ARN_TEMPLATE, CONTAINER_BASE, CURL_SWAP, Capability,
+    FORBIDDEN_INSTALL_PACKAGES, FORBIDDEN_ROOTFS_PATHS, GUEST_TARGET, HOOK_PORT, JOURNAL_PATH,
+    OS_CAPABILITIES, PackageGroup, ROOTFS_CONTRACT, SBOM_DIR, WORKSPACE_PATH,
 };
 use serde::{Deserialize, Serialize};
 
@@ -64,27 +64,39 @@ pub fn pinned_base() -> String {
 pub struct Variant {
     /// The compute shape token.
     pub size: String,
+    /// Whether the browser layer is included.
+    pub browser: bool,
 }
 
 impl Variant {
-    /// Parses one of the five published non-browser variants.
+    /// Parses a variant name such as `1gb` or `4gb-browser`.
     ///
     /// # Errors
     ///
     /// Returns the offered variant names when the name is not one of them.
     pub fn parse(name: &str) -> Result<Self, String> {
+        let (size, browser) = name
+            .strip_suffix("-browser")
+            .map_or((name, false), |size| (size, true));
         let offered = crate::image::variants();
-        let matched = offered.iter().any(|variant| variant.size == name);
+        let matched = offered.iter().any(|variant| {
+            variant.size == size && variant.capabilities.contains(&Capability::Browser) == browser
+        });
         if matched {
             Ok(Self {
-                size: name.to_owned(),
+                size: size.to_owned(),
+                browser,
             })
         } else {
             Err(format!(
-                "`{name}` is not an offered variant; the five are {}",
+                "`{name}` is not an offered variant; the eight are {}",
                 offered
                     .iter()
-                    .map(|variant| variant.size.to_owned())
+                    .map(|variant| if variant.capabilities.is_empty() {
+                        variant.size.to_owned()
+                    } else {
+                        format!("{}-browser", variant.size)
+                    })
                     .collect::<Vec<_>>()
                     .join(", ")
             ))
@@ -94,13 +106,21 @@ impl Variant {
     /// The image tag this variant builds to.
     #[must_use]
     pub fn tag(&self) -> String {
-        format!("aex-hands:{}", self.size)
+        if self.browser {
+            format!("aex-hands:{}-browser", self.size)
+        } else {
+            format!("aex-hands:{}", self.size)
+        }
     }
 
     /// The public variant token used by the release manifest and registration record.
     #[must_use]
     pub fn name(&self) -> String {
-        self.size.clone()
+        if self.browser {
+            format!("{}-browser", self.size)
+        } else {
+            self.size.clone()
+        }
     }
 
     /// The minimum memory the provider must persist on the image version.
@@ -116,14 +136,23 @@ impl Variant {
         }
     }
 
+    /// The package groups this variant installs.
+    #[must_use]
+    pub fn groups(&self) -> Vec<PackageGroup> {
+        PackageGroup::ALL
+            .into_iter()
+            .filter(|group| self.browser || !group.is_browser_layer())
+            .collect()
+    }
+
     /// Every package this variant installs, in group order.
     ///
     /// The deleted set is filtered here rather than only asserted in a test: the
     /// install list is what reaches `dnf`, and `curl` in particular aborts the
     /// whole transaction rather than failing on its own.
     #[must_use]
-    pub fn packages() -> Vec<&'static str> {
-        PackageGroup::ALL
+    pub fn packages(&self) -> Vec<&'static str> {
+        self.groups()
             .into_iter()
             .flat_map(|group| group.packages().iter().copied())
             .filter(|package| !FORBIDDEN_INSTALL_PACKAGES.contains(package))
@@ -208,7 +237,7 @@ pub struct MicrovmImageRegistration {
     pub schema: String,
     /// Public variant token.
     pub variant: String,
-    /// Whether a browser layer is present. The published set is currently false.
+    /// Whether this is one of the three browser-capable variants.
     pub browser: bool,
     /// Region-templated AWS-managed base image ARN.
     pub base_image_arn_template: String,
@@ -231,7 +260,7 @@ pub fn registration_descriptor(variant: &Variant) -> MicrovmImageRegistration {
     MicrovmImageRegistration {
         schema: REGISTRATION_SCHEMA.to_owned(),
         variant: variant.name(),
-        browser: false,
+        browser: variant.browser,
         base_image_arn_template: BASE_IMAGE_ARN_TEMPLATE.to_owned(),
         cpu_configurations: vec![CpuConfiguration {
             architecture: ARCHITECTURE.to_owned(),
@@ -269,20 +298,22 @@ pub fn registration_descriptor(variant: &Variant) -> MicrovmImageRegistration {
 /// lockfile comparison use, so the built image and the checked contract cannot
 /// describe different trees.
 #[must_use]
-pub fn containerfile(_variant: &Variant) -> String {
+pub fn containerfile(variant: &Variant) -> String {
     use core::fmt::Write as _;
 
-    let packages = Variant::packages().join(" ");
+    let packages = variant.packages().join(" ");
     let mut out = String::new();
     let _ = writeln!(
         out,
         "# Generated by `hands-image context`. Do not edit.\n\
          # Base pinned by digest; package source pinned to the AL2023 {RELEASEVER} snapshot.\n\
          FROM --platform=linux/arm64 {base}\n\n\
-         # Keep the pinned base package set intact: it already supplies bash, grep,\n\
-         # sed, gawk, ca-certificates, `curl-minimal`, and `coreutils-single`.\n\
-         # Do not reinstall those packages or replace the minimal variants.\n\n\
-         RUN dnf --releasever={RELEASEVER} --setopt=install_weak_deps=0 -y install \\\n    \
+         # The base ships `dnf` as a symlink to `microdnf`, which has no\n\
+         # --allowerasing. Listing `curl` in the install set therefore aborts the\n\
+         # whole transaction with `curl-minimal conflicts with curl`. The swap runs\n\
+         # first and `curl` never appears below.\n\
+         RUN {CURL_SWAP}\n\n\
+         RUN dnf --releasever={RELEASEVER} --setopt=install_weak_deps=False -y install \\\n    \
          {packages} \\\n && dnf clean all\n",
         base = pinned_base(),
     );
@@ -376,37 +407,45 @@ mod tests {
             generated.contains(&format!("--releasever={RELEASEVER}")),
             "an unpinned dnf resolves against whatever the mirror serves today"
         );
-        assert!(generated.contains("--setopt=install_weak_deps=0"));
+        assert!(generated.contains("--setopt=install_weak_deps=False"));
     }
 
     #[test]
-    fn the_base_minimal_packages_stay_untouched_and_full_packages_are_never_listed() {
+    fn curl_is_swapped_before_any_install_and_never_listed() {
         let generated = containerfile(&Variant::parse("1gb").expect("an offered variant"));
-        assert!(!generated.contains("dnf swap"), "{generated}");
-        assert!(generated.contains("-y install"), "{generated}");
+        let swap = generated
+            .find("dnf swap curl-minimal curl")
+            .expect("the swap is present");
+        let install = generated
+            .find("-y install")
+            .expect("the install is present");
+        assert!(
+            swap < install,
+            "listing curl in the install set aborts the whole microdnf transaction"
+        );
         assert!(!generated.contains(" curl \\"), "{generated}");
-        assert!(!Variant::packages().contains(&"coreutils"));
-        for package in ["bash", "grep", "sed", "gawk", "ca-certificates"] {
-            assert!(!Variant::packages().contains(&package), "{package}");
-        }
     }
 
     #[test]
-    fn browser_variants_are_refused_before_a_context_can_be_built() {
+    fn the_browser_layer_is_only_in_the_browser_variants() {
         let base = Variant::parse("4gb").expect("an offered variant");
-        assert!(!Variant::packages().contains(&"chromium-headless"));
+        let browser = Variant::parse("4gb-browser").expect("an offered variant");
+        assert!(!base.packages().contains(&"chromium-headless"));
+        assert!(browser.packages().contains(&"chromium-headless"));
         assert_eq!(base.tag(), "aex-hands:4gb");
-        for name in [
-            "512mb-browser",
-            "1gb-browser",
-            "2gb-browser",
-            "4gb-browser",
-            "8gb-browser",
-        ] {
+        assert_eq!(browser.tag(), "aex-hands:4gb-browser");
+    }
+
+    #[test]
+    fn chromium_is_not_offered_below_a_two_gigabyte_baseline() {
+        for name in ["512mb-browser", "1gb-browser"] {
             assert!(
                 Variant::parse(name).is_err(),
-                "{name} must remain unavailable until a pinned ARM64 browser layer exists"
+                "{name} is not one of the eight published variants"
             );
+        }
+        for name in ["2gb-browser", "4gb-browser", "8gb-browser"] {
+            assert!(Variant::parse(name).is_ok(), "{name}");
         }
     }
 
@@ -414,8 +453,7 @@ mod tests {
     fn an_unknown_variant_is_refused_with_the_offered_set() {
         let error = Variant::parse("16gb").expect_err("there is no sixth shape");
         assert!(error.contains("512mb"), "{error}");
-        assert!(error.contains("8gb"), "{error}");
-        assert!(!error.contains("browser"), "{error}");
+        assert!(error.contains("8gb-browser"), "{error}");
     }
 
     #[test]
@@ -477,10 +515,10 @@ mod tests {
     #[test]
     fn the_registration_descriptor_is_an_exact_provider_configuration() {
         let descriptor =
-            registration_descriptor(&Variant::parse("8gb").expect("an offered variant"));
+            registration_descriptor(&Variant::parse("8gb-browser").expect("an offered variant"));
         assert_eq!(descriptor.schema, "aex.microvm-image-registration.v1");
-        assert_eq!(descriptor.variant, "8gb");
-        assert!(!descriptor.browser);
+        assert_eq!(descriptor.variant, "8gb-browser");
+        assert!(descriptor.browser);
         assert_eq!(descriptor.resources[0].minimum_memory_in_mi_b, 8_192);
         assert_eq!(descriptor.cpu_configurations[0].architecture, "ARM_64");
         assert_eq!(descriptor.additional_os_capabilities, ["ALL"]);

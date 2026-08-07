@@ -42,22 +42,7 @@ pub fn require(name: &str) -> String {
 /// valid Unicode, or when every named variable is absent.
 #[must_use]
 pub fn require_first(names: &[&str]) -> String {
-    require_first_named(names).1
-}
-
-/// Reads the first present environment variable and returns its accepted name
-/// together with its value.
-///
-/// Use this when a live harness must retain the credential source identity
-/// without retaining the credential itself in a longer-lived plan or matrix.
-/// The same precedence and fail-closed rules as [`require_first`] apply.
-///
-/// # Panics
-///
-/// Panics under the same conditions as [`require_first`].
-#[must_use]
-pub fn require_first_named<'a>(names: &'a [&'a str]) -> (&'a str, String) {
-    classify_first_named(names.iter().map(|name| (*name, std::env::var(name))))
+    classify_first(names.iter().map(|name| (*name, std::env::var(name))))
 }
 
 /// The pure half of [`require`], so every failure message is provable without
@@ -96,27 +81,11 @@ pub fn classify_first<'a, I>(values: I) -> String
 where
     I: IntoIterator<Item = (&'a str, Result<String, VarError>)>,
 {
-    classify_first_named(values).1
-}
-
-/// The pure half of [`require_first_named`].
-///
-/// Results must be supplied in precedence order. Only `NotPresent` advances to
-/// the next name; every other result is authoritative.
-///
-/// # Panics
-///
-/// Panics under the same conditions as [`require_first_named`].
-#[must_use]
-pub fn classify_first_named<'a, I>(values: I) -> (&'a str, String)
-where
-    I: IntoIterator<Item = (&'a str, Result<String, VarError>)>,
-{
     let mut absent = Vec::new();
     for (name, value) in values {
         match value {
             Err(VarError::NotPresent) => absent.push(name),
-            other => return (name, classify(name, other)),
+            other => return classify(name, other),
         }
     }
 
@@ -132,7 +101,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{classify, classify_first, classify_first_named};
+    use super::{classify, classify_first};
     use std::env::VarError;
 
     #[test]
@@ -188,17 +157,6 @@ mod tests {
                 ("AEX_LEGACY", Ok("legacy".to_owned())),
             ]),
             "legacy"
-        );
-    }
-
-    #[test]
-    fn the_selected_alias_name_is_preserved_without_changing_precedence() {
-        assert_eq!(
-            classify_first_named([
-                ("AEX_PRIMARY", Err(VarError::NotPresent)),
-                ("AEX_LEGACY", Ok("legacy".to_owned())),
-            ]),
-            ("AEX_LEGACY", "legacy".to_owned())
         );
     }
 

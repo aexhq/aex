@@ -24,28 +24,27 @@ not receipts and cannot satisfy artifact certification, environment admission,
 or promotion readiness; they let structural graph verification prove that no
 gap is accidental while the later evidence gates remain fail-closed.
 
-Release routing is stricter than structural PR/main routing. Running
-`graph verify --release` refuses to emit a release selection when every cross-service
-scenario is deferred. A dev verification statement likewise requires passing
-`smoke`, `e2e`, and `user` receipts for the exact release before it can become
-production promotion evidence.
-
 `semantic-receipts.json` is the reviewed producer registry for artifact
 semantic evidence. It maps every `contract`, `property`, `conformance`, and
 `integration` requirement in `units.toml` to the real package test selection
 that earns it. Validation rejects missing, extra, duplicate, or nonexistent
 filtered test binaries.
 
-On a protected main push, `_build-artifacts.yml` builds and packages each unit,
-preserves its official GitHub provenance bundle, verifies the exact immutable
-publication identity, and binds the required build/test/package receipts to
-the artifact subject. `artifact certify --defer-supply-chain` records the
-startup-phase scanner deferral explicitly; it does not mint a synthetic SBOM,
-licence, vulnerability, or deny receipt. Missing build/test receipts,
-publication bytes, provenance, signatures, or model-catalog bindings still
-stop publication.
+On a protected main push, `_build-artifacts.yml` packages each unit twice,
+preserves its official GitHub provenance bundle, and passes the exact published
+bytes or immutable OCI digest through pinned Syft 1.50.0 and Grype 0.116.1.
+The public-input job checks CycloneDX 1.6 component and artifact-subject
+binding, applies `deny.toml` to the complete license inventory, rejects any
+unapproved high or critical vulnerability, turns only completed producer
+reports into receipts, and binds them to the draft artifact subject. A unit is
+uploaded as `certified-envelopes` only after `artifact certify` has found every
+receipt required by its `units.toml` row. Missing tools, empty inventories,
+unknown licenses, stale or unidentified advisory data, failed checks, or a
+missing provenance/signature bundle stop publication; none becomes a deferral
+or a synthetic passing receipt.
 
-Dependency audits, licence inventory, SBOM generation, and vulnerability
-scanning are outside the release critical path during startup. Their revisit
-trigger and non-blocking operating policy live in
-[`references/backlog.md`](../references/backlog.md).
+`cargo audit` and `bun audit` remain additional exact-lockfile gates. They do
+not mint artifact vulnerability receipts: that receipt belongs only to Grype's
+scan of the packaged subject and its identified advisory database. Likewise,
+the `deny` receipt records cargo-deny's license, ban, and source checks; it does
+not relabel the two lockfile audits as work cargo-deny performed.

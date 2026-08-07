@@ -5,7 +5,7 @@
 //! what happens on `SIGTERM` — is one readable thing rather than scattered across a `main`.
 
 use crate::admission::{ActivationResources, Admission, AdmissionBounds};
-use crate::cache::{CachePolicy, ConfiguredFoldCache};
+use crate::cache::CachePolicy;
 use crate::control::HealthState;
 use crate::drain::Stage;
 use crate::runtime::{ComputeLane, RuntimeShape};
@@ -116,8 +116,6 @@ pub struct Composition {
     pub envelope: Envelope,
     /// The warm cache's lifecycle.
     pub cache: CachePolicy,
-    /// The exact-revision process-local fold cache.
-    pub fold_cache: Arc<ConfiguredFoldCache>,
     /// The scale-out bounds.
     pub scale: ScaleBounds,
     /// The activation policy whose demand was proven against this envelope.
@@ -181,7 +179,6 @@ impl Composition {
             (PermitKind::WarmCacheBytes, envelope.warm_cache_bytes),
         ])));
         let drain = Arc::new(DrainGate::new());
-        let fold_cache = Arc::new(ConfiguredFoldCache::new(cache));
         Ok(Self {
             admission: Arc::new(Admission::new(
                 bounds,
@@ -197,7 +194,6 @@ impl Composition {
             shape,
             envelope,
             cache,
-            fold_cache,
             scale,
             policy,
         })

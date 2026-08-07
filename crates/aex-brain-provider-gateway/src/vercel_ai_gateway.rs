@@ -135,6 +135,7 @@ fn classify(status: u16, code: Option<&str>) -> ProviderFailureKind {
             402 => ProviderFailureKind::Billing,
             404 => ProviderFailureKind::ModelNotFound,
             429 => ProviderFailureKind::RateLimited,
+            502 => ProviderFailureKind::ServerError,
             503 => ProviderFailureKind::Overloaded,
             504 => ProviderFailureKind::Timeout,
             _ => ProviderFailureKind::ServerError,

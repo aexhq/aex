@@ -12,7 +12,6 @@ describe("public main-push publication", () => {
     expect(workflow.jobs).toHaveProperty("gates");
     expect(workflow.jobs).toHaveProperty("terraform");
     expect(workflow.jobs.build.needs).toEqual([
-      "tools",
       "route",
       "gates",
       "verify",
@@ -20,10 +19,7 @@ describe("public main-push publication", () => {
       "scenarios",
       "terraform"
     ]);
-    expect(workflow.jobs.build.if).toContain("needs.tools.result == 'success'");
     expect(workflow.jobs.build.if).toContain("needs.gates.result == 'success'");
-    expect(workflow.jobs.manifest.needs).toBe("build");
-    expect(workflow.jobs.manifest.if).toBe("always() && needs.build.result == 'success'");
     expect(source).not.toContain("needs.route.outputs.has_artifact == 'true'");
     expect(workflow.jobs.build.with.publish).toBeTrue();
     expect(workflow.jobs.build.permissions).toEqual({
@@ -33,9 +29,7 @@ describe("public main-push publication", () => {
       "artifact-metadata": "write",
       packages: "write"
     });
-    expect(workflow.jobs.route.with.mode).toBe("affected");
-    expect(workflow.jobs.route.with.artifact_mode).toBe("full");
-    expect(workflow.jobs.build.with.matrix).toBe("${{ needs.route.outputs.artifact_matrix }}");
+    expect(workflow.jobs.route.with.mode).toBe("full");
   });
 
   test("main publication uses the same root gates as pull requests", () => {
@@ -56,7 +50,7 @@ describe("public main-push publication", () => {
     const buildJob = workflow.jobs.build;
     const certification = job.steps.find(
       (step: { readonly name?: string }) =>
-        step.name === "Certify exact build and publication identities"
+        step.name === "Produce artifact-bound supply-chain evidence and certify every unit"
     );
     const certifiedUpload = job.steps.find(
       (step: { readonly name?: string }) => step.name === "Upload the exact certified artifact inventory"
@@ -135,18 +129,9 @@ describe("public main-push publication", () => {
     expect(source).toContain("--draft --prerelease");
     expect(source).not.toContain("--clobber");
     expect(source.match(/gh release create/g)).toHaveLength(1);
-    expect(source).toContain('if [ "$total" -ne 36 ]');
+    expect(source).toContain('if [ "$total" -ne 39 ]');
     expect(source).toContain('if [ "$oci_count" -ne 5 ]');
     expect(source).toContain("push-by-digest=true");
-    const rdsBundle = buildJob.steps.find(
-      (step: { readonly name?: string }) =>
-        step.name === "Bind the pinned AWS RDS CA bundle for central schema admin"
-    );
-    expect(rdsBundle?.if).toContain("matrix.name == 'central-schema-admin'");
-    expect(rdsBundle?.run).toContain("https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem");
-    expect(rdsBundle?.run).toContain("e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3");
-    expect(rdsBundle?.run).toContain("/usr/local/share/aex/aws-rds-global-bundle.pem");
-    expect(rdsBundle?.run).toContain("dev.aex.rds-ca-bundle-sha256");
     expect(source).toContain("subject-digest: ${{ steps.publish_oci.outputs.digest }}");
     expect(source).not.toContain("gh release edit \"$tag\"");
     expect(source).not.toContain("aws-actions/configure-aws-credentials");
@@ -164,13 +149,8 @@ describe("public main-push publication", () => {
     expect(source).toContain("Download every same-run validation receipt");
     expect(source).toContain("find validation-receipts -type f -name '*.json' -print0");
     expect(source).not.toContain("merge-multiple: true");
-    expect(source).not.toContain("cargo deny");
-    expect(source).not.toContain("cargo audit");
-    expect(source).not.toContain("bun audit");
-    expect(source).not.toContain("syft scan");
-    expect(source).not.toContain("grype");
-    expect(source).not.toContain("--pattern 'sbom-*'");
-    expect(certification?.run).toContain("--defer-supply-chain");
+    expect(certification?.run).toContain("syft scan");
+    expect(certification?.run).toContain("grype");
     expect(certification?.run).toContain("evidence new-check");
     expect(certification?.run).toContain("evidence bind-artifact");
     expect(certification?.run).toContain("artifact certify");
@@ -181,67 +161,6 @@ describe("public main-push publication", () => {
     expect(blobReadback?.run).toContain("cmp --silent");
     expect(blobReadback?.run).toContain("gh attestation verify");
     expect(blobReadback?.run).toContain('"--deny-${denied_runner_class}-runners"');
-  });
-
-  test("catalog acquisition consumes one atomic last-good binding", () => {
-    const source = read(".github/workflows/_build-artifacts.yml");
-    const workflow = Bun.YAML.parse(source) as { readonly jobs: Record<string, any> };
-    const build = workflow.jobs.build;
-    const acquire = build.steps.find(
-      (step: { readonly name?: string }) =>
-        step.name === "Acquire the last-good signed model-catalog binding"
-    );
-    const recipe = build.steps.find(
-      (step: { readonly name?: string }) => step.name === "Print the recipe"
-    );
-
-    expect(acquire?.if).toContain("matrix.name == 'brain-mux'");
-    expect(acquire?.env).toEqual({
-      AEX_MODEL_CATALOG_BINDING_JSON: "${{ vars.AEX_MODEL_CATALOG_BINDING_JSON }}"
-    });
-    expect(acquire?.run).toContain("aex.model-catalog-build-binding.v1");
-    expect(acquire?.run).toContain('[[ "$binding" == "$canonical_binding" ]]');
-    expect(acquire?.run).toContain(
-      'expected_prefix="https://github.com/${GITHUB_REPOSITORY}/releases/download/"'
-    );
-    expect(acquire?.run).toContain(
-      "--proto '=https' --proto-redir '=https' --tlsv1.2"
-    );
-    expect(acquire?.run).toContain("--max-time 60 --max-filesize 67108864");
-    expect(acquire?.run).toContain("collection_file=\".tmp/model-catalog/collection.json\"");
-    expect(acquire?.run).toContain("sha256sum \"$collection_file\"");
-    expect(acquire?.run).toContain("sha256sum \"$roots_file\"");
-    expect(acquire?.run).toContain("AEX_MODEL_CATALOG_TRUST_ROOTS_JSON=$roots_json");
-    expect(acquire?.run).toContain("AEX_MODEL_CATALOG_TRUST_ROOTS_SHA256=$roots_digest");
-    expect(acquire?.run).toContain("AEX_MODEL_CATALOG_COLLECTION_SHA256=$digest");
-    expect(acquire?.run).toContain("AEX_MODEL_CATALOG_COLLECTION_FILE=$collection_file");
-    expect(acquire?.run).toContain("invalid or open shape");
-    expect(acquire?.run).toContain("must not carry a query, fragment, or parent path");
-    expect(recipe?.env).not.toHaveProperty("AEX_MODEL_CATALOG_COLLECTION_FILE");
-    expect(source).not.toContain("vars.AEX_MODEL_CATALOG_COLLECTION_FILE");
-    expect(source).not.toContain("vars.AEX_MODEL_CATALOG_COLLECTION_URI");
-    expect(source).not.toContain("vars.AEX_MODEL_CATALOG_COLLECTION_SHA256");
-    expect(source).not.toContain("vars.AEX_MODEL_CATALOG_TRUST_ROOTS_JSON");
-    expect(source).not.toContain("vars.AEX_MODEL_CATALOG_TRUST_ROOTS_SHA256");
-    expect(source).not.toContain("aws-actions/configure-aws-credentials");
-  });
-
-  test("catalog authority documentation keeps external prerequisites explicit", () => {
-    const doc = read("references/model-catalog-authority.md");
-    for (const name of [
-      "AEX_MODEL_CATALOG_BINDING_JSON",
-      "AEX_MODEL_CATALOG_AWS_ROLE_ARN",
-      "AEX_MODEL_CATALOG_KMS_KEY_ARN",
-      "AEX_MODEL_CATALOG_PUBLISH_CONFIRMATION",
-      "aex-model-catalog-publisher"
-    ]) {
-      expect(doc).toContain(name);
-    }
-    expect(doc).toMatch(/current\r?\nlast-good signed collection/);
-    expect(doc).toContain("replace `AEX_MODEL_CATALOG_BINDING_JSON` in one operation");
-    expect(doc).toContain("Monitoring is not publication authority");
-    expect(doc).toMatch(/provider observation cannot remove a signed entry/);
-    expect(doc).toContain("No application encryption key");
   });
 
   test("composition handoff derives inputs and publishes only after certified envelopes", () => {

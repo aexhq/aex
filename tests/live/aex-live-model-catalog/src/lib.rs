@@ -7,16 +7,14 @@
 //! least privileged test identity, and is selected only by the live lane. A test here must
 //! fail on a missing prerequisite; it must never self-skip.
 //!
-//! # Why the live `[[test]]` targets are not declared yet
+//! # Why the `[[test]]` targets are not declared yet
 //!
 //! Every probe in [`plan`] needs a real customer-owned key for its provider,
 //! and `00-orchestrator-conventions.md` OD-07 puts nothing credentialed in this
 //! run. The manifest therefore keeps `not_applicable.targets` with that exact
-//! structural reason. This package carries the provider-independent harness
-//! and a protected publisher executable, but no command can claim a probe ran.
-//! The async configured executor can verify typed P-01--P-23 evidence, while
-//! provider-specific programs still require exact owner-supplied catalog,
-//! request, key-custody and fault-harness inputs.
+//! structural reason. What lands here now is the **harness**: the probe
+//! registry, the prerequisite resolution, the receipt builder and the staging
+//! diff — compiled, unit-tested, and ready for the change that adds the target.
 //!
 //! The prerequisite path is the part that can be proved without a key, and it
 //! is: [`ProviderKeys::require`] goes through
@@ -36,15 +34,6 @@ use aex_model_catalog::receipt::{
 use aex_wire::provider::ProviderId;
 use aex_wire::types::Timestamp;
 use aex_wire::{ContentHash, Uuid7};
-
-pub mod catalog_source;
-pub mod deepseek_qualification;
-pub mod evidence;
-pub mod executor;
-pub mod genesis;
-pub mod publisher;
-pub mod qualification_output;
-pub mod tokenizer_oracle;
 
 /// The canonical environment variable carrying a provider's live key.
 ///
@@ -97,21 +86,7 @@ impl ProviderKeys {
     /// skip.
     #[must_use]
     pub fn require(provider: ProviderId) -> String {
-        Self::require_named(provider).1
-    }
-
-    /// Reads one provider's key and returns the accepted variable that supplied
-    /// it.
-    ///
-    /// The name is safe to retain in qualification metadata; the plaintext is
-    /// not. The authoritative name still wins over a documented legacy alias.
-    ///
-    /// # Panics
-    ///
-    /// Panics under the same conditions as [`Self::require`].
-    #[must_use]
-    pub fn require_named(provider: ProviderId) -> (&'static str, String) {
-        aex_test_harness::env::require_first_named(key_variables(provider))
+        aex_test_harness::env::require_first(key_variables(provider))
     }
 }
 

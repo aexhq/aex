@@ -4,15 +4,16 @@
 //! Following `aex_wire::testing`, this is an ordinary always-on module rather
 //! than a feature-gated one: a test-only feature is exactly the sort of build
 //! flag `00-orchestrator-conventions.md` forbids, and everything here builds a
-//! *document*, which is data, not a bypass of any check. [`entry`] always
-//! produces `Staged`; callers must promote it explicitly when testing signed
-//! `Active` metadata.
+//! *document*, which is data, not a bypass of any check. Nothing in this module
+//! can make an unproved entry `Active`: [`entry`] always produces `Staged` with
+//! an [`crate::receipt::ConformanceReceipt::unearned`] receipt, and the caller
+//! must supply real passing probe results to move it.
 
 use aex_wire::provider::ProviderId;
-use aex_wire::to_jcs_bytes;
 use aex_wire::types::Timestamp;
+use aex_wire::{ContentHash, to_jcs_bytes};
 
-use crate::canonical::UsageFieldSet;
+use crate::canonical::{NormalizedUsage, UsageFieldSet};
 use crate::document::{
     AdapterSourceDigest, CacheMode, CachePolicy, CacheReadSemantics, CapabilitySet,
     CatalogDocument, CatalogSequence, Dialect, DialectRevision, EndpointPin, EntryState,
@@ -24,7 +25,10 @@ use crate::document::{
 use crate::failure::ProviderFailureKind;
 use crate::primitives::{Blake3Digest, BoundedString, ModelSlug};
 use crate::qualified::QualifiedModel;
-use crate::receipt::ProbeSuiteRevision;
+use crate::receipt::{
+    ConformanceReceipt, ObservedFact, PlaneId, ProbeId, ProbeOutcome, ProbeResult,
+    ProbeSuiteRevision, Region,
+};
 use crate::wire_pending::CatalogRevision;
 
 /// The probe-suite revision every fixture is stamped with.
@@ -38,9 +42,10 @@ pub const SUITE: ProbeSuiteRevision = ProbeSuiteRevision(1);
 /// Without this, no adapter test could reach `build_request` at all.
 ///
 /// This is a **fixture, not a bypass**. It produces the handle and nothing
-/// more. Every gate that decides admissibility — `EntryState` and emergency
-/// disable — lives in [`crate::Catalog::admit`], which this function neither
-/// touches nor can reach.
+/// more. Every gate that decides admissibility — `EntryState`, the conformance
+/// receipt, emergency disable, revision expiry — lives in
+/// [`crate::Catalog::admit`], which this function neither touches nor can
+/// reach.
 #[must_use]
 pub fn qualified(entry: ModelEntry) -> QualifiedModel {
     let revision = CatalogRevision(Blake3Digest::of(
@@ -85,7 +90,7 @@ pub fn at(millis: i64) -> Timestamp {
         .unwrap_or_else(|error| panic!("fixture timestamp is out of range: {error}"))
 }
 
-/// An adapter digest for external qualification fixtures.
+/// The adapter digest a fixture document requires.
 #[must_use]
 pub fn adapter(seed: &str) -> AdapterSourceDigest {
     AdapterSourceDigest(Blake3Digest::of(seed.as_bytes()))
@@ -110,8 +115,8 @@ pub const fn dialect_for(provider: ProviderId) -> (Dialect, EndpointPin) {
 
 /// A minimal, self-consistent `Staged` entry.
 ///
-/// A staged entry is described but inadmissible until a signed publisher marks
-/// it `Active`.
+/// Every launch entry ships in exactly this shape (OD-24): described, unproved,
+/// and therefore inadmissible.
 ///
 /// # Panics
 ///
@@ -121,6 +126,12 @@ pub const fn dialect_for(provider: ProviderId) -> (Dialect, EndpointPin) {
 pub fn entry(provider: ProviderId, model: &str, capabilities: CapabilitySet) -> ModelEntry {
     let (dialect, endpoint) = dialect_for(provider);
     let model = ModelSlug::new(model).unwrap_or_else(|error| panic!("model slug: {error}"));
+    let receipt = ConformanceReceipt::unearned(
+        adapter("fixture-adapter"),
+        ContentHash::of(model.as_str().as_bytes()),
+        SUITE,
+        "no live conformance run has been performed for this pair",
+    );
     ModelEntry {
         provider,
         model,
@@ -161,6 +172,7 @@ pub fn entry(provider: ProviderId, model: &str, capabilities: CapabilitySet) -> 
         durable_operation: crate::document::DurableOperationSupport::None,
         concurrency_hint: 8,
         pricing_context: None,
+        receipt,
     }
 }
 
@@ -221,9 +233,62 @@ pub fn error_class_map() -> ErrorClassMap {
     }
 }
 
-/// Marks an entry `Active` for signed catalog fixtures.
-pub fn promote(entry: &mut ModelEntry) {
+/// Marks every probe on an entry as passing, so the entry can be `Active`.
+///
+/// This exists for the load-invariant tests and for the publishing tool once a
+/// live run has produced the real results. It is the only path to `Active`, and
+/// it is explicit: nothing promotes an entry implicitly.
+pub fn promote(entry: &mut ModelEntry, adapter: AdapterSourceDigest, now: Timestamp) {
     entry.state = EntryState::Active;
+    entry.receipt.adapter_source = adapter;
+    entry.receipt.probe_suite_revision = SUITE;
+    entry.receipt.ran_at = now;
+    entry.receipt.expires_at = at(now.unix_millis() + crate::receipt::RECEIPT_FRESHNESS_MS);
+    entry.receipt.plane = PlaneId(bounded("test"));
+    entry.receipt.region = Region(bounded("eu-west-1"));
+    entry.receipt.tokens_spent = NormalizedUsage::default();
+    entry.receipt.results = ProbeId::ALL
+        .into_iter()
+        .map(|probe| ProbeResult {
+            probe,
+            outcome: ProbeOutcome::Pass,
+            observed: Vec::new(),
+            duration_ms: 1,
+        })
+        .collect();
+    bind_receipt(entry);
+}
+
+/// Rebinds a fixture receipt after a test deliberately edits entry policy.
+///
+/// Production publishing code must bind the digest produced by the live
+/// conformance run; this helper exists only for explicit fixture construction.
+///
+/// # Panics
+///
+/// Panics if the closed fixture entry cannot be rendered as canonical JSON.
+pub fn bind_receipt(entry: &mut ModelEntry) {
+    entry.receipt.catalog_entry_digest = crate::catalog::catalog_entry_digest(entry)
+        .expect("a fixture model entry is canonicalizable");
+}
+
+/// Records an observed fact on a probe result.
+///
+/// # Panics
+///
+/// Panics when the receipt carries no result for that probe, which a loaded
+/// document makes impossible.
+pub fn observe(entry: &mut ModelEntry, probe: ProbeId, key: &str, value: &str) {
+    let result = entry
+        .receipt
+        .results
+        .iter_mut()
+        .find(|result| result.probe == probe)
+        .unwrap_or_else(|| panic!("receipt carries no result for {probe:?}"));
+    result.observed.push(ObservedFact {
+        key: bounded(key),
+        value: bounded(value),
+    });
 }
 
 /// A document over the supplied entries, with the entry and disable lists
@@ -234,6 +299,7 @@ pub fn document(
     sequence: u64,
     mut entries: Vec<ModelEntry>,
     now: Timestamp,
+    adapter: AdapterSourceDigest,
 ) -> CatalogDocument {
     entries.sort_by(|left, right| {
         (left.provider, left.model.as_str()).cmp(&(right.provider, right.model.as_str()))
@@ -245,6 +311,10 @@ pub fn document(
         predecessor: None,
         issued_at: now,
         not_before: now,
+        expires_at: at(now.unix_millis() + 30 * 24 * 60 * 60 * 1000),
+        retired_at: at(now.unix_millis() + 90 * 24 * 60 * 60 * 1000),
+        probe_suite_revision: SUITE,
+        required_adapter_source: adapter,
         entries,
         emergency_disable: Vec::new(),
     }

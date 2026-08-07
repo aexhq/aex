@@ -54,7 +54,6 @@ variables {
     image              = "000000000000.dkr.ecr.eu-west-1.amazonaws.com/aex/regional-stream@sha256:0000000000000000000000000000000000000000000000000000000000000000"
     cpu                = 1024
     memory             = 2048
-    desired_count      = 2
     stop_timeout       = 30
     container_port     = 8080
     log_group_name     = "/aex/dev/regional-stream"
@@ -64,10 +63,17 @@ variables {
       AEX_PLANE = "dev"
     }
     autoscaling_bounds = {
-      min_capacity = 2
-      max_capacity = 2
+      min_capacity = 1
+      max_capacity = 6
     }
-    autoscaling_metrics = []
+    autoscaling_metrics = [
+      {
+        name         = "StreamBacklogSeconds"
+        namespace    = "AEX/RegionalStream"
+        statistic    = "Average"
+        target_value = 5
+      },
+    ]
   }
 
   alb = {
@@ -160,19 +166,5 @@ run "the_stream_service_runs_a_digest_pinned_image" {
   assert {
     condition     = can(regex("@sha256:[0-9a-f]{64}$", var.stream_service.image))
     error_message = "The stream service image must be digest-pinned."
-  }
-}
-
-run "the_stream_service_uses_reviewed_fixed_capacity_without_an_invented_metric" {
-  command = plan
-
-  assert {
-    condition = (
-      var.stream_service.desired_count == 2
-      && var.stream_service.autoscaling_bounds.min_capacity == var.stream_service.desired_count
-      && var.stream_service.autoscaling_bounds.max_capacity == var.stream_service.desired_count
-      && length(var.stream_service.autoscaling_metrics) == 0
-    )
-    error_message = "The regional stream example must use two fixed tasks without inventing a custom autoscaling metric."
   }
 }

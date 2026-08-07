@@ -44,12 +44,7 @@ The five namespaces are `central-schema-admin`, `regional-stream`,
 ## Bootstrap
 
 1. Confirm the source is the protected `aexhq/aex` `main` ref and the candidate
-   passed both independent OCI *packaging* builds — the two `docker buildx
-   build --no-cache` runs behind `independent-oci-packagings-match`. They prove
-   the same ELF packages to the same digest twice. They do **not** prove the
-   compiler is reproducible: the ELF is compiled once per commit, and
-   compile-level reproducibility has no per-commit witness. Do not attest to it
-   here.
+   passed both independent OCI reproducibility builds.
 2. Create the repository Actions secret `AEX_GHCR_VISIBILITY_BOOTSTRAP` with a
    non-empty, randomly generated value. Its presence is the protected second
    authority; the workflow never prints or persists it.

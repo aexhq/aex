@@ -29,7 +29,10 @@ pub const DENSE_INDEX_PROJECTION: &[&str] = &[
     "observationId",
     "revision",
     "signal",
+    "signalRank",
+    "scopeKey",
     "workspaceId",
+    "organizationId",
     "sessionId",
     "runId",
     "agentId",
@@ -37,10 +40,14 @@ pub const DENSE_INDEX_PROJECTION: &[&str] = &[
     "time",
     "acceptedAt",
     "acceptedSeq",
+    "batchId",
+    "logicalBytes",
     "indexed",
+    "attrDigest",
     "traceId",
     "spanId",
     "metricName",
+    "seriesHash",
     "bodyInline",
     "bodyS3Key",
     "bodySha256",
@@ -299,22 +306,11 @@ mod tests {
 
     #[test]
     fn the_dense_projection_is_exactly_the_declared_slim_set() {
-        assert_eq!(DENSE_INDEX_PROJECTION.len(), 18);
-        for forbidden in [
-            "attrS",
-            "attrN",
-            "attrB",
-            "signalRank",
-            "scopeKey",
-            "organizationId",
-            "batchId",
-            "logicalBytes",
-            "attrDigest",
-            "seriesHash",
-        ] {
+        assert_eq!(DENSE_INDEX_PROJECTION.len(), 25);
+        for forbidden in ["attrS", "attrN", "attrB"] {
             assert!(
                 !DENSE_INDEX_PROJECTION.contains(&forbidden),
-                "`{forbidden}` must stay in the authority row"
+                "`{forbidden}` must not be projected; a page BatchGetItems the base table"
             );
         }
         for index in Index::DENSE {
