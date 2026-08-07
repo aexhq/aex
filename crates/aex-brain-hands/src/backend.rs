@@ -663,12 +663,12 @@ impl ProductionHandsBackend {
         {
             return Ok(None);
         }
-        let endpoint = description.endpoint.ok_or_else(|| {
-            dispatched(
-                ProviderFailureKind::ProtocolViolation,
-                "the running MicroVM has no authenticated endpoint",
-            )
-        })?;
+        // A RunMicrovm response that reached Running without an endpoint is
+        // not an error here: the loop's Running arm connects through the
+        // ordinary probe, which requires one of a GET response.
+        let Some(endpoint) = description.endpoint else {
+            return Ok(None);
+        };
         let identity = LeaseIdentity {
             generation,
             fence: view.head.fence,
