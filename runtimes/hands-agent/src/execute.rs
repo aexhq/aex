@@ -20,8 +20,8 @@ use aex_hands_protocol::operation::{
 use aex_hands_protocol::rpc::{HandsOperationId, OutputStream};
 use aex_hands_tools::command::{build_env, build_spawn};
 use aex_hands_tools::filesystem;
-use aex_hands_tools::observation::{self, SearchCandidate};
-use aex_hands_tools::port::{EntryKind, FsError, GuestFs as _, Pgid};
+use aex_hands_tools::observation;
+use aex_hands_tools::port::Pgid;
 use aex_wire::ids::ContentHash;
 use aex_wire::types::Timestamp;
 
@@ -121,43 +121,6 @@ impl Executor {
     /// The guest root as a path, for the environment builder.
     fn root_path(&self) -> Result<GuestPath, String> {
         GuestPath::parse(&self.root, &self.root.0).map_err(|error| error.to_string())
-    }
-
-    /// Every file under `root`, bounded, for a search.
-    ///
-    /// The walk is bounded rather than exhaustive: a customer with root can put
-    /// anything under the workspace, and an unbounded walk is a denial of service
-    /// against the guest's own supervisor.
-    fn candidates(&self, root: &GuestPath) -> Result<Vec<SearchCandidate>, FsError> {
-        let mut out = Vec::new();
-        let mut frontier = vec![root.clone()];
-        while let Some(current) = frontier.pop() {
-            if out.len() >= observation::SEARCH_MAX_FILES {
-                break;
-            }
-            for entry in self.fs.read_dir(&current)? {
-                let text = format!("{}/{}", current.as_str(), entry.name);
-                let Ok(child) = GuestPath::parse(&self.root, &text) else {
-                    continue;
-                };
-                match entry.meta.kind {
-                    // `.git` is listed and never descended, and a symlink is never
-                    // followed: following one would let a link inside the workspace
-                    // pull in the rest of the filesystem.
-                    EntryKind::Directory if entry.name != ".git" => frontier.push(child),
-                    EntryKind::File => out.push(SearchCandidate {
-                        relative_path: text
-                            .strip_prefix(root.as_str())
-                            .unwrap_or(&text)
-                            .trim_start_matches('/')
-                            .to_owned(),
-                        bytes: self.fs.read(&child)?,
-                    }),
-                    EntryKind::Directory | EntryKind::Symlink | EntryKind::Other => {}
-                }
-            }
-        }
-        Ok(out)
     }
 
     /// The process host, for the cancel ladder.
@@ -451,28 +414,25 @@ impl Executor {
                 pattern,
                 limit,
             } => {
-                let candidates = match self.candidates(root) {
-                    Ok(candidates) => candidates,
-                    Err(error) => {
-                        return Ok(Dispatch::Terminal(Box::new(failed(
-                            meta,
-                            now,
-                            error.code(),
-                            &error.to_string(),
-                        ))));
+                // The walk streams one file at a time under the search bounds,
+                // so a pass over a large tree cannot exhaust the supervisor's
+                // own memory. Every truncation arrives as an explicit notice.
+                match observation::search_tree(&self.fs, &self.root, root, pattern, *limit) {
+                    Ok(outcome) => {
+                        let mut text = outcome.matches.join("\n");
+                        if let Some(notice) = outcome.notice {
+                            text.push('\n');
+                            text.push_str(&notice);
+                        }
+                        Self::text_terminal(journal, meta, now, &text)
                     }
-                };
-                // The deadline is a pure input to the executor, so the search
-                // matrix stays deterministic. The guest supplies no elapsed
-                // milliseconds because the walk above is already bounded by the
-                // file cap.
-                let outcome = observation::search(&candidates, pattern, *limit, u64::MAX, &|_| 0);
-                let mut text = outcome.matches.join("\n");
-                if let Some(notice) = outcome.notice {
-                    text.push('\n');
-                    text.push_str(&notice);
+                    Err(error) => Ok(Dispatch::Terminal(Box::new(failed(
+                        meta,
+                        now,
+                        error.code(),
+                        &error.to_string(),
+                    )))),
                 }
-                Self::text_terminal(journal, meta, now, &text)
             }
             OperationRequest::WriteFile {
                 path,

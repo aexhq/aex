@@ -43,5 +43,5 @@ pub use filesystem::{
     EditError, EditOutcome, LineRange, ListOutcome, MatchMode, ReadOutcome, edit_file, list_dir,
     read_file, stat_path, write_file,
 };
-pub use observation::{SearchCandidate, SearchOutcome, SkipReason, is_contained, search};
+pub use observation::{SearchOutcome, SkipReason, is_contained, search_tree};
 pub use port::{DirEntry, EntryKind, FsError, GuestFs, GuestProc, Meta, Pgid, ProcError, digest};
