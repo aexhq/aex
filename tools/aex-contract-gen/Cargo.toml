@@ -26,7 +26,6 @@ scenarios = []
 canonical_agreement = "unit"
 determinism = "unit"
 surface = "unit"
-typescript = "unit"
 
 [package.metadata.aex.not_applicable]
 live_suite = "workspace tool; it produces bytes locally and reaches no deployed plane"

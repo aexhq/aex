@@ -14,7 +14,6 @@
 //! on the decision, and a deployment-tunable threshold would make the boundary a
 //! property of an environment variable rather than of the model.
 
-use aex_runtime_control::catalog::{HandsImageCatalog, HandsImageCatalogEntry};
 use aex_runtime_control::store::PageBudget;
 use aex_wire::types::Region;
 
@@ -22,8 +21,6 @@ use aex_wire::types::Region;
 pub const PLANE_VAR: &str = "AEX_PLANE";
 /// Environment variable naming the bound `AWS` region.
 pub const REGION_VAR: &str = "AEX_REGION";
-/// Environment variable naming the one AWS account this process may control.
-pub const ACCOUNT_ID_VAR: &str = "AEX_ACCOUNT_ID";
 /// Environment variable naming the runtime-activity `DynamoDB` table.
 pub const RUNTIME_ACTIVITY_TABLE_VAR: &str = "AEX_RUNTIME_ACTIVITY_TABLE";
 /// Environment variable naming the session-authority table the recount reads.
@@ -36,8 +33,8 @@ pub const COMPUTE_QUEUE_VAR: &str = "AEX_USAGE_COMPUTE_QUEUE_URL";
 pub const STORAGE_QUEUE_VAR: &str = "AEX_USAGE_STORAGE_QUEUE_URL";
 /// Environment variable naming the `MicroVM` control-plane endpoint.
 pub const PROVIDER_ENDPOINT_VAR: &str = "AEX_MICROVM_CONTROL_ENDPOINT";
-/// Environment variable containing the eight immutable Hands image identities.
-pub const IMAGE_CATALOG_VAR: &str = "AEX_HANDS_IMAGE_CATALOG";
+/// Environment variable naming the published Hands image the orphan sweep scopes to.
+pub const IMAGE_IDENTIFIER_VAR: &str = "AEX_HANDS_IMAGE_IDENTIFIER";
 /// Environment variable naming how many shards the due index is spread over.
 pub const DUE_SHARDS_VAR: &str = "AEX_RUNTIME_DUE_SHARDS";
 /// Environment variable naming how many items one due scan may return.
@@ -48,16 +45,15 @@ pub const DUE_PAGE_READS_VAR: &str = "AEX_RUNTIME_DUE_PAGE_READS";
 pub const PRICING_VERSION_VAR: &str = "AEX_PRICING_VERSION";
 
 /// Every variable this worker requires, in the order it validates them.
-pub const REQUIRED_VARS: [&str; 13] = [
+pub const REQUIRED_VARS: [&str; 12] = [
     PLANE_VAR,
     REGION_VAR,
-    ACCOUNT_ID_VAR,
     RUNTIME_ACTIVITY_TABLE_VAR,
     SESSION_AUTHORITY_TABLE_VAR,
     LIFECYCLE_QUEUE_VAR,
     COMPUTE_QUEUE_VAR,
     STORAGE_QUEUE_VAR,
-    IMAGE_CATALOG_VAR,
+    IMAGE_IDENTIFIER_VAR,
     DUE_SHARDS_VAR,
     DUE_PAGE_ITEMS_VAR,
     DUE_PAGE_READS_VAR,
@@ -117,8 +113,6 @@ pub struct Config {
     pub plane: String,
     /// The region every resource must live in and every fact is attributed to.
     pub region: Region,
-    /// The account every image ARN must name.
-    pub account_id: String,
     /// The runtime-activity `DynamoDB` table.
     pub runtime_activity_table: String,
     /// The session-authority table the authoritative recount reads.
@@ -133,8 +127,8 @@ pub struct Config {
     /// Optional endpoint override for an explicit test or compatibility endpoint.
     /// Production normally uses the official SDK region endpoint.
     pub provider_endpoint: Option<String>,
-    /// The exact published release catalog.
-    pub image_catalog: HandsImageCatalog,
+    /// The published Hands image the orphan sweep scopes to.
+    pub image_identifier: String,
     /// How many shards the due index is spread over.
     pub due_shards: u16,
     /// How much one due scan may read.
@@ -185,14 +179,6 @@ impl Config {
             name: REGION_VAR,
             reason: format!("`{raw_region}` is not one of the five offered regions"),
         })?;
-        let account_id = required(&lookup, ACCOUNT_ID_VAR)?;
-        if account_id.len() != 12 || !account_id.bytes().all(|byte| byte.is_ascii_digit()) {
-            return Err(ConfigError::Invalid {
-                name: ACCOUNT_ID_VAR,
-                reason: "expected exactly twelve decimal digits".to_owned(),
-            });
-        }
-        let image_catalog = catalog(&lookup, &plane, region, &account_id)?;
         let page_items = positive(&lookup, DUE_PAGE_ITEMS_VAR)?;
         if page_items > MAX_DUE_PAGE_ITEMS {
             return Err(ConfigError::Invalid {
@@ -205,7 +191,6 @@ impl Config {
         let config = Self {
             plane,
             region,
-            account_id,
             runtime_activity_table: required(&lookup, RUNTIME_ACTIVITY_TABLE_VAR)?,
             session_authority_table: required(&lookup, SESSION_AUTHORITY_TABLE_VAR)?,
             lifecycle_queue_url: endpoint(&lookup, LIFECYCLE_QUEUE_VAR, region)?,
@@ -214,7 +199,7 @@ impl Config {
             provider_endpoint: lookup(PROVIDER_ENDPOINT_VAR)
                 .map(|_| endpoint(&lookup, PROVIDER_ENDPOINT_VAR, region))
                 .transpose()?,
-            image_catalog,
+            image_identifier: required(&lookup, IMAGE_IDENTIFIER_VAR)?,
             due_shards: positive(&lookup, DUE_SHARDS_VAR)?,
             page: PageBudget {
                 max_items: page_items,
@@ -232,57 +217,6 @@ impl Config {
         }
         Ok(config)
     }
-}
-
-/// Parses the closed release catalog and binds every provider ARN to this process.
-fn catalog<F>(
-    lookup: &F,
-    plane: &str,
-    region: Region,
-    account_id: &str,
-) -> Result<HandsImageCatalog, ConfigError>
-where
-    F: Fn(&str) -> Option<String>,
-{
-    let raw = required(lookup, IMAGE_CATALOG_VAR)?;
-    let entries =
-        serde_json::from_str::<std::collections::BTreeMap<String, HandsImageCatalogEntry>>(&raw)
-            .map_err(|error| ConfigError::Invalid {
-                name: IMAGE_CATALOG_VAR,
-                reason: format!("expected the closed release JSON catalog: {error}"),
-            })?;
-    let catalog =
-        HandsImageCatalog::from_entries(entries).map_err(|error| ConfigError::Invalid {
-            name: IMAGE_CATALOG_VAR,
-            reason: error.to_string(),
-        })?;
-    let prefix = format!(
-        "arn:aws:lambda:{}:{account_id}:microvm-image:aex-{plane}-",
-        region.as_str()
-    );
-    for identifier in catalog.image_identifiers() {
-        let Some(suffix) = identifier.0.strip_prefix(&prefix) else {
-            return Err(ConfigError::Invalid {
-                name: IMAGE_CATALOG_VAR,
-                reason: format!(
-                    "image ARN `{}` is outside plane `{plane}`, account `{account_id}` or region `{}`",
-                    identifier.0,
-                    region.as_str()
-                ),
-            });
-        };
-        if suffix.len() != 52
-            || !suffix
-                .bytes()
-                .all(|byte| byte.is_ascii_lowercase() || (b'2'..=b'7').contains(&byte))
-        {
-            return Err(ConfigError::Invalid {
-                name: IMAGE_CATALOG_VAR,
-                reason: format!("image ARN `{}` is not content-addressed", identifier.0),
-            });
-        }
-    }
-    Ok(catalog)
 }
 
 /// Why a forbidden variable is forbidden.
@@ -354,9 +288,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        ACCOUNT_ID_VAR, COMPUTE_QUEUE_VAR, Config, ConfigError, DUE_PAGE_ITEMS_VAR, DUE_SHARDS_VAR,
-        FORBIDDEN_VARS, IMAGE_CATALOG_VAR, LIFECYCLE_QUEUE_VAR, PLANE_VAR, PROVIDER_ENDPOINT_VAR,
-        REGION_VAR, REQUIRED_VARS, STORAGE_QUEUE_VAR,
+        COMPUTE_QUEUE_VAR, Config, ConfigError, DUE_PAGE_ITEMS_VAR, DUE_SHARDS_VAR, FORBIDDEN_VARS,
+        LIFECYCLE_QUEUE_VAR, PLANE_VAR, PROVIDER_ENDPOINT_VAR, REGION_VAR, REQUIRED_VARS,
+        STORAGE_QUEUE_VAR,
     };
     use aex_wire::types::Region;
     use std::collections::BTreeMap;
@@ -365,7 +299,6 @@ mod tests {
         BTreeMap::from([
             (PLANE_VAR, "dev".to_owned()),
             (REGION_VAR, "eu-west-1".to_owned()),
-            (ACCOUNT_ID_VAR, "522921482290".to_owned()),
             (
                 super::RUNTIME_ACTIVITY_TABLE_VAR,
                 "aex-dev-runtime-activity".to_owned(),
@@ -390,47 +323,12 @@ mod tests {
                 PROVIDER_ENDPOINT_VAR,
                 "https://lambda.eu-west-1.amazonaws.com".to_owned(),
             ),
-            (
-                IMAGE_CATALOG_VAR,
-                catalog_json("dev", "eu-west-1", "522921482290"),
-            ),
+            (super::IMAGE_IDENTIFIER_VAR, "aex-hands-1gb".to_owned()),
             (DUE_SHARDS_VAR, "8".to_owned()),
             (DUE_PAGE_ITEMS_VAR, "32".to_owned()),
             (super::DUE_PAGE_READS_VAR, "100".to_owned()),
             (super::PRICING_VERSION_VAR, "synthetic-zero-v1".to_owned()),
         ])
-    }
-
-    fn catalog_json(plane: &str, region: &str, account: &str) -> String {
-        // The published set. Browser variants are excluded during prelaunch, so a
-        // fixture carrying them describes no release this worker can be given.
-        let variants = [
-            ("512mb", 512, false),
-            ("1gb", 1_024, false),
-            ("2gb", 2_048, false),
-            ("4gb", 4_096, false),
-            ("8gb", 8_192, false),
-        ];
-        let rows = variants
-            .into_iter()
-            .enumerate()
-            .map(|(index, (variant, memory, browser))| {
-                (
-                    variant,
-                    serde_json::json!({
-                        "imageArn": format!(
-                            "arn:aws:lambda:{region}:{account}:microvm-image:aex-{plane}-{}",
-                            char::from(b'a' + u8::try_from(index).expect("eight rows")).to_string().repeat(52),
-                        ),
-                        "imageVersion": (index + 1).to_string(),
-                        "artifactDigest": format!("sha256:{index:064x}"),
-                        "minimumMemoryMiB": memory,
-                        "browser": browser,
-                    }),
-                )
-            })
-            .collect::<std::collections::BTreeMap<_, _>>();
-        serde_json::to_string(&rows).expect("catalog JSON")
     }
 
     fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, ConfigError> {
@@ -442,8 +340,6 @@ mod tests {
         let config = read(&complete()).expect("a complete environment is accepted");
         assert_eq!(config.plane, "dev");
         assert_eq!(config.region, Region::EuWest1);
-        assert_eq!(config.account_id, "522921482290");
-        assert_eq!(config.image_catalog.image_identifiers().len(), 5);
         assert_eq!(config.runtime_activity_table, "aex-dev-runtime-activity");
         assert_eq!(config.due_shards, 8);
         assert_eq!(config.page.max_items, 32);
@@ -507,38 +403,6 @@ mod tests {
             read(&region),
             Err(ConfigError::Invalid {
                 name: REGION_VAR,
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn the_catalog_is_exact_and_bound_to_plane_account_and_region() {
-        for (name, replacement) in [
-            (PLANE_VAR, "prd"),
-            (REGION_VAR, "us-east-1"),
-            (ACCOUNT_ID_VAR, "000000000000"),
-        ] {
-            let mut vars = complete();
-            vars.insert(name, replacement.to_owned());
-            assert!(matches!(
-                read(&vars),
-                Err(ConfigError::Invalid {
-                    name: IMAGE_CATALOG_VAR,
-                    ..
-                })
-            ));
-        }
-
-        let mut partial = complete();
-        let mut catalog: serde_json::Value =
-            serde_json::from_str(&partial[IMAGE_CATALOG_VAR]).expect("catalog");
-        catalog.as_object_mut().expect("object").remove("8gb");
-        partial.insert(IMAGE_CATALOG_VAR, catalog.to_string());
-        assert!(matches!(
-            read(&partial),
-            Err(ConfigError::Invalid {
-                name: IMAGE_CATALOG_VAR,
                 ..
             })
         ));

@@ -34,11 +34,6 @@ config_env_namespace = "AEX_REGIONAL_SESSION_"
 config_schema_version = 1
 required_receipts = ["unit"]
 alarm_spec = "regional-session-api"
-
-[unit.lambda]
-memory_mb = 1024
-timeout_s = 30
-reserved_concurrency = 8
 "#,
     )
     .unwrap()
@@ -185,7 +180,7 @@ fn blob_identity_rejects_missing_tampered_and_truncated_inputs() {
 
 fn regional_document(definitions_digest: &str) -> Vec<u8> {
     format!(
-        "{{\"schema\":\"aex.regional-tables.v1\",\"generation\":1,\"digest\":\"{definitions_digest}\",\"tables\":[{{\"table\":\"sessions\"}}]}}\n"
+        "{{\"schema\":\"aex.regional-tables.v1\",\"digest\":\"{definitions_digest}\",\"tables\":[{{\"table\":\"sessions\"}}]}}\n"
     )
     .into_bytes()
 }
@@ -204,7 +199,6 @@ fn regional_table_bundle_keeps_transport_and_definition_identities_separate() {
     assert_eq!(identity.digest, canon::digest_bytes(&bytes));
     assert_eq!(identity.size_bytes, bytes.len() as u64);
     assert_eq!(identity.definitions_digest, definitions_digest);
-    assert_eq!(identity.generation, 1);
 
     let acquired = root.path().join("acquired.json");
     fs::write(&acquired, &bytes).unwrap();
@@ -213,7 +207,6 @@ fn regional_table_bundle_keeps_transport_and_definition_identities_separate() {
         &identity.digest,
         identity.size_bytes,
         &identity.definitions_digest,
-        identity.generation,
     )
     .unwrap();
     let err = verify_regional_tables_bundle(
@@ -221,7 +214,6 @@ fn regional_table_bundle_keeps_transport_and_definition_identities_separate() {
         &identity.digest,
         identity.size_bytes,
         &format!("blake3:{}", "cd".repeat(32)),
-        identity.generation,
     )
     .unwrap_err();
     assert!(err.rules().contains(&"regional-tables-identity"));
@@ -282,13 +274,13 @@ fn manifest_rejects_a_release_asset_uri_from_another_run() {
 #[test]
 fn composition_handoff_emits_the_exact_verified_envelope_store() {
     let envelope = handoff_envelope();
-    let registry = handoff_registry();
-    let store =
-        aex_release_tool::manifest::verify_handoff_envelopes(&registry, vec![envelope.clone()])
-            .unwrap();
-    let manifest =
-        aex_release_tool::manifest::new_handoff_manifest(handoff_inputs(), &store, &registry)
-            .expect("a complete certified store must produce a strict manifest");
+    let store = aex_release_tool::manifest::verify_handoff_envelopes(
+        &handoff_registry(),
+        vec![envelope.clone()],
+    )
+    .unwrap();
+    let manifest = aex_release_tool::manifest::new_handoff_manifest(handoff_inputs(), &store)
+        .expect("a complete certified store must produce a strict manifest");
 
     assert_eq!(store.len(), 1);
     assert_eq!(
@@ -303,134 +295,7 @@ fn composition_handoff_emits_the_exact_verified_envelope_store() {
         manifest.units["regional-session-api"].artifact_digest,
         envelope.output.digest
     );
-    let manifest_shape = manifest.units["regional-session-api"].lambda.unwrap();
-    let registry_shape = registry.units[0].lambda.unwrap();
-    assert_eq!(manifest_shape.memory_mb, registry_shape.memory_mb);
-    assert_eq!(manifest_shape.timeout_s, registry_shape.timeout_s);
-    assert_eq!(
-        manifest_shape.reserved_concurrency,
-        registry_shape.reserved_concurrency
-    );
-    let original_release_id = manifest.release_id.clone();
-    let mut changed_shape = manifest;
-    let changed_lambda = aex_release_tool::manifest::ManifestLambdaShape {
-        memory_mb: 2_048,
-        ..changed_shape.units["regional-session-api"].lambda.unwrap()
-    };
-    changed_shape
-        .units
-        .get_mut("regional-session-api")
-        .unwrap()
-        .lambda = Some(changed_lambda);
-    let changed_shape = changed_shape.seal().unwrap();
-    assert_ne!(changed_shape.release_id, original_release_id);
-    changed_shape.validate(true).unwrap();
-}
-
-#[test]
-fn manifest_validation_rejects_a_missing_or_wrong_kind_shape() {
-    let mut missing = valid_manifest();
-    missing["units"]["regional-session-api"]
-        .as_object_mut()
-        .unwrap()
-        .remove("lambda");
-    let missing = serde_json::from_value::<CompositionManifest>(missing)
-        .unwrap()
-        .seal()
-        .unwrap();
-    assert!(
-        missing
-            .validate(false)
-            .unwrap_err()
-            .rules()
-            .contains(&"manifest-unit-shape-missing")
-    );
-
-    let mut conflict = valid_manifest();
-    conflict["units"]["regional-session-api"]["fargate"] = serde_json::json!({
-        "cpu": 256,
-        "memoryMiB": 512,
-        "desiredCount": 1,
-        "stopTimeoutS": 30,
-        "port": 8080
-    });
-    let conflict = serde_json::from_value::<CompositionManifest>(conflict)
-        .unwrap()
-        .seal()
-        .unwrap();
-    assert!(
-        conflict
-            .validate(false)
-            .unwrap_err()
-            .rules()
-            .contains(&"manifest-unit-shape-conflict")
-    );
-}
-
-#[test]
-fn every_resource_shape_field_participates_in_the_release_id() {
-    let sealed = |value: serde_json::Value| {
-        serde_json::from_value::<CompositionManifest>(value)
-            .unwrap()
-            .seal()
-            .unwrap()
-    };
-
-    let lambda = valid_manifest();
-    let lambda_id = sealed(lambda.clone()).release_id;
-    for (field, value) in [
-        ("memoryMiB", serde_json::json!(2048)),
-        ("timeoutS", serde_json::json!(31)),
-        ("reservedConcurrency", serde_json::json!(9)),
-    ] {
-        let mut changed = lambda.clone();
-        changed["units"]["regional-session-api"]["lambda"][field] = value;
-        assert_ne!(sealed(changed).release_id, lambda_id, "Lambda `{field}`");
-    }
-
-    let mut fargate = valid_manifest();
-    let unit = &mut fargate["units"]["regional-session-api"];
-    unit["kind"] = serde_json::json!("rust-oci-service");
-    unit.as_object_mut().unwrap().remove("lambda");
-    unit["fargate"] = serde_json::json!({
-        "cpu": 256,
-        "memoryMiB": 512,
-        "desiredCount": 1,
-        "stopTimeoutS": 30,
-        "port": 8080
-    });
-    let fargate_id = sealed(fargate.clone()).release_id;
-    for (field, value) in [
-        ("cpu", serde_json::json!(512)),
-        ("memoryMiB", serde_json::json!(1024)),
-        ("desiredCount", serde_json::json!(2)),
-        ("stopTimeoutS", serde_json::json!(60)),
-        ("port", serde_json::json!(9090)),
-    ] {
-        let mut changed = fargate.clone();
-        changed["units"]["regional-session-api"]["fargate"][field] = value;
-        assert_ne!(sealed(changed).release_id, fargate_id, "Fargate `{field}`");
-    }
-
-    let mut microvm = valid_manifest();
-    let unit = &mut microvm["units"]["regional-session-api"];
-    unit["kind"] = serde_json::json!("microvm-image");
-    unit.as_object_mut().unwrap().remove("lambda");
-    unit["microvm"] = serde_json::json!({
-        "variant": "2gb",
-        "minimumMemoryMiB": 2048,
-        "browser": false
-    });
-    let microvm_id = sealed(microvm.clone()).release_id;
-    for (field, value) in [
-        ("variant", serde_json::json!("2gb-browser")),
-        ("minimumMemoryMiB", serde_json::json!(4096)),
-        ("browser", serde_json::json!(true)),
-    ] {
-        let mut changed = microvm.clone();
-        changed["units"]["regional-session-api"]["microvm"][field] = value;
-        assert_ne!(sealed(changed).release_id, microvm_id, "MicroVM `{field}`");
-    }
+    manifest.validate(true).unwrap();
 }
 
 #[test]
@@ -471,9 +336,8 @@ fn composition_handoff_rejects_duplicate_and_cross_run_envelopes() {
             .unwrap();
     let mut inputs = handoff_inputs();
     inputs.source.workflow_run_id = "999".to_owned();
-    let error =
-        aex_release_tool::manifest::new_handoff_manifest(inputs, &store, &handoff_registry())
-            .expect_err("composition inputs from another run must not cross-bind");
+    let error = aex_release_tool::manifest::new_handoff_manifest(inputs, &store)
+        .expect_err("composition inputs from another run must not cross-bind");
     assert_eq!(error.exit.code(), 32);
     assert!(error.rules().contains(&"handoff-source-mismatch"));
 }
@@ -564,17 +428,6 @@ fn manifest_cross_binds_unit_blob_and_oci_locations_to_its_source() {
         .unwrap();
     value["units"]["brain-mux"] = entry;
     value["units"]["brain-mux"]["kind"] = serde_json::json!("rust-oci-service");
-    value["units"]["brain-mux"]
-        .as_object_mut()
-        .unwrap()
-        .remove("lambda");
-    value["units"]["brain-mux"]["fargate"] = serde_json::json!({
-        "cpu": 2048,
-        "memoryMiB": 4096,
-        "desiredCount": 1,
-        "stopTimeoutS": 120,
-        "port": 8080
-    });
     let digest = value["units"]["brain-mux"]["artifactDigest"]
         .as_str()
         .unwrap()

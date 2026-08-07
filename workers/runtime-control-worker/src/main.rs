@@ -22,6 +22,7 @@ use std::sync::Arc;
 use aex_hands_control_aws::AwsMicrovmControl;
 use aex_hands_control_aws::provider::MicrovmControlApi;
 use aex_runtime_activity_dynamodb::RuntimeActivityDynamoStore;
+use aex_runtime_control::generation::ImageIdentifier;
 use aex_runtime_control::store::{OpenEffectCounter, RuntimeActivityStore};
 use aex_runtime_control::usage::UsageFactSink;
 use aex_runtime_control_aws::usage_ingress::SqsFactDraftSink;
@@ -37,9 +38,6 @@ use health::{Bindings, Dependency};
 /// Drawn per invocation and clamped by the model. It applies to the *schedule*,
 /// never to the 180000 ms decision (HR-21).
 const SCHEDULE_JITTER_MS: u64 = 0;
-
-/// Maximum concurrent provider reads during the eight-image startup probe.
-const IMAGE_PROBE_CONCURRENCY: usize = 4;
 
 /// Why `runtime-control-worker` stopped.
 #[derive(Debug, thiserror::Error)]
@@ -229,7 +227,16 @@ async fn resolve(config: &Config) -> Result<Adapters, RunError> {
         aws_sdk_lambdamicrovms::Client::from_conf(provider_config.build()),
         config.region.as_str(),
     );
-    probe_image_catalog(&provider, &config.image_catalog).await?;
+    provider
+        .list(
+            Some(&ImageIdentifier(config.image_identifier.clone())),
+            None,
+        )
+        .await
+        .map_err(|error| RunError::Startup {
+            dependency: "microvm-control",
+            reason: error.to_string(),
+        })?;
 
     Ok(Adapters {
         store: Some(Arc::new(RuntimeActivityDynamoStore::new(
@@ -252,55 +259,6 @@ async fn resolve(config: &Config) -> Result<Adapters, RunError> {
             Category::Storage,
         ))),
     })
-}
-
-/// Proves the provider read path accepts every exact release image identifier.
-///
-/// Four concurrent reads keep cold-start latency bounded without sending an
-/// eight-request burst through a newly assumed execution role.
-async fn probe_image_catalog(
-    provider: &AwsMicrovmControl,
-    catalog: &aex_runtime_control::catalog::HandsImageCatalog,
-) -> Result<(), RunError> {
-    let mut pending = tokio::task::JoinSet::new();
-    for identifier in catalog.image_identifiers() {
-        if pending.len() == IMAGE_PROBE_CONCURRENCY {
-            settle_image_probe(pending.join_next().await)?;
-        }
-        let provider = provider.clone();
-        let identifier = identifier.clone();
-        pending.spawn(async move {
-            provider
-                .list(Some(&identifier), None)
-                .await
-                .map(|_| ())
-                .map_err(|error| error.to_string())
-        });
-    }
-    while let Some(result) = pending.join_next().await {
-        settle_image_probe(Some(result))?;
-    }
-    Ok(())
-}
-
-fn settle_image_probe(
-    result: Option<Result<Result<(), String>, tokio::task::JoinError>>,
-) -> Result<(), RunError> {
-    match result {
-        Some(Ok(Ok(()))) => Ok(()),
-        Some(Ok(Err(reason))) => Err(RunError::Startup {
-            dependency: "microvm-control",
-            reason,
-        }),
-        Some(Err(error)) => Err(RunError::Startup {
-            dependency: "microvm-control",
-            reason: format!("catalog probe task failed: {error}"),
-        }),
-        None => Err(RunError::Startup {
-            dependency: "microvm-control",
-            reason: "catalog probe set ended before its bounded wave completed".to_owned(),
-        }),
-    }
 }
 
 /// Runs `runtime-control-worker` until it stops.
@@ -430,72 +388,34 @@ mod tests {
 
     fn config() -> Config {
         let vars = BTreeMap::from([
-            ("AEX_PLANE", "dev".to_owned()),
-            ("AEX_REGION", "eu-west-1".to_owned()),
-            ("AEX_ACCOUNT_ID", "522921482290".to_owned()),
-            (
-                "AEX_RUNTIME_ACTIVITY_TABLE",
-                "aex-dev-runtime-activity".to_owned(),
-            ),
-            (
-                "AEX_SESSION_AUTHORITY_TABLE",
-                "aex-dev-session-authority".to_owned(),
-            ),
+            ("AEX_PLANE", "dev"),
+            ("AEX_REGION", "eu-west-1"),
+            ("AEX_RUNTIME_ACTIVITY_TABLE", "aex-dev-runtime-activity"),
+            ("AEX_SESSION_AUTHORITY_TABLE", "aex-dev-session-authority"),
             (
                 "AEX_RUNTIME_LIFECYCLE_QUEUE_URL",
-                "https://sqs.eu-west-1.amazonaws.com/1/lifecycle".to_owned(),
+                "https://sqs.eu-west-1.amazonaws.com/1/lifecycle",
             ),
             (
                 "AEX_USAGE_COMPUTE_QUEUE_URL",
-                "https://sqs.eu-west-1.amazonaws.com/1/compute".to_owned(),
+                "https://sqs.eu-west-1.amazonaws.com/1/compute",
             ),
             (
                 "AEX_USAGE_STORAGE_QUEUE_URL",
-                "https://sqs.eu-west-1.amazonaws.com/1/storage".to_owned(),
+                "https://sqs.eu-west-1.amazonaws.com/1/storage",
             ),
             (
                 "AEX_MICROVM_CONTROL_ENDPOINT",
-                "https://lambda.eu-west-1.amazonaws.com".to_owned(),
+                "https://lambda.eu-west-1.amazonaws.com",
             ),
-            ("AEX_HANDS_IMAGE_CATALOG", catalog_json()),
-            ("AEX_RUNTIME_DUE_SHARDS", "8".to_owned()),
-            ("AEX_RUNTIME_DUE_PAGE_ITEMS", "32".to_owned()),
-            ("AEX_RUNTIME_DUE_PAGE_READS", "100".to_owned()),
-            ("AEX_PRICING_VERSION", "synthetic-zero-v1".to_owned()),
+            ("AEX_HANDS_IMAGE_IDENTIFIER", "aex-hands-1gb"),
+            ("AEX_RUNTIME_DUE_SHARDS", "8"),
+            ("AEX_RUNTIME_DUE_PAGE_ITEMS", "32"),
+            ("AEX_RUNTIME_DUE_PAGE_READS", "100"),
+            ("AEX_PRICING_VERSION", "synthetic-zero-v1"),
         ]);
-        Config::from_lookup(|name| vars.get(name).cloned())
+        Config::from_lookup(|name| vars.get(name).map(|value| (*value).to_owned()))
             .expect("the fixture environment is complete")
-    }
-
-    fn catalog_json() -> String {
-        // The published set; browser variants are excluded during prelaunch.
-        let variants = [
-            ("512mb", 512, false),
-            ("1gb", 1_024, false),
-            ("2gb", 2_048, false),
-            ("4gb", 4_096, false),
-            ("8gb", 8_192, false),
-        ];
-        let rows = variants
-            .into_iter()
-            .enumerate()
-            .map(|(index, (variant, memory, browser))| {
-                (
-                    variant,
-                    serde_json::json!({
-                        "imageArn": format!(
-                            "arn:aws:lambda:eu-west-1:522921482290:microvm-image:aex-dev-{}",
-                            char::from(b'a' + u8::try_from(index).expect("a small catalog")).to_string().repeat(52),
-                        ),
-                        "imageVersion": (index + 1).to_string(),
-                        "artifactDigest": format!("sha256:{index:064x}"),
-                        "minimumMemoryMiB": memory,
-                        "browser": browser,
-                    }),
-                )
-            })
-            .collect::<BTreeMap<_, _>>();
-        serde_json::to_string(&rows).expect("catalog JSON")
     }
 
     #[test]
@@ -517,15 +437,6 @@ mod tests {
             ],
             "every missing port is named, so readiness and the start refusal agree"
         );
-    }
-
-    #[test]
-    fn startup_scopes_the_provider_probe_to_every_published_image() {
-        // Five published variants at four concurrent reads is two waves. What the
-        // assertion protects is that the probe is bounded and covers the whole
-        // catalog, not the particular arithmetic.
-        assert_eq!(config().image_catalog.image_identifiers().len(), 5);
-        assert_eq!(super::IMAGE_PROBE_CONCURRENCY, 4);
     }
 
     #[test]

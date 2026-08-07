@@ -23,7 +23,6 @@ use aex_regional_http::authz::{
     MAX_PARAMETER_BYTES, MAX_TRUST_ANCHORS, RegionalProjection, TrustError, decode_response,
     issued_assertion, parse_cursor_key_ring, parse_trust_anchors, resolve_request,
 };
-use aex_regional_http::capacity::{LimitProjectionError, LimitResolver};
 use aex_regional_http::context::{AccountState, EffectiveLimits};
 use aex_regional_http::cursor::{CursorBinding, Order, SnapshotToken, SortTuple, decode, encode};
 use aex_regional_http::edge::{
@@ -747,23 +746,6 @@ impl EdgeClock for FixedClock {
     }
 }
 
-struct StubLimitResolver;
-
-#[async_trait]
-impl LimitResolver for StubLimitResolver {
-    async fn resolve(
-        &self,
-        _workspace: WorkspaceId,
-    ) -> Result<EffectiveLimits, LimitProjectionError> {
-        Ok(EffectiveLimits {
-            json_body_bytes: 65_536,
-            otlp_body_bytes: 4 * 1_024 * 1_024,
-            query_page_items: 100,
-            query_page_bytes: 1_048_576,
-        })
-    }
-}
-
 fn projected(account_state: AccountState, region: Region) -> ProjectedState {
     ProjectedState {
         epochs: ProjectedEpochs {
@@ -794,7 +776,7 @@ fn plain_route() -> RouteId {
         .expect("the regional table declares a scoped, non-exempt read")
 }
 
-type Edge = RegionalEdge<StubSource, StubProjectionReader, StubLimitResolver, FixedClock>;
+type Edge = RegionalEdge<StubSource, StubProjectionReader, FixedClock>;
 
 fn binding() -> EdgeBinding {
     EdgeBinding {
@@ -802,6 +784,11 @@ fn binding() -> EdgeBinding {
         audience: AssertionAudience::RegionalSession,
         region: Region::EuWest1,
         cache_budget_bytes: 64 * 1_024,
+        limits: EffectiveLimits {
+            json_body_bytes: 65_536,
+            query_page_items: 100,
+            query_page_bytes: 1_048_576,
+        },
     }
 }
 
@@ -820,7 +807,6 @@ fn edge_over(
             credential_floor: floor,
             placement,
         },
-        StubLimitResolver,
         FixedClock(NOW_MS + 2_000),
         binding(),
     )
@@ -1284,7 +1270,6 @@ async fn a_long_lived_lease_observes_revocation_pause_and_placement_change() {
             key_floor: std::sync::Arc::clone(&key_floor),
             placement: std::sync::Arc::clone(&placement),
         },
-        StubLimitResolver,
         FixedClock(NOW_MS + 2_000),
         binding(),
     )
@@ -1402,7 +1387,6 @@ async fn the_placement_is_read_on_every_request_even_when_the_assertion_is_cache
             reads: std::sync::Arc::clone(&reads),
             state: projected(AccountState::Active, Region::EuWest1),
         },
-        StubLimitResolver,
         FixedClock(NOW_MS + 2_000),
         binding(),
     )

@@ -21,14 +21,10 @@ use crate::error::{Idempotence, StoreError, classify};
 use crate::paging::{PageBudget, PagePosition};
 use crate::plan::key;
 use crate::wire_pending::{
-    FeedFrontier, KeyRevocation, ProjectedLimitBundle, ProjectedLimitBundleHead,
-    ProjectedWorkspaceLimit, WorkspacePlacement, WorkspaceProfile,
+    FeedFrontier, KeyRevocation, ProjectedWorkspaceLimit, WorkspacePlacement, WorkspaceProfile,
 };
 
-pub use crate::projection_limit::{
-    WORKSPACE_LIMIT, decode_limit, decode_limit_at, decode_limit_bundle, decode_limit_bundle_head,
-    limit_bundle_head_key, limit_bundle_key, limit_key,
-};
+pub use crate::projection_limit::{WORKSPACE_LIMIT, decode_limit, decode_limit_at, limit_key};
 
 /// The `itemType` of a workspace placement.
 pub const WORKSPACE_PLACEMENT: &str = "workspace_placement";
@@ -151,26 +147,6 @@ pub trait WorkspaceProjection: Send + Sync + 'static {
         budget: PageBudget,
         after: Option<&PagePosition>,
     ) -> Result<ProjectionPage<ProjectedWorkspaceLimit>, StoreError>;
-
-    /// Strongly reads the complete-set revision fence.
-    ///
-    /// # Errors
-    ///
-    /// [`StoreError`] for absence, transport or strict decode failure.
-    async fn read_limit_bundle_head(
-        &self,
-        workspace: WorkspaceId,
-    ) -> Result<ProjectedLimitBundleHead, StoreError>;
-
-    /// Strongly reads the complete payload selected by the head.
-    ///
-    /// # Errors
-    ///
-    /// [`StoreError`] for absence, transport or strict decode failure.
-    async fn read_limit_bundle(
-        &self,
-        workspace: WorkspaceId,
-    ) -> Result<ProjectedLimitBundle, StoreError>;
 }
 
 /// The reader.
@@ -311,34 +287,6 @@ impl WorkspaceProjection for ProjectionReader {
             })?;
         Ok(ProjectionPage { items, next })
     }
-
-    async fn read_limit_bundle_head(
-        &self,
-        workspace: WorkspaceId,
-    ) -> Result<ProjectedLimitBundleHead, StoreError> {
-        let (pk, sk) = limit_bundle_head_key(workspace);
-        let item = self
-            .get(&pk, &sk)
-            .await?
-            .ok_or_else(|| StoreError::Misconfigured {
-                table: self.table.clone(),
-            })?;
-        Ok(decode_limit_bundle_head(&item, workspace)?)
-    }
-
-    async fn read_limit_bundle(
-        &self,
-        workspace: WorkspaceId,
-    ) -> Result<ProjectedLimitBundle, StoreError> {
-        let (pk, sk) = limit_bundle_key(workspace);
-        let item = self
-            .get(&pk, &sk)
-            .await?
-            .ok_or_else(|| StoreError::Misconfigured {
-                table: self.table.clone(),
-            })?;
-        Ok(decode_limit_bundle(&item, workspace)?)
-    }
 }
 
 /// Decodes cold descriptive workspace facts.
@@ -435,7 +383,7 @@ pub fn guard(placement: &WorkspacePlacement) -> crate::wire_pending::PlacementGu
 mod tests {
     use aex_wire::ids::{ApiKeyId, PrefixedId, Uuid7, WorkspaceId};
     use aex_wire::limits::LimitId;
-    use aex_wire::models::{LimitMapValue, LimitScalarValue, LimitSource, LimitValue};
+    use aex_wire::models::{LimitScalarValue, LimitSource, LimitValue};
     use aex_wire::types::DecimalU128;
 
     use super::{
@@ -531,14 +479,8 @@ mod tests {
         let decoded = decode_profile(&profile, workspace(1)).expect("profile");
         assert_eq!(decoded.name, "Production");
 
-        let value = LimitValue::Map(LimitMapValue {
-            values: std::collections::BTreeMap::from([
-                ("items".to_owned(), DecimalU128::new(100)),
-                (
-                    "serialized_bytes".to_owned(),
-                    DecimalU128::new(8 * 1_024 * 1_024),
-                ),
-            ]),
+        let value = LimitValue::Scalar(LimitScalarValue {
+            value: DecimalU128::new(100),
         });
         let limit = ItemBuilder::new(WORKSPACE_LIMIT)
             .set("pk", s(format!("LIMIT#WS#{}", workspace(1))))
@@ -566,8 +508,8 @@ mod tests {
 
     #[test]
     fn a_limit_value_with_the_wrong_registered_shape_is_corrupt() {
-        let value = LimitValue::Scalar(LimitScalarValue {
-            value: DecimalU128::new(100),
+        let value = aex_wire::models::LimitValue::Map(aex_wire::models::LimitMapValue {
+            values: std::collections::BTreeMap::new(),
         });
         let limit = ItemBuilder::new(WORKSPACE_LIMIT)
             .set("pk", s(format!("LIMIT#WS#{}", workspace(1))))
@@ -614,7 +556,7 @@ mod tests {
             .set("pk", s(format!("LIMIT#WS#{}", workspace(1))))
             .set("sk", s("LIMIT#query.page"))
             .set("workspaceId", s(workspace(1).to_string()))
-            .set("limitId", s(LimitId::ApiJsonBody.as_str()))
+            .set("limitId", s(LimitId::RequestBodyBytes.as_str()))
             .set(
                 "effectiveValue",
                 s(serde_json::to_string(&value).expect("json")),

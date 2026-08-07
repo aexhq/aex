@@ -40,23 +40,23 @@ fn every_shipped_unit_has_a_recipe() {
 }
 
 #[test]
-fn publication_inventory_is_exactly_36_with_every_gap_classified() {
+fn publication_inventory_is_exactly_38_with_every_gap_classified() {
     let units = shipped_units();
-    assert_eq!(units.units.len(), 36);
+    assert_eq!(units.units.len(), 38);
     let blob = units
         .units
         .iter()
         .filter(|unit| !unit.kind.starts_with("rust-oci-"))
         .count();
     let oci = units.units.len() - blob;
-    assert_eq!(blob, 31, "blob units can use immutable release assets");
+    assert_eq!(blob, 33, "blob units can use immutable release assets");
     assert_eq!(oci, 5, "OCI units require real GHCR manifest publication");
     let unique = units
         .units
         .iter()
         .map(|unit| unit.id.as_str())
         .collect::<std::collections::BTreeSet<_>>();
-    assert_eq!(unique.len(), 36, "no two deployables may share an identity");
+    assert_eq!(unique.len(), 38, "no two deployables may share an identity");
 }
 
 #[test]
@@ -101,8 +101,8 @@ fn recipes_name_the_real_build_output_instead_of_guessing_from_the_unit_id() {
         "target/aarch64-unknown-linux-musl/release/hands-agent"
     );
     assert_eq!(
-        recipe("hands-image-4gb").input,
-        "target/microvm/hands-image-4gb"
+        recipe("hands-image-4gb-browser").input,
+        "target/microvm/hands-image-4gb-browser"
     );
 }
 
@@ -128,8 +128,6 @@ fn the_brain_release_recipe_records_the_exact_catalog_build_bindings() {
         trust_roots_json,
         collection_file: "release-inputs/model-catalog-collection.json".to_owned(),
         collection_sha256: digest(7),
-        tool_catalog_sha256:
-            "sha256:b3cae3e3b5cb64b3ca274f22f67c3ba1e305ac4ca14084967348f06d0ba0fdec".to_owned(),
     };
     let unstamped = plan(brain).expect("ordinary plan");
     let stamped = plan_with_model_catalog(brain, Some(&inputs)).expect("release plan");
@@ -150,22 +148,18 @@ fn the_brain_release_recipe_records_the_exact_catalog_build_bindings() {
         stamped.env[MODEL_CATALOG_COLLECTION_SHA256_VAR],
         inputs.collection_sha256
     );
-    assert_eq!(
-        stamped.env[aex_release_tool::artifact::TOOL_CATALOG_SHA256_VAR],
-        inputs.tool_catalog_sha256
-    );
     assert_ne!(stamped.digest, unstamped.digest);
 }
 
 #[test]
-fn the_five_published_microvm_recipes_are_variant_specific_service_zips() {
+fn the_eight_microvm_recipes_are_variant_specific_service_zips() {
     let units = shipped_units();
     let images: Vec<_> = units
         .units
         .iter()
         .filter(|unit| unit.kind == "microvm-image")
         .collect();
-    assert_eq!(images.len(), 5);
+    assert_eq!(images.len(), 8);
     for unit in images {
         let recipe = plan(unit).expect("MicroVM recipe");
         let shape = unit.microvm.as_ref().expect("declared shape");
@@ -492,78 +486,11 @@ fn receipt_refs_are_bound_to_the_exact_build_attempt() {
 }
 
 #[test]
-fn artifact_subject_excludes_receipt_refs_but_the_envelope_digest_does_not() {
-    let envelope = envelope_from(valid_envelope()).seal().unwrap();
-    let subject_digest = envelope.artifact_subject_digest.clone();
-    let envelope_digest = envelope.envelope_digest.clone();
-
-    let mut with_another_receipt = envelope;
-    with_another_receipt.receipts[0].receipt_digest = digest(0x7a);
-    let with_another_receipt = with_another_receipt.seal().unwrap();
-
-    assert_eq!(with_another_receipt.artifact_subject_digest, subject_digest);
-    assert_ne!(with_another_receipt.envelope_digest, envelope_digest);
-}
-
-#[test]
-fn artifact_subject_binds_bytes_source_inputs_and_complete_oci_identity() {
-    let envelope = envelope_from(valid_envelope()).seal().unwrap();
-    let subject_digest = envelope.artifact_subject_digest.clone();
-
-    let mut changed = envelope.clone();
-    changed.source.commit_sha = "b".repeat(40);
-    assert_ne!(
-        changed.seal().unwrap().artifact_subject_digest,
-        subject_digest
-    );
-
-    let mut changed = envelope.clone();
-    changed.inputs.input_closure_digest = digest(0x71);
-    assert_ne!(
-        changed.seal().unwrap().artifact_subject_digest,
-        subject_digest
-    );
-
-    let mut changed = envelope.clone();
-    changed.output.digest = digest(0x72);
-    assert_ne!(
-        changed.seal().unwrap().artifact_subject_digest,
-        subject_digest
-    );
-
-    let mut changed = envelope.clone();
-    changed.output.oci_child_digest = Some(digest(0x73));
-    changed.output.oci_config_digest = Some(digest(0x74));
-    changed.output.oci_layer_digests = vec![digest(0x75), digest(0x76)];
-    assert_ne!(
-        changed.seal().unwrap().artifact_subject_digest,
-        subject_digest
-    );
-}
-
-#[test]
-fn artifact_subject_survives_workflow_execution_and_content_addressed_relocation() {
-    let envelope = envelope_from(valid_envelope()).seal().unwrap();
-    let subject_digest = envelope.artifact_subject_digest.clone();
-    let envelope_digest = envelope.envelope_digest.clone();
-
-    let mut certified_elsewhere = envelope;
-    certified_elsewhere.source.workflow.run_id = "456".to_owned();
-    certified_elsewhere.output.location.uri =
-        "s3://immutable-bucket/sha256/another-location".to_owned();
-    let certified_elsewhere = certified_elsewhere.seal().unwrap();
-
-    assert_eq!(certified_elsewhere.artifact_subject_digest, subject_digest);
-    assert_ne!(certified_elsewhere.envelope_digest, envelope_digest);
-}
-
-#[test]
 fn a_licence_denial_or_an_unapproved_advisory_denies_the_supply_chain() {
     let mut value = valid_envelope();
     value["licenses"]["verdict"] = serde_json::json!("denied");
     let err = envelope_from(value).verify(None, false).unwrap_err();
     assert_eq!(err.exit.code(), 23);
-    assert!(err.rules().contains(&"license-denied"));
 
     let mut value = valid_envelope();
     value["vulnerabilities"]["unapprovedHigh"] = serde_json::json!(2);

@@ -11,11 +11,6 @@ use crate::canon;
 use crate::error::{Exit, Result, ToolError, Violation};
 use crate::evidence::Receipt;
 
-/// Post-deployment evidence that every releasable dev rehearsal must carry.
-/// Artifact receipts prove bytes; these three prove the composed product and
-/// its user-visible path on the exact deployed release.
-const REQUIRED_RELEASE_RECEIPTS: &[&str] = &["smoke", "e2e", "user"];
-
 /// What one unit's post-apply readback observed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -223,17 +218,6 @@ impl VerificationStatement {
                 ));
             }
         }
-        for class in REQUIRED_RELEASE_RECEIPTS {
-            if !self.receipts.iter().any(|receipt| receipt.class == *class) {
-                violations.push(Violation::new(
-                    "statement-receipt-missing",
-                    format!(
-                        "verification statement for release `{}` has no `{class}` receipt",
-                        self.release_id
-                    ),
-                ));
-            }
-        }
         if violations.is_empty() {
             Ok(())
         } else {
@@ -261,38 +245,6 @@ pub fn new_statement(
     fence: u64,
     now: &str,
 ) -> Result<VerificationStatement> {
-    for receipt in receipts {
-        receipt.verify()?;
-    }
-    let mut violations = Vec::new();
-    for class in REQUIRED_RELEASE_RECEIPTS {
-        let candidates = receipts
-            .iter()
-            .filter(|receipt| receipt.class == *class)
-            .collect::<Vec<_>>();
-        if candidates.is_empty() {
-            violations.push(Violation::new(
-                "statement-receipt-missing",
-                format!(
-                    "cannot verify release `{}` without a `{class}` receipt",
-                    manifest.release_id
-                ),
-            ));
-        } else if !candidates.iter().any(|receipt| {
-            receipt.subject.release_id.as_deref() == Some(manifest.release_id.as_str())
-        }) {
-            violations.push(Violation::new(
-                "statement-receipt-release-mismatch",
-                format!(
-                    "no `{class}` receipt is bound to release `{}`",
-                    manifest.release_id
-                ),
-            ));
-        }
-    }
-    if !violations.is_empty() {
-        return Err(ToolError::many(Exit::VerificationMissing, violations));
-    }
     let all_passed = receipts.iter().all(Receipt::is_passing);
     VerificationStatement {
         schema: "aex.verification-statement.v1".to_owned(),

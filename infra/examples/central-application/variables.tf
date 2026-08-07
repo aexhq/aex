@@ -8,11 +8,6 @@ variable "region" {
   description = "Region the central plane runs in."
 }
 
-variable "permissions_boundary_policy_arn" {
-  type        = string
-  description = "Owner-managed permissions boundary required on every deployable execution role."
-}
-
 variable "subnet_ids" {
   type        = list(string)
   description = "Private subnets from the region foundation."
@@ -78,7 +73,6 @@ variable "schema_admin" {
     image              = string
     cpu                = number
     memory             = number
-    stop_timeout       = number
     log_group_name     = string
     secret_env         = map(string)
     execution_role_arn = string

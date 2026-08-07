@@ -1,21 +1,20 @@
 mock_provider "aws" {}
 
 variables {
-  name                   = "regional-stream"
-  task_definition_family = "aex-dev-eu-west-1-regional-stream"
-  cluster_arn            = "arn:aws:ecs:eu-west-1:000000000000:cluster/aex-dev-euw1"
-  cluster_name           = "aex-dev-euw1"
-  image                  = "000000000000.dkr.ecr.eu-west-1.amazonaws.com/aex/regional-stream@sha256:0000000000000000000000000000000000000000000000000000000000000000"
-  cpu                    = 1024
-  memory                 = 2048
-  stop_timeout           = 30
-  container_port         = 8080
-  task_role_arn          = "arn:aws:iam::000000000000:role/aex-dev-regional-stream"
-  execution_role_arn     = "arn:aws:iam::000000000000:role/aex-dev-ecs-execution"
-  subnets                = ["subnet-0123456789abcdef0"]
-  security_group_ids     = ["sg-0123456789abcdef0"]
-  log_group_name         = "/aex/dev/regional-stream"
-  region                 = "eu-west-1"
+  name               = "regional-stream"
+  cluster_arn        = "arn:aws:ecs:eu-west-1:000000000000:cluster/aex-dev-euw1"
+  cluster_name       = "aex-dev-euw1"
+  image              = "000000000000.dkr.ecr.eu-west-1.amazonaws.com/aex/regional-stream@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  cpu                = 1024
+  memory             = 2048
+  stop_timeout       = 30
+  container_port     = 8080
+  task_role_arn      = "arn:aws:iam::000000000000:role/aex-dev-regional-stream"
+  execution_role_arn = "arn:aws:iam::000000000000:role/aex-dev-ecs-execution"
+  subnets            = ["subnet-0123456789abcdef0"]
+  security_group_ids = ["sg-0123456789abcdef0"]
+  log_group_name     = "/aex/dev/regional-stream"
+  region             = "eu-west-1"
 
   autoscaling_bounds = {
     min_capacity = 1
@@ -30,20 +29,6 @@ variables {
       target_value = 5
     },
   ]
-}
-
-run "task_definition_identity_is_explicit_and_retained" {
-  command = plan
-
-  assert {
-    condition     = aws_ecs_task_definition.this.family == var.task_definition_family
-    error_message = "The task definition family must use the caller's plane-qualified identity, independently of the service name."
-  }
-
-  assert {
-    condition     = aws_ecs_task_definition.this.skip_destroy == true
-    error_message = "Terraform must retain old task definition revisions so the release role does not need unscopable deregistration authority."
-  }
 }
 
 run "the_image_is_digest_pinned" {
@@ -115,10 +100,9 @@ run "brain_mux_is_pinned_to_one_task_and_drains_for_two_minutes" {
   command = plan
 
   variables {
-    name                   = "brain-mux"
-    task_definition_family = "aex-dev-eu-west-1-brain-mux"
-    stop_timeout           = 120
-    log_group_name         = "/aex/dev/brain-mux"
+    name           = "brain-mux"
+    stop_timeout   = 120
+    log_group_name = "/aex/dev/brain-mux"
 
     autoscaling_bounds = {
       min_capacity = 1
@@ -137,7 +121,7 @@ run "brain_mux_is_pinned_to_one_task_and_drains_for_two_minutes" {
   }
 
   assert {
-    condition     = one(aws_appautoscaling_target.this).max_capacity == 1
+    condition     = aws_appautoscaling_target.this.max_capacity == 1
     error_message = "brain-mux must not be able to scale past a single task."
   }
 }
@@ -156,10 +140,9 @@ run "rejects_a_second_brain_mux_task" {
   command = plan
 
   variables {
-    name                   = "brain-mux"
-    task_definition_family = "aex-dev-eu-west-1-brain-mux"
-    stop_timeout           = 120
-    desired_count          = 2
+    name          = "brain-mux"
+    stop_timeout  = 120
+    desired_count = 2
 
     autoscaling_bounds = {
       min_capacity = 1
@@ -174,9 +157,8 @@ run "rejects_a_brain_mux_stop_timeout_that_is_not_two_minutes" {
   command = plan
 
   variables {
-    name                   = "brain-mux"
-    task_definition_family = "aex-dev-eu-west-1-brain-mux"
-    stop_timeout           = 30
+    name         = "brain-mux"
+    stop_timeout = 30
 
     autoscaling_bounds = {
       min_capacity = 1
@@ -185,16 +167,6 @@ run "rejects_a_brain_mux_stop_timeout_that_is_not_two_minutes" {
   }
 
   expect_failures = [var.stop_timeout]
-}
-
-run "rejects_an_unqualified_task_definition_family" {
-  command = plan
-
-  variables {
-    task_definition_family = "regional-stream"
-  }
-
-  expect_failures = [var.task_definition_family]
 }
 
 run "rejects_a_regional_stream_stop_timeout_that_is_not_thirty_seconds" {
@@ -257,51 +229,4 @@ run "rejects_an_environment_key_outside_the_aex_namespace" {
   }
 
   expect_failures = [var.env]
-}
-
-run "fixed_count_creates_no_autoscaling_resources" {
-  command = plan
-
-  variables {
-    desired_count = 2
-
-    autoscaling_bounds = {
-      min_capacity = 2
-      max_capacity = 2
-    }
-
-    autoscaling_metrics = []
-  }
-
-  assert {
-    condition     = aws_ecs_service.this.desired_count == 2
-    error_message = "Fixed-count mode must preserve the reviewed desired task count."
-  }
-
-  assert {
-    condition     = length(aws_appautoscaling_target.this) == 0
-    error_message = "Fixed-count mode must not create an Application Auto Scaling target."
-  }
-
-  assert {
-    condition     = length(aws_appautoscaling_policy.this) == 0
-    error_message = "Fixed-count mode must not create Application Auto Scaling policies."
-  }
-}
-
-run "rejects_uncollapsed_bounds_without_autoscaling_metrics" {
-  command = plan
-
-  variables {
-    desired_count = 2
-
-    autoscaling_bounds = {
-      min_capacity = 1
-      max_capacity = 2
-    }
-
-    autoscaling_metrics = []
-  }
-
-  expect_failures = [var.autoscaling_bounds]
 }

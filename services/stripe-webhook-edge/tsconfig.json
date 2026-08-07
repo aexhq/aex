@@ -3,7 +3,6 @@
     "lib": ["ES2024"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "skipLibCheck": true,
     "strict": true,
     "target": "ES2024",
     "types": ["bun"]

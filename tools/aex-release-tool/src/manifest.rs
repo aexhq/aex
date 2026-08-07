@@ -29,81 +29,6 @@ const LOCATION_KINDS: &[&str] = &[
     "local",
 ];
 
-/// Lambda resource shape in the public composition contract.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ManifestLambdaShape {
-    /// Memory allocation in MiB.
-    #[serde(rename = "memoryMiB")]
-    pub memory_mb: u32,
-    /// Function timeout in seconds.
-    pub timeout_s: u32,
-    /// Reserved concurrency.
-    pub reserved_concurrency: u32,
-}
-
-impl From<crate::graph::inputs::LambdaShape> for ManifestLambdaShape {
-    fn from(shape: crate::graph::inputs::LambdaShape) -> Self {
-        Self {
-            memory_mb: shape.memory_mb,
-            timeout_s: shape.timeout_s,
-            reserved_concurrency: shape.reserved_concurrency,
-        }
-    }
-}
-
-/// Fargate resource shape in the public composition contract.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ManifestFargateShape {
-    /// Task CPU units.
-    pub cpu: u32,
-    /// Task memory in MiB.
-    #[serde(rename = "memoryMiB")]
-    pub memory_mb: u32,
-    /// Desired task count.
-    pub desired_count: u32,
-    /// Drain deadline in seconds.
-    pub stop_timeout_s: u32,
-    /// Container listening port.
-    pub port: u16,
-}
-
-impl From<crate::graph::inputs::FargateShape> for ManifestFargateShape {
-    fn from(shape: crate::graph::inputs::FargateShape) -> Self {
-        Self {
-            cpu: shape.cpu,
-            memory_mb: shape.memory_mb,
-            desired_count: shape.desired_count,
-            stop_timeout_s: shape.stop_timeout_s,
-            port: shape.port,
-        }
-    }
-}
-
-/// `MicroVM` image shape in the public composition contract.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ManifestMicrovmShape {
-    /// Stable image variant token.
-    pub variant: String,
-    /// Minimum guest memory accepted by the image.
-    #[serde(rename = "minimumMemoryMiB")]
-    pub minimum_memory_mib: u32,
-    /// Whether the browser package layer is present.
-    pub browser: bool,
-}
-
-impl From<crate::graph::inputs::MicrovmShape> for ManifestMicrovmShape {
-    fn from(shape: crate::graph::inputs::MicrovmShape) -> Self {
-        Self {
-            variant: shape.variant,
-            minimum_memory_mib: shape.minimum_memory_mib,
-            browser: shape.browser,
-        }
-    }
-}
-
 /// One unit's entry in a composition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -131,15 +56,6 @@ pub struct ManifestUnit {
     /// Minimum applied central head.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub required_central_head: Option<String>,
-    /// Lambda resource shape, copied from the deployable registry.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lambda: Option<ManifestLambdaShape>,
-    /// Fargate resource shape, copied from the deployable registry.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fargate: Option<ManifestFargateShape>,
-    /// `MicroVM` image shape, copied from the deployable registry.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub microvm: Option<ManifestMicrovmShape>,
     /// Adjacent-version compatibility.
     pub adjacent: crate::artifact::Adjacent,
 }
@@ -375,7 +291,6 @@ pub const DEFAULT_ORDER: &[(&str, &[&str])] = &[
             "session-operation-worker",
             "runtime-control-worker",
             "content-lifecycle-worker",
-            "regional-capacity-controller",
             "observation-reconciler",
             "observation-export-launcher",
             "observation-export-task",
@@ -396,8 +311,11 @@ pub const DEFAULT_ORDER: &[(&str, &[&str])] = &[
             "hands-image-512mb",
             "hands-image-1gb",
             "hands-image-2gb",
+            "hands-image-2gb-browser",
             "hands-image-4gb",
+            "hands-image-4gb-browser",
             "hands-image-8gb",
+            "hands-image-8gb-browser",
         ],
     ),
     ("web", &["dashboard", "site"]),
@@ -469,9 +387,6 @@ impl CompositionManifest {
             ));
         }
         validate_public_inputs(self, &mut structural);
-        for (id, unit) in &self.units {
-            validate_manifest_unit_shape(id, unit, &mut structural);
-        }
         let ordered: Vec<&String> = self.order.iter().flat_map(|stage| &stage.units).collect();
         for unit in self.units.keys() {
             if !ordered.contains(&unit) {
@@ -558,7 +473,6 @@ impl CompositionManifest {
             &self.migrations.regional.bundle_digest,
             self.migrations.regional.bundle_size_bytes,
             &self.migrations.regional.definitions_digest,
-            self.migrations.regional.generation,
         )
     }
 
@@ -573,16 +487,13 @@ impl CompositionManifest {
 }
 
 impl ManifestUnit {
-    /// The manifest entry an envelope and its registry row describe.
+    /// The manifest entry an envelope describes.
     ///
-    /// Artifact identity fields are copied from the verified envelope. Resource
-    /// shapes are copied from `release/units.toml`, the plane-neutral deployment
-    /// authority; neither set is re-derived or transcribed.
+    /// Every field is copied from the envelope rather than recomputed, because
+    /// the envelope is the thing that was verified: a manifest entry that
+    /// re-derived a digest would be a second opinion about bytes nobody re-read.
     #[must_use]
-    pub fn from_envelope(
-        envelope: &crate::artifact::ArtifactEnvelope,
-        registry: &crate::graph::inputs::Unit,
-    ) -> Self {
+    pub fn from_envelope(envelope: &crate::artifact::ArtifactEnvelope) -> Self {
         Self {
             kind: envelope.unit.kind.clone(),
             envelope_digest: envelope.envelope_digest.clone(),
@@ -598,106 +509,8 @@ impl ManifestUnit {
                 .migration
                 .as_ref()
                 .and_then(|migration| migration.required_central_head.clone()),
-            lambda: registry.lambda.map(Into::into),
-            fargate: registry.fargate.map(Into::into),
-            microvm: registry.microvm.clone().map(Into::into),
             adjacent: envelope.composition.adjacent.clone(),
         }
-    }
-}
-
-fn validate_manifest_unit_shape(id: &str, unit: &ManifestUnit, violations: &mut Vec<Violation>) {
-    let wants_lambda = matches!(unit.kind.as_str(), "rust-lambda" | "ts-lambda");
-    let wants_fargate = matches!(unit.kind.as_str(), "rust-oci-service" | "rust-oci-task");
-    let wants_microvm = unit.kind == "microvm-image";
-
-    if wants_lambda {
-        match unit.lambda {
-            None => violations.push(Violation::new(
-                "manifest-unit-shape-missing",
-                format!("unit `{id}` is a Lambda and carries no Lambda shape"),
-            )),
-            Some(shape) => {
-                if !(128..=10_240).contains(&shape.memory_mb)
-                    || !(1..=900).contains(&shape.timeout_s)
-                {
-                    violations.push(Violation::new(
-                        "manifest-unit-shape-invalid",
-                        format!("unit `{id}` carries an invalid Lambda resource shape"),
-                    ));
-                }
-            }
-        }
-    }
-    if wants_fargate {
-        match unit.fargate {
-            None => violations.push(Violation::new(
-                "manifest-unit-shape-missing",
-                format!("unit `{id}` runs on Fargate and carries no Fargate shape"),
-            )),
-            Some(shape) if shape.cpu == 0 || shape.memory_mb == 0 || shape.stop_timeout_s == 0 => {
-                violations.push(Violation::new(
-                    "manifest-unit-shape-invalid",
-                    format!("unit `{id}` carries an invalid Fargate resource shape"),
-                ));
-            }
-            Some(shape) => {
-                if unit.kind == "rust-oci-service" && shape.port == 0 {
-                    violations.push(Violation::new(
-                        "manifest-unit-shape-invalid",
-                        format!("unit `{id}` is a service and carries no listening port"),
-                    ));
-                }
-                if unit.kind == "rust-oci-task" && (shape.desired_count != 0 || shape.port != 0) {
-                    violations.push(Violation::new(
-                        "manifest-unit-shape-conflict",
-                        format!(
-                            "unit `{id}` is a one-shot task and must carry desiredCount = 0 and port = 0"
-                        ),
-                    ));
-                }
-            }
-        }
-    }
-    if wants_microvm {
-        match &unit.microvm {
-            None => violations.push(Violation::new(
-                "manifest-unit-shape-missing",
-                format!("unit `{id}` is a MicroVM image and carries no MicroVM shape"),
-            )),
-            Some(shape) if shape.variant.trim().is_empty() || shape.minimum_memory_mib == 0 => {
-                violations.push(Violation::new(
-                    "manifest-unit-shape-invalid",
-                    format!("unit `{id}` carries an invalid MicroVM image shape"),
-                ));
-            }
-            Some(_) => {}
-        }
-    }
-
-    if unit.lambda.is_some() && !wants_lambda {
-        violations.push(Violation::new(
-            "manifest-unit-shape-conflict",
-            format!("unit `{id}` of kind `{}` carries a Lambda shape", unit.kind),
-        ));
-    }
-    if unit.fargate.is_some() && !wants_fargate {
-        violations.push(Violation::new(
-            "manifest-unit-shape-conflict",
-            format!(
-                "unit `{id}` of kind `{}` carries a Fargate shape",
-                unit.kind
-            ),
-        ));
-    }
-    if unit.microvm.is_some() && !wants_microvm {
-        violations.push(Violation::new(
-            "manifest-unit-shape-conflict",
-            format!(
-                "unit `{id}` of kind `{}` carries a MicroVM shape",
-                unit.kind
-            ),
-        ));
     }
 }
 
@@ -715,28 +528,11 @@ fn validate_manifest_unit_shape(id: &str, unit: &ManifestUnit, violations: &mut 
 pub fn new_manifest(
     inputs: CompositionInputs,
     envelopes: &BTreeMap<String, crate::artifact::ArtifactEnvelope>,
-    registry: &crate::graph::inputs::Units,
 ) -> Result<CompositionManifest> {
-    let registered: BTreeMap<&str, &crate::graph::inputs::Unit> = registry
-        .units
-        .iter()
-        .map(|unit| (unit.id.as_str(), unit))
-        .collect();
     let units: BTreeMap<String, ManifestUnit> = envelopes
         .iter()
-        .map(|(id, envelope)| {
-            registered
-                .get(id.as_str())
-                .map(|unit| (id.clone(), ManifestUnit::from_envelope(envelope, unit)))
-                .ok_or_else(|| {
-                    ToolError::single(
-                        Exit::CompositionIncompatible,
-                        "manifest-unit-unregistered",
-                        format!("envelope `{id}` names no deployable in release/units.toml"),
-                    )
-                })
-        })
-        .collect::<Result<_>>()?;
+        .map(|(id, envelope)| (id.clone(), ManifestUnit::from_envelope(envelope)))
+        .collect();
     let order = order_for(&units.keys().cloned().collect::<Vec<_>>())?;
     CompositionManifest {
         schema: "aex.composition-manifest.v1".to_owned(),
@@ -869,7 +665,6 @@ pub fn verify_handoff_envelopes(
 pub fn new_handoff_manifest(
     inputs: CompositionInputs,
     envelopes: &BTreeMap<String, crate::artifact::ArtifactEnvelope>,
-    registry: &crate::graph::inputs::Units,
 ) -> Result<CompositionManifest> {
     let mut violations = Vec::new();
     for (id, envelope) in envelopes {
@@ -960,7 +755,7 @@ pub fn new_handoff_manifest(
         return Err(ToolError::many(Exit::CompositionIncompatible, violations));
     }
 
-    let manifest = new_manifest(inputs, envelopes, registry)?;
+    let manifest = new_manifest(inputs, envelopes)?;
     manifest.validate(true)?;
     Ok(manifest)
 }
@@ -1360,7 +1155,7 @@ pub fn diff(from: &CompositionManifest, to: &CompositionManifest) -> ManifestDif
 /// Whether a reference names a mutable target instead of a digest.
 #[must_use]
 pub fn looks_like_mutable_reference(value: &str) -> bool {
-    if value.contains("@sha256:") || valid_prefixed_hex_digest(value, "blake3:", 64) {
+    if value.contains("@sha256:") {
         return false;
     }
     // An image reference with a tag: `repo:tag` after the last `/`, where the
@@ -1415,16 +1210,13 @@ fn walk(value: &serde_json::Value, path: &str, findings: &mut Vec<Violation>) {
 }
 
 fn scan_string(text: &str, path: &str, findings: &mut Vec<Violation>) {
-    let exact_public_asset = is_exact_public_asset_uri(text, path);
     if text.starts_with("arn:") {
         findings.push(Violation::new(
             "manifest-environment-identity",
             format!("`{path}` holds an ARN: `{text}`"),
         ));
     }
-    if !is_manifest_cryptographic_identity(text, path, exact_public_asset)
-        && looks_like_account_id(text)
-    {
+    if looks_like_account_id(text) {
         findings.push(Violation::new(
             "manifest-environment-identity",
             format!("`{path}` holds a 12-digit account identifier"),
@@ -1434,6 +1226,11 @@ fn scan_string(text: &str, path: &str, findings: &mut Vec<Violation>) {
         let host = text
             .split_once("//")
             .map_or("", |(_, rest)| rest.split('/').next().unwrap_or(""));
+        let exact_public_asset = host == "github.com"
+            && (matches!(
+                path,
+                ".releaseTool.uri" | ".infra.moduleBundleUri" | ".migrations.regional.bundleUri"
+            ) || (path.starts_with(".units.") && path.ends_with(".location.uri")));
         if !exact_public_asset
             && !matches!(
                 host,
@@ -1480,52 +1277,6 @@ fn scan_string(text: &str, path: &str, findings: &mut Vec<Violation>) {
 fn looks_like_account_id(text: &str) -> bool {
     let candidates = text.split(|ch: char| !ch.is_ascii_digit());
     candidates.into_iter().any(|run| run.len() == 12)
-}
-
-fn valid_prefixed_hex_digest(value: &str, prefix: &str, digits: usize) -> bool {
-    value.strip_prefix(prefix).is_some_and(|payload| {
-        payload.len() == digits
-            && payload
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-    })
-}
-
-fn valid_lower_hex(value: &str, digits: usize) -> bool {
-    value.len() == digits
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-}
-
-fn is_exact_public_asset_uri(text: &str, path: &str) -> bool {
-    let host = text
-        .strip_prefix("https://")
-        .or_else(|| text.strip_prefix("http://"))
-        .map_or("", |rest| rest.split('/').next().unwrap_or(""));
-    host == "github.com"
-        && (matches!(
-            path,
-            ".releaseTool.uri" | ".infra.moduleBundleUri" | ".migrations.regional.bundleUri"
-        ) || (path.starts_with(".units.") && path.ends_with(".location.uri")))
-}
-
-fn is_manifest_cryptographic_identity(text: &str, path: &str, exact_public_asset: bool) -> bool {
-    let digest_position =
-        path.ends_with("Digest") || path.ends_with("digest") || path.ends_with("releaseId");
-    let commit_position = path.ends_with("commitSha");
-    let oci_location = path.starts_with(".units.")
-        && path.ends_with(".location.uri")
-        && text
-            .rsplit_once("@sha256:")
-            .is_some_and(|(_, digest)| valid_lower_hex(digest, 64));
-
-    exact_public_asset
-        || (digest_position
-            && (valid_prefixed_hex_digest(text, "sha256:", 64)
-                || valid_prefixed_hex_digest(text, "blake3:", 64)))
-        || (commit_position && valid_lower_hex(text, 40))
-        || oci_location
 }
 
 fn is_semver_range(text: &str) -> bool {
@@ -1840,31 +1591,6 @@ alarm_spec = "regional-otlp"
     }
 
     #[test]
-    fn decimal_runs_inside_cryptographic_identities_are_not_account_ids() {
-        let sha256 = format!("sha256:{}{}", "0".repeat(12), "ab".repeat(26));
-        let blake3 = format!("blake3:{}{}", "0".repeat(12), "cd".repeat(26));
-        let commit = format!("{}{}", "0".repeat(12), "ab".repeat(14));
-        let uri = format!("https://github.com/aexhq/aex/releases/download/x/unit-{sha256}.zip");
-
-        assert!(scan_environment(&json!({ "digest": sha256 })).is_empty());
-        assert!(scan_environment(&json!({ "definitionsDigest": blake3 })).is_empty());
-        assert!(scan_environment(&json!({ "commitSha": commit })).is_empty());
-        assert!(scan_environment(&json!({ "releaseTool": { "uri": uri } })).is_empty());
-    }
-
-    #[test]
-    fn an_account_id_padded_to_a_hash_length_remains_an_environment_identity() {
-        let findings = scan_environment(&json!({
-            "uri": "s3://aaaaaaaaaaaaaa522921482290bbbbbbbbbbbbbb/x"
-        }));
-        assert!(
-            findings
-                .iter()
-                .any(|violation| violation.rule == "manifest-environment-identity")
-        );
-    }
-
-    #[test]
     fn an_arn_is_an_environment_identity() {
         let findings = scan_environment(&json!({ "role": "arn:aws:iam::x:role/y" }));
         assert!(
@@ -1883,11 +1609,6 @@ alarm_spec = "regional-otlp"
         ));
         assert!(!looks_like_mutable_reference("s3://bucket/key.zip"));
         assert!(!looks_like_mutable_reference("registry:5000/brain-mux"));
-        assert!(!looks_like_mutable_reference(&format!(
-            "blake3:{}",
-            "ab".repeat(32)
-        )));
-        assert!(looks_like_mutable_reference("blake3:latest"));
     }
 
     #[test]

@@ -292,7 +292,6 @@ mod tests {
                     inline: Some("ok".to_owned()),
                     placed: None,
                     truncated: false,
-                    duration_ms: 1,
                     checksum: ContentHash::of(b"ok"),
                 })
             })

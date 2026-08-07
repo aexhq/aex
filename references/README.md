@@ -12,8 +12,6 @@ related:
   - references/rules.md
   - references/repo.md
   - references/develop.md
-  - references/backlog.md
-  - references/release-evidence.md
   - references/contributing.md
   - references/repository-hygiene.md
   - references/architecture.md
@@ -32,14 +30,10 @@ executable sources.
 | Non-negotiable rules and public boundary | [`rules.md`](rules.md) |
 | Package and path ownership | [`repo.md`](repo.md) |
 | Development, testing, and release routing | [`develop.md`](develop.md) |
-| Deferred work and revisit triggers | [`backlog.md`](backlog.md) |
 | One-time public GHCR namespace bootstrap | [`ghcr-visibility-bootstrap.md`](ghcr-visibility-bootstrap.md) |
-| Model-catalog authority bootstrap and publication | [`model-catalog-authority.md`](model-catalog-authority.md) |
-| Release-bound E2E and public user receipt producer | [`release-evidence.md`](release-evidence.md) |
 | Contributor and review procedure | [`contributing.md`](contributing.md) |
 | Durable-doc and generated-artifact placement | [`repository-hygiene.md`](repository-hygiene.md) |
 | Public v1 architecture and repository boundary | [`architecture.md`](architecture.md) |
-| Generated TypeScript wire binding and consumer migration boundary | [`typescript-wire-binding.md`](typescript-wire-binding.md) |
 | Rust-native rewrite implementation handoffs — what each stream landed, deferred and owes | [`rewrite/README.md`](rewrite/README.md) |
 | Vocabulary the source uses without defining | [`glossary.md`](glossary.md) |
 
