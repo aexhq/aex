@@ -22,8 +22,8 @@ use aex_brain_domain::ids::{
 };
 use aex_hands_agent::wire::Verb;
 use aex_hands_control_aws::{
-    AGENT_PORT, MAX_DURATION_SECONDS, MicrovmControlApi, MicrovmDescription, RunHookBounds,
-    RunHookPayload, RunRequest, TOKEN_TTL_SECONDS,
+    AGENT_PORT, EndpointToken, MAX_DURATION_SECONDS, MicrovmControlApi, MicrovmDescription,
+    RunHookBounds, RunHookPayload, RunRequest, TOKEN_TTL_SECONDS,
 };
 use aex_hands_protocol::lifecycle::ProviderRequestId;
 use aex_hands_protocol::operation::{
@@ -202,7 +202,17 @@ impl ProductionHandsBackend {
                     return Ok((view, lease));
                 }
                 GenerationState::Requested => {
-                    let _ = self.launch(&view).await?;
+                    // A completed launch hands back the running description and
+                    // an endpoint token, so the lease is built without another
+                    // provider probe. `None` means another writer holds the
+                    // launch; loop and observe it.
+                    if let Some((description, token)) = self.launch(&view).await?
+                        && let Some(connected) = self
+                            .lease_from_launch(session, generation, description, token)
+                            .await?
+                    {
+                        return Ok(connected);
+                    }
                 }
                 GenerationState::Launching | GenerationState::Unknown
                     if view
@@ -210,7 +220,13 @@ impl ProductionHandsBackend {
                         .as_ref()
                         .is_some_and(|intent| intent.action == LifecycleAction::Launch) =>
                 {
-                    self.recover_launch(&view).await?;
+                    let (description, token) = self.recover_launch(&view).await?;
+                    if let Some(connected) = self
+                        .lease_from_launch(session, generation, description, token)
+                        .await?
+                    {
+                        return Ok(connected);
+                    }
                 }
                 GenerationState::Launching
                 | GenerationState::Resuming
@@ -240,7 +256,10 @@ impl ProductionHandsBackend {
         ))
     }
 
-    async fn launch(&self, view: &GenerationView) -> Result<bool, HandsError> {
+    async fn launch(
+        &self,
+        view: &GenerationView,
+    ) -> Result<Option<(MicrovmDescription, EndpointToken)>, HandsError> {
         let request = launch_request(&view.definition)?;
         let fence = next_fence(view.head.fence);
         let intent_id = intent_id(view.head.generation, LifecycleAction::Launch, fence);
@@ -263,15 +282,14 @@ impl ProductionHandsBackend {
             Ok(commit) => commit,
             Err(
                 RuntimeStoreError::RevisionConflict { .. } | RuntimeStoreError::IntentOpen { .. },
-            ) => return Ok(true),
+            ) => return Ok(None),
             Err(error) => return Err(store_error(error)),
         };
         match self.provider.run(&request).await {
-            Ok(description) => {
-                self.finish_launch(view, &commit.generation.head, &intent_id, description)
-                    .await?;
-                Ok(true)
-            }
+            Ok(description) => self
+                .finish_launch(view, &commit.generation.head, &intent_id, description)
+                .await
+                .map(Some),
             Err(call) => {
                 self.close_failed_launch(view, &commit.generation.head, &intent_id, &call)
                     .await?;
@@ -280,7 +298,10 @@ impl ProductionHandsBackend {
         }
     }
 
-    async fn recover_launch(&self, view: &GenerationView) -> Result<(), HandsError> {
+    async fn recover_launch(
+        &self,
+        view: &GenerationView,
+    ) -> Result<(MicrovmDescription, EndpointToken), HandsError> {
         let intent = view.open_intent.as_ref().ok_or_else(|| {
             pre_dispatch(
                 ProviderFailureKind::ProtocolViolation,
@@ -297,15 +318,23 @@ impl ProductionHandsBackend {
             let description = self
                 .await_running(view.head.generation, microvm, None)
                 .await?;
-            self.settle_launch(
-                view,
-                &intent.intent_id,
-                microvm,
-                request,
-                description.launched_at,
-            )
-            .await?;
-            return Ok(());
+            // The settlement write and the token mint are independent, so they
+            // run concurrently; the settle outcome is checked first because a
+            // token for an unsettled launch is worthless.
+            let (settled, token) = tokio::join!(
+                self.settle_launch(
+                    view,
+                    &intent.intent_id,
+                    microvm,
+                    request,
+                    description.launched_at,
+                ),
+                self.provider
+                    .auth_token(microvm, TOKEN_TTL_SECONDS, &[AGENT_PORT])
+            );
+            settled?;
+            let token = token.map_err(|call| provider_error(&call, view.head.generation, false))?;
+            return Ok((description, token));
         }
         let description = self
             .provider
@@ -322,7 +351,7 @@ impl ProductionHandsBackend {
         current: &aex_runtime_control::generation::GenerationHead,
         intent_id: &LifecycleIntentId,
         description: MicrovmDescription,
-    ) -> Result<(), HandsError> {
+    ) -> Result<(MicrovmDescription, EndpointToken), HandsError> {
         let request = description.request_id.clone().ok_or_else(|| {
             dispatched(
                 ProviderFailureKind::ProtocolViolation,
@@ -347,14 +376,23 @@ impl ProductionHandsBackend {
             microvm: Some(running.microvm.clone()),
             ..view.clone()
         };
-        self.settle_launch(
-            &recovered,
-            intent_id,
-            &running.microvm,
-            &request,
-            running.launched_at,
-        )
-        .await
+        // The settlement write and the token mint are independent, so they run
+        // concurrently; the settle outcome is checked first because a token
+        // for an unsettled launch is worthless.
+        let (settled, token) = tokio::join!(
+            self.settle_launch(
+                &recovered,
+                intent_id,
+                &running.microvm,
+                &request,
+                running.launched_at,
+            ),
+            self.provider
+                .auth_token(&running.microvm, TOKEN_TTL_SECONDS, &[AGENT_PORT])
+        );
+        settled?;
+        let token = token.map_err(|call| provider_error(&call, view.head.generation, false))?;
+        Ok((running, token))
     }
 
     async fn await_running(
@@ -562,11 +600,17 @@ impl ProductionHandsBackend {
         if let Some(lease) = self.leases.lock().await.get(&identity, now()?) {
             return Ok(lease);
         }
-        let description = self
-            .provider
-            .get(microvm)
-            .await
-            .map_err(|call| provider_error(&call, view.head.generation, false))?;
+        // The description probe and the token mint are independent provider
+        // calls, so a cold connect pays one round trip instead of two in
+        // series. A token minted for a VM the probe then disqualifies simply
+        // expires unused.
+        let (described, token) = tokio::join!(
+            self.provider.get(microvm),
+            self.provider
+                .auth_token(microvm, TOKEN_TTL_SECONDS, &[AGENT_PORT])
+        );
+        let description =
+            described.map_err(|call| provider_error(&call, view.head.generation, false))?;
         if description.microvm != *microvm || description.state != ProviderState::Running {
             self.leases.lock().await.invalidate(view.head.generation);
             return Err(dispatched(
@@ -580,11 +624,7 @@ impl ProductionHandsBackend {
                 "the running MicroVM has no authenticated endpoint",
             )
         })?;
-        let token = self
-            .provider
-            .auth_token(microvm, TOKEN_TTL_SECONDS, &[AGENT_PORT])
-            .await
-            .map_err(|call| provider_error(&call, view.head.generation, false))?;
+        let token = token.map_err(|call| provider_error(&call, view.head.generation, false))?;
         let expires_at = token.expires_at;
         let endpoint = AuthenticatedGuestEndpoint::new(
             view.head.generation,
@@ -597,6 +637,52 @@ impl ProductionHandsBackend {
             .lock()
             .await
             .insert(identity, expires_at, endpoint))
+    }
+
+    /// Builds the endpoint lease straight from a launch this caller just
+    /// completed, skipping the probe `connect` would repeat.
+    ///
+    /// One fresh strong read anchors the lease identity: recording the launch
+    /// intent advanced the fence, so a lease built from the pre-launch view
+    /// would disagree with every subsequent frame and grind through
+    /// `observe_guest` invalidations. `None` means the head moved again while
+    /// the launch settled; the materialize loop observes the new state.
+    async fn lease_from_launch(
+        &self,
+        session: SessionId,
+        generation: GenerationId,
+        description: MicrovmDescription,
+        token: EndpointToken,
+    ) -> Result<Option<(GenerationView, LeaseHandle<AuthenticatedGuestEndpoint>)>, HandsError> {
+        let view = self.load_view(generation, ReadConsistency::Strong).await?;
+        Self::require_view(&view, session, generation)?;
+        if !matches!(
+            view.head.state,
+            GenerationState::Running | GenerationState::LifetimeDraining
+        ) || view.microvm.as_ref() != Some(&description.microvm)
+        {
+            return Ok(None);
+        }
+        let endpoint = description.endpoint.ok_or_else(|| {
+            dispatched(
+                ProviderFailureKind::ProtocolViolation,
+                "the running MicroVM has no authenticated endpoint",
+            )
+        })?;
+        let identity = LeaseIdentity {
+            generation,
+            fence: view.head.fence,
+            microvm: description.microvm.clone(),
+        };
+        let expires_at = token.expires_at;
+        let endpoint =
+            AuthenticatedGuestEndpoint::new(generation, view.head.fence, endpoint, token)?;
+        let lease = self
+            .leases
+            .lock()
+            .await
+            .insert(identity, expires_at, endpoint);
+        Ok(Some((view, lease)))
     }
 
     async fn observe_guest<T>(
