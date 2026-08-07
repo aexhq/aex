@@ -1,6 +1,7 @@
 [package]
 name = "aex-regional-test-support"
 version = "0.1.0"
+description = "`aex-regional-test-support` owns deterministic fixtures and the cleanup ledger for the regional session, work, content, registry, secret and operation authorities."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

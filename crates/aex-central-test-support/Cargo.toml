@@ -1,6 +1,7 @@
 [package]
 name = "aex-central-test-support"
 version = "0.1.0"
+description = "`aex-central-test-support` owns deterministic fixtures, reference models and the cleanup ledger for the central identity, control and finance authorities."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

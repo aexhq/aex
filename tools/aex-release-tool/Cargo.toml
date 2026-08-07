@@ -1,6 +1,7 @@
 [package]
 name = "aex-release-tool"
 version = "0.1.0"
+description = "`aex-release-tool` — the release graph, admission, manifest and evidence library used by CI and by the private deployment repository."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

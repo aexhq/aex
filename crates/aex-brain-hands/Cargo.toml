@@ -1,6 +1,7 @@
 [package]
 name = "aex-brain-hands"
 version = "0.1.0"
+description = "`aex-brain-hands` owns the Brain-side exact-generation Hands adapter: operation dispatch, frame handling, fence checks, cancellation and result incorporation."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

@@ -1,6 +1,7 @@
 [package]
 name = "aex-control-domain"
 version = "0.1.0"
+description = "`aex-control-domain` owns the pure control-plane state: organizations, memberships, invitations, workspaces, API key metadata, durable operations, revocation epochs, audit and outbox records, and the one authorization decision every central route runs through."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

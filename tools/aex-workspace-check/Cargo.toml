@@ -1,6 +1,7 @@
 [package]
 name = "aex-workspace-check"
 version = "0.1.0"
+description = "`aex-workspace-check` owns the structural rules of the AEX Cargo workspace: the member list and the on-disk tree agree, names are consistent, dependency direction points inward, no test-support crate can reach a production binary, the member graph is acyclic, and the frozen inventory is exactly present."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

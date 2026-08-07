@@ -1,6 +1,7 @@
 [package]
 name = "aex-platform-telemetry"
 version = "0.1.0"
+description = "`aex-platform-telemetry` owns the narrow `tracing`/`OpenTelemetry` facade every AEX Rust host installs: bounded non-blocking recording, registry-driven redaction, drop counters and a flush with a deadline."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

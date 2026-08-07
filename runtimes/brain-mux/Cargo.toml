@@ -1,6 +1,7 @@
 [package]
 name = "brain-mux"
 version = "0.1.0"
+description = "`brain-mux` composition root (Rust Fargate OCI)."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

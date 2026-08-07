@@ -1,6 +1,7 @@
 [package]
 name = "finance-reconcile"
 version = "0.1.0"
+description = "`finance-reconcile` runs the conservation, unresolved-effect and statement sweeps."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

@@ -1,6 +1,7 @@
 [package]
 name = "aex-observation-export"
 version = "0.1.0"
+description = "`aex-observation-export` owns the deterministic streaming export engine: format encoders, `NDJSON` and Parquet streaming state, the multipart manifest and hash invariants."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

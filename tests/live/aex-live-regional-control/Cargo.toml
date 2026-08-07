@@ -1,6 +1,7 @@
 [package]
 name = "aex-live-regional-control"
 version = "0.1.0"
+description = "Live companion marker for the regional direct-invoke control authority."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

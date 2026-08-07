@@ -1,6 +1,7 @@
 [package]
 name = "aex-hands-tools"
 version = "0.1.0"
+description = "`aex-hands-tools` owns the guest-side tool executors: filesystem, development, workspace materialize/persist and browser."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

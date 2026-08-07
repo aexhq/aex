@@ -1,6 +1,7 @@
 [package]
 name = "regional-capacity-controller"
 version = "0.1.0"
+description = "Closed direct-invoke controller for durable workspace capacity."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

@@ -1,6 +1,7 @@
 [package]
 name = "regional-secret-key-admin"
 version = "0.1.0"
+description = "Exclusive, idempotent regional branch-key administration kernel."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

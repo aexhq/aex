@@ -1,6 +1,7 @@
 [package]
 name = "aex-live-hands-agent"
 version = "0.1.0"
+description = "Live-test companion package for the `hands-agent` deployable."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
