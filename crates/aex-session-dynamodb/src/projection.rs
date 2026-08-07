@@ -318,7 +318,11 @@ impl AuthorizationProjection for ProjectionReader {
         let (placement_partition, placement_sort) = placement_key(workspace);
         let (limits_partition, limits_sort) = edge_limits_key(workspace);
         let (key_item, placement_item, limits_item) = futures::try_join!(
-            self.get(&authorization_partition, &authorization_sort, Consistency::Eventual),
+            self.get(
+                &authorization_partition,
+                &authorization_sort,
+                Consistency::Eventual
+            ),
             self.get(&placement_partition, &placement_sort, Consistency::Eventual),
             self.get(&limits_partition, &limits_sort, Consistency::Eventual),
         )?;
