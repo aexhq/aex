@@ -1,9 +1,13 @@
 //! Immutable Hands image selection.
 //!
-//! A release publishes five base images and three browser-capable images.  The
-//! catalog is resolved once from the authenticated release placement, validated
-//! as a closed eight-row document at process start, and then selected only by the
-//! public compute token plus required capabilities.  Selection returns an
+//! A release publishes the five base images.  The three browser-capable variants
+//! are excluded during prelaunch -- see the browser-variant entry in
+//! `references/backlog.md` -- because the pinned AL2023 ARM64 repository
+//! publishes no Chromium,
+//! so listing them would mint artifacts that deterministically fail in the
+//! provider image builder.  The catalog is resolved once from the authenticated
+//! release placement, validated as a closed five-row document at process start,
+//! and then selected only by the
 //! [`ImagePin`], so generation allocation can persist the exact provider ARN,
 //! provider version and artifact digest before any launch is attempted.
 
@@ -16,17 +20,14 @@ use serde::{Deserialize, Serialize};
 use crate::generation::{ImageCapability, ImageIdentifier, ImagePin, ImageVersion};
 use crate::shape::ShapeCapacity as _;
 
-/// The eight release variant keys, in deterministic selection order.
-pub const HANDS_IMAGE_VARIANTS: [&str; 8] = [
-    "512mb",
-    "1gb",
-    "2gb",
-    "2gb-browser",
-    "4gb",
-    "4gb-browser",
-    "8gb",
-    "8gb-browser",
-];
+/// The published release variant keys, in deterministic selection order.
+///
+/// This must equal the `hands-image-*` unit set in `release/units.toml`. It
+/// listed the three browser variants while the release published five, so
+/// `runtime-control-worker` refused every start and the runtime reaper never
+/// swept. Restoring a browser row here requires restoring its release unit in
+/// the same change.
+pub const HANDS_IMAGE_VARIANTS: [&str; 5] = ["512mb", "1gb", "2gb", "4gb", "8gb"];
 
 /// One immutable resolved image identity.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -54,8 +55,8 @@ pub struct HandsImageCatalog {
 /// Why a release catalog could not become generation-allocation authority.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CatalogError {
-    /// The document did not contain exactly the eight release variants.
-    #[error("Hands image catalog keys must be exactly the eight release variants")]
+    /// The document did not contain exactly the published release variants.
+    #[error("Hands image catalog keys must be exactly the five published release variants")]
     VariantSet,
     /// An entry did not agree with the size encoded by its key.
     #[error(
@@ -132,7 +133,8 @@ impl HandsImageCatalog {
     /// # Errors
     ///
     /// Returns [`CatalogError::CapabilityUnavailable`] when browser is requested
-    /// for a shape below 2 GiB.
+    /// for a shape below 2 GiB, or for any shape while no browser variant is
+    /// published.
     pub fn select(
         &self,
         size: ComputeSize,
@@ -149,7 +151,18 @@ impl HandsImageCatalog {
         } else {
             size.as_str().to_owned()
         };
-        let entry = self.entries.get(&key).ok_or(CatalogError::VariantSet)?;
+        // A missing browser row is an unavailable capability, not a malformed
+        // document: `from_entries` already proved the catalog holds exactly the
+        // published variants, so the only way to miss here is to ask for one that
+        // this release does not publish. `VariantSet` would send a reader hunting
+        // for corruption that is not there.
+        let entry = self.entries.get(&key).ok_or(if browser {
+            CatalogError::CapabilityUnavailable {
+                size: size.as_str(),
+            }
+        } else {
+            CatalogError::VariantSet
+        })?;
         Ok(ImagePin {
             identifier: entry.image_arn.clone(),
             version: entry.image_version.clone(),
@@ -196,7 +209,7 @@ mod tests {
             .into_iter()
             .enumerate()
             .map(|(index, variant)| {
-                let digest_byte = u8::try_from(index).expect("the catalog has eight variants");
+                let digest_byte = u8::try_from(index).expect("the catalog is small");
                 let size = match variant.split('-').next().expect("a size") {
                     "512mb" => 512,
                     "1gb" => 1_024,
@@ -220,27 +233,35 @@ mod tests {
     }
 
     #[test]
-    fn exactly_eight_shape_consistent_unique_rows_are_required() {
+    fn exactly_the_published_shape_consistent_unique_rows_are_required() {
         let complete = entries();
         assert!(HandsImageCatalog::from_entries(complete.clone()).is_ok());
 
         let mut missing = complete.clone();
-        missing.remove("8gb-browser");
+        missing.remove("8gb");
         assert_eq!(
             HandsImageCatalog::from_entries(missing),
             Err(CatalogError::VariantSet)
         );
 
+        // A browser variant is not published, so an entry claiming the capability
+        // is a shape violation rather than an unknown key.
+        let mut extra = complete.clone();
+        extra.insert("8gb-browser".to_owned(), complete["8gb"].clone());
+        assert_eq!(
+            HandsImageCatalog::from_entries(extra),
+            Err(CatalogError::VariantSet)
+        );
+
         let mut wrong_shape = complete.clone();
-        wrong_shape.get_mut("4gb-browser").expect("row").browser = false;
+        wrong_shape.get_mut("4gb").expect("row").browser = true;
         assert!(matches!(
             HandsImageCatalog::from_entries(wrong_shape),
-            Err(CatalogError::Shape { variant }) if variant == "4gb-browser"
+            Err(CatalogError::Shape { variant }) if variant == "4gb"
         ));
 
         let mut duplicate = complete;
-        duplicate.get_mut("8gb-browser").expect("row").image_arn =
-            duplicate["8gb"].image_arn.clone();
+        duplicate.get_mut("8gb").expect("row").image_arn = duplicate["4gb"].image_arn.clone();
         assert!(matches!(
             HandsImageCatalog::from_entries(duplicate),
             Err(CatalogError::DuplicateImage { .. })
@@ -251,19 +272,28 @@ mod tests {
     fn capability_and_memory_select_the_exact_pin() {
         let catalog = HandsImageCatalog::from_entries(entries()).expect("catalog");
         let base = catalog.select(ComputeSize::Gb4, &[]).expect("base image");
-        let browser = catalog
-            .select(ComputeSize::Gb4, &[ImageCapability::Browser])
-            .expect("browser image");
-        assert_eq!(base.identifier.0, "arn:image:4");
-        assert_eq!(base.version.0, "5");
+        assert_eq!(base.identifier.0, "arn:image:3");
+        assert_eq!(base.version.0, "4");
         assert!(base.capabilities.is_empty());
-        assert_eq!(browser.identifier.0, "arn:image:5");
-        assert_eq!(browser.version.0, "6");
-        assert_eq!(browser.capabilities, vec![ImageCapability::Browser]);
-        assert_eq!(
-            catalog.select(ComputeSize::Gb1, &[ImageCapability::Browser]),
-            Err(CatalogError::CapabilityUnavailable { size: "1gb" })
-        );
+    }
+
+    #[test]
+    fn the_browser_capability_is_unavailable_at_every_published_size() {
+        // No browser variant is published during prelaunch, so asking for the
+        // capability must name the size and refuse rather than silently hand back
+        // a base image that cannot do it.
+        let catalog = HandsImageCatalog::from_entries(entries()).expect("catalog");
+        for (size, name) in [
+            (ComputeSize::Gb1, "1gb"),
+            (ComputeSize::Gb2, "2gb"),
+            (ComputeSize::Gb4, "4gb"),
+            (ComputeSize::Gb8, "8gb"),
+        ] {
+            assert_eq!(
+                catalog.select(size, &[ImageCapability::Browser]),
+                Err(CatalogError::CapabilityUnavailable { size: name })
+            );
+        }
     }
 
     #[test]
