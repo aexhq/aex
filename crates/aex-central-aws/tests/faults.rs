@@ -11,8 +11,8 @@ mod support;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use aex_central_runtime::pepper::{PepperDirectory, PepperState, SecretsManagerPepperKeystore};
-use aex_central_runtime::regional::LambdaRegionalControl;
+use aex_central_aws::pepper::{PepperDirectory, PepperState, SecretsManagerPepperKeystore};
+use aex_central_aws::regional::LambdaRegionalControl;
 use aex_control_app::ports::{EffectError, ProvisionWorkspaceRequest, RegionalControlPort as _};
 use aex_control_domain::{Fence, IntentHash};
 use aex_identity_app::ports::{PepperKeystore as _, PepperPurpose, StoreError};

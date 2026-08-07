@@ -8,7 +8,7 @@
     "scenario_ownership": "present"
   },
   "totals": {
-    "awaiting_owner": 46,
+    "awaiting_owner": 45,
     "capacity_gates": 19,
     "live_targets": 36,
     "packages": 148,
@@ -519,38 +519,8 @@
       "unmapped_targets": [],
       "awaiting_owner": true
     },
-    "crates/aex-central-http": {
-      "name": "aex-central-http",
-      "kind": "cargo",
-      "meta": {
-        "owner": "central-identity",
-        "role": "composition",
-        "artifact": "none",
-        "layers": [
-          "unit"
-        ],
-        "concerns": [
-          "contract",
-          "security"
-        ],
-        "seams": [],
-        "security_tier": "public_edge",
-        "risk": [
-          "untrusted_input"
-        ],
-        "scenarios": [],
-        "targets": {
-          "composition": "unit"
-        },
-        "not_applicable": {
-          "live_suite": "composition crate; the mounted-route set is a unit fact and the deployed route set belongs to its deployable's companion"
-        }
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": false
-    },
-    "crates/aex-central-runtime": {
-      "name": "aex-central-runtime",
+    "crates/aex-central-aws": {
+      "name": "aex-central-aws",
       "kind": "cargo",
       "meta": {
         "owner": "central-identity",
@@ -585,6 +555,36 @@
           "security": "unit"
         },
         "not_applicable": {}
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": false
+    },
+    "crates/aex-central-http": {
+      "name": "aex-central-http",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-identity",
+        "role": "composition",
+        "artifact": "none",
+        "layers": [
+          "unit"
+        ],
+        "concerns": [
+          "contract",
+          "security"
+        ],
+        "seams": [],
+        "security_tier": "public_edge",
+        "risk": [
+          "untrusted_input"
+        ],
+        "scenarios": [],
+        "targets": {
+          "composition": "unit"
+        },
+        "not_applicable": {
+          "live_suite": "composition crate; the mounted-route set is a unit fact and the deployed route set belongs to its deployable's companion"
+        }
       },
       "unmapped_targets": [],
       "awaiting_owner": false
@@ -3634,13 +3634,16 @@
           "iam"
         ],
         "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the providers stream; live evidence cannot be earned before deployment (OD-07)"
-        }
+        "targets": {
+          "catalog_source": "e2e",
+          "deepseek_qualification": "e2e",
+          "genesis": "e2e",
+          "qualification_output": "e2e"
+        },
+        "not_applicable": {}
       },
       "unmapped_targets": [],
-      "awaiting_owner": true
+      "awaiting_owner": false
     },
     "tests/live/aex-live-observation-export-launcher": {
       "name": "aex-live-observation-export-launcher",

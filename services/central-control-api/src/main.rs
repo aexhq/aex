@@ -504,23 +504,23 @@ async fn compose(
         .await
         .map_err(|error| RunError::Dependency("aurora", error.to_string()))?;
 
-    let directory = Arc::new(aex_central_runtime::DataApiPepperDirectory::new(
+    let directory = Arc::new(aex_central_aws::DataApiPepperDirectory::new(
         client.clone(),
-        aex_central_runtime::PepperStatements {
+        aex_central_aws::PepperStatements {
             active: aex_control_aurora::sql::ACTIVE_CONTROL_PEPPER,
             by_version: aex_control_aurora::sql::CONTROL_PEPPER_BY_VERSION,
         },
     ));
-    let api_peppers = Arc::new(aex_central_runtime::SecretsManagerPepperKeystore::new(
+    let api_peppers = Arc::new(aex_central_aws::SecretsManagerPepperKeystore::new(
         aws_sdk_secretsmanager::Client::new(&aws),
         config.pepper_secret_id.clone(),
-        Arc::clone(&directory) as Arc<dyn aex_central_runtime::PepperDirectory>,
+        Arc::clone(&directory) as Arc<dyn aex_central_aws::PepperDirectory>,
     ));
     api_peppers
         .probe(PepperPurpose::ApiKey)
         .await
         .map_err(|error| RunError::Dependency("api-key-pepper", error.to_string()))?;
-    let cursor_peppers = Arc::new(aex_central_runtime::SecretsManagerPepperKeystore::new(
+    let cursor_peppers = Arc::new(aex_central_aws::SecretsManagerPepperKeystore::new(
         aws_sdk_secretsmanager::Client::new(&aws),
         config.cursor_secret_id.clone(),
         directory,
@@ -540,9 +540,9 @@ async fn compose(
     let concrete_store = Arc::new(aex_control_aurora::AuroraControlStore::new(client));
     let api_store: Arc<dyn api::Store> = concrete_store.clone();
     let target_store: Arc<dyn aex_control_app::ports::ControlStore> = concrete_store;
-    let clock: Arc<dyn aex_identity_app::ports::Clock> = Arc::new(aex_central_runtime::SystemClock);
+    let clock: Arc<dyn aex_identity_app::ports::Clock> = Arc::new(aex_central_aws::SystemClock);
     let regional: Arc<dyn aex_control_app::ports::RegionalControlPort> =
-        Arc::new(aex_central_runtime::LambdaRegionalControl::new(
+        Arc::new(aex_central_aws::LambdaRegionalControl::new(
             aws_sdk_lambda::Client::new(&aws),
             config.regional_functions.clone(),
         ));
@@ -551,8 +551,8 @@ async fn compose(
         Arc::clone(&api_peppers) as Arc<dyn aex_identity_app::ports::PepperKeystore>,
         regional,
         Arc::clone(&clock),
-        Arc::new(aex_central_runtime::Uuid7Factory),
-        Arc::new(aex_central_runtime::OsSecretRng),
+        Arc::new(aex_central_aws::Uuid7Factory),
+        Arc::new(aex_central_aws::OsSecretRng),
         Arc::clone(&cursor_secret),
         config.http.region,
         config.api_urls.clone(),

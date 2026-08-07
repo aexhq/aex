@@ -5,8 +5,8 @@ mod support;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use aex_central_runtime::pepper::{PepperDirectory, PepperState, SecretsManagerPepperKeystore};
-use aex_central_runtime::regional::LambdaRegionalControl;
+use aex_central_aws::pepper::{PepperDirectory, PepperState, SecretsManagerPepperKeystore};
+use aex_central_aws::regional::LambdaRegionalControl;
 use aex_control_app::ports::{
     DeleteWorkspaceRequest, ProvisionWorkspaceRequest, RegionalControlPort as _,
 };
@@ -44,7 +44,7 @@ fn the_active_pepper_is_the_version_the_table_names() {
 
 #[test]
 fn a_verifier_computed_under_one_version_reproduces_under_that_version() {
-    let directory = FakeDirectory::with(vec![aex_central_runtime::pepper::PepperRecord {
+    let directory = FakeDirectory::with(vec![aex_central_aws::pepper::PepperRecord {
         version: PepperVersion::new(3),
         purpose: PepperPurpose::Identity,
         state: PepperState::Active,
@@ -95,13 +95,13 @@ fn a_resolved_version_costs_one_secrets_manager_call_however_often_it_is_asked_f
 fn two_peppers_coexist_across_a_rotation() {
     let retiring = "aaaaaaaa-0000-0000-0000-000000000001";
     let directory = FakeDirectory::with(vec![
-        aex_central_runtime::pepper::PepperRecord {
+        aex_central_aws::pepper::PepperRecord {
             version: PepperVersion::new(4),
             purpose: PepperPurpose::Identity,
             state: PepperState::Active,
             secret_ref: VERSION_ID.to_owned(),
         },
-        aex_central_runtime::pepper::PepperRecord {
+        aex_central_aws::pepper::PepperRecord {
             version: PepperVersion::new(3),
             purpose: PepperPurpose::Identity,
             state: PepperState::Retiring,

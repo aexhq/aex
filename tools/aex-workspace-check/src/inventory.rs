@@ -49,7 +49,7 @@ pub const CRATES: &[&str] = &[
     "aex-brain-tool-catalog",
     "aex-capacity-dynamodb",
     "aex-central-http",
-    "aex-central-runtime",
+    "aex-central-aws",
     "aex-central-test-support",
     "aex-content-aws",
     "aex-content-domain",
@@ -258,7 +258,7 @@ mod tests {
         assert_eq!(
             CRATES.len(),
             67,
-            "accepted inventory minus aex-observation-clickhouse, plus aex-central-runtime, aex-brain-provider-custody, and aex-capacity-dynamodb"
+            "accepted inventory minus aex-observation-clickhouse, plus aex-central-aws, aex-brain-provider-custody, and aex-capacity-dynamodb"
         );
         assert_eq!(SERVICES.len(), 10);
         assert_eq!(WORKERS.len(), 18);

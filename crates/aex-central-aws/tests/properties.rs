@@ -11,7 +11,7 @@ mod support;
 
 use std::sync::Arc;
 
-use aex_central_runtime::pepper::{
+use aex_central_aws::pepper::{
     PepperDirectory, PepperRecord, PepperState, SecretsManagerPepperKeystore, pepper_cache_bound,
 };
 use aex_identity_app::ports::{PepperKeystore as _, PepperPurpose};

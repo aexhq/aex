@@ -24,7 +24,7 @@ members = [
     "crates/aex-brain-tool-catalog",
     "crates/aex-capacity-dynamodb",
     "crates/aex-central-http",
-    "crates/aex-central-runtime",
+    "crates/aex-central-aws",
     "crates/aex-central-test-support",
     "crates/aex-content-aws",
     "crates/aex-content-domain",
