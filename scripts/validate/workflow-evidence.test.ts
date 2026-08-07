@@ -334,7 +334,10 @@ describe("workflow evidence producers", () => {
     const cases = [
       {
         path: ".github/workflows/pr.yml",
-        resultJobs: ["tools", "route", "gates", "rust", "node", "scenarios", "terraform", "artifacts"],
+        // No `artifacts` here: the PR lane is read-only, so it cannot call
+        // `_build-artifacts.yml` (which requests write scopes) without failing
+        // the whole run at startup. Bytes are proved buildable on main.
+        resultJobs: ["tools", "route", "gates", "rust", "node", "scenarios", "terraform"],
         receiptJobs: ["rust", "node", "terraform"]
       },
       {
