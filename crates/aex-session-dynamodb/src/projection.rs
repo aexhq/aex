@@ -314,13 +314,13 @@ impl AuthorizationProjection for ProjectionReader {
         // transient refusal, never an admission the old sequence would have
         // denied; the accepted lag on any single row is bounded by the replica
         // horizon, per the projection-consistency charter.
-        let (auth_pk, auth_sk) = authorization_key(api_key);
-        let (placement_pk, placement_sk) = placement_key(workspace);
-        let (limits_pk, limits_sk) = edge_limits_key(workspace);
+        let (authorization_partition, authorization_sort) = authorization_key(api_key);
+        let (placement_partition, placement_sort) = placement_key(workspace);
+        let (limits_partition, limits_sort) = edge_limits_key(workspace);
         let (key_item, placement_item, limits_item) = futures::try_join!(
-            self.get(&auth_pk, &auth_sk, Consistency::Eventual),
-            self.get(&placement_pk, &placement_sk, Consistency::Eventual),
-            self.get(&limits_pk, &limits_sk, Consistency::Eventual),
+            self.get(&authorization_partition, &authorization_sort, Consistency::Eventual),
+            self.get(&placement_partition, &placement_sort, Consistency::Eventual),
+            self.get(&limits_partition, &limits_sort, Consistency::Eventual),
         )?;
         let key_item = key_item.ok_or_else(|| self.absent())?;
         let placement_item = placement_item.ok_or_else(|| self.absent())?;
