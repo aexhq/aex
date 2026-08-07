@@ -58,6 +58,15 @@ resource "aws_ecs_service" "this" {
   propagate_tags  = "SERVICE"
   tags            = var.tags
 
+  # A first deployment whose tasks crash otherwise exits terraform 0 with the
+  # service parked at zero tasks; waiting for steady state fails the apply loudly.
+  wait_for_steady_state = true
+
+  timeouts {
+    create = "15m"
+    update = "15m"
+  }
+
   deployment_circuit_breaker {
     enable   = var.circuit_breaker.enable
     rollback = var.circuit_breaker.rollback

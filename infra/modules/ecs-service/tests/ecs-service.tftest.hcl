@@ -93,6 +93,15 @@ run "autoscaling_targets_a_service_published_metric" {
   }
 }
 
+run "the_apply_waits_for_steady_state" {
+  command = plan
+
+  assert {
+    condition     = aws_ecs_service.this.wait_for_steady_state == true
+    error_message = "The apply must wait for the service to reach steady state; without it a first deployment whose tasks crash exits successfully with the service parked at zero tasks."
+  }
+}
+
 run "tasks_never_get_a_public_address" {
   command = plan
 
