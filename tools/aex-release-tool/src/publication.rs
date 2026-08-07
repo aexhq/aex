@@ -7,8 +7,6 @@
 use std::path::Path;
 use std::process::Command;
 
-use serde::{Deserialize, Serialize};
-
 use crate::canon;
 use crate::error::{Exit, Result, ToolError, Violation};
 use crate::pack::{Entry, SOURCE_DATE_EPOCH_DEFAULT, write_tar_gz};
@@ -17,31 +15,6 @@ use crate::pack::{Entry, SOURCE_DATE_EPOCH_DEFAULT, write_tar_gz};
 pub const RELEASE_TOOL_ASSET: &str = "aex-release-tool";
 /// Fixed public asset name for the Terraform module source bundle.
 pub const MODULE_BUNDLE_ASSET: &str = "terraform-modules.tar.gz";
-/// Fixed public asset name for the generated regional table definition bundle.
-pub const REGIONAL_TABLES_ASSET: &str = "regional-tables.json";
-
-/// Exact identities carried by the generated regional table bundle.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RegionalTablesIdentity {
-    /// SHA-256 over the transported JSON bytes.
-    pub digest: String,
-    /// Exact transported byte length.
-    pub size_bytes: u64,
-    /// BLAKE3 identity over the canonical table-definition array.
-    pub definitions_digest: String,
-    /// Authored monotone regional schema generation.
-    pub generation: u32,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct RegionalTablesDocument {
-    schema: String,
-    generation: u32,
-    digest: String,
-    tables: Vec<serde_json::Value>,
-}
 
 /// Closed naming pair for an auxiliary unit asset.
 #[derive(Debug, Clone, Copy)]
@@ -88,42 +61,15 @@ pub fn github_release_unit_uri(
 /// digest.
 pub fn ghcr_unit_uri(repository: &str, unit: &str, digest: &str) -> Result<String> {
     validate_public_identity(repository, &"a".repeat(40), "1", 1, unit, digest)?;
-    Ok(format!(
-        "oci://{}@{digest}",
-        ghcr_unit_repository(repository, unit)?
-    ))
-}
-
-/// Closed GHCR repository for one public OCI unit, without a mutable tag.
-///
-/// # Errors
-/// Returns [`Exit::EnvelopeInvalid`] for an invalid repository or unit id.
-pub fn ghcr_unit_repository(repository: &str, unit: &str) -> Result<String> {
-    let valid_segment = |segment: &str| {
-        !segment.is_empty()
-            && segment
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
-    };
-    let repository_valid = repository
-        .split_once('/')
-        .is_some_and(|(owner, repo)| valid_segment(owner) && valid_segment(repo));
-    if !repository_valid || !safe_unit_id(unit) {
-        return Err(ToolError::single(
+    let (owner, repo) = repository.split_once('/').ok_or_else(|| {
+        ToolError::single(
             Exit::EnvelopeInvalid,
-            "publication-oci-repository",
-            "OCI publication requires exact `owner/repository` and a safe unit id",
-        ));
-    }
-    let Some((owner, repo)) = repository.split_once('/') else {
-        return Err(ToolError::single(
-            Exit::EnvelopeInvalid,
-            "publication-oci-repository",
-            "OCI publication requires exact `owner/repository` and a safe unit id",
-        ));
-    };
+            "publication-repository",
+            "the repository must have exact `owner/repo` form",
+        )
+    })?;
     Ok(format!(
-        "ghcr.io/{}/{}-units/{unit}",
+        "oci://ghcr.io/{}/{}-units/{unit}@{digest}",
         owner.to_ascii_lowercase(),
         repo.to_ascii_lowercase()
     ))
@@ -391,141 +337,6 @@ pub fn package_module_bundle_from_paths(root: &Path, paths: &[String]) -> Result
         return Err(ToolError::many(Exit::Usage, violations));
     }
     write_tar_gz(&entries, SOURCE_DATE_EPOCH_DEFAULT)
-}
-
-/// Read and validate the checked-in generated regional table definition
-/// bundle without changing its bytes.
-///
-/// The JSON file is a separate release identity from the Terraform module
-/// archive. Terraform roots decode these exact bytes and pass the definitions
-/// into the module; the module never reads a public checkout path.
-///
-/// # Errors
-/// Returns [`Exit::Usage`] when the generated member is missing, link-shaped,
-/// malformed, empty, or carries an invalid schema/digest identity.
-pub fn regional_tables_bundle(root: &Path) -> Result<(Vec<u8>, RegionalTablesIdentity)> {
-    let path = root.join("migrations/regional/generated/regional-tables.json");
-    let metadata = std::fs::symlink_metadata(&path).map_err(|err| {
-        ToolError::single(
-            Exit::Usage,
-            "regional-tables-missing",
-            format!("`{}` cannot be read: {err}", path.display()),
-        )
-    })?;
-    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
-        return Err(ToolError::single(
-            Exit::Usage,
-            "regional-tables-not-regular",
-            format!("`{}` is not a regular file", path.display()),
-        ));
-    }
-    let bytes = std::fs::read(&path).map_err(|err| {
-        ToolError::single(
-            Exit::Usage,
-            "regional-tables-missing",
-            format!("`{}` cannot be read: {err}", path.display()),
-        )
-    })?;
-    let document: RegionalTablesDocument = serde_json::from_slice(&bytes).map_err(|err| {
-        ToolError::single(
-            Exit::Usage,
-            "regional-tables-json",
-            format!(
-                "`{}` is not the closed generated bundle: {err}",
-                path.display()
-            ),
-        )
-    })?;
-    if document.schema != "aex.regional-tables.v1"
-        || document.generation == 0
-        || document.tables.is_empty()
-        || !valid_blake3(&document.digest)
-    {
-        return Err(ToolError::single(
-            Exit::Usage,
-            "regional-tables-identity",
-            "the generated regional bundle requires schema `aex.regional-tables.v1`, a positive generation, a non-empty table array and one lowercase BLAKE3 digest",
-        ));
-    }
-    let identity = RegionalTablesIdentity {
-        digest: canon::digest_bytes(&bytes),
-        size_bytes: bytes.len() as u64,
-        definitions_digest: document.digest,
-        generation: document.generation,
-    };
-    Ok((bytes, identity))
-}
-
-/// Verify the exact transported bytes and the generated definition identity.
-///
-/// # Errors
-/// Returns [`Exit::ArtifactMismatch`] for byte mismatch and
-/// [`Exit::ManifestInvalid`] when the JSON's BLAKE3 identity differs from the
-/// composition.
-pub fn verify_regional_tables_bundle(
-    path: &Path,
-    digest: &str,
-    size_bytes: u64,
-    definitions_digest: &str,
-    generation: u32,
-) -> Result<()> {
-    let bytes = std::fs::read(path).map_err(|err| {
-        ToolError::single(
-            Exit::ArtifactMismatch,
-            "regional-tables-missing",
-            format!("`{}` cannot be read: {err}", path.display()),
-        )
-    })?;
-    let actual_digest = canon::digest_bytes(&bytes);
-    let actual_size = bytes.len() as u64;
-    let mut byte_violations = Vec::new();
-    if actual_digest != digest {
-        byte_violations.push(Violation::new(
-            "published-blob-digest-mismatch",
-            format!("recorded `{digest}`, downloaded `{actual_digest}`"),
-        ));
-    }
-    if actual_size != size_bytes {
-        byte_violations.push(Violation::new(
-            "published-blob-size-mismatch",
-            format!("recorded `{size_bytes}` bytes, downloaded `{actual_size}` bytes"),
-        ));
-    }
-    if !byte_violations.is_empty() {
-        return Err(ToolError::many(Exit::ArtifactMismatch, byte_violations));
-    }
-    let document: RegionalTablesDocument = serde_json::from_slice(&bytes).map_err(|err| {
-        ToolError::single(
-            Exit::ManifestInvalid,
-            "regional-tables-json",
-            format!(
-                "`{}` is not the closed generated bundle: {err}",
-                path.display()
-            ),
-        )
-    })?;
-    if document.schema != "aex.regional-tables.v1"
-        || document.generation == 0
-        || document.generation != generation
-        || document.tables.is_empty()
-        || !valid_blake3(&document.digest)
-        || document.digest != definitions_digest
-    {
-        return Err(ToolError::single(
-            Exit::ManifestInvalid,
-            "regional-tables-identity",
-            "the acquired regional table bundle is empty, malformed or not bound to the composition definitions digest",
-        ));
-    }
-    Ok(())
-}
-
-fn valid_blake3(value: &str) -> bool {
-    value.len() == 71
-        && value.starts_with("blake3:")
-        && value[7..]
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
 fn permitted_module_source(member: &str) -> bool {

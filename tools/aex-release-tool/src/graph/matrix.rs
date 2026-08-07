@@ -13,17 +13,15 @@ use serde::{Deserialize, Serialize};
 use crate::error::{Exit, Result, ToolError};
 
 use super::NodeKind;
-use super::inputs::{NpmPackage, ScenarioOwnership, Units};
+use super::inputs::ScenarioOwnership;
 use super::select::Selection;
 
 /// Which slice of the selection to emit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 #[clap(rename_all = "kebab-case")]
 pub enum MatrixKind {
-    /// Cargo packages to test in the Rust lane.
+    /// Cargo and npm packages to test.
     Test,
-    /// npm packages that own deployable units to test in the Node lane.
-    Node,
     /// Artifacts to build.
     Artifact,
     /// Scenarios to exercise.
@@ -48,12 +46,6 @@ pub struct MatrixEntry {
     /// Exact package target for a scenario entry.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
-    /// Repository-relative npm package directory for a Node entry.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub directory: Option<String>,
-    /// Deployable unit ids whose own package this entry exercises.
-    #[serde(default)]
-    pub units: Vec<String>,
     /// Zero-based shard index.
     pub partition: usize,
     /// Total shard count.
@@ -103,33 +95,6 @@ pub fn build(
     partitions: usize,
     durations: &BTreeMap<String, u64>,
     scenarios: &ScenarioOwnership,
-    units: &Units,
-    npm: &[NpmPackage],
-) -> Result<MatrixOutput> {
-    build_with_artifacts(
-        selection, None, kind, partitions, durations, scenarios, units, npm,
-    )
-}
-
-/// Build a matrix while retaining validation for every selected artifact owner.
-///
-/// A publication may narrow ordinary checks to the affected closure only when
-/// the packages that own its exhaustive artifact selection remain present to
-/// emit the same-run receipts required for certification.
-///
-/// # Errors
-/// Returns the same errors as [`build`], and rejects an artifact selection that
-/// names no registered unit.
-#[allow(clippy::too_many_arguments)]
-pub fn build_with_artifacts(
-    selection: &Selection,
-    artifact_selection: Option<&Selection>,
-    kind: MatrixKind,
-    partitions: usize,
-    durations: &BTreeMap<String, u64>,
-    scenarios: &ScenarioOwnership,
-    units: &Units,
-    npm: &[NpmPackage],
 ) -> Result<MatrixOutput> {
     if partitions == 0 {
         return Err(ToolError::single(
@@ -138,10 +103,38 @@ pub fn build_with_artifacts(
             "--partitions must be at least 1",
         ));
     }
-    let candidates = if kind == MatrixKind::Scenario {
-        scenario_candidates(selection, scenarios)?
-    } else {
-        candidates(selection, artifact_selection, kind, units, npm)?
+    let candidates: Vec<(String, String)> = match kind {
+        MatrixKind::Test => selection
+            .test
+            .iter()
+            .filter(|selected| {
+                matches!(selected.id.namespace(), "cargo" | "npm")
+                    && !selected.id.local().starts_with("aex-live-")
+            })
+            .map(|selected| (selected.id.to_string(), selected.id.local().to_owned()))
+            .collect(),
+        MatrixKind::Live => selection
+            .test
+            .iter()
+            .filter(|selected| selected.id.local().starts_with("aex-live-"))
+            .map(|selected| (selected.id.to_string(), selected.id.local().to_owned()))
+            .collect(),
+        MatrixKind::Terraform => selection
+            .test
+            .iter()
+            .filter(|selected| selected.id.namespace() == "tf")
+            .map(|selected| (selected.id.to_string(), selected.id.local().to_owned()))
+            .collect(),
+        MatrixKind::Artifact => selection
+            .deploy
+            .iter()
+            .map(|selected| (selected.id.to_string(), selected.id.local().to_owned()))
+            .collect(),
+        MatrixKind::Scenario => selection
+            .scenarios
+            .iter()
+            .map(|selected| (selected.id.to_string(), selected.id.local().to_owned()))
+            .collect(),
     };
 
     let shards = partition(&candidates, partitions, durations);
@@ -171,41 +164,11 @@ pub fn build_with_artifacts(
             } else {
                 (None, None)
             };
-            let directory = if kind == MatrixKind::Node {
-                Some(
-                    npm.iter()
-                        .find(|candidate| candidate.name == *name)
-                        .ok_or_else(|| {
-                            ToolError::single(
-                                Exit::GraphVerification,
-                                "node-package-directory-missing",
-                                format!(
-                                    "selected Node package `{name}` has no npm package directory"
-                                ),
-                            )
-                        })?
-                        .dir
-                        .clone(),
-                )
-            } else {
-                None
-            };
             include.push(MatrixEntry {
                 id: id.clone(),
                 name: name.clone(),
                 package,
                 target,
-                directory,
-                units: if matches!(kind, MatrixKind::Test | MatrixKind::Node) {
-                    units
-                        .units
-                        .iter()
-                        .filter(|unit| unit.package == *name)
-                        .map(|unit| unit.id.clone())
-                        .collect()
-                } else {
-                    Vec::new()
-                },
                 partition: index,
                 partitions: used,
             });
@@ -218,126 +181,6 @@ pub fn build_with_artifacts(
         count: include.len(),
         include,
     })
-}
-
-fn candidates(
-    selection: &Selection,
-    artifact_selection: Option<&Selection>,
-    kind: MatrixKind,
-    units: &Units,
-    npm: &[NpmPackage],
-) -> Result<Vec<(String, String)>> {
-    let selected: Vec<(String, String)> = match kind {
-        MatrixKind::Test => selection
-            .test
-            .iter()
-            .filter(|selected| {
-                selected.id.namespace() == "cargo" && !selected.id.local().starts_with("aex-live-")
-            })
-            .map(|selected| (selected.id.to_string(), selected.id.local().to_owned()))
-            .collect(),
-        MatrixKind::Node => selection
-            .test
-            .iter()
-            .filter(|selected| {
-                selected.id.namespace() == "npm"
-                    && units
-                        .units
-                        .iter()
-                        .any(|unit| unit.package == selected.id.local())
-            })
-            .map(|selected| (selected.id.to_string(), selected.id.local().to_owned()))
-            .collect(),
-        MatrixKind::Live => selection
-            .test
-            .iter()
-            .filter(|selected| selected.id.local().starts_with("aex-live-"))
-            .map(|selected| (selected.id.to_string(), selected.id.local().to_owned()))
-            .collect(),
-        MatrixKind::Terraform => selection
-            .test
-            .iter()
-            .filter(|selected| selected.id.namespace() == "tf")
-            .map(|selected| (selected.id.to_string(), selected.id.local().to_owned()))
-            .collect(),
-        MatrixKind::Artifact => selection
-            .deploy
-            .iter()
-            .map(|selected| (selected.id.to_string(), selected.id.local().to_owned()))
-            .collect(),
-        MatrixKind::Scenario => selection
-            .scenarios
-            .iter()
-            .map(|selected| (selected.id.to_string(), selected.id.local().to_owned()))
-            .collect(),
-    };
-    let mut selected: BTreeMap<String, String> = selected.into_iter().collect();
-    if matches!(kind, MatrixKind::Test | MatrixKind::Node)
-        && let Some(artifact_selection) = artifact_selection
-    {
-        for artifact in &artifact_selection.deploy {
-            let unit = units
-                .units
-                .iter()
-                .find(|unit| unit.id == artifact.id.local())
-                .ok_or_else(|| {
-                    ToolError::single(
-                        Exit::GraphVerification,
-                        "artifact-unit-missing",
-                        format!(
-                            "selected artifact `{}` has no registered deployable unit",
-                            artifact.id
-                        ),
-                    )
-                })?;
-            let is_npm = npm.iter().any(|package| package.name == unit.package);
-            if (kind == MatrixKind::Node && is_npm) || (kind == MatrixKind::Test && !is_npm) {
-                let namespace = if is_npm { "npm" } else { "cargo" };
-                selected
-                    .entry(format!("{namespace}:{}", unit.package))
-                    .or_insert_with(|| unit.package.clone());
-            }
-        }
-    }
-    Ok(selected.into_iter().collect())
-}
-
-fn scenario_candidates(
-    selection: &Selection,
-    scenarios: &ScenarioOwnership,
-) -> Result<Vec<(String, String)>> {
-    let registry: BTreeMap<&str, &super::inputs::Scenario> = scenarios
-        .scenarios
-        .iter()
-        .map(|scenario| (scenario.id.as_str(), scenario))
-        .collect();
-    let mut candidates = Vec::new();
-    for selected in &selection.scenarios {
-        let name = selected.id.local();
-        let Some(scenario) = registry.get(name) else {
-            return Err(ToolError::single(
-                Exit::GraphVerification,
-                "scenario-runnable-missing",
-                format!("selected scenario `{name}` is absent from the scenario registry"),
-            ));
-        };
-        match (&scenario.package, &scenario.target, &scenario.deferred) {
-            (Some(_), Some(_), None) => {
-                candidates.push((selected.id.to_string(), name.to_owned()));
-            }
-            (None, None, Some(reason)) if !reason.trim().is_empty() => {}
-            _ => {
-                return Err(ToolError::single(
-                    Exit::GraphVerification,
-                    "scenario-runnable-missing",
-                    format!(
-                        "selected scenario `{name}` has neither a sound runnable claim nor an explicit deferral"
-                    ),
-                ));
-            }
-        }
-    }
-    Ok(candidates)
 }
 
 /// The emission produced when routing itself failed.
@@ -412,7 +255,6 @@ pub fn to_github_output(output: &MatrixOutput) -> Result<String> {
 pub const fn source_kind(kind: MatrixKind) -> NodeKind {
     match kind {
         MatrixKind::Test | MatrixKind::Live => NodeKind::Crate,
-        MatrixKind::Node => NodeKind::NpmPackage,
         MatrixKind::Artifact => NodeKind::Artifact,
         MatrixKind::Scenario => NodeKind::Scenario,
         MatrixKind::Terraform => NodeKind::TerraformModule,
@@ -423,11 +265,9 @@ pub const fn source_kind(kind: MatrixKind) -> NodeKind {
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::{
-        MatrixKind, OUTPUT_KEYS, build, build_with_artifacts, degraded, partition, to_github_output,
-    };
+    use super::{MatrixKind, OUTPUT_KEYS, build, degraded, partition, to_github_output};
     use crate::graph::NodeId;
-    use crate::graph::inputs::{ScenarioOwnership, Units};
+    use crate::graph::inputs::ScenarioOwnership;
     use crate::graph::select::{Lane, Mode, Selected, Selection, SelectionReason};
 
     fn selection(ids: &[NodeId]) -> Selection {
@@ -460,13 +300,6 @@ mod tests {
         }
     }
 
-    fn no_units() -> Units {
-        Units {
-            schema: "aex.units.v1".to_owned(),
-            units: Vec::new(),
-        }
-    }
-
     #[test]
     fn healthy_and_degraded_paths_emit_the_same_output_keys() {
         let healthy = to_github_output(
@@ -476,8 +309,6 @@ mod tests {
                 1,
                 &BTreeMap::new(),
                 &no_scenarios(),
-                &no_units(),
-                &[],
             )
             .unwrap(),
         )
@@ -506,7 +337,6 @@ mod tests {
         let selection = selection(&[
             NodeId::cargo("aex-wire"),
             NodeId::cargo("aex-live-brain-mux"),
-            NodeId::npm("@aexhq/sdk"),
         ]);
         let unit = build(
             &selection,
@@ -514,8 +344,6 @@ mod tests {
             4,
             &BTreeMap::new(),
             &no_scenarios(),
-            &no_units(),
-            &[],
         )
         .unwrap();
         let live = build(
@@ -524,8 +352,6 @@ mod tests {
             4,
             &BTreeMap::new(),
             &no_scenarios(),
-            &no_units(),
-            &[],
         )
         .unwrap();
         assert_eq!(
@@ -542,153 +368,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["aex-live-brain-mux"]
         );
-        assert!(
-            unit.include
-                .iter()
-                .all(|entry| entry.id.starts_with("cargo:")),
-            "the Rust lane must never receive an npm package"
-        );
-    }
-
-    #[test]
-    fn publication_validation_keeps_artifact_owners_and_skips_unrelated_packages() {
-        let affected = selection(&[NodeId::cargo("aex-changed")]);
-        let mut artifacts = selection(&[NodeId::cargo("demo-api"), NodeId::cargo("aex-unrelated")]);
-        artifacts.mode = Mode::Full;
-        artifacts.deploy = vec![Selected {
-            id: NodeId::artifact("demo-api"),
-            reason: SelectionReason::RouterChanged,
-        }];
-        let units: Units = toml::from_str(
-            r#"
-schema = "aex.units.v1"
-[[unit]]
-id = "demo-api"
-kind = "rust-lambda"
-plane = "regional"
-package = "demo-api"
-target = "aarch64-unknown-linux-gnu.2.34"
-profile = "release-lambda"
-form = "zip"
-config_env_namespace = "AEX_DEMO_"
-config_schema_version = 1
-required_receipts = ["unit", "lint"]
-alarm_spec = "demo-api"
-"#,
-        )
-        .unwrap();
-
-        let output = build_with_artifacts(
-            &affected,
-            Some(&artifacts),
-            MatrixKind::Test,
-            4,
-            &BTreeMap::new(),
-            &no_scenarios(),
-            &units,
-            &[],
-        )
-        .unwrap();
-        let names: Vec<&str> = output
-            .include
-            .iter()
-            .map(|entry| entry.name.as_str())
-            .collect();
-        assert_eq!(names, vec!["aex-changed", "demo-api"]);
-        assert!(
-            !names.contains(&"aex-unrelated"),
-            "an unchanged package that owns no selected artifact must not rerun"
-        );
-    }
-
-    #[test]
-    fn node_matrix_is_bounded_to_npm_packages_that_own_deployable_units() {
-        let selection = selection(&[
-            NodeId::npm("@aexhq/sdk"),
-            NodeId::npm("@aexhq/stripe-command-edge"),
-            NodeId::npm("@aexhq/stripe-webhook-edge"),
-            NodeId::cargo("aex-wire"),
-        ]);
-        let units: Units = toml::from_str(
-            r#"
-schema = "aex.units.v1"
-[[unit]]
-id = "stripe-command-edge"
-kind = "ts-lambda"
-plane = "central"
-package = "@aexhq/stripe-command-edge"
-target = "none"
-profile = "release"
-form = "zip"
-config_env_namespace = "AEX_STRIPE_COMMAND_"
-config_schema_version = 1
-required_receipts = ["unit"]
-alarm_spec = "stripe-command-edge"
-[[unit]]
-id = "stripe-webhook-edge"
-kind = "ts-lambda"
-plane = "central"
-package = "@aexhq/stripe-webhook-edge"
-target = "none"
-profile = "release"
-form = "zip"
-config_env_namespace = "AEX_STRIPE_WEBHOOK_"
-config_schema_version = 1
-required_receipts = ["unit"]
-alarm_spec = "stripe-webhook-edge"
-"#,
-        )
-        .unwrap();
-        let npm = vec![
-            crate::graph::inputs::NpmPackage {
-                name: "@aexhq/sdk".to_owned(),
-                dir: "packages/sdk".to_owned(),
-                meta: None,
-                publishable: true,
-                deps: Vec::new(),
-            },
-            crate::graph::inputs::NpmPackage {
-                name: "@aexhq/stripe-command-edge".to_owned(),
-                dir: "services/stripe-command-edge".to_owned(),
-                meta: None,
-                publishable: false,
-                deps: Vec::new(),
-            },
-            crate::graph::inputs::NpmPackage {
-                name: "@aexhq/stripe-webhook-edge".to_owned(),
-                dir: "services/stripe-webhook-edge".to_owned(),
-                meta: None,
-                publishable: false,
-                deps: Vec::new(),
-            },
-        ];
-
-        let output = build(
-            &selection,
-            MatrixKind::Node,
-            8,
-            &BTreeMap::new(),
-            &no_scenarios(),
-            &units,
-            &npm,
-        )
-        .unwrap();
-
-        assert_eq!(output.include.len(), 2);
-        assert_eq!(output.include[0].name, "@aexhq/stripe-command-edge");
-        assert_eq!(
-            output.include[0].directory.as_deref(),
-            Some("services/stripe-command-edge")
-        );
-        assert_eq!(output.include[0].units, vec!["stripe-command-edge"]);
-        assert_eq!(output.include[1].name, "@aexhq/stripe-webhook-edge");
-        assert_eq!(
-            output.include[1].directory.as_deref(),
-            Some("services/stripe-webhook-edge")
-        );
-        assert_eq!(output.include[1].units, vec!["stripe-webhook-edge"]);
-        assert_eq!(output.include[0].partitions, 2);
-        assert_eq!(output.include[1].partitions, 2);
     }
 
     #[test]
@@ -716,8 +395,6 @@ target = "live"
             1,
             &BTreeMap::new(),
             &registry,
-            &no_units(),
-            &[],
         )
         .expect("scenario matrix");
         assert_eq!(output.include.len(), 1);
@@ -742,45 +419,9 @@ target = "live"
             1,
             &BTreeMap::new(),
             &no_scenarios(),
-            &no_units(),
-            &[],
         )
         .unwrap_err();
         assert_eq!(err.rules(), vec!["scenario-runnable-missing"]);
-    }
-
-    #[test]
-    fn explicitly_deferred_scenario_is_excluded_from_the_matrix() {
-        let mut selected = selection(&[]);
-        selected.scenarios.push(Selected {
-            id: NodeId::scenario("SC-DEFERRED"),
-            reason: SelectionReason::RouterChanged,
-        });
-        let registry: ScenarioOwnership = toml::from_str(
-            r#"
-schema = "aex.scenario-ownership.v1"
-[[scenario]]
-id = "SC-DEFERRED"
-owner = "delivery"
-observes = ["artifact:demo-api"]
-deferred = "the production composition does not yet expose this surface"
-"#,
-        )
-        .expect("scenario registry");
-        let output = build(
-            &selected,
-            MatrixKind::Scenario,
-            1,
-            &BTreeMap::new(),
-            &registry,
-            &no_units(),
-            &[],
-        )
-        .expect("deferred scenario matrix");
-        assert!(!output.routing_failed);
-        assert!(!output.has_entries);
-        assert_eq!(output.count, 0);
-        assert!(output.include.is_empty());
     }
 
     #[test]
@@ -816,54 +457,6 @@ deferred = "the production composition does not yet expose this surface"
     }
 
     #[test]
-    fn test_entries_carry_units_owned_by_the_selected_package() {
-        let units: Units = toml::from_str(
-            r#"
-schema = "aex.units.v1"
-[[unit]]
-id = "hands-image-small"
-kind = "microvm-image"
-plane = "regional"
-package = "hands-image"
-target = "aarch64-unknown-linux-musl"
-profile = "release"
-form = "raw"
-config_env_namespace = "AEX_HANDS_IMAGE_"
-config_schema_version = 1
-required_receipts = ["unit"]
-alarm_spec = "hands-image-small"
-[[unit]]
-id = "hands-image-large"
-kind = "microvm-image"
-plane = "regional"
-package = "hands-image"
-target = "aarch64-unknown-linux-musl"
-profile = "release"
-form = "raw"
-config_env_namespace = "AEX_HANDS_IMAGE_"
-config_schema_version = 1
-required_receipts = ["unit"]
-alarm_spec = "hands-image-large"
-"#,
-        )
-        .unwrap();
-        let output = build(
-            &selection(&[NodeId::cargo("hands-image")]),
-            MatrixKind::Test,
-            1,
-            &BTreeMap::new(),
-            &no_scenarios(),
-            &units,
-            &[],
-        )
-        .unwrap();
-        assert_eq!(
-            output.include[0].units,
-            vec!["hands-image-small", "hands-image-large"]
-        );
-    }
-
-    #[test]
     fn an_empty_selection_yields_no_shards_and_says_so() {
         let output = build(
             &selection(&[]),
@@ -871,8 +464,6 @@ alarm_spec = "hands-image-large"
             4,
             &BTreeMap::new(),
             &no_scenarios(),
-            &no_units(),
-            &[],
         )
         .unwrap();
         assert!(!output.has_entries);
@@ -888,8 +479,6 @@ alarm_spec = "hands-image-large"
             0,
             &BTreeMap::new(),
             &no_scenarios(),
-            &no_units(),
-            &[],
         )
         .unwrap_err();
         assert_eq!(err.exit.code(), 2);

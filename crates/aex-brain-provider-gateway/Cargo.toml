@@ -47,14 +47,10 @@ url.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
-aws-lc-rs.workspace = true
 proptest.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time", "test-util"] }
 uuid.workspace = true
 wiremock.workspace = true
-
-[build-dependencies]
-blake3.workspace = true
 
 [[test]]
 name = "properties"

@@ -39,9 +39,6 @@ policy = "unit"
 janitor = "unit"
 failing_fixtures = "unit"
 contracts = "unit"
-publication = "unit"
-certify = "unit"
-oci = "unit"
 
 [package.metadata.aex.not_applicable]
 live_suite = "workspace tool; it observes releases and is never itself deployed"
@@ -60,7 +57,6 @@ anyhow.workspace = true
 clap.workspace = true
 flate2.workspace = true
 hex.workspace = true
-p256.workspace = true
 regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -114,9 +110,3 @@ name = "contracts"
 
 [[test]]
 name = "publication"
-
-[[test]]
-name = "certify"
-
-[[test]]
-name = "oci"

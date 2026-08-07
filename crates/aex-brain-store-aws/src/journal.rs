@@ -339,16 +339,11 @@ impl EffectStore for BrainStore {
                 .map_err(|error| CommitError::Store(store_key_error(&error)))?;
             let now = translate::at(ticket.issued_at(), "at")
                 .map_err(|error| CommitError::Store(translate_error(&error)))?;
-            // Every attribute `effect::decode` reads back is written here. The operation
-            // binding is closed: an external operation is mutually exclusive with the
-            // detached tool's id-plus-executor pair.
-            if evidence.external_operation.is_some() && evidence.detached_tool.is_some() {
-                return Err(CommitError::Store(StoreError::Undecodable {
-                    location: format!("effect {} response evidence", ticket.effect()),
-                    reason: "external and detached-tool operation bindings are mutually exclusive"
-                        .to_owned(),
-                }));
-            }
+            // Every attribute `effect::decode` reads back is written here. The three optional
+            // ones are the whole recovery matrix: without the operation id a detached effect
+            // decodes with no operation and `recover` interrupts a run the upstream is still
+            // happily working on, and without the receipt a settled outcome is re-fetched
+            // from a provider that has already been paid.
             let mut update = "SET #state = :next, responseStartedAt = :now, \
                               dispatchStage = :stage, dispatchProof = :proof"
                 .to_owned();
@@ -364,21 +359,9 @@ impl EffectStore for BrainStore {
                 .expression_attribute_values(":now", stamp(now))
                 .expression_attribute_values(":stage", s(format!("{:?}", evidence.stage)))
                 .expression_attribute_values(":proof", s(format!("{:?}", evidence.proof)));
-            if let Some(operation) = evidence.external_operation.as_ref() {
-                update.push_str(", externalOperationId = :externalOperation");
-                request = request
-                    .expression_attribute_values(":externalOperation", s(operation.0.clone()));
-            }
-            if let Some(operation) = evidence.detached_tool.as_ref() {
-                update.push_str(
-                    ", detachedOperationId = :detachedOperation, detachedExecutor = :detachedExecutor",
-                );
-                request = request
-                    .expression_attribute_values(":detachedOperation", s(operation.id.0.clone()))
-                    .expression_attribute_values(
-                        ":detachedExecutor",
-                        s(format!("{:?}", operation.executor)),
-                    );
+            if let Some(operation) = evidence.operation.as_ref() {
+                update.push_str(", operationId = :operation");
+                request = request.expression_attribute_values(":operation", s(operation.0.clone()));
             }
             if let Some(provider_request) = evidence.provider_request_id.as_ref() {
                 update.push_str(", providerRequestId = :providerRequestId");
@@ -419,7 +402,7 @@ impl EffectStore for BrainStore {
 ///
 /// [`StoreError::JournalGap`] when the page is not contiguous from `from`,
 /// [`StoreError::JournalForked`] when a stored body does not hash to its recorded entry id,
-/// [`StoreError::ReadBudgetExhausted`] when the response exceeds either page bound, and
+/// [`StoreError::ReadBudgetExhausted`] when the page exceeds its byte bound, and
 /// [`StoreError::Undecodable`] when a row is not a journal entry.
 pub fn decode_page(
     items: &[Item],
@@ -429,16 +412,10 @@ pub fn decode_page(
     from: JournalSeq,
     budget: ReadBudget,
 ) -> Result<JournalPage, StoreError> {
-    let mut entries = Vec::with_capacity(items.len().min(budget.max_entries));
+    let mut entries = Vec::with_capacity(items.len());
     let mut expected = from;
     let mut bytes = 0_usize;
     for item in items {
-        if entries.len() >= budget.max_entries {
-            return Err(StoreError::ReadBudgetExhausted {
-                entries: entries.len().saturating_add(1),
-                bytes,
-            });
-        }
         let row = Row::bind(item, aex_session_dynamodb::codec::JOURNAL_ENTRY)
             .map_err(|error| undecodable("journal entry", &error))?;
         let seq = JournalSeq(
@@ -484,11 +461,11 @@ pub fn decode_page(
             record,
         });
         expected = expected.next();
+        if entries.len() >= budget.max_entries {
+            break;
+        }
     }
     let next = last_evaluated_key
-        // The API defines an absent or empty LEK as EOF. Every non-empty map is evidence
-        // that pagination must continue and is validated as the exact table key below.
-        .filter(|key| !key.is_empty())
         .map(|key| decode_cursor(key, partition, query_from, expected))
         .transpose()?;
     Ok(JournalPage {

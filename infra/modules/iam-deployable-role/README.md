@@ -18,7 +18,7 @@ grants in.
 | `assume_principal` | `object` | `{ type, identifiers }`; who may assume the role. |
 | `action_grants` | `list(object)` | `{ sid, actions, resources, scopable, condition_operator, condition_key, condition_values }`; the operator defaults to `StringEquals`, and only reviewed operators are accepted. |
 | `wildcard_resource_allowlist` | `list(string)` | Exhaustive list of actions permitted on `Resource: "*"`. |
-| `boundary_policy_arn` | `string` | Required owner-managed permissions boundary. The application deploy identity must be able to attach it but must not own or mutate the policy. |
+| `boundary_policy_arn` | `string` | Optional permissions boundary. |
 | `max_session_duration` | `number` | Session duration in seconds. |
 | `tags` | `map(string)` | Tags applied to the role. |
 
@@ -44,8 +44,6 @@ The role name is `aex-<plane>-<deployable>`.
   on the same table, for instance — fails here rather than at apply.
 - The trust policy names explicit principals, never a wildcard, and grants only
   `sts:AssumeRole`.
-- Every role carries the required exact owner-managed permissions boundary. A
-  caller cannot silently omit the ceiling by accepting a module default.
 
 ## Not asserted here
 

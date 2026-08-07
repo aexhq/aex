@@ -5,7 +5,7 @@
   "description": "The immutable identity and freshness boundary around one opaque saved Terraform plan. envelopeDigest is sha256 over RFC 8785 canonical bytes with envelopeDigest removed. The plan is sensitive and remains private.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "envelopeDigest", "releaseId", "bindingDigest", "bindingRef", "placementDigest", "plan", "tool", "sourceArchive", "moduleBundle", "regionalTables", "runner", "terraform", "state", "workflow", "createdAt", "expiresAt"],
+  "required": ["schema", "envelopeDigest", "releaseId", "bindingDigest", "bindingRef", "placementDigest", "plan", "tool", "sourceArchive", "moduleBundle", "runner", "terraform", "state", "workflow", "createdAt", "expiresAt"],
   "properties": {
     "schema": { "const": "aex.saved-plan-envelope.v1" },
     "envelopeDigest": { "$ref": "#/$defs/sha256" },
@@ -17,7 +17,6 @@
     "tool": { "$ref": "#/$defs/toolIdentity" },
     "sourceArchive": { "$ref": "#/$defs/blobIdentity" },
     "moduleBundle": { "$ref": "#/$defs/blobIdentity" },
-    "regionalTables": { "$ref": "#/$defs/regionalTablesIdentity" },
     "runner": {
       "description": "Execution compatibility and the fixed paths embedded in Terraform's saved plan.",
       "type": "object",
@@ -83,16 +82,6 @@
       "properties": {
         "digest": { "$ref": "#/$defs/sha256" },
         "sizeBytes": { "type": "integer", "minimum": 1 }
-      }
-    },
-    "regionalTablesIdentity": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["digest", "sizeBytes", "definitionsDigest"],
-      "properties": {
-        "digest": { "$ref": "#/$defs/sha256" },
-        "sizeBytes": { "type": "integer", "minimum": 1 },
-        "definitionsDigest": { "type": "string", "pattern": "^blake3:[0-9a-f]{64}$" }
       }
     },
     "savedPlanIdentity": {

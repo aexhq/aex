@@ -14,20 +14,9 @@
 //! this crate admits and the gate refuses, or the reverse, is the drift both
 //! exist to prevent.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
-use sha2::{Digest as _, Sha256};
 use sqlx::migrate::Migrator;
-
-const EMBEDDED_BUNDLE_LOCK: &str = include_str!("../../../migrations/central/bundle.lock.json");
-const EMBEDDED_GRANTS: &str = include_str!("../../../migrations/central/grants.toml");
-
-// A future non-transactional migration must add its compile-time repair here.
-// `MigrationBundle::embedded` refuses a lock row with `repair=true` until this
-// table contains the same version, so the production repair path can never
-// fall back to a source-tree file.
-const EMBEDDED_REPAIRS: &[(i64, &str)] = &[];
 
 /// The phase vocabulary, identical to the release gate's.
 ///
@@ -58,73 +47,6 @@ pub struct MigrationBundle {
 }
 
 impl MigrationBundle {
-    /// Loads the exact bundle lock compiled into the executable.
-    ///
-    /// # Errors
-    /// Rejects malformed lock bytes, an invalid identity, a nonlinear chain,
-    /// or a non-transactional row whose repair was not also embedded.
-    pub fn embedded() -> Result<Self, BundleError> {
-        let lock: EmbeddedBundleLock =
-            serde_json::from_str(EMBEDDED_BUNDLE_LOCK).map_err(BundleError::Lock)?;
-        if lock.schema != "aex.migration-bundle.v1"
-            || lock.files.is_empty()
-            || lock.grants_digest != sha256(normalized(EMBEDDED_GRANTS).as_bytes())
-        {
-            return Err(BundleError::Identity);
-        }
-        let migrator = embedded_sqlx_migrator();
-        if migrator.migrations.len() != lock.files.len() {
-            return Err(BundleError::Identity);
-        }
-        let mut files = Vec::with_capacity(lock.files.len());
-        for (row, migration) in lock.files.into_iter().zip(migrator.migrations.iter()) {
-            let version = row
-                .version
-                .parse::<i64>()
-                .map_err(|_| BundleError::Filename)?;
-            let sql = normalized(migration.sql.as_str());
-            let header = parse_header(
-                sql.lines().next().ok_or(BundleError::Header)?,
-                version,
-                &row.slug,
-            )?;
-            if row.version.len() != 14
-                || !row.version.bytes().all(|byte| byte.is_ascii_digit())
-                || row.file != format!("{}_{}.sql", row.version, row.slug)
-                || migration.version != version
-                || row.sha256 != sha256(sql.as_bytes())
-                || row.length != sql.len() as u64
-                || !PHASES.contains(&row.phase.as_str())
-                || header.transactional != row.tx
-                || header.destructive != row.destructive
-                || header.phase != row.phase
-                || migration.no_tx == row.tx
-            {
-                return Err(BundleError::Identity);
-            }
-            if row.repair == row.tx
-                || (row.repair && embedded_repair(version).is_none())
-                || files
-                    .last()
-                    .is_some_and(|previous: &MigrationFile| previous.version >= version)
-            {
-                return Err(BundleError::NonLinear);
-            }
-            files.push(MigrationFile {
-                version,
-                slug: row.slug,
-                transactional: row.tx,
-                destructive: row.destructive,
-                phase: row.phase,
-            });
-        }
-        let expected_head = files.last().map_or(0, |file| file.version);
-        if lock.head.parse::<i64>().ok() != Some(expected_head) {
-            return Err(BundleError::Identity);
-        }
-        Ok(Self { files })
-    }
-
     /// Reads and validates all forward `.sql` migrations.
     ///
     /// # Errors
@@ -229,83 +151,37 @@ impl MigrationBundle {
     ///
     /// # Errors
     ///
-    /// Returns [`BundleError::MissingRepair`] when the version is not bundled,
-    /// is transactional, or its repair was not compiled into this executable.
-    /// A transactional migration is re-entrant by rerunning the exact artifact
-    /// and therefore has no repair path at all.
-    pub fn repair_sql(&self, version: i64) -> Result<&'static str, BundleError> {
+    /// Returns [`BundleError::MissingRepair`] when the version is not bundled or
+    /// is transactional, and [`BundleError::Io`] when the sibling file cannot be
+    /// read. A transactional migration is re-entrant by rerunning the exact
+    /// artifact and therefore has no repair path at all.
+    pub fn repair_sql(&self, path: &Path, version: i64) -> Result<String, BundleError> {
         let file = self.file(version).ok_or(BundleError::MissingRepair)?;
         if file.transactional {
             return Err(BundleError::MissingRepair);
         }
-        embedded_repair(version).ok_or(BundleError::MissingRepair)
+        let repair = path.join(format!("{version:014}_{}.repair.sql", file.slug));
+        std::fs::read_to_string(repair).map_err(BundleError::Io)
     }
 }
 
 /// Constructs `SQLx`'s native migrator with fail-closed history settings.
 ///
-/// `sqlx::migrate!` validates and embeds the committed directory at compile
-/// time, so the production image needs no sibling source-tree files.
-#[must_use]
-pub fn native_migrator() -> Migrator {
-    let mut migrator = embedded_sqlx_migrator();
+/// # Errors
+/// Returns `SQLx`'s source error if the committed directory cannot be parsed.
+pub async fn native_migrator() -> Result<Migrator, sqlx::migrate::MigrateError> {
+    let mut migrator = Migrator::new(bundle_path()).await?;
     migrator.create_schema("schema_admin");
     migrator.dangerous_set_table_name("schema_admin._sqlx_migrations");
     migrator.set_ignore_missing(false);
     migrator.set_locking(true);
-    migrator
+    Ok(migrator)
 }
 
-fn embedded_sqlx_migrator() -> Migrator {
-    sqlx::migrate!("../../migrations/central")
-}
-
-fn normalized(text: &str) -> std::borrow::Cow<'_, str> {
-    if text.contains("\r\n") {
-        std::borrow::Cow::Owned(text.replace("\r\n", "\n"))
-    } else {
-        std::borrow::Cow::Borrowed(text)
-    }
-}
-
-fn sha256(bytes: &[u8]) -> String {
-    use std::fmt::Write as _;
-
-    let mut text = String::with_capacity(71);
-    text.push_str("sha256:");
-    for byte in Sha256::digest(bytes) {
-        write!(&mut text, "{byte:02x}").expect("writing to a String cannot fail");
-    }
-    text
-}
-
-fn embedded_repair(version: i64) -> Option<&'static str> {
-    EMBEDDED_REPAIRS
-        .iter()
-        .find_map(|(candidate, sql)| (*candidate == version).then_some(*sql))
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct EmbeddedBundleLock {
-    schema: String,
-    head: String,
-    files: Vec<EmbeddedMigrationFile>,
-    grants_digest: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct EmbeddedMigrationFile {
-    version: String,
-    slug: String,
-    file: String,
-    sha256: String,
-    length: u64,
-    tx: bool,
-    destructive: bool,
-    phase: String,
-    repair: bool,
+/// Committed migration directory.
+#[must_use]
+pub fn bundle_path() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations/central")
 }
 
 /// Parses one header line for the migration the filename already identifies.
@@ -351,12 +227,6 @@ pub enum BundleError {
     /// Filesystem failure.
     #[error("migration bundle I/O failed: {0}")]
     Io(std::io::Error),
-    /// The embedded canonical bundle lock is not valid JSON.
-    #[error("embedded migration bundle lock is invalid: {0}")]
-    Lock(serde_json::Error),
-    /// The embedded lock's schema, head, or file identity is inconsistent.
-    #[error("embedded migration bundle identity is inconsistent")]
-    Identity,
     /// Filename is not `<14 digits>_<slug>.sql`.
     #[error("migration filename is invalid")]
     Filename,

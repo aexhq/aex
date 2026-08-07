@@ -6,7 +6,7 @@
 //! ports are used here, so a divergence between what the engine promises and what the mux
 //! wires it to shows up as a failure rather than as a difference nobody compared.
 
-use crate::admission::{ActivationResources, Admission, AdmissionBounds};
+use crate::admission::{Admission, AdmissionBounds};
 use crate::drain::Stage;
 use crate::measure::Measurement;
 use crate::wake::{BindingState, Bindings, MuxAdmission};
@@ -155,7 +155,6 @@ fn produced() -> ProviderOutcome {
             generation: 1,
         },
         provider_request_id: None,
-        gateway_route: None,
         http_status: 200,
         attempts: 1,
         started_at: at,
@@ -183,7 +182,6 @@ fn produced() -> ProviderOutcome {
 fn bound() -> Bindings {
     Bindings {
         store: BindingState::Ready,
-        snapshots: BindingState::Ready,
         provider: BindingState::Ready,
         catalog: BindingState::Ready,
         tools: BindingState::Ready,
@@ -191,17 +189,7 @@ fn bound() -> Bindings {
     }
 }
 
-fn activation_resources(policy: &ActivationPolicy) -> ActivationResources {
-    ActivationResources {
-        context_bytes: policy.restore_resident_bytes,
-        stream_buffer_bytes: u64::try_from(policy.stream_buffer_bytes).unwrap_or(u64::MAX),
-        provider_streams: 1,
-        hands_rpcs: 1,
-    }
-}
-
 fn admission(drain: &Arc<DrainGate>) -> Arc<Admission> {
-    let policy = ActivationPolicy::default();
     Arc::new(Admission::new(
         AdmissionBounds {
             target: 4,
@@ -210,16 +198,9 @@ fn admission(drain: &Arc<DrainGate>) -> Arc<Admission> {
         },
         Arc::new(PermitSet::new(BTreeMap::from([
             (PermitKind::Activation, 8_u64),
-            (PermitKind::ContextBytes, policy.restore_resident_bytes),
-            (
-                PermitKind::StreamBufferBytes,
-                u64::try_from(policy.stream_buffer_bytes).unwrap_or(u64::MAX),
-            ),
-            (PermitKind::ProviderStream, 1_u64),
-            (PermitKind::HandsRpc, 1_u64),
+            (PermitKind::ContextBytes, 64 * 1_024 * 1_024),
         ]))),
         Arc::clone(drain),
-        activation_resources(&policy),
     ))
 }
 
@@ -243,7 +224,6 @@ fn compose_loop(provider: Arc<dyn ProviderPort>) -> Composed {
     let drain = Arc::new(DrainGate::new());
     let ports = Ports {
         journal: Arc::clone(&store) as Arc<_>,
-        snapshots: Arc::clone(&store) as Arc<_>,
         effects: Arc::clone(&store) as Arc<_>,
         leases: Arc::clone(&store) as Arc<_>,
         wakes: Arc::clone(&queue) as Arc<_>,
@@ -371,7 +351,6 @@ async fn ten_long_effects_are_polled_concurrently_under_the_drive_bound() {
     let drain = Arc::new(DrainGate::new());
     let ports = Ports {
         journal: Arc::clone(&store) as Arc<_>,
-        snapshots: Arc::clone(&store) as Arc<_>,
         effects: Arc::clone(&store) as Arc<_>,
         leases: Arc::clone(&store) as Arc<_>,
         wakes: Arc::clone(&queue) as Arc<_>,
@@ -386,16 +365,12 @@ async fn ten_long_effects_are_polled_concurrently_under_the_drive_bound() {
         max_concurrent_drives: COUNT,
         ..ActivationPolicy::default()
     };
-    let context_bytes = policy.restore_resident_bytes.saturating_mul(COUNT_U64);
-    let stream_buffer_bytes = u64::try_from(policy.stream_buffer_bytes)
-        .unwrap_or(u64::MAX)
+    let context_bytes = u64::try_from(policy.restore.max_bytes)
+        .expect("the restore budget fits u64")
         .saturating_mul(COUNT_U64);
     let permits = Arc::new(PermitSet::new(BTreeMap::from([
         (PermitKind::Activation, COUNT_U64),
         (PermitKind::ContextBytes, context_bytes),
-        (PermitKind::StreamBufferBytes, stream_buffer_bytes),
-        (PermitKind::ProviderStream, COUNT_U64),
-        (PermitKind::HandsRpc, COUNT_U64),
     ])));
     let admission = Arc::new(Admission::new(
         AdmissionBounds {
@@ -405,7 +380,6 @@ async fn ten_long_effects_are_polled_concurrently_under_the_drive_bound() {
         },
         permits,
         Arc::clone(&drain),
-        activation_resources(&policy),
     ));
     let pump = WakeLoop::new(
         Activation::new(
@@ -546,7 +520,6 @@ async fn the_scheduler_refills_below_the_aggregate_cap_and_keeps_due_recovery_li
     let drain = Arc::new(DrainGate::new());
     let ports = Ports {
         journal: Arc::clone(&store) as Arc<_>,
-        snapshots: Arc::clone(&store) as Arc<_>,
         effects: Arc::clone(&store) as Arc<_>,
         leases: Arc::clone(&store) as Arc<_>,
         wakes: Arc::clone(&queue) as Arc<_>,
@@ -567,11 +540,8 @@ async fn the_scheduler_refills_below_the_aggregate_cap_and_keeps_due_recovery_li
         renew_interval: core::time::Duration::from_millis(10),
         ..ActivationPolicy::default()
     };
-    let context_bytes = policy
-        .restore_resident_bytes
-        .saturating_mul(u64::try_from(CAP).expect("the test cap fits u64"));
-    let stream_buffer_bytes = u64::try_from(policy.stream_buffer_bytes)
-        .unwrap_or(u64::MAX)
+    let context_bytes = u64::try_from(policy.restore.max_bytes)
+        .expect("the restore budget fits u64")
         .saturating_mul(u64::try_from(CAP).expect("the test cap fits u64"));
     let admission = Arc::new(Admission::new(
         AdmissionBounds {
@@ -585,18 +555,8 @@ async fn the_scheduler_refills_below_the_aggregate_cap_and_keeps_due_recovery_li
                 u64::try_from(CAP).expect("the test cap fits u64"),
             ),
             (PermitKind::ContextBytes, context_bytes),
-            (PermitKind::StreamBufferBytes, stream_buffer_bytes),
-            (
-                PermitKind::ProviderStream,
-                u64::try_from(CAP).expect("the test cap fits u64"),
-            ),
-            (
-                PermitKind::HandsRpc,
-                u64::try_from(CAP).expect("the test cap fits u64"),
-            ),
         ]))),
         Arc::clone(&drain),
-        activation_resources(&policy),
     ));
     let pump = WakeLoop::new(
         Activation::new(
@@ -679,18 +639,6 @@ async fn the_drain_sequence_walks_every_stage_in_order() {
             work_table: "work".to_owned(),
             secret_custody_table: "secret-custody".to_owned(),
             secret_kms_key_arn: "arn:aws:kms:eu-west-1:123456789012:key/fixture".to_owned(),
-            content_bucket: "content".to_owned(),
-            content_expected_owner: "123456789012".to_owned(),
-            content_kms_key_arn: "arn:aws:kms:eu-west-1:123456789012:key/content".to_owned(),
-            runtime_activity_table: "runtime-activity".to_owned(),
-            usage_compute_queue_url: "https://sqs.eu-west-1.amazonaws.com/1/compute".to_owned(),
-            usage_storage_queue_url: "https://sqs.eu-west-1.amazonaws.com/1/storage".to_owned(),
-            runtime_due_shards: 8,
-            runtime_due_page: aex_runtime_control::store::PageBudget {
-                max_items: 32,
-                max_reads: 100,
-            },
-            pricing_version: "synthetic-zero-v1".to_owned(),
             budget: 4,
         })
         .expect("the candidate shape composes"),

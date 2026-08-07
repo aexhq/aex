@@ -1,10 +1,9 @@
 mock_provider "aws" {}
 
 variables {
-  deployable          = "regional-session-api"
-  plane               = "dev"
-  region              = "eu-west-1"
-  boundary_policy_arn = "arn:aws:iam::000000000000:policy/aex-dev-application-boundary"
+  deployable = "regional-session-api"
+  plane      = "dev"
+  region     = "eu-west-1"
 
   assume_principal = {
     type        = "Service"
@@ -42,15 +41,6 @@ run "trust_policy_names_an_explicit_principal" {
   assert {
     condition     = jsondecode(aws_iam_role.this.assume_role_policy).Statement[0].Action == "sts:AssumeRole"
     error_message = "The trust policy must grant only sts:AssumeRole."
-  }
-}
-
-run "attaches_the_required_owner_managed_boundary" {
-  command = plan
-
-  assert {
-    condition     = aws_iam_role.this.permissions_boundary == var.boundary_policy_arn
-    error_message = "Every deployable role must carry the exact owner-managed permissions boundary."
   }
 }
 

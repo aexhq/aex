@@ -59,7 +59,7 @@ mod keys {
     pub const REGIONAL_PROJECTIONS: &str = "AEX_CENTRAL_CONTROL_WORKER_REGIONAL_PROJECTION_TABLES";
     /// The login role. Must be `aex_control_worker`.
     pub const ROLE: &str = "AEX_CENTRAL_CONTROL_WORKER_ROLE";
-    /// The sender identity bound to the mail capability.
+    /// The verified sender identity.
     pub const SES_IDENTITY_ARN: &str = "AEX_CENTRAL_CONTROL_WORKER_SES_IDENTITY_ARN";
     /// The verified RFC 5322 sender address.
     pub const MAIL_FROM: &str = "AEX_CENTRAL_CONTROL_WORKER_MAIL_FROM";
@@ -129,7 +129,7 @@ pub struct Config {
     pub control_queue_arn: String,
     /// The control queue URL for startup probing.
     pub control_queue_url: String,
-    /// The sender identity bound to the mail capability.
+    /// The verified sender identity.
     pub ses_identity_arn: String,
     /// Verified sender address.
     pub mail_from: String,
@@ -495,6 +495,7 @@ pub const PERMISSIONS: &[&str] = &[
     "kms:Decrypt",
     "kms:GenerateDataKey",
     "ses:SendEmail",
+    "ses:GetEmailIdentity",
     "lambda:InvokeFunction",
 ];
 
@@ -513,6 +514,8 @@ pub struct Probes {
     pub functions: bool,
     /// Every regional authorization projection answered.
     pub projections: bool,
+    /// The sender identity resolved.
+    pub mail_identity: bool,
     /// The signing secret prefix is listable.
     pub signing: bool,
 }
@@ -524,6 +527,7 @@ impl Probes {
         queue: false,
         functions: false,
         projections: false,
+        mail_identity: false,
         signing: false,
     };
 }
@@ -549,6 +553,10 @@ pub fn readiness(probes: Probes) -> Readiness {
             Dependency {
                 name: "regional-authz-projections",
                 resolved: probes.projections,
+            },
+            Dependency {
+                name: "ses-identity",
+                resolved: probes.mail_identity,
             },
             Dependency {
                 name: "signing-secret-prefix",
@@ -659,7 +667,19 @@ pub async fn run(
         .send()
         .await
         .map_err(|error| RunError::Dependency("control-queue", error.to_string()))?;
+    let identity = config
+        .ses_identity_arn
+        .rsplit_once("identity/")
+        .map(|(_, identity)| identity)
+        .ok_or_else(|| {
+            RunError::Dependency("ses-identity", "ARN has no identity resource".to_owned())
+        })?;
     let ses = aws_sdk_sesv2::Client::new(&aws);
+    ses.get_email_identity()
+        .email_identity(identity)
+        .send()
+        .await
+        .map_err(|error| RunError::Dependency("ses-identity", error.to_string()))?;
 
     let signing = std::sync::Arc::new(runtime::SecretsSigningAdmin::new(
         aws_sdk_secretsmanager::Client::new(&aws),
@@ -1030,6 +1050,7 @@ mod tests {
                 queue: true,
                 functions: true,
                 projections: false,
+                mail_identity: true,
                 signing: true,
             })
             .is_ready()

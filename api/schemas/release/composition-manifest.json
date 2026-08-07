@@ -102,9 +102,6 @@
           "ociChildDigest": { "$ref": "#/$defs/sha256" },
           "configSchemaVersion": { "type": "integer", "minimum": 1 },
           "requiredCentralHead": { "type": "string", "pattern": "^[0-9]{14}$" },
-          "lambda": { "$ref": "#/$defs/lambdaShape" },
-          "fargate": { "$ref": "#/$defs/fargateShape" },
-          "microvm": { "$ref": "#/$defs/microvmShape" },
           "adjacent": {
             "type": "object",
             "additionalProperties": false,
@@ -116,32 +113,7 @@
               "rationale": { "type": "string", "minLength": 8 }
             }
           }
-        },
-        "allOf": [
-          {
-            "if": { "properties": { "kind": { "enum": ["rust-lambda", "ts-lambda"] } }, "required": ["kind"] },
-            "then": { "required": ["lambda"] },
-            "else": { "properties": { "lambda": false } }
-          },
-          {
-            "if": { "properties": { "kind": { "enum": ["rust-oci-service", "rust-oci-task"] } }, "required": ["kind"] },
-            "then": { "required": ["fargate"] },
-            "else": { "properties": { "fargate": false } }
-          },
-          {
-            "if": { "properties": { "kind": { "const": "microvm-image" } }, "required": ["kind"] },
-            "then": { "required": ["microvm"] },
-            "else": { "properties": { "microvm": false } }
-          },
-          {
-            "if": { "properties": { "kind": { "const": "rust-oci-service" } }, "required": ["kind"] },
-            "then": { "properties": { "fargate": { "properties": { "port": { "minimum": 1 } } } } }
-          },
-          {
-            "if": { "properties": { "kind": { "const": "rust-oci-task" } }, "required": ["kind"] },
-            "then": { "properties": { "fargate": { "properties": { "desiredCount": { "const": 0 }, "port": { "const": 0 } } } } }
-          }
-        ]
+        }
       }
     },
     "packages": {
@@ -183,12 +155,9 @@
         "regional": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["bundleDigest", "bundleSizeBytes", "bundleUri", "definitionsDigest", "generation"],
+          "required": ["bundleDigest", "generation"],
           "properties": {
             "bundleDigest": { "$ref": "#/$defs/sha256" },
-            "bundleSizeBytes": { "type": "integer", "minimum": 1 },
-            "bundleUri": { "type": "string", "pattern": "^https://github\\.com/aexhq/aex/releases/download/main-[0-9a-f]{40}-run-[1-9][0-9]*-attempt-[1-9][0-9]*/regional-tables\\.json$" },
-            "definitionsDigest": { "type": "string", "pattern": "^blake3:[0-9a-f]{64}$" },
             "generation": { "type": "integer", "minimum": 1 }
           }
         }
@@ -246,38 +215,6 @@
   "$defs": {
     "sha256": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
     "sha1": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
-    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$" },
-    "lambdaShape": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["memoryMiB", "timeoutS", "reservedConcurrency"],
-      "properties": {
-        "memoryMiB": { "type": "integer", "minimum": 128, "maximum": 10240 },
-        "timeoutS": { "type": "integer", "minimum": 1, "maximum": 900 },
-        "reservedConcurrency": { "type": "integer", "minimum": 0 }
-      }
-    },
-    "fargateShape": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["cpu", "memoryMiB", "desiredCount", "stopTimeoutS", "port"],
-      "properties": {
-        "cpu": { "type": "integer", "minimum": 1 },
-        "memoryMiB": { "type": "integer", "minimum": 1 },
-        "desiredCount": { "type": "integer", "minimum": 0 },
-        "stopTimeoutS": { "type": "integer", "minimum": 1 },
-        "port": { "type": "integer", "minimum": 0, "maximum": 65535 }
-      }
-    },
-    "microvmShape": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["variant", "minimumMemoryMiB", "browser"],
-      "properties": {
-        "variant": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
-        "minimumMemoryMiB": { "type": "integer", "minimum": 1 },
-        "browser": { "type": "boolean" }
-      }
-    }
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$" }
   }
 }

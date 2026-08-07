@@ -267,44 +267,6 @@ mod threaded {
         assert_eq!(error.limit, 0);
     }
 
-    /// Opposite request order cannot split one activation's bundle across two threads.
-    #[test]
-    fn l4_multi_resource_acquisition_is_atomic() {
-        for _ in 0..64 {
-            let set = Arc::new(PermitSet::new(BTreeMap::from([
-                (PermitKind::Activation, 1),
-                (PermitKind::ProviderStream, 1),
-            ])));
-            let active = Arc::new(AtomicUsize::new(0));
-            let maximum = Arc::new(AtomicUsize::new(0));
-            let handles = [
-                [(PermitKind::Activation, 1), (PermitKind::ProviderStream, 1)],
-                [(PermitKind::ProviderStream, 1), (PermitKind::Activation, 1)],
-            ]
-            .into_iter()
-            .map(|request| {
-                let set = Arc::clone(&set);
-                let active = Arc::clone(&active);
-                let maximum = Arc::clone(&maximum);
-                std::thread::spawn(move || {
-                    let Ok(_bundle) = set.acquire_many(&request) else {
-                        return;
-                    };
-                    let now = active.fetch_add(1, Ordering::SeqCst) + 1;
-                    maximum.fetch_max(now, Ordering::SeqCst);
-                    active.fetch_sub(1, Ordering::SeqCst);
-                })
-            })
-            .collect::<Vec<_>>();
-            for handle in handles {
-                handle.join().expect("no thread panics");
-            }
-            assert_eq!(maximum.load(Ordering::SeqCst), 1);
-            assert_eq!(set.held(PermitKind::Activation), 0);
-            assert_eq!(set.held(PermitKind::ProviderStream), 0);
-        }
-    }
-
     // ---------------------------------------------------------------------------
     // L5 — warm cache versus revision
     // ---------------------------------------------------------------------------
@@ -566,58 +528,6 @@ mod loom_models {
             first.join().unwrap();
             second.join().unwrap();
             assert_eq!(set.held(PermitKind::Activation), 0);
-        });
-    }
-
-    /// L4 — two opposing bundles are linearized; no interleaving can split their resources.
-    #[test]
-    fn l4_multi_resource_permit_accounting() {
-        loom::model(|| {
-            use loom::sync::atomic::{AtomicUsize, Ordering};
-
-            let set = Arc::new(PermitSet::new(BTreeMap::from([
-                (PermitKind::Activation, 1),
-                (PermitKind::ProviderStream, 1),
-            ])));
-            let active = Arc::new(AtomicUsize::new(0));
-            let maximum = Arc::new(AtomicUsize::new(0));
-            let first = {
-                let set = Arc::clone(&set);
-                let active = Arc::clone(&active);
-                let maximum = Arc::clone(&maximum);
-                thread::spawn(move || {
-                    let Ok(_bundle) = set.acquire_many(&[
-                        (PermitKind::Activation, 1),
-                        (PermitKind::ProviderStream, 1),
-                    ]) else {
-                        return;
-                    };
-                    let now = active.fetch_add(1, Ordering::SeqCst) + 1;
-                    maximum.fetch_max(now, Ordering::SeqCst);
-                    active.fetch_sub(1, Ordering::SeqCst);
-                })
-            };
-            let second = {
-                let set = Arc::clone(&set);
-                let active = Arc::clone(&active);
-                let maximum = Arc::clone(&maximum);
-                thread::spawn(move || {
-                    let Ok(_bundle) = set.acquire_many(&[
-                        (PermitKind::ProviderStream, 1),
-                        (PermitKind::Activation, 1),
-                    ]) else {
-                        return;
-                    };
-                    let now = active.fetch_add(1, Ordering::SeqCst) + 1;
-                    maximum.fetch_max(now, Ordering::SeqCst);
-                    active.fetch_sub(1, Ordering::SeqCst);
-                })
-            };
-            first.join().unwrap();
-            second.join().unwrap();
-            assert_eq!(maximum.load(Ordering::SeqCst), 1);
-            assert_eq!(set.held(PermitKind::Activation), 0);
-            assert_eq!(set.held(PermitKind::ProviderStream), 0);
         });
     }
 

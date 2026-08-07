@@ -17,17 +17,14 @@ role = "adapter"
 artifact = "none"
 live_suite = "aex-live-brain-mux"
 layers = ["unit", "integration"]
-concerns = ["contract", "property", "fault", "security"]
-seams = []
+concerns = ["fault", "security", "performance"]
+seams = ["aws.dynamodb.get_item", "aws.kms.decrypt"]
 security_tier = "secret"
-risk = ["none"]
+risk = ["iam", "untrusted_input"]
 scenarios = []
 
 [package.metadata.aex.targets]
-authority = "unit"
-
-[package.metadata.aex.not_applicable]
-integration = "port-composition adapter with no datastore or transport engine of its own; DynamoDB and KMS integration evidence belongs to the regional-stores adapters"
+unit = "unit"
 
 [dependencies]
 aex-brain-application = { path = "../aex-brain-application" }
@@ -40,5 +37,4 @@ futures.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true
-proptest.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }

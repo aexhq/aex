@@ -148,10 +148,6 @@ pub async fn run(config: Config) -> Result<(), RunError> {
         .map_err(|error| RunError::Edge {
             reason: error.to_string(),
         })?;
-    let projection = aex_session_dynamodb::projection::ProjectionReader::new(
-        dynamodb.clone(),
-        config.authz_projection_table.clone(),
-    );
     let edge = aex_regional_http::edge::RegionalEdge::new(
         aex_regional_http::authz::LambdaAssertionSource::new(
             aws_sdk_lambda::Client::new(&aws),
@@ -160,14 +156,20 @@ pub async fn run(config: Config) -> Result<(), RunError> {
             config.region,
         ),
         anchors,
-        aex_regional_http::authz::RegionalProjection::new(projection.clone(), config.region),
-        aex_regional_http::capacity::CapacityProjection::new(projection),
+        aex_regional_http::authz::RegionalProjection::new(
+            aex_session_dynamodb::projection::ProjectionReader::new(
+                dynamodb.clone(),
+                config.authz_projection_table.clone(),
+            ),
+            config.region,
+        ),
         aex_regional_http::edge::SystemClock,
         aex_regional_http::edge::EdgeBinding {
             plane: config.plane,
             audience: AUDIENCE,
             region: config.region,
             cache_budget_bytes: config.assertion_cache_bytes,
+            limits: config.effective_limits(),
         },
     )
     .map_err(|error| RunError::Edge {

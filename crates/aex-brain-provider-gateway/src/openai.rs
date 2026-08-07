@@ -412,7 +412,6 @@ impl ProviderAdapter for OpenAiAdapter {
             stop_reason,
             usage: state.usage,
             provider_request_id: state.request_id,
-            gateway_route: state.gateway_route,
         })
     }
 
@@ -1891,7 +1890,13 @@ mod tests {
             openai_entry(MODEL_TOOLS_ONLY, tools_only_capabilities()),
             fixture::entry(ProviderId::Anthropic, MODEL_ANTHROPIC, base_capabilities()),
         ];
-        fixture::document(PUBLISHER, 1, entries, fixture::at(NOW_MS))
+        fixture::document(
+            PUBLISHER,
+            1,
+            entries,
+            fixture::at(NOW_MS),
+            fixture::adapter("fixture-adapter"),
+        )
     }
 
     fn pair(provider: ProviderId, model: &str) -> QualifiedModel {

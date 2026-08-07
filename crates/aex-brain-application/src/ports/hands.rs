@@ -155,8 +155,6 @@ pub struct HandsResult {
     /// Whether the output was cut short by the bounds. Never silently: a truncated
     /// deliverable reported as complete is the failure this flag exists to prevent.
     pub truncated: bool,
-    /// Guest-observed execution duration, excluding queue and result-pull time.
-    pub duration_ms: u32,
     /// A checksum over the result, verified before it enters the journal.
     pub checksum: ContentHash,
 }

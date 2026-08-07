@@ -7,15 +7,7 @@ import {
   createStripeClient,
   providerRequestOptions,
 } from "./edge.js";
-import type {
-  Failed,
-  HostedSession,
-  PaymentCommandEnvelope,
-  PaymentCommandFailure,
-  PaymentResult,
-  Succeeded,
-  Unknown,
-} from "./wire_pending.js";
+import type { PaymentCommandEnvelope, Succeeded } from "./wire_pending.js";
 
 const COMMAND_KINDS = new Set([
   "ensure_customer",
@@ -74,13 +66,6 @@ function envelopeFrom(value: unknown): PaymentCommandEnvelope {
   ) {
     throw new Error("effect metadata does not match command");
   }
-  if (
-    envelope.command.kind === "lookup_effect_outcome" &&
-    (envelope.command.expect !== "charge_saved_method" ||
-      (envelope.command.provider !== null && typeof envelope.command.provider !== "string"))
-  ) {
-    throw new Error("lookup command is unsupported");
-  }
   return envelope as PaymentCommandEnvelope;
 }
 
@@ -101,76 +86,29 @@ function cents(value: number): number {
 function succeeded(
   envelope: PaymentCommandEnvelope,
   objectId: string,
-  createdSeconds: number,
+  objectType: string,
+  status: string | null | undefined,
   amountCents: number,
-  hosted: HostedSession | null = null,
+  providerRequestId?: string,
 ): Succeeded {
   return {
     outcome: "succeeded",
     effect: envelope.command.effect,
-    providerRef: objectId,
-    providerCreatedAt: new Date(createdSeconds * 1000).toISOString(),
-    hosted,
-    charged: amountCents,
-    tax: null,
+    objectId,
+    objectType,
+    status: status ?? "created",
+    amountCents,
+    currency: "usd",
+    ...(providerRequestId === undefined ? {} : { providerRequestId }),
+    apiVersion: STRIPE_API_VERSION,
   };
-}
-
-function failed(effect: string, failure: Extract<PaymentCommandFailure, { outcome: "rejected" }>): Failed {
-  const classification =
-    failure.code === "authentication_required" || failure.declineCode === "authentication_required"
-      ? "authentication_required"
-      : failure.errorType === "StripeCardError"
-        ? "card_declined"
-        : "invalid_request";
-  return {
-    outcome: "failed",
-    effect,
-    failure: {
-      class: classification,
-      providerCode: failure.code,
-      declineCode: failure.declineCode ?? null,
-      retryable: false,
-    },
-  };
-}
-
-function unknown(
-  effect: string,
-  failure: Extract<PaymentCommandFailure, { outcome: "indeterminate" }>,
-): Unknown {
-  switch (failure.reason) {
-    case "timeout":
-      return { outcome: "unknown", effect, evidence: { evidence: "timeout", waitedMs: 8000 } };
-    case "provider_5xx":
-      return {
-        outcome: "unknown",
-        effect,
-        evidence: { evidence: "server_error", status: failure.status ?? 500 },
-      };
-    case "rate_limited":
-      return {
-        outcome: "unknown",
-        effect,
-        evidence: { evidence: "ambiguous_response", providerCode: "rate_limited" },
-      };
-    case "connection_reset":
-      return { outcome: "unknown", effect, evidence: { evidence: "transport_lost" } };
-  }
-}
-
-export function paymentResultFromFailure(
-  effect: string,
-  failure: PaymentCommandFailure,
-): Failed | Unknown {
-  return failure.outcome === "rejected" ? failed(effect, failure) : unknown(effect, failure);
 }
 
 /** Executes exactly one generated command with exactly one provider request. */
 export async function executePaymentCommand(
   client: Stripe,
   envelope: PaymentCommandEnvelope,
-): Promise<PaymentResult> {
+): Promise<Succeeded> {
   const options = providerRequestOptions(envelope.providerIdempotencyKey);
   const effectMetadata = metadata(envelope);
   switch (envelope.command.kind) {
@@ -179,7 +117,7 @@ export async function executePaymentCommand(
         { email: envelope.command.email, metadata: effectMetadata },
         options,
       );
-      return succeeded(envelope, object.id, object.created, 0);
+      return succeeded(envelope, object.id, "customer", undefined, 0, object.lastResponse.requestId);
     }
     case "create_top_up_checkout": {
       const amount = cents(envelope.command.amount);
@@ -209,15 +147,7 @@ export async function executePaymentCommand(
         },
         options,
       );
-      return succeeded(
-        envelope,
-        object.id,
-        object.created,
-        amount,
-        object.url === null
-          ? null
-          : { url: object.url, expiresAt: new Date(object.expires_at * 1000).toISOString() },
-      );
+      return succeeded(envelope, object.id, "checkout_session", object.status, amount, object.lastResponse.requestId);
     }
     case "create_portal_session": {
       const object = await client.billingPortal.sessions.create(
@@ -227,13 +157,7 @@ export async function executePaymentCommand(
         },
         options,
       );
-      return succeeded(envelope, object.id, object.created, 0, {
-        url: object.url,
-        // Stripe does not publish an expiry timestamp for portal sessions. AEX
-        // exposes a conservative five-minute grant rather than claiming the
-        // provider URL is durable.
-        expiresAt: new Date((object.created + 300) * 1000).toISOString(),
-      });
+      return succeeded(envelope, object.id, "billing_portal_session", undefined, 0, object.lastResponse.requestId);
     }
     case "charge_saved_method": {
       const amount = cents(envelope.command.amount);
@@ -249,59 +173,23 @@ export async function executePaymentCommand(
         },
         options,
       );
-      if (object.status === "succeeded") {
-        return succeeded(envelope, object.id, object.created, amount);
-      }
-      if (object.status === "requires_action") {
-        return {
-          outcome: "failed",
-          effect: envelope.command.effect,
-          failure: {
-            class: "authentication_required",
-            providerCode: object.status,
-            declineCode: null,
-            retryable: false,
-          },
-        };
-      }
-      return {
-        outcome: "unknown",
-        effect: envelope.command.effect,
-        evidence: { evidence: "ambiguous_response", providerCode: object.status },
-      };
+      return succeeded(envelope, object.id, "payment_intent", object.status, amount, object.lastResponse.requestId);
     }
     case "lookup_effect_outcome": {
-      if (envelope.command.expect !== "charge_saved_method") {
-        return {
-          outcome: "unknown",
-          effect: envelope.command.effect,
-          evidence: { evidence: "ambiguous_response", providerCode: "unsupported_lookup_kind" },
-        };
-      }
-      const object =
-        envelope.command.provider === null
-          ? (
-              await client.paymentIntents.search({
-                query: `metadata['aex_effect_id']:'${envelope.command.effect}'`,
-                limit: 1,
-              })
-            ).data[0]
-          : await client.paymentIntents.retrieve(envelope.command.provider);
-      if (object?.metadata.aex_effect_id !== envelope.command.effect) {
-        return {
-          outcome: "unknown",
-          effect: envelope.command.effect,
-          evidence: { evidence: "ambiguous_response", providerCode: "effect_metadata_mismatch" },
-        };
-      }
-      if (object === undefined || object.status !== "succeeded") {
-        return {
-          outcome: "unknown",
-          effect: envelope.command.effect,
-          evidence: { evidence: "ambiguous_response", providerCode: object?.status ?? null },
-        };
-      }
-      return succeeded(envelope, object.id, object.created, object.amount);
+      const objects = await client.paymentIntents.search({
+        query: `metadata['aex_effect_id']:'${envelope.command.effect}'`,
+        limit: 1,
+      });
+      const object = objects.data[0];
+      if (object === undefined) throw new Error("effect outcome was not found");
+      return succeeded(
+        envelope,
+        object.id,
+        "payment_intent",
+        object.status,
+        object.amount,
+        objects.lastResponse.requestId,
+      );
     }
     case "refund_charge": {
       const amount = cents(envelope.command.amount);
@@ -309,26 +197,19 @@ export async function executePaymentCommand(
         { charge: envelope.command.original, amount, metadata: effectMetadata },
         options,
       );
-      if (object.status !== "succeeded") {
-        return {
-          outcome: "unknown",
-          effect: envelope.command.effect,
-          evidence: { evidence: "ambiguous_response", providerCode: object.status ?? null },
-        };
-      }
-      return succeeded(envelope, object.id, object.created, amount);
+      return succeeded(envelope, object.id, "refund", object.status, amount, object.lastResponse.requestId);
     }
   }
 }
 
 /** Node 22 Lambda entrypoint. */
-export const handler = async (event: unknown): Promise<PaymentResult> => {
+export const handler = async (event: unknown): Promise<Succeeded | ReturnType<typeof classifyStripeFailure>> => {
   const envelope = envelopeFrom(event);
   const config = configuration();
   const client = createStripeClient(await loadSecret(config.region, config.secretArn));
   try {
     return await executePaymentCommand(client, envelope);
   } catch (error: unknown) {
-    return paymentResultFromFailure(envelope.command.effect, classifyStripeFailure(error));
+    return classifyStripeFailure(error);
   }
 };

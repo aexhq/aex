@@ -40,28 +40,6 @@ fn environment_binding_accepts_references_and_rejects_tampering() {
     let binding = parse_environment_binding(&valid).unwrap();
     assert_eq!(binding.plane, "dev");
     assert_eq!(binding.secrets.len(), 1);
-    assert!(
-        serde_json::to_value(&binding)
-            .unwrap()
-            .get("bindingRef")
-            .is_none(),
-        "the sealed binding must not claim custody of its containing Git commit"
-    );
-
-    let mut self_referential: Value = serde_json::from_str(&valid).unwrap();
-    self_referential["bindingRef"] =
-        Value::String("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned());
-    let self_referential = with_self_digest(
-        &canon::to_string(&self_referential).unwrap(),
-        "bindingDigest",
-    );
-    assert!(
-        parse_environment_binding(&self_referential)
-            .unwrap_err()
-            .rules()
-            .contains(&"environment-binding-invalid"),
-        "external source custody must not be sealed into the binding document"
-    );
 
     let mut tampered: Value = serde_json::from_str(&valid).unwrap();
     tampered["plane"] = Value::String("prd".to_owned());
@@ -153,31 +131,6 @@ fn resolved_placement_is_content_addressed_and_closed() {
     tampered["artifacts"]["brain-mux"]["sizeBytes"] = Value::from(8_u64);
     let error = parse_resolved_placement(&canon::to_string(&tampered).unwrap()).unwrap_err();
     assert_eq!(error.rules(), vec!["placement-digest-mismatch"]);
-
-    let mut with_image: Value =
-        serde_json::from_str(&fixture("resolved-placement.valid.json")).unwrap();
-    with_image["artifacts"]["central-identity-api"]["microvmImage"] = serde_json::json!({
-        "imageArn": "arn:aws:lambda:eu-west-1:000000000000:microvm-image:aex-dev-aaaaaaaa",
-        "imageVersion": "7"
-    });
-    let with_image = with_self_digest(&canon::to_string(&with_image).unwrap(), "placementDigest");
-    let placement = parse_resolved_placement(&with_image).unwrap();
-    let image = placement.artifacts["central-identity-api"]
-        .microvm_image
-        .as_ref()
-        .expect("the provider pair is preserved");
-    assert_eq!(image.image_version, "7");
-
-    let mut invalid: Value = serde_json::from_str(&with_image).unwrap();
-    invalid["artifacts"]["central-identity-api"]["microvmImage"]["imageArn"] =
-        Value::String("arn:aws:lambda:eu-west-1:000000000000:function:not-an-image".to_owned());
-    let invalid = with_self_digest(&canon::to_string(&invalid).unwrap(), "placementDigest");
-    assert!(
-        parse_resolved_placement(&invalid)
-            .unwrap_err()
-            .rules()
-            .contains(&"placement-microvm-image-arn-invalid")
-    );
 }
 
 #[test]
@@ -239,8 +192,6 @@ fn saved_plan_envelope_binds_execution_storage_backend_and_max_ttl() {
     for pointer in [
         "/runner/arch",
         "/runner/moduleExtractionPath",
-        "/regionalTables/digest",
-        "/regionalTables/definitionsDigest",
         "/bindingDigest",
         "/plan/location/key",
         "/plan/location/kmsKeyArn",
@@ -254,12 +205,6 @@ fn saved_plan_envelope_binds_execution_storage_backend_and_max_ttl() {
             match pointer {
                 "/runner/arch" => "aarch64",
                 "/runner/moduleExtractionPath" => "/tmp/substituted/modules",
-                "/regionalTables/digest" => {
-                    "sha256:1212121212121212121212121212121212121212121212121212121212121213"
-                }
-                "/regionalTables/definitionsDigest" => {
-                    "blake3:3434343434343434343434343434343434343434343434343434343434343435"
-                }
                 "/bindingDigest" => {
                     "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
                 }

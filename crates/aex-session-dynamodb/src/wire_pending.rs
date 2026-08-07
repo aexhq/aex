@@ -54,30 +54,6 @@ pub struct ProjectedWorkspaceLimit {
     pub changed_at: Timestamp,
 }
 
-/// Revision fence for one complete effective-limit projection.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProjectedLimitBundleHead {
-    /// Owning workspace.
-    pub workspace: WorkspaceId,
-    /// Authority revision shared by every row and the bundle payload.
-    pub revision: u64,
-    /// Canonical defaults revision used by the authority.
-    pub defaults_revision: u64,
-    /// When this effective set changed.
-    pub changed_at: Timestamp,
-}
-
-/// One complete, revision-bound effective-limit payload.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ProjectedLimitBundle {
-    /// Owning workspace.
-    pub workspace: WorkspaceId,
-    /// Authority revision that must equal the strong head read.
-    pub revision: u64,
-    /// Every registered limit, in registry order.
-    pub limits: Vec<aex_wire::models::EffectiveWorkspaceLimit>,
-}
-
 // TODO(cross-stream): `aex-content-domain` publishes no body enum. The inline-or-stored
 // question is `aex_content_domain::placement::Placement`, and the whole record is
 // `aex_content_domain::descriptor::ContentDescriptor`, which is workspace-scoped and

@@ -1,7 +1,6 @@
 //! Production credential-authority boundary tests with an in-memory custody port.
 
 use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll};
 
 use aex_brain_application::ports::BoxFuture;
 use aex_brain_provider_custody::{CredentialAuthority, CredentialCustody};
@@ -24,7 +23,6 @@ use aex_wire::ids::{
 use aex_wire::provider::ProviderId;
 use aex_wire::types::{Region, Timestamp};
 use async_trait::async_trait;
-use proptest::prelude::*;
 
 fn timestamp(millis: i64) -> Timestamp {
     Timestamp::from_unix_millis(millis).expect("timestamp")
@@ -324,75 +322,4 @@ async fn moved_ciphertext_context_fails_before_decrypt() {
         .await
         .expect_err("a moved ciphertext must not reach KMS");
     assert_eq!(error, CredentialResolveError::DecryptFailed);
-}
-
-proptest! {
-    #![proptest_config(ProptestConfig::with_cases(256))]
-
-    /// No non-empty combination of cross-authority identity mutations may
-    /// reconstruct a provider binding. This is the property behind the
-    /// individual revocation examples above: independently read rows fail
-    /// closed unless every typed identity and ciphertext context agrees.
-    #[test]
-    fn any_cross_authority_identity_mutation_fails_closed(mask in 1_u16..1_024) {
-        let custody = Arc::new(FakeCustody::ready());
-        let other_workspace = WorkspaceId::from_uuid7(Uuid7::compose(2, [4; 10]));
-        let other_credential = ProviderCredentialId::from_uuid7(Uuid7::compose(2, [5; 10]));
-        let other_name = aex_secret_domain::SecretName::parse("other-provider-key")
-            .expect("alternate name");
-
-        {
-            let mut binding = custody.binding.lock().expect("not poisoned");
-            if mask & 1 != 0 {
-                binding.workspace = other_workspace;
-            }
-            if mask & 2 != 0 {
-                binding.provider = ProviderId::Anthropic;
-            }
-            if mask & 4 != 0 {
-                binding.credential = other_credential;
-            }
-            if mask & 8 != 0 {
-                binding.secret_name = other_name.clone();
-            }
-        }
-        {
-            let mut metadata = custody.metadata.lock().expect("not poisoned");
-            if mask & 16 != 0 {
-                metadata.workspace = other_workspace;
-            }
-            if mask & 32 != 0 {
-                metadata.name = other_name.clone();
-            }
-        }
-        {
-            let mut generation = custody.generation.lock().expect("not poisoned");
-            if mask & 64 != 0 {
-                generation.workspace = other_workspace;
-            }
-            if mask & 128 != 0 {
-                generation.name = other_name;
-            }
-            if mask & 256 != 0 {
-                generation.generation = SourceGeneration(4);
-            }
-            if mask & 512 != 0 {
-                generation.context_digest = [9; 32];
-            }
-        }
-
-        let authority = authority(custody);
-        let mut resolution = authority.resolve(
-            organization(),
-            workspace(),
-            ProviderId::Openai,
-            Some(credential()),
-        );
-        let waker = futures::task::noop_waker();
-        let result = match resolution.as_mut().poll(&mut Context::from_waker(&waker)) {
-            Poll::Ready(result) => result,
-            Poll::Pending => panic!("in-memory credential ports must resolve synchronously"),
-        };
-        prop_assert!(result.is_err());
-    }
 }

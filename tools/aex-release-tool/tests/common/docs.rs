@@ -29,7 +29,6 @@ pub fn valid_envelope() -> Value {
     json!({
         "schema": "aex.artifact-envelope.v1",
         "envelopeDigest": digest(1),
-        "artifactSubjectDigest": digest(2),
         "unit": { "id": "regional-session-api", "kind": "rust-lambda", "plane": "regional" },
         "media": { "mediaType": "application/zip", "form": "zip" },
         "source": {
@@ -159,11 +158,6 @@ pub fn valid_manifest() -> Value {
                     "triple": "aarch64-unknown-linux-gnu.2.34"
                 },
                 "configSchemaVersion": 1,
-                "lambda": {
-                    "memoryMiB": 1024,
-                    "timeoutS": 30,
-                    "reservedConcurrency": 8
-                },
                 "adjacent": {
                     "storageCompatible": true,
                     "protocolCompatible": true,
@@ -178,13 +172,7 @@ pub fn valid_manifest() -> Value {
                 "head": "20260801000100",
                 "adminImageDigest": digest(0x22)
             },
-            "regional": {
-                "bundleDigest": digest(0x23),
-                "bundleSizeBytes": 71384,
-                "bundleUri": format!("https://github.com/aexhq/aex/releases/download/main-{}-run-123-attempt-1/regional-tables.json", sha1()),
-                "definitionsDigest": format!("blake3:{}", "23".repeat(32)),
-                "generation": 1
-            }
+            "regional": { "bundleDigest": digest(0x23), "generation": 1 }
         },
         "infra": {
             "moduleBundleDigest": digest(0x24),
@@ -258,26 +246,12 @@ pub fn valid_statement() -> Value {
             "actualVersionOrAlias": "live",
             "readbackAt": "2026-08-01T01:00:00Z"
         }],
-        "receipts": [
-            {
-                "class": "smoke",
-                "receiptDigest": digest(0x31),
-                "conclusion": "passed",
-                "collectedAt": "2026-08-01T01:00:00Z"
-            },
-            {
-                "class": "e2e",
-                "receiptDigest": digest(0x32),
-                "conclusion": "passed",
-                "collectedAt": "2026-08-01T01:00:00Z"
-            },
-            {
-                "class": "user",
-                "receiptDigest": digest(0x33),
-                "conclusion": "passed",
-                "collectedAt": "2026-08-01T01:00:00Z"
-            }
-        ],
+        "receipts": [{
+            "class": "smoke",
+            "receiptDigest": digest(0x31),
+            "conclusion": "passed",
+            "collectedAt": "2026-08-01T01:00:00Z"
+        }],
         "startedAt": "2026-08-01T00:30:00Z",
         "completedAt": "2026-08-01T01:00:00Z",
         "conclusion": "passed",

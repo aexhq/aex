@@ -17,12 +17,10 @@ use aex_brain_application::ports::{
     BoxFuture, CancelToken, DispatchTicket, FenceGuard, HandsAccepted, HandsEndpoint, HandsError,
     HandsOperationStart, HandsOperationStatus, HandsPort, PreparedToolCall, ProviderDispatchError,
     ProviderFailureKind, ProviderOutcome, ProviderPort, RedactedDetail, ResultBounds, StreamBudget,
-    ToolAdvertisement, ToolDispatchError, ToolOutcome, ToolPort, ToolRoute, ToolRoutingError,
-    UnknownResolution,
+    ToolDispatchError, ToolOutcome, ToolPort, ToolRoute, ToolRoutingError, UnknownResolution,
 };
 use aex_brain_domain::effect::{
-    DetachedOperationRef, DispatchEvidence, DispatchProof, DispatchStage, DurableEffect,
-    EffectClass, EffectKind,
+    DispatchEvidence, DispatchProof, DispatchStage, DurableEffect, EffectClass, EffectKind,
 };
 use aex_brain_domain::ids::{
     AgentId, AgentKey, AgentRevision, CancelEpoch, CatalogPin, ContentHash, DetachedOperationId,
@@ -128,21 +126,6 @@ impl ProviderPort for RecordingProvider {
 struct StubTools;
 
 impl ToolPort for StubTools {
-    fn advertise(&self, _pin: &CatalogPin) -> Result<ToolAdvertisement, ToolRoutingError> {
-        Ok(ToolAdvertisement {
-            definitions: vec![aex_model_catalog::canonical::CanonicalToolDef {
-                name: ToolName::parse("read_file").expect("tool name"),
-                description: BoundedString::new("Read a file.").expect("description"),
-                input_schema: CanonicalJson::parse(
-                    r#"{"type":"object","additionalProperties":true}"#,
-                )
-                .expect("schema"),
-                strict: false,
-            }],
-            parallel_safe: false,
-        })
-    }
-
     fn route(&self, _pin: &CatalogPin, name: &ToolName) -> Result<ToolRoute, ToolRoutingError> {
         if name.as_str() == "read_file" {
             Ok(ToolRoute {
@@ -150,7 +133,6 @@ impl ToolPort for StubTools {
                 executor: ExecutorRoute::ManagedWeb,
                 class: EffectClass::IdempotentManaged,
                 timeout_ms: 30_000,
-                concurrency_weight: 1,
                 manifest_digest: ContentHash::of(b"manifest"),
             })
         } else {
@@ -180,14 +162,14 @@ impl ToolPort for StubTools {
 
     fn query<'a>(
         &'a self,
-        _operation: &'a DetachedOperationRef,
+        _operation: &'a DetachedOperationId,
     ) -> BoxFuture<'a, Result<DetachedStatus, ToolDispatchError>> {
         Box::pin(async { Ok(DetachedStatus::Unknown) })
     }
 
     fn cancel<'a>(
         &'a self,
-        _operation: &'a DetachedOperationRef,
+        _operation: &'a DetachedOperationId,
         _fence: Fence,
     ) -> BoxFuture<'a, Result<(), ToolDispatchError>> {
         Box::pin(async { Ok(()) })
@@ -419,7 +401,6 @@ fn a_detached_tool_returns_an_operation_rather_than_blocking() {
             .expect("the tool routes"),
         input: CanonicalJson::parse("{}").expect("tool input"),
         max_result_bytes: 65_536,
-        hands_generation: generation(3),
         control: ControlStateView::default(),
     };
     let outcome = block_on(tools.invoke(&ticket(EffectId([2; 16])), &call, &CancelToken::new()))
