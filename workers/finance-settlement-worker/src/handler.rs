@@ -68,16 +68,17 @@ pub fn decode(event: SqsEvent) -> (Vec<Delivered>, Vec<String>) {
             failed.push(message_id);
             continue;
         }
-        match serde_json::from_str::<RatingRequest>(record.body.as_deref().unwrap_or_default()) {
-            Ok(request) => delivered.push(Delivered {
+        if let Ok(request) =
+            serde_json::from_str::<RatingRequest>(record.body.as_deref().unwrap_or_default())
+        {
+            delivered.push(Delivered {
                 message_id,
                 group,
                 request,
-            }),
-            Err(_) => {
-                poisoned_groups.insert(group);
-                failed.push(message_id);
-            }
+            });
+        } else {
+            poisoned_groups.insert(group);
+            failed.push(message_id);
         }
     }
     (delivered, failed)
