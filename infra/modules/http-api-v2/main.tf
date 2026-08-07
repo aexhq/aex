@@ -69,9 +69,14 @@ resource "aws_apigatewayv2_authorizer" "request" {
   authorizer_type                   = "REQUEST"
   authorizer_uri                    = "arn:${local.authorizer_partition}:apigateway:${local.authorizer_region}:lambda:path/2015-03-31/functions/${var.authorizer_alias_arn}/invocations"
   authorizer_payload_format_version = "2.0"
-  authorizer_result_ttl_in_seconds  = 0
-  enable_simple_responses           = true
-  identity_sources                  = ["$request.header.Authorization"]
+  # Half of MAX_CONTEXT_LIFETIME_MS (crates/aex-central-http/src/authorizer.rs):
+  # the authorizer context is valid for exactly 30 s, so a 15 s gateway cache can
+  # never serve a context past the lifetime the integrations re-check. Keyed on
+  # the Authorization header, so one credential's cache entry cannot admit
+  # another's request.
+  authorizer_result_ttl_in_seconds = 15
+  enable_simple_responses          = true
+  identity_sources                 = ["$request.header.Authorization"]
 }
 
 resource "aws_apigatewayv2_route" "explicit" {
