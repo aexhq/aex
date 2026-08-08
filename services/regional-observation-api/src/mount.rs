@@ -353,7 +353,6 @@ mod tests {
     use aex_regional_http::mount::{AdmissionRequest, EdgeAdmission};
     use aex_wire::error::{ErrorCode, WireError, WireResult};
     use aex_wire::routes::{Plane, RouteId, route};
-    use aex_wire::server::RouteGroup;
     use aex_wire::types::Region;
     use axum::body::{Body, to_bytes};
     use axum::http::{Request, StatusCode, header};
