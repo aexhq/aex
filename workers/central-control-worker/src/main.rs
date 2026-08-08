@@ -196,6 +196,30 @@ impl Config {
         let lease_ms = bounded(&lookup, keys::LEASE_MS, 1, MAX_LEASE_MS)?;
         let regional_functions = functions(&required(&lookup, keys::REGIONAL_FUNCTIONS)?)?;
         let regional_projections = projections(&required(&lookup, keys::REGIONAL_PROJECTIONS)?)?;
+        if let Some(region) = regional_functions
+            .keys()
+            .find(|region| !regional_projections.contains_key(region))
+        {
+            return Err(CentralControlWorkerConfigError::Invalid {
+                name: keys::REGIONAL_PROJECTIONS,
+                reason: format!(
+                    "no projection table for configured region `{}`",
+                    region.as_str()
+                ),
+            });
+        }
+        if let Some(region) = regional_projections
+            .keys()
+            .find(|region| !regional_functions.contains_key(region))
+        {
+            return Err(CentralControlWorkerConfigError::Invalid {
+                name: keys::REGIONAL_FUNCTIONS,
+                reason: format!(
+                    "no function ARN for configured region `{}`",
+                    region.as_str()
+                ),
+            });
+        }
         Ok(Self {
             plane,
             region,
@@ -299,8 +323,8 @@ where
 
 /// Parses the `region=lambda-arn` direct-invoke map.
 ///
-/// Every launch region must be present. A worker that can dispatch to four of
-/// five regions is one that silently strands every workspace in the fifth.
+/// Every configured launch region must be present. A plane may compose a
+/// strict non-empty subset while the remaining regional stacks are unpublished.
 fn functions(raw: &str) -> Result<BTreeMap<Region, String>, CentralControlWorkerConfigError> {
     let mut map = BTreeMap::new();
     for entry in raw.split(',').filter(|it| !it.trim().is_empty()) {
@@ -332,10 +356,10 @@ fn functions(raw: &str) -> Result<BTreeMap<Region, String>, CentralControlWorker
             });
         }
     }
-    if let Some(missing) = Region::ALL.iter().find(|region| !map.contains_key(region)) {
+    if map.is_empty() {
         return Err(CentralControlWorkerConfigError::Invalid {
             name: keys::REGIONAL_FUNCTIONS,
-            reason: format!("no function for `{}`", missing.as_str()),
+            reason: "at least one configured region is required".to_owned(),
         });
     }
     Ok(map)
@@ -364,10 +388,10 @@ fn projections(raw: &str) -> Result<BTreeMap<Region, String>, CentralControlWork
             });
         }
     }
-    if let Some(missing) = Region::ALL.iter().find(|region| !map.contains_key(region)) {
+    if map.is_empty() {
         return Err(CentralControlWorkerConfigError::Invalid {
             name: keys::REGIONAL_PROJECTIONS,
-            reason: format!("no projection table for `{}`", missing.as_str()),
+            reason: "at least one configured region is required".to_owned(),
         });
     }
     Ok(map)
@@ -939,17 +963,48 @@ mod tests {
     }
 
     #[test]
-    fn a_function_map_missing_a_region_is_refused() {
+    fn a_single_composed_region_is_accepted() {
         let mut vars = complete();
         vars.insert(
             keys::REGIONAL_FUNCTIONS,
             "eu-west-1=arn:aws:lambda:eu-west-1:000000000000:function:aex-regional-control"
                 .to_owned(),
         );
-        let error = read(&vars).expect_err("an incomplete map strands a region");
-        assert!(
-            matches!(error, CentralControlWorkerConfigError::Invalid { name, .. } if name == keys::REGIONAL_FUNCTIONS)
+        vars.insert(
+            keys::REGIONAL_PROJECTIONS,
+            "eu-west-1=aex-dev-eu-west-1-regional-authz-projection".to_owned(),
         );
+        let config = read(&vars).expect("a composed subset of launch regions");
+        assert_eq!(config.regional_functions.len(), 1);
+        assert_eq!(config.regional_projections.len(), 1);
+    }
+
+    #[test]
+    fn the_function_and_projection_maps_must_cover_the_same_regions() {
+        let mut functions_without_projection = complete();
+        functions_without_projection.insert(
+            keys::REGIONAL_FUNCTIONS,
+            "eu-west-1=arn:aws:lambda:eu-west-1:000000000000:function:aex-regional-control"
+                .to_owned(),
+        );
+        let error = read(&functions_without_projection).expect_err("maps must agree");
+        assert!(matches!(
+            error,
+            CentralControlWorkerConfigError::Invalid { name, .. }
+                if name == keys::REGIONAL_FUNCTIONS
+        ));
+
+        let mut projections_without_function = complete();
+        projections_without_function.insert(
+            keys::REGIONAL_PROJECTIONS,
+            "eu-west-1=aex-dev-eu-west-1-regional-authz-projection".to_owned(),
+        );
+        let error = read(&projections_without_function).expect_err("maps must agree");
+        assert!(matches!(
+            error,
+            CentralControlWorkerConfigError::Invalid { name, .. }
+                if name == keys::REGIONAL_PROJECTIONS
+        ));
     }
 
     #[test]
