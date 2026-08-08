@@ -549,6 +549,13 @@ impl WorkspacesApi for ControlService {
         if body.name.is_empty() || body.name.chars().count() > 128 {
             return Err(WireError::new(ErrorCode::InvalidRequest));
         }
+        // The deployment may intentionally compose fewer than all launch
+        // regions while the remaining regional stacks are unpublished. Check
+        // the configured placement set before the central transaction so an
+        // unsupported region cannot leave a hidden provisioning row behind.
+        if !self.api_urls.contains_key(&body.region) {
+            return Err(WireError::new(ErrorCode::InvalidRequest));
+        }
         let workspace_id = self.ids.next();
         let operation_id = self.ids.next();
         let slug = slug(&body.name)?;

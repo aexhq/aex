@@ -40,23 +40,23 @@ fn every_shipped_unit_has_a_recipe() {
 }
 
 #[test]
-fn publication_inventory_is_exactly_36_with_every_gap_classified() {
+fn publication_inventory_is_exactly_37_with_every_gap_classified() {
     let units = shipped_units();
-    assert_eq!(units.units.len(), 36);
+    assert_eq!(units.units.len(), 37);
     let blob = units
         .units
         .iter()
         .filter(|unit| !unit.kind.starts_with("rust-oci-"))
         .count();
     let oci = units.units.len() - blob;
-    assert_eq!(blob, 31, "blob units can use immutable release assets");
+    assert_eq!(blob, 32, "blob units can use immutable release assets");
     assert_eq!(oci, 5, "OCI units require real GHCR manifest publication");
     let unique = units
         .units
         .iter()
         .map(|unit| unit.id.as_str())
         .collect::<std::collections::BTreeSet<_>>();
-    assert_eq!(unique.len(), 36, "no two deployables may share an identity");
+    assert_eq!(unique.len(), 37, "no two deployables may share an identity");
 }
 
 #[test]
