@@ -8,6 +8,9 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 publish = false
+# Every test target is declared explicitly, so a target's required features are
+# a manifest fact rather than something auto-discovery can route around.
+autotests = false
 
 [lints]
 workspace = true
@@ -28,10 +31,12 @@ scenarios = []
 expressions = "unit"
 plans = "unit"
 adapters = "unit"
+integration = "integration"
 
-[package.metadata.aex.not_applicable]
-integration = "brain-core owns the integration layer through the aex-live-brain-mux companion: the DynamoDB Local and real-stack suites run there so one harness owns every created resource"
-
+[features]
+# Engine-backed targets. The unit lane neither builds nor links any of it, so
+# the per-stream gate still runs on a machine with no container runtime.
+integration-engines = ["dep:tokio", "aex-test-harness/containers"]
 
 [dependencies]
 async-trait.workspace = true
@@ -57,9 +62,12 @@ aex-session-dynamodb = { path = "../aex-session-dynamodb" }
 aex-work-dynamodb = { path = "../aex-work-dynamodb" }
 aex-wire = { path = "../aex-wire" }
 
+tokio = { workspace = true, optional = true }
+
 [dev-dependencies]
 aex-brain-test-support = { path = "../aex-brain-test-support" }
 aex-session-domain = { path = "../aex-session-domain" }
+aex-test-harness = { path = "../../tests/support/aex-test-harness" }
 aws-smithy-http-client.workspace = true
 base64.workspace = true
 http.workspace = true
@@ -76,3 +84,8 @@ path = "tests/plans.rs"
 [[test]]
 name = "adapters"
 path = "tests/adapters.rs"
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+required-features = ["integration-engines"]

@@ -81,7 +81,7 @@
     "subject": "crates/aex-runtime-control-aws",
     "owner": "hands",
     "blocking_rule": "aex-empty-unit",
-    "detail": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
+    "detail": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map. `tests/integration.rs` is written and PARKED, not forgotten: declaring it would exit this awaiting-owner state, and `aex-target-missing` would then demand a [[test]] target at layer `unit` for each of contract/property/fault/security - which inline modules can never satisfy, because `test_target_names` counts only `test` and `bench` targets. Wiring it needs one of: those four targets extracted from the inline modules, or a registry rule that lets a lib's own test binary cover layer `unit`."
   },
   {
     "reason_class": "awaiting_owner",

@@ -414,11 +414,10 @@
         "targets": {
           "adapters": "unit",
           "expressions": "unit",
+          "integration": "integration",
           "plans": "unit"
         },
-        "not_applicable": {
-          "integration": "brain-core owns the integration layer through the aex-live-brain-mux companion: the DynamoDB Local and real-stack suites run there so one harness owns every created resource"
-        }
+        "not_applicable": {}
       },
       "unmapped_targets": [],
       "awaiting_owner": false
@@ -1587,7 +1586,8 @@
         "role": "composition",
         "artifact": "none",
         "layers": [
-          "unit"
+          "unit",
+          "integration"
         ],
         "concerns": [
           "contract",
@@ -1603,6 +1603,7 @@
         "scenarios": [],
         "targets": {
           "authz": "unit",
+          "integration": "integration",
           "mount": "unit",
           "primitives": "unit",
           "projection": "unit"
@@ -1777,7 +1778,7 @@
         "scenarios": [],
         "targets": {},
         "not_applicable": {
-          "targets": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
+          "targets": "the `hands` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map. `tests/integration.rs` is written and PARKED, not forgotten: declaring it would exit this awaiting-owner state, and `aex-target-missing` would then demand a [[test]] target at layer `unit` for each of contract/property/fault/security - which inline modules can never satisfy, because `test_target_names` counts only `test` and `bench` targets. Wiring it needs one of: those four targets extracted from the inline modules, or a registry rule that lets a lib's own test binary cover layer `unit`."
         }
       },
       "unmapped_targets": [],
@@ -2124,11 +2125,10 @@
         ],
         "scenarios": [],
         "targets": {
+          "integration": "integration",
           "isolation": "unit"
         },
-        "not_applicable": {
-          "integration": "DEFERRED, not inapplicable: the DynamoDB Local suite (concurrent producers on one workspace, closure-vector write, four discriminated fact shapes round-tripping) is unwritten. The expression and codec halves are covered at the unit layer."
-        }
+        "not_applicable": {}
       },
       "unmapped_targets": [],
       "awaiting_owner": false
@@ -2256,11 +2256,10 @@
         ],
         "scenarios": [],
         "targets": {
+          "integration": "integration",
           "isolation": "unit"
         },
-        "not_applicable": {
-          "integration": "DEFERRED, not inapplicable: the DynamoDB Local suite (concurrent producers converging on a contiguous sequence, ambiguous-commit resolution by re-reading ID#, replay vs conflict discrimination) is unwritten. The expression and codec halves are covered at the unit layer; the transaction's live behaviour is not."
-        }
+        "not_applicable": {}
       },
       "unmapped_targets": [],
       "awaiting_owner": false
@@ -2292,11 +2291,10 @@
         ],
         "scenarios": [],
         "targets": {
+          "integration": "integration",
           "isolation": "unit"
         },
-        "not_applicable": {
-          "integration": "DEFERRED, not inapplicable: the DynamoDB Local suite (the crossing-claim fence under concurrent adapters, counter-mode vs receipt-mode facts kept distinct) is unwritten. The expression and codec halves are covered at the unit layer."
-        }
+        "not_applicable": {}
       },
       "unmapped_targets": [],
       "awaiting_owner": false

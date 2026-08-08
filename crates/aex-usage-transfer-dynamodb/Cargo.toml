@@ -25,11 +25,14 @@ risk = ["concurrency"]
 scenarios = []
 
 
-[package.metadata.aex.not_applicable]
-integration = "DEFERRED, not inapplicable: the DynamoDB Local suite (the crossing-claim fence under concurrent adapters, counter-mode vs receipt-mode facts kept distinct) is unwritten. The expression and codec halves are covered at the unit layer."
-
 [package.metadata.aex.targets]
 isolation = "unit"
+integration = "integration"
+
+[features]
+# Engine-backed targets. The unit lane neither builds nor links any of it, so
+# the per-stream gate still runs on a machine with no container runtime.
+integration-engines = ["aex-test-harness/containers"]
 
 [dependencies]
 async-trait.workspace = true
@@ -49,4 +52,19 @@ aex-usage-domain = { path = "../aex-usage-domain" }
 
 [dev-dependencies]
 aws-smithy-runtime-api.workspace = true
-tokio = { workspace = true, features = ["rt", "macros"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
+# The integration target mints its fixture identifiers from the wire owner
+# rather than hand-typing them: the outbox boundary parses those strings into
+# the central contract's identifier types, and a hand-written spelling would
+# keep passing after the format moved.
+aex-wire = { path = "../aex-wire" }
+aex-test-harness = { path = "../../tests/support/aex-test-harness" }
+
+[[test]]
+name = "isolation"
+path = "tests/isolation.rs"
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+required-features = ["integration-engines"]

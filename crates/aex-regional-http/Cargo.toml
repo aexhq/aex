@@ -17,7 +17,7 @@ workspace = true
 owner = "regional-services"
 role = "composition"
 artifact = "none"
-layers = ["unit"]
+layers = ["unit", "integration"]
 concerns = ["contract", "property", "fault", "security"]
 seams = []
 security_tier = "public_edge"
@@ -29,9 +29,17 @@ primitives = "unit"
 mount = "unit"
 projection = "unit"
 authz = "unit"
+integration = "integration"
 
 [package.metadata.aex.not_applicable]
 live_suite = "composition crate; the mounted-route set is a unit fact and the deployed route set belongs to its deployable's companion"
+
+[features]
+# Engine-backed targets. The unit lane neither builds nor links any of it, so
+# the per-stream gate still runs on a machine with no container runtime. There
+# is no `dep:tokio` here as there is in the store crates: this crate links tokio
+# unconditionally, so making it optional for one target would be a lie.
+integration-engines = ["aex-test-harness/containers"]
 
 [dependencies]
 axum.workspace = true
@@ -88,6 +96,7 @@ http-body-util.workspace = true
 proptest.workspace = true
 serde.workspace = true
 tokio = { workspace = true, features = ["io-util", "rt-multi-thread", "macros"] }
+aex-test-harness = { path = "../../tests/support/aex-test-harness" }
 
 [[test]]
 name = "primitives"
@@ -104,3 +113,8 @@ path = "tests/projection.rs"
 [[test]]
 name = "authz"
 path = "tests/authz.rs"
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+required-features = ["integration-engines"]
