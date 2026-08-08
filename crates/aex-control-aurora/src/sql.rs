@@ -391,7 +391,7 @@ INSERT INTO control.durable_operation \
   (id, kind, visibility, organization_id, workspace_id, principal_kind, principal_id, scopes, \
    status, intent_hash, fence, attempt, created_at, updated_at, due_at) \
 VALUES (:id, :kind, :visibility, :organization_id, :workspace_id, :principal_kind, :principal_id, \
-        :scopes, 'queued', :intent_hash, 1, 0, \
+        ARRAY(SELECT jsonb_array_elements_text(CAST(:scopes AS jsonb))), 'queued', :intent_hash, 1, 0, \
         TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond', \
         TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond', \
         TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond')";

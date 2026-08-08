@@ -101,6 +101,10 @@ impl AuroraControlStore {
             .map_or(SqlValue::Null, SqlValue::I64)
     }
 
+    fn scopes_parameter(scopes: ScopeSet) -> SqlValue {
+        SqlValue::Json(serde_json::json!(scopes.to_strings()))
+    }
+
     /// The bounded row count one page may return.
     fn page_limit(page: &PageRequest) -> i64 {
         let limit = page.limit.clamp(1, aex_control_app::ports::MAX_PAGE_LIMIT);
@@ -415,7 +419,7 @@ impl AuroraControlStore {
                         SqlValue::Text(insert.key.principal_kind.as_str().to_owned()),
                     )
                     .bind("principal_id", SqlValue::Uuid(insert.key.principal_id))
-                    .bind("scopes", SqlValue::TextArray(insert.scopes.to_strings()))
+                    .bind("scopes", Self::scopes_parameter(insert.scopes))
                     .bind(
                         "intent_hash",
                         SqlValue::Bytes(insert.key.intent_hash.as_bytes().to_vec()),
@@ -2080,11 +2084,11 @@ mod tests {
         ResourceKind, ScopeKind, Slug,
     };
     use aex_rds_data::{
-        DataApiClient, DataApiConfig, DatabaseName, ExecuteResponse, ResourceArn, SecretArn,
-        TransactionId, Transport, TransportError,
+        DataApiClient, DataApiConfig, DatabaseName, ExecuteResponse, Isolation, ResourceArn,
+        SecretArn, TransactionId, Transport, TransportError,
     };
     use async_trait::async_trait;
-    use aws_sdk_rdsdata::types::SqlParameter;
+    use aws_sdk_rdsdata::types::{Field, SqlParameter, TypeHint};
     use time::{Duration, OffsetDateTime};
     use uuid::Uuid;
 
@@ -2094,6 +2098,7 @@ mod tests {
     #[derive(Debug)]
     struct ScriptedTransport {
         statements: Mutex<Vec<String>>,
+        parameters: Mutex<Vec<Vec<SqlParameter>>>,
         commit_is_unknown: bool,
     }
 
@@ -2102,13 +2107,17 @@ mod tests {
         async fn execute(
             &self,
             statement: &str,
-            _parameters: Vec<SqlParameter>,
+            parameters: Vec<SqlParameter>,
             _transaction: Option<&TransactionId>,
         ) -> Result<ExecuteResponse, TransportError> {
             self.statements
                 .lock()
                 .expect("statement ledger")
                 .push(statement.to_owned());
+            self.parameters
+                .lock()
+                .expect("parameter ledger")
+                .push(parameters);
             Ok(ExecuteResponse {
                 records: Vec::new(),
                 rows_affected: 1,
@@ -2137,6 +2146,7 @@ mod tests {
     fn store(commit_is_unknown: bool) -> (AuroraControlStore, Arc<ScriptedTransport>) {
         let transport = Arc::new(ScriptedTransport {
             statements: Mutex::new(Vec::new()),
+            parameters: Mutex::new(Vec::new()),
             commit_is_unknown,
         });
         let config = DataApiConfig::new(
@@ -2189,6 +2199,55 @@ mod tests {
             },
             now,
         }
+    }
+
+    #[tokio::test]
+    async fn durable_operation_scopes_use_a_json_scalar_and_parameterized_text_array() {
+        let (store, transport) = store(false);
+        let mut transaction = store
+            .client
+            .begin(Isolation::Serializable)
+            .await
+            .expect("transaction begins");
+        let organization = create_organization();
+        let operation_id = Uuid::from_u128(12);
+        AuroraControlStore::insert_operation(
+            &mut transaction,
+            super::OperationInsert {
+                id: operation_id,
+                kind: aex_control_domain::OperationKind::WorkspaceProvision,
+                organization_id: Uuid::from_u128(7),
+                workspace_id: Uuid::from_u128(13),
+                key: &organization.idempotency,
+                scopes: AuroraControlStore::required_scope("workspaces:write"),
+                now: OffsetDateTime::UNIX_EPOCH,
+            },
+        )
+        .await
+        .expect("operation insert succeeds");
+        transaction
+            .rollback()
+            .await
+            .expect("transaction rolls back");
+
+        let statements = transport.statements.lock().expect("statement ledger");
+        assert_eq!(statements.len(), 2);
+        assert_eq!(statements[1], sql::INSERT_OPERATION);
+        assert!(statements[1].contains("jsonb_array_elements_text"));
+
+        let parameters = transport.parameters.lock().expect("parameter ledger");
+        let scopes = parameters[1]
+            .iter()
+            .find(|parameter| parameter.name() == Some("scopes"))
+            .expect("scopes parameter");
+        assert_eq!(scopes.type_hint(), Some(&TypeHint::Json));
+        let Some(Field::StringValue(encoded)) = scopes.value() else {
+            panic!("scopes must use a scalar JSON string");
+        };
+        assert_eq!(
+            serde_json::from_str::<Vec<String>>(encoded).expect("scope JSON"),
+            vec!["workspaces:write"]
+        );
     }
 
     #[tokio::test]
