@@ -68,9 +68,9 @@ provider monitoring is not a publication input.
 
 Pull requests build and package affected candidates without publishing. The
 protected main workflow preserves exact GitHub provenance, publishes
-content-addressed unit/signature assets, and certifies all 36 deployable rows
-before composition. `release/units.toml` declares the required build/test
-receipt classes and `release/semantic-receipts.json` declares the real package
+content-addressed unit/signature assets, and certifies every deployable row
+declared in `release/units.toml` before composition. That registry declares the
+required build/test receipt classes and `release/semantic-receipts.json` declares the real package
 selections for semantic classes. Missing producers, build/test receipts,
 package identity, provenance, signatures, or model-catalog bindings remain
 publication failures. Supply-chain scanners and their derived receipt classes

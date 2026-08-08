@@ -100,8 +100,15 @@ resource "aws_apigatewayv2_stage" "default" {
     format          = local.access_log_format
   }
 
+  # Set the stage throttle explicitly. With the AWS provider/AWS API Gateway,
+  # omitting this block can retain an effective 0/0 throttle on an existing
+  # stage, which rejects POST routes with 429 before Lambda is invoked. These
+  # values are only an outer burst guard; the public API owns its application
+  # limits and authentication semantics.
   default_route_settings {
-    detailed_metrics_enabled = true
+    detailed_metrics_enabled = false
+    throttling_burst_limit   = 100
+    throttling_rate_limit    = 50
   }
 }
 

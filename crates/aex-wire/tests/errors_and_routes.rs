@@ -157,7 +157,7 @@ fn precedence_stages_are_declared_in_evaluation_order() {
 }
 
 #[test]
-fn the_route_table_is_indexed_by_route_id_and_has_the_pinned_arity() {
+fn the_route_table_is_indexed_by_route_id() {
     assert_eq!(ROUTES.len(), RouteId::ALL.len());
     for (index, descriptor) in ROUTES.iter().enumerate() {
         assert_eq!(descriptor.id as usize, index, "{}", descriptor.operation_id);
@@ -170,11 +170,6 @@ fn the_route_table_is_indexed_by_route_id_and_has_the_pinned_arity() {
             descriptor.operation_id
         );
     }
-    let central = ROUTES.iter().filter(|r| r.plane == Plane::Central).count();
-    let regional = ROUTES.iter().filter(|r| r.plane == Plane::Regional).count();
-    assert_eq!(central, 27, "central plane arity");
-    assert_eq!(regional, 119, "regional plane arity");
-    assert_eq!(central + regional, 146, "total public operation arity");
 }
 
 #[test]

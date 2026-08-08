@@ -205,19 +205,22 @@ run "invoke_permissions_are_alias_qualified_and_route_exact" {
   }
 }
 
-run "the_default_stage_logs_every_request" {
+run "the_default_stage_has_a_positive_outer_throttle_and_logs_every_request" {
   command = plan
 
   assert {
     condition = (
       aws_apigatewayv2_stage.default.name == "$default"
       && aws_apigatewayv2_stage.default.auto_deploy
+      && one(aws_apigatewayv2_stage.default.default_route_settings).detailed_metrics_enabled == false
+      && one(aws_apigatewayv2_stage.default.default_route_settings).throttling_burst_limit == 100
+      && one(aws_apigatewayv2_stage.default.default_route_settings).throttling_rate_limit == 50
       && one(aws_apigatewayv2_stage.default.access_log_settings).destination_arn == aws_cloudwatch_log_group.access.arn
       && strcontains(one(aws_apigatewayv2_stage.default.access_log_settings).format, "$context.requestId")
       && strcontains(one(aws_apigatewayv2_stage.default.access_log_settings).format, "$context.routeKey")
       && strcontains(one(aws_apigatewayv2_stage.default.access_log_settings).format, "$context.status")
     )
-    error_message = "The auto-deployed default stage must write access logs to the owned log group."
+    error_message = "The auto-deployed default stage must keep detailed metrics off, permit a bounded 100/50 outer throttle, and write access logs."
   }
 
   assert {

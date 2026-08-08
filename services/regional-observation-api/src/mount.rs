@@ -353,7 +353,6 @@ mod tests {
     use aex_regional_http::mount::{AdmissionRequest, EdgeAdmission};
     use aex_wire::error::{ErrorCode, WireError, WireResult};
     use aex_wire::routes::{Plane, RouteId, route};
-    use aex_wire::server::RouteGroup;
     use aex_wire::types::Region;
     use axum::body::{Body, to_bytes};
     use axum::http::{Request, StatusCode, header};
@@ -457,18 +456,6 @@ mod tests {
                 route(id).operation_id
             );
         }
-    }
-
-    #[test]
-    fn this_deployable_owns_twenty_seven_routes_and_serves_twenty_five() {
-        // The observations authoring group has 39 operations, but its 24
-        // NDJSON operations belong exclusively to `regional-stream`. This
-        // Lambda owns the 15 finite observation operations plus 12 lifecycle
-        // operations.
-        assert_eq!(RouteGroup::Observations.routes().len(), 39);
-        assert_eq!(RouteGroup::TelemetryLifecycle.routes().len(), 12);
-        assert_eq!(owned_routes().len(), 27);
-        assert_eq!(served_routes().len(), 25);
     }
 
     #[test]

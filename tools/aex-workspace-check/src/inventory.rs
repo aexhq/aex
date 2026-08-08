@@ -1,11 +1,8 @@
-//! The frozen member inventory.
+//! Workspace roots and architecture classifications.
 //!
-//! These lists are the mechanical form of the accepted architecture: Area 9's
-//! crate and deployable registries as amended by Area 11 (no `ClickHouse`, no
-//! Kinesis, so `aex-observation-clickhouse`, `observation-materializer` and
-//! `observation-schema-admin` are absent). Adding a member without adding it
-//! here fails `cargo run -p aex-workspace-check`, which is the point: a new
-//! crate is an architecture decision, not an incidental file.
+//! Cargo metadata and the on-disk tree are authoritative for membership. These
+//! lists classify the roots and the architecture-sensitive subsets that carry
+//! additional rules; they are not a second hand-maintained member manifest.
 
 /// Directory roots that hold Cargo workspace members.
 pub const MEMBER_ROOTS: &[&str] = &[
@@ -35,7 +32,7 @@ pub const NON_CARGO_DIRECTORIES: &[&str] = &[
     "tests/load/workloads",
 ];
 
-/// The 67 library crates under `crates/`.
+/// Library crates with architecture-sensitive naming checks.
 pub const CRATES: &[&str] = &[
     "aex-brain-app",
     "aex-brain-domain",
@@ -106,7 +103,7 @@ pub const CRATES: &[&str] = &[
     "aex-workspace-domain",
 ];
 
-/// The 10 deployable services.
+/// Deployable services that must own live companions.
 pub const SERVICES: &[&str] = &[
     "central-authz",
     "central-control-api",
@@ -120,7 +117,7 @@ pub const SERVICES: &[&str] = &[
     "regional-stream",
 ];
 
-/// The 18 deployable workers.
+/// Deployable workers that must own live companions.
 pub const WORKERS: &[&str] = &[
     "central-control-worker",
     "central-schema-admin",
@@ -142,7 +139,7 @@ pub const WORKERS: &[&str] = &[
     "usage-transfer-worker",
 ];
 
-/// The 3 deployable runtimes.
+/// Deployable runtimes that must own live companions.
 pub const RUNTIMES: &[&str] = &["brain-mux", "hands-agent", "hands-image"];
 
 /// The workspace tools.
@@ -155,8 +152,8 @@ pub const TOOLS: &[&str] = &[
 
 /// The targets that own a `tests/live/aex-live-<target>` companion package.
 ///
-/// Every Rust deployable, both `TypeScript` Stripe edges, the dashboard, the
-/// site and the model catalog, exactly as Area 9 names them.
+/// This set is checked against metadata-derived `live_suite` declarations plus
+/// companions that explicitly record their deployable as not yet applicable.
 pub const LIVE_TARGETS: &[&str] = &[
     "brain-mux",
     "central-authz",
@@ -198,8 +195,8 @@ pub const LIVE_TARGETS: &[&str] = &[
 
 /// The shared test-infrastructure packages, as `(root, package name)`.
 ///
-/// Both live outside `crates/` so the frozen crate inventory remains limited
-/// to product libraries. Both are `publish = false` dev-dependency-only
+/// These live outside `crates/` so the crate classification remains limited to
+/// product libraries. They are `publish = false` dev-dependency-only
 /// packages that must never appear in a production link graph.
 /// `aex-test-harness` owns run identity, prefixes, budget, TTL, the cleanup
 /// ledger, the secret canary, the fault ports and the pinned image registry;
@@ -210,33 +207,13 @@ pub const HARNESSES: &[(&str, &str)] = &[
     ("tests/load", "aex-load-harness"),
 ];
 
-/// Every expected member as `(root, package name)`.
-#[must_use]
-pub fn expected_members() -> Vec<(&'static str, String)> {
-    let mut members: Vec<(&'static str, String)> = Vec::new();
-    members.extend(CRATES.iter().map(|name| ("crates", (*name).to_owned())));
-    members.extend(SERVICES.iter().map(|name| ("services", (*name).to_owned())));
-    members.extend(WORKERS.iter().map(|name| ("workers", (*name).to_owned())));
-    members.extend(RUNTIMES.iter().map(|name| ("runtimes", (*name).to_owned())));
-    members.extend(TOOLS.iter().map(|name| ("tools", (*name).to_owned())));
-    members.extend(
-        LIVE_TARGETS
-            .iter()
-            .map(|name| ("tests/live", format!("aex-live-{name}"))),
-    );
-    members.extend(
-        HARNESSES
-            .iter()
-            .map(|(root, name)| (*root, (*name).to_owned())),
-    );
-    members
-}
-
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::{
         CRATES, HARNESSES, LIVE_TARGETS, MEMBER_ROOTS, NON_CARGO_DIRECTORIES, RUNTIMES, SERVICES,
-        TOOLS, WORKERS, expected_members,
+        TOOLS, WORKERS,
     };
 
     fn is_sorted_and_unique(names: &[&str]) -> bool {
@@ -244,29 +221,18 @@ mod tests {
     }
 
     #[test]
-    fn every_frozen_list_is_sorted_and_free_of_duplicates() {
+    fn every_classification_is_sorted_and_free_of_duplicates() {
         assert!(is_sorted_and_unique(CRATES), "crates");
         assert!(is_sorted_and_unique(SERVICES), "services");
         assert!(is_sorted_and_unique(WORKERS), "workers");
         assert!(is_sorted_and_unique(RUNTIMES), "runtimes");
         assert!(is_sorted_and_unique(TOOLS), "tools");
         assert!(is_sorted_and_unique(LIVE_TARGETS), "live targets");
-    }
-
-    #[test]
-    fn the_frozen_counts_match_the_accepted_architecture() {
         assert_eq!(
-            CRATES.len(),
-            67,
-            "accepted inventory minus aex-observation-clickhouse, plus aex-central-aws, aex-brain-provider-custody, and aex-capacity-dynamodb"
+            HARNESSES.iter().copied().collect::<BTreeSet<_>>().len(),
+            HARNESSES.len(),
+            "duplicate harness classification"
         );
-        assert_eq!(SERVICES.len(), 10);
-        assert_eq!(WORKERS.len(), 18);
-        assert_eq!(RUNTIMES.len(), 3);
-        assert_eq!(TOOLS.len(), 4);
-        assert_eq!(LIVE_TARGETS.len(), 36);
-        assert_eq!(HARNESSES.len(), 2);
-        assert_eq!(expected_members().len(), 140);
     }
 
     #[test]

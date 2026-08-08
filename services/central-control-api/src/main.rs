@@ -121,9 +121,9 @@ pub struct Config {
     pub database: String,
     /// The login role.
     pub role: String,
-    /// Every region a workspace may be placed in.
+    /// Every configured region a workspace may be placed in.
     pub regional_functions: BTreeMap<Region, String>,
-    /// Public workspace API base URL per region.
+    /// Public workspace API base URL for every configured region.
     pub api_urls: BTreeMap<Region, aex_wire::types::HttpsUrl>,
 }
 
@@ -167,6 +167,32 @@ impl Config {
             name: keys::PLANE,
             reason: reason.to_string(),
         })?;
+        let regional_functions = functions(&required(&lookup, keys::REGIONAL_FUNCTIONS)?)?;
+        let api_urls = api_urls(&required(&lookup, keys::API_URLS)?)?;
+        if let Some(region) = regional_functions
+            .keys()
+            .find(|region| !api_urls.contains_key(region))
+        {
+            return Err(CentralControlApiConfigError::Invalid {
+                name: keys::API_URLS,
+                reason: format!(
+                    "no public API URL for configured region `{}`",
+                    region.as_str()
+                ),
+            });
+        }
+        if let Some(region) = api_urls
+            .keys()
+            .find(|region| !regional_functions.contains_key(region))
+        {
+            return Err(CentralControlApiConfigError::Invalid {
+                name: keys::REGIONAL_FUNCTIONS,
+                reason: format!(
+                    "no function ARN for configured region `{}`",
+                    region.as_str()
+                ),
+            });
+        }
         Ok(Self {
             http,
             account_id: required(&lookup, keys::ACCOUNT_ID)?,
@@ -176,8 +202,8 @@ impl Config {
             pepper_secret_id: required(&lookup, keys::PEPPER_SECRET_ID)?,
             database: required(&lookup, keys::DATABASE)?,
             role,
-            regional_functions: functions(&required(&lookup, keys::REGIONAL_FUNCTIONS)?)?,
-            api_urls: api_urls(&required(&lookup, keys::API_URLS)?)?,
+            regional_functions,
+            api_urls,
         })
     }
 
@@ -231,10 +257,10 @@ where
 
 /// Parses the `region=lambda-arn` authority map.
 ///
-/// Every launch region must be present, and it is checked here rather than at
-/// the first `POST /api/workspaces`: a control API that can place a workspace in
-/// four of five regions is one that `500`s on the fifth after it has already
-/// committed the central half.
+/// Every configured launch region must be present, and it is checked here rather
+/// than at the first `POST /api/workspaces`. A plane may compose a strict
+/// subset while its remaining regional stacks are not yet published, but it
+/// must never claim an unconfigured region is reachable.
 fn functions(raw: &str) -> Result<BTreeMap<Region, String>, CentralControlApiConfigError> {
     let mut map = BTreeMap::new();
     for entry in raw.split(',').filter(|it| !it.trim().is_empty()) {
@@ -266,10 +292,10 @@ fn functions(raw: &str) -> Result<BTreeMap<Region, String>, CentralControlApiCon
             });
         }
     }
-    if let Some(missing) = Region::ALL.iter().find(|region| !map.contains_key(region)) {
+    if map.is_empty() {
         return Err(CentralControlApiConfigError::Invalid {
             name: keys::REGIONAL_FUNCTIONS,
-            reason: format!("no function ARN for `{}`", missing.as_str()),
+            reason: "at least one configured region is required".to_owned(),
         });
     }
     Ok(map)
@@ -306,10 +332,10 @@ fn api_urls(
             });
         }
     }
-    if let Some(missing) = Region::ALL.iter().find(|region| !map.contains_key(region)) {
+    if map.is_empty() {
         return Err(CentralControlApiConfigError::Invalid {
             name: keys::API_URLS,
-            reason: format!("no public API URL for `{}`", missing.as_str()),
+            reason: "at least one configured region is required".to_owned(),
         });
     }
     Ok(map)
@@ -1022,7 +1048,24 @@ mod tests {
     }
 
     #[test]
-    fn a_function_map_missing_a_region_is_refused_before_a_workspace_is_placed() {
+    fn a_single_composed_region_is_accepted() {
+        let mut vars = complete();
+        vars.insert(
+            keys::REGIONAL_FUNCTIONS,
+            "eu-west-1=arn:aws:lambda:eu-west-1:000000000000:function:aex-regional-control"
+                .to_owned(),
+        );
+        vars.insert(
+            keys::API_URLS,
+            "eu-west-1=https://api.eu-west-1.aex.dev".to_owned(),
+        );
+        let config = read(&vars).expect("a composed subset of launch regions");
+        assert_eq!(config.regional_functions.len(), 1);
+        assert_eq!(config.api_urls.len(), 1);
+    }
+
+    #[test]
+    fn the_function_and_public_url_maps_must_cover_the_same_regions() {
         let mut vars = complete();
         vars.insert(
             keys::REGIONAL_FUNCTIONS,

@@ -219,11 +219,6 @@ pub struct SourceScan {
     pub image_literals: Vec<String>,
     /// Quarantine or expected-failure files that exist.
     pub quarantine_files: Vec<String>,
-    /// Every `services/` and `workers/` Cargo member whose `src/main.rs` was
-    /// scanned for the configuration-rejected process event.
-    pub deployable_mains: Vec<String>,
-    /// The subset of [`SourceScan::deployable_mains`] that never emits it.
-    pub silent_config_mains: Vec<String>,
 }
 
 const IGNORE_ATTRIBUTE: &str = concat!("#[", "ignore");

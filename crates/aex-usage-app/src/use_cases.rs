@@ -110,16 +110,14 @@ impl UseCaseError {
     pub const fn poison(&self) -> Option<PoisonReason> {
         match self {
             Self::CategoryEscape { .. } => Some(PoisonReason::CategoryEscape),
-            // A correction whose target this authority does not hold, and a
-            // fold that refused, are both invariant violations: the fact is
-            // internally consistent but the history it names is not.
-            Self::TargetUnknown { .. } | Self::Fold(_) => Some(PoisonReason::InvariantViolated),
+            // A correction whose target this authority does not hold, a fold
+            // that refused, or a fact the central contract cannot express are
+            // all invariant violations: the fact is internally consistent but
+            // the history it names is not, and redelivery cannot change it.
+            Self::TargetUnknown { .. } | Self::Fold(_) | Self::Outbox(_) => {
+                Some(PoisonReason::InvariantViolated)
+            }
             Self::ReceiptMismatch { .. } => Some(PoisonReason::PricingVersionMismatch),
-            // A fact the central contract cannot express never becomes
-            // expressible by redelivery. Retrying it forever is the poison
-            // loop; parking is the honest third option, exactly as for a
-            // decode failure.
-            Self::Outbox(_) => Some(PoisonReason::InvariantViolated),
             Self::Port(error) if error.terminal() => Some(PoisonReason::Undecodable),
             Self::SequenceGap { .. } | Self::Frontier(_) | Self::Port(_) => None,
         }

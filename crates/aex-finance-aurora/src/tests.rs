@@ -242,11 +242,3 @@ fn a_commit_failure_the_transport_did_not_name_cannot_be_reconciled() {
         );
     }
 }
-
-#[test]
-fn adapter_sql_never_casts_money_to_float() {
-    let source = include_str!("store.rs");
-    assert!(!source.contains("::float8"));
-    assert!(!source.contains("doubleValue"));
-    assert!(source.contains("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE"));
-}

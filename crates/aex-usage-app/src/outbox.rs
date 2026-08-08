@@ -162,9 +162,12 @@ fn contract_fact(fact: &UsageFact) -> Result<contracts::UsageFact, OutboxError> 
         workspace,
         region,
         attribution: contracts::Attribution {
-            session: parse_attributed("attribution.session", &fact.attribution.session)?,
-            run: parse_attributed("attribution.run", &fact.attribution.run)?,
-            operation: parse_attributed("attribution.operation", &fact.attribution.operation)?,
+            session: parse_attributed("attribution.session", fact.attribution.session.as_ref())?,
+            run: parse_attributed("attribution.run", fact.attribution.run.as_ref())?,
+            operation: parse_attributed(
+                "attribution.operation",
+                fact.attribution.operation.as_ref(),
+            )?,
         },
         authority: contracts::FactAuthority {
             kind: wire_authority_kind(fact),
@@ -268,15 +271,12 @@ fn parse_id<I: PrefixedId>(field: &'static str, value: &str) -> Result<I, Outbox
 }
 
 /// Parses one optional attribution identifier.
-fn parse_attributed<I, D>(field: &'static str, value: &Option<D>) -> Result<Option<I>, OutboxError>
+fn parse_attributed<I, D>(field: &'static str, value: Option<&D>) -> Result<Option<I>, OutboxError>
 where
     I: PrefixedId,
     D: std::fmt::Display,
 {
-    value
-        .as_ref()
-        .map(|id| parse_id(field, &id.to_string()))
-        .transpose()
+    value.map(|id| parse_id(field, &id.to_string())).transpose()
 }
 
 /// Shapes one grammar refusal.

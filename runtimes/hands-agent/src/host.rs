@@ -684,7 +684,12 @@ mod tests {
         )
         .expect("both streams drain");
         assert_eq!(sink.0.len(), stdout.len() + stderr.len());
-        assert_eq!(sink.0.iter().filter(|byte| **byte == b'a').count(), 10_000);
+        assert_eq!(
+            sink.0
+                .iter()
+                .fold(0_usize, |count, byte| count + usize::from(*byte == b'a')),
+            10_000
+        );
     }
 
     struct FailingReader;

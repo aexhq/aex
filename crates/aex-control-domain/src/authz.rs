@@ -1,9 +1,10 @@
 //! The one authorization decision.
 //!
-//! Every central route runs through [`decide`] and then [`admit`]. Nothing else
-//! in the platform decides whether a principal may act: a handler that wanted to
-//! re-check would have to re-derive the effective scopes, and re-derivation is
-//! what let today's three scope vocabularies drift apart.
+//! Every central route runs through [`decide`] and then [`admit`]. This edge
+//! decision owns principal-kind and scope checks. A collection route whose
+//! organization exists only in its typed body stays actor-scoped here; its
+//! handler must load that organization and enforce membership, role and account
+//! state from the control authority before it changes state.
 //!
 //! Two invariants close standing defects by construction.
 //!
@@ -13,7 +14,9 @@
 //!    silent narrowing to whatever the row says.
 //! 2. Every route that is not pause-exempt resolves an organization first, so an
 //!    org-less principal can never skip the `402 account_paused` gate. The
-//!    pairing is asserted over the whole generated central route table.
+//!    pairing is asserted over the whole generated central route table. A
+//!    body-scoped collection create is edge-exempt only because its handler
+//!    performs the same gate after decoding the target.
 
 use aex_wire::routes::{Plane, ROUTES, RouteDescriptor, RouteId};
 
@@ -437,8 +440,8 @@ const RULES: &[Rule] = &[
     },
     Rule {
         route: RouteId::WorkspaceCreate,
-        class: ResourceClass::Organization,
-        min_role: Some(OrgRole::Admin),
+        class: ResourceClass::None,
+        min_role: None,
     },
     Rule {
         route: RouteId::WorkspaceGet,
@@ -821,7 +824,7 @@ pub fn admit(
 #[cfg(test)]
 mod tests {
     use super::{Action, OrgRole, PrincipalKindTag, RULES, ResourceClass, requirement};
-    use aex_wire::routes::{Plane, ROUTES};
+    use aex_wire::routes::{Plane, ROUTES, RouteId};
     use std::collections::BTreeSet;
 
     #[test]
@@ -865,6 +868,14 @@ mod tests {
                 action.route()
             );
         }
+    }
+
+    #[test]
+    fn workspace_create_defers_its_body_scoped_organization_gate_to_the_handler() {
+        let requirement = requirement(Action::central(RouteId::WorkspaceCreate).expect("central"));
+        assert_eq!(requirement.resource_class, ResourceClass::None);
+        assert_eq!(requirement.min_role, None);
+        assert!(requirement.pause_exempt);
     }
 
     #[test]

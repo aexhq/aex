@@ -563,6 +563,30 @@ timeout_s = 15
 reserved_concurrency = 5
 
 [[unit]]
+id = "regional-control"
+kind = "rust-lambda"
+plane = "regional"
+package = "regional-control"
+bin = "regional-control"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release-lambda"
+form = "zip"
+entrypoint = "bootstrap"
+config_env_namespace = "AEX_REGIONAL_CONTROL_"
+config_schema_version = 1
+required_receipts = ["unit", "contract", "lint", "package-integrity"]
+alarm_spec = "regional-control"
+live_suite = "aex-live-regional-control"
+
+# Direct-invoke workspace control reads and conditionally fences one session
+# authority row. Keep it isolated from the regional request path while the
+# central API fans out control-plane requests across all launch regions.
+[unit.lambda]
+memory_mb = 512
+timeout_s = 15
+reserved_concurrency = 5
+
+[[unit]]
 id = "session-operation-worker"
 kind = "rust-lambda"
 plane = "regional"

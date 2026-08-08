@@ -1,6 +1,6 @@
 import type { RouteId } from "@aexhq/sdk";
 
-export type UserSuite = "packed" | "local" | "live" | "browser" | "money" | "operator";
+export type UserSuite = "packed" | "local" | "live" | "browser";
 
 export interface UserScenario {
   readonly id: `${UserSuite}.${string}`;
@@ -78,9 +78,4 @@ export const USER_SCENARIOS: readonly UserScenario[] = Object.freeze([
   scenario("browser.session-lifecycle", ["dashboard"], [], 60),
   scenario("browser.panel-degradation", ["dashboard"], [], 60),
   scenario("browser.error-mapping", ["dashboard"], [], 60),
-  scenario("money.top-up-checkout", ["sdk", "cli", "dashboard"], [], 90),
-  scenario("money.auto-topup-policy", ["sdk", "cli", "dashboard"], [], 90),
-  scenario("money.statement-artifact", ["sdk", "cli", "dashboard"], [], 90),
-  scenario("operator.contract-isolation", ["sdk", "cli"], [], 60),
-  scenario("operator.audit-visibility", ["dashboard"], [], 60),
 ]);

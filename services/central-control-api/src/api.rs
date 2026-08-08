@@ -128,6 +128,14 @@ impl ControlService {
         }
     }
 
+    fn require_workspace_creation_role(role: OrgRole) -> WireResult<()> {
+        if role.at_least(OrgRole::Admin) {
+            Ok(())
+        } else {
+            Err(WireError::new(ErrorCode::Forbidden))
+        }
+    }
+
     async fn organization_access(
         &self,
         cx: &RequestContext,
@@ -545,8 +553,16 @@ impl WorkspacesApi for ControlService {
         body: WorkspaceCreateRequest,
     ) -> WireResult<Created<Workspace>> {
         let organization_id = raw(body.organization_id);
-        self.organization_access(cx, organization_id, true).await?;
+        let role = self.organization_access(cx, organization_id, true).await?;
+        Self::require_workspace_creation_role(role)?;
         if body.name.is_empty() || body.name.chars().count() > 128 {
+            return Err(WireError::new(ErrorCode::InvalidRequest));
+        }
+        // The deployment may intentionally compose fewer than all launch
+        // regions while the remaining regional stacks are unpublished. Check
+        // the configured placement set before the central transaction so an
+        // unsupported region cannot leave a hidden provisioning row behind.
+        if !self.api_urls.contains_key(&body.region) {
             return Err(WireError::new(ErrorCode::InvalidRequest));
         }
         let workspace_id = self.ids.next();
@@ -1299,4 +1315,20 @@ fn hex(bytes: &[u8]) -> String {
         let _ = write!(out, "{byte:02x}");
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ControlService;
+    use aex_control_domain::OrgRole;
+    use aex_wire::error::ErrorCode;
+
+    #[test]
+    fn workspace_creation_rejects_a_member_but_accepts_admins_and_owners() {
+        let denied = ControlService::require_workspace_creation_role(OrgRole::Member)
+            .expect_err("a member cannot create a workspace");
+        assert_eq!(denied.code, ErrorCode::Forbidden);
+        assert!(ControlService::require_workspace_creation_role(OrgRole::Admin).is_ok());
+        assert!(ControlService::require_workspace_creation_role(OrgRole::Owner).is_ok());
+    }
 }

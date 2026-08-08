@@ -111,28 +111,19 @@ fn the_lock_file_records_the_digest_the_bundle_actually_has() {
 }
 
 #[test]
-fn the_operation_arity_matches_the_pinned_totals() {
+fn operation_ids_are_unique_and_snake_case() {
     let ir = load::load(&repo_root()).expect("load");
-    let central = ir
-        .planes
-        .iter()
-        .find(|plane| plane.id == "central")
-        .expect("central plane");
-    let regional = ir
-        .planes
-        .iter()
-        .find(|plane| plane.id == "regional")
-        .expect("regional plane");
-    assert_eq!(central.operations.len(), 27);
-    assert_eq!(regional.operations.len(), 119);
-    assert_eq!(ir.operations().len(), 146);
-
+    let operations = ir.operations();
     let ids: BTreeSet<&str> = ir
         .operations()
         .iter()
         .map(|operation| operation.id.as_str())
         .collect();
-    assert_eq!(ids.len(), 146, "operationIds are not globally unique");
+    assert_eq!(
+        ids.len(),
+        operations.len(),
+        "operationIds are not globally unique"
+    );
     for id in &ids {
         assert!(
             id.chars().all(|character| character.is_ascii_lowercase()

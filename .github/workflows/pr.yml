@@ -144,6 +144,7 @@ jobs:
   node:
     name: TypeScript
     needs: [tools, route]
+    if: needs.route.outputs.has_node == 'true'
     uses: ./.github/workflows/_node-lane.yml
     with:
       matrix: ${{ needs.route.outputs.node_matrix }}
@@ -191,4 +192,4 @@ jobs:
       node_matrix: ${{ needs.route.outputs.node_matrix }}
       terraform_matrix: ${{ needs.route.outputs.terraform_matrix }}
       required_job_results: >-
-        {"tools":{"result":"${{ needs.tools.result }}","allowSkipped":false},"route":{"result":"${{ needs.route.result }}","allowSkipped":false},"gates":{"result":"${{ needs.gates.result }}","allowSkipped":false},"rust":{"result":"${{ needs.rust.result }}","allowSkipped":true},"integration":{"result":"${{ needs.integration.result }}","allowSkipped":true},"node":{"result":"${{ needs.node.result }}","allowSkipped":false},"scenarios":{"result":"${{ needs.scenarios.result }}","allowSkipped":true},"terraform":{"result":"${{ needs.terraform.result }}","allowSkipped":true}}
+        {"tools":{"result":"${{ needs.tools.result }}","allowSkipped":false},"route":{"result":"${{ needs.route.result }}","allowSkipped":false},"gates":{"result":"${{ needs.gates.result }}","allowSkipped":false},"rust":{"result":"${{ needs.rust.result }}","allowSkipped":true},"integration":{"result":"${{ needs.integration.result }}","allowSkipped":true},"node":{"result":"${{ needs.node.result }}","allowSkipped":true},"scenarios":{"result":"${{ needs.scenarios.result }}","allowSkipped":true},"terraform":{"result":"${{ needs.terraform.result }}","allowSkipped":true}}

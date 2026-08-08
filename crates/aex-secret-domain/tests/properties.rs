@@ -1,7 +1,7 @@
 //! Property catalogue for `aex-secret-domain`: plan 04 items 88-98 and 100.
 //!
-//! Items 99 and 101 — plaintext non-persistence and zeroization — are structural
-//! rather than behavioural and live in `tests/security.rs`.
+//! Items 99 and 101 — plaintext non-persistence and zeroization — have direct
+//! behavioral coverage in `tests/security.rs` and the plaintext module.
 
 use std::collections::BTreeSet;
 

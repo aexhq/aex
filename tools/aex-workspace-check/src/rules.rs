@@ -128,7 +128,6 @@ pub fn check(workspace: &Workspace) -> Vec<Violation> {
     violations.extend(dependency_direction_holds(workspace));
     violations.extend(test_support_is_dev_only(workspace));
     violations.extend(no_dependency_cycles(workspace));
-    violations.extend(frozen_inventory_is_present(workspace));
     violations.extend(every_member_is_unpublished(workspace));
     violations.extend(application_suffix_is_app(workspace));
     violations.extend(adapter_suffix_names_the_service(workspace));
@@ -350,44 +349,6 @@ pub fn no_dependency_cycles(workspace: &Workspace) -> Vec<Violation> {
     }
     violations.sort();
     violations.dedup();
-    violations
-}
-
-/// Every member named by the frozen inventory exists, and no member is present
-/// that the inventory does not name.
-#[must_use]
-pub fn frozen_inventory_is_present(workspace: &Workspace) -> Vec<Violation> {
-    const RULE: &str = "frozen-inventory";
-    let Ok(directories) = workspace.metadata.member_directories() else {
-        return Vec::new();
-    };
-    let mut violations = Vec::new();
-    let expected: BTreeMap<String, String> = inventory::expected_members()
-        .into_iter()
-        .map(|(root, name)| (name.clone(), format!("{root}/{name}")))
-        .collect();
-
-    for (name, path) in &expected {
-        match directories.get(name) {
-            None => violations.push(Violation {
-                rule: RULE,
-                detail: format!("`{name}` is in the frozen inventory but is not a member"),
-            }),
-            Some(actual) if actual != path => violations.push(Violation {
-                rule: RULE,
-                detail: format!("`{name}` is at `{actual}`, expected `{path}`"),
-            }),
-            Some(_) => {}
-        }
-    }
-    for name in directories.keys() {
-        if !expected.contains_key(name) {
-            violations.push(Violation {
-                rule: RULE,
-                detail: format!("`{name}` is a member but is not in the frozen inventory"),
-            });
-        }
-    }
     violations
 }
 
@@ -911,9 +872,8 @@ pub fn adapter_suffix_names_the_service(workspace: &Workspace) -> Vec<Violation>
 /// Every `services/` and `workers/` member exposes a library.
 ///
 /// `main.rs` is composition only. A main-only deployable cannot be reached by an
-/// integration test, which is why 14 of the tree's 19 `include_str!("../src/…")`
-/// source-scanning tests live in these twelve members: with no library to call,
-/// the only thing left to assert against is the text of `main.rs`.
+/// integration test. Without a library to call, tests tend to fall back to
+/// brittle assertions against the text and layout of `main.rs`.
 #[must_use]
 pub fn deployables_expose_a_library(workspace: &Workspace) -> Vec<Violation> {
     deployables_expose_a_library_against(workspace, MAIN_ONLY_DEPLOYABLES)

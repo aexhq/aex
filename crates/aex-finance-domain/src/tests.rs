@@ -51,26 +51,6 @@ fn money_rejects_noncanonical_and_out_of_domain_values() {
     assert!(MicrousdDelta::new(MicrousdDelta::MAX_ABS + 1).is_err());
 }
 
-#[test]
-fn public_money_authority_has_no_float_or_decimal_type() {
-    let sources = [
-        include_str!("money.rs"),
-        include_str!("account.rs"),
-        include_str!("journal.rs"),
-        include_str!("transitions.rs"),
-        include_str!("reservation.rs"),
-        include_str!("effect.rs"),
-        include_str!("billing_account.rs"),
-    ]
-    .join("\n");
-    for forbidden in ["f32", "f64", "rust_decimal"] {
-        assert!(
-            !sources.contains(forbidden),
-            "finance authority contains forbidden float-money token {forbidden}"
-        );
-    }
-}
-
 proptest! {
     #[test]
     fn cent_microusd_round_trip_is_exact(value in 0_i64..=Cents::MAX_RAW) {

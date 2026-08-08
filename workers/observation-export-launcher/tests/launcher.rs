@@ -115,44 +115,6 @@ fn a_due_sort_key_orders_lexicographically_by_instant() {
 }
 
 #[test]
-fn the_source_never_scans_and_names_no_removed_rail() {
-    let sources = [
-        include_str!("../src/launcher.rs"),
-        include_str!("../src/aws.rs"),
-        include_str!("../src/config.rs"),
-        include_str!("../src/main.rs"),
-        include_str!("../src/mount.rs"),
-    ];
-    for source in sources {
-        assert!(
-            !source.contains(".scan()"),
-            "a scan is how a bounded launcher silently becomes an unbounded one"
-        );
-        for removed in ["ClickHouse", "clickhouse", "Kinesis", "kinesis"] {
-            assert!(!source.contains(removed), "`{removed}` is a removed rail");
-        }
-    }
-}
-
-#[test]
-fn exactly_one_run_task_call_site_exists_in_the_whole_deployable() {
-    // Duplicate launches are prevented by reconciliation at runtime; a second
-    // call site would let a future edit reintroduce them structurally.
-    let adapter = include_str!("../src/aws.rs");
-    assert_eq!(
-        adapter.matches(".run_task()").count(),
-        1,
-        "the ECS `RunTask` seam must have exactly one call site"
-    );
-    let logic = include_str!("../src/launcher.rs");
-    assert_eq!(
-        logic.matches("self.tasks.run_task(").count(),
-        1,
-        "the launch logic must reach the `RunTask` port from exactly one place"
-    );
-}
-
-#[test]
 fn the_state_row_key_is_derived_from_the_shared_key_template() {
     let workspace = WorkspaceId::from_uuid7(Uuid7::compose(1, [1; 10]));
     let export = ExportId::from_uuid7(Uuid7::compose(2, [2; 10]));

@@ -936,16 +936,54 @@ jobs:
             packaged-units/artifact-*/draft-envelope.json
             oci-units/oci-artifact-*/draft-envelope.json
           )
-          test "${#drafts[@]}" -eq 36
           tag="main-${GITHUB_SHA}-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}"
           release_base="https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag"
           builder="https://github.com/$GITHUB_REPOSITORY/.github/workflows/_build-artifacts.yml@refs/heads/main"
 
           bun -e '
             const parsed = Bun.TOML.parse(await Bun.file("release/units.toml").text());
+            const policies = Bun.TOML.parse(await Bun.file("release/policy/artifact-policy.toml").text());
+            if (!Array.isArray(parsed.unit) || parsed.unit.length === 0) {
+              throw new Error("release/units.toml declares no units");
+            }
+            const ids = parsed.unit.map((row) => row.id);
+            if (ids.some((id) => typeof id !== "string" || id.length === 0)) {
+              throw new Error("every release unit needs a non-empty id");
+            }
+            if (new Set(ids).size !== ids.length) {
+              throw new Error("release/units.toml declares duplicate unit ids");
+            }
+            for (const row of parsed.unit) {
+              if (typeof row.kind !== "string" || typeof policies.kind?.[row.kind]?.signature !== "string") {
+                throw new Error(`release unit ${row.id} has no artifact signature policy for kind ${row.kind}`);
+              }
+            }
             const rows = Object.fromEntries(parsed.unit.map((row) => [row.id, row.required_receipts]));
+            const oci = parsed.unit
+              .filter((row) => row.kind.startsWith("rust-oci-"))
+              .map((row) => row.id)
+              .sort();
+            const blobs = parsed.unit
+              .filter((row) => !row.kind.startsWith("rust-oci-"))
+              .map((row) => row.id)
+              .sort();
+            const signed = parsed.unit
+              .filter((row) => policies.kind?.[row.kind]?.signature === "sigstore-cosign")
+              .map((row) => row.id)
+              .sort();
             await Bun.write("dist/unit-required-receipts.json", JSON.stringify(rows, null, 2) + "\n");
+            await Bun.write("dist/declared-unit-ids.txt", ids.toSorted().join("\n") + "\n");
+            await Bun.write("dist/declared-blob-unit-ids.txt", blobs.length === 0 ? "" : blobs.join("\n") + "\n");
+            await Bun.write("dist/declared-oci-unit-ids.txt", oci.length === 0 ? "" : oci.join("\n") + "\n");
+            await Bun.write("dist/declared-signature-unit-ids.txt", signed.length === 0 ? "" : signed.join("\n") + "\n");
           '
+          for draft in "${drafts[@]}"; do
+            jq -er '.unit.id | select(type == "string" and length > 0)' "$draft"
+          done | sort > dist/draft-unit-ids.txt
+          test -s dist/draft-unit-ids.txt
+          test -z "$(uniq -d dist/draft-unit-ids.txt)"
+          diff -u dist/declared-unit-ids.txt dist/draft-unit-ids.txt
+          : > dist/produced-signature-unit-ids.txt
 
           new_bound_package_receipt() {
             local unit=$1 class=$2 report=$3 attachment=$4 draft=$5 output=$6
@@ -1035,6 +1073,7 @@ jobs:
               signature_digest=$(sha256sum "$signature_bundle" | cut -d' ' -f1)
               signature_asset="signature-$unit-$signature_digest.sigstore.json"
               cp "$signature_bundle" "dist/aux-assets/$signature_asset"
+              printf '%s\n' "$unit" >> dist/produced-signature-unit-ids.txt
               signature=$(jq -cn --arg keyId \
                 "https://github.com/$GITHUB_REPOSITORY/.github/workflows/_build-artifacts.yml@refs/heads/main" \
                 '{present:true,kind:"sigstore-cosign",keyId:$keyId}')
@@ -1059,6 +1098,9 @@ jobs:
           done
           certified_count=$(find dist/certified -type f -name certified-envelope.json | wc -l)
           test "$certified_count" -eq "${#drafts[@]}"
+          sort -o dist/produced-signature-unit-ids.txt dist/produced-signature-unit-ids.txt
+          test -z "$(uniq -d dist/produced-signature-unit-ids.txt)"
+          diff -u dist/declared-signature-unit-ids.txt dist/produced-signature-unit-ids.txt
 
       - name: Upload the exact certified artifact inventory
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
@@ -1110,9 +1152,12 @@ jobs:
         run: |
           set -euo pipefail
           blob_count=0
+          : > dist/produced-blob-unit-ids.txt
+          : > dist/produced-oci-unit-ids.txt
           shopt -s nullglob
           for directory in packaged-units/artifact-*; do
             unit=${directory##*/artifact-}
+            printf '%s\n' "$unit" >> dist/produced-blob-unit-ids.txt
             file="$directory/artifact.bin"
             test -f "$file"
             metadata=$(dist/aex-release-tool artifact asset-name --unit "$unit" --file "$file")
@@ -1125,22 +1170,24 @@ jobs:
             jq -e '.schema == "aex.oci-image-identity.v1" and (.unit | length > 0) and (.outputDigest | test("^sha256:[0-9a-f]{64}$"))' \
               "$identity" >/dev/null
             unit=$(jq -er .unit "$identity")
+            printf '%s\n' "$unit" >> dist/produced-oci-unit-ids.txt
             jq -e --arg digest "$(jq -er .outputDigest "$identity")" \
               '.schema == "aex.oci-publication.v1" and .image.outputDigest == $digest and .location.immutable == true and (.provenance.bundleDigest | test("^sha256:[0-9a-f]{64}$")) and (.provenance.verificationResultDigest | test("^sha256:[0-9a-f]{64}$"))' \
               "publication-units/publication-$unit/oci-publication.json" >/dev/null
             oci_count=$((oci_count + 1))
           done
-          if [ "$oci_count" -ne 5 ]; then
-            echo "accounted for $oci_count OCI identities, expected exactly 5" >&2
-            exit 30
-          fi
-          total=$((blob_count + oci_count))
-          if [ "$total" -ne 36 ]; then
-            echo "unit inventory accounted for $total entries, expected exactly 36" >&2
-            exit 30
-          fi
+          sort -o dist/produced-blob-unit-ids.txt dist/produced-blob-unit-ids.txt
+          sort -o dist/produced-oci-unit-ids.txt dist/produced-oci-unit-ids.txt
+          test -z "$(uniq -d dist/produced-blob-unit-ids.txt)"
+          test -z "$(uniq -d dist/produced-oci-unit-ids.txt)"
+          diff -u dist/declared-blob-unit-ids.txt dist/produced-blob-unit-ids.txt
+          diff -u dist/declared-oci-unit-ids.txt dist/produced-oci-unit-ids.txt
           aux_count=$(find dist/aux-assets -maxdepth 1 -type f | wc -l)
-          [[ "$aux_count" -eq 1 ]]
+          signature_count=$(wc -l < dist/produced-signature-unit-ids.txt)
+          if [ "$aux_count" -ne "$signature_count" ]; then
+            echo "found $aux_count auxiliary assets for $signature_count declared signer units" >&2
+            exit 30
+          fi
           echo "blob_count=$blob_count" >> "$GITHUB_ENV"
           echo "oci_count=$oci_count" >> "$GITHUB_ENV"
           echo "aux_count=$aux_count" >> "$GITHUB_ENV"
@@ -1201,7 +1248,9 @@ jobs:
             echo "named ${#aux_assets[@]} auxiliary assets, expected $aux_count" >&2
             exit 30
           fi
-          gh release upload "$tag" "${aux_assets[@]}" --repo "$GITHUB_REPOSITORY"
+          if [ ${#aux_assets[@]} -gt 0 ]; then
+            gh release upload "$tag" "${aux_assets[@]}" --repo "$GITHUB_REPOSITORY"
+          fi
           observed_count=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" \
             --json assets --jq '.assets | length')
           expected_count=$((3 + blob_count + aux_count))
@@ -1237,8 +1286,10 @@ jobs:
               "--deny-${denied_runner_class}-runners"
           done
           local_aux=(dist/aux-assets/*)
-          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
-            --pattern 'signature-*' --dir dist/aux-readback
+          if [ ${#local_aux[@]} -gt 0 ]; then
+            gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+              --pattern 'signature-*' --dir dist/aux-readback
+          fi
           readback_aux=(dist/aux-readback/*)
           [[ "${#readback_aux[@]}" -eq "${#local_aux[@]}" ]]
           for local_asset in "${local_aux[@]}"; do

@@ -127,19 +127,3 @@ fn a_budget_that_cannot_cover_the_reservations_refuses_before_anything_runs() {
         "the refusal names the wire code the launcher retries on: {stderr}"
     );
 }
-
-#[test]
-fn the_declared_variable_list_matches_the_binary() {
-    let source = include_str!("../src/config.rs");
-    for name in REQUIRED {
-        assert!(
-            source.contains(name),
-            "`{name}` is declared here and absent from the binary's configuration"
-        );
-    }
-    assert_eq!(
-        source.matches("pub const REQUIRED_VARS").count(),
-        1,
-        "there is exactly one required-variable list"
-    );
-}

@@ -1923,8 +1923,7 @@
           "conformance": "unit",
           "faults": "unit",
           "integration": "integration",
-          "properties": "unit",
-          "security": "unit"
+          "properties": "unit"
         },
         "not_applicable": {}
       },
@@ -2632,10 +2631,8 @@
         ],
         "scenarios": [],
         "targets": {
-          "conformance": "unit",
           "faults": "unit",
-          "resource_envelope": "e2e",
-          "security": "unit"
+          "resource_envelope": "e2e"
         },
         "not_applicable": {}
       },
@@ -2675,10 +2672,8 @@
         ],
         "scenarios": [],
         "targets": {
-          "conformance": "unit",
           "faults": "unit",
-          "resource_envelope": "e2e",
-          "security": "unit"
+          "resource_envelope": "e2e"
         },
         "not_applicable": {}
       },
@@ -2717,10 +2712,8 @@
         ],
         "scenarios": [],
         "targets": {
-          "conformance": "unit",
           "faults": "unit",
-          "resource_envelope": "e2e",
-          "security": "unit"
+          "resource_envelope": "e2e"
         },
         "not_applicable": {}
       },
@@ -4660,7 +4653,6 @@
         ],
         "scenarios": [],
         "targets": {
-          "conformance": "unit",
           "faults": "unit",
           "resource_envelope": "e2e",
           "security": "unit"

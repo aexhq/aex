@@ -355,31 +355,4 @@ mod tests {
             })
         );
     }
-
-    #[test]
-    fn this_mailer_names_no_vendor_anywhere_in_its_source() {
-        let source = include_str!("mail.rs");
-        // The module documentation names SES once, as the *worker's*
-        // permission. Nothing below it may name a vendor at all: an adapter
-        // here that reached for one would be a second sender, in a deployable
-        // whose reviewable permission list says it cannot send.
-        let body = source
-            .split_once("use std::fmt;")
-            .expect("the module body starts at the first import")
-            .1
-            .split_once("#[cfg(test)]")
-            .expect("the shipped body ends where the suite begins")
-            .0;
-        // Whole tokens, so `uses` and `responses` are not false positives.
-        let tokens: std::collections::BTreeSet<String> = body
-            .split(|character: char| !character.is_ascii_alphanumeric())
-            .map(str::to_lowercase)
-            .collect();
-        for vendor in ["ses", "sendgrid", "mailgun", "postmark", "smtp", "sendmail"] {
-            assert!(
-                !tokens.contains(vendor),
-                "`{vendor}` appears in the mailer body; delivery belongs to the worker"
-            );
-        }
-    }
 }

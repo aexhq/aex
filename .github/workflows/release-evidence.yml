@@ -79,7 +79,11 @@ jobs:
       RELEASE_TOOL_URI: ${{ inputs.release_tool_uri }}
       RELEASE_TOOL_DIGEST: ${{ inputs.release_tool_digest }}
       RELEASE_TOOL_SIZE_BYTES: ${{ inputs.release_tool_size_bytes }}
-      AEX_API_URL: ${{ secrets.AEX_RELEASE_EVIDENCE_API_URL }}
+      # Derive the protected API origin from the same canonical host used by
+      # release health. Keeping the URL and health probe on one environment
+      # coordinate prevents a stale URL secret from sending the bearer token
+      # to a different plane or legacy hostname.
+      AEX_API_URL: ${{ format('https://{0}', vars.AEX_RELEASE_EVIDENCE_API_HOST) }}
       AEX_API_KEY: ${{ secrets.AEX_RELEASE_EVIDENCE_API_KEY }}
       AEX_EXPECTED_API_HOST: ${{ vars.AEX_RELEASE_EVIDENCE_API_HOST }}
       AEX_RELEASE_EVIDENCE_HEALTH_URL: ${{ format('https://{0}/api/release/health', vars.AEX_RELEASE_EVIDENCE_API_HOST) }}

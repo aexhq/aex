@@ -191,6 +191,25 @@ mod tests {
         }
     }
 
+    /// A group that dies on the first signal of any kind.
+    struct ObedientRunner(StubbornRunner);
+
+    impl Runner for ObedientRunner {
+        fn start(&self, spec: &aex_hands_tools::command::SpawnSpec) -> Result<Started, ProcError> {
+            self.0.start(spec)
+        }
+
+        fn signal(&self, group: Pgid, signal: StopSignal) -> Result<(), ProcError> {
+            self.0.signal(group, signal)?;
+            self.0.dead.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn alive(&self, group: Pgid) -> Result<bool, ProcError> {
+            self.0.alive(group)
+        }
+    }
+
     fn meta(dir: &std::path::Path) -> (Journal, OperationMeta) {
         let journal = Journal::open(dir).expect("the journal opens");
         let meta = OperationMeta {
@@ -313,24 +332,6 @@ mod tests {
     fn an_obedient_group_terminalizes_after_the_polite_term_alone() {
         let dir = tempfile::tempdir().expect("a temporary directory");
         let (journal, meta) = meta(dir.path());
-        /// Dies on the first signal of any kind.
-        struct ObedientRunner(StubbornRunner);
-        impl Runner for ObedientRunner {
-            fn start(
-                &self,
-                spec: &aex_hands_tools::command::SpawnSpec,
-            ) -> Result<Started, ProcError> {
-                self.0.start(spec)
-            }
-            fn signal(&self, group: Pgid, signal: StopSignal) -> Result<(), ProcError> {
-                self.0.signal(group, signal)?;
-                self.0.dead.store(true, Ordering::SeqCst);
-                Ok(())
-            }
-            fn alive(&self, group: Pgid) -> Result<bool, ProcError> {
-                self.0.alive(group)
-            }
-        }
         let runner = ObedientRunner(StubbornRunner::default());
         let mut elapsed = 0_u64;
         let mut pace = |millis: u64| {

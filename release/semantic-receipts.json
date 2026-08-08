@@ -21,6 +21,7 @@
     { "unit": "regional-stream", "package": "regional-stream", "class": "contract", "layer": "unit", "filterset": "all()" },
     { "unit": "regional-stream", "package": "regional-stream", "class": "property", "layer": "unit", "filterset": "all()" },
     { "unit": "regional-capacity-controller", "package": "regional-capacity-controller", "class": "contract", "layer": "unit", "filterset": "all()" },
+    { "unit": "regional-control", "package": "regional-control", "class": "contract", "layer": "unit", "filterset": "all()" },
     { "unit": "session-operation-worker", "package": "session-operation-worker", "class": "property", "layer": "unit", "filterset": "all()" },
     { "unit": "runtime-control-worker", "package": "runtime-control-worker", "class": "property", "layer": "unit", "filterset": "all()" },
     { "unit": "content-lifecycle-worker", "package": "content-lifecycle-worker", "class": "property", "layer": "unit", "filterset": "all()" },

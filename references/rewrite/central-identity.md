@@ -491,7 +491,7 @@ have not answered serves `503`, and one that probed nothing is never ready.
 | --- | ---: | --- | --- |
 | `central-authz` | 0 | `authorization.read`, `assertion.sign` | `rds-data:ExecuteStatement` only — no transaction API at all. Readiness requires the **write probe to fail**. The signing key is unwrapped once per cold start, not signed per request. |
 | `central-identity-api` | 2 | `identity.write` | Cannot link a control write or the signing capability. |
-| `central-control-api` | 16 | `control.write`, `control.queue_publish`, `regional.control_invoke` | The regional endpoint map must cover every launch region, checked at start-up rather than at the first `POST /api/workspaces`. |
+| `central-control-api` | 16 | `control.write`, `control.queue_publish`, `regional.control_invoke` | The regional endpoint and Lambda maps must cover the same configured launch regions, checked at start-up rather than at the first `POST /api/workspaces`. A plane may publish a strict subset until its remaining regional stacks exist. |
 | `central-control-worker` | 0 | + `control.queue_consume`, `mail.send`, `signing_key.administer` | `Handler::for_topic` is total over `Topic`, so an outbox topic without a duty is a compile error. A partial batch names only uncommitted items. |
 
 `issue_for_key` and `issue_for_actor` in `central-authz` are the two assertion
@@ -1001,7 +1001,7 @@ now available; what remains is the wire adapter itself.
 The remaining control surface is now composed. `central-control-api` mounts all
 16 routes owned by its five generated server traits over `AuroraControlStore`,
 `ControlStoreTargets`, the versioned API-key pepper, a separate cursor secret,
-and one direct regional Lambda authority per launch region. Startup reads each
+and one direct regional Lambda authority per configured launch region. Startup reads each
 real dependency before binding the runtime; the public regional `apiUrl` map is
 configured independently from the private Lambda ARN map.
 

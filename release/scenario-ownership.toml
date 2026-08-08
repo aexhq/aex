@@ -68,6 +68,7 @@ observes = [
   "artifact:central-control-api",
   "artifact:central-control-worker",
   "artifact:regional-capacity-controller",
+  "artifact:regional-control",
 ]
 
 [scenario.prd]

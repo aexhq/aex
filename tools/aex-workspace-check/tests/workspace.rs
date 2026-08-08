@@ -1,8 +1,8 @@
 //! Runs every structural and registry rule against the real workspace.
 //!
 //! This is the test that proves no production binary can reach test-only code,
-//! that the frozen inventory and the on-disk tree agree, and that every package
-//! in the tree declares what evidence it owes. It shells out to the exact
+//! that Cargo membership and the on-disk tree agree, and that every package in
+//! the tree declares what evidence it owes. It shells out to the exact
 //! `cargo` that is running it, through `required_env!`, so a missing
 //! prerequisite is a failure rather than a reason to skip.
 
@@ -76,11 +76,6 @@ fn every_package_in_the_tree_declares_its_test_ownership() {
         undeclared.is_empty(),
         "packages with no aex metadata: {undeclared:?}"
     );
-    assert!(
-        report.collected.packages.len() >= 133,
-        "expected at least the 133 Cargo members plus the npm packages, found {}",
-        report.collected.packages.len()
-    );
 }
 
 #[test]
@@ -111,20 +106,6 @@ fn no_production_package_depends_on_a_test_support_crate() {
 }
 
 #[test]
-fn every_frozen_member_is_declared_exactly_once() {
-    let metadata =
-        aex_workspace_check::WorkspaceMetadata::parse(&metadata_json()).expect("metadata parses");
-    let directories = metadata
-        .member_directories()
-        .expect("members live under the root");
-    assert_eq!(
-        directories.len(),
-        aex_workspace_check::inventory::expected_members().len(),
-        "member count differs from the frozen inventory"
-    );
-}
-
-#[test]
 fn the_live_target_set_is_derived_from_live_suite_declarations() {
     let report = report();
     let document = aex_workspace_check::registry::build(&report.collected.as_input(
@@ -141,33 +122,40 @@ fn the_live_target_set_is_derived_from_live_suite_declarations() {
             "live_suite `{target}` names no package"
         );
     }
-    // The derived set is what a lane would select today. The frozen companion
-    // inventory is larger by exactly the companions whose subject package does
-    // not exist yet, each of which states so with `not_applicable.deployable`
-    // and appears in the unearned-evidence ledger. Nothing is quietly missing.
-    let awaiting: Vec<&str> = report
-        .registry
-        .unearned
+    // Companions whose subject package does not exist yet state so with
+    // `not_applicable.deployable` and appear in the unearned-evidence ledger.
+    // Their union with declared live suites must equal the classified target set.
+    let mut accounted: std::collections::BTreeSet<String> = document
+        .live_targets
         .iter()
-        .filter(|row| {
-            row.blocking_rule == "aex-orphan-companion" && row.subject.starts_with("tests/live/")
-        })
-        .map(|row| row.subject.as_str())
-        .filter(|subject| {
-            // A companion can be both named by a `live_suite` and awaiting its
-            // own subject package, as the model catalog is; count it once.
-            !document
-                .live_targets
-                .iter()
-                .any(|target| subject.ends_with(target.as_str()))
+        .map(|suite| {
+            suite
+                .strip_prefix("aex-live-")
+                .unwrap_or_else(|| panic!("live suite `{suite}` lacks the aex-live- prefix"))
+                .to_owned()
         })
         .collect();
-    assert_eq!(
-        document.live_targets.len() + awaiting.len(),
-        aex_workspace_check::inventory::LIVE_TARGETS.len(),
-        "derived {} + awaiting {awaiting:?} must account for the whole frozen companion inventory",
-        document.live_targets.len()
+    accounted.extend(
+        report
+            .registry
+            .unearned
+            .iter()
+            .filter(|row| {
+                row.blocking_rule == "aex-orphan-companion"
+                    && row.subject.starts_with("tests/live/")
+            })
+            .map(|row| {
+                row.subject
+                    .strip_prefix("tests/live/aex-live-")
+                    .unwrap_or_else(|| panic!("invalid companion subject `{}`", row.subject))
+                    .to_owned()
+            }),
     );
+    let expected: std::collections::BTreeSet<String> = aex_workspace_check::inventory::LIVE_TARGETS
+        .iter()
+        .map(|target| (*target).to_owned())
+        .collect();
+    assert_eq!(accounted, expected, "live target accounting drifted");
 }
 
 #[test]

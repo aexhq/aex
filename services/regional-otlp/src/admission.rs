@@ -59,6 +59,7 @@ impl std::fmt::Debug for OtlpService {
             .field("budget_bytes", &self.budget.capacity())
             .field("reserve_wait", &self.reserve_wait)
             .field("redaction_key", &"<redacted>")
+            .field("telemetry", &self.telemetry)
             .finish()
     }
 }
@@ -141,6 +142,10 @@ impl OtlpRequest {
     }
 
     /// Admits one batch of one signal.
+    // This is intentionally kept as one bounded admission transaction so the
+    // reservation, decode, normalization, redaction, and commit ordering is
+    // visible in one place.
+    #[allow(clippy::too_many_lines)]
     async fn admit(
         &self,
         cx: &RequestContext,

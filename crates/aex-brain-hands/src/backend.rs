@@ -1558,11 +1558,11 @@ mod tests {
         );
         assert_eq!(
             super::poll_after(30_000),
-            core::time::Duration::from_millis(4_000)
+            core::time::Duration::from_secs(4)
         );
         assert_eq!(
             super::poll_after(u64::MAX),
-            core::time::Duration::from_millis(4_000),
+            core::time::Duration::from_secs(4),
             "the ceiling holds for any age"
         );
     }

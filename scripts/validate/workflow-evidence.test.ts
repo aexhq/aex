@@ -382,6 +382,40 @@ describe("workflow evidence producers", () => {
     }
   });
 
+  test("empty Node selections skip the lane without admitting selected Node failures", () => {
+    for (const [path, checksId] of [
+      [".github/workflows/pr.yml", "checks"],
+      [".github/workflows/main.yml", "receipts"]
+    ] as const) {
+      const workflow = readWorkflow(path);
+      expect(workflowJob(workflow, "node").if).toBe(
+        "needs.route.outputs.has_node == 'true'"
+      );
+
+      const inputs = workflowJob(workflow, checksId).with as Readonly<Record<string, string>>;
+      const results = JSON.parse(inputs.required_job_results!) as Readonly<
+        Record<string, { readonly result: string; readonly allowSkipped: boolean }>
+      >;
+      const producers = JSON.parse(inputs.receipt_jobs!) as Readonly<
+        Record<string, { readonly job: string; readonly selected: string }>
+      >;
+      expect(results.node).toEqual({
+        result: "${{ needs.node.result }}",
+        allowSkipped: true
+      });
+      expect(producers.node).toEqual({
+        job: "node",
+        selected: "${{ needs.route.outputs.has_node }}"
+      });
+    }
+
+    const mainBuild = workflowJob(readWorkflow(".github/workflows/main.yml"), "build");
+    expect(mainBuild.if).toContain(
+      "(needs.node.result == 'success' || needs.node.result == 'skipped')"
+    );
+    expect(mainBuild.if).not.toContain("needs.node.result != 'failure'");
+  });
+
   test("receipt aggregation validates job results before collecting selected evidence", () => {
     const source = readRepoFile(".github/workflows/_receipts.yml");
     const workflow = readWorkflow(".github/workflows/_receipts.yml");

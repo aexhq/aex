@@ -17,14 +17,6 @@ pub const KMS_ARN: &str = "arn:aws:kms:eu-west-1:000000000000:key/keystore";
 pub const DEFINITION: &str =
     include_str!("../../../../migrations/regional/tables/regional-secret-keystore.json");
 
-/// The crate's own source, so a conformance case can assert what is **not** in
-/// it: this crate implements no write path, and a grep is the only way to prove
-/// a negative like that at the unit layer.
-pub const STORE_SOURCE: &str = include_str!("../../src/store.rs");
-
-/// The record codec's source, for the same reason.
-pub const BRANCH_KEY_SOURCE: &str = include_str!("../../src/branch_key.rs");
-
 #[must_use]
 pub fn binding() -> KeyStoreBinding {
     KeyStoreBinding::new(TABLE, KMS_ARN)

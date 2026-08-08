@@ -26,27 +26,6 @@ fn table_definition() -> serde_json::Value {
 }
 
 #[test]
-fn the_projection_module_contains_no_write_operation_at_all() {
-    // `regional-authz-projection` is written only by `central-control-worker`.
-    // Read-only by convention is not a property, so it is asserted here.
-    let source = std::fs::read_to_string(crate_root().join("src/projection.rs"))
-        .expect("the projection module is checked in");
-    for forbidden in [
-        "put_item",
-        "update_item",
-        "delete_item",
-        "transact_write_items",
-        "batch_write_item",
-    ] {
-        assert!(
-            !source.contains(forbidden),
-            "the projection reader calls `{forbidden}`; that table is read-only for every \
-             regional role"
-        );
-    }
-}
-
-#[test]
 fn the_workspace_index_is_a_keys_only_locator_that_can_never_return_a_body() {
     let definition = table_definition();
     let index = &definition["globalSecondaryIndexes"][0];

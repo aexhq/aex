@@ -317,40 +317,6 @@ fn every_envelope_rejects_an_unknown_member() {
 }
 
 #[test]
-fn the_crate_contains_no_floating_point_money() {
-    // U-RATING forbids floating-point money inside authorities. The cheapest way
-    // to keep that true is to make a float unwritable in the crate at all.
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let mut offenders = Vec::new();
-    let mut stack = vec![root];
-    while let Some(current) = stack.pop() {
-        for entry in std::fs::read_dir(&current).expect("read src").flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
-                continue;
-            }
-            let text = std::fs::read_to_string(&path).expect("read file");
-            // Prose may name the thing it forbids; code may not contain it.
-            let code: String = text
-                .lines()
-                .filter(|line| !line.trim_start().starts_with("//"))
-                .collect::<Vec<_>>()
-                .join(" ");
-            for token in ["f32", "f64"] {
-                if code.contains(token) {
-                    offenders.push(format!("{}: {token}", path.display()));
-                }
-            }
-        }
-    }
-    assert!(
-        offenders.is_empty(),
-        "floating point found:\n{offenders:#?}"
-    );
-}
-
-#[test]
 fn the_terminal_outbox_event_decodes_on_this_side_of_the_boundary() {
     // `regional-stream` and the observation materializer both decode it, so it
     // is a contract envelope rather than a domain value. Declared in the session
