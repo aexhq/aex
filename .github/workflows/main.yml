@@ -43,7 +43,7 @@ jobs:
     with:
       # Package checks use the affected reverse closure. Until immutable
       # predecessor-manifest carry-forward exists, publication still rebuilds
-      # the complete registry so this source mints all 36 unit identities.
+      # the complete registry so this source mints all 37 unit identities.
       mode: affected
       artifact_mode: full
       lane: main
