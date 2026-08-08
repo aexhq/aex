@@ -12,42 +12,45 @@ async fn authenticated_registry_inventory_is_admitted_and_anonymous_access_is_de
     let base = aex_test_harness::required_env!("AEX_API_URL");
     let token = aex_test_harness::required_env!("AEX_API_KEY");
     let base = base.trim_end_matches('/');
-    let workspace_url = format!("{base}/api/workspace");
     let inventory_url = format!("{base}/api/workspace/files?limit=1");
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .expect("the bounded live client must build");
 
-    // The public contract's regional `workspace_current_get` route is the
-    // token preflight: GET /api/workspace -> Workspace. This must be the
-    // first network request so a stale bearer fails before inventory auth.
+    // The public contract's regional `registry_files_list` route is the token
+    // preflight: GET /api/workspace/files?limit=1 -> RegisteredFilePage. This
+    // must be the first network request so a stale bearer fails clearly.
     let preflight = client
-        .get(&workspace_url)
+        .get(&inventory_url)
         .bearer_auth(&token)
         .send()
         .await
-        .expect("the authenticated workspace preflight must receive a response");
+        .expect("the authenticated inventory preflight must receive a response");
     let (preflight_status, preflight_headers, preflight_body) =
-        collect_response(preflight, "the authenticated workspace preflight").await;
+        collect_response(preflight, "the authenticated inventory preflight").await;
     let preflight_diagnostic =
         redacted_response_diagnostic(preflight_status, &preflight_headers, &preflight_body);
     assert_eq!(
         preflight_status,
         StatusCode::OK,
-        "bearer token preflight GET /api/workspace failed ({preflight_diagnostic})"
+        "bearer token preflight GET /api/workspace/files?limit=1 failed ({preflight_diagnostic})"
     );
     assert_json_content_type(
         &preflight_headers,
-        "the authenticated workspace preflight",
+        "the authenticated inventory preflight",
         &preflight_diagnostic,
     );
-    let workspace: Value = parse_json(
+    let preflight_page: Value = parse_json(
         &preflight_body,
-        "the authenticated workspace preflight",
+        "the authenticated inventory preflight",
         &preflight_diagnostic,
     );
-    assert_workspace_response(&workspace, &preflight_diagnostic);
+    assert_inventory_page(
+        &preflight_page,
+        "the authenticated inventory preflight",
+        &preflight_diagnostic,
+    );
 
     let anonymous = client
         .get(&inventory_url)
@@ -91,9 +94,10 @@ async fn authenticated_registry_inventory_is_admitted_and_anonymous_access_is_de
         "the authenticated registry inventory",
         &admitted_diagnostic,
     );
-    assert!(
-        body.get("items").is_some_and(Value::is_array),
-        "the authenticated registry inventory omitted its items array"
+    assert_inventory_page(
+        &body,
+        "the authenticated registry inventory",
+        &admitted_diagnostic,
     );
 
     write_hygiene();
@@ -128,28 +132,10 @@ fn assert_json_content_type(headers: &HeaderMap, label: &str, diagnostic: &str) 
     );
 }
 
-fn assert_workspace_response(body: &Value, diagnostic: &str) {
-    let object = body.as_object().unwrap_or_else(|| {
-        panic!("the workspace preflight was not a Workspace object ({diagnostic})")
-    });
-    for field in [
-        "apiUrl",
-        "createdAt",
-        "id",
-        "name",
-        "organizationId",
-        "region",
-        "slug",
-        "status",
-    ] {
-        assert!(
-            object.get(field).is_some_and(Value::is_string),
-            "the workspace preflight Workspace omitted string field {field} ({diagnostic})"
-        );
-    }
+fn assert_inventory_page(body: &Value, label: &str, diagnostic: &str) {
     assert!(
-        object.get("operationalState").is_some_and(Value::is_object),
-        "the workspace preflight Workspace omitted operationalState ({diagnostic})"
+        body.get("items").is_some_and(Value::is_array),
+        "{label} omitted its items array ({diagnostic})"
     );
 }
 
@@ -208,20 +194,12 @@ mod tests {
     }
 
     #[test]
-    fn workspace_preflight_checks_the_published_workspace_shape() {
-        let workspace = json!({
-            "apiUrl": "https://eu-west-1.dev-api.aex.dev",
-            "createdAt": "2026-08-08T00:00:00Z",
-            "id": "wsp_01h00000000000000000000000",
-            "name": "Release Evidence",
-            "operationalState": {},
-            "organizationId": "org_01h00000000000000000000000",
-            "region": "eu-west-1",
-            "slug": "release-evidence",
-            "status": "active"
+    fn inventory_preflight_checks_the_published_inventory_page_shape() {
+        let inventory = json!({
+            "items": []
         });
 
-        assert_workspace_response(&workspace, "test workspace");
+        assert_inventory_page(&inventory, "test inventory", "test diagnostic");
     }
 }
 
