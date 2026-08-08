@@ -259,6 +259,8 @@ describe("release-bound public evidence producer", () => {
     );
     expect(source).toContain("AEX_RELEASE_EVIDENCE_HEALTH_URL");
     expect(source).toContain("https://{0}/api/release/health");
+    expect(source).toContain("format('https://{0}', vars.AEX_RELEASE_EVIDENCE_API_HOST)");
+    expect(source).not.toContain("secrets.AEX_RELEASE_EVIDENCE_API_URL");
     expect(source).not.toContain("secrets.AEX_RELEASE_EVIDENCE_HEALTH_URL");
     expect(source).not.toContain("AEX_RELEASE_EVIDENCE_SYNTHETIC_IDENTITY");
     expect(source).not.toContain("AEX_RELEASE_EVIDENCE_PROVIDER_CREDENTIALS_JSON");
