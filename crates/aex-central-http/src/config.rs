@@ -331,6 +331,13 @@ mod tests {
         assert!(
             HttpConfig::resolve("dev", "eu-west-1", "central-control-api", 65_536, 5_000).is_ok()
         );
+        assert!(matches!(
+            HttpConfig::resolve("dev", "eu-west-1", "central-control-api", 65_537, 5_000),
+            Err(CentralHttpConfigError::OutOfRange {
+                key: "max_json_body_bytes",
+                ..
+            })
+        ));
         assert_eq!(
             HttpConfig::resolve("staging", "eu-west-1", "central-control-api", 1, 1),
             Err(CentralHttpConfigError::UnknownPlane("staging".to_owned()))
