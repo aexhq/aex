@@ -137,6 +137,16 @@ jobs:
       release_tool_sha256: ${{ needs.tools.outputs.release_tool_sha256 }}
       workspace_check_sha256: ${{ needs.tools.outputs.workspace_check_sha256 }}
 
+  integration:
+    name: Integration
+    needs: [tools, route]
+    if: needs.route.outputs.has_integration == 'true'
+    uses: ./.github/workflows/_integration-lane.yml
+    with:
+      matrix: ${{ needs.route.outputs.integration_matrix }}
+      lane: main
+      cache_mode: restore-save
+
   node:
     name: TypeScript
     needs: [tools, route]
@@ -174,13 +184,14 @@ jobs:
 
   build:
     name: Build and publish
-    needs: [tools, route, gates, verify, node, scenarios, terraform]
+    needs: [tools, route, gates, verify, integration, node, scenarios, terraform]
     if: >-
       always() &&
       needs.tools.result == 'success' &&
       needs.route.result == 'success' &&
       needs.gates.result == 'success' &&
       (needs.verify.result == 'success' || needs.verify.result == 'skipped') &&
+      (needs.integration.result == 'success' || needs.integration.result == 'skipped') &&
       needs.node.result == 'success' &&
       (needs.scenarios.result == 'success' || needs.scenarios.result == 'skipped') &&
       (needs.terraform.result == 'success' || needs.terraform.result == 'skipped')
@@ -462,7 +473,7 @@ jobs:
 
   receipts:
     name: Checks
-    needs: [tools, route, gates, verify, node, scenarios, terraform, build, manifest]
+    needs: [tools, route, gates, verify, integration, node, scenarios, terraform, build, manifest]
     if: always()
     uses: ./.github/workflows/_receipts.yml
     with:
@@ -475,4 +486,4 @@ jobs:
       node_matrix: ${{ needs.route.outputs.node_matrix }}
       terraform_matrix: ${{ needs.route.outputs.terraform_matrix }}
       required_job_results: >-
-        {"tools":{"result":"${{ needs.tools.result }}","allowSkipped":false},"route":{"result":"${{ needs.route.result }}","allowSkipped":false},"gates":{"result":"${{ needs.gates.result }}","allowSkipped":false},"verify":{"result":"${{ needs.verify.result }}","allowSkipped":true},"node":{"result":"${{ needs.node.result }}","allowSkipped":false},"scenarios":{"result":"${{ needs.scenarios.result }}","allowSkipped":true},"terraform":{"result":"${{ needs.terraform.result }}","allowSkipped":true},"build":{"result":"${{ needs.build.result }}","allowSkipped":false},"manifest":{"result":"${{ needs.manifest.result }}","allowSkipped":false}}
+        {"tools":{"result":"${{ needs.tools.result }}","allowSkipped":false},"route":{"result":"${{ needs.route.result }}","allowSkipped":false},"gates":{"result":"${{ needs.gates.result }}","allowSkipped":false},"verify":{"result":"${{ needs.verify.result }}","allowSkipped":true},"integration":{"result":"${{ needs.integration.result }}","allowSkipped":true},"node":{"result":"${{ needs.node.result }}","allowSkipped":false},"scenarios":{"result":"${{ needs.scenarios.result }}","allowSkipped":true},"terraform":{"result":"${{ needs.terraform.result }}","allowSkipped":true},"build":{"result":"${{ needs.build.result }}","allowSkipped":false},"manifest":{"result":"${{ needs.manifest.result }}","allowSkipped":false}}

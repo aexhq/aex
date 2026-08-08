@@ -337,12 +337,12 @@ describe("workflow evidence producers", () => {
         // No `artifacts` here: the PR lane is read-only, so it cannot call
         // `_build-artifacts.yml` (which requests write scopes) without failing
         // the whole run at startup. Bytes are proved buildable on main.
-        resultJobs: ["tools", "route", "gates", "rust", "node", "scenarios", "terraform"],
+        resultJobs: ["tools", "route", "gates", "rust", "integration", "node", "scenarios", "terraform"],
         receiptJobs: ["rust", "node", "terraform"]
       },
       {
         path: ".github/workflows/main.yml",
-        resultJobs: ["tools", "route", "gates", "verify", "node", "scenarios", "terraform", "build", "manifest"],
+        resultJobs: ["tools", "route", "gates", "verify", "integration", "node", "scenarios", "terraform", "build", "manifest"],
         receiptJobs: ["verify", "node", "terraform"]
       }
     ] as const;
@@ -363,6 +363,13 @@ describe("workflow evidence producers", () => {
       >;
 
       expect(Object.keys(results)).toEqual([...resultJobs]);
+      // `integration` is deliberately absent from the producers: it gates (a red
+      // engine lane fails the run) but emits no evidence receipt, because a
+      // semantic receipt is keyed to a deployable unit's own package and every
+      // crate in that lane bar `central-schema-admin` is a library with no unit
+      // row. Giving library evidence a seat in the ledger is a
+      // `release/units.toml` decision, so until it is taken this asymmetry is
+      // recorded here rather than left to be discovered.
       expect(Object.keys(producers)).toEqual(["rust", "node", "terraform"]);
       expect(inputs).not.toHaveProperty("declared_jobs");
       for (const job of receiptJobs) {

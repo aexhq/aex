@@ -16,10 +16,18 @@ describe("public main-push publication", () => {
       "route",
       "gates",
       "verify",
+      "integration",
       "node",
       "scenarios",
       "terraform"
     ]);
+    // The engine-backed lane gates publication exactly as the others do. It is
+    // allowed to be `skipped` because the router selects it only when an
+    // affected package owns an engine-backed target, but a *failed* one must
+    // never publish.
+    expect(workflow.jobs.build.if).toContain(
+      "(needs.integration.result == 'success' || needs.integration.result == 'skipped')"
+    );
     expect(workflow.jobs.build.if).toContain("needs.tools.result == 'success'");
     expect(workflow.jobs.build.if).toContain("needs.gates.result == 'success'");
     expect(workflow.jobs.manifest.needs).toBe("build");

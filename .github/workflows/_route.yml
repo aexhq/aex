@@ -52,6 +52,10 @@ on:
         value: ${{ jobs.route.outputs.test_matrix }}
       has_test:
         value: ${{ jobs.route.outputs.has_test }}
+      integration_matrix:
+        value: ${{ jobs.route.outputs.integration_matrix }}
+      has_integration:
+        value: ${{ jobs.route.outputs.has_integration }}
       node_matrix:
         value: ${{ jobs.route.outputs.node_matrix }}
       has_node:
@@ -83,6 +87,8 @@ jobs:
       repo_wide: ${{ steps.test.outputs.repo_wide }}
       test_matrix: ${{ steps.test.outputs.matrix }}
       has_test: ${{ steps.test.outputs.has_entries }}
+      integration_matrix: ${{ steps.integration.outputs.matrix }}
+      has_integration: ${{ steps.integration.outputs.has_entries }}
       node_matrix: ${{ steps.node.outputs.matrix }}
       has_node: ${{ steps.node.outputs.has_entries }}
       artifact_matrix: ${{ steps.artifact.outputs.matrix }}
@@ -167,6 +173,22 @@ jobs:
             --selection selection.json --kind test \
             --artifact-selection artifact-selection.json \
             --partitions "${{ inputs.partitions }}" \
+            --github-output "$GITHUB_OUTPUT" --quiet
+
+      # Engine-backed targets only: packages that both map a target to the
+      # integration layer and declare the `integration-engines` feature. A
+      # package whose integration-layer target needs no container is left to the
+      # unit lane, which already runs it, rather than run twice under two
+      # receipts. Partitioned at 1 because each entry is one package's engine
+      # suite and the engines, not the assertions, are what cost wall clock -
+      # sharding a package would start the same containers twice.
+      - name: Integration matrix
+        id: integration
+        run: |
+          set -euo pipefail
+          aex-release-tool graph matrix \
+            --selection selection.json --kind integration \
+            --partitions 1 \
             --github-output "$GITHUB_OUTPUT" --quiet
 
       - name: Artifact matrix

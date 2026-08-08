@@ -1,0 +1,107 @@
+# The engine-backed integration lane.
+#
+# These are the targets the unit lane deliberately cannot run: each sits behind
+# `required-features = ["integration-engines"]` and needs a container runtime,
+# so a machine without Docker still passes the per-stream gate. GitHub-hosted
+# `ubuntu-latest` ships a Docker daemon, which is the whole reason this lane
+# exists as its own workflow rather than a job inside `_rust-lane.yml`.
+#
+# The matrix is derived, never hand-listed: `graph matrix --kind integration`
+# selects packages that both map a target to the integration layer and declare
+# the feature, and hands each entry the exact nextest filterset naming its
+# targets. Adding an engine-backed target to any crate therefore joins this lane
+# with no workflow edit - which is the defect this lane was built to close, as
+# nine such targets existed and none of them had ever executed in CI.
+#
+# `--no-tests=fail` on every invocation: a filterset that matched nothing is an
+# error, not a pass. `retries = 0` lives in `.config/nextest.toml`, so no lane
+# can grant itself a retry around a flaky engine.
+#
+# What this lane deliberately does NOT do: emit an evidence receipt. A semantic
+# receipt is keyed to a deployable unit's own package, and every crate here but
+# `central-schema-admin` is a library with no unit row, so there is nothing for a
+# receipt to be about. This lane therefore gates - a red job fails the run - but
+# it does not yet feed the release ledger. Giving library evidence a place in
+# that ledger is a `release/units.toml` decision, not a workflow one.
+
+name: integration-lane
+
+on:
+  workflow_call:
+    inputs:
+      matrix:
+        description: The routed engine-backed package matrix, as canonical JSON.
+        type: string
+        required: true
+      lane:
+        type: string
+        required: true
+      cache_mode:
+        description: restore | restore-save
+        type: string
+        required: false
+        default: restore
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(inputs.matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
+        with:
+          toolchain: "1.97.1"
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@bc2d2e71bd35c5549942babaa51a89c586b981d1  # v2.8.1
+        with:
+          save-if: ${{ inputs.cache_mode == 'restore-save' }}
+          shared-key: ${{ inputs.lane }}-integration
+
+      - name: Install pinned nextest
+        run: |
+          set -euo pipefail
+          cargo install --locked --version 0.9.108 cargo-nextest
+          cargo-nextest --version | grep -Eq '^cargo-nextest 0\.9\.108([[:space:]]|$)'
+
+      # The engines are digest-pinned in `release/policy/test-images.toml` and
+      # started by the harness through testcontainers, so nothing here names an
+      # image. Proving the daemon answers before the suite runs turns "Docker
+      # was not ready" into its own failure rather than a container start that
+      # times out inside a test.
+      - name: Prove the container runtime answers
+        run: |
+          set -euo pipefail
+          docker version --format '{{.Server.Version}}'
+
+      - name: Run the engine-backed targets
+        env:
+          CARGO_INCREMENTAL: "0"
+          SELECTED_PACKAGE: ${{ matrix.name }}
+          SELECTED_TARGETS: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          cargo nextest run --locked --profile integration \
+            -p "$SELECTED_PACKAGE" \
+            --features integration-engines \
+            -E "$SELECTED_TARGETS" \
+            --no-tests=fail
+
+      - name: Upload the JUnit report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: junit-${{ inputs.lane }}-integration-${{ matrix.name }}
+          path: target/nextest/integration/junit.xml
+          if-no-files-found: error

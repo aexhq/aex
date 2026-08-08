@@ -131,6 +131,16 @@ jobs:
       release_tool_sha256: ${{ needs.tools.outputs.release_tool_sha256 }}
       workspace_check_sha256: ${{ needs.tools.outputs.workspace_check_sha256 }}
 
+  integration:
+    name: Integration
+    needs: [tools, route]
+    if: needs.route.outputs.has_integration == 'true'
+    uses: ./.github/workflows/_integration-lane.yml
+    with:
+      matrix: ${{ needs.route.outputs.integration_matrix }}
+      lane: pr
+      cache_mode: restore
+
   node:
     name: TypeScript
     needs: [tools, route]
@@ -168,7 +178,7 @@ jobs:
 
   checks:
     name: Checks
-    needs: [tools, route, gates, rust, node, scenarios, terraform]
+    needs: [tools, route, gates, rust, integration, node, scenarios, terraform]
     if: always()
     uses: ./.github/workflows/_receipts.yml
     with:
@@ -181,4 +191,4 @@ jobs:
       node_matrix: ${{ needs.route.outputs.node_matrix }}
       terraform_matrix: ${{ needs.route.outputs.terraform_matrix }}
       required_job_results: >-
-        {"tools":{"result":"${{ needs.tools.result }}","allowSkipped":false},"route":{"result":"${{ needs.route.result }}","allowSkipped":false},"gates":{"result":"${{ needs.gates.result }}","allowSkipped":false},"rust":{"result":"${{ needs.rust.result }}","allowSkipped":true},"node":{"result":"${{ needs.node.result }}","allowSkipped":false},"scenarios":{"result":"${{ needs.scenarios.result }}","allowSkipped":true},"terraform":{"result":"${{ needs.terraform.result }}","allowSkipped":true}}
+        {"tools":{"result":"${{ needs.tools.result }}","allowSkipped":false},"route":{"result":"${{ needs.route.result }}","allowSkipped":false},"gates":{"result":"${{ needs.gates.result }}","allowSkipped":false},"rust":{"result":"${{ needs.rust.result }}","allowSkipped":true},"integration":{"result":"${{ needs.integration.result }}","allowSkipped":true},"node":{"result":"${{ needs.node.result }}","allowSkipped":false},"scenarios":{"result":"${{ needs.scenarios.result }}","allowSkipped":true},"terraform":{"result":"${{ needs.terraform.result }}","allowSkipped":true}}

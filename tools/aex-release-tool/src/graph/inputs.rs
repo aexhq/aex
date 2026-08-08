@@ -29,6 +29,12 @@ pub struct CargoPackage {
     pub meta: Option<AexMeta>,
     /// Whether the package is published to a registry.
     pub publishable: bool,
+    /// Declared Cargo feature names, sorted.
+    ///
+    /// Carried because a target behind `required-features` is only runnable
+    /// when the lane also turns the feature on, and the feature is a manifest
+    /// fact rather than something a workflow should guess.
+    pub features: Vec<String>,
     /// Workspace-internal dependency edges.
     pub deps: Vec<(String, EdgeKind)>,
 }
@@ -479,6 +485,11 @@ fn parse_cargo(
             .get("publish")
             .and_then(serde_json::Value::as_array)
             .is_none_or(|registries| !registries.is_empty());
+        let features = package
+            .get("features")
+            .and_then(serde_json::Value::as_object)
+            .map(|features| features.keys().cloned().collect())
+            .unwrap_or_default();
         let mut deps = Vec::new();
         if let Some(list) = package
             .get("dependencies")
@@ -503,6 +514,7 @@ fn parse_cargo(
             dir,
             meta,
             publishable,
+            features,
             deps,
         });
     }

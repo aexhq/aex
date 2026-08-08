@@ -1207,6 +1207,7 @@ fn build_graph_matrix(
         &inputs.scenarios,
         &inputs.units,
         &inputs.npm,
+        &inputs.cargo,
     )
 }
 

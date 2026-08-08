@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{Exit, Result, ToolError};
 
 use super::NodeKind;
-use super::inputs::{NpmPackage, ScenarioOwnership, Units};
+use super::inputs::{CargoPackage, NpmPackage, ScenarioOwnership, Units};
 use super::select::Selection;
 
 /// Which slice of the selection to emit.
@@ -22,6 +22,18 @@ use super::select::Selection;
 pub enum MatrixKind {
     /// Cargo packages to test in the Rust lane.
     Test,
+    /// Cargo packages that own an engine-backed target, for the integration
+    /// lane.
+    ///
+    /// Separate from [`Self::Test`] because these targets sit behind
+    /// `required-features` and need a container runtime, so the ordinary unit
+    /// lane neither builds nor links them. Deriving the slice from
+    /// `[package.metadata.aex.targets]` rather than from
+    /// `release/semantic-receipts.json` is deliberate: a semantic receipt
+    /// producer must name a deployable unit's own package, and an adapter crate
+    /// has no unit row, so an engine-backed target in a library could otherwise
+    /// never reach any lane at all.
+    Integration,
     /// npm packages that own deployable units to test in the Node lane.
     Node,
     /// Artifacts to build.
@@ -45,7 +57,8 @@ pub struct MatrixEntry {
     /// Runnable package node for a scenario entry.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub package: Option<String>,
-    /// Exact package target for a scenario entry.
+    /// Exact package target for a scenario entry, or the nextest filterset
+    /// selecting an integration entry's engine-backed targets.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
     /// Repository-relative npm package directory for a Node entry.
@@ -97,6 +110,10 @@ pub const OUTPUT_KEYS: &[&str] = &[
 /// Returns [`Exit::Usage`] when `partitions` is zero, or
 /// [`Exit::GraphVerification`] when a selected scenario has no exact runnable
 /// package/target claim.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one parameter per authority the matrix is derived from; bundling them into a struct would hide which registry a slice actually reads"
+)]
 pub fn build(
     selection: &Selection,
     kind: MatrixKind,
@@ -105,9 +122,10 @@ pub fn build(
     scenarios: &ScenarioOwnership,
     units: &Units,
     npm: &[NpmPackage],
+    cargo: &[CargoPackage],
 ) -> Result<MatrixOutput> {
     build_with_artifacts(
-        selection, None, kind, partitions, durations, scenarios, units, npm,
+        selection, None, kind, partitions, durations, scenarios, units, npm, cargo,
     )
 }
 
@@ -130,6 +148,7 @@ pub fn build_with_artifacts(
     scenarios: &ScenarioOwnership,
     units: &Units,
     npm: &[NpmPackage],
+    cargo: &[CargoPackage],
 ) -> Result<MatrixOutput> {
     if partitions == 0 {
         return Err(ToolError::single(
@@ -141,7 +160,7 @@ pub fn build_with_artifacts(
     let candidates = if kind == MatrixKind::Scenario {
         scenario_candidates(selection, scenarios)?
     } else {
-        candidates(selection, artifact_selection, kind, units, npm)?
+        candidates(selection, artifact_selection, kind, units, npm, cargo)?
     };
 
     let shards = partition(&candidates, partitions, durations);
@@ -168,6 +187,13 @@ pub fn build_with_artifacts(
                     ));
                 };
                 (Some((*package).to_owned()), Some((*target).to_owned()))
+            } else if kind == MatrixKind::Integration {
+                // `candidates` already refused a package with no engine-backed
+                // target, so this is never the empty filterset.
+                (
+                    None,
+                    Some(integration_filterset(&integration_targets(cargo, name))),
+                )
             } else {
                 (None, None)
             };
@@ -196,7 +222,10 @@ pub fn build_with_artifacts(
                 package,
                 target,
                 directory,
-                units: if matches!(kind, MatrixKind::Test | MatrixKind::Node) {
+                units: if matches!(
+                    kind,
+                    MatrixKind::Test | MatrixKind::Integration | MatrixKind::Node
+                ) {
                     units
                         .units
                         .iter()
@@ -220,12 +249,66 @@ pub fn build_with_artifacts(
     })
 }
 
+/// The Cargo feature every engine-backed target sits behind.
+///
+/// One spelling workspace-wide, so the lane turns on exactly what
+/// `required-features` demands without inspecting manifests at run time.
+pub const ENGINE_FEATURE: &str = "integration-engines";
+
+/// The engine-backed target names one Cargo package declares, sorted.
+///
+/// The authority is `[package.metadata.aex.targets]`, which maps every test
+/// target to the layer it covers; `aex-workspace-check` already refuses a
+/// mapping that names no real `[[test]]` target, so a name here is runnable.
+///
+/// A package that maps a target to the integration layer but declares no
+/// [`ENGINE_FEATURE`] yields nothing: its target needs no container, so it is
+/// an ordinary target the unit lane already runs, and selecting it here would
+/// run the same evidence twice under two different receipts.
+fn integration_targets(cargo: &[CargoPackage], name: &str) -> Vec<String> {
+    let Some(package) = cargo.iter().find(|package| package.name == name) else {
+        return Vec::new();
+    };
+    if !package
+        .features
+        .iter()
+        .any(|feature| feature == ENGINE_FEATURE)
+    {
+        return Vec::new();
+    }
+    package
+        .meta
+        .as_ref()
+        .map(|meta| {
+            meta.targets
+                .iter()
+                .filter(|(_, layer)| layer.as_str() == "integration")
+                .map(|(target, _)| target.clone())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The nextest filterset selecting exactly one package's engine-backed targets.
+///
+/// Emitted onto the matrix entry so the lane never has to re-derive it, and so
+/// a package whose integration target is renamed changes the filterset rather
+/// than silently running nothing: every lane passes `--no-tests=fail`.
+fn integration_filterset(targets: &[String]) -> String {
+    targets
+        .iter()
+        .map(|target| format!("binary({target})"))
+        .collect::<Vec<_>>()
+        .join(" or ")
+}
+
 fn candidates(
     selection: &Selection,
     artifact_selection: Option<&Selection>,
     kind: MatrixKind,
     units: &Units,
     npm: &[NpmPackage],
+    cargo: &[CargoPackage],
 ) -> Result<Vec<(String, String)>> {
     let selected: Vec<(String, String)> = match kind {
         MatrixKind::Test => selection
@@ -233,6 +316,16 @@ fn candidates(
             .iter()
             .filter(|selected| {
                 selected.id.namespace() == "cargo" && !selected.id.local().starts_with("aex-live-")
+            })
+            .map(|selected| (selected.id.to_string(), selected.id.local().to_owned()))
+            .collect(),
+        MatrixKind::Integration => selection
+            .test
+            .iter()
+            .filter(|selected| {
+                selected.id.namespace() == "cargo"
+                    && !selected.id.local().starts_with("aex-live-")
+                    && !integration_targets(cargo, selected.id.local()).is_empty()
             })
             .map(|selected| (selected.id.to_string(), selected.id.local().to_owned()))
             .collect(),
@@ -411,7 +504,7 @@ pub fn to_github_output(output: &MatrixOutput) -> Result<String> {
 #[must_use]
 pub const fn source_kind(kind: MatrixKind) -> NodeKind {
     match kind {
-        MatrixKind::Test | MatrixKind::Live => NodeKind::Crate,
+        MatrixKind::Test | MatrixKind::Integration | MatrixKind::Live => NodeKind::Crate,
         MatrixKind::Node => NodeKind::NpmPackage,
         MatrixKind::Artifact => NodeKind::Artifact,
         MatrixKind::Scenario => NodeKind::Scenario,
@@ -427,8 +520,9 @@ mod tests {
         MatrixKind, OUTPUT_KEYS, build, build_with_artifacts, degraded, partition, to_github_output,
     };
     use crate::graph::NodeId;
-    use crate::graph::inputs::{ScenarioOwnership, Units};
+    use crate::graph::inputs::{CargoPackage, ScenarioOwnership, Units};
     use crate::graph::select::{Lane, Mode, Selected, Selection, SelectionReason};
+    use crate::meta::AexMeta;
 
     fn selection(ids: &[NodeId]) -> Selection {
         Selection {
@@ -467,6 +561,124 @@ mod tests {
         }
     }
 
+    /// One Cargo package carrying `targets` mapped to the given layers.
+    fn cargo_package(name: &str, targets: &[(&str, &str)]) -> CargoPackage {
+        CargoPackage {
+            name: name.to_owned(),
+            dir: format!("crates/{name}"),
+            meta: Some(AexMeta {
+                owner: "test-architecture".to_owned(),
+                role: "adapter".to_owned(),
+                artifact: "none".to_owned(),
+                deployable: None,
+                live_suite: None,
+                layers: Vec::new(),
+                concerns: Vec::new(),
+                seams: Vec::new(),
+                security_tier: "internal".to_owned(),
+                risk: Vec::new(),
+                scenarios: Vec::new(),
+                targets: targets
+                    .iter()
+                    .map(|(target, layer)| ((*target).to_owned(), (*layer).to_owned()))
+                    .collect(),
+                not_applicable: BTreeMap::new(),
+            }),
+            publishable: false,
+            features: vec![crate::graph::matrix::ENGINE_FEATURE.to_owned()],
+            deps: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn the_integration_matrix_selects_only_packages_that_own_an_engine_backed_target() {
+        let cargo = [
+            cargo_package("aex-secret-aws", &[("integration", "integration")]),
+            // Declares targets, but none of them at the integration layer.
+            cargo_package("aex-wire", &[("conformance", "unit")]),
+        ];
+        let selection = selection(&[
+            NodeId::cargo("aex-secret-aws"),
+            NodeId::cargo("aex-wire"),
+            // Never selected: a live companion belongs to the live matrix, and
+            // it holds no engine-backed target either way.
+            NodeId::cargo("aex-live-brain-mux"),
+        ]);
+
+        let integration = build(
+            &selection,
+            MatrixKind::Integration,
+            1,
+            &BTreeMap::new(),
+            &no_scenarios(),
+            &no_units(),
+            &[],
+            &cargo,
+        )
+        .unwrap();
+
+        let names: Vec<&str> = integration
+            .include
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["aex-secret-aws"],
+            "a package with no integration-layer target must not reach the engine lane"
+        );
+
+        // The unit matrix still carries every one of them, so narrowing the
+        // integration lane never narrows the lane that gates on unit evidence.
+        let unit = build(
+            &selection,
+            MatrixKind::Test,
+            1,
+            &BTreeMap::new(),
+            &no_scenarios(),
+            &no_units(),
+            &[],
+            &cargo,
+        )
+        .unwrap();
+        assert_eq!(
+            unit.count, 2,
+            "aex-wire and aex-secret-aws, never the live one"
+        );
+    }
+
+    #[test]
+    fn an_integration_entry_carries_a_filterset_naming_each_of_its_targets() {
+        let cargo = [cargo_package(
+            "aex-control-aurora",
+            &[
+                ("migrations", "integration"),
+                ("integration", "integration"),
+                ("properties", "unit"),
+            ],
+        )];
+        let output = build(
+            &selection(&[NodeId::cargo("aex-control-aurora")]),
+            MatrixKind::Integration,
+            1,
+            &BTreeMap::new(),
+            &no_scenarios(),
+            &no_units(),
+            &[],
+            &cargo,
+        )
+        .unwrap();
+
+        let entry = output.include.first().expect("one selected package");
+        // Sorted, because `targets` is a `BTreeMap`: the filterset a lane runs
+        // must not depend on manifest ordering.
+        assert_eq!(
+            entry.target.as_deref(),
+            Some("binary(integration) or binary(migrations)"),
+            "the unit-layer target must not be dragged into the engine lane"
+        );
+    }
+
     #[test]
     fn healthy_and_degraded_paths_emit_the_same_output_keys() {
         let healthy = to_github_output(
@@ -477,6 +689,7 @@ mod tests {
                 &BTreeMap::new(),
                 &no_scenarios(),
                 &no_units(),
+                &[],
                 &[],
             )
             .unwrap(),
@@ -516,6 +729,7 @@ mod tests {
             &no_scenarios(),
             &no_units(),
             &[],
+            &[],
         )
         .unwrap();
         let live = build(
@@ -525,6 +739,7 @@ mod tests {
             &BTreeMap::new(),
             &no_scenarios(),
             &no_units(),
+            &[],
             &[],
         )
         .unwrap();
@@ -586,6 +801,7 @@ alarm_spec = "demo-api"
             &BTreeMap::new(),
             &no_scenarios(),
             &units,
+            &[],
             &[],
         )
         .unwrap();
@@ -671,6 +887,7 @@ alarm_spec = "stripe-webhook-edge"
             &no_scenarios(),
             &units,
             &npm,
+            &[],
         )
         .unwrap();
 
@@ -718,6 +935,7 @@ target = "live"
             &registry,
             &no_units(),
             &[],
+            &[],
         )
         .expect("scenario matrix");
         assert_eq!(output.include.len(), 1);
@@ -743,6 +961,7 @@ target = "live"
             &BTreeMap::new(),
             &no_scenarios(),
             &no_units(),
+            &[],
             &[],
         )
         .unwrap_err();
@@ -774,6 +993,7 @@ deferred = "the production composition does not yet expose this surface"
             &BTreeMap::new(),
             &registry,
             &no_units(),
+            &[],
             &[],
         )
         .expect("deferred scenario matrix");
@@ -855,6 +1075,7 @@ alarm_spec = "hands-image-large"
             &no_scenarios(),
             &units,
             &[],
+            &[],
         )
         .unwrap();
         assert_eq!(
@@ -873,6 +1094,7 @@ alarm_spec = "hands-image-large"
             &no_scenarios(),
             &no_units(),
             &[],
+            &[],
         )
         .unwrap();
         assert!(!output.has_entries);
@@ -889,6 +1111,7 @@ alarm_spec = "hands-image-large"
             &BTreeMap::new(),
             &no_scenarios(),
             &no_units(),
+            &[],
             &[],
         )
         .unwrap_err();
