@@ -117,11 +117,6 @@ fn the_role_floor_holds_in_both_directions() {
             OrgRole::Admin,
         ),
         (
-            RouteId::WorkspaceCreate,
-            ResourceClass::Organization,
-            OrgRole::Admin,
-        ),
-        (
             RouteId::WorkspaceGet,
             ResourceClass::Workspace,
             OrgRole::Member,
@@ -187,6 +182,24 @@ fn a_non_member_is_denied_before_any_role_or_scope_check() {
     assert_eq!(
         decide(&stranger, action(RouteId::OrganizationGet), &organization()),
         Err(Denial::NotAMember)
+    );
+}
+
+#[test]
+fn workspace_create_defers_membership_role_and_account_state_to_its_handler() {
+    let action = action(RouteId::WorkspaceCreate);
+    let requirement = requirement(action);
+    assert_eq!(requirement.resource_class, ResourceClass::None);
+    assert_eq!(requirement.min_role, None);
+    assert!(requirement.pause_exempt);
+    assert!(
+        decide(
+            &actor(OrgRole::Member, ScopeSet::ALL),
+            action,
+            &Resource::None
+        )
+        .is_ok(),
+        "the edge checks the actor and scope; the handler checks the decoded organization"
     );
 }
 
@@ -417,7 +430,7 @@ fn a_paused_account_reaches_only_the_pause_exempt_routes() {
 
 #[test]
 fn an_unreadable_account_state_is_a_refusal_and_never_an_assumption() {
-    let action = action(RouteId::WorkspaceCreate);
+    let action = action(RouteId::InvitationCreate);
     assert_eq!(
         admit(
             &actor(OrgRole::Admin, ScopeSet::ALL),
@@ -443,7 +456,7 @@ fn authorization_is_decided_before_the_account_state_gate() {
     assert_eq!(
         admit(
             &actor(OrgRole::Member, ScopeSet::ALL),
-            action(RouteId::WorkspaceCreate),
+            action(RouteId::InvitationCreate),
             &organization(),
             AccountState::PausedTopUpRequired
         ),

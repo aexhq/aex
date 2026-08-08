@@ -421,6 +421,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn workspace_create_defers_its_body_scoped_organization_gate_to_the_handler() {
+        let stub = Stub::new(None, Err(()));
+        let granted = admit_request(
+            &stub,
+            &owner(),
+            action(RouteId::WorkspaceCreate),
+            &TargetPath::default(),
+        )
+        .await
+        .expect("the edge admits the actor and scope before the body target is decoded");
+        assert_eq!(granted.organization_id, None);
+        assert_eq!(granted.role, None);
+        assert_eq!(stub.resolutions.load(Ordering::SeqCst), 0);
+        assert_eq!(stub.state_reads.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
     async fn a_paused_account_is_refused_on_a_non_exempt_route() {
         let stub = Stub::new(
             Some(Resource::Organization(Uuid::from_u128(ORGANIZATION))),
