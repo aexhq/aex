@@ -46,9 +46,7 @@ pub use budget::{Budget, BudgetError, Charge};
 pub use canary::{LeakFinding, LeakShape, SecretCanary, scan_for_leaks};
 pub use containers::{ContainerError, Engine, Readiness};
 #[cfg(feature = "containers")]
-pub use containers::{
-    DynamoDbLocalContainer, LocalStackContainer, MinioContainer, PostgresContainer,
-};
+pub use containers::{DynamoDbLocalContainer, MinioContainer, MotoContainer, PostgresContainer};
 pub use fault::{Clock, FaultError, Proxy, ScriptedClock, ScriptedPort, Toxic};
 pub use images::{ImageError, ImageRef, image};
 pub use ledger::{

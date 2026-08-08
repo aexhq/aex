@@ -133,8 +133,8 @@ mod tests {
             keys(),
             vec![
                 "dynamodb_local",
-                "localstack",
                 "minio",
+                "moto",
                 "postgres",
                 "stripe_mock",
                 "toxiproxy"

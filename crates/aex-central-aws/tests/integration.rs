@@ -15,14 +15,14 @@ use aex_central_aws::pepper::{
 };
 use aex_identity_app::ports::{PepperKeystore as _, PepperPurpose, StoreError};
 use aex_identity_domain::{PepperVersion, PresentedDigest, verifier};
-use aex_test_harness::LocalStackContainer;
+use aex_test_harness::MotoContainer;
 use aws_sdk_secretsmanager::Client;
 use aws_sdk_secretsmanager::config::{BehaviorVersion, Credentials, Region};
 use support::{FakeDirectory, MATERIAL_B64, OTHER_MATERIAL_B64, payload};
 
 const SECRET_NAME: &str = "aex/integration/identity-pepper";
 
-fn client(engine: &LocalStackContainer) -> Client {
+fn client(engine: &MotoContainer) -> Client {
     let config = aws_sdk_secretsmanager::Config::builder()
         .behavior_version(BehaviorVersion::latest())
         .region(Region::new(engine.region()))
@@ -49,9 +49,7 @@ fn row(version: u16, state: PepperState, secret_ref: &str) -> PepperRecord {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_rotated_secret_leaves_both_peppers_resolvable_by_their_own_version_ids() {
-    let engine = LocalStackContainer::start()
-        .await
-        .expect("LocalStack starts");
+    let engine = MotoContainer::start().await.expect("moto starts");
     let client = client(&engine);
 
     let first = client
@@ -108,9 +106,7 @@ async fn a_rotated_secret_leaves_both_peppers_resolvable_by_their_own_version_id
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_version_id_the_service_does_not_hold_is_not_found() {
-    let engine = LocalStackContainer::start()
-        .await
-        .expect("LocalStack starts");
+    let engine = MotoContainer::start().await.expect("moto starts");
     let client = client(&engine);
     client
         .create_secret()

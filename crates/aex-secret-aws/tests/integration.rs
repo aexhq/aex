@@ -1,28 +1,31 @@
-//! Engine-backed cases for the secret cryptography adapter, against
-//! `LocalStack`'s KMS.
+//! Engine-backed cases for the secret cryptography adapter, against `moto`'s
+//! KMS.
 //!
 //! What this proves: that the adapter's `Decrypt` really round-trips a wrapped
 //! branch key against a service, that the encryption context is carried on the
 //! wire and enforced by that service, and that the whole seal → reveal path
-//! works end to end with real key material rather than a fake.
+//! works end to end with real key material rather than a fake. The enforcement
+//! is not bookkeeping: `moto` encrypts under AES-256-GCM with the serialised
+//! encryption context as additional authenticated data, so a foreign context
+//! fails tag verification and is refused with `InvalidCiphertextException`.
 //!
-//! What it does not prove is stated rather than assumed: `LocalStack` implements
-//! no KMS key policy, so the `kms:EncryptionContext:aex:workspace` condition
-//! OD-18 requires — the thing that makes the binding enforceable at the key
-//! rather than advisory — is a live concern (plan 05 section 8.3 item 11).
+//! What it does not prove is stated rather than assumed: `moto` implements no
+//! KMS key policy, so the `kms:EncryptionContext:aex:workspace` condition OD-18
+//! requires — the thing that makes the binding enforceable at the key rather
+//! than advisory — is a live concern (plan 05 section 8.3 item 11).
 
 mod support;
 
 use aex_secret_aws::crypto::{EnvelopeCrypto, SecretCrypto, SecretCryptoError, key_version};
 use aex_secret_aws::keystore::{BranchKeyProvider, KeyMaterialError, KmsBranchKeys};
-use aex_test_harness::LocalStackContainer;
+use aex_test_harness::MotoContainer;
 use aws_sdk_kms::Client;
 use aws_sdk_kms::config::{BehaviorVersion, Credentials, Region};
 use aws_sdk_kms::types::DataKeySpec;
 
 use support::{WRAPPED, context, now, plaintext, session_context};
 
-fn client(engine: &LocalStackContainer) -> Client {
+fn client(engine: &MotoContainer) -> Client {
     let config = aws_sdk_kms::Config::builder()
         .behavior_version(BehaviorVersion::latest())
         .region(Region::new(engine.region()))
@@ -72,9 +75,7 @@ async fn branch_key(
 
 #[tokio::test]
 async fn a_value_seals_and_reveals_against_a_real_key_service() {
-    let engine = LocalStackContainer::start()
-        .await
-        .expect("LocalStack starts");
+    let engine = MotoContainer::start().await.expect("moto starts");
     let client = client(&engine);
     let bound = context("openai-key", 1);
     let (key, wrapped) = branch_key(&client, &bound).await;
@@ -107,9 +108,7 @@ async fn a_value_seals_and_reveals_against_a_real_key_service() {
 
 #[tokio::test]
 async fn the_service_refuses_a_wrapped_key_presented_under_another_context() {
-    let engine = LocalStackContainer::start()
-        .await
-        .expect("LocalStack starts");
+    let engine = MotoContainer::start().await.expect("moto starts");
     let client = client(&engine);
     let bound = context("openai-key", 1);
     let (key, wrapped) = branch_key(&client, &bound).await;
@@ -134,9 +133,7 @@ async fn the_service_refuses_a_wrapped_key_presented_under_another_context() {
 
 #[tokio::test]
 async fn a_rewrap_between_contexts_survives_a_real_key_round_trip() {
-    let engine = LocalStackContainer::start()
-        .await
-        .expect("LocalStack starts");
+    let engine = MotoContainer::start().await.expect("moto starts");
     let client = client(&engine);
     let source = context("openai-key", 1);
     let (key, wrapped) = branch_key(&client, &source).await;

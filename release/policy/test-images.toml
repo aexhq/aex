@@ -18,6 +18,16 @@
 # Deliberately absent: any emulator claiming DynamoDB Streams, ECS lifecycle,
 # Firecracker/MicroVM lifecycle or provider inference, and ClickHouse - Area 11
 # removes it, so the `Q-DEPENDENCY` "real pinned ClickHouse" clause is void.
+#
+# `moto` replaced `localstack` on 2026-08-08. The LocalStack repository was
+# archived read-only on 2026-03-23 and its community distribution ends with the
+# March 2026 unified image, so the old pin could only ever have been frozen. The
+# swap is not a downgrade: moto encrypts under real AES-256-GCM with the
+# serialised encryption context as additional authenticated data, so the
+# context-mismatch refusal this substrate is relied on for is a genuine
+# cryptographic property rather than a bookkeeping check. moto is emulation all
+# the same - it is here to catch defects early and cheaply, and every seam it
+# touches still carries `requires_live = true`.
 
 schema = "aex.test-images.v1"
 
@@ -51,14 +61,14 @@ proves = "the S3 API shape, byte ranges, multipart create/upload/list/complete/a
 cannot_prove = "bucket-policy denial of an unconditional put or of a delete, s3:signatureAge, SSE-KMS and Bucket Keys, AWS checksum semantics, lifecycle rules, presigned-URL expiry, Inventory, replication"
 seams = ["aws.s3.conditional_put", "aws.s3.multipart", "aws.s3.unversioned_delete", "aws.s3.presigned_expiry", "aws.s3.sse_kms"]
 
-[image.localstack]
+[image.moto]
 registry = "registry-1.docker.io"
-repository = "localstack/localstack"
-tag = "4.6"
-digest = "sha256:5a97e0f9917a3f0d9630bb13b9d8ccf10cbe52f33252807d3b4e21418cc21348"
-purpose = "SQS, KMS and Secrets Manager protocol shape only"
-proves = "the SQS queue and message protocol shape, the FIFO group ordering shape, the partial-batch response shape, the KMS and Secrets Manager request/response shape"
-cannot_prove = "the FIFO deduplication window, real visibility-timeout and redrive timing, DLQ at scale, KMS key policies, grants and EncryptionContext conditions, real key material, IAM evaluation"
+repository = "motoserver/moto"
+tag = "5.2.2"
+digest = "sha256:d8ae5edc2bf080e7e4c13f9bd4b29b53ac3b4427e92956318db3dbe23ec43eb7"
+purpose = "SQS, KMS, Secrets Manager and SSM Parameter Store protocol shape only"
+proves = "the SQS queue and message protocol shape, the FIFO group ordering shape, the partial-batch response shape, the KMS and Secrets Manager request/response shape, KMS encryption-context binding as authenticated AES-256-GCM additional data (a foreign context is refused with InvalidCiphertextException), ReEncrypt between two contexts, Secrets Manager version-id minting and per-version resolution, SSM parameter put/get and history"
+cannot_prove = "the FIFO deduplication window, real visibility-timeout and redrive timing, DLQ at scale, KMS key policies, grants and EncryptionContext IAM conditions, real key material and HSM custody, IAM evaluation, SecureString KMS integration"
 seams = ["aws.sqs.fifo", "aws.sqs.redrive", "aws.kms.encryption_context", "aws.kms.branch_key_rotation"]
 
 [image.toxiproxy]

@@ -61,25 +61,29 @@ pub const MINIO_SECRET_ACCESS_KEY: &str = "aexharnesssecret";
 
 /// The access key id the emulated AWS engines accept.
 ///
-/// `DynamoDB` Local with `-sharedDb` and `LocalStack` both ignore the value and
-/// only require that one is present, so it is fixed here rather than invented
-/// per call site: two clients signing with different keys must still reach the
-/// same data.
+/// `DynamoDB` Local with `-sharedDb` and `moto` both ignore the value and only
+/// require that one is present, so it is fixed here rather than invented per
+/// call site: two clients signing with different keys must still reach the same
+/// data.
 pub const EMULATED_ACCESS_KEY_ID: &str = "aexharness";
 /// The secret the emulated AWS engines accept.
 pub const EMULATED_SECRET_ACCESS_KEY: &str = "aexharnesssecret";
 /// The region every emulated client signs for; the planes' own region.
 pub const EMULATED_REGION: &str = "eu-west-1";
 
-/// The AWS services a started `LocalStack` loads eagerly.
+/// The AWS services a started `moto` may be asked for.
 ///
-/// Exactly the three the policy document says `LocalStack` may stand in for.
-pub const LOCALSTACK_SERVICES: &str = "sqs,kms,secretsmanager";
+/// Exactly the four the policy document says `moto` may stand in for. `moto`
+/// serves every service it implements from one dispatcher and needs no eager
+/// loading, so this is documentation of the permitted surface rather than
+/// configuration handed to the container: reaching for a fifth service means
+/// amending `release/policy/test-images.toml` first, with its `cannot_prove`.
+pub const MOTO_SERVICES: [&str; 4] = ["sqs", "kms", "secretsmanager", "ssm"];
 
 /// How long an engine has to become ready before the start is a failure.
 ///
-/// Generous enough for a cold `LocalStack` on a loaded host and still bounded:
-/// a hang is reported as a hang rather than waited out forever.
+/// Generous enough for a cold engine on a loaded host and still bounded: a hang
+/// is reported as a hang rather than waited out forever.
 pub const STARTUP_TIMEOUT: Duration = Duration::from_mins(3);
 
 /// The probe command `PostgreSQL` is considered ready by.
@@ -118,13 +122,17 @@ const MINIO_ENVIRONMENT: [(&str, &str); 2] = [
     ("MINIO_ROOT_PASSWORD", MINIO_SECRET_ACCESS_KEY),
 ];
 
-/// The environment `LocalStack` is started with.
-const LOCALSTACK_ENVIRONMENT: [(&str, &str); 4] = [
-    ("SERVICES", LOCALSTACK_SERVICES),
-    ("EAGER_SERVICE_LOADING", "1"),
+/// The environment `moto` is started with.
+///
+/// `MOTO_PORT` is set explicitly rather than left at the image default so the
+/// published port and the port the readiness probe asks for cannot drift apart.
+const MOTO_ENVIRONMENT: [(&str, &str); 2] = [
+    ("MOTO_PORT", MOTO_PORT),
     ("AWS_DEFAULT_REGION", EMULATED_REGION),
-    ("DEBUG", "0"),
 ];
+
+/// The port `moto` is told to listen on, as a string for its environment.
+const MOTO_PORT: &str = "5000";
 
 /// The argument vector `DynamoDB` Local is started with.
 ///
@@ -158,18 +166,13 @@ pub enum Engine {
     /// `MinIO`, standing in for S3 under content, checkpoint and export
     /// objects.
     Minio,
-    /// `LocalStack`, standing in for SQS, KMS and Secrets Manager.
-    LocalStack,
+    /// `moto`, standing in for SQS, KMS, Secrets Manager and SSM.
+    Moto,
 }
 
 impl Engine {
     /// Every engine, in policy-key order.
-    pub const ALL: [Self; 4] = [
-        Self::DynamoDbLocal,
-        Self::LocalStack,
-        Self::Minio,
-        Self::Postgres,
-    ];
+    pub const ALL: [Self; 4] = [Self::DynamoDbLocal, Self::Minio, Self::Moto, Self::Postgres];
 
     /// The engine's key in `release/policy/test-images.toml`.
     #[must_use]
@@ -178,7 +181,7 @@ impl Engine {
             Self::Postgres => "postgres",
             Self::DynamoDbLocal => "dynamodb_local",
             Self::Minio => "minio",
-            Self::LocalStack => "localstack",
+            Self::Moto => "moto",
         }
     }
 
@@ -189,7 +192,7 @@ impl Engine {
             Self::Postgres => 5432,
             Self::DynamoDbLocal => 8000,
             Self::Minio => 9000,
-            Self::LocalStack => 4566,
+            Self::Moto => 5000,
         }
     }
 
@@ -200,7 +203,7 @@ impl Engine {
             Self::Postgres => &POSTGRES_ENVIRONMENT,
             Self::DynamoDbLocal => &[],
             Self::Minio => &MINIO_ENVIRONMENT,
-            Self::LocalStack => &LOCALSTACK_ENVIRONMENT,
+            Self::Moto => &MOTO_ENVIRONMENT,
         }
     }
 
@@ -208,7 +211,7 @@ impl Engine {
     #[must_use]
     pub const fn command(self) -> &'static [&'static str] {
         match self {
-            Self::Postgres | Self::LocalStack => &[],
+            Self::Postgres | Self::Moto => &[],
             Self::DynamoDbLocal => &DYNAMODB_LOCAL_COMMAND,
             Self::Minio => &MINIO_COMMAND,
         }
@@ -232,12 +235,14 @@ impl Engine {
                 path: "/minio/health/live",
                 status: 200,
             }],
-            // The marker is written once every eagerly loaded service is
-            // running; the health probe then confirms the gateway answers.
-            Self::LocalStack => &[
-                Readiness::LogMarker("Ready."),
+            // `moto` serves its own dashboard from the same dispatcher that
+            // answers the AWS APIs, so a 200 here is the dispatcher answering
+            // rather than merely the port being open. The log marker is written
+            // by the embedded server as it binds, which orders the two.
+            Self::Moto => &[
+                Readiness::LogMarker("Running on http://"),
                 Readiness::HttpStatus {
-                    path: "/_localstack/health",
+                    path: "/moto-api/",
                     status: 200,
                 },
             ],
@@ -591,9 +596,9 @@ engine_handle!(
 
 #[cfg(feature = "containers")]
 engine_handle!(
-    /// A running `LocalStack`, pinned by digest.
-    LocalStackContainer,
-    Engine::LocalStack
+    /// A running `moto`, pinned by digest.
+    MotoContainer,
+    Engine::Moto
 );
 
 #[cfg(feature = "containers")]
@@ -681,8 +686,8 @@ impl MinioContainer {
 }
 
 #[cfg(feature = "containers")]
-impl LocalStackContainer {
-    /// The endpoint to point an SQS, KMS or Secrets Manager client at.
+impl MotoContainer {
+    /// The endpoint to point an SQS, KMS, Secrets Manager or SSM client at.
     #[must_use]
     pub fn endpoint_url(&self) -> String {
         http_endpoint(self.host(), self.port())
@@ -706,10 +711,10 @@ impl LocalStackContainer {
         EMULATED_SECRET_ACCESS_KEY
     }
 
-    /// The services this engine was started with, comma separated.
+    /// The services this engine is permitted to stand in for.
     #[must_use]
-    pub const fn services(&self) -> &'static str {
-        LOCALSTACK_SERVICES
+    pub const fn services(&self) -> [&'static str; 4] {
+        MOTO_SERVICES
     }
 }
 
@@ -879,18 +884,16 @@ mod tests {
             .collect();
         assert_eq!(minio, vec!["MINIO_ROOT_USER", "MINIO_ROOT_PASSWORD"]);
 
-        let localstack = Engine::LocalStack.environment();
+        let moto = Engine::Moto.environment();
         assert!(
-            localstack
-                .iter()
-                .any(|(key, value)| *key == "SERVICES" && value.contains("sqs")),
-            "{localstack:?}"
+            moto.iter().any(|(key, value)| *key == "MOTO_PORT"
+                && *value == Engine::Moto.container_port().to_string()),
+            "moto would listen on a port other than the one published: {moto:?}"
         );
         assert!(
-            localstack
-                .iter()
+            moto.iter()
                 .any(|(key, value)| *key == "AWS_DEFAULT_REGION" && *value == EMULATED_REGION),
-            "{localstack:?}"
+            "{moto:?}"
         );
 
         assert!(Engine::DynamoDbLocal.environment().is_empty());
@@ -920,8 +923,8 @@ mod tests {
     #[test]
     fn an_engine_renders_as_its_policy_key() {
         assert_eq!(Engine::DynamoDbLocal.to_string(), "dynamodb_local");
-        assert_eq!(Engine::LocalStack.to_string(), "localstack");
         assert_eq!(Engine::Minio.to_string(), "minio");
+        assert_eq!(Engine::Moto.to_string(), "moto");
         assert_eq!(Engine::Postgres.to_string(), "postgres");
     }
 }
@@ -929,7 +932,7 @@ mod tests {
 #[cfg(all(test, feature = "containers"))]
 mod started_tests {
     use super::{
-        DynamoDbLocalContainer, Engine, LocalStackContainer, MinioContainer, PostgresContainer,
+        DynamoDbLocalContainer, Engine, MinioContainer, MotoContainer, PostgresContainer,
         http_endpoint, postgres_url,
     };
     use std::net::TcpStream;
@@ -1000,11 +1003,11 @@ mod started_tests {
     }
 
     #[tokio::test]
-    async fn a_started_localstack_accepts_a_connection_as_soon_as_start_returns() {
-        let engine = LocalStackContainer::start()
+    async fn a_started_moto_accepts_a_connection_as_soon_as_start_returns() {
+        let engine = MotoContainer::start()
             .await
-            .expect("the pinned localstack starts");
-        assert_eq!(engine.engine(), Engine::LocalStack);
+            .expect("the pinned moto starts");
+        assert_eq!(engine.engine(), Engine::Moto);
         assert!(
             engine.reference().contains("@sha256:"),
             "{}",

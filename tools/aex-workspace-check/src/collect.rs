@@ -575,7 +575,7 @@ mod tests {
         for expected in [
             concat!("amazon/", "dynamodb-local"),
             concat!("minio/", "minio"),
-            concat!("localstack/", "localstack"),
+            concat!("motoserver/", "moto"),
             concat!("shopify/", "toxiproxy"),
             concat!("stripe/", "stripe-mock"),
             concat!("library/", "postgres"),

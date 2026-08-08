@@ -368,7 +368,7 @@ cannot prove — which is the reason its seams carry `requires_live = true`.
 | `postgres` | `library/postgres:17.5-bookworm` | `sha256:fbcea1bd13b6a882cd6caa6b58db3ae5c102efe50ec625b3e2a5cbc50db5bfe4` |
 | `dynamodb_local` | `amazon/dynamodb-local:2.6.1` | `sha256:1856c05cc66a0e49dc1099e483ad2851477eeebe2135250ac11a1d1227db54b1` |
 | `minio` | `minio/minio:RELEASE.2025-04-22T22-12-26Z` | `sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e` |
-| `localstack` | `localstack/localstack:4.6` | `sha256:5a97e0f9917a3f0d9630bb13b9d8ccf10cbe52f33252807d3b4e21418cc21348` |
+| `moto` | `motoserver/moto:5.2.2` | `sha256:d8ae5edc2bf080e7e4c13f9bd4b29b53ac3b4427e92956318db3dbe23ec43eb7` |
 | `toxiproxy` | `ghcr.io/shopify/toxiproxy:2.12.0` | `sha256:9378ed52a28bc50edc1350f936f518f31fa95f0d15917d6eb40b8e376d1a214e` |
 | `stripe_mock` | `stripe/stripe-mock:v0.194.0` | `sha256:b535ce5548783b44ca0df7ecbe7f4773aee9f1b9caa6b012f0e0bc92844774b5` |
 
