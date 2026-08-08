@@ -19,26 +19,9 @@ async fn authenticated_registry_inventory_is_admitted_and_anonymous_access_is_de
         .build()
         .expect("the bounded live client must build");
 
-    let anonymous = client
-        .get(&inventory_url)
-        .send()
-        .await
-        .expect("the anonymous admission check must receive a response");
-    let (anonymous_status, anonymous_headers, anonymous_body) =
-        collect_response(anonymous, "the anonymous admission check").await;
-    let anonymous_diagnostic =
-        redacted_response_diagnostic(anonymous_status, &anonymous_headers, &anonymous_body);
-    assert!(
-        matches!(
-            anonymous_status,
-            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
-        ),
-        "anonymous registry inventory was not unauthorized ({anonymous_diagnostic})"
-    );
-
     // The public contract's regional `workspace_current_get` route is the
-    // token preflight: GET /api/workspace -> Workspace. A stale bearer must
-    // fail here, before the registry request can obscure the auth failure.
+    // token preflight: GET /api/workspace -> Workspace. This must be the
+    // first network request so a stale bearer fails before inventory auth.
     let preflight = client
         .get(&workspace_url)
         .bearer_auth(&token)
@@ -65,6 +48,23 @@ async fn authenticated_registry_inventory_is_admitted_and_anonymous_access_is_de
         &preflight_diagnostic,
     );
     assert_workspace_response(&workspace, &preflight_diagnostic);
+
+    let anonymous = client
+        .get(&inventory_url)
+        .send()
+        .await
+        .expect("the anonymous admission check must receive a response");
+    let (anonymous_status, anonymous_headers, anonymous_body) =
+        collect_response(anonymous, "the anonymous admission check").await;
+    let anonymous_diagnostic =
+        redacted_response_diagnostic(anonymous_status, &anonymous_headers, &anonymous_body);
+    assert!(
+        matches!(
+            anonymous_status,
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
+        ),
+        "anonymous registry inventory was not unauthorized ({anonymous_diagnostic})"
+    );
 
     let admitted = client
         .get(&inventory_url)
