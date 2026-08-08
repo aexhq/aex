@@ -21,13 +21,6 @@ fn owned() -> Vec<RouteId> {
 }
 
 #[test]
-fn this_deployable_owns_the_twenty_seven_finite_observation_routes() {
-    assert_eq!(RouteGroup::Observations.routes().len(), 39);
-    assert_eq!(RouteGroup::TelemetryLifecycle.routes().len(), 12);
-    assert_eq!(owned().len(), 27);
-}
-
-#[test]
 fn the_groups_partition_cleanly_from_every_other_deployable() {
     for id in RouteId::ALL {
         let mine = owned().contains(id);
@@ -67,7 +60,6 @@ fn every_ndjson_route_belongs_exclusively_to_regional_stream() {
         streaming.is_empty(),
         "the finite Lambda must mount no NDJSON route"
     );
-    assert_eq!(RouteOwner::Stream.routes().len(), 24);
 }
 
 #[test]

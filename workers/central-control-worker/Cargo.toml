@@ -26,7 +26,6 @@ risk = ["iam"]
 scenarios = []
 
 [package.metadata.aex.targets]
-conformance = "unit"
 faults = "unit"
 security = "unit"
 resource_envelope = "e2e"

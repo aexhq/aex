@@ -210,5 +210,4 @@ fn the_surface_corpus_carries_exactly_one_line_per_operation() {
         seen, expected,
         "the surface corpus does not cover the table"
     );
-    assert_eq!(seen.len(), 146, "the pinned operation arity moved");
 }

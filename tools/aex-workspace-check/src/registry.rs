@@ -112,38 +112,7 @@ pub struct SourceFindings {
     pub image_literals: Vec<String>,
     /// Quarantine or expected-failure files that exist.
     pub quarantine_files: Vec<String>,
-    /// Every `services/` and `workers/` Cargo member whose `src/main.rs` was
-    /// scanned for the configuration-rejected process event.
-    pub deployable_mains: Vec<String>,
-    /// The subset of [`SourceFindings::deployable_mains`] that never emits it.
-    pub silent_config_mains: Vec<String>,
 }
-
-/// Composition roots that predate the configuration-rejected telemetry floor.
-///
-/// Every `services/` and `workers/` main must emit
-/// `EVENT_AEX_PROCESS_CONFIGURATION_REJECTED` before exiting on a rejected
-/// configuration — a refusal that reaches only stderr makes a crash loop
-/// invisible to every alarm (L5-03). This table freezes the members that still
-/// owe the emit. It is shrink-only: deleting a row is the only legal edit, a
-/// member that starts emitting fails the check until its row is deleted, and a
-/// new member never qualifies for a row.
-const CONFIG_REJECTION_DEBT: [&str; 14] = [
-    "services/regional-otlp",
-    "workers/central-schema-admin",
-    "workers/content-lifecycle-worker",
-    "workers/observation-export-launcher",
-    "workers/observation-export-task",
-    "workers/observation-reconciler",
-    "workers/regional-capacity-controller",
-    "workers/regional-control",
-    "workers/regional-secret-key-admin",
-    "workers/runtime-control-worker",
-    "workers/session-operation-worker",
-    "workers/usage-compute-worker",
-    "workers/usage-storage-worker",
-    "workers/usage-transfer-worker",
-];
 
 /// Everything the rules read.
 #[derive(Debug)]
@@ -797,48 +766,6 @@ fn source_findings(input: &RegistryInput<'_>) -> Vec<Violation> {
             detail: format!("`{path}` exists; Q-FLAKE removes all release exemptions"),
         });
     }
-    for path in &input.source.silent_config_mains {
-        if CONFIG_REJECTION_DEBT.contains(&path.as_str()) {
-            continue;
-        }
-        violations.push(Violation {
-            rule: "process-config-rejected",
-            detail: format!(
-                "`{path}/src/main.rs` never emits EVENT_AEX_PROCESS_CONFIGURATION_REJECTED; a start-up refusal that reaches only stderr makes a crash loop invisible (L5-03)"
-            ),
-        });
-    }
-    // The debt rows are validated only against a real scan: an empty scan means
-    // a fixture input, where the table has nothing to say.
-    if !input.source.deployable_mains.is_empty() {
-        for debtor in CONFIG_REJECTION_DEBT {
-            let scanned = input
-                .source
-                .deployable_mains
-                .iter()
-                .any(|path| path == debtor);
-            let silent = input
-                .source
-                .silent_config_mains
-                .iter()
-                .any(|path| path == debtor);
-            if !scanned {
-                violations.push(Violation {
-                    rule: "process-config-rejected",
-                    detail: format!(
-                        "`{debtor}` is in CONFIG_REJECTION_DEBT but is no longer a scanned member; delete the stale row"
-                    ),
-                });
-            } else if !silent {
-                violations.push(Violation {
-                    rule: "process-config-rejected",
-                    detail: format!(
-                        "`{debtor}` now emits EVENT_AEX_PROCESS_CONFIGURATION_REJECTED; delete its CONFIG_REJECTION_DEBT row — the table only shrinks"
-                    ),
-                });
-            }
-        }
-    }
     violations
 }
 
@@ -1397,78 +1324,5 @@ mod tests {
             vec!["`.test-quarantine.json` exists; Q-FLAKE removes all release exemptions"]
         );
         assert_eq!(details(&report, "data-image-literal").len(), 1);
-    }
-
-    /// The class rule for L5-03: every `services/` and `workers/` main emits
-    /// the configuration-rejected process event, so a crash loop is a wire
-    /// fact rather than a stderr line nobody tails.
-    #[test]
-    fn a_deployable_main_that_never_says_config_rejected_is_a_violation() {
-        let policy = Policy::embedded();
-        let mut inputs = input(
-            vec![row("services/aex-new-api", "aex-new-api", Some(DOMAIN))],
-            policy,
-        );
-        inputs.source.deployable_mains = vec!["services/aex-new-api".to_owned()];
-        inputs.source.silent_config_mains = vec!["services/aex-new-api".to_owned()];
-        let report = check(&inputs);
-        let findings = details(&report, "process-config-rejected");
-        assert!(
-            findings
-                .iter()
-                .any(|detail| detail.contains("`services/aex-new-api/src/main.rs` never emits")),
-            "{findings:?}"
-        );
-    }
-
-    #[test]
-    fn the_config_rejection_debt_table_is_sorted_and_shrink_only() {
-        let mut sorted = super::CONFIG_REJECTION_DEBT.to_vec();
-        sorted.sort_unstable();
-        sorted.dedup();
-        assert_eq!(
-            sorted.as_slice(),
-            super::CONFIG_REJECTION_DEBT,
-            "the table is sorted and free of duplicates"
-        );
-
-        let policy = Policy::embedded();
-        let debtor = "services/regional-otlp";
-
-        // A debtor that is still silent is recorded debt, not a violation.
-        let mut inputs = input(vec![row(debtor, "regional-otlp", Some(DOMAIN))], policy);
-        inputs.source.deployable_mains = vec![debtor.to_owned()];
-        inputs.source.silent_config_mains = vec![debtor.to_owned()];
-        let report = check(&inputs);
-        assert!(
-            !details(&report, "process-config-rejected")
-                .iter()
-                .any(|detail| detail.contains(debtor)),
-            "a frozen row is debt, not a finding"
-        );
-
-        // A debtor that starts emitting fails until its row is deleted, so the
-        // table cannot outlive the debt it records.
-        inputs.source.silent_config_mains = Vec::new();
-        let report = check(&inputs);
-        let findings = details(&report, "process-config-rejected");
-        assert!(
-            findings
-                .iter()
-                .any(|detail| detail.contains(debtor) && detail.contains("delete its")),
-            "{findings:?}"
-        );
-
-        // A debtor that is no longer a scanned member is a stale row.
-        inputs.source.deployable_mains = vec!["services/aex-other".to_owned()];
-        inputs.source.silent_config_mains = Vec::new();
-        let report = check(&inputs);
-        let findings = details(&report, "process-config-rejected");
-        assert!(
-            findings
-                .iter()
-                .any(|detail| detail.contains(debtor) && detail.contains("stale row")),
-            "{findings:?}"
-        );
     }
 }

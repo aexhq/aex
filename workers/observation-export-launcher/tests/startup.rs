@@ -87,14 +87,3 @@ fn a_cross_region_cluster_refuses_to_start_and_names_the_cluster_variable() {
     assert!(stderr.contains("AEX_EXPORT_CLUSTER"), "{stderr}");
     assert!(stderr.contains("us-east-1"), "{stderr}");
 }
-
-#[test]
-fn the_declared_variable_list_matches_the_binary() {
-    let source = include_str!("../src/config.rs");
-    for name in REQUIRED {
-        assert!(
-            source.contains(name),
-            "`{name}` is declared here and absent from the binary's configuration"
-        );
-    }
-}

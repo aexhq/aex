@@ -1,7 +1,7 @@
 //! `aex-workspace-check` owns the structural rules of the AEX Cargo workspace:
 //! the member list and the on-disk tree agree, names are consistent, dependency
 //! direction points inward, no test-support crate can reach a production binary,
-//! the member graph is acyclic, and the frozen inventory is exactly present.
+//! and the member graph is acyclic.
 //!
 //! It reads `cargo metadata`, which is the native manifest graph, and never
 //! maintains a second hand-written dependency graph (`M12`).
@@ -121,9 +121,9 @@ pub fn check_metadata_json(json: &str) -> Result<Vec<Violation>, CheckError> {
 /// Runs the structural rules and the derived test registry against the real
 /// tree.
 ///
-/// The two are reported together because they answer one question: is this
-/// workspace the one the accepted architecture describes, and does every
-/// package say what evidence it owes?
+/// The two are reported together because they answer one question: does the
+/// workspace satisfy its structural contracts, and does every package say what
+/// evidence it owes?
 ///
 /// # Errors
 ///

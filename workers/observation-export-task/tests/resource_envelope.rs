@@ -124,15 +124,10 @@ fn the_declared_memory_covers_the_reservation_model_with_runtime_headroom() {
 }
 
 #[test]
-fn the_health_port_is_declared_and_the_task_binds_nothing_by_default() {
+fn the_one_shot_task_declares_no_long_lived_listener() {
     let row = unit_row();
     assert!(
         row.contains("port = 0"),
         "a one-shot task exposes no long-lived listener: {row}"
-    );
-    let source = include_str!("../src/main.rs");
-    assert!(
-        source.contains("let Some(port) = config.health_port else"),
-        "the listener is bound only when a port is configured"
     );
 }

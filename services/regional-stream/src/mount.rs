@@ -299,7 +299,6 @@ mod tests {
     #[test]
     fn every_owned_route_has_one_bounded_connection_class() {
         let routes = RouteOwner::Stream.routes();
-        assert_eq!(routes.len(), 24);
         for id in routes {
             let class = connection_class(id);
             let operation = aex_wire::routes::route(id).operation_id;

@@ -244,8 +244,7 @@ fn run_check(phase: Phase) -> ExitCode {
     let violations = report.violations();
     if violations.is_empty() {
         println!(
-            "aex-workspace-check: {} member(s) and {} package(s) satisfy every structural and registry rule",
-            aex_workspace_check::inventory::expected_members().len(),
+            "aex-workspace-check: {} package(s) satisfy every structural and registry rule",
             report.collected.packages.len()
         );
         println!(

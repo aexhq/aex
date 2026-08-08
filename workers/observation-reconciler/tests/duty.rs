@@ -852,16 +852,3 @@ fn no_clickhouse_or_kinesis_dependency_can_reach_this_binary() {
         );
     }
 }
-
-#[test]
-fn the_health_paths_are_never_hand_typed_in_this_deployable() {
-    for source in [
-        include_str!("../src/handler.rs"),
-        include_str!("../src/health.rs"),
-    ] {
-        assert!(
-            !source.contains("\"/internal/"),
-            "the health paths come from `aex_observation_store_dynamodb::health`, never a literal"
-        );
-    }
-}

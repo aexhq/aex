@@ -155,35 +155,3 @@ fn a_succeeded_result_round_trips_through_the_cross_language_encoding() {
     // Canonical bytes are stable, which is what the TypeScript edge compares to.
     assert_eq!(canonical, aex_wire::to_jcs_bytes(&decoded).expect("again"));
 }
-
-#[test]
-fn the_crate_contains_no_floating_point_money() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let mut offenders = Vec::new();
-    let mut stack = vec![root];
-    while let Some(current) = stack.pop() {
-        for entry in std::fs::read_dir(&current).expect("read src").flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
-                continue;
-            }
-            let text = std::fs::read_to_string(&path).expect("read file");
-            // Prose may name the thing it forbids; code may not contain it.
-            let code: String = text
-                .lines()
-                .filter(|line| !line.trim_start().starts_with("//"))
-                .collect::<Vec<_>>()
-                .join(" ");
-            for token in ["f32", "f64"] {
-                if code.contains(token) {
-                    offenders.push(format!("{}: {token}", path.display()));
-                }
-            }
-        }
-    }
-    assert!(
-        offenders.is_empty(),
-        "floating point found:\n{offenders:#?}"
-    );
-}

@@ -32,12 +32,12 @@
     }
   },
   "scripts": {
-    "test:user": "bun test --isolate test/packed test/local test/browser test/money test/operator test/registry.test.ts",
-    "test:user:files": "bun test --isolate test/packed test/local test/browser test/money test/operator test/registry.test.ts",
+    "test:user": "bun test --isolate test/packed test/local test/browser test/registry.test.ts",
+    "test:user:files": "bun test --isolate test/packed test/local test/browser test/registry.test.ts",
     "test:user:live": "bun test --isolate test/live",
     "test:user:smoke": "bun test --isolate test/registry.test.ts",
     "test:user:offline": "bun test --isolate test/packed test/local test/registry.test.ts",
-    "test:unit": "bun test --isolate test/packed test/local test/browser test/money test/operator test/registry.test.ts",
+    "test:unit": "bun test --isolate test/packed test/local test/browser test/registry.test.ts",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit"
   },

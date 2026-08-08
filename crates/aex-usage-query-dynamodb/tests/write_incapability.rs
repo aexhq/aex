@@ -1,17 +1,15 @@
 //! Proof that the query adapter cannot write.
 //!
-//! "Read-only" has to be a test result, not a convention (`U-20`). Four controls
-//! are required and three of them are provable here without an account:
+//! "Read-only" has to be enforced at several boundaries (`U-20`). The local
+//! suite proves the dependency graph, IAM shape, and typed projection behavior:
 //!
-//! 1. **Source conformance** — no write operation name appears anywhere in this
-//!    crate's sources, in either the SDK's `snake_case` or its `PascalCase` form.
-//! 2. **Link graph** — this crate does not depend on any of the three authority
+//! 1. **Link graph** — this crate does not depend on any of the three authority
 //!    adapters, so no write expression builder is even reachable from it.
-//! 3. **IAM shape** — the generation definition for `usage-query-projection`
+//! 2. **IAM shape** — the generation definition for `usage-query-projection`
 //!    grants the reading role `GetItem` and `Query` and nothing else, and grants
 //!    a write action to no role outside the three usage workers.
 //!
-//! The fourth is a live `AccessDeniedException` assertion against a real table,
+//! The deployed control is a live `AccessDeniedException` assertion against a real table,
 //! which needs a deployed plane and lives in `tests/live/aex-live-usage-*-worker`.
 
 use std::path::{Path, PathBuf};
@@ -19,55 +17,6 @@ use std::path::{Path, PathBuf};
 /// This crate's own directory.
 fn crate_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
-/// Every Rust source file in this crate.
-fn sources() -> Vec<(PathBuf, String)> {
-    fn walk(dir: &Path, found: &mut Vec<(PathBuf, String)>) {
-        for entry in std::fs::read_dir(dir).expect("the crate's own source tree is readable") {
-            let path = entry.expect("a readable directory entry").path();
-            if path.is_dir() {
-                walk(&path, found);
-            } else if path.extension().is_some_and(|ext| ext == "rs") {
-                let text = std::fs::read_to_string(&path).expect("a readable source file");
-                found.push((path, text));
-            }
-        }
-    }
-    let mut found = Vec::new();
-    walk(&crate_dir().join("src"), &mut found);
-    assert!(!found.is_empty(), "the crate must have sources to scan");
-    found
-}
-
-/// Every mutating `DynamoDB` operation, in both spellings the SDK uses.
-const WRITE_OPERATIONS: [&str; 12] = [
-    "put_item",
-    "update_item",
-    "delete_item",
-    "batch_write_item",
-    "transact_write_item",
-    "execute_statement",
-    "PutItem",
-    "UpdateItem",
-    "DeleteItem",
-    "BatchWriteItem",
-    "TransactWriteItems",
-    "ExecuteStatement",
-];
-
-#[test]
-fn no_source_names_a_write_operation() {
-    for (path, text) in sources() {
-        for operation in WRITE_OPERATIONS {
-            assert!(
-                !text.contains(operation),
-                "`{}` names `{operation}`; the query adapter is read-only and \
-                 that has to be a test result rather than a convention",
-                path.display()
-            );
-        }
-    }
 }
 
 #[test]

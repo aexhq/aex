@@ -175,8 +175,7 @@ mod tests {
         // Observing memory after a drop needs `unsafe`, which the workspace
         // forbids, so the drop guarantee is proved on the wrapper the field
         // actually uses: `Zeroizing<Vec<u8>>` clears its buffer on `zeroize`,
-        // and `Zeroizing` calls exactly that from its `Drop`. The companion
-        // source scan in `tests/security.rs` proves the field still uses it.
+        // and `Zeroizing` calls exactly that from its `Drop`.
         let mut buffer = zeroize::Zeroizing::new(b"hunter2".to_vec());
         buffer.zeroize();
         assert!(buffer.iter().all(|byte| *byte == 0));

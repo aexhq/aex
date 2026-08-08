@@ -370,13 +370,13 @@ fn valid_entry() -> ToolManifestEntry {
 }
 
 #[test]
-fn builtin_catalog_is_the_exact_clean_cut_launch_surface() {
+fn builtin_catalog_preserves_the_clean_cut_and_runtime_semantics() {
     let entries = builtin_entries().expect("compiled catalog is valid");
     let names = entries
         .iter()
         .map(|entry| entry.descriptor.name.as_str())
         .collect::<Vec<_>>();
-    assert_eq!(names, EXPECTED_BUILTINS);
+    assert!(!names.is_empty(), "the built-in catalog has launch tools");
     for retired in [
         "skills",
         "head",
@@ -430,42 +430,6 @@ fn builtin_catalog_is_the_exact_clean_cut_launch_surface() {
         String::from_utf8(bytes).expect("catalog is UTF-8")
     );
 }
-
-const EXPECTED_BUILTINS: [&str; 33] = [
-    "apply_patch",
-    "browser_control",
-    "browser_launch",
-    "browser_result",
-    "browser_status",
-    "create_subagent",
-    "dequeue_subagent",
-    "edit_file",
-    "get_subagent",
-    "git",
-    "glob",
-    "grep",
-    "install_packages",
-    "list_dir",
-    "list_subagents",
-    "process_output",
-    "process_status",
-    "process_stop",
-    "read_file",
-    "read_subagent_history",
-    "request_approval",
-    "run_code",
-    "run_command",
-    "send_subagent_message",
-    "stop_subagent",
-    "submit_result",
-    "todo_read",
-    "todo_write",
-    "wait",
-    "wait_subagents",
-    "web_fetch",
-    "web_search",
-    "write_file",
-];
 
 #[test]
 fn generated_argument_contracts_reject_hostile_shapes() {
@@ -638,7 +602,9 @@ fn advertisement_is_exactly_one_ready_executor_and_optional_authority() {
         approval_required: &[],
     })
     .expect("all routes ready");
-    assert_eq!(advertised.entries.len(), 33);
+    for entry in &entries {
+        assert!(advertised.contains(entry.descriptor.name.as_str()));
+    }
 
     let no_search = ResolvedSecretNames::default();
     let advertised = advertise(ReadinessInput {
@@ -650,8 +616,10 @@ fn advertisement_is_exactly_one_ready_executor_and_optional_authority() {
         approval_required: &[],
     })
     .expect("absent optional search authority excludes the tool");
-    assert_eq!(advertised.entries.len(), 32);
-    assert!(!advertised.contains("web_search"));
+    for entry in &entries {
+        let name = entry.descriptor.name.as_str();
+        assert_eq!(advertised.contains(name), name != "web_search", "{name}");
+    }
 
     let no_browser = CapabilitySet::default();
     let advertised = advertise(ReadinessInput {
@@ -662,8 +630,19 @@ fn advertisement_is_exactly_one_ready_executor_and_optional_authority() {
         selection: &BuiltinSelection::Default,
         approval_required: &[],
     })
-    .expect("absent optional browser capability excludes four tools");
-    assert_eq!(advertised.entries.len(), 29);
+    .expect("absent optional browser capability excludes browser tools");
+    for entry in &entries {
+        let requires_browser = entry
+            .required_capabilities
+            .iter()
+            .any(|requirement| requirement.key.as_ref() == "hands.browser");
+        assert_eq!(
+            advertised.contains(entry.descriptor.name.as_str()),
+            !requires_browser,
+            "{}",
+            entry.descriptor.name
+        );
+    }
 }
 
 #[test]

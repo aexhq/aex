@@ -1,4 +1,4 @@
-//! The compiled-in 33-entry launch catalog.
+//! The compiled-in launch catalog.
 
 use aex_wire::CanonicalJson;
 use aex_wire::ids::{ContentHash, ResourceName};

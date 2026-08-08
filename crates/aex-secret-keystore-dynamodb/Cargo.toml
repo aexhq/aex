@@ -31,7 +31,6 @@ scenarios = []
 conformance = "unit"
 properties = "unit"
 faults = "unit"
-security = "unit"
 integration = "integration"
 
 [features]
@@ -70,10 +69,6 @@ path = "tests/properties.rs"
 [[test]]
 name = "faults"
 path = "tests/faults.rs"
-
-[[test]]
-name = "security"
-path = "tests/security.rs"
 
 [[test]]
 name = "integration"

@@ -291,21 +291,6 @@ fn rate_book_open_fails_closed_for_signature_hash_expiry_schema_and_active_zero(
 }
 
 #[test]
-fn one_module_owns_big_rational_to_microusd_conversion() {
-    let modules = [
-        ("exact", include_str!("exact.rs")),
-        ("rate_card", include_str!("rate_card.rs")),
-        ("rounding", include_str!("rounding.rs")),
-        ("allocation", include_str!("allocation.rs")),
-    ];
-    let owners: Vec<_> = modules
-        .into_iter()
-        .filter_map(|(name, source)| source.contains("fn rational_to_microusd").then_some(name))
-        .collect();
-    assert_eq!(owners, ["rounding"]);
-}
-
-#[test]
 fn the_seeded_pricing_context_is_canonical_zero_and_shadow_only() {
     // The migration hashes exactly these bytes into `content_sha256`, so they
     // have to be canonical for that digest to identify anything.

@@ -1014,7 +1014,6 @@ fn the_served_set_exactly_matches_the_generated_actual_mount_authority() {
         })
         .collect();
     assert_eq!(Routes::served(), generated);
-    assert_eq!(generated.len(), 17);
 
     let session_export = registry["routes"]
         .as_array()

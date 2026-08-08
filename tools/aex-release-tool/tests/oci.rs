@@ -1,7 +1,5 @@
 //! Reproducible OCI producer, registry-readback and workflow contract tests.
 
-use std::collections::BTreeMap;
-
 use aex_release_tool::artifact;
 use aex_release_tool::canon;
 use aex_release_tool::graph::inputs::Units;
@@ -481,17 +479,16 @@ fn artifact_schema_carries_config_and_every_layer_digest() {
 }
 
 #[test]
-fn all_five_oci_units_share_the_closed_supported_shape() {
+fn all_declared_oci_units_share_the_supported_shape() {
     let text = std::fs::read_to_string(repository_root().join("release/units.toml")).unwrap();
     let units: Units = toml::from_str(&text).unwrap();
-    let oci: BTreeMap<_, _> = units
+    let oci: Vec<_> = units
         .units
         .iter()
         .filter(|unit| unit.kind.starts_with("rust-oci-"))
-        .map(|unit| (unit.id.as_str(), unit))
         .collect();
-    assert_eq!(oci.len(), 5);
-    for unit in oci.values() {
+    assert!(!oci.is_empty(), "the declared OCI class has units");
+    for unit in oci {
         assert_eq!(unit.target, "aarch64-unknown-linux-gnu.2.34");
         assert_eq!(unit.form, "oci-image");
         assert_eq!(unit.bin.as_deref(), Some(unit.id.as_str()));

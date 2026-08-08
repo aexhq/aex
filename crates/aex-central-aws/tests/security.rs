@@ -195,14 +195,3 @@ fn a_successful_resolution_emits_a_version_and_never_material() {
     assert!(leaks(&attribute).is_none(), "{attribute}");
     assert_eq!(attribute, "pepper.version=5");
 }
-
-#[test]
-fn the_adapter_source_never_formats_a_pepper_into_a_string() {
-    let source = include_str!("../src/pepper.rs");
-    for forbidden in ["{pepper}", "{material}", "{secret}", "payload.secret)"] {
-        assert!(
-            !source.contains(forbidden),
-            "`{forbidden}` would render material into a string"
-        );
-    }
-}

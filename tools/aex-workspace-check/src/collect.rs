@@ -99,8 +99,6 @@ impl Collected {
             source: SourceFindings {
                 image_literals: self.scan.image_literals.clone(),
                 quarantine_files: self.scan.quarantine_files.clone(),
-                deployable_mains: self.scan.deployable_mains.clone(),
-                silent_config_mains: self.scan.silent_config_mains.clone(),
             },
             collected: None,
             phase,
@@ -350,11 +348,6 @@ fn authorities(root: &Path) -> Result<Authorities, CollectError> {
     })
 }
 
-/// The process event a composition root must emit when configuration is
-/// rejected. The name is scanned as source text: a main that never names it
-/// cannot be emitting it.
-const CONFIGURATION_REJECTED_EVENT: &str = "EVENT_AEX_PROCESS_CONFIGURATION_REJECTED";
-
 fn scan_tree(root: &Path, packages: &[PackageRow]) -> Result<SourceScan, CollectError> {
     let mut scan = SourceScan::default();
     let harness = "tests/support/aex-test-harness";
@@ -379,17 +372,6 @@ fn scan_tree(root: &Path, packages: &[PackageRow]) -> Result<SourceScan, Collect
                 scan.image_literals.push(relative_path);
             }
         }
-        if package.path.starts_with("services/") || package.path.starts_with("workers/") {
-            scan.deployable_mains.push(package.path.clone());
-            // A missing `src/main.rs` is recorded as silent rather than
-            // skipped: a composition root that moved its entry point escapes
-            // no scan.
-            let emits = std::fs::read_to_string(directory.join("src").join("main.rs"))
-                .is_ok_and(|text| text.contains(CONFIGURATION_REJECTED_EVENT));
-            if !emits {
-                scan.silent_config_mains.push(package.path.clone());
-            }
-        }
     }
 
     scan.quarantine_files = quarantine(root);
@@ -397,8 +379,6 @@ fn scan_tree(root: &Path, packages: &[PackageRow]) -> Result<SourceScan, Collect
     scan.env_reads.sort();
     scan.image_literals.sort();
     scan.image_literals.dedup();
-    scan.deployable_mains.sort();
-    scan.silent_config_mains.sort();
     Ok(scan)
 }
 

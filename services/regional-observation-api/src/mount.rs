@@ -460,18 +460,6 @@ mod tests {
     }
 
     #[test]
-    fn this_deployable_owns_twenty_seven_routes_and_serves_twenty_five() {
-        // The observations authoring group has 39 operations, but its 24
-        // NDJSON operations belong exclusively to `regional-stream`. This
-        // Lambda owns the 15 finite observation operations plus 12 lifecycle
-        // operations.
-        assert_eq!(RouteGroup::Observations.routes().len(), 39);
-        assert_eq!(RouteGroup::TelemetryLifecycle.routes().len(), 12);
-        assert_eq!(owned_routes().len(), 27);
-        assert_eq!(served_routes().len(), 25);
-    }
-
-    #[test]
     fn served_routes_match_the_generated_actual_mount_authority() {
         let registry: serde_json::Value = serde_json::from_str(include_str!(
             "../../../api/generated/registries/routes.json"

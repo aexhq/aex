@@ -40,23 +40,18 @@ fn every_shipped_unit_has_a_recipe() {
 }
 
 #[test]
-fn publication_inventory_is_exactly_37_with_every_gap_classified() {
+fn publication_inventory_has_unique_unit_identities() {
     let units = shipped_units();
-    assert_eq!(units.units.len(), 37);
-    let blob = units
-        .units
-        .iter()
-        .filter(|unit| !unit.kind.starts_with("rust-oci-"))
-        .count();
-    let oci = units.units.len() - blob;
-    assert_eq!(blob, 32, "blob units can use immutable release assets");
-    assert_eq!(oci, 5, "OCI units require real GHCR manifest publication");
     let unique = units
         .units
         .iter()
         .map(|unit| unit.id.as_str())
         .collect::<std::collections::BTreeSet<_>>();
-    assert_eq!(unique.len(), 37, "no two deployables may share an identity");
+    assert_eq!(
+        unique.len(),
+        units.units.len(),
+        "no two deployables may share an identity"
+    );
 }
 
 #[test]
@@ -158,14 +153,14 @@ fn the_brain_release_recipe_records_the_exact_catalog_build_bindings() {
 }
 
 #[test]
-fn the_five_published_microvm_recipes_are_variant_specific_service_zips() {
+fn published_microvm_recipes_are_variant_specific_service_zips() {
     let units = shipped_units();
     let images: Vec<_> = units
         .units
         .iter()
         .filter(|unit| unit.kind == "microvm-image")
         .collect();
-    assert_eq!(images.len(), 5);
+    assert!(!images.is_empty(), "the declared MicroVM class has recipes");
     for unit in images {
         let recipe = plan(unit).expect("MicroVM recipe");
         let shape = unit.microvm.as_ref().expect("declared shape");

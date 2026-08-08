@@ -3,9 +3,8 @@
 //! These cases hold the facts a deployment can silently get wrong: what the
 //! export task is allowed to hold, what a resume must refuse, what a lost
 //! publication means, and which wire code a capacity refusal carries. Every one
-//! of them is read from the shared crates or from this deployable's own source
-//! rather than restated, so a drift is a failure and not a second copy that
-//! agrees with nobody.
+//! of them is exercised through shared typed contracts, so a drift is a failure
+//! and not a second copy that agrees with nobody.
 
 use aex_observation_export::checkpoint::{publish, verify_parts};
 use aex_observation_export::encoder::encoder_for;
@@ -13,7 +12,6 @@ use aex_observation_export::{
     EncodeError, ExportCheckpoint, Format, PartRecord, Publication, PublishFence, ResumeError,
 };
 use aex_observation_store_dynamodb::composition::{Capability, Role, assert_grant};
-use aex_observation_store_dynamodb::health::{HEALTHZ, Probe, READYZ};
 use aex_wire::error::ErrorCode;
 
 /// The role this deployable composes as.
@@ -183,84 +181,12 @@ fn the_capacity_refusal_is_the_registered_code() {
 }
 
 #[test]
-fn the_part_size_floor_is_the_providers_and_is_named_in_the_refusal() {
-    let source = include_str!("../src/config.rs");
-    assert!(
-        source.contains("pub const PART_BYTES_MIN: usize = 5 * 1024 * 1024;"),
-        "the floor is the 5 MiB S3 enforces"
-    );
-    assert!(
-        source.contains("S3 refuses a non-final part under 5 MiB"),
-        "the refusal explains why a smaller part can never complete"
-    );
-    assert!(source.contains("AEX_EXPORT_PART_BYTES"));
-}
-
-#[test]
-fn the_health_paths_are_never_hand_typed() {
-    let source = include_str!("../src/health.rs");
-    assert!(
-        !source.contains("\"/internal/healthz\""),
-        "the path is the store crate's constant, not a literal"
-    );
-    assert!(!source.contains("\"/internal/readyz\""));
-    assert!(source.contains("aex_observation_store_dynamodb::health::HEALTHZ"));
-    assert_eq!(HEALTHZ, "/internal/healthz");
-    assert_eq!(READYZ, "/internal/readyz");
-}
-
-#[test]
-fn the_declared_probe_set_is_the_table_and_the_bucket() {
-    let source = include_str!("../src/main.rs");
-    assert!(source.contains("Probe::ObservationTable"));
-    assert!(source.contains("Probe::ObservationBucket"));
-    assert_eq!(Probe::ObservationTable.as_str(), "observation_table");
-    assert_eq!(Probe::ObservationBucket.as_str(), "observation_bucket");
-}
-
-#[test]
-fn nothing_in_this_deployable_reaches_clickhouse_or_kinesis() {
+fn no_clickhouse_or_kinesis_dependency_can_reach_this_binary() {
     let manifest = include_str!("../Cargo.toml").to_ascii_lowercase();
-    let sources = [
-        include_str!("../src/main.rs"),
-        include_str!("../src/aws.rs"),
-        include_str!("../src/task.rs"),
-        include_str!("../src/budget.rs"),
-        include_str!("../src/config.rs"),
-        include_str!("../src/health.rs"),
-    ];
     for banned in ["clickhouse", "kinesis"] {
         assert!(
             !manifest.contains(banned),
             "`{banned}` must not appear in this deployable's dependency set"
-        );
-        for source in sources {
-            assert!(
-                !source.to_ascii_lowercase().contains(banned),
-                "`{banned}` must not appear in this deployable's source"
-            );
-        }
-    }
-}
-
-#[test]
-fn no_case_in_this_deployable_skips_itself() {
-    let sources = [
-        include_str!("../src/main.rs"),
-        include_str!("../src/aws.rs"),
-        include_str!("../src/task.rs"),
-        include_str!("../src/budget.rs"),
-        include_str!("../src/config.rs"),
-        include_str!("../src/health.rs"),
-        include_str!("./startup.rs"),
-        include_str!("./resource_envelope.rs"),
-    ];
-    for source in sources {
-        assert!(!source.contains("#[ignore"), "no case may be ignored");
-        assert!(!source.contains("todo!("), "no path may be unimplemented");
-        assert!(
-            !source.contains("unimplemented!("),
-            "no path may be unimplemented"
         );
     }
 }

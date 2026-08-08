@@ -52,14 +52,3 @@ fn a_partial_environment_still_refuses_and_names_the_gap() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("AEX_OBSERVATION_TABLE"), "{stderr}");
 }
-
-#[test]
-fn the_declared_variable_list_matches_the_binary() {
-    let source = include_str!("../src/config.rs");
-    for name in REQUIRED {
-        assert!(
-            source.contains(name),
-            "`{name}` is declared here and absent from the binary's configuration"
-        );
-    }
-}

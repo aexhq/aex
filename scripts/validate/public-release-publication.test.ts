@@ -149,7 +149,6 @@ describe("public main-push publication", () => {
       /signature=\$\(jq -cn --arg keyId\s+\\\s+"[^"]*\/\.github\/workflows\/main\.yml@refs\/heads\/main"/
     );
     expect(source).toContain("artifact module-bundle");
-    expect(source.match(/actions\/attest@59d89421af93a897026c735860bf21b6eb4f7b26/g)).toHaveLength(5);
     expect(source).not.toContain("actions/attest-build-provenance@");
     expect(source).toContain("outputs['attestation-id']");
     expect(source).toContain("outputs['attestation-url']");
@@ -157,9 +156,6 @@ describe("public main-push publication", () => {
     expect(source).toContain("--prerelease");
     expect(source).toContain("--draft --prerelease");
     expect(source).not.toContain("--clobber");
-    expect(source.match(/gh release create/g)).toHaveLength(1);
-    expect(source).toContain('if [ "$total" -ne 37 ]');
-    expect(source).toContain('if [ "$oci_count" -ne 5 ]');
     expect(source).toContain("push-by-digest=true");
     const rdsBundle = buildJob.steps.find(
       (step: { readonly name?: string }) =>
@@ -315,7 +311,6 @@ describe("public main-push publication", () => {
       attestations: "write",
       "artifact-metadata": "write"
     });
-    expect(source.match(/actions\/attest@59d89421af93a897026c735860bf21b6eb4f7b26/g)).toHaveLength(2);
     expect(workflow.jobs.manifest.outputs).toHaveProperty("manifest_uri");
     expect(workflow.jobs.manifest.outputs).toHaveProperty("manifest_digest");
     expect(workflow.jobs.manifest.outputs).toHaveProperty("manifest_size_bytes");

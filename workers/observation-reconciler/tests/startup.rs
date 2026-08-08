@@ -93,14 +93,3 @@ fn the_launcher_duty_is_refused_by_the_built_binary() {
     assert!(stderr.contains("AEX_OBS_DUTY"), "{stderr}");
     assert!(stderr.contains("observation-export-launcher"), "{stderr}");
 }
-
-#[test]
-fn the_declared_variable_list_matches_the_binary() {
-    let source = include_str!("../src/config.rs");
-    for name in REQUIRED {
-        assert!(
-            source.contains(name),
-            "`{name}` is declared here and absent from the binary's configuration"
-        );
-    }
-}

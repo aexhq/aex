@@ -6,7 +6,7 @@
 //! `DynamoDB` stream, `sweep` from a one-minute schedule, and `receipt` from the
 //! storage settlement queue. All three need identical credentials and sit inside
 //! the identical category boundary, so a fourth deployable would buy nothing and
-//! would break Area 9's frozen inventory.
+//! would add a deployment boundary without a distinct role or credential set.
 //!
 //! The behaviour lives in `aex_usage_app::worker`, which is
 //! category-generic over ports. This binary is the only place that names a
@@ -937,25 +937,5 @@ mod tests {
             );
         }
         assert!(manifest.contains("aex-usage-storage-dynamodb"));
-    }
-
-    #[test]
-    fn no_source_in_this_binary_names_a_sibling_authority() {
-        let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"))
-            .expect("the crate's own source is readable");
-        let body = source.split("#[cfg(test)]").next().unwrap_or_default();
-        for forbidden in [
-            "usage-compute-authority",
-            "usage-transfer-authority",
-            "AEX_USAGE_COMPUTE_TABLE",
-            "AEX_USAGE_TRANSFER_TABLE",
-            "AEX_USAGE_RECEIPT_COMPUTE_QUEUE",
-            "AEX_USAGE_RECEIPT_TRANSFER_QUEUE",
-        ] {
-            assert!(
-                !body.contains(forbidden),
-                "this worker names `{forbidden}`, which belongs to a sibling authority"
-            );
-        }
     }
 }

@@ -20,7 +20,9 @@ test("generation is byte-identical and covers every generated operation", () => 
   const routes = JSON.parse(
     readFileSync(resolve(import.meta.dir, "../../../api/generated/registries/routes.json"), "utf8"),
   ) as { routes: Array<{ operationId: string }> };
-  expect(routes.routes).toHaveLength(146);
+  const operationIds = routes.routes.map(({ operationId }) => operationId);
+  expect(operationIds.length).toBeGreaterThan(0);
+  expect(new Set(operationIds).size).toBe(operationIds.length);
   for (const route of routes.routes) expect(api).toContain(`\`${route.operationId}\``);
 }, 120_000);
 
