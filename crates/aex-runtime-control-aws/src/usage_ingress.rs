@@ -7,9 +7,61 @@ use aex_runtime_control::usage::{SinkError, UsageCategory, UsageFactSink};
 use aex_usage_domain::fact::FactDraft;
 use aex_usage_domain::ingress::FactDraftEnvelope;
 use aws_sdk_sqs::Client;
+use aws_sdk_sqs::error::{ProvideErrorMetadata, SdkError};
 
 /// Maximum SQS message body size.
 const SQS_BODY_MAX_BYTES: usize = 256 * 1024;
+
+/// The service-error codes no redelivery can clear.
+///
+/// Every one of these is a binding or grammar fault: the queue named by
+/// `AEX_USAGE_*_QUEUE_URL` does not exist, the role may not write to it, or the
+/// request is malformed for the queue's own type. Redriving them to
+/// `MAX_RECEIVE_COUNT` and only then quarantining turns a deploy-time
+/// misconfiguration into a slow leak that reports as a transient outage, which
+/// is exactly the shape the dev plane already produced once. Both spellings of
+/// the missing-queue refusal are listed because the JSON protocol answers
+/// `QueueDoesNotExist` while the legacy query protocol answers
+/// `AWS.SimpleQueueService.NonExistentQueue`, and a producer that only knows one
+/// of them silently reclassifies the other as retryable.
+///
+/// `MissingParameter` is here for a specific trap: neither ingress queue is
+/// FIFO today and this producer sends no `MessageGroupId`. If either queue is
+/// ever recreated as `.fifo`, every send fails with that code forever.
+const TERMINAL_SQS_CODES: [&str; 8] = [
+    "QueueDoesNotExist",
+    "AWS.SimpleQueueService.NonExistentQueue",
+    "AccessDenied",
+    "AccessDeniedException",
+    "InvalidAddress",
+    "InvalidParameterValue",
+    "InvalidMessageContents",
+    "MissingParameter",
+];
+
+/// Classifies one send failure as permanent or worth redriving.
+///
+/// The default is [`SinkError::Unavailable`], because an unrecognised failure is
+/// more likely to be an outage than a grammar fault; the named codes are the
+/// ones that are never worth another delivery.
+fn classify<E, R>(category: UsageCategory, error: &SdkError<E, R>) -> SinkError
+where
+    E: ProvideErrorMetadata,
+{
+    let reason = error.to_string();
+    match error {
+        SdkError::ServiceError(service) => {
+            let code = service.err().code().unwrap_or("Unknown");
+            let reason = format!("{reason} (the service reported `{code}`)");
+            if TERMINAL_SQS_CODES.contains(&code) {
+                SinkError::Refused { category, reason }
+            } else {
+                SinkError::Unavailable { category, reason }
+            }
+        }
+        _ => SinkError::Unavailable { category, reason },
+    }
+}
 
 /// One category's queue producer.
 ///
@@ -85,10 +137,7 @@ impl UsageFactSink for SqsFactDraftSink {
                 .message_body(body)
                 .send()
                 .await
-                .map_err(|error| SinkError::Unavailable {
-                    category,
-                    reason: error.to_string(),
-                })?;
+                .map_err(|error| classify(category, &error))?;
             Ok(())
         })
     }

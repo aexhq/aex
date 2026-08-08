@@ -373,7 +373,13 @@ impl ParameterStore {
             .await
             .map_err(|error| TrustError::Unreadable {
                 name: name.to_owned(),
-                reason: error.to_string(),
+                // `SdkError`'s own `Display` is the bare word "service error"
+                // for every service failure, so an access denial, a throttle and
+                // an absent parameter all read identically in the last line this
+                // process writes before it exits. `DisplayErrorContext` walks the
+                // source chain and names the code, which is the difference
+                // between "fix the role" and "fix the parameter".
+                reason: aws_sdk_ssm::error::DisplayErrorContext(&error).to_string(),
             })?;
         let value = output
             .parameter

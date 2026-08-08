@@ -112,10 +112,18 @@ where
                 "InvalidParameterValue" | "InvalidMessageContents" | "UnsupportedOperation" => {
                     PortError::Corrupt { what: WHAT, reason }
                 }
-                "QueueDoesNotExist" => PortError::NotFound {
-                    what: WHAT,
-                    id: reason,
-                },
+                // Both spellings of the same refusal: the JSON protocol answers
+                // `QueueDoesNotExist`, the legacy query protocol answers
+                // `AWS.SimpleQueueService.NonExistentQueue`. Knowing only one of
+                // them silently reclassifies a permanently wrong queue binding
+                // as retryable, and the outbox then redrives a misconfiguration
+                // instead of surfacing it.
+                "QueueDoesNotExist" | "AWS.SimpleQueueService.NonExistentQueue" => {
+                    PortError::NotFound {
+                        what: WHAT,
+                        id: reason,
+                    }
+                }
                 _ => PortError::Unavailable { what: WHAT, reason },
             }
         }
