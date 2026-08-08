@@ -140,6 +140,7 @@ jobs:
   node:
     name: TypeScript
     needs: [tools, route]
+    if: needs.route.outputs.has_node == 'true'
     uses: ./.github/workflows/_node-lane.yml
     with:
       matrix: ${{ needs.route.outputs.node_matrix }}
@@ -181,7 +182,7 @@ jobs:
       needs.route.result == 'success' &&
       needs.gates.result == 'success' &&
       (needs.verify.result == 'success' || needs.verify.result == 'skipped') &&
-      needs.node.result == 'success' &&
+      (needs.node.result == 'success' || needs.node.result == 'skipped') &&
       (needs.scenarios.result == 'success' || needs.scenarios.result == 'skipped') &&
       (needs.terraform.result == 'success' || needs.terraform.result == 'skipped')
     permissions:
@@ -475,4 +476,4 @@ jobs:
       node_matrix: ${{ needs.route.outputs.node_matrix }}
       terraform_matrix: ${{ needs.route.outputs.terraform_matrix }}
       required_job_results: >-
-        {"tools":{"result":"${{ needs.tools.result }}","allowSkipped":false},"route":{"result":"${{ needs.route.result }}","allowSkipped":false},"gates":{"result":"${{ needs.gates.result }}","allowSkipped":false},"verify":{"result":"${{ needs.verify.result }}","allowSkipped":true},"node":{"result":"${{ needs.node.result }}","allowSkipped":false},"scenarios":{"result":"${{ needs.scenarios.result }}","allowSkipped":true},"terraform":{"result":"${{ needs.terraform.result }}","allowSkipped":true},"build":{"result":"${{ needs.build.result }}","allowSkipped":false},"manifest":{"result":"${{ needs.manifest.result }}","allowSkipped":false}}
+        {"tools":{"result":"${{ needs.tools.result }}","allowSkipped":false},"route":{"result":"${{ needs.route.result }}","allowSkipped":false},"gates":{"result":"${{ needs.gates.result }}","allowSkipped":false},"verify":{"result":"${{ needs.verify.result }}","allowSkipped":true},"node":{"result":"${{ needs.node.result }}","allowSkipped":true},"scenarios":{"result":"${{ needs.scenarios.result }}","allowSkipped":true},"terraform":{"result":"${{ needs.terraform.result }}","allowSkipped":true},"build":{"result":"${{ needs.build.result }}","allowSkipped":false},"manifest":{"result":"${{ needs.manifest.result }}","allowSkipped":false}}
