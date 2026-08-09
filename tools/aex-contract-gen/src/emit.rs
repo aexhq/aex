@@ -87,6 +87,14 @@ pub fn emit_all(ir: &ContractIr) -> GeneratedTree {
         crate::typescript::typescript_wire(ir, &digest),
     );
     tree.insert(
+        "packages/sdk/src/generated/routes.ts",
+        crate::typescript_sdk::typescript_sdk_routes(ir, &digest),
+    );
+    tree.insert(
+        "packages/sdk/src/generated/errors.ts",
+        crate::typescript_sdk::typescript_sdk_errors(ir, &digest),
+    );
+    tree.insert(
         "conformance/routes/bindings.jsonl",
         route_binding_corpus(ir),
     );

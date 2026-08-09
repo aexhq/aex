@@ -31,6 +31,12 @@ conformance/** text eol=lf
 # this file exists to stop crying.
 packages/wire/src/generated/** text eol=lf
 
+# The SDK's generated route table and error vocabulary are written by the same
+# generator into the package that ships them, because `@aexhq/sdk` is published
+# with no runtime dependencies and so cannot import `@aexhq/wire`. Same rule,
+# same reason.
+packages/sdk/src/generated/** text eol=lf
+
 # The derived test registry and the unearned-evidence ledger are rewritten by
 # `aex-workspace-check registry build` on every manifest change and are meant to
 # be regenerated on conflict, like `Cargo.lock`. Without this, the tool writes LF,

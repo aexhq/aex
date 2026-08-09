@@ -1,9 +1,16 @@
-import {
-  ERROR_METADATA,
-  type AexErrorCode,
-  type ErrorClass,
-  type RouteId,
-} from "../wire_pending.js";
+import { ERROR_METADATA, type ErrorClass } from "../generated/errors.js";
+import { type RouteId } from "../generated/routes.js";
+
+/**
+ * A public error code as it arrives on the wire.
+ *
+ * Deliberately open rather than a union of the generated vocabulary: a deployed
+ * platform may answer with a code newer than the installed SDK, and an unknown
+ * code must reach the caller as data instead of failing to type-check.
+ * `ERROR_METADATA` is the closed part — a lookup miss is what "newer than this
+ * SDK" looks like at runtime.
+ */
+export type AexErrorCode = string;
 
 export class AexError extends Error {
   constructor(message: string) {

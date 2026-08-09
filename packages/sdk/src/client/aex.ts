@@ -2,7 +2,7 @@ import { parseCredential, type ParsedCredential } from "./credentials.js";
 import { resolveCentralBaseUrl, resolveRegionalBaseUrl } from "./routing.js";
 import { AexConfigError } from "../transport/errors.js";
 import { FetchTransport, type AexTransport, type WireRequest } from "../transport/transport.js";
-import { ROUTES, type RouteId } from "../wire_pending.js";
+import { CONTRACT_DIGEST, ROUTES, type RouteId } from "../generated/routes.js";
 
 export interface AexOptions {
   readonly apiKey: string;
@@ -79,7 +79,7 @@ export class Aex {
   }
 
   static buildInfo(): Readonly<{ packageVersion: string; contractDigest: string; sourceSha: string }> {
-    return Object.freeze({ packageVersion: "0.50.0", contractDigest: "wire-pending", sourceSha: "development" });
+    return Object.freeze({ packageVersion: "0.50.0", contractDigest: CONTRACT_DIGEST, sourceSha: "development" });
   }
 }
 

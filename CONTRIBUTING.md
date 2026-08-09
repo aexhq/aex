@@ -46,7 +46,8 @@ surprises.
   entries; a test that cannot run is one to fix or delete, never to skip.
 - **Public API changes need docs** under
   [`apps/site/content/docs/`](apps/site/content/docs/).
-- **Never hand-edit generated output.** `api/generated/` and `crates/aex-wire/src/generated/`
+- **Never hand-edit generated output.** `api/generated/`, `crates/aex-wire/src/generated/`,
+  `packages/wire/src/generated/` and `packages/sdk/src/generated/`
   are written by `cargo run -p aex-contract-gen -- build` from the schemas under
   `api/schemas/`, and the site reference tree is written by `apps/site/generate`.
   Edit the source and rerun the generator; a hand edit is reported by

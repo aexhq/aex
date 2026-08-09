@@ -1,4 +1,4 @@
-import { ROUTES, type RouteId } from "../wire_pending.js";
+import { ROUTES, type RouteId } from "../generated/routes.js";
 
 export interface WireRequest {
   readonly routeId: RouteId;

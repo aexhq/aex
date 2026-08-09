@@ -38,6 +38,7 @@ pub mod rustsrc;
 pub mod surface;
 pub mod tree;
 pub mod typescript;
+pub mod typescript_sdk;
 
 use std::path::Path;
 
