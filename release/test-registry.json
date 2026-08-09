@@ -8,10 +8,10 @@
     "scenario_ownership": "present"
   },
   "totals": {
-    "awaiting_owner": 44,
+    "awaiting_owner": 45,
     "capacity_gates": 19,
-    "live_targets": 35,
-    "packages": 146,
+    "live_targets": 36,
+    "packages": 148,
     "seams_claimed": 33,
     "seams_declared": 35,
     "workloads": 8
@@ -2601,6 +2601,48 @@
       "unmapped_targets": [],
       "awaiting_owner": true
     },
+    "services/central-api": {
+      "name": "central-api",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-identity",
+        "role": "deployable",
+        "artifact": "oci_image",
+        "deployable": "central-api",
+        "live_suite": "aex-live-central-api",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.rds_data.transaction",
+          "aws.iam.denial",
+          "aws.alb.framing"
+        ],
+        "security_tier": "public_edge",
+        "risk": [
+          "iam",
+          "untrusted_input",
+          "money"
+        ],
+        "scenarios": [],
+        "targets": {
+          "composition": "unit",
+          "faults": "unit",
+          "resource_envelope": "e2e"
+        },
+        "not_applicable": {}
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": false
+    },
     "services/central-authz": {
       "name": "central-authz",
       "kind": "cargo",
@@ -3099,6 +3141,44 @@
       },
       "unmapped_targets": [],
       "awaiting_owner": false
+    },
+    "tests/live/aex-live-central-api": {
+      "name": "aex-live-central-api",
+      "kind": "cargo",
+      "meta": {
+        "owner": "central-identity",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "central-api",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.alb.framing",
+          "aws.aurora.serverless_v2",
+          "aws.iam.denial",
+          "aws.rds_data.transaction",
+          "stripe.test_mode.webhook"
+        ],
+        "security_tier": "public_edge",
+        "risk": [
+          "iam",
+          "money"
+        ],
+        "scenarios": [],
+        "targets": {},
+        "not_applicable": {
+          "targets": "awaiting the central-identity stream to deploy the merged edge behind its load balancer; live evidence cannot be earned before deployment (OD-07)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": true
     },
     "tests/live/aex-live-central-authz": {
       "name": "aex-live-central-authz",
@@ -5270,6 +5350,7 @@
   },
   "live_targets": [
     "aex-live-brain-mux",
+    "aex-live-central-api",
     "aex-live-central-authz",
     "aex-live-central-control-api",
     "aex-live-central-control-worker",
@@ -5307,11 +5388,13 @@
   ],
   "seam_claims": {
     "aws.alb.framing": [
+      "aex-live-central-api",
       "aex-live-central-control-api",
       "aex-live-central-identity-api",
       "aex-live-session-stream-api"
     ],
     "aws.aurora.serverless_v2": [
+      "aex-live-central-api",
       "aex-live-central-control-api",
       "aex-live-central-identity-api",
       "aex-live-central-schema-admin",
@@ -5370,6 +5453,7 @@
     ],
     "aws.iam.denial": [
       "aex-live-brain-mux",
+      "aex-live-central-api",
       "aex-live-central-authz",
       "aex-live-central-control-api",
       "aex-live-central-control-worker",
@@ -5416,6 +5500,7 @@
       "aex-live-runtime-control-worker"
     ],
     "aws.rds_data.transaction": [
+      "aex-live-central-api",
       "aex-live-central-authz",
       "aex-live-central-control-api",
       "aex-live-central-control-worker",
@@ -5500,6 +5585,7 @@
       "aex-live-model-catalog"
     ],
     "stripe.test_mode.webhook": [
+      "aex-live-central-api",
       "aex-live-finance-api",
       "aex-live-finance-ingest",
       "aex-live-finance-reconcile",

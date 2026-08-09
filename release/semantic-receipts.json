@@ -1,6 +1,8 @@
 {
   "schema": "aex.semantic-receipts.v1",
   "producers": [
+    { "unit": "central-api", "package": "central-api", "class": "contract", "layer": "unit", "filterset": "all()" },
+    { "unit": "central-api", "package": "central-api", "class": "property", "layer": "unit", "filterset": "all()" },
     { "unit": "central-identity-api", "package": "central-identity-api", "class": "contract", "layer": "unit", "filterset": "all()" },
     { "unit": "central-authz", "package": "central-authz", "class": "contract", "layer": "unit", "filterset": "all()" },
     { "unit": "central-authz", "package": "central-authz", "class": "property", "layer": "unit", "filterset": "all()" },

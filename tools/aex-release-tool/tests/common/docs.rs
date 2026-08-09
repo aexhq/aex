@@ -30,7 +30,7 @@ pub fn valid_envelope() -> Value {
         "schema": "aex.artifact-envelope.v1",
         "envelopeDigest": digest(1),
         "artifactSubjectDigest": digest(2),
-        "unit": { "id": "regional-session-api", "kind": "rust-lambda", "plane": "regional" },
+        "unit": { "id": "regional-otlp", "kind": "rust-lambda", "plane": "regional" },
         "media": { "mediaType": "application/zip", "form": "zip" },
         "source": {
             "repository": "aexhq/aex",
@@ -71,7 +71,7 @@ pub fn valid_envelope() -> Value {
             },
             "location": {
                 "kind": "s3",
-                "uri": "lambda/regional-session-api/deadbeef.zip",
+                "uri": "lambda/regional-otlp/deadbeef.zip",
                 "immutable": true
             }
         },
@@ -88,7 +88,7 @@ pub fn valid_envelope() -> Value {
         "sbom": {
             "format": "cyclonedx-1.6",
             "digest": digest(7),
-            "uri": "sbom/regional-session-api.json",
+            "uri": "sbom/regional-otlp.json",
             "componentCount": 214
         },
         "licenses": { "policyDigest": digest(8), "verdict": "allowed", "denials": [] },
@@ -143,14 +143,14 @@ pub fn valid_manifest() -> Value {
             "target": "x86_64-unknown-linux-musl"
         },
         "units": {
-            "regional-session-api": {
+            "regional-otlp": {
                 "kind": "rust-lambda",
                 "envelopeDigest": digest(1),
                 "artifactDigest": digest(5),
                 "sizeBytes": 4096,
                 "location": {
                     "kind": "s3",
-                    "uri": "lambda/regional-session-api/deadbeef.zip",
+                    "uri": "lambda/regional-otlp/deadbeef.zip",
                     "immutable": true
                 },
                 "target": {
@@ -195,7 +195,7 @@ pub fn valid_manifest() -> Value {
         },
         "order": [{
             "name": "regional-api",
-            "units": ["regional-session-api"],
+            "units": ["regional-otlp"],
             "mode": "parallel",
             "rationale": "default order stage; nothing in it depends on anything else in it"
         }],
@@ -252,7 +252,7 @@ pub fn valid_statement() -> Value {
         "bindingRef": sha1(),
         "regions": ["eu-west-1"],
         "deployed": [{
-            "unit": "regional-session-api",
+            "unit": "regional-otlp",
             "expectedDigest": digest(5),
             "actualDigest": digest(5),
             "actualVersionOrAlias": "live",

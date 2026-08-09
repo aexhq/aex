@@ -105,6 +105,7 @@ pub const CRATES: &[&str] = &[
 
 /// Deployable services that must own live companions.
 pub const SERVICES: &[&str] = &[
+    "central-api",
     "central-authz",
     "central-control-api",
     "central-identity-api",
@@ -113,8 +114,7 @@ pub const SERVICES: &[&str] = &[
     "regional-observation-api",
     "regional-otlp",
     "regional-secret-api",
-    "regional-session-api",
-    "regional-stream",
+    "session-stream-api",
 ];
 
 /// Deployable workers that must own live companions.
@@ -156,6 +156,7 @@ pub const TOOLS: &[&str] = &[
 /// companions that explicitly record their deployable as not yet applicable.
 pub const LIVE_TARGETS: &[&str] = &[
     "brain-mux",
+    "central-api",
     "central-authz",
     "central-control-api",
     "central-control-worker",
@@ -180,10 +181,9 @@ pub const LIVE_TARGETS: &[&str] = &[
     "regional-otlp",
     "regional-secret-api",
     "regional-secret-key-admin",
-    "regional-session-api",
-    "regional-stream",
     "runtime-control-worker",
     "session-operation-worker",
+    "session-stream-api",
     "site",
     "stripe-command-edge",
     "stripe-webhook-edge",

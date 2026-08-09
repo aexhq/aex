@@ -21,19 +21,19 @@ fn handoff_registry() -> Units {
 schema = "aex.units.v1"
 
 [[unit]]
-id = "regional-session-api"
+id = "regional-otlp"
 kind = "rust-lambda"
 plane = "regional"
-package = "regional-session-api"
-bin = "regional-session-api"
+package = "regional-otlp"
+bin = "regional-otlp"
 target = "aarch64-unknown-linux-gnu.2.34"
 profile = "release-lambda"
 form = "zip"
 entrypoint = "bootstrap"
-config_env_namespace = "AEX_REGIONAL_SESSION_"
+config_env_namespace = "AEX_REGIONAL_OTLP_"
 config_schema_version = 1
 required_receipts = ["unit"]
-alarm_spec = "regional-session-api"
+alarm_spec = "regional-otlp"
 
 [unit.lambda]
 memory_mb = 1024
@@ -46,7 +46,7 @@ reserved_concurrency = 8
 
 fn handoff_envelope() -> ArtifactEnvelope {
     let mut value = valid_envelope();
-    value["identities"]["configEnvNamespace"] = serde_json::json!("AEX_REGIONAL_SESSION_");
+    value["identities"]["configEnvNamespace"] = serde_json::json!("AEX_REGIONAL_OTLP_");
     serde_json::from_value::<ArtifactEnvelope>(value)
         .unwrap()
         .seal()
@@ -292,18 +292,18 @@ fn composition_handoff_emits_the_exact_verified_envelope_store() {
 
     assert_eq!(store.len(), 1);
     assert_eq!(
-        store["regional-session-api"].envelope_digest,
+        store["regional-otlp"].envelope_digest,
         envelope.envelope_digest
     );
     assert_eq!(
-        manifest.units["regional-session-api"].envelope_digest,
+        manifest.units["regional-otlp"].envelope_digest,
         envelope.envelope_digest
     );
     assert_eq!(
-        manifest.units["regional-session-api"].artifact_digest,
+        manifest.units["regional-otlp"].artifact_digest,
         envelope.output.digest
     );
-    let manifest_shape = manifest.units["regional-session-api"].lambda.unwrap();
+    let manifest_shape = manifest.units["regional-otlp"].lambda.unwrap();
     let registry_shape = registry.units[0].lambda.unwrap();
     assert_eq!(manifest_shape.memory_mb, registry_shape.memory_mb);
     assert_eq!(manifest_shape.timeout_s, registry_shape.timeout_s);
@@ -315,13 +315,9 @@ fn composition_handoff_emits_the_exact_verified_envelope_store() {
     let mut changed_shape = manifest;
     let changed_lambda = aex_release_tool::manifest::ManifestLambdaShape {
         memory_mb: 2_048,
-        ..changed_shape.units["regional-session-api"].lambda.unwrap()
+        ..changed_shape.units["regional-otlp"].lambda.unwrap()
     };
-    changed_shape
-        .units
-        .get_mut("regional-session-api")
-        .unwrap()
-        .lambda = Some(changed_lambda);
+    changed_shape.units.get_mut("regional-otlp").unwrap().lambda = Some(changed_lambda);
     let changed_shape = changed_shape.seal().unwrap();
     assert_ne!(changed_shape.release_id, original_release_id);
     changed_shape.validate(true).unwrap();
@@ -330,7 +326,7 @@ fn composition_handoff_emits_the_exact_verified_envelope_store() {
 #[test]
 fn manifest_validation_rejects_a_missing_or_wrong_kind_shape() {
     let mut missing = valid_manifest();
-    missing["units"]["regional-session-api"]
+    missing["units"]["regional-otlp"]
         .as_object_mut()
         .unwrap()
         .remove("lambda");
@@ -347,7 +343,7 @@ fn manifest_validation_rejects_a_missing_or_wrong_kind_shape() {
     );
 
     let mut conflict = valid_manifest();
-    conflict["units"]["regional-session-api"]["fargate"] = serde_json::json!({
+    conflict["units"]["regional-otlp"]["fargate"] = serde_json::json!({
         "cpu": 256,
         "memoryMiB": 512,
         "desiredCount": 1,
@@ -384,12 +380,12 @@ fn every_resource_shape_field_participates_in_the_release_id() {
         ("reservedConcurrency", serde_json::json!(9)),
     ] {
         let mut changed = lambda.clone();
-        changed["units"]["regional-session-api"]["lambda"][field] = value;
+        changed["units"]["regional-otlp"]["lambda"][field] = value;
         assert_ne!(sealed(changed).release_id, lambda_id, "Lambda `{field}`");
     }
 
     let mut fargate = valid_manifest();
-    let unit = &mut fargate["units"]["regional-session-api"];
+    let unit = &mut fargate["units"]["regional-otlp"];
     unit["kind"] = serde_json::json!("rust-oci-service");
     unit.as_object_mut().unwrap().remove("lambda");
     unit["fargate"] = serde_json::json!({
@@ -408,12 +404,12 @@ fn every_resource_shape_field_participates_in_the_release_id() {
         ("port", serde_json::json!(9090)),
     ] {
         let mut changed = fargate.clone();
-        changed["units"]["regional-session-api"]["fargate"][field] = value;
+        changed["units"]["regional-otlp"]["fargate"][field] = value;
         assert_ne!(sealed(changed).release_id, fargate_id, "Fargate `{field}`");
     }
 
     let mut microvm = valid_manifest();
-    let unit = &mut microvm["units"]["regional-session-api"];
+    let unit = &mut microvm["units"]["regional-otlp"];
     unit["kind"] = serde_json::json!("microvm-image");
     unit.as_object_mut().unwrap().remove("lambda");
     unit["microvm"] = serde_json::json!({
@@ -428,7 +424,7 @@ fn every_resource_shape_field_participates_in_the_release_id() {
         ("browser", serde_json::json!(true)),
     ] {
         let mut changed = microvm.clone();
-        changed["units"]["regional-session-api"]["microvm"][field] = value;
+        changed["units"]["regional-otlp"]["microvm"][field] = value;
         assert_ne!(sealed(changed).release_id, microvm_id, "MicroVM `{field}`");
     }
 }
@@ -451,7 +447,7 @@ fn composition_handoff_reports_concrete_certification_and_receipt_gaps() {
         error
             .violations
             .iter()
-            .all(|violation| violation.detail.contains("regional-session-api"))
+            .all(|violation| violation.detail.contains("regional-otlp"))
     );
 }
 
@@ -521,7 +517,7 @@ fn handoff_cli_names_missing_composition_inputs_without_writing_outputs() {
 #[test]
 fn manifest_cross_binds_unit_blob_and_oci_locations_to_its_source() {
     let mut value = valid_manifest();
-    let digest = value["units"]["regional-session-api"]["artifactDigest"]
+    let digest = value["units"]["regional-otlp"]["artifactDigest"]
         .as_str()
         .unwrap()
         .to_owned();
@@ -530,12 +526,12 @@ fn manifest_cross_binds_unit_blob_and_oci_locations_to_its_source() {
         &"a".repeat(40),
         "123",
         1,
-        "regional-session-api",
+        "regional-otlp",
         &digest,
         "zip",
     )
     .unwrap();
-    value["units"]["regional-session-api"]["location"] = serde_json::json!({
+    value["units"]["regional-otlp"]["location"] = serde_json::json!({
         "kind": "github-release",
         "uri": uri,
         "immutable": true
@@ -546,7 +542,7 @@ fn manifest_cross_binds_unit_blob_and_oci_locations_to_its_source() {
         .unwrap();
     manifest.validate(true).unwrap();
 
-    value["units"]["regional-session-api"]["location"]["uri"] =
+    value["units"]["regional-otlp"]["location"]["uri"] =
         serde_json::json!(uri.replace("run-123", "run-999"));
     let err = serde_json::from_value::<CompositionManifest>(value)
         .unwrap()
@@ -560,7 +556,7 @@ fn manifest_cross_binds_unit_blob_and_oci_locations_to_its_source() {
     let entry = value["units"]
         .as_object_mut()
         .unwrap()
-        .remove("regional-session-api")
+        .remove("regional-otlp")
         .unwrap();
     value["units"]["brain-mux"] = entry;
     value["units"]["brain-mux"]["kind"] = serde_json::json!("rust-oci-service");

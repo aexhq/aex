@@ -14,7 +14,7 @@ use common::docs::{
     BUILDER, digest, valid_envelope, valid_manifest, valid_receipt, valid_statement,
 };
 
-const UNIT: &str = "regional-session-api";
+const UNIT: &str = "regional-otlp";
 
 fn manifest() -> CompositionManifest {
     serde_json::from_value::<CompositionManifest>(valid_manifest())

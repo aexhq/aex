@@ -28,6 +28,26 @@ output "role_arns" {
   description = "Deployable to execution role ARN."
 }
 
+output "central_api_service_arn" {
+  value       = module.central_api_service.service_arn
+  description = "The merged central HTTP service."
+}
+
+output "public_dns_name" {
+  value       = module.public_lb.dns_name
+  description = "The load balancer's own name. It answers permanently: an ALB has no `disable_execute_api_endpoint` analogue, and `alb-service-target` emits `path_pattern` conditions only, so there is no host-header rule that could close it. The web ACL below is associated with the load balancer rather than the listener partly for that reason."
+}
+
+output "device_flow_rate_limit_arn" {
+  value       = module.device_flow_rate_limit.web_acl_arn
+  description = "The web ACL replacing the API Gateway throttle on the two unauthenticated routes."
+}
+
+output "device_flow_rate_limit_metric" {
+  value       = module.device_flow_rate_limit.rule_metric_name
+  description = "The dimension `BlockedRequests` is published under, so an alarm names the string the ACL does rather than re-deriving it."
+}
+
 output "schedule_arns" {
   value       = module.schedules.schedule_arns
   description = "Schedule name to schedule ARN."

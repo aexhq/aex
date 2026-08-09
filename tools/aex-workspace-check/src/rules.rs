@@ -759,9 +759,7 @@ mod tests {
 /// keeps two branches from merge-summing their way back to green.
 pub const MAIN_ONLY_DEPLOYABLES: &[&str] = &[
     "central-authz",
-    "central-control-api",
     "central-control-worker",
-    "central-identity-api",
     "observation-export-launcher",
     "observation-export-task",
     "regional-control",

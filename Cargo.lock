@@ -646,6 +646,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "aex-live-central-api"
+version = "0.1.0"
+
+[[package]]
 name = "aex-live-central-authz"
 version = "0.1.0"
 
@@ -1032,12 +1036,10 @@ dependencies = [
  "aex-wire",
  "aex-workspace-domain",
  "async-trait",
- "aws-sdk-lambda",
  "aws-sdk-ssm",
  "axum",
  "base64 0.23.0",
  "bytes",
- "ed25519-dalek",
  "hmac 0.13.0",
  "http 1.5.0",
  "http-body-util",
@@ -3042,6 +3044,44 @@ dependencies = [
  "jobserver",
  "libc",
  "shlex",
+]
+
+[[package]]
+name = "central-api"
+version = "0.1.0"
+dependencies = [
+ "aex-central-aws",
+ "aex-central-http",
+ "aex-control-app",
+ "aex-control-aurora",
+ "aex-control-domain",
+ "aex-identity-app",
+ "aex-identity-aurora",
+ "aex-identity-domain",
+ "aex-platform-telemetry",
+ "aex-rds-data",
+ "aex-regional-http",
+ "aex-telemetry-schema",
+ "aex-wire",
+ "async-trait",
+ "aws-config",
+ "aws-sdk-lambda",
+ "aws-sdk-rdsdata",
+ "aws-sdk-s3",
+ "aws-sdk-secretsmanager",
+ "axum",
+ "central-control-api",
+ "central-identity-api",
+ "finance-api",
+ "http 1.5.0",
+ "http-body-util",
+ "serde_json",
+ "thiserror",
+ "time",
+ "tokio",
+ "toml",
+ "tower",
+ "uuid",
 ]
 
 [[package]]
@@ -6496,7 +6536,6 @@ dependencies = [
  "async-trait",
  "aws-config",
  "aws-sdk-dynamodb",
- "aws-sdk-lambda",
  "aws-sdk-s3",
  "aws-sdk-ssm",
  "aws-smithy-http-client",
@@ -6534,7 +6573,6 @@ dependencies = [
  "async-trait",
  "aws-config",
  "aws-sdk-dynamodb",
- "aws-sdk-lambda",
  "aws-sdk-s3",
  "aws-sdk-secretsmanager",
  "aws-sdk-ssm",
@@ -6575,7 +6613,6 @@ dependencies = [
  "aws-config",
  "aws-sdk-dynamodb",
  "aws-sdk-kms",
- "aws-sdk-lambda",
  "aws-sdk-ssm",
  "axum",
  "http-body-util",
@@ -7219,7 +7256,6 @@ dependencies = [
  "aws-config",
  "aws-sdk-dynamodb",
  "aws-sdk-dynamodbstreams",
- "aws-sdk-lambda",
  "aws-sdk-s3",
  "aws-sdk-ssm",
  "aws-smithy-http-client",

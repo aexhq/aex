@@ -25,7 +25,7 @@ use common::docs::{
 };
 use common::{CratePlan, Fixture, SOUND_SCENARIOS, SOUND_UNITS, deployable_meta, live_meta};
 
-const UNIT: &str = "regional-session-api";
+const UNIT: &str = "regional-otlp";
 
 fn freshness() -> FreshnessPolicy {
     let text = std::fs::read_to_string(

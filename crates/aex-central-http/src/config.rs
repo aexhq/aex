@@ -59,6 +59,13 @@ pub enum CentralServiceId {
     Authz,
     /// `central-control-api`: organizations, workspaces, keys and operations.
     ControlApi,
+    /// `central-api`: one long-lived task serving the whole central surface.
+    ///
+    /// The merge of [`Self::IdentityApi`], [`Self::ControlApi`] and
+    /// [`Self::FinanceApi`], which [`Self::supersedes`] states as data rather
+    /// than as prose. It is a **composition**, not a fourth owner: exactly one
+    /// of it and the three it replaces is deployed to a plane at a time.
+    CentralApi,
     /// `finance-api`: billing only.
     FinanceApi,
     /// `finance-ingest`: queue-driven, no public route.
@@ -69,10 +76,11 @@ pub enum CentralServiceId {
 
 impl CentralServiceId {
     /// Every central deployable.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::IdentityApi,
         Self::Authz,
         Self::ControlApi,
+        Self::CentralApi,
         Self::FinanceApi,
         Self::FinanceIngest,
         Self::ControlWorker,
@@ -85,6 +93,7 @@ impl CentralServiceId {
             Self::IdentityApi => "central-identity-api",
             Self::Authz => "central-authz",
             Self::ControlApi => "central-control-api",
+            Self::CentralApi => "central-api",
             Self::FinanceApi => "finance-api",
             Self::FinanceIngest => "finance-ingest",
             Self::ControlWorker => "central-control-worker",
@@ -97,6 +106,25 @@ impl CentralServiceId {
         Self::ALL.into_iter().find(|it| it.as_str() == text)
     }
 
+    /// The deployables this one replaces when it is deployed.
+    ///
+    /// Empty for every deployable that is not a merge. A non-empty answer means
+    /// this id and the ids it names are **alternatives**: a plane runs one or
+    /// the other, never both, so the route sets overlapping is the intended
+    /// shape rather than two owners of one route.
+    #[must_use]
+    pub const fn supersedes(self) -> &'static [Self] {
+        match self {
+            Self::CentralApi => &[Self::IdentityApi, Self::ControlApi, Self::FinanceApi],
+            Self::IdentityApi
+            | Self::Authz
+            | Self::ControlApi
+            | Self::FinanceApi
+            | Self::FinanceIngest
+            | Self::ControlWorker => &[],
+        }
+    }
+
     /// The route groups this deployable serves.
     #[must_use]
     pub const fn groups(self) -> &'static [RouteGroup] {
@@ -105,6 +133,20 @@ impl CentralServiceId {
             Self::Authz | Self::FinanceIngest | Self::ControlWorker => &[],
             Self::ControlApi => &[
                 RouteGroup::ApiKeys,
+                RouteGroup::Bootstrap,
+                RouteGroup::CentralOperations,
+                RouteGroup::Organizations,
+                RouteGroup::Workspaces,
+            ],
+            // The union of the three above, spelled out rather than computed:
+            // `groups` is `const`, and a merged deployable whose surface is
+            // derived would silently grow whenever one of its parts did.
+            // `the_merged_deployable_serves_exactly_what_it_supersedes` is what
+            // keeps this list honest.
+            Self::CentralApi => &[
+                RouteGroup::ApiKeys,
+                RouteGroup::Auth,
+                RouteGroup::Billing,
                 RouteGroup::Bootstrap,
                 RouteGroup::CentralOperations,
                 RouteGroup::Organizations,
@@ -245,9 +287,78 @@ mod tests {
     use aex_wire::server::RouteGroup;
     use std::collections::BTreeSet;
 
+    /// Every deployable that is a merge of others, and so is an *alternative*
+    /// to them rather than a co-owner of their routes.
+    fn compositions() -> BTreeSet<CentralServiceId> {
+        CentralServiceId::ALL
+            .into_iter()
+            .filter(|service| !service.supersedes().is_empty())
+            .collect()
+    }
+
+    /// The deployables whose route sets partition the served central surface.
+    fn primaries() -> Vec<CentralServiceId> {
+        let compositions = compositions();
+        CentralServiceId::ALL
+            .into_iter()
+            .filter(|service| !compositions.contains(service))
+            .collect()
+    }
+
+    #[test]
+    fn a_merged_deployable_serves_exactly_what_it_supersedes() {
+        for service in compositions() {
+            let mut expected: Vec<RouteId> = service
+                .supersedes()
+                .iter()
+                .flat_map(|part| part.routes())
+                .collect();
+            expected.sort_unstable();
+            let before = expected.len();
+            expected.dedup();
+            assert_eq!(
+                before,
+                expected.len(),
+                "`{}` merges two deployables that already share a route",
+                service.as_str()
+            );
+            assert_eq!(
+                service.routes(),
+                expected,
+                "`{}` must serve the union of its parts and nothing else: a merge that \
+                 drops a route silently retires it, and one that gains a route mounts \
+                 something no deployable was reviewed for",
+                service.as_str()
+            );
+            assert!(
+                service.supersedes().len() > 1,
+                "`{}` supersedes fewer than two deployables, so it is a rename rather \
+                 than a merge",
+                service.as_str()
+            );
+        }
+    }
+
+    #[test]
+    fn a_superseded_deployable_never_supersedes_anything_itself() {
+        // One level, on purpose. A chain would make "which deployable actually
+        // owns this route" a graph walk rather than a lookup, and the answer
+        // has to be readable at the point a plane is deployed.
+        for service in compositions() {
+            for part in service.supersedes() {
+                assert!(
+                    part.supersedes().is_empty(),
+                    "`{}` supersedes `{}`, which supersedes further deployables",
+                    service.as_str(),
+                    part.as_str()
+                );
+            }
+        }
+    }
+
     #[test]
     fn every_actually_served_central_route_has_exactly_one_runtime_owner() {
-        let mut owned: Vec<RouteId> = CentralServiceId::ALL
+        let mut owned: Vec<RouteId> = primaries()
             .iter()
             .flat_map(|service| service.routes())
             .collect();
@@ -293,7 +404,7 @@ mod tests {
 
     #[test]
     fn the_mounted_group_list_excludes_the_unserved_identity_fragment() {
-        let assigned: BTreeSet<_> = CentralServiceId::ALL
+        let assigned: BTreeSet<_> = primaries()
             .iter()
             .flat_map(|service| service.groups().iter().copied())
             .collect();
@@ -312,6 +423,24 @@ mod tests {
         assert!(CentralServiceId::Authz.groups().is_empty());
         assert!(CentralServiceId::FinanceIngest.groups().is_empty());
         assert!(CentralServiceId::ControlWorker.groups().is_empty());
+    }
+
+    #[test]
+    fn the_merged_deployable_mounts_every_group_the_central_plane_actually_serves() {
+        // `central-api` is one process behind one listener rule, so anything it
+        // does not mount is a `404` with no other deployable left to answer it.
+        assert_eq!(
+            CentralServiceId::CentralApi
+                .groups()
+                .iter()
+                .copied()
+                .collect::<BTreeSet<_>>(),
+            central_groups()
+                .into_iter()
+                .filter(|group| *group != RouteGroup::Identity)
+                .collect::<BTreeSet<_>>()
+        );
+        assert_eq!(CentralServiceId::CentralApi.routes().len(), 26);
     }
 
     #[test]

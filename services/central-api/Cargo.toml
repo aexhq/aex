@@ -1,0 +1,100 @@
+[package]
+name = "central-api"
+version = "0.1.0"
+description = "`central-api`: the whole central HTTP surface in one long-lived task."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+autotests = false
+
+[lints]
+workspace = true
+
+[package.metadata.aex]
+owner = "central-identity"
+role = "deployable"
+artifact = "oci_image"
+deployable = "central-api"
+live_suite = "aex-live-central-api"
+layers = ["unit", "smoke", "e2e"]
+concerns = ["contract", "fault", "security", "performance"]
+# No `aws.sqs.fifo`. The control handlers write the outbox row inside the same
+# Aurora transaction as the effect; publishing it is `central-control-worker`'s,
+# and this deployable holds no `sqs:*` permission and declares no queue
+# capability. Claiming the seam would be claiming a boundary it never crosses.
+seams = [
+    "aws.rds_data.transaction",
+    "aws.iam.denial",
+    "aws.alb.framing",
+]
+security_tier = "public_edge"
+risk = ["iam", "untrusted_input", "money"]
+scenarios = []
+
+[package.metadata.aex.targets]
+composition = "unit"
+faults = "unit"
+resource_envelope = "e2e"
+
+[[bin]]
+name = "central-api"
+path = "src/main.rs"
+
+[dependencies]
+aex-central-http = { path = "../../crates/aex-central-http" }
+aex-central-aws = { path = "../../crates/aex-central-aws" }
+aex-control-app = { path = "../../crates/aex-control-app" }
+aex-control-aurora = { path = "../../crates/aex-control-aurora" }
+aex-control-domain = { path = "../../crates/aex-control-domain" }
+aex-identity-app = { path = "../../crates/aex-identity-app" }
+aex-identity-aurora = { path = "../../crates/aex-identity-aurora" }
+aex-identity-domain = { path = "../../crates/aex-identity-domain" }
+aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
+aex-rds-data = { path = "../../crates/aex-rds-data" }
+# The drain deadline's relationship to the ECS stop timeout is a compile-time
+# fact that already exists, in `aex_regional_http::drain`. Restating those
+# numbers here would give the platform two answers to "when does SIGKILL
+# arrive?", and the whole point of that module is that there is one. It is
+# depended on for three constants and nothing else.
+aex-regional-http = { path = "../../crates/aex-regional-http" }
+aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
+aex-wire = { path = "../../crates/aex-wire" }
+# The three deployables this one merges, composed as libraries. Nothing is
+# re-implemented here: the handlers, the ports and the adapters are theirs.
+central-control-api = { path = "../central-control-api" }
+central-identity-api = { path = "../central-identity-api" }
+finance-api = { path = "../finance-api" }
+aws-config.workspace = true
+aws-sdk-lambda.workspace = true
+aws-sdk-rdsdata.workspace = true
+aws-sdk-s3.workspace = true
+aws-sdk-secretsmanager.workspace = true
+axum.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tokio = { workspace = true, features = ["net", "signal"] }
+uuid.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+toml.workspace = true
+tower.workspace = true
+
+[[test]]
+name = "composition"
+path = "tests/composition.rs"
+
+[[test]]
+name = "faults"
+path = "tests/faults.rs"
+
+[[test]]
+name = "resource_envelope"
+path = "tests/resource_envelope.rs"

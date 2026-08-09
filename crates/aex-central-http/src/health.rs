@@ -9,6 +9,7 @@
 //! ready only once each probe has actually answered.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use axum::extract::State;
 use axum::http::{StatusCode, header};
@@ -21,6 +22,15 @@ use serde::Serialize;
 pub const HEALTH_PATH: &str = "/internal/healthz";
 /// The path the load balancer polls for readiness.
 pub const READY_PATH: &str = "/internal/readyz";
+
+/// The one name a draining process reports as unresolved.
+///
+/// A long-lived host raises its drain flag **before** it asks the listener to
+/// stop, so the load balancer sees `503` on [`READY_PATH`] and deregisters the
+/// target while the requests it already accepted finish. The name is part of the
+/// readiness body, so it is stated once here rather than re-spelled by every
+/// host that drains.
+pub const DRAINING: &str = "draining";
 
 /// One named start-up dependency.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,11 +62,30 @@ impl Dependency {
 }
 
 /// The readiness of one composition.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// A Lambda resolves its dependencies once and never drains, so it carries no
+/// drain signal and this value is constant for the life of the process. A
+/// long-lived host binds one with [`Readiness::with_drain_signal`] and the same
+/// two endpoints then answer `503` for as long as the flag is raised.
+#[derive(Debug, Clone)]
 pub struct Readiness {
     deployable: &'static str,
     dependencies: Vec<Dependency>,
+    draining: Option<Arc<AtomicBool>>,
 }
+
+/// Equality is over what the endpoints would render, which is why the drain
+/// signal is compared by its current value rather than by handle identity: two
+/// readiness values that answer identically are the same readiness.
+impl PartialEq for Readiness {
+    fn eq(&self, other: &Self) -> bool {
+        self.deployable == other.deployable
+            && self.dependencies == other.dependencies
+            && self.is_draining() == other.is_draining()
+    }
+}
+
+impl Eq for Readiness {}
 
 impl Readiness {
     /// Builds a readiness projection over the declared dependencies.
@@ -68,26 +97,63 @@ impl Readiness {
         Self {
             deployable,
             dependencies,
+            draining: None,
         }
     }
 
-    /// Whether every declared dependency resolved.
+    /// Binds a live drain signal to an already-resolved readiness.
+    ///
+    /// Additive on purpose: a Lambda never drains, so a composition that does
+    /// not bind one keeps the exact status and body it had before this existed.
+    /// A host that binds one answers `503` on [`READY_PATH`] the moment it
+    /// raises the flag, which is what lets the load balancer deregister the
+    /// target before the drain deadline runs.
+    #[must_use]
+    pub fn with_drain_signal(mut self, draining: Arc<AtomicBool>) -> Self {
+        self.draining = Some(draining);
+        self
+    }
+
+    /// Whether a bound drain signal is currently raised.
+    #[must_use]
+    pub fn is_draining(&self) -> bool {
+        self.draining
+            .as_ref()
+            .is_some_and(|flag| flag.load(Ordering::Acquire))
+    }
+
+    /// Whether every declared dependency resolved and no drain is running.
     #[must_use]
     pub fn is_ready(&self) -> bool {
-        !self.dependencies.is_empty() && self.dependencies.iter().all(|it| it.resolved)
+        !self.dependencies.is_empty()
+            && self.dependencies.iter().all(|it| it.resolved)
+            && !self.is_draining()
     }
 
     /// The dependencies that did not resolve, by name.
+    ///
+    /// A draining process names [`DRAINING`] first: the reason it is refusing
+    /// traffic is that it is going away, not that a dependency broke, and an
+    /// operator reading the body during a rollout must be able to tell those
+    /// two apart at a glance.
     #[must_use]
     pub fn unresolved(&self) -> Vec<&'static str> {
+        let mut names = if self.is_draining() {
+            vec![DRAINING]
+        } else {
+            Vec::new()
+        };
         if self.dependencies.is_empty() {
-            return vec!["no dependency was probed"];
+            names.push("no dependency was probed");
+            return names;
         }
-        self.dependencies
-            .iter()
-            .filter(|it| !it.resolved)
-            .map(|it| it.name)
-            .collect()
+        names.extend(
+            self.dependencies
+                .iter()
+                .filter(|it| !it.resolved)
+                .map(|it| it.name),
+        );
+        names
     }
 }
 
@@ -213,5 +279,36 @@ mod tests {
         let (status, body) = probe(readiness, READY_PATH).await;
         assert_eq!(status, StatusCode::OK);
         assert!(body.contains("ready"), "{body}");
+    }
+
+    #[tokio::test]
+    async fn a_raised_drain_flag_takes_a_ready_composition_out_of_rotation() {
+        let draining = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let readiness = Readiness::new("central-api", vec![Dependency::resolved("aurora")])
+            .with_drain_signal(std::sync::Arc::clone(&draining));
+        let (status, _) = probe(readiness.clone(), READY_PATH).await;
+        assert_eq!(status, StatusCode::OK);
+
+        draining.store(true, std::sync::atomic::Ordering::Release);
+        let (status, body) = probe(readiness.clone(), READY_PATH).await;
+        assert_eq!(
+            status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "a draining target must be deregistered before its listener stops"
+        );
+        assert!(body.contains(super::DRAINING), "{body}");
+
+        // Liveness is unchanged: a draining process is still running, and a
+        // liveness failure would have the runtime kill it mid-drain.
+        let (status, _) = probe(readiness, HEALTH_PATH).await;
+        assert_eq!(status, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn a_composition_that_binds_no_drain_signal_is_unchanged() {
+        let readiness = Readiness::new("finance-api", vec![Dependency::resolved("aurora")]);
+        assert!(!readiness.is_draining());
+        assert!(readiness.is_ready());
+        assert!(readiness.unresolved().is_empty());
     }
 }

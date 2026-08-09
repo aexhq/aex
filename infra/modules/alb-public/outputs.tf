@@ -3,6 +3,11 @@ output "dns_name" {
   description = "DNS name of the load balancer."
 }
 
+output "arn" {
+  value       = aws_lb.this.arn
+  description = "ARN of the load balancer itself. A `waf-rate-limit` web ACL associates with this, not with the listener: `aws_wafv2_web_acl_association` takes the load balancer and AWS refuses a listener ARN."
+}
+
 output "listener_arn" {
   value       = aws_lb_listener.https.arn
   description = "ARN of the HTTPS listener."

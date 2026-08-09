@@ -45,7 +45,12 @@ schema = "aex.scenario-ownership.v1"
 id = "SC-IDENTITY-ACCOUNT"
 owner = "central-identity"
 deferred = "No executable live target yet proves the complete account identity and operational-state flow."
-observes = ["artifact:central-identity-api"]
+# `central-api` is the merged composition that serves the device-flow routes
+# once a plane runs it, so it observes the same scenario as the deployable it
+# replaces. Naming both is not double ownership: exactly one of them is
+# deployed, and dropping either would leave the one that *is* deployed
+# unobserved.
+observes = ["artifact:central-api", "artifact:central-identity-api"]
 
 [scenario.prd]
 rule = "deployable_write"
@@ -65,6 +70,7 @@ id = "SC-CONTROL-WORKSPACE"
 owner = "central-identity"
 deferred = "The multi-deployable workspace provisioning scenario has no executable live target yet."
 observes = [
+  "artifact:central-api",
   "artifact:central-control-api",
   "artifact:central-control-worker",
   "artifact:regional-capacity-controller",
@@ -91,7 +97,11 @@ observes = ["artifact:central-schema-admin"]
 id = "SC-FINANCE-INVOICE"
 owner = "central-finance"
 deferred = "The invoice and settlement composition has no executable live target yet."
-observes = ["artifact:finance-api", "artifact:finance-settlement-worker"]
+observes = [
+  "artifact:central-api",
+  "artifact:finance-api",
+  "artifact:finance-settlement-worker",
+]
 
 [[scenario]]
 id = "SC-FINANCE-PAYMENT"

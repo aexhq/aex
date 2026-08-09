@@ -106,6 +106,13 @@
   },
   {
     "reason_class": "awaiting_owner",
+    "subject": "tests/live/aex-live-central-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-empty-unit",
+    "detail": "awaiting the central-identity stream to deploy the merged edge behind its load balancer; live evidence cannot be earned before deployment (OD-07)"
+  },
+  {
+    "reason_class": "awaiting_owner",
     "subject": "tests/live/aex-live-central-schema-admin",
     "owner": "central-finance",
     "blocking_rule": "aex-empty-unit",
@@ -477,6 +484,20 @@
   },
   {
     "reason_class": "requires_deployment",
+    "subject": "services/central-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "services/central-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
     "subject": "services/central-authz",
     "owner": "central-identity",
     "blocking_rule": "aex-unearned-evidence",
@@ -640,6 +661,20 @@
     "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-brain-mux",
     "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-central-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-central-api",
+    "owner": "central-identity",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `smoke` needs a deployed artifact (OD-07)"
   },
@@ -2031,6 +2066,27 @@
   },
   {
     "reason_class": "requires_live_seam",
+    "subject": "services/central-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.alb.framing` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/central-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/central-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
     "subject": "services/central-authz",
     "owner": "central-identity",
     "blocking_rule": "aex-unearned-evidence",
@@ -2385,6 +2441,41 @@
     "owner": "brain-core",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `provider.zai.stream` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-central-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.alb.framing` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-central-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.aurora.serverless_v2` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-central-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-central-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-central-api",
+    "owner": "central-identity",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `stripe.test_mode.webhook` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",

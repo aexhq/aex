@@ -61,6 +61,72 @@ schema = "aex.units.v1"
 
 # --- central plane: request APIs ---------------------------------------------
 
+# `central-identity-api`, `central-control-api` and `finance-api` merged here.
+# All three were request-path central edges behind one API Gateway, sharing one
+# route table, one generated dispatcher and one Aurora cluster; the merge removes
+# three process boundaries between code that already agreed.
+#
+# The three rows below are **not** retired by this row. They are the alternative
+# composition, and a plane runs one or the other: `aex_central_http::config`
+# states that relationship as `CentralServiceId::CentralApi.supersedes()` rather
+# than as prose, and its suite proves the merged route set is exactly the union
+# of theirs. Retiring them is a separate step, taken once a plane has actually
+# served from this row.
+#
+# `required_receipts` is the union of the three rows it replaces: two owed
+# `contract` and `finance-api` also owed `property`, and merging the deployables
+# must not quietly retire either.
+#
+# The move off API Gateway removes the only component that ever *verified* a
+# central credential, so this deployable does it in process — see
+# `crates/aex-central-http/src/admission.rs`. That is why it is the one central
+# unit that reads four Aurora login secrets rather than one.
+[[unit]]
+id = "central-api"
+kind = "rust-oci-service"
+plane = "central"
+package = "central-api"
+bin = "central-api"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release"
+form = "oci-image"
+base_image = "public.ecr.aws/amazonlinux/amazonlinux:2023-minimal@sha256:f536dd770d9f7065461c786418265a13f5ba548a11a57bbbf360e677b811ed39"
+config_env_namespace = "AEX_CENTRAL_API_"
+config_schema_version = 1
+health_path = "/internal/healthz"
+ready_path = "/internal/readyz"
+required_receipts = [
+    "unit",
+    "contract",
+    "property",
+    "lint",
+    "package-integrity",
+]
+alarm_spec = "central-api"
+live_suite = "aex-live-central-api"
+
+# Sized from `session-stream-api`, the peer of the same class: a long-lived
+# request-path task whose work is per-request rather than per-task. What this
+# task must hold is the Data API client set, the JSON codec and the route table,
+# which is what 1024/2048 already covered there.
+#
+# The 30 s stop timeout is the drain deadline, and the relationship is a start-up
+# refusal rather than a comment: this process reads its admitted
+# `AEX_CENTRAL_API_DRAIN_DEADLINE_MS` ceiling from
+# `aex_regional_http::drain`, which derives it from this exact number. Raising
+# this value without raising that constant makes the deadline unreachable and the
+# task is killed mid-transaction instead of exiting on its own terms.
+#
+# `desired_count` is the production floor: two tasks. Unlike the three Lambda
+# rows it replaces, this deployable does not scale to zero, and a single task is
+# a single point of failure in front of the whole central plane.
+[unit.fargate]
+cpu = 1024
+memory_mb = 2048
+desired_count = 2
+stop_timeout_s = 30
+port = 8080
+
 [[unit]]
 id = "central-identity-api"
 kind = "rust-lambda"

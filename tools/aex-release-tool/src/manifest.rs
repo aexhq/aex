@@ -358,12 +358,19 @@ pub const DEFAULT_ORDER: &[(&str, &[&str])] = &[
             "stripe-webhook-edge",
         ],
     ),
+    // After finance, because the merged central edge serves the billing group
+    // and invokes `stripe-command-edge`: publishing it first would put a
+    // listener in front of a money surface whose provider edge is still the
+    // previous release. It is its own stage rather than an addition to
+    // `central-finance` because it is the alternative composition to three
+    // units in two earlier stages, and a stage is a set that goes together.
+    ("central-edge", &["central-api"]),
     ("central-control", &["central-control-worker"]),
     ("regional-keys", &["regional-secret-key-admin"]),
     (
         "regional-api",
         &[
-            "regional-session-api",
+            "session-stream-api",
             "regional-secret-api",
             "regional-observation-api",
             "regional-otlp",
@@ -385,7 +392,6 @@ pub const DEFAULT_ORDER: &[(&str, &[&str])] = &[
             "usage-transfer-worker",
         ],
     ),
-    ("regional-stream", &["regional-stream"]),
     // The agent is its own stage and it comes first, because `hands-image`
     // embeds the agent binary: publishing them together would let an image whose
     // rootfs holds the previous agent reach a plane as if it held the new one.
@@ -1992,7 +1998,7 @@ alarm_spec = "regional-otlp"
         let stages = order_for(&[
             "brain-mux".to_owned(),
             "central-schema-admin".to_owned(),
-            "regional-session-api".to_owned(),
+            "session-stream-api".to_owned(),
         ])
         .unwrap();
         let names: Vec<&str> = stages.iter().map(|stage| stage.name.as_str()).collect();

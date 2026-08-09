@@ -687,8 +687,15 @@ fn the_eight_central_groups_partition_the_central_route_table() {
 
 #[test]
 fn each_deployable_mounts_a_disjoint_slice_of_the_actually_served_plane() {
+    // A deployable that supersedes others is an *alternative* to them: one or
+    // the other reaches a plane, never both. Counting it here would report the
+    // merge itself as a double mount, which is why the partition runs over the
+    // deployables that are not compositions.
     let mut seen: BTreeSet<RouteId> = BTreeSet::new();
-    for service in CentralServiceId::ALL {
+    for service in CentralServiceId::ALL
+        .into_iter()
+        .filter(|service| service.supersedes().is_empty())
+    {
         for id in service.routes() {
             assert!(seen.insert(id), "{id:?} is served twice");
         }
@@ -698,6 +705,21 @@ fn each_deployable_mounts_a_disjoint_slice_of_the_actually_served_plane() {
         all.difference(&seen).copied().collect::<Vec<_>>(),
         vec![RouteId::AccountGet]
     );
+
+    // And every composition covers exactly the slice its parts held, so the
+    // partition above stays the whole truth after a merge is deployed.
+    for service in CentralServiceId::ALL
+        .into_iter()
+        .filter(|service| !service.supersedes().is_empty())
+    {
+        let merged: BTreeSet<RouteId> = service.routes().into_iter().collect();
+        let parts: BTreeSet<RouteId> = service
+            .supersedes()
+            .iter()
+            .flat_map(|part| part.routes())
+            .collect();
+        assert_eq!(merged, parts, "`{}` is a lossy merge", service.as_str());
+    }
 }
 
 // ---------------------------------------------------------------------------

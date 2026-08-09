@@ -84,8 +84,12 @@ fn recipes_name_the_real_build_output_instead_of_guessing_from_the_unit_id() {
         "target/lambda/regional-observation-api/bootstrap"
     );
     assert_eq!(
-        recipe("regional-session-api").input,
-        "target/aarch64-unknown-linux-gnu/release/regional-session-api"
+        recipe("session-stream-api").input,
+        "target/aarch64-unknown-linux-gnu/release/session-stream-api"
+    );
+    assert_eq!(
+        recipe("central-api").input,
+        "target/aarch64-unknown-linux-gnu/release/central-api"
     );
     assert_eq!(
         recipe("stripe-command-edge").input,
@@ -610,18 +614,14 @@ required_receipts = ["unit"]
 fn the_publication_destination_is_content_addressed_and_immutable() {
     let destination = publish_destination(
         &envelope_from(valid_envelope()),
-        &row(
-            "regional-session-api",
-            "rust-lambda",
-            "regional-session-api",
-        ),
+        &row("regional-otlp", "rust-lambda", "regional-otlp"),
     )
     .unwrap();
     assert_eq!(destination.kind, "github-release");
     assert!(destination.immutable);
     assert_eq!(
         destination.key,
-        format!("unit-regional-session-api-{}.zip", &digest(5)[7..])
+        format!("unit-regional-otlp-{}.zip", &digest(5)[7..])
     );
     assert!(
         !destination.key.contains("sha256:"),
@@ -679,7 +679,7 @@ fn github_release_locations_bind_repo_commit_run_attempt_unit_and_digest() {
         &common::docs::sha1(),
         "123",
         1,
-        "regional-session-api",
+        "regional-otlp",
         &digest,
         "zip",
     )
@@ -695,7 +695,7 @@ fn github_release_locations_bind_repo_commit_run_attempt_unit_and_digest() {
         expected.replace("github.com", "example.com"),
         expected.replace("run-123", "run-124"),
         expected.replace("attempt-1", "attempt-2"),
-        expected.replace("regional-session-api", "central-authz"),
+        expected.replace("regional-otlp", "central-authz"),
         expected.replace(&digest[7..], &"f".repeat(64)),
     ] {
         value["output"]["location"]["uri"] = serde_json::json!(altered);

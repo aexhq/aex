@@ -344,6 +344,29 @@ the composition root. None of that is speculative work — it is the shape the
 merge takes — but it is not a mechanical edit, and doing it badly on the path
 that now carries authentication is worse than doing it in a second pass.
 
+## The throttling question, decided
+
+**Option A, scoped down to the two device-flow paths.** The owner took it, and it
+is built: `infra/modules/waf-rate-limit` is a per-source-IP rate-based rule whose
+scope-down statement matches `/api/auth/device/authorizations` and
+`/api/auth/device/tokens` **exactly**, associated with the central load balancer
+by `infra/examples/central-application`. Roughly `$5`/mo per web ACL, `$1`/mo per
+rule and `$0.60` per million requests evaluated.
+
+Three choices inside it are worth reading before changing anything:
+
+* `default_action` is **allow**. This ACL bounds one class of caller; it is not
+  the plane's admission control. A default block would make a defect in the
+  module an outage of the whole listener.
+* `aggregate_key_type` is `IP`, not `FORWARDED_IP`. A caller may append to
+  `X-Forwarded-For`, so keying on the header would let one source present a fresh
+  key per request and buy itself an unbounded rate.
+* `positional_constraint` is `EXACTLY`, not `STARTS_WITH`. A prefix on
+  `/api/auth/device/` would silently throttle any route added under it later.
+
+`aex_central_http::router`'s `TODO(cross-stream)` pointed at an API Gateway
+usage-plan throttle; this is that rule, and the gateway is not what carries it.
+
 ## Status of this work
 
 Landed:
@@ -351,10 +374,51 @@ Landed:
 * this design record;
 * the authentication relocation — `crates/aex-central-http/src/admission.rs`,
   wired into the numbered admission chain, with the ambient context ignored
-  outright once a composition verifies credentials itself.
+  outright once a composition verifies credentials itself;
+* **library targets** for `central-control-api` and `central-identity-api`: each
+  is now `src/lib.rs` plus a `src/main.rs` holding only the Lambda adapters,
+  probes and entry point. Neither Lambda deployable changed shape.
+  `MAIN_ONLY_DEPLOYABLES` in `aex-workspace-check` shrank by both, which is the
+  only edit that list admits;
+* **`services/central-api`**, the composition root: four Aurora logins over one
+  cluster (`aex_authz` read-only for admission, plus control, identity and
+  finance), every authority probed before the listener binds, one readiness flag
+  carrying a drain signal, `SIGTERM` raising the drain **before** the listener
+  stops, and the drain deadline bounded by `aex_regional_http::drain` rather than
+  by a restated constant;
+* **`release/units.toml`**, the registry rows in the blast-radius table, and
+  `CentralServiceId::CentralApi`;
+* **the Terraform**: the `alb-public` + `alb-service-target` + `ecs-service`
+  triad in `infra/examples/central-application`, plus the new
+  `infra/modules/waf-rate-limit` and its association.
 
-Not landed, in the order it should be taken up: the library targets above, the
-`services/central-api` composition root, the `release/units.toml` row (which
-cannot land first — `graph verify` fails `unit-package-unknown` for a unit whose
-package is not a workspace member), the registry rows in the blast-radius table,
-and the Terraform. The throttling question above gates the last of those.
+### Two things the merge model states as data rather than prose
+
+`CentralServiceId::CentralApi.supersedes()` names the three deployables it
+replaces. It is a **composition**, not a fourth owner: a plane runs it *or* the
+three, never both, so the route sets overlapping is the intended shape. Every
+ownership test now partitions over the non-composition deployables and separately
+asserts the merged route set equals the union of its parts exactly — which is a
+stronger statement than the old partition, because it proves the merge is
+lossless in both directions.
+
+`Config` refuses a composition in which two of the four login secrets are the
+same value. That is the whole of the privilege separation surviving the merge,
+and a shared secret would be a silent widening rather than a permission error
+somebody eventually sees.
+
+### Not landed
+
+* **The contract cutover.** `api/schemas/registries/routes-meta.yaml` still names
+  `central-control-api`, `central-identity-api` and `finance-api` as the serving
+  artifacts. `aex-contract-gen` requires `servingArtifacts` to match the planned
+  owners in `scenarioOwners` **exactly**, so flipping it is all-or-nothing: it
+  would claim a mount that exists in no plane and simultaneously un-claim three
+  that do. It should land with the deployment, not before it.
+* **Retiring the three Lambda rows.** They remain deployable, which is the
+  rollback path while the merged edge has never served a plane.
+* **`finance-ingest`.** Unchanged, on Lambda, for the reason recorded above:
+  `stripe-webhook-edge` reaches it by `lambda:Invoke` and `alb-service-target`
+  refuses to forward anything outside `/api/`.
+* **A live suite.** `tests/live/aex-live-central-api` exists and records its
+  targets as not-applicable until a plane runs the merged edge.

@@ -82,6 +82,21 @@ capability!(
     "signing_key.administer",
     "Creating and retiring assertion signing-key secrets."
 );
+capability!(
+    FinanceRead,
+    "finance.read",
+    "Read-only `rds-data` statements as `aex_finance_api` against the finance schema."
+);
+capability!(
+    PaymentCommandInvoke,
+    "payment.command_invoke",
+    "Invoking `stripe-command-edge`, the only holder of the provider secrets."
+);
+capability!(
+    StatementRead,
+    "statement.read",
+    "Presigning a bounded read of an already-issued statement artifact."
+);
 
 /// A token proving the holder's composition declared `C`.
 pub struct Grant<C: Capability>(PhantomData<C>);
