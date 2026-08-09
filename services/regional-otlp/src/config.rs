@@ -339,7 +339,7 @@ mod tests {
                 REDACTION_KEY_REF_VAR,
                 "aex/dev/observation/redact".to_owned(),
             ),
-            (ENCODED_MAX_VAR, (4 * 1024 * 1024).to_string()),
+            (ENCODED_MAX_VAR, (768 * 1024).to_string()),
             (DECODED_MAX_VAR, (16 * 1024 * 1024).to_string()),
             (MAX_RECORDS_VAR, "2000".to_owned()),
             (MEMORY_BUDGET_VAR, (1_600 * 1024 * 1024).to_string()),
@@ -370,7 +370,7 @@ mod tests {
         let config = read(&complete()).expect("a complete environment starts");
         assert_eq!(config.plane, aex_identity_domain::assertion::Plane::Dev);
         assert_eq!(config.region.as_str(), "eu-west-1");
-        assert_eq!(config.limits.encoded_max, 4 * 1024 * 1024);
+        assert_eq!(config.limits.encoded_max, 768 * 1024);
         assert_eq!(config.limits.decoded_max, 16 * 1024 * 1024);
         assert_eq!(config.limits.max_records, 2_000);
         assert_eq!(config.authz_verify_keys_param, "/aex/dev/authz/verify-keys");

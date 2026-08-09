@@ -2,8 +2,10 @@
 //!
 //! Every value is loaded from the workspace's effective limits rather than
 //! hard-coded at a call site. [`OtlpLimits::REGISTERED`] is the registry's own
-//! row set, and the encoded ceiling is **4 MiB**: the replaced implementation's
-//! `MAX_OTLP_BYTES = 6 MiB` contradicted the registry and is not ported.
+//! row set, and the encoded ceiling is **768 KiB** — the largest body that
+//! survives base64 expansion inside the 1 MB an Application Load Balancer
+//! allows a Lambda target. See [`aex_observation_domain::limits`] for why a
+//! larger number would be enforced by the load balancer rather than here.
 
 use aex_observation_domain::limits;
 
@@ -59,8 +61,9 @@ mod tests {
     use super::OtlpLimits;
 
     #[test]
-    fn the_registered_encoded_ceiling_is_four_mebibytes_not_six() {
-        assert_eq!(OtlpLimits::REGISTERED.encoded_max, 4 * 1024 * 1024);
+    fn the_registered_encoded_ceiling_is_the_transport_bound_not_a_wish() {
+        assert_eq!(OtlpLimits::REGISTERED.encoded_max, 768 * 1024);
+        assert_ne!(OtlpLimits::REGISTERED.encoded_max, 4 * 1024 * 1024);
         assert_ne!(OtlpLimits::REGISTERED.encoded_max, 6 * 1024 * 1024);
         assert_eq!(OtlpLimits::default(), OtlpLimits::REGISTERED);
     }

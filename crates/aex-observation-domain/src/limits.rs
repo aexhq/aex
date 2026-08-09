@@ -8,8 +8,21 @@
 
 /// Maximum **encoded** OTLP request body, in bytes.
 ///
-/// The registry pins 4 MiB. The replaced implementation's 6 MiB is not ported.
-pub const OTLP_ENCODED_MAX: usize = 4 * 1024 * 1024;
+/// 768 KiB, which is what the transport actually permits rather than what the
+/// registry once wished for. `regional-otlp` is a Lambda behind an Application
+/// Load Balancer, and an ALB caps a Lambda target's request body at 1 MB. It
+/// also base64-encodes a binary body on the way in, inflating it by 4/3, so
+/// 768 KiB is exactly the largest protobuf batch whose encoded form still fits.
+///
+/// A ceiling above that is not a larger limit, it is a limit enforced by the
+/// wrong component: the load balancer answers 413 before the service sees the
+/// request, so the caller learns nothing about which bound it crossed. The
+/// earlier 4 MiB — and the 6 MiB it replaced — were both unreachable in
+/// production for this reason.
+///
+/// Raising it again requires moving the deployable off a Lambda target first.
+/// See `references/backlog.md`.
+pub const OTLP_ENCODED_MAX: usize = 768 * 1024;
 
 /// Maximum **decoded** OTLP payload, in bytes.
 pub const OTLP_DECODED_MAX: usize = 16 * 1024 * 1024;
@@ -154,8 +167,19 @@ mod tests {
     };
 
     #[test]
-    fn the_encoded_otlp_ceiling_is_the_registered_four_mebibytes() {
-        assert_eq!(OTLP_ENCODED_MAX, 4_194_304);
+    fn the_encoded_otlp_ceiling_survives_base64_inside_the_load_balancer_limit() {
+        const ALB_LAMBDA_TARGET_REQUEST_MAX: usize = 1024 * 1024;
+
+        assert_eq!(OTLP_ENCODED_MAX, 786_432);
+        // Base64 is 4 bytes out per 3 in, rounded up to a 4-byte group. A body
+        // at the ceiling must still fit the load balancer's limit after that
+        // expansion, or the 413 comes from the ALB and never reaches the
+        // service that owns the bound.
+        assert!(
+            OTLP_ENCODED_MAX.div_ceil(3) * 4 <= ALB_LAMBDA_TARGET_REQUEST_MAX,
+            "an encoded body at the ceiling must survive base64 within the \
+             ALB's 1 MB Lambda-target request limit"
+        );
         assert_ne!(
             OTLP_ENCODED_MAX,
             6 * 1024 * 1024,

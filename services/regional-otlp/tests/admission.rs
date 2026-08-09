@@ -34,7 +34,7 @@ fn every_owned_route_is_a_unary_regional_otlp_post() {
         assert_eq!(descriptor.body_class, BodyClass::Otlp);
         assert_eq!(descriptor.transport, TransportKind::Unary);
         assert!(
-            descriptor.template.starts_with("/api/telemetry/otlp/v1/"),
+            descriptor.template.starts_with("/api/otlp/v1/"),
             "{}",
             descriptor.template
         );
@@ -57,7 +57,16 @@ fn the_group_partitions_cleanly_from_every_other_deployable() {
 #[test]
 fn the_registered_ceilings_are_the_ones_this_binary_enforces() {
     let limits = OtlpLimits::REGISTERED;
-    assert_eq!(limits.encoded_max, 4 * 1024 * 1024, "4 MiB encoded");
+    // 768 KiB is the transport bound, not a preference: this deployable is a
+    // Lambda behind an ALB, which caps a Lambda target's request body at 1 MB
+    // and base64-encodes a binary body by 4/3 on the way in. A larger ceiling
+    // would be enforced by the load balancer's 413 instead of by this binary.
+    assert_eq!(limits.encoded_max, 768 * 1024, "768 KiB encoded");
+    assert_ne!(
+        limits.encoded_max,
+        4 * 1024 * 1024,
+        "the 4 MiB ceiling was never reachable through the load balancer"
+    );
     assert_ne!(
         limits.encoded_max,
         6 * 1024 * 1024,

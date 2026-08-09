@@ -957,7 +957,7 @@ impl ObservationReader {
             let decoded = if descriptor.access == Access::SessionAuthority {
                 Self::decode_event(&item, scope, workspace, query.order_by)?
             } else {
-                Self::decode(&item, descriptor.signal, query.order_by)?
+                Self::decode(&item, descriptor.signal, workspace, query.order_by)?
             }
             .ok_or(ReadError::Malformed {
                 attribute: "observationId",
@@ -1244,9 +1244,20 @@ impl ObservationReader {
     }
 
     /// Decodes one stored item into the wire shape and its filter row.
+    ///
+    /// The row's recorded owner is **compared** with the workspace the edge
+    /// authenticated, exactly as [`Self::decode_event`] compares it, rather than
+    /// merely being copied onto the response. A session-scoped observation's
+    /// partition key is `OBS#S#{session}` and carries no workspace component,
+    /// so the stored `workspaceId` is the only tenancy evidence a row of this
+    /// family holds; reading it without comparing it made every session
+    /// partition addressable by any authenticated caller that could name the
+    /// session. This is defence in depth behind the scope the edge derives —
+    /// both halves must agree for a row to be returned.
     fn decode(
         item: &HashMap<String, AttributeValue>,
         signal: Signal,
+        asserted_workspace: WorkspaceId,
         order_by: aex_observation_domain::order::OrderBy,
     ) -> Result<Option<(OrderTuple, Observation, MapRow)>, ReadError> {
         let Some(id) =
@@ -1258,11 +1269,7 @@ impl ObservationReader {
         let accepted_at = timestamp(item, "acceptedAt").ok_or(ReadError::Malformed {
             attribute: "acceptedAt",
         })?;
-        let workspace = string(item, "workspaceId")
-            .and_then(|text| text.parse::<WorkspaceId>().ok())
-            .ok_or(ReadError::Malformed {
-                attribute: "workspaceId",
-            })?;
+        let workspace = assert_row_workspace(item, asserted_workspace)?;
         let revision = number(item, "revision").unwrap_or(1);
         let accepted_seq = number(item, "acceptedSeq").unwrap_or(0);
         let body = body_json(item);
@@ -2200,6 +2207,36 @@ pub(crate) fn timestamp(item: &HashMap<String, AttributeValue>, name: &str) -> O
     string(item, name).and_then(|text| Timestamp::parse(&text).ok())
 }
 
+/// Asserts a stored row belongs to the workspace the edge authenticated.
+///
+/// One assertion, used by every path that turns an observation-authority row
+/// into a wire value. A row records its owner in `workspaceId`; a scope key
+/// does not always carry one (`OBS#S#{session}` and `TRC#S#{session}#…` are
+/// keyed by session alone), so this comparison is the row-level half of the
+/// tenancy argument and the scope the edge derived is the other half.
+///
+/// # Errors
+///
+/// Returns [`ReadError::Malformed`] when the attribute is absent, unparseable,
+/// or names another workspace. A row that cannot prove its owner is refused
+/// rather than attributed to the caller who happened to ask for it.
+pub(crate) fn assert_row_workspace(
+    item: &HashMap<String, AttributeValue>,
+    asserted: WorkspaceId,
+) -> Result<WorkspaceId, ReadError> {
+    let malformed = ReadError::Malformed {
+        attribute: "workspaceId",
+    };
+    let workspace = string(item, "workspaceId")
+        .and_then(|text| text.parse::<WorkspaceId>().ok())
+        .ok_or_else(|| malformed.clone())?;
+    if workspace == asserted {
+        Ok(workspace)
+    } else {
+        Err(malformed)
+    }
+}
+
 /// The wire signal of one stored item.
 pub(crate) fn stored_signal(item: &HashMap<String, AttributeValue>) -> Option<ObservationSignal> {
     string(item, "signal")
@@ -2333,14 +2370,35 @@ mod tests {
         id: ObservationId,
         revision: u64,
     ) -> String {
+        observation_response_owned_by(workspace(), scope, accepted, observed, id, revision)
+    }
+
+    /// The same reply, with the row's recorded owner chosen by the caller.
+    ///
+    /// A session partition (`OBS#S#{session}`) names no workspace, so the
+    /// stored `workspaceId` is the only thing that says whose row it is. That
+    /// makes "a row owned by someone else" a fixture the reader has to be able
+    /// to refuse rather than a state that cannot arise.
+    fn observation_response_owned_by(
+        owner: WorkspaceId,
+        scope: &ScopeKey,
+        accepted: Timestamp,
+        observed: Timestamp,
+        id: ObservationId,
+        revision: u64,
+    ) -> String {
         let pk = keys::observation_pk(scope, Signal::Logs, BucketHour::from_timestamp(accepted), 0);
         let sk = order_sort_key(OrderTuple::new(accepted, Signal::Logs, id, revision));
         format!(
-            r#"{{"Items":[{{"pk":{{"S":"{pk}"}},"sk":{{"S":"{sk}"}},"observationId":{{"S":"{id}"}},"revision":{{"N":"{revision}"}},"signal":{{"S":"logs"}},"workspaceId":{{"S":"{}"}},"time":{{"S":"{}"}},"acceptedAt":{{"S":"{}"}},"acceptedSeq":{{"N":"7"}},"bodyInline":{{"B":"e30="}},"indexed":{{"M":{{}}}}}}],"Count":1,"ScannedCount":1}}"#,
-            workspace(),
+            r#"{{"Items":[{{"pk":{{"S":"{pk}"}},"sk":{{"S":"{sk}"}},"observationId":{{"S":"{id}"}},"revision":{{"N":"{revision}"}},"signal":{{"S":"logs"}},"workspaceId":{{"S":"{owner}"}},"time":{{"S":"{}"}},"acceptedAt":{{"S":"{}"}},"acceptedSeq":{{"N":"7"}},"bodyInline":{{"B":"e30="}},"indexed":{{"M":{{}}}}}}],"Count":1,"ScannedCount":1}}"#,
             observed.to_wire(),
             accepted.to_wire(),
         )
+    }
+
+    /// A workspace no case here is ever authenticated for.
+    fn other_workspace() -> WorkspaceId {
+        WorkspaceId::from_uuid7(aex_wire::Uuid7::compose(1, [3; 10]))
     }
 
     #[test]
@@ -2524,6 +2582,128 @@ mod tests {
 
         assert_eq!(page.items.len(), 1);
         assert_eq!(page.last.expect("follow position").revision, 7);
+    }
+
+    /// One page read of a session partition the caller has named but may not
+    /// own, over a reply whose single row records `owner`.
+    ///
+    /// `preserve_snapshot_tail` is the only difference between the paged read
+    /// and the follow the stream route runs, and both reach the row decode
+    /// through this one call, so running the same fixture both ways is what
+    /// proves the refusal covers query **and** stream.
+    async fn session_page_owned_by(
+        owner: WorkspaceId,
+        preserve_snapshot_tail: bool,
+    ) -> Result<super::Page, ReadError> {
+        let scope = ScopeKey::Session(session());
+        let accepted = Timestamp::parse("2026-08-01T09:01:00.000Z").expect("accepted");
+        let id = ObservationId::from_uuid7(aex_wire::Uuid7::compose(
+            u64::try_from(accepted.unix_millis()).expect("positive fixture"),
+            [8; 10],
+        ));
+        let item = observation_response_owned_by(owner, &scope, accepted, accepted, id, 1);
+        let empty = r#"{"Items":[],"Count":0,"ScannedCount":0}"#;
+        let (reader, _replay) = replaying_reader_responses(&[&item, empty, empty, empty]);
+        let mut query = normalized_query();
+        query.axis = ScopeAxis::Scope;
+        query.trace_id = None;
+        query.metric_name = None;
+        query.order_by = OrderBy::Accepted;
+        query.time_gte = Timestamp::parse("2026-08-01T09:00:00.000Z").expect("range");
+        query.time_lt = Timestamp::parse("2026-08-01T10:00:00.000Z").expect("range");
+        let planned = plan(&query, Budget::default()).expect("plans");
+        reader
+            .read_page(
+                &scope,
+                workspace(),
+                &query,
+                &planned,
+                aex_observation_query::coverage::Snapshot::at(
+                    Timestamp::parse("2026-08-01T09:59:00.000Z").expect("snapshot"),
+                ),
+                None,
+                None,
+                preserve_snapshot_tail,
+            )
+            .await
+    }
+
+    #[tokio::test]
+    async fn a_row_recorded_under_another_workspace_is_refused_on_the_query_path() {
+        // The scope key of a session partition carries no workspace, so naming
+        // someone else's session used to be enough to read their rows: the
+        // stored `workspaceId` was read only to be copied onto the response.
+        let error = session_page_owned_by(other_workspace(), false)
+            .await
+            .expect_err("a foreign row is never returned");
+        assert!(
+            matches!(
+                error,
+                ReadError::Malformed {
+                    attribute: "workspaceId"
+                }
+            ),
+            "{error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_row_recorded_under_another_workspace_is_refused_on_the_stream_path() {
+        // The follow that `listen`/`replay` runs differs from the paged read
+        // only by `preserve_snapshot_tail`; both decode through `read_page`, so
+        // the refusal must be identical rather than merely similar.
+        let error = session_page_owned_by(other_workspace(), true)
+            .await
+            .expect_err("a foreign row is never streamed");
+        assert!(
+            matches!(
+                error,
+                ReadError::Malformed {
+                    attribute: "workspaceId"
+                }
+            ),
+            "{error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_row_recorded_under_the_callers_own_workspace_still_reads_on_both_paths() {
+        // The refusal must be the workspace comparison and nothing broader: the
+        // owner's own session rows are still served, paged and followed.
+        let paged = session_page_owned_by(workspace(), false)
+            .await
+            .expect("the owner reads its own session");
+        assert_eq!(paged.items.len(), 1);
+        assert_eq!(paged.items[0].workspace_id, workspace());
+
+        let followed = session_page_owned_by(workspace(), true)
+            .await
+            .expect("the owner follows its own session");
+        assert_eq!(followed.items.len(), 1);
+        assert_eq!(followed.items[0].workspace_id, workspace());
+    }
+
+    #[test]
+    fn a_row_that_cannot_prove_its_owner_is_refused_rather_than_attributed_to_the_caller() {
+        let error = super::assert_row_workspace(&HashMap::new(), workspace())
+            .expect_err("a row with no recorded owner is refused");
+        assert!(
+            matches!(
+                error,
+                ReadError::Malformed {
+                    attribute: "workspaceId"
+                }
+            ),
+            "{error:?}"
+        );
+        let owned = HashMap::from([(
+            "workspaceId".to_owned(),
+            AttributeValue::S(workspace().to_string()),
+        )]);
+        assert_eq!(
+            super::assert_row_workspace(&owned, workspace()).expect("the owner's row reads"),
+            workspace()
+        );
     }
 
     #[tokio::test]

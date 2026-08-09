@@ -597,6 +597,13 @@ impl ObservationRequest {
         let mut ended = started;
         let mut root = String::new();
         for item in &items {
+            // The same tenancy assertion `ObservationReader::decode` makes, on
+            // the one hydrated path that does not go through it. `TRC#S#…` is
+            // keyed by the caller-named session and carries no workspace
+            // component, so without this the stored owner would only ever have
+            // been overwritten by `self.workspace()` on the way out.
+            crate::reader::assert_row_workspace(item, self.workspace())
+                .map_err(|error| read_error(&error))?;
             let Some(signal) = crate::reader::stored_signal(item) else {
                 continue;
             };

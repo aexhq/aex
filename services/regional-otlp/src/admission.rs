@@ -19,7 +19,8 @@ use aex_otlp_admission::{
     RedactionReport, SecretDigest, SecretDigestManifest, decode, normalize, reservation_for,
 };
 use aex_wire::error::{ErrorCode, WireError, WireResult};
-use aex_wire::ids::{PrefixedId as _, SessionId, TelemetryBatchId, Uuid7};
+use aex_wire::idempotency::PrincipalScope;
+use aex_wire::ids::{PrefixedId as _, SessionId, TelemetryBatchId, Uuid7, WorkspaceId};
 use aex_wire::models::TelemetryAdmissionReceipt;
 use aex_wire::routes::route;
 use aex_wire::server::{OtlpApi, RequestContext};
@@ -30,9 +31,6 @@ use crate::authority::{AdmissionAuthority, AdmissionRequest, AuthorityError, Pre
 use crate::counters::{AdmissionCounter, AdmissionTelemetry};
 use aex_observation_store_dynamodb::spool::GateState;
 use aex_regional_http::context::RequestContext as EdgeContext;
-
-/// The header naming the session an in-guest collector is emitting for.
-pub const SESSION_HEADER: &str = "aex-session-id";
 
 /// How long the reservation loop sleeps between attempts.
 const RESERVE_POLL: Duration = Duration::from_millis(2);
@@ -98,7 +96,6 @@ impl OtlpService {
 pub struct OtlpRequest {
     service: Arc<OtlpService>,
     authorized: EdgeContext,
-    session: Option<SessionId>,
     encoding: OtlpEncoding,
     coding: ContentCoding,
 }
@@ -108,34 +105,75 @@ impl std::fmt::Debug for OtlpRequest {
         formatter
             .debug_struct("OtlpRequest")
             .field("encoding", &self.encoding.as_str())
-            .field("session", &self.session)
+            .field("scope", &self.scope())
             .finish_non_exhaustive()
     }
 }
 
 impl OtlpRequest {
     /// Binds one request to the shared service.
+    ///
+    /// There is deliberately no session parameter. Everything this request may
+    /// be attributed to arrives inside `authorized`, which the edge produced by
+    /// verifying a credential; a caller-supplied value can therefore not reach
+    /// the attribution at all rather than being checked and hopefully rejected.
     #[must_use]
     pub fn new(
         service: Arc<OtlpService>,
         authorized: EdgeContext,
-        session: Option<SessionId>,
         encoding: OtlpEncoding,
         coding: ContentCoding,
     ) -> Self {
         Self {
             service,
             authorized,
-            session,
             encoding,
             coding,
         }
     }
 
+    /// The session the **verified credential** names, when it names one.
+    ///
+    /// This is the only session source in this deployable, and it is a pure
+    /// function of the edge's own output. Ingest is a hot path the owner has
+    /// ruled out putting a lookup on, so a session that no credential proves is
+    /// not a session this service can attribute to.
+    ///
+    /// The match is exhaustive **and fully destructured on purpose**: there is
+    /// no `_` arm and no `..` rest pattern anywhere in it. A new
+    /// [`PrincipalScope`] variant — or a new field on an existing one — that
+    /// carries a session therefore fails this build, right here, at the one
+    /// place that decides what a batch is attributed to. Whoever introduces a
+    /// session-bearing principal cannot land it without answering this
+    /// question, and the moment they answer it with `Some`, session attribution
+    /// starts working through [`Self::scope`] with no other edit anywhere.
+    fn credential_session(&self) -> Option<SessionId> {
+        match self.authorized.auth.principal {
+            // No regional principal names a session today. A person acting
+            // through an account token and a workspace API key are both scoped
+            // to a workspace and nothing narrower, so the honest answer for
+            // both is "no session" rather than a value taken from the request.
+            PrincipalScope::Account {
+                user: _,
+                organization: _,
+            }
+            | PrincipalScope::WorkspaceKey {
+                key: _,
+                workspace: _,
+                organization: _,
+            } => None,
+        }
+    }
+
     /// The scope this request's observations belong to.
+    ///
+    /// A session-scoped row's partition key (`OBS#S#{session}`) carries no
+    /// workspace component, so this value is the whole tenancy decision for
+    /// every row the batch writes. It is derived from the credential and from
+    /// nothing else.
     #[must_use]
     pub fn scope(&self) -> ScopeKey {
-        self.session.map_or(
+        self.credential_session().map_or(
             ScopeKey::Workspace(self.authorized.auth.workspace_id),
             ScopeKey::Session,
         )
@@ -155,6 +193,11 @@ impl OtlpRequest {
         let service = &self.service;
         aex_otlp_admission::decode::check_encoded_size(body.len(), &service.limits)
             .map_err(|error| otlp_error(&error))?;
+        // One scope decision per request, taken once and consumed by every
+        // stage below. The normalized identity attributes, the batch binding
+        // and the stored partition key cannot disagree about a session because
+        // there is only one value for them to read.
+        let scope_key = self.scope();
 
         // Step 1 — reserve before the first decode byte.
         let reservation = reservation_for(
@@ -177,7 +220,7 @@ impl OtlpRequest {
         let scope = aex_otlp_admission::AuthenticatedScope {
             organization_id: self.authorized.auth.organization_id,
             workspace_id: self.authorized.auth.workspace_id,
-            session_id: self.session,
+            session_id: scope_key.session(),
             run_id: None,
             agent_id: None,
         };
@@ -195,7 +238,6 @@ impl OtlpRequest {
             );
         }
         let descriptor = route(cx.route);
-        let scope_key = self.scope();
         let workspace = self.authorized.auth.workspace_id.to_string();
         let scope_text = scope_key.to_key();
         let principal = principal_id(cx);
@@ -271,13 +313,23 @@ impl OtlpRequest {
 
     /// Removes AEX-managed secret values the platform itself injected.
     async fn redact(&self, batch: &mut NormalizedBatch) -> WireResult<RedactionReport> {
-        let Some(session) = self.session else {
+        let Some(session) = self.scope().session() else {
             // Only a session can have had a platform secret injected into it. A
             // workspace-key batch is customer-authored throughout, and the
             // product never claims arbitrary customer bytes can be recognised.
+            //
+            // This is also what makes the custody read unreachable while no
+            // principal names a session: the manifest `GetItem` below is the
+            // only cross-tenant-addressable read on this path, and it can only
+            // be reached with a session the credential itself proved.
             return apply(&NoManagedSecrets, batch).map_err(|error| otlp_error(&error));
         };
-        let manifest = match self.service.custody.manifest(session).await {
+        let manifest = match self
+            .service
+            .custody
+            .manifest(session, self.authorized.auth.workspace_id)
+            .await
+        {
             Ok(manifest) => manifest,
             Err(error) => {
                 if let AuthorityError::CustodyMalformed { malformed } = &error {
@@ -485,18 +537,32 @@ impl CustodyManifests {
         format!("REDACT#{session}")
     }
 
-    /// Reads one session's manifest.
+    /// Reads one session's manifest, refusing one that names another workspace.
+    ///
+    /// The key is `REDACT#{session}` alone — the item family is partitioned by
+    /// session, not by tenant — so the read itself cannot be conditioned on the
+    /// caller's workspace. The row does record its owner, though
+    /// (`aex_secret_custody_dynamodb::codec::encode_manifest` writes
+    /// `workspaceId` on every manifest it emits), so the ownership assertion is
+    /// made on the returned item, exactly as that crate's own `decode_manifest`
+    /// makes it. Belt and braces: with the session now coming from the verified
+    /// credential, the caller can no longer name a session it does not own, and
+    /// this refusal is the second, independent reason a foreign manifest can
+    /// never be read.
     ///
     /// # Errors
     ///
-    /// Returns [`AuthorityError::Provider`] when the read fails and
+    /// Returns [`AuthorityError::Provider`] when the read fails,
+    /// [`AuthorityError::Malformed`] when the stored manifest is absent an
+    /// owner or names a different one, and
     /// [`AuthorityError::CustodyMalformed`] when any entry cannot be parsed.
-    /// Both fail the batch closed: admitting unredacted bytes — or bytes
+    /// All three fail the batch closed: admitting unredacted bytes — or bytes
     /// checked against a silently emptier redaction set — is never an
     /// acceptable degradation.
     pub async fn manifest(
         &self,
         session: SessionId,
+        workspace: WorkspaceId,
     ) -> Result<SecretDigestManifest, AuthorityError> {
         let response = self
             .dynamodb
@@ -512,12 +578,16 @@ impl CustodyManifests {
                 reason: error.to_string(),
             })?;
         let Some(item) = response.item else {
+            // An absent item means no managed secret was injected into the
+            // session. There is no owner to compare, and inventing one would
+            // invent a manifest.
             return Ok(SecretDigestManifest {
                 session,
                 custody_revision: 0,
                 entries: Vec::new(),
             });
         };
+        owned_by(&item, workspace)?;
         let entries = parse_entries(&item)
             .map_err(|malformed| AuthorityError::CustodyMalformed { malformed })?;
         Ok(SecretDigestManifest {
@@ -529,6 +599,36 @@ impl CustodyManifests {
                 .unwrap_or(0),
             entries,
         })
+    }
+}
+
+/// Asserts a stored manifest belongs to the workspace that is reading it.
+///
+/// A present row with no `workspaceId` is a refusal, not a pass: the only
+/// writer of this family stamps the attribute unconditionally, so an item
+/// without one is a row this reader cannot prove the ownership of, and an
+/// unprovable owner fails closed.
+///
+/// # Errors
+///
+/// Returns [`AuthorityError::Malformed`] when the attribute is absent,
+/// unparseable, or names another workspace.
+fn owned_by(
+    item: &HashMap<String, AttributeValue>,
+    workspace: WorkspaceId,
+) -> Result<(), AuthorityError> {
+    let malformed = AuthorityError::Malformed {
+        item: "redaction_manifest",
+        attribute: "workspaceId",
+    };
+    let owner = item
+        .get("workspaceId")
+        .and_then(|value| value.as_s().ok())
+        .ok_or_else(|| malformed.clone())?;
+    if owner.parse::<WorkspaceId>().ok() == Some(workspace) {
+        Ok(())
+    } else {
+        Err(malformed)
     }
 }
 
@@ -575,15 +675,25 @@ fn parse_entries(item: &HashMap<String, AttributeValue>) -> Result<Vec<SecretDig
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
     use std::time::Duration;
 
     use aex_observation_domain::canonical::{BatchBinding, CanonicalValue, batch_intent_digest};
-    use aex_otlp_admission::{MemoryBudget, OtlpError};
+    use aex_observation_domain::keys::ScopeKey;
+    use aex_otlp_admission::{
+        ContentCoding, MemoryBudget, NormalizedBatch, OtlpEncoding, OtlpError, OtlpLimits,
+        OverwriteReport,
+    };
     use aex_wire::error::ErrorCode;
-    use aex_wire::ids::PrefixedId as _;
+    use aex_wire::idempotency::PrincipalScope;
+    use aex_wire::ids::{ApiKeyId, OrganizationId, PrefixedId as _, SessionId, WorkspaceId};
 
-    use super::{CustodyManifests, authority_error, batch_id_for, otlp_error, reserve};
-    use crate::authority::AuthorityError;
+    use super::{
+        CustodyManifests, OtlpRequest, OtlpService, authority_error, batch_id_for, otlp_error,
+        owned_by, reserve,
+    };
+    use crate::authority::{AdmissionAuthority, AuthorityError};
+    use crate::counters::AdmissionTelemetry;
 
     #[test]
     fn an_oversize_body_is_a_four_one_three_before_any_allocation() {
@@ -756,7 +866,7 @@ mod tests {
         BatchBinding {
             principal_id: "{\"kind\":\"workspaceKey\"}",
             method: "POST",
-            canonical_route: "/api/telemetry/otlp/v1/logs",
+            canonical_route: "/api/otlp/v1/logs",
             workspace_id: "wsp_01h455vb4pex5vsknk084sn02q",
             scope: "WS#wsp_01h455vb4pex5vsknk084sn02q",
         }
@@ -784,6 +894,242 @@ mod tests {
             batch_id_for(&different),
             batch_id_for(&reordered),
             "the observation list is ordered; reordering is a different batch"
+        );
+    }
+
+    /// The workspace every fixture request is authenticated for.
+    fn workspace() -> WorkspaceId {
+        WorkspaceId::from_uuid7(aex_wire::Uuid7::compose(1, [2; 10]))
+    }
+
+    /// A workspace nobody in these cases is authenticated for.
+    fn other_workspace() -> WorkspaceId {
+        WorkspaceId::from_uuid7(aex_wire::Uuid7::compose(1, [3; 10]))
+    }
+
+    /// The session a caller would have named, had there been anywhere to name
+    /// one.
+    fn session() -> SessionId {
+        SessionId::from_uuid7(aex_wire::Uuid7::compose(1, [4; 10]))
+    }
+
+    /// One verified edge context for a workspace API key.
+    ///
+    /// This is the whole input a request's attribution is allowed to depend on:
+    /// what the edge proved, and nothing the caller wrote.
+    fn authorized() -> aex_regional_http::context::RequestContext {
+        use aex_regional_http::context::{
+            AccountState, AuthorizationEpochs, EffectiveLimits, RegionalAuthorization,
+            RequestContext,
+        };
+        let organization = OrganizationId::from_uuid7(aex_wire::Uuid7::compose(1, [5; 10]));
+        RequestContext {
+            request_id: aex_wire::types::RequestId::parse("0123456789abcdef0123456789abcdef")
+                .expect("a diagnostic id"),
+            route: aex_wire::routes::RouteId::OtlpLogsIngest,
+            auth: RegionalAuthorization {
+                principal: PrincipalScope::WorkspaceKey {
+                    key: ApiKeyId::from_uuid7(aex_wire::Uuid7::compose(1, [6; 10])),
+                    workspace: workspace(),
+                    organization,
+                },
+                credential_binding: [7; 32],
+                organization_id: organization,
+                workspace_id: workspace(),
+                placement: aex_wire::types::Region::EuWest1,
+                scopes: aex_wire::scopes::ScopeSet::empty(),
+                account_state: AccountState::Active,
+                epochs: AuthorizationEpochs::default(),
+                issued_at: time::OffsetDateTime::UNIX_EPOCH,
+                expires_at: time::OffsetDateTime::UNIX_EPOCH + time::Duration::seconds(30),
+            },
+            limits: EffectiveLimits {
+                json_body_bytes: 1_048_576,
+                otlp_body_bytes: 4 * 1_024 * 1_024,
+                query_page_items: 100,
+                query_page_bytes: 1_048_576,
+            },
+            operation_id: None,
+            idempotency: None,
+            if_match: None,
+            received_at: time::OffsetDateTime::UNIX_EPOCH,
+        }
+    }
+
+    /// One request whose custody client would fail loudly if it were used.
+    ///
+    /// The replay client is handed **no** events, so any provider call at all
+    /// is an error rather than a silently satisfied read. That is what makes
+    /// "the custody read is unreachable" a measured fact here rather than a
+    /// claim about the source.
+    fn request_with_unusable_provider() -> (
+        OtlpRequest,
+        aws_smithy_http_client::test_util::StaticReplayClient,
+    ) {
+        use aws_smithy_http_client::test_util::StaticReplayClient;
+        let replay = StaticReplayClient::new(Vec::new());
+        let dynamodb = aws_sdk_dynamodb::Client::from_conf(
+            aws_sdk_dynamodb::Config::builder()
+                .behavior_version(aws_sdk_dynamodb::config::BehaviorVersion::latest())
+                .region(aws_sdk_dynamodb::config::Region::new("eu-west-1"))
+                .credentials_provider(aws_sdk_dynamodb::config::Credentials::new(
+                    "AKIDTESTTESTTESTTEST",
+                    "test-secret",
+                    None,
+                    None,
+                    "aex-tests",
+                ))
+                .http_client(replay.clone())
+                .build(),
+        );
+        let s3 = aws_sdk_s3::Client::from_conf(
+            aws_sdk_s3::Config::builder()
+                .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+                .region(aws_sdk_s3::config::Region::new("eu-west-1"))
+                .build(),
+        );
+        let region = aex_wire::types::Region::from_name("eu-west-1").expect("a region");
+        let service = OtlpService::new(
+            AdmissionAuthority::new(
+                dynamodb.clone(),
+                s3,
+                "test-observation-authority",
+                "test-observation-bucket",
+                region,
+            ),
+            CustodyManifests::new(dynamodb, "test-secret-custody"),
+            OtlpLimits::REGISTERED,
+            MemoryBudget::new(1024 * 1024),
+            Duration::from_millis(5),
+            vec![0u8; 32],
+            AdmissionTelemetry::new(
+                aex_platform_telemetry::Handle::install(
+                    &aex_platform_telemetry::Settings::default(),
+                    None,
+                ),
+                "dev",
+                "eu-west-1",
+            ),
+        );
+        (
+            OtlpRequest::new(
+                Arc::new(service),
+                authorized(),
+                OtlpEncoding::Protobuf,
+                ContentCoding::Identity,
+            ),
+            replay,
+        )
+    }
+
+    #[test]
+    fn a_batch_is_attributed_to_the_authenticated_workspace_and_to_nothing_a_caller_can_send() {
+        // `OtlpRequest` has no session input of any kind, so the only fixture a
+        // caller-controlled attribution could be built from does not exist.
+        // What remains is the derivation, and it must read the credential.
+        let (request, _replay) = request_with_unusable_provider();
+        assert_eq!(
+            request.scope(),
+            ScopeKey::Workspace(workspace()),
+            "the batch is bound to the workspace the edge verified"
+        );
+        assert_eq!(
+            request.scope().session(),
+            None,
+            "no regional principal names a session, so no batch may claim one"
+        );
+        assert_ne!(
+            request.scope(),
+            ScopeKey::Session(session()),
+            "a session scope is unreachable while no credential proves a session"
+        );
+    }
+
+    #[test]
+    fn the_stored_partition_key_of_an_admitted_batch_carries_the_workspace() {
+        // A session-scoped row's key is `OBS#S#{session}` and holds no
+        // workspace, which is exactly why the scope may not come from the
+        // request. With the credential as the only source, every row this
+        // deployable writes today is addressable only through its tenant.
+        let (request, _replay) = request_with_unusable_provider();
+        let key = request.scope().to_key();
+        assert_eq!(key, format!("W#{}", workspace()));
+        assert!(
+            !key.starts_with("S#"),
+            "a workspace-key batch may never land in a session partition"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_custody_manifest_read_is_unreachable_without_a_credential_named_session() {
+        // `redact` short-circuits on "no session", so the unconditioned
+        // `GetItem` on `REDACT#{session}` — the one cross-tenant addressable
+        // read left on this path — is never issued. The provider would fail if
+        // it were.
+        let (request, replay) = request_with_unusable_provider();
+        let mut batch = NormalizedBatch {
+            observations: Vec::new(),
+            report: OverwriteReport::default(),
+        };
+        let report = request
+            .redact(&mut batch)
+            .await
+            .expect("a workspace batch redacts against the empty managed set");
+        assert_eq!(report.redacted_values, 0);
+        assert_eq!(
+            replay.actual_requests().count(),
+            0,
+            "ingest must issue no custody read at all"
+        );
+    }
+
+    #[test]
+    fn a_custody_manifest_naming_another_workspace_is_refused() {
+        use aws_sdk_dynamodb::types::AttributeValue;
+        let mut item = manifest_item(vec![custody_entry()]);
+        item.insert(
+            "workspaceId".to_owned(),
+            AttributeValue::S(other_workspace().to_string()),
+        );
+        let error = owned_by(&item, workspace()).expect_err("a foreign manifest is refused");
+        assert!(
+            matches!(
+                error,
+                AuthorityError::Malformed {
+                    item: "redaction_manifest",
+                    attribute: "workspaceId"
+                }
+            ),
+            "{error:?}"
+        );
+        assert!(
+            !error.retryable(),
+            "a manifest owned by another tenant never becomes readable by retrying"
+        );
+
+        item.insert(
+            "workspaceId".to_owned(),
+            AttributeValue::S(workspace().to_string()),
+        );
+        owned_by(&item, workspace()).expect("the owner's own manifest reads");
+    }
+
+    #[test]
+    fn a_custody_manifest_that_cannot_prove_its_owner_is_refused() {
+        // The only writer of this family stamps `workspaceId` unconditionally,
+        // so a present row without one is a row whose ownership this reader
+        // cannot establish. It fails closed rather than being read.
+        let error = owned_by(&manifest_item(vec![custody_entry()]), workspace())
+            .expect_err("an unattributed manifest is refused");
+        assert!(
+            matches!(
+                error,
+                AuthorityError::Malformed {
+                    item: "redaction_manifest",
+                    attribute: "workspaceId"
+                }
+            ),
+            "{error:?}"
         );
     }
 

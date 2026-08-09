@@ -12,7 +12,6 @@ use std::sync::Arc;
 use aex_otlp_admission::{ContentCoding, OtlpEncoding};
 use aex_wire::dispatch::{DispatchOutcome, RawRequest, RawResponse, RequestLimits};
 use aex_wire::error::{ErrorCode, WireError};
-use aex_wire::ids::SessionId;
 use aex_wire::routes::{Plane, RouteId, TransportKind, match_route, route};
 use aex_wire::server::{RouteGroup, dispatch_otlp};
 use aex_wire::types::HttpMethod;
@@ -22,7 +21,7 @@ use axum::http::{HeaderMap, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{MethodFilter, on};
 
-use crate::admission::{OtlpRequest, OtlpService, SESSION_HEADER};
+use crate::admission::{OtlpRequest, OtlpService};
 use aex_internal_contracts::assertion::AssertionAudience;
 use aex_regional_http::authz::{LambdaAssertionSource, RegionalProjection};
 use aex_regional_http::edge::{RegionalEdge, SystemClock};
@@ -191,18 +190,12 @@ async fn handle(
         Ok(coding) => coding,
         Err(failure) => return render_error(Some(&context), &failure),
     };
-    let session = match session_header(&headers) {
-        Ok(session) => session,
-        Err(failure) => return render_error(Some(&context), &failure),
-    };
-
-    let request = OtlpRequest::new(
-        Arc::clone(&state.service),
-        authorized,
-        session,
-        encoding,
-        coding,
-    );
+    // The only facts taken from this request's headers are the two that
+    // describe the bytes: what they are encoded as and how they are compressed.
+    // Who the batch belongs to is `authorized` and nothing else — a header
+    // cannot name a scope here because nothing downstream of this line accepts
+    // one.
+    let request = OtlpRequest::new(Arc::clone(&state.service), authorized, encoding, coding);
     let raw = RawRequest {
         route: id,
         path: binding,
@@ -237,22 +230,6 @@ fn content_coding(headers: &HeaderMap) -> Result<ContentCoding, WireError> {
     ContentCoding::from_content_encoding(value).map_err(|error| {
         WireError::new(ErrorCode::InvalidTelemetry).with_message(error.to_string())
     })
-}
-
-/// Resolves the session an in-guest collector declared.
-fn session_header(headers: &HeaderMap) -> Result<Option<SessionId>, WireError> {
-    let Some(value) = headers.get(SESSION_HEADER) else {
-        return Ok(None);
-    };
-    value
-        .to_str()
-        .ok()
-        .and_then(|text| text.parse::<SessionId>().ok())
-        .map(Some)
-        .ok_or_else(|| {
-            WireError::new(ErrorCode::InvalidRequest)
-                .with_message(format!("`{SESSION_HEADER}` is not a session identifier"))
-        })
 }
 
 /// Renders a unary response exactly as the route table declares it.
@@ -444,12 +421,14 @@ mod tests {
         use tower::ServiceExt as _;
         let router = super::router(offline_state());
 
-        // 3 MiB is inside the pinned 4 MiB contract but past `axum`'s 2 MiB
-        // extractor default: without the explicit limit this died as a bare
-        // framework `413` before the handler ever ran.
+        // Both sizes are derived from the ceiling rather than written down, so
+        // moving the ceiling moves the test with it. The explicit body limit
+        // still has to be set: `axum`'s extractor default is its own number and
+        // whether it sits above or below the contract is not ours to rely on.
+        let ceiling = aex_otlp_admission::OtlpLimits::REGISTERED.encoded_max;
         let inside = router
             .clone()
-            .oneshot(ingest_request(3 * 1024 * 1024))
+            .oneshot(ingest_request(ceiling))
             .await
             .expect("served");
         assert_ne!(
@@ -461,10 +440,46 @@ mod tests {
 
         // Past the configured ceiling the framework guard still refuses.
         let refused = router
-            .oneshot(ingest_request(5 * 1024 * 1024))
+            .oneshot(ingest_request(ceiling + 1))
             .await
             .expect("served");
         assert_eq!(refused.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[tokio::test]
+    async fn a_caller_supplied_session_header_is_not_read_and_cannot_fail_a_request() {
+        use tower::ServiceExt as _;
+        // `aex-session-id` used to be parsed here and used verbatim as the
+        // scope a batch was attributed to — a caller naming any session in any
+        // workspace. It is gone: the header is now an unknown header like any
+        // other, which shows up as the request being decided by exactly what
+        // decided it before, and never by a `400` about the header's syntax.
+        let router = super::router(offline_state());
+        let without = router
+            .clone()
+            .oneshot(ingest_request(64))
+            .await
+            .expect("served");
+        let without_status = without.status();
+
+        for value in ["ses_01h455vb4pex5vsknk084sn02q", "not-a-session-identifier"] {
+            let mut request = ingest_request(64);
+            request.headers_mut().insert(
+                "aex-session-id",
+                axum::http::HeaderValue::from_static(value),
+            );
+            let with = router.clone().oneshot(request).await.expect("served");
+            assert_eq!(
+                with.status(),
+                without_status,
+                "`aex-session-id: {value}` changed the outcome; the header is being read"
+            );
+            assert_ne!(
+                with.status(),
+                StatusCode::BAD_REQUEST,
+                "a header nothing parses can never be a syntax refusal"
+            );
+        }
     }
 
     #[test]
