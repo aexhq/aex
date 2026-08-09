@@ -29,8 +29,14 @@ id, ARN or domain appears in any `.tf` file here.
 
 ## Outputs
 
-`vpc_id`, `private_subnet_ids`, `authority_key_arns`, `table_names`,
-`stream_arns`, `content_bucket`.
+`vpc_id`, `private_subnet_ids`, `public_subnet_ids`,
+`interface_endpoint_security_group_id`, `gateway_endpoint_prefix_list_ids`,
+`authority_key_arns`, `table_names`, `stream_arns`, `content_bucket`.
+
+The last three network handles exist for the application root's security
+groups: a task group egresses to the interface endpoints by group reference and
+to S3 and DynamoDB by AWS-managed prefix list, because a gateway endpoint is a
+route-table entry rather than an interface and cannot be named any other way.
 
 ## Test
 

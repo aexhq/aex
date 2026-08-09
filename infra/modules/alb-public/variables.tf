@@ -8,6 +8,16 @@ variable "name" {
   }
 }
 
+variable "vpc_id" {
+  type        = string
+  description = "VPC the load balancer's own security group is created in. It must be the VPC the public subnets belong to; a group is only meaningful inside one."
+
+  validation {
+    condition     = can(regex("^vpc-[0-9a-f]{8,17}$", var.vpc_id))
+    error_message = "The VPC must be an EC2 VPC id such as `vpc-0123456789abcdef0`."
+  }
+}
+
 variable "subnet_ids" {
   type        = list(string)
   description = "Public subnets the load balancer sits in."
@@ -18,13 +28,14 @@ variable "subnet_ids" {
   }
 }
 
-variable "security_group_ids" {
+variable "additional_security_group_ids" {
   type        = list(string)
-  description = "Security groups attached to the load balancer."
+  default     = []
+  description = "Groups attached to the load balancer alongside the one this module creates. The module's own group is always attached; anything here is added to it and never substituted for it, so no caller can leave the public edge with ingress nobody wrote down."
 
   validation {
-    condition     = length(var.security_group_ids) > 0
-    error_message = "At least one security group is required."
+    condition     = alltrue([for id in var.additional_security_group_ids : can(regex("^sg-[0-9a-f]{8,17}$", id))])
+    error_message = "Every additional security group must be an EC2 security group id such as `sg-0123456789abcdef0`."
   }
 }
 

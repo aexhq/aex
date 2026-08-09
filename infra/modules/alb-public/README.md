@@ -21,13 +21,35 @@ What keeps `/internal/*` private is unchanged and still lives here: the service
 target groups health-check `/internal/readyz`, so the path exists and answers,
 but no rule matches it and this listener's default action is a fixed 404.
 
+## The edge owns its own ingress
+
+This module creates the load balancer's security group. It used to take one, and
+nothing anywhere created it: no module built these groups and the private
+deployment repository may not declare resources in an environment root, so the
+group a root was naming could not exist. The group is derived, not configurable
+- `<name>-alb` - and it admits TCP/443 and TCP/80 from `0.0.0.0/0`. Port 80 is
+open because this module already answers it with a permanent redirect; refusing
+it would turn a plain `http://` request into a timeout rather than a 301.
+
+`additional_security_group_ids` is added to that group, never substituted for
+it. A caller can attach something extra; a caller cannot leave the public edge
+admitting only what somebody wrote down elsewhere.
+
+The group carries no egress rule of its own. Terraform revokes the allow-all
+egress AWS attaches to a new group, and the only thing this load balancer needs
+to reach is a service target. `ecs-service` writes that rule, on this group,
+against its own task group and its own container port: the load balancer cannot
+name a task group without depending on the service that already depends on it,
+and one load balancer carries several services on different ports.
+
 ## Inputs
 
 | Name | Type | Description |
 | --- | --- | --- |
 | `name` | `string` | Load balancer name, `aex-<...>`. |
+| `vpc_id` | `string` | VPC the security group is created in. |
 | `subnet_ids` | `list(string)` | At least two public subnets. |
-| `security_group_ids` | `list(string)` | Security groups. |
+| `additional_security_group_ids` | `list(string)` | Attached alongside the module's own group, never instead of it. Defaults to none. |
 | `certificate_arn` | `string` | ACM certificate for the HTTPS listener. |
 | `idle_timeout` | `number` | At least 1200 seconds. |
 | `deregistration_delay` | `number` | At least 30 seconds; published to every service target. |
@@ -42,6 +64,7 @@ but no rule matches it and this listener's default action is a fixed 404.
 | --- | --- |
 | `dns_name` | DNS name of the load balancer. |
 | `listener_arn` | ARN of the HTTPS listener, which every `alb-service-target` attaches to. |
+| `security_group_id` | The load balancer's own group, which each service behind it names to admit exactly this edge. |
 | `zone_id` | Hosted zone id, for an alias record. |
 | `deregistration_delay` | Drain window, so a service behind it cannot disagree. |
 
@@ -49,6 +72,15 @@ but no rule matches it and this listener's default action is a fixed 404.
 
 - `idle_timeout` is at least 1200 seconds; a shorter value is rejected.
 - This module creates no target group and no listener rule at all.
+- The load balancer's security group is created here, in the given VPC, under a
+  name derived from the load balancer's own name.
+- Ingress is TCP/443 and TCP/80 from `0.0.0.0/0` and nothing else.
+- The module's own group is always attached; an additional group is attached
+  alongside it rather than in place of it.
+- A `vpc_id` that is not a VPC, and an additional group that is not a security
+  group, are both rejected. So are a name outside the `aex-` prefix, a single
+  subnet, a certificate that is not an ACM certificate, and a TLS policy below
+  1.3.
 - The HTTPS listener's default action is a fixed 404, so anything no service
   rule matches - `/internal/*` included - is unreachable from the public
   listener.

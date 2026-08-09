@@ -1,5 +1,15 @@
 mock_provider "aws" {}
 
+# The task group this module creates has no id until it exists, and the network
+# configuration it lands in is asserted below, so the plan needs one.
+override_resource {
+  target          = aws_security_group.task
+  override_during = plan
+  values = {
+    id = "sg-0123456789abcdef0"
+  }
+}
+
 variables {
   name                   = "regional-stream"
   task_definition_family = "aex-dev-eu-west-1-regional-stream"
@@ -13,9 +23,16 @@ variables {
   task_role_arn          = "arn:aws:iam::000000000000:role/aex-dev-regional-stream"
   execution_role_arn     = "arn:aws:iam::000000000000:role/aex-dev-ecs-execution"
   subnets                = ["subnet-0123456789abcdef0"]
-  security_group_ids     = ["sg-0123456789abcdef0"]
   log_group_name         = "/aex/dev/regional-stream"
   region                 = "eu-west-1"
+
+  vpc_id                               = "vpc-0123456789abcdef0"
+  interface_endpoint_security_group_id = "sg-0123456789abcdef1"
+
+  gateway_endpoint_prefix_list_ids = {
+    s3       = "pl-0123456789abcdef0"
+    dynamodb = "pl-0123456789abcdef1"
+  }
 
   autoscaling_bounds = {
     min_capacity = 1
@@ -457,6 +474,7 @@ run "a_load_balanced_service_gets_a_health_check_grace_period" {
 
   variables {
     target_group_arn                  = "arn:aws:elasticloadbalancing:eu-west-1:000000000000:targetgroup/aex-dev-euw1-stream-tg/73e2d6bc24d8a067"
+    load_balancer_security_group_ids  = ["sg-0123456789abcdef2"]
     health_check_grace_period_seconds = 60
   }
 
@@ -477,6 +495,7 @@ run "a_fixed_count_load_balanced_service_gets_the_same_grace_period" {
   variables {
     desired_count                     = 2
     target_group_arn                  = "arn:aws:elasticloadbalancing:eu-west-1:000000000000:targetgroup/aex-dev-euw1-stream-tg/73e2d6bc24d8a067"
+    load_balancer_security_group_ids  = ["sg-0123456789abcdef2"]
     health_check_grace_period_seconds = 90
 
     autoscaling_bounds = {
@@ -497,7 +516,8 @@ run "rejects_a_load_balanced_service_with_no_health_check_grace_period" {
   command = plan
 
   variables {
-    target_group_arn = "arn:aws:elasticloadbalancing:eu-west-1:000000000000:targetgroup/aex-dev-euw1-stream-tg/73e2d6bc24d8a067"
+    target_group_arn                 = "arn:aws:elasticloadbalancing:eu-west-1:000000000000:targetgroup/aex-dev-euw1-stream-tg/73e2d6bc24d8a067"
+    load_balancer_security_group_ids = ["sg-0123456789abcdef2"]
   }
 
   expect_failures = [var.health_check_grace_period_seconds]
@@ -665,6 +685,7 @@ run "regional_session_api_drains_for_thirty_seconds" {
     desired_count          = 2
 
     target_group_arn                  = "arn:aws:elasticloadbalancing:eu-west-1:000000000000:targetgroup/aex-dev-euw1-session-tg/73e2d6bc24d8a067"
+    load_balancer_security_group_ids  = ["sg-0123456789abcdef2"]
     health_check_grace_period_seconds = 60
 
     autoscaling_bounds = {
@@ -717,4 +738,254 @@ run "rejects_a_regional_session_api_stop_timeout_below_the_pin" {
   }
 
   expect_failures = [var.stop_timeout]
+}
+
+# --- the tasks' own security group ------------------------------------------
+
+run "the_service_creates_the_group_its_tasks_run_with" {
+  command = plan
+
+  assert {
+    condition     = aws_security_group.task.vpc_id == var.vpc_id
+    error_message = "The task security group must be created by this module, in the VPC its subnets belong to. No module created these groups and no environment root may declare one, so a group nobody creates is a service that cannot be applied at all."
+  }
+
+  assert {
+    condition     = aws_security_group.task.name == "${var.task_definition_family}-task"
+    error_message = "The group name must be derived from the plane- and region-qualified family, never supplied. The bare service name would read as though it named the only `regional-stream` group, and both planes live in one account."
+  }
+
+  assert {
+    condition     = contains(one(aws_ecs_service.autoscaled[0].network_configuration).security_groups, aws_security_group.task.id)
+    error_message = "The tasks must run with the group this module creates."
+  }
+
+  assert {
+    condition     = length(one(aws_ecs_service.autoscaled[0].network_configuration).security_groups) == 1
+    error_message = "With no additional groups supplied, the module's own group must be the only one the tasks run with."
+  }
+}
+
+run "task_egress_reaches_the_private_endpoints_and_nothing_else" {
+  command = plan
+
+  assert {
+    condition = (
+      aws_vpc_security_group_egress_rule.interface_endpoints.ip_protocol == "tcp"
+      && aws_vpc_security_group_egress_rule.interface_endpoints.from_port == 443
+      && aws_vpc_security_group_egress_rule.interface_endpoints.to_port == 443
+      && aws_vpc_security_group_egress_rule.interface_endpoints.referenced_security_group_id == var.interface_endpoint_security_group_id
+    )
+    error_message = "One rule to the shared interface endpoint group is how the tasks reach ECR, CloudWatch Logs, KMS, Secrets Manager, STS and SQS. Every interface endpoint sits in that one group, so one rule covers all of them."
+  }
+
+  assert {
+    condition = alltrue([
+      for k, rule in aws_vpc_security_group_egress_rule.gateway_endpoints :
+      rule.ip_protocol == "tcp" && rule.from_port == 443 && rule.to_port == 443
+      && rule.prefix_list_id == var.gateway_endpoint_prefix_list_ids[k]
+    ])
+    error_message = "Each gateway endpoint must be named by its AWS-managed prefix list. A gateway endpoint is a route table entry rather than an interface, so it has no security group a rule could reference."
+  }
+
+  assert {
+    condition     = length(aws_vpc_security_group_egress_rule.gateway_endpoints) == 2
+    error_message = "Exactly the two gateway endpoints - S3 for the image layers, DynamoDB for the journal - must be reachable."
+  }
+
+  assert {
+    condition = alltrue(concat(
+      [aws_vpc_security_group_egress_rule.interface_endpoints.cidr_ipv4 == null],
+      [for rule in aws_vpc_security_group_egress_rule.gateway_endpoints : rule.cidr_ipv4 == null],
+    ))
+    error_message = "No task egress rule may name a CIDR. The VPC has no NAT gateway, so an open egress rule would not grant reach it would merely stop describing what the tasks may do; the endpoint group and the two prefix lists are the whole of it."
+  }
+}
+
+# Task role credentials arrive over the link-local metadata address, which no
+# security group filters, so there is no fourth egress rule to look for.
+run "a_service_with_no_load_balancer_admits_nothing_at_all" {
+  command = plan
+
+  assert {
+    condition     = length(aws_vpc_security_group_ingress_rule.from_load_balancer) == 0
+    error_message = "A service with no load balancer in front of it must admit no ingress whatsoever."
+  }
+
+  assert {
+    condition     = length(aws_vpc_security_group_egress_rule.load_balancer_to_task) == 0
+    error_message = "With no load balancer there is no group to open towards the tasks."
+  }
+}
+
+run "a_load_balanced_service_admits_only_that_load_balancer" {
+  command = plan
+
+  variables {
+    target_group_arn                  = "arn:aws:elasticloadbalancing:eu-west-1:000000000000:targetgroup/aex-dev-euw1-stream-tg/73e2d6bc24d8a067"
+    load_balancer_security_group_ids  = ["sg-0123456789abcdef2"]
+    health_check_grace_period_seconds = 60
+  }
+
+  assert {
+    condition     = length(aws_vpc_security_group_ingress_rule.from_load_balancer) == 1
+    error_message = "The load balancer is the one source the tasks admit. The health check arrives on the same port as the traffic, so it needs no rule of its own."
+  }
+
+  assert {
+    condition = (
+      one(aws_vpc_security_group_ingress_rule.from_load_balancer).referenced_security_group_id == one(var.load_balancer_security_group_ids)
+      && one(aws_vpc_security_group_ingress_rule.from_load_balancer).cidr_ipv4 == null
+    )
+    error_message = "Ingress must name the load balancer's group rather than any address range, so a subnet CIDR cannot quietly widen into a second source."
+  }
+
+  assert {
+    condition = (
+      one(aws_vpc_security_group_ingress_rule.from_load_balancer).from_port == var.container_port
+      && one(aws_vpc_security_group_ingress_rule.from_load_balancer).to_port == var.container_port
+    )
+    error_message = "The admitted port must be the port the container listens on, not a range around it."
+  }
+}
+
+run "the_load_balancer_is_opened_towards_this_service_and_its_port" {
+  command = plan
+
+  variables {
+    target_group_arn                  = "arn:aws:elasticloadbalancing:eu-west-1:000000000000:targetgroup/aex-dev-euw1-stream-tg/73e2d6bc24d8a067"
+    load_balancer_security_group_ids  = ["sg-0123456789abcdef2"]
+    health_check_grace_period_seconds = 60
+  }
+
+  assert {
+    condition     = one(aws_vpc_security_group_egress_rule.load_balancer_to_task).security_group_id == one(var.load_balancer_security_group_ids)
+    error_message = "The matching egress must land on the load balancer's group. Terraform revokes the allow-all egress AWS attaches to a new group, so without this rule the edge reaches nothing and every target reads unhealthy while the service, the target group and the listener all look correct."
+  }
+
+  assert {
+    condition = (
+      one(aws_vpc_security_group_egress_rule.load_balancer_to_task).referenced_security_group_id == aws_security_group.task.id
+      && one(aws_vpc_security_group_egress_rule.load_balancer_to_task).from_port == var.container_port
+    )
+    error_message = "The load balancer must be opened towards this service's own task group on this service's own port. One load balancer carries several services, which is why the rule belongs to the service rather than to the edge."
+  }
+}
+
+run "additional_groups_are_added_to_the_module_group_not_substituted_for_it" {
+  command = plan
+
+  variables {
+    additional_security_group_ids = ["sg-0123456789abcdef3"]
+  }
+
+  assert {
+    condition     = contains(one(aws_ecs_service.autoscaled[0].network_configuration).security_groups, aws_security_group.task.id)
+    error_message = "The module's own group must stay attached whatever else a caller supplies; a caller may add reach a task needs but may not replace what this module states about it."
+  }
+
+  assert {
+    condition     = length(one(aws_ecs_service.autoscaled[0].network_configuration).security_groups) == 2
+    error_message = "An additional group must be attached alongside the module's own, not instead of it."
+  }
+}
+
+run "rejects_a_vpc_id_that_is_not_a_vpc" {
+  command = plan
+
+  variables {
+    vpc_id = "subnet-0123456789abcdef0"
+  }
+
+  expect_failures = [var.vpc_id]
+}
+
+run "rejects_an_interface_endpoint_group_that_is_not_a_security_group" {
+  command = plan
+
+  variables {
+    interface_endpoint_security_group_id = "pl-0123456789abcdef0"
+  }
+
+  expect_failures = [var.interface_endpoint_security_group_id]
+}
+
+run "rejects_a_gateway_endpoint_map_missing_the_journal" {
+  command = plan
+
+  variables {
+    gateway_endpoint_prefix_list_ids = {
+      s3 = "pl-0123456789abcdef0"
+    }
+  }
+
+  expect_failures = [var.gateway_endpoint_prefix_list_ids]
+}
+
+run "rejects_a_gateway_endpoint_named_by_anything_but_a_prefix_list" {
+  command = plan
+
+  variables {
+    gateway_endpoint_prefix_list_ids = {
+      s3       = "sg-0123456789abcdef0"
+      dynamodb = "pl-0123456789abcdef1"
+    }
+  }
+
+  expect_failures = [var.gateway_endpoint_prefix_list_ids]
+}
+
+run "rejects_a_load_balancer_group_that_is_not_a_security_group" {
+  command = plan
+
+  variables {
+    target_group_arn                  = "arn:aws:elasticloadbalancing:eu-west-1:000000000000:targetgroup/aex-dev-euw1-stream-tg/73e2d6bc24d8a067"
+    load_balancer_security_group_ids  = ["aex-dev-euw1-public-alb"]
+    health_check_grace_period_seconds = 60
+  }
+
+  expect_failures = [var.load_balancer_security_group_ids]
+}
+
+run "rejects_a_load_balanced_service_that_names_no_load_balancer_group" {
+  command = plan
+
+  variables {
+    target_group_arn                  = "arn:aws:elasticloadbalancing:eu-west-1:000000000000:targetgroup/aex-dev-euw1-stream-tg/73e2d6bc24d8a067"
+    health_check_grace_period_seconds = 60
+  }
+
+  expect_failures = [var.load_balancer_security_group_ids]
+}
+
+run "rejects_a_load_balancer_group_on_a_service_behind_no_target_group" {
+  command = plan
+
+  variables {
+    load_balancer_security_group_ids = ["sg-0123456789abcdef2"]
+  }
+
+  expect_failures = [var.load_balancer_security_group_ids]
+}
+
+run "rejects_more_than_one_load_balancer_group" {
+  command = plan
+
+  variables {
+    target_group_arn                  = "arn:aws:elasticloadbalancing:eu-west-1:000000000000:targetgroup/aex-dev-euw1-stream-tg/73e2d6bc24d8a067"
+    load_balancer_security_group_ids  = ["sg-0123456789abcdef2", "sg-0123456789abcdef3"]
+    health_check_grace_period_seconds = 60
+  }
+
+  expect_failures = [var.load_balancer_security_group_ids]
+}
+
+run "rejects_an_additional_group_that_is_not_a_security_group" {
+  command = plan
+
+  variables {
+    additional_security_group_ids = ["aex-dev-eu-west-1-regional-stream-task"]
+  }
+
+  expect_failures = [var.additional_security_group_ids]
 }

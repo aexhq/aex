@@ -75,18 +75,21 @@ module "public_lb" {
   source = "../../modules/alb-public"
 
   name               = var.alb.name
+  vpc_id             = var.vpc_id
   subnet_ids         = var.public_subnet_ids
-  security_group_ids = var.alb_security_group_ids
   certificate_arn    = var.alb.certificate_arn
   access_logs_bucket = var.alb.access_logs_bucket
   tags               = var.tags
 }
 
 # Two services, two target groups, and as many rules each as their pattern sets
-# need. The lower number is evaluated first, so a narrower rule must hold a
-# lower priority than any rule that would also match it. `regional-stream` is
-# given the 10s and `regional-session-api` the 20s, which leaves each service
-# room to add rules without reaching into the other's band.
+# need. Every regional first path segment has exactly one serving artifact, so
+# no two rules here can both match one request and evaluation order decides
+# nothing; a priority is an address, not a tie-break. `regional-stream` is given
+# the 10s and `regional-session-api` the 20s, which leaves each service room to
+# add rules without reaching into the other's band. Were a pattern ever added
+# that a second rule could also match, the lower number would win, so a narrower
+# rule would have to hold a lower priority than the wider one.
 module "stream_target" {
   source = "../../modules/alb-service-target"
 
@@ -140,9 +143,16 @@ module "stream_service" {
   task_role_arn      = module.role["regional-stream"].role_arn
   execution_role_arn = var.stream_service.execution_role_arn
   subnets            = var.private_subnet_ids
-  security_group_ids = var.service_security_group_ids
   log_group_name     = module.stream_log_group.name
   region             = var.region
+
+  # Each service creates its own task group. The load balancer's group is the
+  # only source it admits, and the two endpoint handles are the whole of what it
+  # may reach outbound.
+  vpc_id                               = var.vpc_id
+  load_balancer_security_group_ids     = [module.public_lb.security_group_id]
+  interface_endpoint_security_group_id = var.interface_endpoint_security_group_id
+  gateway_endpoint_prefix_list_ids     = var.gateway_endpoint_prefix_list_ids
 
   tags = var.tags
 }
@@ -174,9 +184,15 @@ module "session_service" {
   task_role_arn      = module.role["regional-session-api"].role_arn
   execution_role_arn = var.session_api.execution_role_arn
   subnets            = var.private_subnet_ids
-  security_group_ids = var.service_security_group_ids
   log_group_name     = module.session_log_group.name
   region             = var.region
+
+  # A second task group, not a shared one. The two services are separate
+  # deployables and each admits the edge only on its own container port.
+  vpc_id                               = var.vpc_id
+  load_balancer_security_group_ids     = [module.public_lb.security_group_id]
+  interface_endpoint_security_group_id = var.interface_endpoint_security_group_id
+  gateway_endpoint_prefix_list_ids     = var.gateway_endpoint_prefix_list_ids
 
   tags = var.tags
 }

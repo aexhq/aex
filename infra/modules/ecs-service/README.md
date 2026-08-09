@@ -62,6 +62,54 @@ Each metric also carries `scale_out_cooldown` and `scale_in_cooldown`, 60 and
 not be quicker than scale-out, because shedding capacity faster than it is added
 is how a service oscillates under a load pattern it should have absorbed.
 
+## The tasks' own security group
+
+This module creates the group its tasks run with. It used to take one, and
+nothing anywhere created it: no module built these groups and the private
+deployment repository may not declare resources in an environment root, so the
+group a root was naming could not exist. The name is derived from the plane- and
+region-qualified `task_definition_family` rather than from `name`, because
+`name` is bare - `regional-stream` - and both planes live in one account.
+
+Ingress is one rule or none. A service given `load_balancer_security_group_ids`
+admits that group on `container_port`, and nothing else: not a CIDR, not a
+subnet range. The health check arrives on the same port as the traffic, so there
+is no second rule. A service with no edge in front of it admits nothing at all.
+
+That variable is a list of at most one rather than a single id, and the reason
+is mechanical. The load balancer's group is created in the same plan as the
+service behind it, so its id is unknown while planning; a `count` written over
+`id == null` cannot be planned and the root fails outright with *the count value
+depends on resource attributes that cannot be determined until apply*. The
+length of a one-element list is known even when the element is not.
+
+The same module writes the matching egress rule **on the load balancer's
+group**, because that is the only place both ends are in scope. `alb-public`
+creates that group but cannot reference a task group without depending on the
+service that already depends on it, and one load balancer carries several
+services on different ports. Terraform revokes the allow-all egress AWS attaches
+to a new group, so without this rule the edge reaches nothing and every target
+reads unhealthy while the service, the target group and the listener all look
+correct.
+
+Egress from the tasks is three rules and no `0.0.0.0/0`:
+
+- TCP/443 to `interface_endpoint_security_group_id`. Every interface endpoint in
+  the VPC shares that one group, so one rule covers ECR, CloudWatch Logs, KMS,
+  Secrets Manager, STS and SQS together;
+- TCP/443 to the `s3` prefix list, for the image layers a task starts from;
+- TCP/443 to the `dynamodb` prefix list, for the journal.
+
+A gateway endpoint is a route table entry rather than an interface, so it has no
+group to reference and its AWS-managed prefix list is the only way an egress
+rule can name it. The regional VPC stands up no NAT gateway, so anything not
+named here is unreachable rather than merely unauthorised. Task role credentials
+need no rule: they arrive over the link-local task metadata address, which no
+security group filters.
+
+`additional_security_group_ids` is added to the module's group, never
+substituted for it.
+
 ## Inputs
 
 | Name | Type | Description |
@@ -83,7 +131,12 @@ is how a service oscillates under a load pattern it should have absorbed.
 | `container_port` | `number` | Port the container listens on. |
 | `target_group_arn` | `string` | Optional target group to register with. |
 | `task_role_arn` / `execution_role_arn` | `string` | Roles. |
-| `subnets` / `security_group_ids` | `list(string)` | Network placement. |
+| `subnets` | `list(string)` | Private subnets the tasks run in. |
+| `vpc_id` | `string` | VPC the task security group is created in. |
+| `interface_endpoint_security_group_id` | `string` | The group every interface endpoint shares; the tasks get TLS egress to it. |
+| `gateway_endpoint_prefix_list_ids` | `map(string)` | Must carry `s3` and `dynamodb`; the tasks get TLS egress to each prefix list. |
+| `load_balancer_security_group_ids` | `list(string)` | At most one, empty for a service with no edge. The only source the tasks admit. |
+| `additional_security_group_ids` | `list(string)` | Attached alongside the module's own group, never instead of it. Defaults to none. |
 | `log_group_name` / `region` | `string` | Logging. |
 | `tags` | `map(string)` | Tags. |
 
@@ -93,6 +146,7 @@ is how a service oscillates under a load pattern it should have absorbed.
 | --- | --- |
 | `service_arn` | ARN of the service. |
 | `task_definition_arn` | Revisioned task definition ARN. |
+| `security_group_id` | The tasks' own group, for a caller that has to write a rule against it. |
 | `deregistration_delay` | Drain window for the target group in front of the service. |
 
 ## Policy asserted
@@ -124,6 +178,20 @@ is how a service oscillates under a load pattern it should have absorbed.
   reference.
 - `brain-mux` carries `AEX_MAX_ACTIVE_ACTIVATIONS = "16"`; an absent or different
   activation budget is rejected in either plane.
+- The task security group is created here, in the given VPC, under a name
+  derived from the plane-qualified task definition family.
+- Task egress is exactly the interface endpoint group and the two gateway
+  prefix lists, all TCP/443, and no rule names a CIDR.
+- A load-balanced service admits exactly one source - the load balancer's group,
+  on `container_port` - and a service with no load balancer admits nothing.
+- The matching egress on the load balancer's group names this service's own task
+  group and this service's own port.
+- The module's own group is always attached; an additional group is attached
+  alongside it rather than in place of it.
+- A service with a `target_group_arn` must name a load balancer group and a
+  service without one may not; more than one is rejected, as are a `vpc_id`, an
+  interface endpoint group, an additional group or a prefix-list id of the wrong
+  shape, and a gateway endpoint map missing `s3` or `dynamodb`.
 
 ## Not asserted here
 

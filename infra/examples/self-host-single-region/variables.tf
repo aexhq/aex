@@ -148,11 +148,6 @@ variable "log_authority" {
   default     = "session"
 }
 
-variable "service_security_group_ids" {
-  type        = list(string)
-  description = "Security groups attached to the session service tasks. This root does not create them: a self-hoster decides what their tasks may reach."
-}
-
 variable "session_api" {
   type = object({
     name               = string

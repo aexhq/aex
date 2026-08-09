@@ -17,8 +17,14 @@ Every value is a variable with no default. In particular you supply:
 - the key policies, so every principal that can use your keys is written down in
   your own configuration;
 - the digest-pinned session API image, taken from the published artifact
-  envelope, plus the ECS execution role and the security groups its tasks run
-  with.
+  envelope, plus the ECS execution role.
+
+You no longer supply a security group. `ecs-service` creates the group its tasks
+run with, in the VPC this root stands up, and wires its egress to the interface
+endpoints and the S3 and DynamoDB prefix lists that same network already
+creates. That is the whole of what a task can reach: there is no NAT gateway and
+no route to the internet, so an unnamed destination is unreachable rather than
+merely unauthorised.
 
 The image is pinned by digest, never by tag. A service that follows a tag can
 restart onto different bytes with no deployment and no receipt, and the module
@@ -31,6 +37,12 @@ no ingress in front of it - exactly as it previously stood the function up with
 no API gateway. A self-hoster supplies their own edge. `infra/examples/region-application`
 is the worked example of the public load balancer, its listener and the
 per-service target groups.
+
+Because there is no edge, the task group admits nothing. Your load balancer
+reaches the tasks when you write one ingress rule naming
+`session_service_security_group_id`, next to whatever edge you put in front. The
+group's rules are separate resources rather than inline blocks, so a rule added
+from your own configuration is not drift.
 
 ## Sanitized values
 
@@ -47,7 +59,7 @@ hostname; both appear only in documentation and tests.
 ## Outputs
 
 `vpc_id`, `table_names`, `content_bucket`, `artifact_bucket`, `ops_topic_arn`,
-`session_service_arn`, `cluster_arn`.
+`session_service_arn`, `session_service_security_group_id`, `cluster_arn`.
 
 ## Test
 

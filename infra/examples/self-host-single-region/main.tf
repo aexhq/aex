@@ -128,9 +128,16 @@ module "session_service" {
   task_role_arn      = module.session_api_role.role_arn
   execution_role_arn = var.session_api.execution_role_arn
   subnets            = module.network.subnet_ids.private
-  security_group_ids = var.service_security_group_ids
   log_group_name     = module.session_log_group.name
   region             = var.region
+
+  # The service creates its own task group. With no edge in front of it the
+  # group admits nothing at all, and its egress is TLS to the endpoints this
+  # network already stands up - which is the whole of what the task can reach,
+  # because there is no NAT gateway and no route to the internet.
+  vpc_id                               = module.network.vpc_id
+  interface_endpoint_security_group_id = module.network.interface_endpoint_security_group_id
+  gateway_endpoint_prefix_list_ids     = module.network.gateway_endpoint_prefix_list_ids
 
   tags = var.tags
 }

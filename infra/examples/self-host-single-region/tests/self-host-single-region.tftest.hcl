@@ -8,7 +8,6 @@ variables {
   name_prefix                     = "aex-prd-euw1-"
   bucket_suffix                   = "0a1b2c3d"
   cluster_name                    = "aex-prd-euw1"
-  service_security_group_ids      = ["sg-0123456789abcdef0"]
   content_bucket_purpose          = "content"
   content_lifecycle_role_arn      = "arn:aws:iam::000000000000:role/aex-prd-content-lifecycle"
   artifact_retention_days         = 90

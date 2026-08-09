@@ -1,5 +1,80 @@
 locals {
   autoscaling_enabled = length(var.autoscaling_metrics) > 0
+  security_group_ids  = concat([aws_security_group.task.id], var.additional_security_group_ids)
+}
+
+# The tasks' group is the service's to own. While no module created it and no
+# environment root was allowed to declare one, it could not exist anywhere, and
+# every root that wired `security_group_ids` was naming a group nothing in the
+# repository builds.
+#
+# The name is derived from the plane- and region-qualified family rather than
+# from `name`, because `name` is bare - `regional-stream` - and both planes live
+# in one account. Group names are unique per VPC, so the bare name would work
+# and would still read as though it named the only one.
+resource "aws_security_group" "task" {
+  name        = "${var.task_definition_family}-task"
+  description = "Egress from the ${var.name} tasks to the private AWS endpoints they need"
+  vpc_id      = var.vpc_id
+
+  tags = merge(var.tags, { Name = "${var.task_definition_family}-task" })
+}
+
+# Exactly one source, and the health check arrives on the same port as the
+# traffic, so there is no second rule to write.
+resource "aws_vpc_security_group_ingress_rule" "from_load_balancer" {
+  count = length(var.load_balancer_security_group_ids)
+
+  security_group_id            = aws_security_group.task.id
+  description                  = "Requests and health checks from the load balancer in front of this service"
+  ip_protocol                  = "tcp"
+  from_port                    = var.container_port
+  to_port                      = var.container_port
+  referenced_security_group_id = var.load_balancer_security_group_ids[count.index]
+}
+
+# The other half of that edge, written here because this is the only place both
+# ends are in scope. `alb-public` creates the group but cannot reference a task
+# group without depending on the service that depends on it, and one load
+# balancer carries several services, so the port is per service rather than per
+# load balancer. Terraform revokes the allow-all egress AWS attaches to a new
+# group, so without this rule the load balancer reaches nothing.
+resource "aws_vpc_security_group_egress_rule" "load_balancer_to_task" {
+  count = length(var.load_balancer_security_group_ids)
+
+  security_group_id            = var.load_balancer_security_group_ids[count.index]
+  description                  = "To the ${var.name} tasks on the port they listen on"
+  ip_protocol                  = "tcp"
+  from_port                    = var.container_port
+  to_port                      = var.container_port
+  referenced_security_group_id = aws_security_group.task.id
+}
+
+# Egress is these three rules and nothing else - no `0.0.0.0/0`. The VPC has no
+# NAT gateway by default, so anything not named here is unreachable rather than
+# merely unauthorised.
+#
+# Task role credentials are not a fourth rule: they arrive over the link-local
+# task metadata address, which is served by the instance the task runs on and is
+# not filtered by any security group.
+resource "aws_vpc_security_group_egress_rule" "interface_endpoints" {
+  security_group_id            = aws_security_group.task.id
+  description                  = "TLS to the private AWS interface endpoints. They all share one group, so this single rule covers every endpoint the VPC carries."
+  ip_protocol                  = "tcp"
+  from_port                    = 443
+  to_port                      = 443
+  referenced_security_group_id = var.interface_endpoint_security_group_id
+}
+
+resource "aws_vpc_security_group_egress_rule" "gateway_endpoints" {
+  for_each = var.gateway_endpoint_prefix_list_ids
+
+  security_group_id = aws_security_group.task.id
+  description       = "TLS to the ${each.key} gateway endpoint, named by its AWS-managed prefix list because a gateway endpoint is a route rather than an interface and has no group to reference"
+  ip_protocol       = "tcp"
+  from_port         = 443
+  to_port           = 443
+  prefix_list_id    = each.value
 }
 
 resource "aws_ecs_task_definition" "this" {
@@ -84,7 +159,7 @@ resource "aws_ecs_service" "autoscaled" {
 
   network_configuration {
     subnets          = var.subnets
-    security_groups  = var.security_group_ids
+    security_groups  = local.security_group_ids
     assign_public_ip = false
   }
 
@@ -134,7 +209,7 @@ resource "aws_ecs_service" "static" {
 
   network_configuration {
     subnets          = var.subnets
-    security_groups  = var.security_group_ids
+    security_groups  = local.security_group_ids
     assign_public_ip = false
   }
 

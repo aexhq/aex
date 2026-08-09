@@ -28,14 +28,14 @@ variable "public_subnet_ids" {
   description = "Public subnets the load balancer sits in."
 }
 
-variable "service_security_group_ids" {
-  type        = list(string)
-  description = "Security groups attached to the service tasks."
+variable "interface_endpoint_security_group_id" {
+  type        = string
+  description = "The group every private AWS interface endpoint shares, from the region foundation. Each service's task group is given TLS egress to it."
 }
 
-variable "alb_security_group_ids" {
-  type        = list(string)
-  description = "Security groups attached to the load balancer."
+variable "gateway_endpoint_prefix_list_ids" {
+  type        = map(string)
+  description = "Gateway endpoint service to AWS-managed prefix-list id, from the region foundation. Each service's task group is given TLS egress to `s3` and `dynamodb` through these."
 }
 
 variable "kms_key_arn" {

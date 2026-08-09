@@ -375,13 +375,82 @@ variable "subnets" {
   }
 }
 
-variable "security_group_ids" {
-  type        = list(string)
-  description = "Security groups attached to the tasks."
+variable "vpc_id" {
+  type        = string
+  description = "VPC the tasks' own security group is created in. It must be the VPC the subnets above belong to; a group is only meaningful inside one."
 
   validation {
-    condition     = length(var.security_group_ids) > 0
-    error_message = "At least one security group is required."
+    condition     = can(regex("^vpc-[0-9a-f]{8,17}$", var.vpc_id))
+    error_message = "The VPC must be an EC2 VPC id such as `vpc-0123456789abcdef0`."
+  }
+}
+
+variable "interface_endpoint_security_group_id" {
+  type        = string
+  description = "The group every private AWS interface endpoint in this VPC shares, as `vpc-regional` exports it. The tasks are given TLS egress to it, which is how they reach ECR, CloudWatch Logs, KMS, Secrets Manager, STS and SQS with no NAT gateway and no route to the internet."
+
+  validation {
+    condition     = can(regex("^sg-[0-9a-f]{8,17}$", var.interface_endpoint_security_group_id))
+    error_message = "The interface endpoint security group must be an EC2 security group id such as `sg-0123456789abcdef0`."
+  }
+}
+
+variable "gateway_endpoint_prefix_list_ids" {
+  type        = map(string)
+  description = "Gateway endpoint service short name to AWS-managed prefix-list id, as `vpc-regional` exports it. A gateway endpoint is a route table entry rather than an interface, so it has no security group to reference and its prefix list is the only way an egress rule can name it."
+
+  validation {
+    condition     = length(setsubtract(["s3", "dynamodb"], keys(var.gateway_endpoint_prefix_list_ids))) == 0
+    error_message = "The map must carry both `s3` and `dynamodb`. S3 is where the image layers the task starts from are read, and DynamoDB is the journal; a task that cannot reach either does not run, and the failure surfaces as a timeout rather than as a denial."
+  }
+
+  validation {
+    condition     = alltrue([for id in values(var.gateway_endpoint_prefix_list_ids) : can(regex("^pl-[0-9a-f]{8,17}$", id))])
+    error_message = "Every gateway endpoint value must be an AWS-managed prefix-list id such as `pl-0123456789abcdef0`."
+  }
+}
+
+# A list of at most one rather than a single id, because the *number* of rules
+# has to be known while planning and the id itself does not. The load balancer's
+# group is created in the same plan as the service that sits behind it, so its
+# id is unknown until apply; a `count` written over `id == null` cannot be
+# planned at all, and the root fails with "the count value depends on resource
+# attributes that cannot be determined until apply". The length of a
+# one-element list is known even when the element is not.
+variable "load_balancer_security_group_ids" {
+  type        = list(string)
+  default     = []
+  description = "The security group of the load balancer in front of this service, as a list of at most one, or empty for a service with no edge. It is the only source the tasks admit, and this module also opens the matching egress on it: the load balancer's own module cannot name a task group without depending on the service that already depends on it, and only the service knows which port to open."
+
+  validation {
+    condition     = length(var.load_balancer_security_group_ids) <= 1
+    error_message = "A service sits behind at most one load balancer. This is a list only so the rule count is known while planning; it is not a way to admit several edges."
+  }
+
+  validation {
+    condition     = alltrue([for id in var.load_balancer_security_group_ids : can(regex("^sg-[0-9a-f]{8,17}$", id))])
+    error_message = "The load balancer security group must be an EC2 security group id such as `sg-0123456789abcdef0`."
+  }
+
+  validation {
+    condition     = var.target_group_arn == null || length(var.load_balancer_security_group_ids) > 0
+    error_message = "A service registered with a target group must name the load balancer's security group. Without it the tasks admit nothing, the load balancer has no egress towards them, and every target reads unhealthy while the service, the target group and the listener all look correctly configured."
+  }
+
+  validation {
+    condition     = var.target_group_arn != null || length(var.load_balancer_security_group_ids) == 0
+    error_message = "A load balancer security group only means something for a service registered with a target group. Naming one without a target group would admit an edge that never sends this service traffic."
+  }
+}
+
+variable "additional_security_group_ids" {
+  type        = list(string)
+  default     = []
+  description = "Groups attached to the tasks alongside the one this module creates. The module's own group is always attached; anything here is added to it and never substituted for it, so no caller can leave the tasks reachable through a group nothing in the repository builds."
+
+  validation {
+    condition     = alltrue([for id in var.additional_security_group_ids : can(regex("^sg-[0-9a-f]{8,17}$", id))])
+    error_message = "Every additional security group must be an EC2 security group id such as `sg-0123456789abcdef0`."
   }
 }
 

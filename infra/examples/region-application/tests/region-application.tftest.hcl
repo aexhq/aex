@@ -7,18 +7,29 @@ variables {
   vpc_id                          = "vpc-0123456789abcdef0"
   private_subnet_ids              = ["subnet-0123456789abcdef0", "subnet-0123456789abcdef1"]
   public_subnet_ids               = ["subnet-0123456789abcdef2", "subnet-0123456789abcdef3"]
-  service_security_group_ids      = ["sg-0123456789abcdef0"]
-  alb_security_group_ids          = ["sg-0123456789abcdef1"]
   kms_key_arn                     = "arn:aws:kms:eu-west-1:000000000000:key/00000000-0000-4000-8000-000000000000"
   session_journal_stream_arn      = "arn:aws:dynamodb:eu-west-1:000000000000:table/aex-dev-euw1-session-journal/stream/2026-08-01T00:00:00.000"
   cluster_name                    = "aex-dev-euw1"
 
-  # The rules below are the part of the public surface that splits cleanly, and
-  # only that part. `/api/sessions` and everything under
-  # `/api/sessions/{sessionId}/` are deliberately absent: `regional-stream` and
-  # `regional-session-api` both serve routes there, so routing it correctly
-  # means deciding to rely on priority precedence rather than on disjoint
-  # patterns. That decision is not this example's to make. See the README.
+  # No group ids: every group is created by the module that owns the resource
+  # it protects. What the foundation still has to hand over is what the task
+  # groups are allowed to reach.
+  interface_endpoint_security_group_id = "sg-0123456789abcdef0"
+
+  gateway_endpoint_prefix_list_ids = {
+    s3       = "pl-0123456789abcdef0"
+    dynamodb = "pl-0123456789abcdef1"
+  }
+
+  # Every regional first segment now resolves to exactly one serving artifact,
+  # workspace-scoped routes included: `/api/sessions/`, `/api/workspace/`,
+  # `/api/operations/` and `/api/billing/` are `regional-session-api`'s,
+  # `/api/streams/` is `regional-stream`'s. No prefix needs priority precedence
+  # to route correctly, and both services claim theirs by prefix below.
+  #
+  # `/api/observations/*`, `/api/secrets/*` and `/api/otlp/*` are the other
+  # three artifacts' prefixes and are absent here because this root deploys two
+  # services and none of those three is one of them. See the README.
   session_api = {
     name                              = "regional-session-api"
     image                             = "000000000000.dkr.ecr.eu-west-1.amazonaws.com/aex/regional-session-api@sha256:0000000000000000000000000000000000000000000000000000000000000000"
@@ -31,10 +42,17 @@ variables {
     log_group_name                    = "/aex/dev/regional-session-api"
     log_retention_days                = 30
     execution_role_arn                = "arn:aws:iam::000000000000:role/aex-dev-ecs-execution"
+    # `/api/sessions` and `/api/sessions/*` are two condition values because an
+    # ALB pattern ending in `/*` does not match the bare collection: `POST
+    # /api/sessions` and `GET /api/sessions` carry no session id.
     rules = [
       {
         priority      = 20
         path_patterns = ["/api/workspace/*", "/api/operations/*", "/api/billing/*"]
+      },
+      {
+        priority      = 21
+        path_patterns = ["/api/sessions", "/api/sessions/*"]
       },
     ]
     env = {
@@ -75,17 +93,15 @@ variables {
     log_group_name                    = "/aex/dev/regional-stream"
     log_retention_days                = 30
     execution_role_arn                = "arn:aws:iam::000000000000:role/aex-dev-ecs-execution"
-    # Six top-level prefixes are six condition values, one more than a single
-    # rule may carry, so they are expressed as two rules against the one target
-    # group. This is the shape the per-rule quota forces, not a routing choice.
+    # All twenty-four NDJSON routes sit under `/api/streams/` now — the
+    # session-scoped ones and the workspace-scoped ones alike — so the whole
+    # surface is one condition value in one rule. It used to be seven top-level
+    # prefixes across two rules, which the per-rule quota of five condition
+    # values forced; the quota has not moved, the surface has.
     rules = [
       {
         priority      = 10
-        path_patterns = ["/api/events/*", "/api/logs/*", "/api/metrics/*", "/api/spans/*", "/api/telemetry/*"]
-      },
-      {
-        priority      = 11
-        path_patterns = ["/api/traces/*"]
+        path_patterns = ["/api/streams/*"]
       },
     ]
     env = {
@@ -231,11 +247,38 @@ run "both_request_path_services_attach_to_the_one_public_listener" {
     error_message = "The two services must occupy disjoint listener priorities. Each module instantiation proves its own priorities unique; only this root can see both."
   }
 
-  # Six top-level stream prefixes do not fit one rule, so the service carries
-  # two. The per-rule quota bounds a rule, not a service.
+  # The stream service's whole surface is one prefix, so one rule carries it.
+  # The per-rule quota still bounds a rule rather than a service, which the
+  # session API's two rules and the module's own tests exercise.
   assert {
-    condition     = length(module.stream_target.rule_priorities) == 2
-    error_message = "The stream service must express its six top-level prefixes as two rules against one target group."
+    condition     = length(module.stream_target.rule_priorities) == 1
+    error_message = "The stream service's whole public surface is `/api/streams/*`: one condition value, and therefore one rule."
+  }
+
+  # The property the API surface now supplies and this root depends on: every
+  # forwarded pattern is anchored on its first path segment, and no first
+  # segment is claimed by both services. A prefix match is therefore sufficient
+  # to route, and correctness does not rest on rule precedence. This could not
+  # hold while `/api/sessions/{sessionId}/` was served by three artifacts at
+  # once, nor while `/api/logs/query` and `/api/logs/stream` went to different
+  # ones: in both cases only a segment after the shared prefix told them apart.
+  assert {
+    condition = length(setintersection(
+      toset([for p in flatten([for r in var.stream_service.rules : r.path_patterns]) : split("/", p)[2]]),
+      toset([for p in flatten([for r in var.session_api.rules : r.path_patterns]) : split("/", p)[2]]),
+    )) == 0
+    error_message = "The two services must not share a first path segment. If they do, no prefix separates them and routing falls back to rule precedence."
+  }
+
+  # No pattern may wildcard the first segment, or the anchoring above is vacuous.
+  assert {
+    condition = alltrue([
+      for p in flatten([
+        for r in concat(var.stream_service.rules, var.session_api.rules) : r.path_patterns
+      ]) :
+      !strcontains(split("/", p)[2], "*") && !strcontains(split("/", p)[2], "?")
+    ])
+    error_message = "A forwarded pattern must name its first path segment literally; an ALB `*` matches across `/`, so a wildcard there would swallow another service's prefix."
   }
 }
 
