@@ -1076,10 +1076,6 @@ mod tests {
             .find(|grant| grant.role == "regional-capacity-controller")
             .expect("regional capacity owns workspace limits");
         assert_eq!(
-            capacity.actions,
-            ["dynamodb:PutItem", "dynamodb:TransactWriteItems"]
-        );
-        assert_eq!(
             capacity.item_types,
             [
                 "workspace_limit",
@@ -1124,11 +1120,7 @@ mod tests {
         assert_eq!(writer.role, "regional-capacity-controller");
         assert_eq!(
             writer.actions,
-            [
-                "dynamodb:GetItem",
-                "dynamodb:PutItem",
-                "dynamodb:TransactWriteItems"
-            ]
+            ["dynamodb:GetItem", "dynamodb:TransactWriteItems"]
         );
         assert_eq!(writer.resources, ["table"]);
         assert_eq!(writer.item_types, ["workspace_capacity", "capacity_audit"]);

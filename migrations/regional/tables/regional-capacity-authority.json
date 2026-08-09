@@ -33,7 +33,7 @@
   "iam": [
     {
       "role": "regional-capacity-controller",
-      "actions": ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:TransactWriteItems"],
+      "actions": ["dynamodb:GetItem", "dynamodb:TransactWriteItems"],
       "resources": ["table"],
       "itemTypes": ["workspace_capacity", "capacity_audit"],
       "condition": {
