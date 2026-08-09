@@ -469,7 +469,9 @@ pub const INSERT_API_KEY: &str = "\
 INSERT INTO control.api_key \
   (id, workspace_id, organization_id, name, scopes, region, verifier, pepper_version, \
    created_at, revision, created_by_user_id) \
-VALUES (:id, :workspace_id, :organization_id, :name, :scopes, :region, :verifier, :pepper_version, \
+VALUES (:id, :workspace_id, :organization_id, :name, \
+        ARRAY(SELECT jsonb_array_elements_text(CAST(:scopes AS jsonb))), \
+        :region, :verifier, :pepper_version, \
         TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond', 1, :created_by_user_id)";
 
 /// Reads one API key without exposing its verifier.

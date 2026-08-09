@@ -9,7 +9,7 @@
 //! removes every dependence on the session time zone, `DateStyle` and the Data
 //! `API`'s own naive timestamp rendering.
 
-use aws_sdk_rdsdata::types::{ArrayValue, Field, SqlParameter, TypeHint};
+use aws_sdk_rdsdata::types::{Field, SqlParameter, TypeHint};
 use aws_smithy_types::Blob;
 use uuid::Uuid;
 
@@ -52,7 +52,9 @@ pub enum SqlValue {
     TimestampMillis(i64),
     /// `jsonb`, bound with the `JSON` type hint.
     Json(serde_json::Value),
-    /// `text[]`.
+    /// `text[]`, transported as a JSON scalar because the Data `API` rejects
+    /// array parameters. The statement must expand it with
+    /// `jsonb_array_elements_text`.
     TextArray(Vec<String>),
 }
 
@@ -82,9 +84,18 @@ impl SqlValue {
             Self::Json(value) => builder
                 .value(Field::StringValue(value.to_string()))
                 .type_hint(TypeHint::Json),
-            Self::TextArray(values) => builder.value(Field::ArrayValue(ArrayValue::StringValues(
-                values.iter().cloned().map(Some).collect(),
-            ))),
+            Self::TextArray(values) => builder
+                .value(Field::StringValue(
+                    serde_json::Value::Array(
+                        values
+                            .iter()
+                            .cloned()
+                            .map(serde_json::Value::String)
+                            .collect(),
+                    )
+                    .to_string(),
+                ))
+                .type_hint(TypeHint::Json),
         }
         .build()
     }
@@ -159,7 +170,7 @@ impl<'a> Statement<'a> {
 #[cfg(test)]
 mod tests {
     use super::{SqlValue, Statement};
-    use aws_sdk_rdsdata::types::{ArrayValue, Field, TypeHint};
+    use aws_sdk_rdsdata::types::{Field, TypeHint};
     use uuid::Uuid;
 
     #[test]
@@ -192,16 +203,14 @@ mod tests {
     }
 
     #[test]
-    fn a_text_array_binds_as_string_values() {
+    fn a_text_array_binds_as_a_json_scalar() {
         let parameter =
             SqlValue::TextArray(vec!["a:read".to_owned(), "b:write".to_owned()]).to_parameter("s");
         assert_eq!(
             parameter.value(),
-            Some(&Field::ArrayValue(ArrayValue::StringValues(vec![
-                Some("a:read".to_owned()),
-                Some("b:write".to_owned())
-            ])))
+            Some(&Field::StringValue("[\"a:read\",\"b:write\"]".to_owned()))
         );
+        assert_eq!(parameter.type_hint(), Some(&TypeHint::Json));
     }
 
     #[test]

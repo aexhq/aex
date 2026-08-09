@@ -415,3 +415,16 @@ fn the_write_probe_targets_a_table_the_read_only_role_cannot_write() {
     // succeed for another reason would not prove the role is read-only.
     assert!(sql::AUTHZ_WRITE_PROBE.starts_with("INSERT INTO control.audit_event"));
 }
+
+#[test]
+fn text_array_parameters_are_expanded_from_data_api_json_scalars() {
+    for (name, statement) in [
+        ("INSERT_OPERATION", sql::INSERT_OPERATION),
+        ("INSERT_API_KEY", sql::INSERT_API_KEY),
+    ] {
+        assert!(
+            statement.contains("ARRAY(SELECT jsonb_array_elements_text(CAST(:scopes AS jsonb)))"),
+            "`{name}` passes an unsupported Data API array parameter"
+        );
+    }
+}

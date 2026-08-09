@@ -234,7 +234,8 @@ UPDATE identity.device_authorization \
 pub const INSERT_ACCOUNT_TOKEN: &str = "\
 INSERT INTO identity.account_token \
   (id, user_id, verifier, pepper_version, name, scopes, origin, issued_at, expires_at) \
-VALUES (:id, :user_id, :verifier, :pepper_version, :name, :scopes, 'device_flow', \
+VALUES (:id, :user_id, :verifier, :pepper_version, :name, \
+        ARRAY(SELECT jsonb_array_elements_text(CAST(:scopes AS jsonb))), 'device_flow', \
         (TIMESTAMPTZ 'epoch' + :issued_at_ms * INTERVAL '1 millisecond'), \
         (TIMESTAMPTZ 'epoch' + :expires_at_ms * INTERVAL '1 millisecond'))";
 

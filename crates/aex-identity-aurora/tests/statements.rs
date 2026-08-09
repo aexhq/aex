@@ -170,3 +170,12 @@ fn the_statement_inventory_is_sorted_by_name_within_its_groups() {
         "no statement is listed twice: {names:?}"
     );
 }
+
+#[test]
+fn account_token_scopes_expand_from_a_data_api_json_scalar() {
+    assert!(
+        sql::INSERT_ACCOUNT_TOKEN
+            .contains("ARRAY(SELECT jsonb_array_elements_text(CAST(:scopes AS jsonb)))"),
+        "account-token creation passes an unsupported Data API array parameter"
+    );
+}
