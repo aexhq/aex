@@ -43,10 +43,30 @@
 //!
 //! A green run here is evidence that one task started, answers, and answers where the
 //! release says it will. It is not evidence that §8.1 passes.
+//!
+//! # The cleanup ledger
+//!
+//! `[role.live_companion]` says a live companion owns the cleanup-ledger flush. This lane
+//! minted a `TestRun` — and with it a `CleanupLedger` — and then never installed a
+//! reclamation path, never flushed, and never asked what was outstanding. A ledger nobody
+//! reads is a ledger that cannot report anything.
+//!
+//! What this lane can honestly install is [`NoReclamationRoute`], which **refuses**. A test
+//! executor here holds one thing: the endpoint of a task somebody else started. It has no
+//! route to terminate a generation, stop a task or delete a record, so a reclaimer that
+//! answered `Ok(())` would mark entries released having deleted nothing — the same
+//! green-no-op the release tool's own `UnavailableAdapter` exists to refuse. Recording
+//! something this lane cannot release therefore fails loudly and names the steps it did not
+//! take, rather than passing and leaving the resource to the out-of-band janitor.
+//!
+//! [`LiveTarget::finish`] writes the ledger to the run's artifact directory and asserts it
+//! holds nothing outstanding. The `Drop` on `CleanupLedger` is the backstop for a case that
+//! panics before reaching it.
 
-use aex_test_harness::{Lane, TestRun};
+use aex_test_harness::{Entry, Lane, ReclaimError, Reclaimer, TestRun};
 use core::time::Duration;
 use reqwest::{Client, StatusCode, Url};
+use std::sync::Arc;
 use std::time::Instant;
 
 /// The deployed plane the smoke lane binds to.
@@ -193,6 +213,29 @@ fn causes(error: &(dyn std::error::Error + 'static)) -> String {
     rendered.join(": ")
 }
 
+/// The reclamation path a health probe actually has, which is none.
+///
+/// It refuses with the steps it did not take rather than reporting a green no-op, which is
+/// the same rule every unreachable reclamation in this workspace follows: a lane that is red
+/// for a reason is better than one that reports success having done nothing. A stream that
+/// needs to record a resource here has to bring a route that can release it.
+#[derive(Debug, Default)]
+struct NoReclamationRoute;
+
+impl Reclaimer for NoReclamationRoute {
+    fn reclaim(&self, entry: &Entry) -> Result<(), ReclaimError> {
+        Err(ReclaimError::new(
+            entry,
+            format!(
+                "the brain-mux smoke lane holds only an HTTP endpoint and has no route to \
+                 reclaim a `{}`; required steps: {}",
+                entry.kind,
+                entry.kind.policy().reclaim
+            ),
+        ))
+    }
+}
+
 /// A deployed task, and the run identity its failures are reported under.
 struct LiveTarget {
     plane: String,
@@ -214,12 +257,37 @@ impl LiveTarget {
             .timeout(REQUEST_TIMEOUT)
             .build()
             .expect("the bounded live client must build");
+        let run = TestRun::mint(Lane::Smoke, "brain-core", 0);
+        assert!(
+            run.ledger().install_reclaimer(Arc::new(NoReclamationRoute)),
+            "the reclamation path must be installed exactly once"
+        );
         Self {
             plane,
             endpoint: endpoint.trim_end_matches('/').to_owned(),
-            run: TestRun::mint(Lane::Smoke, "brain-core", 0),
+            run,
             client,
         }
+    }
+
+    /// Writes the ledger and asserts the run left nothing behind.
+    ///
+    /// Called at the end of every case that binds a plane. A smoke probe creates nothing, so
+    /// this passes with an empty ledger today; it is here so that the first case to record
+    /// something is gated the moment it does, rather than after a sweep finds the residue on
+    /// a plane.
+    fn finish(&self) {
+        let path = self
+            .run
+            .ledger()
+            .flush()
+            .expect("the cleanup ledger must be written to the run's artifact directory");
+        assert!(
+            path.0.starts_with(self.run.artifact_dir()),
+            "the ledger must land in the run's artifact directory, which is what a lane collects"
+        );
+        let residue = self.run.ledger().residue();
+        assert!(residue.is_empty(), "{}", self.run.ledger().residue_report());
     }
 
     /// The port the bound endpoint addresses.
@@ -271,6 +339,53 @@ fn the_health_contract_is_the_one_the_load_balancer_targets() {
     }
 }
 
+/// The reclaimer this lane installs must refuse, and must say what it did not do.
+///
+/// Asserted without a plane because it is a property of the lane rather than of a
+/// deployment. An `Ok(())` here would mark an entry released having deleted nothing, which
+/// is worse than the leak it would be hiding: the ledger would report a clean run and the
+/// janitor would find the resource by tag hours later with nobody expecting it.
+#[test]
+fn the_installed_reclaimer_refuses_and_names_the_steps_it_did_not_take() {
+    let entry = Entry::new(
+        aex_test_harness::ResourceKind::HandsGeneration,
+        "generation-0001",
+        aex_test_harness::Terminal::Deleted,
+        aex_test_harness::TestCaseId("reclaimer-contract".to_owned()),
+    );
+    let error = Reclaimer::reclaim(&NoReclamationRoute, &entry)
+        .expect_err("a health probe has no route to terminate a generation");
+    let rendered = error.to_string();
+    assert!(rendered.contains("no route to reclaim"), "{rendered}");
+    assert!(
+        rendered.contains("terminate the generation"),
+        "the refusal must carry the policy's own reclamation steps: {rendered}"
+    );
+}
+
+/// Recording something this lane cannot release has to fail, not pass quietly.
+#[test]
+fn an_unreleasable_entry_is_residue_rather_than_a_silently_released_one() {
+    let run = TestRun::mint(Lane::Smoke, "brain-core", 0);
+    assert!(run.ledger().install_reclaimer(Arc::new(NoReclamationRoute)));
+    run.ledger().record(Entry::new(
+        aex_test_harness::ResourceKind::EcsTask,
+        run.resource_name("task"),
+        aex_test_harness::Terminal::Deleted,
+        aex_test_harness::TestCaseId("reclaimer-contract".to_owned()),
+    ));
+
+    let summary = run.ledger().reclaim_all();
+    assert!(
+        !summary.is_complete(),
+        "the refusal must be reported, never absorbed"
+    );
+    assert_eq!(run.ledger().residue().len(), 1);
+    // Taken so the ledger's own Drop does not abort this process; the assertion
+    // above is what makes the refusal a failure.
+    let _ = run.ledger().take_residue_report();
+}
+
 /// The registry row is what the deployment is built from, so a lane probing paths or a port
 /// it does not declare is probing something nobody deployed. Asserted without a plane, which
 /// is also what keeps the port reader itself covered by the lane that runs everywhere.
@@ -306,6 +421,8 @@ async fn a_started_task_answers_liveness_on_the_port_the_release_row_declares() 
         StatusCode::OK,
         "{endpoint}{LIVE_PATH} on plane `{plane}` answered {status}: {body}"
     );
+
+    target.finish();
 }
 
 /// Readiness starts false and only becomes true once the task has proved its dependencies
@@ -322,6 +439,7 @@ async fn a_started_task_reaches_readiness_and_names_what_it_waits_on_until_it_do
     let unready = loop {
         let (status, body) = target.get(READY_PATH).await;
         if status == StatusCode::OK {
+            target.finish();
             assert_eq!(
                 body.trim(),
                 "ok",
@@ -378,4 +496,6 @@ async fn a_started_task_serves_none_of_the_superseded_health_paths() {
              group pointed at it would still register: {body}"
         );
     }
+
+    target.finish();
 }

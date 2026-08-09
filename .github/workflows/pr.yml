@@ -114,6 +114,14 @@ jobs:
       - name: Terraform packages no code
         run: aex-release-tool policy terraform
 
+      # The janitor reclaims test residue in dependency order, and the order is
+      # data: `[janitor.resource]` in `release/policy/test-profiles.toml`. A row
+      # whose prerequisite outranks it would be reclaimed in the wrong order and
+      # no test of the engine would catch it, because the engine faithfully
+      # implements whatever the table says. This is the check on the table.
+      - name: Janitor policy
+        run: aex-release-tool janitor verify
+
       - name: Secret scan
         run: bash scripts/cicd/scan-secrets.sh
 
