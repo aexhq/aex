@@ -11,6 +11,11 @@ output "subnet_ids" {
   description = "Private and public subnet ids. Workloads use the private list."
 }
 
+output "endpoint_subnet_ids" {
+  value       = local.endpoint_subnet_ids
+  description = "The private subnets every interface endpoint places an interface in. A prefix of the private list, and shorter than it whenever `endpoint_az_count` trims the spread. Exposed so the standing endpoint-hour count is readable from state rather than inferred."
+}
+
 output "endpoint_ids" {
   value = merge(
     { for k, e in aws_vpc_endpoint.gateway : k => e.id },

@@ -43,6 +43,17 @@ variable "az_count" {
   }
 }
 
+variable "endpoint_az_count" {
+  type        = number
+  default     = null
+  description = "How many zones each interface endpoint places an interface in. Defaults to `az_count`. Every (endpoint, zone) pair bills hourly whether or not traffic crosses it, so a plane that does not need endpoint redundancy should lower this. Traffic from a zone with no interface still resolves and crosses zones inside the VPC."
+
+  validation {
+    condition     = var.endpoint_az_count == null || try(var.endpoint_az_count >= 1 && var.endpoint_az_count <= var.az_count, false)
+    error_message = "The endpoint zone count must be between 1 and `az_count`."
+  }
+}
+
 variable "availability_zones" {
   type        = list(string)
   description = "The zones to use, supplied by the root. The module does not query the account for them, because zone naming is per-account and a lookup would make the plan depend on which account it runs in."
@@ -67,9 +78,13 @@ variable "endpoints" {
     error_message = "Every endpoint must be a service short name such as `kms` or `ecr.api`."
   }
 
+  # With a NAT fallback an endpoint is an optimisation; dropping one re-routes
+  # the traffic. Without a NAT fallback the endpoints are the only path out, so
+  # a missing one is an outage rather than a slower path. The requirement binds
+  # in exactly that second case.
   validation {
-    condition     = length(setsubtract(var.required_interface_services, var.endpoints)) == 0
-    error_message = "The endpoint list must include every service the schema-admin task needs; without them the task has no path to AWS from a private subnet."
+    condition     = var.allow_nat || length(setsubtract(var.required_interface_services, var.endpoints)) == 0
+    error_message = "Without `allow_nat` the endpoints are the only path out of a private subnet, so `endpoints` must cover every service in `required_interface_services`."
   }
 }
 
@@ -78,12 +93,10 @@ variable "required_interface_services" {
   default = [
     "ecr.api",
     "ecr.dkr",
-    "kms",
     "logs",
     "secretsmanager",
-    "sts",
   ]
-  description = "Interface endpoints the one-shot schema-admin task cannot run without. `endpoints` must be a superset."
+  description = "Interface endpoints a task cannot reach RUNNING without on a network with no NAT path: `ecr.*` for the image pull, `logs` for the log driver, `secretsmanager` for its credentials. KMS is not here because Secrets Manager decrypts server-side and the client never issues a KMS call; STS is not here because task-role credentials arrive from the ECS agent over the link-local task metadata address. `endpoints` must be a superset whenever `allow_nat` is false."
 
   validation {
     condition     = length(var.required_interface_services) > 0

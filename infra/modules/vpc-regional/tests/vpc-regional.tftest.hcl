@@ -53,14 +53,14 @@ run "no_nat_gateway_by_default" {
   }
 }
 
-run "interface_endpoints_cover_everything_the_schema_admin_task_needs" {
+run "interface_endpoints_cover_everything_a_task_needs_to_start" {
   command = plan
 
   assert {
     condition = alltrue([
       for s in var.required_interface_services : contains(keys(aws_vpc_endpoint.interface), s)
     ])
-    error_message = "Every service the schema-admin task needs must have an interface endpoint."
+    error_message = "Every service a task needs to reach RUNNING must have an interface endpoint."
   }
 
   assert {
@@ -144,6 +144,48 @@ run "rejects_enabling_nat_with_no_justification" {
   expect_failures = [var.allow_nat]
 }
 
+run "interface_endpoints_span_every_zone_unless_told_otherwise" {
+  command = plan
+
+  assert {
+    condition     = length(output.endpoint_subnet_ids) == var.az_count
+    error_message = "By default an interface endpoint must be placed in every private subnet."
+  }
+}
+
+run "endpoint_az_count_trims_the_endpoint_spread_without_moving_subnets" {
+  command = plan
+
+  variables {
+    endpoint_az_count = 1
+  }
+
+  assert {
+    condition     = length(output.endpoint_subnet_ids) == 1
+    error_message = "`endpoint_az_count` must decide how many subnets carry an endpoint interface, because each one is a standing hourly charge."
+  }
+
+  assert {
+    condition     = length(aws_subnet.private) == var.az_count
+    error_message = "Trimming the endpoint spread must not remove a private subnet; workloads and Aurora still need every zone."
+  }
+
+  assert {
+    condition     = length(aws_route_table.private) == var.az_count
+    error_message = "Trimming the endpoint spread must not remove a private route table."
+  }
+}
+
+run "rejects_an_endpoint_zone_count_wider_than_the_vpc" {
+  command = plan
+
+  variables {
+    endpoint_az_count = 3
+  }
+
+  expect_failures = [var.endpoint_az_count]
+}
+
 run "rejects_an_endpoint_list_missing_a_required_service" {
   command = plan
 
@@ -152,6 +194,24 @@ run "rejects_an_endpoint_list_missing_a_required_service" {
   }
 
   expect_failures = [var.endpoints]
+}
+
+# The mirror of the run above: the same deficient list is accepted once a NAT
+# path exists, because then the endpoints are an optimisation rather than the
+# only way out.
+run "accepts_a_reduced_endpoint_list_when_nat_provides_the_fallback" {
+  command = plan
+
+  variables {
+    endpoints         = ["logs"]
+    allow_nat         = true
+    nat_justification = "Provider egress for the dev plane until the egress proxy lands."
+  }
+
+  assert {
+    condition     = toset(keys(aws_vpc_endpoint.interface)) == toset(["logs"])
+    error_message = "A plane with a NAT fallback must be free to run whatever endpoint subset it can justify."
+  }
 }
 
 run "rejects_a_zone_list_that_does_not_match_the_zone_count" {

@@ -8,6 +8,13 @@ locals {
   ]
 
   nat_count = var.allow_nat ? var.az_count : 0
+
+  # Endpoint placement is decoupled from the VPC's zone spread. Subnets stay in
+  # every zone because workloads and Aurora need them there; the endpoints
+  # themselves need only enough zones to carry the redundancy this plane wants,
+  # and each one they occupy is a standing hourly charge.
+  endpoint_az_count   = coalesce(var.endpoint_az_count, var.az_count)
+  endpoint_subnet_ids = slice(aws_subnet.private[*].id, 0, local.endpoint_az_count)
 }
 
 resource "aws_vpc" "this" {
@@ -145,7 +152,7 @@ resource "aws_vpc_endpoint" "interface" {
   vpc_id              = aws_vpc.this.id
   service_name        = "com.amazonaws.${var.region}.${each.key}"
   vpc_endpoint_type   = "Interface"
-  subnet_ids          = aws_subnet.private[*].id
+  subnet_ids          = local.endpoint_subnet_ids
   security_group_ids  = [aws_security_group.interface_endpoints.id]
   private_dns_enabled = true
 
