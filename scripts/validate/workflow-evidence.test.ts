@@ -336,7 +336,7 @@ describe("workflow evidence producers", () => {
         // No `artifacts` here: the PR lane is read-only, so it cannot call
         // `_build-artifacts.yml` (which requests write scopes) without failing
         // the whole run at startup. Bytes are proved buildable on main.
-        resultJobs: ["tools", "route", "gates", "rust", "integration", "node", "scenarios", "terraform"],
+        resultJobs: ["preflight", "tools", "route", "gates", "rust", "integration", "node", "scenarios", "terraform"],
         receiptJobs: ["rust", "node", "terraform"]
       },
       {
@@ -344,7 +344,7 @@ describe("workflow evidence producers", () => {
         // `compile` gates nothing but is required to have SUCCEEDED: it is the
         // only producer of the bytes `build` publishes, so a red compile that
         // was merely tolerated would publish a shorter release.
-        resultJobs: ["tools", "route", "gates", "verify", "integration", "node", "scenarios", "terraform", "compile", "build", "manifest"],
+        resultJobs: ["preflight", "tools", "route", "gates", "verify", "integration", "node", "scenarios", "terraform", "compile", "build", "manifest"],
         receiptJobs: ["verify", "node", "terraform"]
       }
     ] as const;
@@ -381,6 +381,58 @@ describe("workflow evidence producers", () => {
       expect(inputs.rust_matrix).toBe("${{ needs.route.outputs.test_matrix }}");
       expect(inputs.node_matrix).toBe("${{ needs.route.outputs.node_matrix }}");
       expect(inputs.terraform_matrix).toBe("${{ needs.route.outputs.terraform_matrix }}");
+    }
+  });
+
+  test("the tool-independent gates run unblocked and download no workspace tools", () => {
+    // `Format` and `Secret scan` need no prebuilt binary. Holding them behind
+    // `tools` meant a formatting violation took ~3 minutes to report, ~1m46s
+    // of which was a build the job never used. They own a job with no `needs:`;
+    // everything left in `gates` genuinely runs a downloaded tool.
+    for (const path of [".github/workflows/main.yml", ".github/workflows/pr.yml"] as const) {
+      const workflow = readWorkflow(path);
+      const preflight = workflowJob(workflow, "preflight");
+      const gates = workflowJob(workflow, "gates");
+
+      expect(jobNeeds(preflight), path).toEqual([]);
+      expect(
+        workflowSteps(preflight).map((step) => step.name),
+        path
+      ).toEqual(["Checkout", "Install Rust", "Format", "Secret scan"]);
+      expect(workflowStep(preflight, "Format").run, path).toBe("cargo fmt --all -- --check");
+      // The same pinned toolchain `gates` installs — a second pin would drift.
+      expect(workflowStep(preflight, "Install Rust").uses, path).toBe(
+        workflowStep(gates, "Install Rust").uses
+      );
+      expect(workflowStep(preflight, "Install Rust").with?.toolchain, path).toBe(
+        workflowStep(gates, "Install Rust").with?.toolchain
+      );
+      // Downloading the tools artifact would re-couple this job to `tools`.
+      expect(
+        workflowSteps(preflight).some((step) =>
+          step.uses?.startsWith("actions/download-artifact@")
+        ),
+        path
+      ).toBeFalse();
+
+      expect(jobNeeds(gates), path).toEqual(["tools"]);
+      const gateSteps = workflowSteps(gates).map((step) => step.name);
+      expect(gateSteps, path).not.toContain("Format");
+      expect(gateSteps, path).not.toContain("Secret scan");
+      // Every check left behind is one that cannot run without a built tool,
+      // which is what earns `gates` its wait on `tools`.
+      for (const name of [
+        "Workspace structure",
+        "Delivery graph",
+        "Router selftest",
+        "Workflow structure",
+        "Terraform packages no code",
+        "Janitor policy"
+      ]) {
+        expect(workflowStep(gates, name).run, `${path} ${name}`).toMatch(
+          /^aex-(release-tool|workspace-check)\b/
+        );
+      }
     }
   });
 

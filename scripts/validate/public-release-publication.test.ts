@@ -9,9 +9,11 @@ describe("public main-push publication", () => {
   test("main gates publication on every public validation lane", () => {
     const source = read(".github/workflows/main.yml");
     const workflow = Bun.YAML.parse(source) as { readonly jobs: Record<string, any> };
+    expect(workflow.jobs).toHaveProperty("preflight");
     expect(workflow.jobs).toHaveProperty("gates");
     expect(workflow.jobs).toHaveProperty("terraform");
     expect(workflow.jobs.build.needs).toEqual([
+      "preflight",
       "tools",
       "route",
       "gates",
@@ -31,6 +33,11 @@ describe("public main-push publication", () => {
     );
     expect(workflow.jobs.build.if).toContain("needs.tools.result == 'success'");
     expect(workflow.jobs.build.if).toContain("needs.gates.result == 'success'");
+    // `Format` and `Secret scan` moved out of `gates` into the unblocked
+    // `preflight` job. They gate publication exactly as hard as they did
+    // inside `gates`: a run that leaks a secret must not mint a release, so
+    // the split must never cost the scan its veto over `build`.
+    expect(workflow.jobs.build.if).toContain("needs.preflight.result == 'success'");
     // The compile lane runs beside the test lanes, so it is the one dependency
     // of `build` that is NOT a gate. It still has to have succeeded, because a
     // publish job with nothing to publish must fail rather than publish less.
@@ -209,6 +216,12 @@ describe("public main-push publication", () => {
     };
 
     expect(main.jobs.gates).toEqual(pr.jobs.gates);
+    // The unblocked half of the same root gate. Both lanes must format and
+    // scan identically, and neither may reintroduce a `needs:` that would put
+    // the fast answers back behind a build.
+    expect(main.jobs.preflight).toEqual(pr.jobs.preflight);
+    expect(main.jobs.preflight.needs).toBeUndefined();
+    expect(pr.jobs.preflight.needs).toBeUndefined();
   });
 
   test("the reusable workflow mints non-overwriting public inputs", () => {

@@ -23,15 +23,50 @@ permissions:
   contents: read
 
 jobs:
-  # The head of the graph. Every job below runs the exact bytes this one built
-  # and published the digest of.
+  # Deliberately unblocked: neither step below consumes a prebuilt tool, so
+  # waiting on `tools` bought nothing and cost every run the ~1m46s that build
+  # takes. A formatting violation or a leaked secret now fails the run in well
+  # under a minute. This is a feedback narrowing, not a weakened gate — both
+  # `build` and `receipts` require this job to have succeeded, and `receipts`
+  # holds it at `allowSkipped: false`, so a skipped `preflight` fails the run.
+  preflight:
+    name: Preflight
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # Full history: the secret scan walks every reachable commit
+      # (`--log-opts=--all`), not just the tip.
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          fetch-depth: 0
+
+      # No cargo cache and no workspace-tools download: the only cargo this job
+      # runs is the `metadata --no-deps` behind `cargo fmt --all`, which
+      # resolves no dependency and reads no registry, and nothing here executes
+      # a built tool. `rustfmt` is the one component the job uses.
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
+        with:
+          toolchain: "1.97.1"
+          components: rustfmt
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Secret scan
+        run: bash scripts/cicd/scan-secrets.sh
+
+  # The head of the tool-dependent graph. Every job below runs the exact bytes
+  # this one built and published the digest of.
   #
   # `gates` depends on this rather than on `route`, so a broken router cannot
-  # hide a policy finding. It does mean a broken `tools` hides all of them,
-  # including the secret scan, which needs no tool at all. That is a feedback
-  # narrowing, not a false green: `receipts` requires `gates` to have succeeded
-  # with `allowSkipped: false`, so a skipped `gates` fails the run. Splitting
-  # the two tool-independent steps into their own unblocked job is owed.
+  # hide a policy finding. It does mean a broken `tools` hides all of them, but
+  # only the findings that genuinely need a prebuilt tool: the two that need
+  # none run in `preflight` above and report independently. `receipts` requires
+  # `gates` to have succeeded with `allowSkipped: false`, so a skipped `gates`
+  # fails the run.
   tools:
     name: Tools
     uses: ./.github/workflows/_tools.yml
@@ -67,9 +102,9 @@ jobs:
 
       # No cargo cache: nothing here compiles since the tools arrive prebuilt,
       # and the only cargo this job still runs is the `metadata --no-deps`
-      # behind `cargo fmt --all`, `aex-workspace-check` and `graph verify`,
-      # which resolves no dependency and reads no registry. The key it used to
-      # declare was never written by any workflow, so the step could only miss.
+      # behind `aex-workspace-check` and `graph verify`, which resolves no
+      # dependency and reads no registry. The key it used to declare was never
+      # written by any workflow, so the step could only miss.
       - name: Install Rust
         uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
         with:
@@ -102,9 +137,6 @@ jobs:
           ./aex-workspace-check --version | grep -Eq '^aex-workspace-check [0-9]+\.[0-9]+\.[0-9]+'
           echo "$RUNNER_TEMP/aex-tools" >> "$GITHUB_PATH"
 
-      - name: Format
-        run: cargo fmt --all -- --check
-
       - name: Workspace structure
         run: aex-workspace-check
 
@@ -127,9 +159,6 @@ jobs:
       # implements whatever the table says. This is the check on the table.
       - name: Janitor policy
         run: aex-release-tool janitor verify
-
-      - name: Secret scan
-        run: bash scripts/cicd/scan-secrets.sh
 
   verify:
     name: Verify
@@ -209,9 +238,10 @@ jobs:
 
   build:
     name: Build and publish
-    needs: [tools, route, gates, verify, integration, node, scenarios, terraform, compile]
+    needs: [preflight, tools, route, gates, verify, integration, node, scenarios, terraform, compile]
     if: >-
       always() &&
+      needs.preflight.result == 'success' &&
       needs.tools.result == 'success' &&
       needs.route.result == 'success' &&
       needs.gates.result == 'success' &&
@@ -513,7 +543,7 @@ jobs:
 
   receipts:
     name: Checks
-    needs: [tools, route, gates, verify, integration, node, scenarios, terraform, compile, build, manifest]
+    needs: [preflight, tools, route, gates, verify, integration, node, scenarios, terraform, compile, build, manifest]
     if: always()
     uses: ./.github/workflows/_receipts.yml
     with:
@@ -526,4 +556,4 @@ jobs:
       node_matrix: ${{ needs.route.outputs.node_matrix }}
       terraform_matrix: ${{ needs.route.outputs.terraform_matrix }}
       required_job_results: >-
-        {"tools":{"result":"${{ needs.tools.result }}","allowSkipped":false},"route":{"result":"${{ needs.route.result }}","allowSkipped":false},"gates":{"result":"${{ needs.gates.result }}","allowSkipped":false},"verify":{"result":"${{ needs.verify.result }}","allowSkipped":true},"integration":{"result":"${{ needs.integration.result }}","allowSkipped":true},"node":{"result":"${{ needs.node.result }}","allowSkipped":true},"scenarios":{"result":"${{ needs.scenarios.result }}","allowSkipped":true},"terraform":{"result":"${{ needs.terraform.result }}","allowSkipped":true},"compile":{"result":"${{ needs.compile.result }}","allowSkipped":false},"build":{"result":"${{ needs.build.result }}","allowSkipped":false},"manifest":{"result":"${{ needs.manifest.result }}","allowSkipped":false}}
+        {"preflight":{"result":"${{ needs.preflight.result }}","allowSkipped":false},"tools":{"result":"${{ needs.tools.result }}","allowSkipped":false},"route":{"result":"${{ needs.route.result }}","allowSkipped":false},"gates":{"result":"${{ needs.gates.result }}","allowSkipped":false},"verify":{"result":"${{ needs.verify.result }}","allowSkipped":true},"integration":{"result":"${{ needs.integration.result }}","allowSkipped":true},"node":{"result":"${{ needs.node.result }}","allowSkipped":true},"scenarios":{"result":"${{ needs.scenarios.result }}","allowSkipped":true},"terraform":{"result":"${{ needs.terraform.result }}","allowSkipped":true},"compile":{"result":"${{ needs.compile.result }}","allowSkipped":false},"build":{"result":"${{ needs.build.result }}","allowSkipped":false},"manifest":{"result":"${{ needs.manifest.result }}","allowSkipped":false}}

@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  jobNeeds,
   readRepoFile,
   readWorkflow,
   workflowJob,
-  workflowStep
+  workflowStep,
+  workflowSteps
 } from "./workflow-test-helpers.js";
 
 const GITLEAKS_VERSION = "8.30.1";
@@ -16,10 +18,11 @@ describe("secret scanning", () => {
   test("main and pull requests run the checkout-owned, license-free scanner", () => {
     for (const workflowPath of [".github/workflows/main.yml", ".github/workflows/pr.yml"]) {
       const source = readRepoFile(workflowPath);
-      const gates = workflowJob(readWorkflow(workflowPath), "gates");
-      const checkout = workflowStep(gates, "Checkout");
-      const scan = workflowStep(gates, "Secret scan");
+      const preflight = workflowJob(readWorkflow(workflowPath), "preflight");
+      const checkout = workflowStep(preflight, "Checkout");
+      const scan = workflowStep(preflight, "Secret scan");
 
+      // The scan walks every reachable commit, so it owns a full checkout.
       expect(checkout.with?.["fetch-depth"], workflowPath).toBe(0);
       expect(scan.uses, workflowPath).toBeUndefined();
       expect(scan.run, workflowPath).toBe(`bash ${SCAN_SCRIPT}`);
@@ -27,6 +30,30 @@ describe("secret scanning", () => {
       expect(source, workflowPath).not.toContain("gitleaks/gitleaks-action");
       expect(source, workflowPath).not.toContain("GITLEAKS_LICENSE");
       expect(source, workflowPath).not.toContain("GITHUB_TOKEN");
+    }
+  });
+
+  test("the scanner reports without waiting for anything that has to be built", () => {
+    // A planted secret used to take ~3 minutes to surface because the scan sat
+    // in `gates`, behind the `tools` build it never used. It needs no prebuilt
+    // binary, so it must stay in a job with no `needs:` and no tools download.
+    for (const workflowPath of [".github/workflows/main.yml", ".github/workflows/pr.yml"]) {
+      const workflow = readWorkflow(workflowPath);
+      const preflight = workflowJob(workflow, "preflight");
+      const gates = workflowJob(workflow, "gates");
+
+      expect(jobNeeds(preflight), workflowPath).toEqual([]);
+      expect(
+        workflowSteps(preflight).some((step) =>
+          step.uses?.startsWith("actions/download-artifact@")
+        ),
+        workflowPath
+      ).toBeFalse();
+      // And it must not linger in the blocked job as a second, slower copy.
+      expect(
+        workflowSteps(gates).map((step) => step.name),
+        workflowPath
+      ).not.toContain("Secret scan");
     }
   });
 
