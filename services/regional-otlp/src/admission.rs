@@ -554,7 +554,7 @@ impl CustodyManifests {
     ///
     /// Returns [`AuthorityError::Provider`] when the read fails,
     /// [`AuthorityError::Malformed`] when the stored manifest is absent an
-    /// owner or names a different one, and
+    /// owner, names a different one, or carries no `entries` attribute, and
     /// [`AuthorityError::CustodyMalformed`] when any entry cannot be parsed.
     /// All three fail the batch closed: admitting unredacted bytes — or bytes
     /// checked against a silently emptier redaction set — is never an
@@ -588,8 +588,7 @@ impl CustodyManifests {
             });
         };
         owned_by(&item, workspace)?;
-        let entries = parse_entries(&item)
-            .map_err(|malformed| AuthorityError::CustodyMalformed { malformed })?;
+        let entries = parse_entries(&item)?;
         Ok(SecretDigestManifest {
             session,
             custody_revision: item
@@ -634,20 +633,40 @@ fn owned_by(
 
 /// Reads the `{len, hmac}` rows of one manifest item.
 ///
+/// The counterpart writer is
+/// `aex_secret_custody_dynamodb::codec::encode_manifest`, which emits `entries`
+/// as `L` of `M{len: N, hmac: B}`. Nothing in the compiler connects the two —
+/// this reader holds the raw `DynamoDB` client — so the shape is pinned on both
+/// sides and a test in this module encodes through that writer and parses here.
+///
 /// An unreadable entry refuses the whole manifest rather than being filtered
 /// away: a `filter_map` here silently emptied the redaction set, which is how
 /// an injected secret would have reached storage unredacted.
 ///
+/// An **absent** `entries` attribute is the same refusal for the same reason.
+/// It used to be read as "a manifest that names no secrets", justified by a
+/// custody stream that writes an empty list before the first injection — no
+/// such stream exists, and against a malformed or wrong-shaped row that reading
+/// admitted telemetry against an empty redaction set. An explicitly present
+/// empty list still means no secrets; absence means a row this reader cannot
+/// prove the shape of, and an unprovable shape fails closed exactly as an
+/// unprovable owner does in [`owned_by`].
+///
 /// # Errors
 ///
-/// Returns how many entries could not be parsed.
-fn parse_entries(item: &HashMap<String, AttributeValue>) -> Result<Vec<SecretDigest>, usize> {
-    let Some(list) = item.get("entries").and_then(|value| value.as_l().ok()) else {
-        // An absent list is a manifest that names no secrets, not a malformed
-        // one: the custody stream writes the item with an empty list before
-        // the first injection.
-        return Ok(Vec::new());
-    };
+/// Returns [`AuthorityError::Malformed`] when `entries` is absent or is not a
+/// list, and [`AuthorityError::CustodyMalformed`] carrying how many entries
+/// could not be parsed.
+fn parse_entries(
+    item: &HashMap<String, AttributeValue>,
+) -> Result<Vec<SecretDigest>, AuthorityError> {
+    let list = item
+        .get("entries")
+        .and_then(|value| value.as_l().ok())
+        .ok_or(AuthorityError::Malformed {
+            item: "redaction_manifest",
+            attribute: "entries",
+        })?;
     let mut entries = Vec::with_capacity(list.len());
     let mut malformed = 0usize;
     for entry in list {
@@ -668,7 +687,7 @@ fn parse_entries(item: &HashMap<String, AttributeValue>) -> Result<Vec<SecretDig
         }
     }
     if malformed > 0 {
-        return Err(malformed);
+        return Err(AuthorityError::CustodyMalformed { malformed });
     }
     Ok(entries)
 }
@@ -807,26 +826,136 @@ mod tests {
             truncated_hmac,
             missing_len,
         ]));
-        assert_eq!(
-            outcome.expect_err("two unreadable entries refuse the manifest"),
-            2,
+        assert!(
+            matches!(
+                outcome.expect_err("two unreadable entries refuse the manifest"),
+                AuthorityError::CustodyMalformed { malformed: 2 }
+            ),
             "every attempt is counted, not only the first"
         );
     }
 
     #[test]
-    fn a_well_formed_manifest_and_an_absent_list_both_parse() {
+    fn a_well_formed_manifest_parses_whole() {
         let entries =
             super::parse_entries(&manifest_item(vec![custody_entry()])).expect("parses whole");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].len, 12);
         assert_eq!(entries[0].hmac, [7u8; 32]);
+    }
 
-        // An absent list is a manifest that names no secrets, not a malformed
-        // one.
-        let empty = super::parse_entries(&std::collections::HashMap::new())
-            .expect("an absent list is empty");
+    #[test]
+    fn an_explicitly_empty_entry_list_is_a_session_that_names_no_secrets() {
+        let empty = super::parse_entries(&manifest_item(Vec::new()))
+            .expect("an explicit empty list names no secrets");
         assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn a_manifest_row_with_no_entry_list_is_refused_rather_than_read_as_empty() {
+        // Absent is not empty. This branch used to return an empty redaction
+        // set, justified by a custody stream that writes the row with an empty
+        // list before the first injection; no writer does that, so against a
+        // malformed or wrong-shaped row the justification admitted telemetry
+        // unredacted — the exact failure the neighbouring entry-parse refusal
+        // exists to prevent.
+        let error = super::parse_entries(&std::collections::HashMap::from([(
+            "custodyRevision".to_owned(),
+            aws_sdk_dynamodb::types::AttributeValue::N("3".into()),
+        )]))
+        .expect_err("an absent attribute is a row this reader cannot prove");
+        assert!(
+            matches!(
+                error,
+                AuthorityError::Malformed {
+                    item: "redaction_manifest",
+                    attribute: "entries"
+                }
+            ),
+            "{error}"
+        );
+        assert_eq!(
+            authority_error(&error).code,
+            ErrorCode::InternalError,
+            "a wrong-shaped custody row fails the batch closed"
+        );
+    }
+
+    #[test]
+    fn an_entry_list_of_the_wrong_type_is_refused() {
+        let error = super::parse_entries(&std::collections::HashMap::from([(
+            "entries".to_owned(),
+            aws_sdk_dynamodb::types::AttributeValue::S("[]".to_owned()),
+        )]))
+        .expect_err("a scalar is not an entry list");
+        assert!(matches!(error, AuthorityError::Malformed { .. }), "{error}");
+    }
+
+    /// The writer and the reader of the manifest agree, byte for byte.
+    ///
+    /// There is no compiler edge between
+    /// `aex_secret_custody_dynamodb::codec::encode_manifest` and
+    /// [`super::parse_entries`] — this service reaches the row through the raw
+    /// `DynamoDB` client — and the two shapes had in fact diverged: the writer
+    /// published a flat list of hex digests with no length, which this
+    /// sliding-window reader cannot use at all. The dev-dependency exists so
+    /// that divergence is a failing test rather than an empty redaction set.
+    #[test]
+    fn what_the_custody_writer_encodes_is_exactly_what_this_reader_parses() {
+        use aex_observation_domain::canonical::CanonicalValue;
+        use aex_otlp_admission::redact::REDACTED;
+        use aex_otlp_admission::{
+            DigestRedactor, ManagedSecretRedactor as _, SecretDigestManifest,
+        };
+        use aex_secret_custody_dynamodb::codec::{
+            RedactionEntry, RedactionManifest, encode_manifest,
+        };
+
+        const KEY: &[u8] = b"regional-redaction-key";
+        const SECRET: &str = "sk-live-abcdef";
+
+        let session: SessionId =
+            aex_wire::ids::PrefixedId::parse("ses_0000000003ec1r60r30c1g60r3").expect("a session");
+        let written = RedactionManifest {
+            session,
+            workspace: WorkspaceId::from_uuid7(aex_wire::Uuid7::compose(1, [1; 10])),
+            revision: aex_secret_domain::custody::CustodyRevision::FIRST,
+            algorithm: "HMAC-SHA-256".to_owned(),
+            key_id: "redact-key-1".to_owned(),
+            entries: vec![RedactionEntry::digest(KEY, SECRET.as_bytes()).expect("a narrow secret")],
+            updated_at: aex_wire::types::Timestamp::parse("2026-08-09T00:00:00.000Z")
+                .expect("a timestamp"),
+        };
+
+        let parsed = super::parse_entries(&encode_manifest(&written))
+            .expect("the reader parses what the writer wrote");
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(
+            usize::from(parsed[0].len),
+            SECRET.len(),
+            "the declared length survives the row; without it there is no window to slide"
+        );
+
+        // End to end: a digest produced by the writer matches through the
+        // reader's own matcher, so the two HMAC constructions are one contract.
+        let redactor = DigestRedactor::new(
+            KEY.to_vec(),
+            SecretDigestManifest {
+                session,
+                custody_revision: 1,
+                entries: parsed,
+            },
+            u64::MAX,
+        );
+        let mut value = CanonicalValue::Str(format!("token is {SECRET} ok").into());
+        assert_eq!(
+            redactor
+                .redact(&mut value)
+                .expect("redacts")
+                .redacted_values,
+            1
+        );
+        assert_eq!(value.as_str(), Some(REDACTED));
     }
 
     #[test]

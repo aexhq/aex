@@ -72,6 +72,12 @@ tokio.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+# The counterpart writer of the `REDACT#{session}` manifest this service reads.
+# Production reaches that row through the raw DynamoDB client, so there is no
+# compiler edge between the two shapes and they had in fact diverged; this
+# dev-only edge makes a future divergence a failing test.
+aex-secret-custody-dynamodb = { path = "../../crates/aex-secret-custody-dynamodb" }
+aex-secret-domain = { path = "../../crates/aex-secret-domain" }
 aws-smithy-http-client.workspace = true
 aws-smithy-types.workspace = true
 # `ServiceExt::oneshot`, so the mount's body-limit contract is provable without

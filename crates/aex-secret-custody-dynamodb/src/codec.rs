@@ -20,6 +20,9 @@ use aex_wire::ids::{
 };
 use aex_wire::models::ProviderId;
 use aex_wire::types::Timestamp;
+use aws_sdk_dynamodb::types::AttributeValue;
+use hmac::{Hmac, Mac as _};
+use sha2::Sha256;
 
 use crate::keys;
 
@@ -46,6 +49,19 @@ pub enum EncodeError {
     /// A key component was unusable.
     #[error(transparent)]
     Key(#[from] KeyError),
+    /// A managed secret was wider than a manifest entry can declare.
+    ///
+    /// The declared length is the window `regional-otlp` slides, and that
+    /// window is a `u16`. A wider secret cannot be published as a manifest
+    /// entry at all, so it is refused here rather than truncated into an entry
+    /// that would match a prefix of the real value.
+    #[error("a managed secret of {observed} bytes exceeds the {limit} byte manifest entry width")]
+    SecretTooWide {
+        /// The secret's byte length.
+        observed: usize,
+        /// The widest entry a manifest can declare.
+        limit: usize,
+    },
 }
 
 /// One workspace secret, without its ciphertext.
@@ -457,11 +473,72 @@ pub fn encode_authorization(authorization: &CallAuthorization) -> Result<Item, E
         .build())
 }
 
+/// One managed secret named by a manifest: a length and a keyed digest.
+///
+/// The length is not decoration, and dropping it is not a compression. The
+/// reader — `aex_otlp_admission::redact::DigestRedactor` — is a **sliding
+/// window** matcher: it indexes the manifest by declared length, slides a
+/// window of exactly that width across every canonical string and HMACs each
+/// position. Without a length there is no window, and a bare digest could only
+/// ever decide whole-value equality, which is not what this product promises:
+/// it redacts a managed secret embedded *inside* a longer customer string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RedactionEntry {
+    /// The secret's exact byte length.
+    pub len: u16,
+    /// `HMAC-SHA256(k_region, secret)`.
+    pub hmac: [u8; 32],
+}
+
+impl RedactionEntry {
+    /// The widest secret a manifest entry can declare.
+    pub const MAX_SECRET_BYTES: usize = u16::MAX as usize;
+
+    /// Digests one managed secret under the regional redaction key.
+    ///
+    /// The single place a manifest entry is produced. `regional-otlp` recomputes
+    /// `HMAC-SHA256(k_region, window)` over each candidate window and compares
+    /// the result to `hmac`, so the construction here and the construction there
+    /// are one contract with no compiler edge between them; a test in that
+    /// service digests through this constructor and matches through that
+    /// redactor, which is what keeps the two from drifting again.
+    ///
+    /// # Errors
+    ///
+    /// [`EncodeError::SecretTooWide`] when the secret exceeds
+    /// [`RedactionEntry::MAX_SECRET_BYTES`]. Refused rather than truncated: a
+    /// truncated length would name a window that is not the secret.
+    ///
+    /// # Panics
+    ///
+    /// Unreachable: HMAC pads or hashes a key of any length, so keying is
+    /// infallible for every `key` and the crate's `InvalidLength` is a variant
+    /// no input reaches.
+    pub fn digest(key: &[u8], secret: &[u8]) -> Result<Self, EncodeError> {
+        let len = u16::try_from(secret.len()).map_err(|_| EncodeError::SecretTooWide {
+            observed: secret.len(),
+            limit: Self::MAX_SECRET_BYTES,
+        })?;
+        let mut mac = <Hmac<Sha256> as hmac::KeyInit>::new_from_slice(key)
+            .expect("HMAC accepts a key of any length");
+        mac.update(secret);
+        Ok(Self {
+            len,
+            hmac: mac.finalize().into_bytes().into(),
+        })
+    }
+}
+
 /// The per-session redaction manifest `regional-otlp` reads.
 ///
-/// It carries HMAC digests of the values the platform injected, so a collector
+/// It carries keyed digests of the values the platform injected, so a collector
 /// can redact them with **zero decrypt permission**: it never sees a ciphertext,
 /// never calls KMS, and cannot reverse a digest into a value.
+///
+/// The stored shape is the cross-stream contract parsed by
+/// `regional-otlp`'s `admission::parse_entries`. Any change to the `entries`
+/// attribute has to be made in both places in the same commit: the reader uses
+/// the raw `DynamoDB` client, so nothing in the compiler connects them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RedactionManifest {
     /// The session.
@@ -474,13 +551,18 @@ pub struct RedactionManifest {
     pub algorithm: String,
     /// Which HMAC key produced the digests.
     pub key_id: String,
-    /// The digests, lowercase hex, in name order.
-    pub digests: Vec<String>,
+    /// The entries, in name order.
+    pub entries: Vec<RedactionEntry>,
     /// When it last changed.
     pub updated_at: Timestamp,
 }
 
 /// Encodes one redaction manifest.
+///
+/// `entries` is written unconditionally, including as an empty list. The
+/// reader distinguishes an absent attribute — a row this writer did not
+/// produce, refused closed — from an explicit empty list, which is a session
+/// that had no managed secret injected.
 #[must_use]
 pub fn encode_manifest(manifest: &RedactionManifest) -> Item {
     let key = keys::redaction_manifest(manifest.session);
@@ -493,11 +575,23 @@ pub fn encode_manifest(manifest: &RedactionManifest) -> Item {
         .set("algorithm", s(manifest.algorithm.clone()))
         .set("keyId", s(manifest.key_id.clone()))
         .set(
-            "digests",
-            aex_session_dynamodb::attr::string_list(manifest.digests.clone()),
+            "entries",
+            AttributeValue::L(manifest.entries.iter().map(encode_entry).collect()),
         )
         .set("updatedAt", stamp(manifest.updated_at))
         .build()
+}
+
+/// Encodes one `{len, hmac}` entry.
+///
+/// `len` is `N` and `hmac` is `B`, exactly as `regional-otlp` parses them
+/// (`services/regional-otlp/src/admission.rs::parse_entries`). Hex would be a
+/// second spelling of the same 32 bytes and the reader has no decoder for it.
+fn encode_entry(entry: &RedactionEntry) -> AttributeValue {
+    AttributeValue::M(Item::from([
+        ("len".to_owned(), n(u64::from(entry.len))),
+        ("hmac".to_owned(), b(entry.hmac.to_vec())),
+    ]))
 }
 
 /// Decodes one redaction manifest.
@@ -518,28 +612,21 @@ pub fn decode_manifest(
         "the manifest is read by a role with no decrypt permission",
     )?;
     let encoded = item
-        .get("digests")
-        .and_then(|value| value.as_l().ok())
+        .get("entries")
         .ok_or(CodecError::Missing {
             item_type: REDACTION_MANIFEST,
-            attribute: "digests",
-        })?;
-    let mut digests = Vec::with_capacity(encoded.len());
-    for entry in encoded {
-        let text = entry.as_s().map_err(|_| CodecError::WrongType {
+            attribute: "entries",
+        })?
+        .as_l()
+        .map_err(|_| CodecError::WrongType {
             item_type: REDACTION_MANIFEST,
-            attribute: "digests",
-            expected: "S",
+            attribute: "entries",
+            expected: "L",
             found: "another type",
         })?;
-        if text.len() != 64 || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return Err(CodecError::Malformed {
-                item_type: REDACTION_MANIFEST,
-                attribute: "digests",
-                reason: "a manifest entry is a 64 character HMAC digest".to_owned(),
-            });
-        }
-        digests.push(text.clone());
+    let mut entries = Vec::with_capacity(encoded.len());
+    for entry in encoded {
+        entries.push(decode_entry(entry)?);
     }
     Ok(RedactionManifest {
         session: row.id::<SessionId>("sessionId")?,
@@ -547,8 +634,37 @@ pub fn decode_manifest(
         revision: CustodyRevision(row.u64("custodyRevision")?),
         algorithm: row.string("algorithm")?.to_owned(),
         key_id: row.string("keyId")?.to_owned(),
-        digests,
+        entries,
         updated_at: row.timestamp("updatedAt")?,
+    })
+}
+
+/// Decodes one `{len, hmac}` entry.
+///
+/// An unreadable entry refuses the whole manifest, never shrinks it: a
+/// redaction set that silently loses a member is how an injected secret reaches
+/// storage unredacted. `regional-otlp` refuses on the same rule.
+fn decode_entry(entry: &AttributeValue) -> Result<RedactionEntry, CodecError> {
+    let map = entry.as_m().map_err(|_| CodecError::WrongType {
+        item_type: REDACTION_MANIFEST,
+        attribute: "entries",
+        expected: "L of M",
+        found: "another type",
+    })?;
+    // The nested map carries no discriminator of its own; the outer row's has
+    // already been checked.
+    let row = Row::bind_projected(map, REDACTION_MANIFEST);
+    let len = u16::try_from(row.u64("len")?).map_err(|_| CodecError::Malformed {
+        item_type: REDACTION_MANIFEST,
+        attribute: "len",
+        reason: format!(
+            "a declared secret length is at most {} bytes",
+            RedactionEntry::MAX_SECRET_BYTES
+        ),
+    })?;
+    Ok(RedactionEntry {
+        len,
+        hmac: row.fixed_bytes::<32>("hmac")?,
     })
 }
 

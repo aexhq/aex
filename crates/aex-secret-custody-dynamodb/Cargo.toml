@@ -44,6 +44,9 @@ async-trait.workspace = true
 aws-sdk-dynamodb.workspace = true
 aws-smithy-types.workspace = true
 hex.workspace = true
+# The manifest entry digest. The collector recomputes the same construction with
+# no decrypt permission, so the writer has to speak it too.
+hmac.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 aex-secret-domain = { path = "../aex-secret-domain" }

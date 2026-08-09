@@ -10,7 +10,8 @@ use aex_secret_custody_dynamodb::keys;
 use aex_session_dynamodb::attr::CodecError;
 
 use support::{
-    generation, manifest, metadata, other_workspace, provider_credential, session, workspace,
+    REDACTED_SECRETS, generation, manifest, metadata, other_workspace, provider_credential,
+    session, workspace,
 };
 
 #[test]
@@ -59,13 +60,28 @@ fn the_redaction_manifest_carries_digests_and_nothing_a_collector_could_reverse(
             "the manifest carried `{name}`"
         );
     }
-    let digests = encoded["digests"].as_l().expect("a list");
-    assert!(
-        digests
-            .iter()
-            .all(|entry| entry.as_s().expect("a string").len() == 64),
-        "every entry is a fixed-width digest, so none of them can be a value"
-    );
+    let entries = encoded["entries"].as_l().expect("a list");
+    assert_eq!(entries.len(), REDACTED_SECRETS.len());
+    for (entry, secret) in entries.iter().zip(REDACTED_SECRETS) {
+        let map = entry.as_m().expect("a map");
+        assert_eq!(
+            map["hmac"].as_b().expect("a blob").as_ref().len(),
+            32,
+            "every entry is a fixed-width digest, so none of them can be a value"
+        );
+        assert_ne!(
+            map["hmac"].as_b().expect("a blob").as_ref(),
+            secret.as_bytes(),
+            "the digest is not the secret"
+        );
+        // The length is published on purpose — the collector cannot slide a
+        // window without it — and it is the only thing the row says about the
+        // value. A length is not a value, and nothing here inverts a digest.
+        assert_eq!(
+            map["len"].as_n().expect("a number"),
+            &secret.len().to_string()
+        );
+    }
 }
 
 #[test]

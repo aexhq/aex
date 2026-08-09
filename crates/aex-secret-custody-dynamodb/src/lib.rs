@@ -28,6 +28,6 @@ pub mod store;
 
 pub use codec::{
     CallAuthorization, CredentialState, CustodyBinding, CustodyHead, ProviderCredential,
-    RedactionManifest, SecretMetadata, StoredGeneration,
+    RedactionEntry, RedactionManifest, SecretMetadata, StoredGeneration,
 };
 pub use store::{CustodyStore, Page, SecretCustodyStore};
