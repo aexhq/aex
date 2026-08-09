@@ -23,45 +23,57 @@ to exist, so a fresh region plans from an empty account.
 
 `alb-public` owns the load balancer and the listener whose default action is a
 fixed 404. It owns no target group and no rule. Each service attaches through
-its own `alb-service-target`, which is exactly one target group and one rule at
-an explicitly required priority: `regional-stream` at 10, `regional-session-api`
-at 20. Lower priorities are evaluated first, so the narrower pattern set takes
-the lower number.
+its own `alb-service-target`: one target group, and as many rules against it as
+that service's pattern set needs, each at an explicitly required priority.
+`regional-stream` is given the 10s and `regional-session-api` the 20s, so each
+can add rules without reaching into the other's band. Lower priorities are
+evaluated first, so a narrower rule must hold a lower number than any rule that
+would also match.
 
-## The public path split is unresolved
+The per-rule quotas are `Condition Values per Rule` = 5 and `Condition Wildcards
+per Rule` = 6, neither adjustable; `Rules per Application Load Balancer` is 100
+and *is* adjustable. So a pattern set too wide for one rule is not a problem
+with the split, it just needs another rule. The stream service's six top-level
+prefixes are six condition values, one more than a rule may carry, so this root
+expresses them as two rules at priorities 10 and 11 against one target group.
 
-`path_patterns` is a required input on both services and this root does not pick
-a complete one, because on the evidence no complete prefix split exists.
+## The public path split is expressible; one decision is still open
+
+`rules` is a required input on both services, and this root deliberately routes
+only the part of the surface that splits into disjoint patterns.
 
 `api/generated/registries/routes.json` puts 12 of `regional-stream`'s 24 routes
 and 22 of `regional-session-api`'s 61 under the same `/api/sessions/{sessionId}/`
 prefix. The segment that tells them apart comes *after* a variable session id -
 `/api/sessions/{sessionId}/events/stream` against
-`/api/sessions/{sessionId}/messages` - so no prefix separates them.
+`/api/sessions/{sessionId}/messages` - so no *prefix* separates them.
 
-Anchoring the discriminating segment instead, as
-`/api/sessions/*/events/*` and five more, needs 12 pattern values in one rule.
-`Condition Values per Rule` is 5 and `Condition Wildcards per Rule` is 6; both
-are hard AWS quotas that cannot be raised, and `alb-service-target` rejects a
-pattern list that exceeds them. Even `regional-stream`'s six top-level nouns -
-`events`, `logs`, `metrics`, `spans`, `telemetry`, `traces` - are six values and
-so do not fit one rule on their own.
+Anchoring the discriminating segment does separate them safely.
+`/api/sessions/*/events/*` cannot match `/api/sessions/{id}/messages` however
+much the wildcards swallow, and no `regional-session-api` route contains
+`events`, `logs`, `metrics`, `spans`, `telemetry` or `traces` in any position.
+The six such patterns are two wildcards each, so they are two rules of three -
+at the wildcard ceiling, and well inside the rule count.
 
-The one shape that does fit, matching on the trailing verb as `/api/*/stream`
-and `/api/*/listen`, is unsafe: an ALB `*` matches across `/`, and
-`regional-session-api` serves `PUT /api/workspace/files/{name}` with a
-user-chosen name, so a file called `stream` would be routed to the wrong
-service.
+What is *not* safe is matching on the trailing verb, as `/api/*/stream` and
+`/api/*/listen`. An ALB `*` matches across `/`, and `regional-session-api`
+serves `PUT /api/workspace/files/{name}` with a user-chosen name, so a file
+called `stream` would be routed to the wrong service. That shape is rejected on
+its merits, not on quota.
 
-The fixture in `tests/` therefore routes exactly the part that does split
-cleanly - `/api/events/*`, `/api/logs/*`, `/api/metrics/*`, `/api/spans/*` and
-`/api/traces/*` to the stream service, `/api/workspace/*`, `/api/operations/*`
-and `/api/billing/*` to the session API - and deliberately leaves out
-`/api/telemetry/*`, `/api/sessions` and everything under
-`/api/sessions/{sessionId}/`. Resolving those needs a decision this root cannot
-make for itself: split the API surface so the two services no longer share the
-`/api/sessions/` prefix, put a router in front, or give the session-scoped
-stream routes their own top-level prefix.
+So the mechanism is in place, and what remains is a routing decision rather than
+a limitation. Covering `/api/sessions/` means giving the stream service its
+anchored session-scoped rules at low priorities and letting the session API hold
+`/api/sessions` and `/api/sessions/*` behind them - correctness then rests on
+rule *precedence* rather than on disjoint patterns, which is a property worth
+choosing deliberately rather than inheriting. The alternatives are to split the
+API surface so the two services stop sharing the prefix, or to give the
+session-scoped stream routes their own top-level prefix.
+
+Until that is decided, the fixture in `tests/` routes the cleanly separable
+part: all six top-level stream prefixes across two rules, and
+`/api/workspace/*`, `/api/operations/*` and `/api/billing/*` to the session API.
+`/api/sessions` and everything below it are left out on purpose.
 
 ## Sanitized values
 
@@ -78,7 +90,7 @@ in any `.tf` file here.
 | `ecs-cluster` | The cluster both services run in. |
 | `log-group` | One group per service. |
 | `alb-public` | Public edge: load balancer, listeners, fixed 404 default. |
-| `alb-service-target` | One target group and one rule per service. |
+| `alb-service-target` | One target group per service, with its listener rules. |
 | `ecs-service` | `regional-stream` and `regional-session-api`. |
 
 ## Outputs
@@ -92,5 +104,7 @@ in any `.tf` file here.
 provider. It asserts one role per deployable, that the cluster and both log
 groups are created here, that each service's drain window is the one its own
 target group publishes, that both services' forwarded patterns are `/api/` paths
-that do not collide, that the session API carries the reviewed Fargate shape,
-and that its role is assumed by `ecs-tasks.amazonaws.com` rather than by Lambda.
+that do not collide, that the two services occupy disjoint listener priorities,
+that the stream service expresses its six top-level prefixes as two rules, that
+the session API carries the reviewed Fargate shape, and that its role is assumed
+by `ecs-tasks.amazonaws.com` rather than by Lambda.

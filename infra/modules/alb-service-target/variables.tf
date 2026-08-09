@@ -54,60 +54,77 @@ variable "health_check_path" {
   }
 }
 
-# Required, with no default, on purpose. A default is what lets two services
-# collide: both would take it, and the second apply would fail on a duplicate
-# priority - or worse, succeed against a different listener and shadow the
-# first. Making every caller state its own integer is what makes the set
-# unique-able at all.
-variable "priority" {
-  type        = number
-  description = "Listener rule priority. Required and explicit: a default is what lets a second service silently claim the first service's slot. Lower numbers are evaluated first."
+# One target group, N rules pointing at it. The quotas that bite are per rule -
+# `Condition Values per Rule` is 5 and `Condition Wildcards per Rule` is 6, both
+# fixed - while `Rules per Application Load Balancer` is 100 and adjustable. So
+# a service whose public surface needs more than five patterns is not
+# inexpressible; it just needs more than one rule.
+#
+# Every priority is required and explicit. Nothing here derives or
+# auto-increments one: a silently chosen priority is exactly how one service
+# claims a slot another service was using, and that is the failure this module
+# exists to prevent.
+variable "rules" {
+  type = list(object({
+    priority      = number
+    path_patterns = list(string)
+  }))
+  description = "The listener rules that forward to this service's target group. Each carries its own explicit priority and its own pattern list. Lower priorities are evaluated first, so a narrower rule must hold a lower number than any rule that would also match."
 
   validation {
-    condition     = var.priority >= 1 && var.priority <= 50000
-    error_message = "The rule priority must be between 1 and 50000."
+    condition     = length(var.rules) > 0
+    error_message = "At least one listener rule is required; a target group with no rule receives nothing."
   }
 
   validation {
-    condition     = var.priority == floor(var.priority)
-    error_message = "The rule priority must be a whole number."
-  }
-}
-
-variable "path_patterns" {
-  type        = list(string)
-  description = "The only paths this rule forwards. Everything the rule set does not match, `/internal/*` above all, falls through to the listener's fixed 404."
-
-  validation {
-    condition     = length(var.path_patterns) > 0
-    error_message = "At least one forwarded path pattern is required."
+    condition     = alltrue([for r in var.rules : length(r.path_patterns) > 0])
+    error_message = "Every rule must forward at least one path pattern."
   }
 
   validation {
-    condition     = alltrue([for p in var.path_patterns : startswith(p, "/api/")])
+    condition = alltrue([
+      for r in var.rules : alltrue([for p in r.path_patterns : startswith(p, "/api/")])
+    ])
     error_message = "The public listener may only forward paths under `/api/`."
   }
 
   validation {
-    condition     = alltrue([for p in var.path_patterns : !startswith(p, "/internal")])
+    condition = alltrue([
+      for r in var.rules : alltrue([for p in r.path_patterns : !startswith(p, "/internal")])
+    ])
     error_message = "`/internal/*` must never be reachable from the public listener."
   }
 
-  # AWS quota, not taste: `Condition Values per Rule` is 5 and is not
-  # adjustable. A rule that needs more values than this is a routing split that
-  # does not fit one rule, and it must fail here rather than at apply.
+  # `Condition Values per Rule` is a hard AWS quota of 5, per rule.
   validation {
-    condition     = length(var.path_patterns) <= 5
-    error_message = "At most five path patterns fit one listener rule; `Condition Values per Rule` is a hard AWS quota of 5 and cannot be raised."
+    condition     = alltrue([for r in var.rules : length(r.path_patterns) <= 5])
+    error_message = "At most five path patterns fit one listener rule; `Condition Values per Rule` is a hard AWS quota of 5 and cannot be raised. Split the patterns across more rules in this list instead."
   }
 
-  # `Condition Wildcards per Rule` is 6 and is not adjustable either.
+  # `Condition Wildcards per Rule` is a hard AWS quota of 6, per rule, counting
+  # every `*` and `?` across that rule's patterns.
   validation {
-    condition = (
-      length(var.path_patterns) == 0
-      || sum([for p in var.path_patterns : length(replace(p, "/[^*?]/", ""))]) <= 6
-    )
-    error_message = "At most six wildcard characters fit one listener rule; `Condition Wildcards per Rule` is a hard AWS quota of 6 and cannot be raised."
+    condition = alltrue([
+      for r in var.rules :
+      sum([for p in r.path_patterns : length(replace(p, "/[^*?]/", ""))]) <= 6
+      if length(r.path_patterns) > 0
+    ])
+    error_message = "At most six wildcard characters fit one listener rule; `Condition Wildcards per Rule` is a hard AWS quota of 6 and cannot be raised. Split the patterns across more rules in this list instead."
+  }
+
+  validation {
+    condition     = alltrue([for r in var.rules : r.priority >= 1 && r.priority <= 50000])
+    error_message = "Every rule priority must be between 1 and 50000."
+  }
+
+  validation {
+    condition     = alltrue([for r in var.rules : r.priority == floor(r.priority)])
+    error_message = "Every rule priority must be a whole number."
+  }
+
+  validation {
+    condition     = length(distinct([for r in var.rules : r.priority])) == length(var.rules)
+    error_message = "Two rules in this service target share a priority. A listener rejects a duplicate priority at apply; catching it here keeps the collision out of the plane."
   }
 }
 

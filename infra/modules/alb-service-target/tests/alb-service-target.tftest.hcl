@@ -1,35 +1,99 @@
 mock_provider "aws" {}
 
 variables {
-  name          = "aex-dev-euw1-stream"
-  listener_arn  = "arn:aws:elasticloadbalancing:eu-west-1:000000000000:listener/app/aex-dev-euw1-public/50dc6c495c0c9188/f2f7dc8efc522ab2"
-  vpc_id        = "vpc-0123456789abcdef0"
-  target_port   = 8080
-  priority      = 10
-  path_patterns = ["/api/events/*"]
+  name         = "aex-dev-euw1-stream"
+  listener_arn = "arn:aws:elasticloadbalancing:eu-west-1:000000000000:listener/app/aex-dev-euw1-public/50dc6c495c0c9188/f2f7dc8efc522ab2"
+  vpc_id       = "vpc-0123456789abcdef0"
+  target_port  = 8080
+
+  rules = [
+    {
+      priority      = 10
+      path_patterns = ["/api/events/*"]
+    },
+  ]
 }
 
-run "the_service_gets_exactly_one_rule_at_the_priority_it_asked_for" {
+run "the_service_gets_a_rule_at_the_priority_it_asked_for" {
   command = plan
 
   assert {
-    condition     = aws_lb_listener_rule.this.priority == var.priority
+    condition     = aws_lb_listener_rule.this["10"].priority == 10
     error_message = "The rule must sit at the caller's explicit priority; that explicitness is what keeps two services from colliding."
   }
 
   assert {
-    condition     = aws_lb_listener_rule.this.listener_arn == var.listener_arn
+    condition     = aws_lb_listener_rule.this["10"].listener_arn == var.listener_arn
     error_message = "The rule must attach to the listener the caller named."
   }
 
   assert {
-    condition     = one(aws_lb_listener_rule.this.action).type == "forward"
+    condition     = one(aws_lb_listener_rule.this["10"].action).type == "forward"
     error_message = "The rule must forward to this service's target group."
   }
 
   assert {
-    condition     = length(one(aws_lb_listener_rule.this.condition).path_pattern) == 1
-    error_message = "The rule must carry exactly one path-pattern condition."
+    condition     = length(aws_lb_listener_rule.this) == 1
+    error_message = "A single-element rule list must create exactly one rule."
+  }
+}
+
+# The quotas bite per rule, not per service: `Condition Values per Rule` is 5
+# and `Condition Wildcards per Rule` is 6, both fixed, while `Rules per
+# Application Load Balancer` is 100 and adjustable. A surface too wide for one
+# rule is expressed as several rules against the one target group.
+run "one_target_group_can_carry_several_rules" {
+  command = plan
+
+  variables {
+    rules = [
+      {
+        priority      = 10
+        path_patterns = ["/api/events/*", "/api/logs/*", "/api/metrics/*", "/api/spans/*", "/api/telemetry/*"]
+      },
+      {
+        priority      = 11
+        path_patterns = ["/api/traces/*"]
+      },
+      {
+        priority      = 12
+        path_patterns = ["/api/sessions/*/events/*", "/api/sessions/*/logs/*", "/api/sessions/*/metrics/*"]
+      },
+    ]
+  }
+
+  assert {
+    condition     = length(aws_lb_listener_rule.this) == 3
+    error_message = "Each element of the rule list must become its own listener rule."
+  }
+
+  assert {
+    condition = alltrue([
+      for key, rule in aws_lb_listener_rule.this :
+      one(rule.action).type == "forward"
+    ])
+    error_message = "Every rule must forward to the one target group this module creates; the module is one service's whole attachment."
+  }
+
+  assert {
+    condition     = aws_lb_target_group.this.name == "aex-dev-euw1-stream-tg"
+    error_message = "Several rules must still mean exactly one target group."
+  }
+
+  assert {
+    condition = (
+      length(output.rule_priorities) == 3
+      && contains(output.rule_priorities, 10)
+      && contains(output.rule_priorities, 11)
+      && contains(output.rule_priorities, 12)
+    )
+    error_message = "The module must report every priority it occupies, so a root can check two services do not overlap."
+  }
+
+  # Exactly at the wildcard ceiling: three patterns of two wildcards each.
+  assert {
+    condition     = length(one(one(aws_lb_listener_rule.this["12"].condition).path_pattern).values) == 3
+    error_message = "The session-scoped rule must carry its three anchored patterns."
   }
 }
 
@@ -37,13 +101,18 @@ run "a_second_service_takes_a_different_priority_on_the_same_listener" {
   command = plan
 
   variables {
-    name          = "aex-dev-euw1-session"
-    priority      = 20
-    path_patterns = ["/api/workspace/*"]
+    name = "aex-dev-euw1-session"
+
+    rules = [
+      {
+        priority      = 20
+        path_patterns = ["/api/workspace/*"]
+      },
+    ]
   }
 
   assert {
-    condition     = aws_lb_listener_rule.this.priority == 20
+    condition     = aws_lb_listener_rule.this["20"].priority == 20
     error_message = "A second service must be able to attach to the same listener at its own priority."
   }
 
@@ -53,27 +122,30 @@ run "a_second_service_takes_a_different_priority_on_the_same_listener" {
   }
 }
 
-run "the_rule_forwards_only_the_api_prefix" {
+run "the_rules_forward_only_the_api_prefix" {
   command = plan
 
   variables {
-    path_patterns = ["/api/events/*", "/api/logs/*"]
+    rules = [
+      {
+        priority      = 10
+        path_patterns = ["/api/events/*", "/api/logs/*"]
+      },
+      {
+        priority      = 11
+        path_patterns = ["/api/traces/*"]
+      },
+    ]
   }
 
   assert {
-    condition = alltrue([
-      for p in one(one(aws_lb_listener_rule.this.condition).path_pattern).values :
-      startswith(p, "/api/")
-    ])
-    error_message = "The listener rule must forward only paths under /api/."
-  }
-
-  assert {
-    condition = alltrue([
-      for p in one(one(aws_lb_listener_rule.this.condition).path_pattern).values :
-      !startswith(p, "/internal")
-    ])
-    error_message = "The listener rule must never forward /internal paths."
+    condition = alltrue(flatten([
+      for key, rule in aws_lb_listener_rule.this : [
+        for p in one(one(rule.condition).path_pattern).values :
+        startswith(p, "/api/") && !startswith(p, "/internal")
+      ]
+    ]))
+    error_message = "Every rule must forward only public paths under /api/, and never an /internal path."
   }
 }
 
@@ -118,76 +190,193 @@ run "rejects_forwarding_an_internal_path" {
   command = plan
 
   variables {
-    path_patterns = ["/internal/*"]
+    rules = [
+      {
+        priority      = 10
+        path_patterns = ["/internal/*"]
+      },
+    ]
   }
 
-  expect_failures = [var.path_patterns]
+  expect_failures = [var.rules]
 }
 
 run "rejects_forwarding_everything" {
   command = plan
 
   variables {
-    path_patterns = ["/*"]
-  }
-
-  expect_failures = [var.path_patterns]
-}
-
-run "rejects_a_pattern_outside_the_api_prefix" {
-  command = plan
-
-  variables {
-    path_patterns = ["/api/sessions/*", "/healthz"]
-  }
-
-  expect_failures = [var.path_patterns]
-}
-
-run "rejects_an_empty_pattern_list" {
-  command = plan
-
-  variables {
-    path_patterns = []
-  }
-
-  expect_failures = [var.path_patterns]
-}
-
-# `Condition Values per Rule` is a hard, non-adjustable AWS quota of 5. A split
-# that needs more values than this does not fit one rule, and the failure has to
-# land at plan rather than at apply.
-run "rejects_more_path_patterns_than_one_rule_can_hold" {
-  command = plan
-
-  variables {
-    path_patterns = [
-      "/api/events/*",
-      "/api/logs/*",
-      "/api/metrics/*",
-      "/api/spans/*",
-      "/api/telemetry/*",
-      "/api/traces/*",
+    rules = [
+      {
+        priority      = 10
+        path_patterns = ["/*"]
+      },
     ]
   }
 
-  expect_failures = [var.path_patterns]
+  expect_failures = [var.rules]
+}
+
+run "rejects_a_pattern_outside_the_api_prefix_in_any_rule" {
+  command = plan
+
+  variables {
+    rules = [
+      {
+        priority      = 10
+        path_patterns = ["/api/sessions/*"]
+      },
+      {
+        priority      = 11
+        path_patterns = ["/healthz"]
+      },
+    ]
+  }
+
+  expect_failures = [var.rules]
+}
+
+run "rejects_an_empty_rule_list" {
+  command = plan
+
+  variables {
+    rules = []
+  }
+
+  expect_failures = [var.rules]
+}
+
+run "rejects_a_rule_with_no_patterns" {
+  command = plan
+
+  variables {
+    rules = [
+      {
+        priority      = 10
+        path_patterns = []
+      },
+    ]
+  }
+
+  expect_failures = [var.rules]
+}
+
+# `Condition Values per Rule` is a hard, non-adjustable AWS quota of 5. Six
+# patterns are legal for the service, but not in one rule.
+run "rejects_a_rule_that_exceeds_five_condition_values" {
+  command = plan
+
+  variables {
+    rules = [
+      {
+        priority = 10
+        path_patterns = [
+          "/api/events/*",
+          "/api/logs/*",
+          "/api/metrics/*",
+          "/api/spans/*",
+          "/api/telemetry/*",
+          "/api/traces/*",
+        ]
+      },
+    ]
+  }
+
+  expect_failures = [var.rules]
+}
+
+# The same six patterns split across two rules are accepted, which is the whole
+# point: the quota is a per-rule bound, not a ceiling on the service.
+run "accepts_those_same_six_patterns_split_across_two_rules" {
+  command = plan
+
+  variables {
+    rules = [
+      {
+        priority      = 10
+        path_patterns = ["/api/events/*", "/api/logs/*", "/api/metrics/*", "/api/spans/*", "/api/telemetry/*"]
+      },
+      {
+        priority      = 11
+        path_patterns = ["/api/traces/*"]
+      },
+    ]
+  }
+
+  assert {
+    condition     = length(aws_lb_listener_rule.this) == 2
+    error_message = "A surface too wide for one rule must be expressible as two."
+  }
 }
 
 # `Condition Wildcards per Rule` is a hard, non-adjustable AWS quota of 6.
-run "rejects_more_wildcards_than_one_rule_can_hold" {
+# Four two-wildcard patterns are eight wildcards in one rule.
+run "rejects_a_rule_that_exceeds_six_wildcards" {
   command = plan
 
   variables {
-    path_patterns = [
-      "/api/sessions/*/events/*",
-      "/api/sessions/*/logs/*",
-      "/api/sessions/*/metrics/*",
-      "/api/sessions/*/spans/*",
+    rules = [
+      {
+        priority = 10
+        path_patterns = [
+          "/api/sessions/*/events/*",
+          "/api/sessions/*/logs/*",
+          "/api/sessions/*/metrics/*",
+          "/api/sessions/*/spans/*",
+        ]
+      },
     ]
   }
 
-  expect_failures = [var.path_patterns]
+  expect_failures = [var.rules]
+}
+
+run "rejects_two_rules_sharing_a_priority" {
+  command = plan
+
+  variables {
+    rules = [
+      {
+        priority      = 10
+        path_patterns = ["/api/events/*"]
+      },
+      {
+        priority      = 10
+        path_patterns = ["/api/logs/*"]
+      },
+    ]
+  }
+
+  expect_failures = [var.rules]
+}
+
+run "rejects_a_priority_outside_the_listener_range" {
+  command = plan
+
+  variables {
+    rules = [
+      {
+        priority      = 0
+        path_patterns = ["/api/events/*"]
+      },
+    ]
+  }
+
+  expect_failures = [var.rules]
+}
+
+run "rejects_a_fractional_priority" {
+  command = plan
+
+  variables {
+    rules = [
+      {
+        priority      = 10.5
+        path_patterns = ["/api/events/*"]
+      },
+    ]
+  }
+
+  expect_failures = [var.rules]
 }
 
 run "rejects_a_public_health_check_path" {
@@ -218,26 +407,6 @@ run "rejects_a_deregistration_delay_below_thirty_seconds" {
   }
 
   expect_failures = [var.deregistration_delay]
-}
-
-run "rejects_a_priority_outside_the_listener_range" {
-  command = plan
-
-  variables {
-    priority = 0
-  }
-
-  expect_failures = [var.priority]
-}
-
-run "rejects_a_fractional_priority" {
-  command = plan
-
-  variables {
-    priority = 10.5
-  }
-
-  expect_failures = [var.priority]
 }
 
 run "rejects_a_health_check_timeout_that_outlasts_its_interval" {

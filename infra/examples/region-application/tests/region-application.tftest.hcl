@@ -13,12 +13,12 @@ variables {
   session_journal_stream_arn      = "arn:aws:dynamodb:eu-west-1:000000000000:table/aex-dev-euw1-session-journal/stream/2026-08-01T00:00:00.000"
   cluster_name                    = "aex-dev-euw1"
 
-  # The `path_patterns` below are the part of the public surface that splits
-  # cleanly, and only that part. `/api/telemetry/*`, `/api/sessions` and
-  # everything under `/api/sessions/{sessionId}/` are deliberately absent:
-  # `regional-stream` and `regional-session-api` both serve routes under
-  # `/api/sessions/{sessionId}/`, discriminated by the segment *after* a
-  # variable id, so no prefix split separates them. See this root's README.
+  # The rules below are the part of the public surface that splits cleanly, and
+  # only that part. `/api/sessions` and everything under
+  # `/api/sessions/{sessionId}/` are deliberately absent: `regional-stream` and
+  # `regional-session-api` both serve routes there, so routing it correctly
+  # means deciding to rely on priority precedence rather than on disjoint
+  # patterns. That decision is not this example's to make. See the README.
   session_api = {
     name                              = "regional-session-api"
     image                             = "000000000000.dkr.ecr.eu-west-1.amazonaws.com/aex/regional-session-api@sha256:0000000000000000000000000000000000000000000000000000000000000000"
@@ -31,7 +31,12 @@ variables {
     log_group_name                    = "/aex/dev/regional-session-api"
     log_retention_days                = 30
     execution_role_arn                = "arn:aws:iam::000000000000:role/aex-dev-ecs-execution"
-    path_patterns                     = ["/api/workspace/*", "/api/operations/*", "/api/billing/*"]
+    rules = [
+      {
+        priority      = 20
+        path_patterns = ["/api/workspace/*", "/api/operations/*", "/api/billing/*"]
+      },
+    ]
     env = {
       AEX_PLANE  = "dev"
       AEX_REGION = "eu-west-1"
@@ -70,7 +75,19 @@ variables {
     log_group_name                    = "/aex/dev/regional-stream"
     log_retention_days                = 30
     execution_role_arn                = "arn:aws:iam::000000000000:role/aex-dev-ecs-execution"
-    path_patterns                     = ["/api/events/*", "/api/logs/*", "/api/metrics/*", "/api/spans/*", "/api/traces/*"]
+    # Six top-level prefixes are six condition values, one more than a single
+    # rule may carry, so they are expressed as two rules against the one target
+    # group. This is the shape the per-rule quota forces, not a routing choice.
+    rules = [
+      {
+        priority      = 10
+        path_patterns = ["/api/events/*", "/api/logs/*", "/api/metrics/*", "/api/spans/*", "/api/telemetry/*"]
+      },
+      {
+        priority      = 11
+        path_patterns = ["/api/traces/*"]
+      },
+    ]
     env = {
       AEX_PLANE = "dev"
     }
@@ -190,18 +207,35 @@ run "both_request_path_services_attach_to_the_one_public_listener" {
 
   assert {
     condition = length(setintersection(
-      toset(var.stream_service.path_patterns),
-      toset(var.session_api.path_patterns),
+      toset(flatten([for r in var.stream_service.rules : r.path_patterns])),
+      toset(flatten([for r in var.session_api.rules : r.path_patterns])),
     )) == 0
     error_message = "The two services must not claim the same path pattern."
   }
 
   assert {
     condition = alltrue([
-      for p in concat(var.stream_service.path_patterns, var.session_api.path_patterns) :
+      for p in flatten([
+        for r in concat(var.stream_service.rules, var.session_api.rules) : r.path_patterns
+      ]) :
       startswith(p, "/api/") && !startswith(p, "/internal")
     ])
     error_message = "Every forwarded pattern must be a public /api/ path; /internal/* stays unreachable from the public listener."
+  }
+
+  assert {
+    condition = length(setintersection(
+      toset(module.stream_target.rule_priorities),
+      toset(module.session_target.rule_priorities),
+    )) == 0
+    error_message = "The two services must occupy disjoint listener priorities. Each module instantiation proves its own priorities unique; only this root can see both."
+  }
+
+  # Six top-level stream prefixes do not fit one rule, so the service carries
+  # two. The per-rule quota bounds a rule, not a service.
+  assert {
+    condition     = length(module.stream_target.rule_priorities) == 2
+    error_message = "The stream service must express its six top-level prefixes as two rules against one target group."
   }
 }
 

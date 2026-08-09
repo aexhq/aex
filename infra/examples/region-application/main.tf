@@ -82,9 +82,11 @@ module "public_lb" {
   tags               = var.tags
 }
 
-# Two services, two target groups, two rules, two explicit priorities. The
-# lower number is evaluated first, so the narrower pattern set must hold the
-# lower priority. `regional-stream` is 10 and `regional-session-api` is 20.
+# Two services, two target groups, and as many rules each as their pattern sets
+# need. The lower number is evaluated first, so a narrower rule must hold a
+# lower priority than any rule that would also match it. `regional-stream` is
+# given the 10s and `regional-session-api` the 20s, which leaves each service
+# room to add rules without reaching into the other's band.
 module "stream_target" {
   source = "../../modules/alb-service-target"
 
@@ -92,8 +94,7 @@ module "stream_target" {
   listener_arn         = module.public_lb.listener_arn
   vpc_id               = var.vpc_id
   target_port          = var.stream_service.container_port
-  priority             = 10
-  path_patterns        = var.stream_service.path_patterns
+  rules                = var.stream_service.rules
   deregistration_delay = module.public_lb.deregistration_delay
   tags                 = var.tags
 }
@@ -105,8 +106,7 @@ module "session_target" {
   listener_arn         = module.public_lb.listener_arn
   vpc_id               = var.vpc_id
   target_port          = var.session_api.container_port
-  priority             = 20
-  path_patterns        = var.session_api.path_patterns
+  rules                = var.session_api.rules
   deregistration_delay = module.public_lb.deregistration_delay
   tags                 = var.tags
 }

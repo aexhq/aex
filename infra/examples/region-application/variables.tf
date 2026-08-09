@@ -66,8 +66,11 @@ variable "session_api" {
     log_group_name                    = string
     log_retention_days                = number
     execution_role_arn                = string
-    path_patterns                     = list(string)
     env                               = map(string)
+    rules = list(object({
+      priority      = number
+      path_patterns = list(string)
+    }))
     autoscaling_bounds = object({
       min_capacity = number
       max_capacity = number
@@ -85,16 +88,24 @@ variable "session_api" {
   description = "The regional session API, a Fargate service behind the public load balancer. It was a Lambda; it is the same service class as `regional-stream` now, and carries the same shape."
 
   validation {
-    condition     = length(var.session_api.path_patterns) > 0
+    condition     = length(var.session_api.rules) > 0
     error_message = "The session API must declare the public paths it serves; the listener forwards nothing by default."
   }
 
   validation {
     condition = length(setintersection(
-      toset(var.session_api.path_patterns),
-      toset(var.stream_service.path_patterns),
+      toset(flatten([for r in var.session_api.rules : r.path_patterns])),
+      toset(flatten([for r in var.stream_service.rules : r.path_patterns])),
     )) == 0
     error_message = "The two services must not declare the same path pattern. Two rules matching one pattern is decided by priority alone, which makes the lower-priority service silently unreachable on that path."
+  }
+
+  validation {
+    condition = length(setintersection(
+      toset([for r in var.session_api.rules : r.priority]),
+      toset([for r in var.stream_service.rules : r.priority]),
+    )) == 0
+    error_message = "The two services must not claim the same listener priority. Each module instantiation can only prove its own priorities unique; the overlap between them is this root's to check."
   }
 }
 
@@ -132,8 +143,11 @@ variable "stream_service" {
     log_group_name                    = string
     log_retention_days                = number
     execution_role_arn                = string
-    path_patterns                     = list(string)
     env                               = map(string)
+    rules = list(object({
+      priority      = number
+      path_patterns = list(string)
+    }))
     autoscaling_bounds = object({
       min_capacity = number
       max_capacity = number
@@ -151,7 +165,7 @@ variable "stream_service" {
   description = "The regional stream service."
 
   validation {
-    condition     = length(var.stream_service.path_patterns) > 0
+    condition     = length(var.stream_service.rules) > 0
     error_message = "The stream service must declare the public paths it serves; the listener forwards nothing by default."
   }
 }

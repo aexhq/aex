@@ -18,19 +18,24 @@ resource "aws_lb_target_group" "this" {
   }
 }
 
-# Exactly one rule, at the caller's explicit priority, forwarding exactly the
-# configured public paths. The invariant `alb-public` used to hold by having a
-# single rule now lives here and is held per service: one instance of this
-# module is one target group and one rule, and the priority is required so two
-# instances cannot silently claim the same slot.
+# One rule per element, every one of them forwarding to the single target group
+# above. The invariant `alb-public` used to hold by having a single rule now
+# lives here and is held per service: one instance of this module is one
+# service's whole attachment, and every priority in it is required and explicit
+# so no rule can silently claim a slot another service was using.
+#
+# Keyed by priority, which the variable validates as unique, so a rule's address
+# in state does not shift when the list is reordered.
 resource "aws_lb_listener_rule" "this" {
+  for_each = { for rule in var.rules : tostring(rule.priority) => rule }
+
   listener_arn = var.listener_arn
-  priority     = var.priority
+  priority     = each.value.priority
   tags         = var.tags
 
   condition {
     path_pattern {
-      values = var.path_patterns
+      values = each.value.path_patterns
     }
   }
 
