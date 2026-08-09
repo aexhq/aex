@@ -69,10 +69,23 @@ jobs:
           save-if: ${{ inputs.cache_mode == 'restore-save' }}
           shared-key: ${{ inputs.lane }}-integration
 
+      # Compiling nextest from source costs ~3m and is the same bytes every run
+      # for a fixed version and toolchain, so it is cached on those alone —
+      # separately from the workspace cargo cache above, which turns over far
+      # more often. The version assertion runs on hit and miss alike.
+      - name: Restore the pinned nextest build
+        id: nextest_cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
+        with:
+          path: ~/.cargo/bin/cargo-nextest
+          key: cargo-nextest-0.9.108-rust1.97.1-${{ runner.os }}-${{ runner.arch }}
+
       - name: Install pinned nextest
         run: |
           set -euo pipefail
-          cargo install --locked --version 0.9.108 cargo-nextest
+          if [ "${{ steps.nextest_cache.outputs.cache-hit }}" != "true" ]; then
+            cargo install --locked --version 0.9.108 cargo-nextest
+          fi
           cargo-nextest --version | grep -Eq '^cargo-nextest 0\.9\.108([[:space:]]|$)'
 
       # The engines are digest-pinned in `release/policy/test-images.toml` and
