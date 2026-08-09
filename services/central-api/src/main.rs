@@ -1,7 +1,7 @@
 //! `central-api` composition root (Rust Fargate OCI).
 //!
 //! Exclusive responsibility: the twenty-six mounted central operations. One
-//! process, one listener, one drain flag, four Aurora logins.
+//! process, one listener, one drain flag, one Aurora login.
 //!
 //! The binary is a composition root only: it installs telemetry, validates
 //! configuration, admits its capability manifest, builds the real adapters,
@@ -125,30 +125,26 @@ async fn run(
     let rds = aws_sdk_rdsdata::Client::new(&aws);
     let secrets = aws_sdk_secretsmanager::Client::new(&aws);
 
-    // --- four logins, one cluster ---------------------------------------------
+    // --- one login, one cluster ------------------------------------------------
     //
-    // The merge joined three processes; it did not join their privileges. Each
-    // client below authenticates with its own secret, so a control handler
-    // reaching a finance table is refused by PostgreSQL rather than by a code
-    // review. `Config` already refused a composition in which two of these name
-    // the same secret.
+    // The same connection `central-control-api`, `central-identity-api` and
+    // `finance-api` each open: the cluster's managed login, reaching every
+    // central schema. Per-schema `PostgreSQL` roles are deferred rather than
+    // lost — `references/backlog.md` carries the row. Nothing here is what
+    // keeps one tenant out of another's rows; that is the application's
+    // organization scoping and it is unchanged.
     let cluster = ResourceArn::parse(&config.aurora_cluster_arn)
         .map_err(|error| CentralApiRunError::Dependency("aurora", error.to_string()))?;
     let database = DatabaseName::parse(&config.database)
         .map_err(|error| CentralApiRunError::Dependency("aurora", error.to_string()))?;
-    let authz_client = login(&rds, &cluster, &database, &config.authz_secret_arn)?;
-    let control_client = login(&rds, &cluster, &database, &config.control_secret_arn)?;
-    let identity_client = login(&rds, &cluster, &database, &config.identity_secret_arn)?;
-    let finance_client = login(&rds, &cluster, &database, &config.finance_secret_arn)?;
+    let aurora = login(&rds, &cluster, &database, &config.aurora_secret_arn)?;
 
-    // --- probe every login before the listener binds ---------------------------
-    probe_login(&authz_client, "aurora-authz").await?;
-    probe_login(&control_client, "aurora-control").await?;
-    probe_login(&identity_client, "aurora-identity").await?;
+    // --- probe the login before the listener binds ------------------------------
+    probe_login(&aurora, "aurora").await?;
 
-    // --- the two peppers, each through the login that owns its directory -------
+    // --- the two peppers, each through the directory that holds its versions ---
     let control_directory = Arc::new(aex_central_aws::DataApiPepperDirectory::new(
-        control_client.clone(),
+        aurora.clone(),
         aex_central_aws::PepperStatements {
             active: aex_control_aurora::sql::ACTIVE_CONTROL_PEPPER,
             by_version: aex_control_aurora::sql::CONTROL_PEPPER_BY_VERSION,
@@ -168,7 +164,7 @@ async fn run(
         secrets.clone(),
         config.identity_pepper_secret_id.clone(),
         Arc::new(aex_central_aws::DataApiPepperDirectory::new(
-            identity_client.clone(),
+            aurora.clone(),
             aex_central_aws::PepperStatements {
                 active: aex_identity_aurora::sql::ACTIVE_IDENTITY_PEPPER,
                 by_version: aex_identity_aurora::sql::IDENTITY_PEPPER_BY_VERSION,
@@ -200,9 +196,7 @@ async fn run(
     // --- the three services ----------------------------------------------------
     let clock: Arc<dyn aex_identity_app::ports::Clock> = Arc::new(aex_central_aws::SystemClock);
 
-    let control_store = Arc::new(aex_control_aurora::AuroraControlStore::new(
-        control_client.clone(),
-    ));
+    let control_store = Arc::new(aex_control_aurora::AuroraControlStore::new(aurora.clone()));
     let control = Arc::new(central_control_api::api::ControlService::new(
         control_store.clone() as Arc<dyn central_control_api::api::Store>,
         Arc::clone(&api_peppers) as Arc<dyn PepperKeystore>,
@@ -220,7 +214,7 @@ async fn run(
 
     let auth = Arc::new(central_identity_api::api::AuthService::new(
         Arc::new(aex_identity_aurora::AuroraIdentityStore::new(
-            identity_client,
+            aurora.clone(),
             Arc::clone(&identity_peppers) as Arc<dyn PepperKeystore>,
         )),
         Arc::clone(&identity_peppers) as Arc<dyn PepperKeystore>,
@@ -233,7 +227,7 @@ async fn run(
     ));
 
     let billing_authority = Arc::new(finance_api::aurora::AuroraBillingAuthority::new(
-        Arc::new(finance_client),
+        Arc::new(aurora.clone()),
         config.finance_role.clone(),
     ));
     // The finance probe is a grant fact rather than a `SELECT 1`: it asks
@@ -268,7 +262,7 @@ async fn run(
     // ambient context map would be one whose verification a caller skips by
     // asserting the principal it wants.
     let authenticator = Arc::new(CredentialAdmission::new(
-        aex_control_aurora::AuroraAuthorizationReader::new(authz_client),
+        aex_control_aurora::AuroraAuthorizationReader::new(aurora),
         PurposedPeppers::new(
             Arc::clone(&identity_peppers) as Arc<dyn PepperKeystore>,
             Arc::clone(&api_peppers) as Arc<dyn PepperKeystore>,

@@ -16,19 +16,23 @@
 //! credential against Aurora is gone; behind a load balancer every header is
 //! caller-authored, and a composition that still trusted an ambient context map
 //! would admit whatever principal the caller asserted. So this root builds
-//! [`aex_central_http::admission::CredentialAdmission`] over the read-only
-//! `aex_authz` login and hands it to
+//! [`aex_central_http::admission::CredentialAdmission`] over the Aurora login
+//! and hands it to
 //! [`aex_central_http::router::EdgeStack::with_in_process_authentication`],
 //! which is exclusive with the gateway path by enum: a stack cannot both verify
 //! and trust.
 //!
-//! # Privilege separation survives the merge
+//! # One Aurora login, as the three merged deployables already have
 //!
-//! Four Aurora logins, one cluster, one process: `aex_authz` (read-only, for
-//! admission), `aex_control_api`, `aex_identity_api` and `aex_finance_api`.
-//! Merging the processes is not a reason to merge the roles, and
-//! [`config::Config`] refuses a composition in which two of them name the same
-//! secret.
+//! One cluster, one login secret, one process. `central-control-api`,
+//! `central-identity-api` and `finance-api` each connect through the cluster's
+//! RDS-managed master secret, and this composition does the same, so the merge
+//! changes nothing about how the database is reached.
+//!
+//! Per-schema `PostgreSQL` logins are a deferred capability, recorded in
+//! `references/backlog.md`. They would defend service against service; they are
+//! not what keeps one customer out of another's data. That is tenant isolation,
+//! it lives in the application, and it is untouched by this.
 //!
 //! # What did not move
 //!
@@ -99,17 +103,17 @@ pub fn manifest() -> CompositionManifest {
             StatementRead::ID,
         ]),
         bindings: vec![
-            // The cluster is the address every login shares, so it carries the
-            // capability of the strongest thing reachable through it. What
-            // actually separates the four is the **secret**, which is why each
-            // login is bound here in its own right rather than folded into the
-            // one cluster ARN. Every one is an ARN binding, so a secret from
+            // The cluster is the address and the secret is the login, and one
+            // login reaches every central schema, so the secret is bound to each
+            // of the four database capabilities rather than to one. Naming them
+            // separately still keeps the list honest about what this deployable
+            // may do, and both are ARN bindings, so a cluster or a secret from
             // another account or region is refused before a client is opened.
             CapabilityBinding::arn(config::AURORA_CLUSTER_ARN, ControlWrite::ID),
-            CapabilityBinding::arn(config::AUTHZ_SECRET_ARN, AuthorizationRead::ID),
-            CapabilityBinding::arn(config::CONTROL_SECRET_ARN, ControlWrite::ID),
-            CapabilityBinding::arn(config::IDENTITY_SECRET_ARN, IdentityWrite::ID),
-            CapabilityBinding::arn(config::FINANCE_SECRET_ARN, FinanceRead::ID),
+            CapabilityBinding::arn(config::AURORA_SECRET_ARN, AuthorizationRead::ID),
+            CapabilityBinding::arn(config::AURORA_SECRET_ARN, ControlWrite::ID),
+            CapabilityBinding::arn(config::AURORA_SECRET_ARN, IdentityWrite::ID),
+            CapabilityBinding::arn(config::AURORA_SECRET_ARN, FinanceRead::ID),
             CapabilityBinding::resource(config::API_KEY_PEPPER_SECRET_ID, ControlWrite::ID),
             CapabilityBinding::resource(config::IDENTITY_PEPPER_SECRET_ID, IdentityWrite::ID),
             CapabilityBinding::resource(config::REGIONAL_FUNCTION_ARNS, RegionalControlInvoke::ID),
@@ -138,20 +142,16 @@ pub const PERMISSIONS: &[&str] = &[
 ///
 /// One field per probe rather than one boolean for "everything": a process that
 /// reports "not ready" without naming which authority did not answer is a page
-/// nobody can action, and this composition has eight of them.
+/// nobody can action, and this composition has six of them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(
     clippy::struct_excessive_bools,
     reason = "one field per start-up probe; a bitfield would hide which probe failed"
 )]
 pub struct Probes {
-    /// `SELECT 1` as `aex_authz` succeeded.
-    pub authz: bool,
-    /// `SELECT 1` as `aex_control_api` succeeded.
-    pub control: bool,
-    /// `SELECT 1` as `aex_identity_api` succeeded.
-    pub identity: bool,
-    /// The finance login proved its own grants.
+    /// `SELECT 1` on the Aurora login succeeded.
+    pub aurora: bool,
+    /// That same login proved the finance grants.
     pub finance: bool,
     /// The API-key pepper loaded.
     pub api_key_pepper: bool,
@@ -166,9 +166,7 @@ pub struct Probes {
 impl Probes {
     /// No probe has answered yet.
     pub const NONE: Self = Self {
-        authz: false,
-        control: false,
-        identity: false,
+        aurora: false,
         finance: false,
         api_key_pepper: false,
         identity_pepper: false,
@@ -178,9 +176,7 @@ impl Probes {
 
     /// Every required authority answered its real probe.
     pub const READY: Self = Self {
-        authz: true,
-        control: true,
-        identity: true,
+        aurora: true,
         finance: true,
         api_key_pepper: true,
         identity_pepper: true,
@@ -196,16 +192,8 @@ pub fn readiness(probes: Probes) -> Readiness {
         DEPLOYABLE.as_str(),
         vec![
             Dependency {
-                name: "aurora-authz",
-                resolved: probes.authz,
-            },
-            Dependency {
-                name: "aurora-control",
-                resolved: probes.control,
-            },
-            Dependency {
-                name: "aurora-identity",
-                resolved: probes.identity,
+                name: "aurora",
+                resolved: probes.aurora,
             },
             Dependency {
                 name: "aurora-finance",
@@ -302,7 +290,7 @@ mod tests {
     fn the_readiness_projection_names_one_dependency_per_probe() {
         assert!(!readiness(Probes::NONE).is_ready());
         assert!(readiness(Probes::READY).is_ready());
-        assert_eq!(readiness(Probes::NONE).unresolved().len(), 8);
+        assert_eq!(readiness(Probes::NONE).unresolved().len(), 6);
         assert!(readiness(Probes::READY).unresolved().is_empty());
     }
 

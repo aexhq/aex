@@ -6,20 +6,23 @@
 //! control, identity and finance surfaces at once, so the blast radius of a
 //! silent misbinding is the whole central plane.
 //!
-//! # Four login roles, one cluster, one process
+//! # One login, one cluster, one process
 //!
-//! The three deployables this one merges each connect to Aurora as their own
-//! `PostgreSQL` role, and the in-process authenticator that replaces the API
-//! Gateway authorizer connects as a fourth (`aex_authz`, read-only). Merging
-//! the *processes* is not a reason to merge the *privileges*: one login holding
-//! the union of control DML, identity DML, finance reads and the authorization
-//! reads would make every schema reachable from every handler. So this reader
-//! takes four secret ARNs against one cluster, and the process builds four Data
-//! API clients over them.
+//! The three deployables this one merges each connect to Aurora through the
+//! cluster's RDS-managed master secret, and so does this one: a single
+//! [`AURORA_SECRET_ARN`] against a single cluster, exactly the shape
+//! `central-control-api`, `central-identity-api` and `finance-api` already
+//! have. The merged service is therefore no different from its parts in this
+//! respect.
+//!
+//! Per-schema `PostgreSQL` logins — a control role that cannot read finance
+//! tables and so on — are a deferred capability, not a lost one; see the
+//! narrowed-login row in `references/backlog.md`. Nothing here bears on
+//! *tenant* isolation, which is enforced in the application and is unaffected.
 //!
 //! # What is deliberately absent
 //!
-//! * A `ROLE` variable per client. The Lambda deployables each carry one and
+//! * A `ROLE` variable per schema. The Lambda deployables each carry one and
 //!   compare it to a constant, which proves only that the operator typed the
 //!   constant: the role a connection actually assumes comes from the secret,
 //!   not from the environment. The one exception is [`FINANCE_ROLE`], which
@@ -52,12 +55,10 @@ pub const API_URLS: &str = "AEX_CENTRAL_API_API_URLS";
 pub const API_KEY_PEPPER_SECRET_ID: &str = "AEX_CENTRAL_API_API_KEY_PEPPER_SECRET_ID";
 /// The Aurora cluster holding every central schema.
 pub const AURORA_CLUSTER_ARN: &str = "AEX_CENTRAL_API_AURORA_CLUSTER_ARN";
-/// The credentials secret for the read-only `aex_authz` login.
-pub const AUTHZ_SECRET_ARN: &str = "AEX_CENTRAL_API_AUTHZ_SECRET_ARN";
+/// The credentials secret this deployable connects with.
+pub const AURORA_SECRET_ARN: &str = "AEX_CENTRAL_API_AURORA_SECRET_ARN";
 /// How long one minted admission context is honoured for.
 pub const CONTEXT_LIFETIME_MS: &str = "AEX_CENTRAL_API_CONTEXT_LIFETIME_MS";
-/// The credentials secret for the `aex_control_api` login.
-pub const CONTROL_SECRET_ARN: &str = "AEX_CENTRAL_API_CONTROL_SECRET_ARN";
 /// The cursor signing secret.
 pub const CURSOR_SECRET_ID: &str = "AEX_CENTRAL_API_CURSOR_SECRET_ID";
 /// The logical database inside the cluster.
@@ -68,14 +69,10 @@ pub const DEVICE_VERIFICATION_URI: &str = "AEX_CENTRAL_API_DEVICE_VERIFICATION_U
 pub const DOWNLOAD_GRANT_TTL_MS: &str = "AEX_CENTRAL_API_DOWNLOAD_GRANT_TTL_MS";
 /// How long a drain may run before the listener is abandoned.
 pub const DRAIN_DEADLINE_MS: &str = "AEX_CENTRAL_API_DRAIN_DEADLINE_MS";
-/// The credentials secret for the `aex_finance_api` login.
-pub const FINANCE_SECRET_ARN: &str = "AEX_CENTRAL_API_FINANCE_SECRET_ARN";
 /// The `PostgreSQL` role the finance grant probe checks membership of.
 pub const FINANCE_ROLE: &str = "AEX_CENTRAL_API_FINANCE_ROLE";
 /// The identity credential pepper secret.
 pub const IDENTITY_PEPPER_SECRET_ID: &str = "AEX_CENTRAL_API_IDENTITY_PEPPER_SECRET_ID";
-/// The credentials secret for the `aex_identity_api` login.
-pub const IDENTITY_SECRET_ARN: &str = "AEX_CENTRAL_API_IDENTITY_SECRET_ARN";
 /// The largest request body this composition accepts.
 pub const MAX_BODY_BYTES: &str = "AEX_CENTRAL_API_MAX_BODY_BYTES";
 /// The largest page a list route will answer with.
@@ -102,18 +99,15 @@ pub const ALL: &[&str] = &[
     API_KEY_PEPPER_SECRET_ID,
     API_URLS,
     AURORA_CLUSTER_ARN,
-    AUTHZ_SECRET_ARN,
+    AURORA_SECRET_ARN,
     CONTEXT_LIFETIME_MS,
-    CONTROL_SECRET_ARN,
     CURSOR_SECRET_ID,
     DATABASE,
     DEVICE_VERIFICATION_URI,
     DOWNLOAD_GRANT_TTL_MS,
     DRAIN_DEADLINE_MS,
     FINANCE_ROLE,
-    FINANCE_SECRET_ARN,
     IDENTITY_PEPPER_SECRET_ID,
-    IDENTITY_SECRET_ARN,
     MAX_BODY_BYTES,
     PAGE_LIMIT,
     PLANE,
@@ -151,18 +145,12 @@ pub struct Config {
     pub http: HttpConfig,
     /// The plane's account id.
     pub account_id: String,
-    /// The one Aurora cluster every login connects to.
+    /// The one Aurora cluster this deployable connects to.
     pub aurora_cluster_arn: String,
     /// The logical database inside it.
     pub database: String,
-    /// The read-only authorization login.
-    pub authz_secret_arn: String,
-    /// The control DML login.
-    pub control_secret_arn: String,
-    /// The identity DML login.
-    pub identity_secret_arn: String,
-    /// The finance read login.
-    pub finance_secret_arn: String,
+    /// The credentials secret this deployable connects with.
+    pub aurora_secret_arn: String,
     /// The role the finance grant probe checks membership of.
     pub finance_role: String,
     /// The API-key pepper secret.
@@ -258,20 +246,6 @@ impl Config {
             });
         }
 
-        // Four secrets against one cluster. Two of them naming the same secret
-        // is a composition that has quietly collapsed two roles into one, which
-        // is the exact separation this process exists to keep.
-        let authz_secret_arn = required(&lookup, AUTHZ_SECRET_ARN)?;
-        let control_secret_arn = required(&lookup, CONTROL_SECRET_ARN)?;
-        let identity_secret_arn = required(&lookup, IDENTITY_SECRET_ARN)?;
-        let finance_secret_arn = required(&lookup, FINANCE_SECRET_ARN)?;
-        distinct_logins(&[
-            (AUTHZ_SECRET_ARN, &authz_secret_arn),
-            (CONTROL_SECRET_ARN, &control_secret_arn),
-            (IDENTITY_SECRET_ARN, &identity_secret_arn),
-            (FINANCE_SECRET_ARN, &finance_secret_arn),
-        ])?;
-
         let download_grant_ttl_ms =
             bounded(&lookup, DOWNLOAD_GRANT_TTL_MS, 1, MAX_DOWNLOAD_GRANT_TTL_MS)?;
         let page_limit = bounded(&lookup, PAGE_LIMIT, 1, 1_000)?;
@@ -294,10 +268,7 @@ impl Config {
             account_id: required(&lookup, ACCOUNT_ID)?,
             aurora_cluster_arn: required(&lookup, AURORA_CLUSTER_ARN)?,
             database: required(&lookup, DATABASE)?,
-            authz_secret_arn,
-            control_secret_arn,
-            identity_secret_arn,
-            finance_secret_arn,
+            aurora_secret_arn: required(&lookup, AURORA_SECRET_ARN)?,
             finance_role: required(&lookup, FINANCE_ROLE)?,
             api_key_pepper_secret_id: required(&lookup, API_KEY_PEPPER_SECRET_ID)?,
             identity_pepper_secret_id: required(&lookup, IDENTITY_PEPPER_SECRET_ID)?,
@@ -343,19 +314,7 @@ impl Config {
                     IDENTITY_PEPPER_SECRET_ID.to_owned(),
                     self.identity_pepper_secret_id.clone(),
                 ),
-                (AUTHZ_SECRET_ARN.to_owned(), self.authz_secret_arn.clone()),
-                (
-                    CONTROL_SECRET_ARN.to_owned(),
-                    self.control_secret_arn.clone(),
-                ),
-                (
-                    IDENTITY_SECRET_ARN.to_owned(),
-                    self.identity_secret_arn.clone(),
-                ),
-                (
-                    FINANCE_SECRET_ARN.to_owned(),
-                    self.finance_secret_arn.clone(),
-                ),
+                (AURORA_SECRET_ARN.to_owned(), self.aurora_secret_arn.clone()),
                 (
                     REGIONAL_FUNCTION_ARNS.to_owned(),
                     self.regional_functions
@@ -419,30 +378,6 @@ where
         });
     }
     Ok(value)
-}
-
-/// Refuses two logins that resolve to the same secret.
-///
-/// The four roles are the whole of this process's privilege separation. Two of
-/// them sharing a secret is not a typo that shows up as a permission error
-/// later — it is a silent widening, because the shared login is whichever of
-/// the two is stronger and every handler then reaches it.
-fn distinct_logins(logins: &[(&'static str, &String)]) -> Result<(), CentralApiConfigError> {
-    for (index, (name, value)) in logins.iter().enumerate() {
-        if let Some((other, _)) = logins
-            .iter()
-            .take(index)
-            .find(|(_, earlier)| earlier.trim() == value.trim())
-        {
-            return Err(CentralApiConfigError::Invalid {
-                name,
-                reason: format!(
-                    "names the same secret as `{other}`; each login role must have its own"
-                ),
-            });
-        }
-    }
-    Ok(())
 }
 
 /// Parses the `region=lambda-arn` authority map.

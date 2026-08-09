@@ -380,9 +380,10 @@ Landed:
   probes and entry point. Neither Lambda deployable changed shape.
   `MAIN_ONLY_DEPLOYABLES` in `aex-workspace-check` shrank by both, which is the
   only edit that list admits;
-* **`services/central-api`**, the composition root: four Aurora logins over one
-  cluster (`aex_authz` read-only for admission, plus control, identity and
-  finance), every authority probed before the listener binds, one readiness flag
+* **`services/central-api`**, the composition root: one Aurora login over one
+  cluster — the same managed cluster login `central-control-api`,
+  `central-identity-api` and `finance-api` each already open — every authority
+  probed before the listener binds, one readiness flag
   carrying a drain signal, `SIGTERM` raising the drain **before** the listener
   stops, and the drain deadline bounded by `aex_regional_http::drain` rather than
   by a restated constant;
@@ -402,10 +403,25 @@ asserts the merged route set equals the union of its parts exactly — which is 
 stronger statement than the old partition, because it proves the merge is
 lossless in both directions.
 
-`Config` refuses a composition in which two of the four login secrets are the
-same value. That is the whole of the privilege separation surviving the merge,
-and a shared secret would be a silent widening rather than a permission error
-somebody eventually sees.
+### The four narrowed logins, and what replaced them
+
+This root first required four distinct Aurora login secrets — `aex_authz`
+read-only for admission, plus control, identity and finance — and `Config`
+refused a composition in which two of them named the same secret. The four
+`PostgreSQL` users do not exist in either plane, and every central Lambda
+connects as the RDS-managed master, so shipping that requirement meant creating
+four users by hand before anything could start. It was narrowed to the one
+cluster login the three merged deployables already use; `references/backlog.md`
+records the deferral and its revisit trigger.
+
+What was deferred is **service-from-service** containment: a compromised billing
+handler being unable to read identity's tables. What is **not** affected, and
+must stay enforced, is **tenant isolation** — one customer reaching only their
+own rows. That is an application property: the edge resolves every
+path-addressed resource from its row and decides against the organization the
+row names (`crates/aex-central-http/src/target.rs`,
+`crates/aex-control-domain/src/authz.rs`), and no database login has ever been
+what enforced it.
 
 ### Not landed
 

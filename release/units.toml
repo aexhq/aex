@@ -90,8 +90,9 @@ schema = "aex.units.v1"
 #
 # The move off API Gateway removes the only component that ever *verified* a
 # central credential, so this deployable does it in process — see
-# `crates/aex-central-http/src/admission.rs`. That is why it is the one central
-# unit that reads four Aurora login secrets rather than one.
+# `crates/aex-central-http/src/admission.rs`. It reaches Aurora through the one
+# cluster login the three rows it replaces already use; per-schema PostgreSQL
+# roles are a deferred capability recorded in `references/backlog.md`.
 [[unit]]
 id = "central-api"
 kind = "rust-oci-service"

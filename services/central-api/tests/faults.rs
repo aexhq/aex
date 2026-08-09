@@ -2,7 +2,7 @@
 //!
 //! Two properties, and the second is the one that matters for a merge: an
 //! incomplete environment must be refused **by name**. This deployable reads
-//! twenty-five variables where the three it replaces read thirteen, eleven and
+//! twenty-two variables where the three it replaces read thirteen, eleven and
 //! twelve, so "it did not start" without a variable name is a deployment nobody
 //! can debug.
 
@@ -62,22 +62,6 @@ fn the_declared_variable_list_is_exactly_what_the_reader_reads() {
         complete().len(),
         "the fixture and the declared list must describe the same environment"
     );
-}
-
-#[test]
-fn two_logins_may_never_share_one_secret() {
-    // The four Aurora roles are the whole of this process's privilege
-    // separation. Two of them resolving to the same secret is a silent widening
-    // rather than a permission error somebody eventually sees.
-    let mut vars = complete();
-    vars.insert(
-        config::IDENTITY_SECRET_ARN,
-        vars[config::CONTROL_SECRET_ARN].clone(),
-    );
-    assert!(matches!(
-        read(&vars),
-        Err(CentralApiConfigError::Invalid { name, .. }) if name == config::IDENTITY_SECRET_ARN
-    ));
 }
 
 #[test]
@@ -156,14 +140,10 @@ fn complete() -> BTreeMap<&'static str, String> {
             "arn:aws:rds:eu-west-1:000000000000:cluster:aex".to_owned(),
         ),
         (
-            config::AUTHZ_SECRET_ARN,
-            "arn:aws:secretsmanager:eu-west-1:000000000000:secret:aex-authz".to_owned(),
+            config::AURORA_SECRET_ARN,
+            "arn:aws:secretsmanager:eu-west-1:000000000000:secret:aex-central".to_owned(),
         ),
         (config::CONTEXT_LIFETIME_MS, "30000".to_owned()),
-        (
-            config::CONTROL_SECRET_ARN,
-            "arn:aws:secretsmanager:eu-west-1:000000000000:secret:aex-control".to_owned(),
-        ),
         (
             config::CURSOR_SECRET_ID,
             "aex/dev/cursor-secret/current".to_owned(),
@@ -177,16 +157,8 @@ fn complete() -> BTreeMap<&'static str, String> {
         (config::DRAIN_DEADLINE_MS, "20000".to_owned()),
         (config::FINANCE_ROLE, "aex_finance_api".to_owned()),
         (
-            config::FINANCE_SECRET_ARN,
-            "arn:aws:secretsmanager:eu-west-1:000000000000:secret:aex-finance".to_owned(),
-        ),
-        (
             config::IDENTITY_PEPPER_SECRET_ID,
             "aex/dev/identity-pepper/current".to_owned(),
-        ),
-        (
-            config::IDENTITY_SECRET_ARN,
-            "arn:aws:secretsmanager:eu-west-1:000000000000:secret:aex-identity".to_owned(),
         ),
         (config::MAX_BODY_BYTES, "65536".to_owned()),
         (config::PAGE_LIMIT, "100".to_owned()),
