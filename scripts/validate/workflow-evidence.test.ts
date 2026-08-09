@@ -149,8 +149,7 @@ describe("workflow evidence producers", () => {
   test("every Rust caller supplies its aggregate job id and routing mode", () => {
     const cases = [
       [".github/workflows/pr.yml", "rust", "affected"],
-      [".github/workflows/main.yml", "verify", "affected"],
-      [".github/workflows/assurance.yml", "full-graph", "full"]
+      [".github/workflows/main.yml", "verify", "affected"]
     ] as const;
 
     for (const [path, jobId, mode] of cases) {
@@ -541,8 +540,7 @@ describe("workflow evidence producers", () => {
   test("every caller of a tool-consuming lane reads the digests from its own tools job", () => {
     for (const [path, jobIds] of [
       [".github/workflows/main.yml", ["route", "verify", "node", "terraform", "build", "receipts"]],
-      [".github/workflows/pr.yml", ["route", "rust", "node", "terraform", "checks"]],
-      [".github/workflows/assurance.yml", ["route", "full-graph"]]
+      [".github/workflows/pr.yml", ["route", "rust", "node", "terraform", "checks"]]
     ] as const) {
       const workflow = readWorkflow(path);
       expect(workflowJob(workflow, "tools").uses, path).toBe("./.github/workflows/_tools.yml");

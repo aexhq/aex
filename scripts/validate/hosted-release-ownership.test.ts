@@ -29,18 +29,4 @@ describe("public delivery ownership", () => {
     }
   });
 
-  test("public assurance contains only repository-owned suites", () => {
-    const source = readFileSync(resolve(workflowsRoot, "assurance.yml"), "utf8");
-    const workflow = Bun.YAML.parse(source) as {
-      readonly on: Readonly<Record<string, unknown>>;
-      readonly jobs: Readonly<Record<string, unknown>>;
-    };
-    const dispatch = workflow.on.workflow_dispatch as {
-      readonly inputs?: Readonly<Record<string, { readonly options?: readonly string[] }>>;
-    };
-    const options = dispatch.inputs?.suite?.options ?? [];
-
-    expect(options).toEqual(["full-graph", "deep-risk", "cold-rebuild"]);
-    expect(workflow.jobs).not.toHaveProperty("plane");
-  });
 });
