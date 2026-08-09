@@ -27,7 +27,7 @@ pub fn shipped_unit(id: &str) -> Unit {
         .units
         .into_iter()
         .find(|unit| unit.id == id)
-        .expect("registered OCI unit")
+        .expect("registered unit")
 }
 
 pub fn fake_aarch64_elf(marker: u8) -> Vec<u8> {

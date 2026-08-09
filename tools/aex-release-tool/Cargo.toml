@@ -58,6 +58,9 @@ aex-workspace-check = { path = "../aex-workspace-check" }
 # instead of relying on every workflow author to remember a separate command.
 aex-contract-gen = { path = "../aex-contract-gen" }
 anyhow.workspace = true
+# npm's own tarball identity is SHA-512 subresource integrity, which is a
+# different function and encoding from the SHA-256 the envelope records.
+base64.workspace = true
 clap.workspace = true
 flate2.workspace = true
 hex.workspace = true

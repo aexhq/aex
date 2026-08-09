@@ -6,7 +6,7 @@
 //! `composition-inputs.json` from becoming an unchecked shell-authored claim.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use regex::Regex;
 
@@ -15,9 +15,10 @@ use crate::canon;
 use crate::error::{Exit, Result, ToolError, Violation};
 use crate::graph::inputs::Units;
 use crate::manifest::{
-    CentralMigrations, CompositionInputs, Infra, Migrations, Policy, PublicSource,
+    CentralMigrations, CompositionInputs, Infra, Migrations, PackageRef, Policy, PublicSource,
     RegionalMigrations, ReleaseToolIdentity,
 };
+use crate::npm::NpmPublication;
 
 /// Files whose exact bytes enter the public composition.
 #[derive(Debug, Clone, Copy)]
@@ -28,6 +29,8 @@ pub struct PublicInputFiles<'a> {
     pub module_bundle: &'a Path,
     /// Generated regional table bundle.
     pub regional_tables: &'a Path,
+    /// Registry publication evidence, one document per npm package unit.
+    pub npm_publications: &'a [PathBuf],
 }
 
 /// Protected-main workflow identity.
@@ -145,7 +148,8 @@ pub fn produce(
     authorities: EnvelopeAuthorities,
 ) -> Result<CompositionInputs> {
     validate_run(root, run)?;
-    validate_authorities(root, registry, &authorities)?;
+    validate_authorities(root, &authorities)?;
+    let packages = registry_packages(registry, files.npm_publications)?;
     let published = read_published_inputs(root, files, &authorities)?;
     let base = release_base(run);
     let source = PublicSource {
@@ -165,10 +169,10 @@ pub fn produce(
             uri: format!("{base}/aex-release-tool"),
             target: "x86_64-unknown-linux-musl".to_owned(),
         },
-        // Hosted deployables are built from this exact source checkout. The
-        // registry contains no npm-package unit, so an empty registry map is an
-        // explicit fact rather than a missing publication claim.
-        packages: BTreeMap::new(),
+        // Hosted deployables are built from this exact source checkout, so this
+        // map holds exactly the registry units that publish to a package
+        // registry instead — never a claim, always a verified readback.
+        packages,
         migrations: Migrations {
             central: CentralMigrations {
                 bundle_digest: published.central_bundle_digest,
@@ -195,11 +199,100 @@ pub fn produce(
     })
 }
 
-fn validate_authorities(
-    root: &Path,
+/// Turn verified registry publication evidence into the composition's package
+/// map, refusing anything the deployable registry did not ask for.
+///
+/// The set has to match exactly in both directions. A registry unit with no
+/// publication would put a package in the release that nobody proved reached
+/// the registry; a publication with no registry unit would put an identity in
+/// the composition that no deployable owns.
+fn registry_packages(
     registry: &Units,
-    authorities: &EnvelopeAuthorities,
-) -> Result<()> {
+    publications: &[PathBuf],
+) -> Result<BTreeMap<String, BTreeMap<String, PackageRef>>> {
+    let declared: BTreeMap<&str, &str> = registry
+        .units
+        .iter()
+        .filter(|unit| unit.kind == "npm-package")
+        .map(|unit| (unit.id.as_str(), unit.package.as_str()))
+        .collect();
+    let mut npm: BTreeMap<String, PackageRef> = BTreeMap::new();
+    let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut violations = Vec::new();
+    for path in publications {
+        let bytes = read(path, "composition-package-publication-missing")?;
+        let publication: NpmPublication = serde_json::from_slice(&bytes).map_err(|error| {
+            ToolError::single(
+                Exit::ManifestInvalid,
+                "composition-package-publication-invalid",
+                format!(
+                    "`{}` is not npm publication evidence: {error}",
+                    path.display()
+                ),
+            )
+        })?;
+        crate::npm::validate_publication(&publication)?;
+        match declared.get(publication.unit.as_str()) {
+            Some(package) if *package == publication.package => {}
+            Some(package) => {
+                violations.push(Violation::new(
+                    "composition-package-publication-mismatch",
+                    format!(
+                        "unit `{}` publishes `{package}`, but the publication names `{}`",
+                        publication.unit, publication.package
+                    ),
+                ));
+                continue;
+            }
+            None => {
+                violations.push(Violation::new(
+                    "composition-package-publication-unregistered",
+                    format!(
+                        "publication for `{}` names no npm package unit in the deployable registry",
+                        publication.unit
+                    ),
+                ));
+                continue;
+            }
+        }
+        if !seen.insert(publication.unit.clone()) {
+            violations.push(Violation::new(
+                "composition-package-publication-duplicate",
+                format!("unit `{}` has more than one publication", publication.unit),
+            ));
+            continue;
+        }
+        npm.insert(
+            publication.package.clone(),
+            PackageRef {
+                version: publication.version.clone(),
+                integrity: publication.integrity.clone(),
+                provenance: publication.provenance,
+            },
+        );
+    }
+    for unit in declared.keys() {
+        if !seen.contains(*unit) {
+            violations.push(Violation::new(
+                "composition-package-publication-missing",
+                format!(
+                    "the deployable registry contains npm package unit `{unit}` but no registry \
+                     publication identity was supplied"
+                ),
+            ));
+        }
+    }
+    if !violations.is_empty() {
+        return Err(ToolError::many(Exit::CompositionIncompatible, violations));
+    }
+    Ok(if npm.is_empty() {
+        BTreeMap::new()
+    } else {
+        BTreeMap::from([("npm".to_owned(), npm)])
+    })
+}
+
+fn validate_authorities(root: &Path, authorities: &EnvelopeAuthorities) -> Result<()> {
     require_sha256(
         &authorities.central_admin_image_digest,
         "composition-central-admin-digest",
@@ -216,13 +309,6 @@ fn validate_authorities(
                     .get("tool")
                     .map_or("<missing>", String::as_str)
             ),
-        ));
-    }
-    if registry.units.iter().any(|unit| unit.kind == "npm-package") {
-        return Err(ToolError::single(
-            Exit::CompositionIncompatible,
-            "composition-package-publication-missing",
-            "the deployable registry contains an npm package but no registry publication identity was supplied",
         ));
     }
     Ok(())
@@ -593,6 +679,54 @@ mod tests {
         }
     }
 
+    /// A publication document for every npm package unit the registry carries.
+    ///
+    /// The registry is read rather than hard-coded so that adding a second
+    /// published package fails here until its evidence exists, which is the
+    /// same both-directions rule `registry_packages` enforces in production.
+    fn publications(root: &Path, temp: &Path) -> Vec<PathBuf> {
+        registry(root)
+            .units
+            .iter()
+            .filter(|unit| unit.kind == "npm-package")
+            .map(|unit| {
+                let path = temp.join(format!("npm-publication-{}.json", unit.id));
+                std::fs::write(&path, publication_json(&unit.id, &unit.package, "0.50.0"))
+                    .expect("publication evidence");
+                path
+            })
+            .collect()
+    }
+
+    fn publication_json(unit: &str, package: &str, version: &str) -> String {
+        serde_json::json!({
+            "schema": "aex.npm-publication.v1",
+            "unit": unit,
+            "package": package,
+            "version": version,
+            "integrity": format!("sha512-{}==", "A".repeat(86)),
+            "tarballDigest": digest(7),
+            "tarballSizeBytes": 22_679,
+            "provenance": true,
+            "location": {
+                "kind": "npm",
+                "uri": crate::publication::npm_tarball_uri(package, version)
+                    .expect("canonical tarball location"),
+                "immutable": true,
+            },
+            "workflow": {
+                "repository": "aexhq/aex",
+                "ref": "refs/heads/main",
+                "path": ".github/workflows/_build-artifacts.yml",
+                "runId": "42",
+                "runAttempt": 3,
+                "jobName": unit,
+                "builderId": "https://github.com/aexhq/aex/.github/workflows/_build-artifacts.yml@refs/heads/main",
+            },
+        })
+        .to_string()
+    }
+
     fn acquired(root: &Path, temp: &Path) -> (PathBuf, PathBuf, PathBuf) {
         let tool = temp.join("aex-release-tool");
         let modules = temp.join("terraform-modules.tar.gz");
@@ -619,7 +753,11 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let (tool, modules, regional) = acquired(&root, temp.path());
         let units = registry(&root);
-        assert!(units.units.iter().all(|unit| unit.kind != "npm-package"));
+        let published = publications(&root, temp.path());
+        assert!(
+            units.units.iter().any(|unit| unit.kind == "npm-package"),
+            "the registry publishes at least one package, so the map below is real evidence"
+        );
         let inputs = produce(
             &root,
             &units,
@@ -627,6 +765,7 @@ mod tests {
                 release_tool: &tool,
                 module_bundle: &modules,
                 regional_tables: &regional,
+                npm_publications: &published,
             },
             &run(),
             authorities(&root),
@@ -642,7 +781,16 @@ mod tests {
         assert_eq!(inputs.infra.provider_versions["hashicorp/aws"], "6.57.1");
         assert_eq!(inputs.migrations.regional.generation, 1);
         assert_eq!(inputs.catalogs["tool"], authorities(&root).catalogs["tool"]);
-        assert!(inputs.packages.is_empty());
+        let sdk = &inputs.packages["npm"]["@aexhq/sdk"];
+        assert_eq!(sdk.version, "0.50.0");
+        assert!(
+            sdk.provenance,
+            "a published version carries registry provenance"
+        );
+        assert!(
+            sdk.integrity.starts_with("sha512-"),
+            "the npm identity is SHA-512 SRI, not the envelope's SHA-256"
+        );
         assert_eq!(
             inputs.release_tool.uri,
             format!(
@@ -658,6 +806,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let (tool, modules, regional) = acquired(&root, temp.path());
         std::fs::write(&modules, b"not the module closure").expect("tampered module");
+        let published = publications(&root, temp.path());
         let error = produce(
             &root,
             &registry(&root),
@@ -665,6 +814,7 @@ mod tests {
                 release_tool: &tool,
                 module_bundle: &modules,
                 regional_tables: &regional,
+                npm_publications: &published,
             },
             &run(),
             authorities(&root),
@@ -694,16 +844,15 @@ mod tests {
     #[test]
     fn registry_packages_require_real_publication_identities() {
         let root = workspace();
-        let mut units = registry(&root);
-        units.units[0].kind = "npm-package".to_owned();
         let missing = root.join("does-not-exist");
         let error = produce(
             &root,
-            &units,
+            &registry(&root),
             PublicInputFiles {
                 release_tool: &missing,
                 module_bundle: &missing,
                 regional_tables: &missing,
+                npm_publications: &[],
             },
             &run(),
             authorities(&root),
@@ -713,6 +862,97 @@ mod tests {
             error.rules(),
             vec!["composition-package-publication-missing"]
         );
+    }
+
+    #[test]
+    fn a_publication_for_no_registered_unit_is_refused() {
+        let root = workspace();
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut published = publications(&root, temp.path());
+        let stray = temp.path().join("npm-publication-stray.json");
+        std::fs::write(
+            &stray,
+            publication_json("dashboard", "@aexhq/dashboard", "0.50.0"),
+        )
+        .expect("stray publication");
+        published.push(stray);
+        let missing = root.join("does-not-exist");
+        let error = produce(
+            &root,
+            &registry(&root),
+            PublicInputFiles {
+                release_tool: &missing,
+                module_bundle: &missing,
+                regional_tables: &missing,
+                npm_publications: &published,
+            },
+            &run(),
+            authorities(&root),
+        )
+        .expect_err("a descoped package cannot enter the composition through its evidence");
+        assert_eq!(
+            error.rules(),
+            vec!["composition-package-publication-unregistered"]
+        );
+    }
+
+    #[test]
+    fn a_publication_naming_another_package_than_its_unit_is_refused() {
+        let root = workspace();
+        let temp = tempfile::tempdir().expect("tempdir");
+        let wrong = temp.path().join("npm-publication-sdk.json");
+        std::fs::write(&wrong, publication_json("sdk", "@aexhq/wire", "0.50.0"))
+            .expect("mismatched publication");
+        let missing = root.join("does-not-exist");
+        let error = produce(
+            &root,
+            &registry(&root),
+            PublicInputFiles {
+                release_tool: &missing,
+                module_bundle: &missing,
+                regional_tables: &missing,
+                npm_publications: &[wrong],
+            },
+            &run(),
+            authorities(&root),
+        )
+        .expect_err("a unit publishes only the package its registry row declares");
+        assert_eq!(
+            error.rules(),
+            vec![
+                "composition-package-publication-mismatch",
+                // The rejected document also leaves `sdk` unaccounted for, which
+                // is the point: a mismatched claim is not a partial credit.
+                "composition-package-publication-missing",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_publication_with_no_registry_provenance_is_refused() {
+        let root = workspace();
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("npm-publication-sdk.json");
+        let mut document: serde_json::Value =
+            serde_json::from_str(&publication_json("sdk", "@aexhq/sdk", "0.50.0"))
+                .expect("publication json");
+        document["provenance"] = serde_json::json!(false);
+        std::fs::write(&path, document.to_string()).expect("unattested publication");
+        let missing = root.join("does-not-exist");
+        let error = produce(
+            &root,
+            &registry(&root),
+            PublicInputFiles {
+                release_tool: &missing,
+                module_bundle: &missing,
+                regional_tables: &missing,
+                npm_publications: &[path],
+            },
+            &run(),
+            authorities(&root),
+        )
+        .expect_err("publication without provenance is not trusted publishing");
+        assert_eq!(error.rules(), vec!["npm-publication-provenance"]);
     }
 
     #[test]
@@ -728,6 +968,7 @@ mod tests {
                 release_tool: &missing,
                 module_bundle: &missing,
                 regional_tables: &missing,
+                npm_publications: &[],
             },
             &run(),
             wrong,

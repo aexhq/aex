@@ -33,6 +33,8 @@ pub enum Form {
     Tarball,
     /// A `.tar.gz` of a build output tree.
     BuildOutput,
+    /// The exact tarball the npm packer produced.
+    NpmTarball,
 }
 
 /// The exact build invocation for one unit. Printing it is the whole point:
@@ -239,6 +241,31 @@ pub fn plan(unit: &Unit) -> Result<BuildPlan> {
                 "build-output",
                 format!("services/{}/dist", unit.id),
             ),
+            // The registry publishes the packer's own tarball, so the packer is
+            // the recipe: re-archiving those bytes deterministically here would
+            // produce a file `npm publish` has never seen and an integrity value
+            // no installer would ever compute.
+            //
+            // `bun pm pack` has no workspace filter and packs whichever package
+            // `--cwd` names; the unit id is that directory's name, the same
+            // convention `ts-lambda` uses for `services/<id>`, and `graph
+            // verify` refuses a row whose owning npm member sits anywhere else.
+            // `--filename` resolves against the process directory rather than
+            // `--cwd`, and bun refuses it together with `--destination`, so one
+            // repository-relative path is both the flag and the recorded output.
+            "npm-package" => (
+                vec![
+                    "bun".to_owned(),
+                    "pm".to_owned(),
+                    "pack".to_owned(),
+                    "--cwd".to_owned(),
+                    format!("packages/{}", unit.id),
+                    "--filename".to_owned(),
+                    npm_pack_path(&unit.id),
+                ],
+                "npm-tarball",
+                npm_pack_path(&unit.id),
+            ),
             "microvm-image" => microvm_plan(unit)?,
             other => {
                 return Err(ToolError::single(
@@ -276,6 +303,39 @@ pub fn plan(unit: &Unit) -> Result<BuildPlan> {
         base_image: unit.base_image.clone(),
         digest,
     })
+}
+
+/// Repository-relative directory an npm unit's tarball is packed into.
+#[must_use]
+pub fn npm_pack_directory(unit: &str) -> String {
+    format!("target/npm/{unit}")
+}
+
+/// Fixed tarball basename for an npm unit.
+///
+/// The packer's default name embeds the version, which would make the recipe's
+/// declared output path change every time the package version does. A fixed
+/// name keeps the recipe a function of the unit alone; the version is recorded
+/// in the publication identity, where it is checked against the manifest.
+#[must_use]
+pub fn npm_pack_filename(unit: &str) -> String {
+    format!("{unit}.tgz")
+}
+
+/// Repository-relative path to the exact bytes an npm unit publishes.
+#[must_use]
+pub fn npm_pack_path(unit: &str) -> String {
+    format!("{}/{}", npm_pack_directory(unit), npm_pack_filename(unit))
+}
+
+/// Whether a unit kind's artifact must carry a signature before publication.
+///
+/// Two kinds cross a distribution boundary this repository does not control: a
+/// binary a customer downloads, and a package a registry serves. Everything
+/// else is fetched by digest from a location the composition already pins.
+#[must_use]
+pub fn kind_requires_signature(kind: &str) -> bool {
+    matches!(kind, "rust-binary" | "npm-package")
 }
 
 /// Derives a plan whose recorded environment exactly binds `brain-mux` to a
@@ -762,6 +822,22 @@ pub fn package(
                 vec![pack::Entry::regular(&name, data)]
             };
             pack::write_tar_gz(&entries, source_date_epoch)
+        }
+        // Deliberately a passthrough. The published artifact is the packer's
+        // tarball, byte for byte: an installer verifies the registry's own
+        // integrity value over exactly these bytes, so anything this function
+        // rewrote would break that check while still looking packaged.
+        Form::NpmTarball => {
+            let data =
+                std::fs::read(input).map_err(|err| io(&input.display().to_string(), &err))?;
+            if data.is_empty() {
+                return Err(ToolError::single(
+                    Exit::Usage,
+                    "npm-tarball-empty",
+                    format!("`{}` is an empty npm tarball", input.display()),
+                ));
+            }
+            Ok(data)
         }
         Form::Oci => Err(ToolError::single(
             Exit::Usage,
@@ -1537,7 +1613,37 @@ impl ArtifactEnvelope {
                     ));
                 }
             }
+            // The registry name and version are the whole of an npm identity, and
+            // they live in the URI rather than in the unit id: a unit id matches
+            // `^[a-z][a-z0-9-]{2,63}$` and can therefore never be a scoped npm
+            // name. Re-deriving the canonical tarball location from what was
+            // parsed is what makes a redirect or a hand-edited path a refusal.
+            "npm" => {
+                if let Err(err) =
+                    crate::publication::npm_tarball_identity(&self.output.location.uri)
+                {
+                    structural.extend(err.violations);
+                }
+            }
             _ => {}
+        }
+        if (self.unit.kind == "npm-package") != (self.output.location.kind == "npm") {
+            structural.push(Violation::new(
+                "envelope-location-kind",
+                format!(
+                    "unit kind `{}` and location kind `{}` disagree about registry publication",
+                    self.unit.kind, self.output.location.kind
+                ),
+            ));
+        }
+        if self.unit.kind == "npm-package" && self.media.form != "npm-tarball" {
+            structural.push(Violation::new(
+                "envelope-media-form",
+                format!(
+                    "an npm package publishes the packer's tarball, not media form `{}`",
+                    self.media.form
+                ),
+            ));
         }
         let is_oci = self.unit.kind.starts_with("rust-oci-");
         let oci_identity_valid = self.output.oci_index_digest.is_none()
@@ -1821,9 +1927,24 @@ pub struct PublishDestination {
 
 /// Derive the immutable destination for an envelope.
 ///
+/// The registry row is required, not optional: a unit id matches
+/// `^[a-z][a-z0-9-]{2,63}$` and so can never be a scoped npm package name, and
+/// the only place that mapping is declared is the row's own `package`.
+///
 /// # Errors
-/// Returns [`Exit::EnvelopeInvalid`] for a unit kind with no publication rule.
-pub fn publish_destination(envelope: &ArtifactEnvelope) -> Result<PublishDestination> {
+/// Returns [`Exit::EnvelopeInvalid`] for a unit kind with no publication rule,
+/// a row that does not describe this envelope, or an unpublishable npm name.
+pub fn publish_destination(envelope: &ArtifactEnvelope, unit: &Unit) -> Result<PublishDestination> {
+    if unit.id != envelope.unit.id || unit.kind != envelope.unit.kind {
+        return Err(ToolError::single(
+            Exit::EnvelopeInvalid,
+            "publish-destination-unit-mismatch",
+            format!(
+                "registry row `{}`/`{}` does not describe envelope unit `{}`/`{}`",
+                unit.id, unit.kind, envelope.unit.id, envelope.unit.kind
+            ),
+        ));
+    }
     let (kind, key) = match envelope.unit.kind.as_str() {
         "rust-lambda" | "ts-lambda" | "rust-binary" | "build-output" | "microvm-image" => (
             "github-release",
@@ -1837,7 +1958,10 @@ pub fn publish_destination(envelope: &ArtifactEnvelope) -> Result<PublishDestina
             "oci",
             format!("{}@{}", envelope.unit.id, envelope.output.digest),
         ),
-        "npm-package" => ("npm", envelope.unit.id.clone()),
+        "npm-package" => {
+            crate::publication::split_npm_package(&unit.package)?;
+            ("npm", unit.package.clone())
+        }
         other => {
             return Err(ToolError::single(
                 Exit::EnvelopeInvalid,

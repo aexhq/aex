@@ -376,7 +376,7 @@ fn build_envelope(
             contract_digest: build.contract_digest.clone(),
             telemetry_schema_digest: None,
             config_schema_version: build.unit.config_schema_version,
-            config_env_namespace: Some(build.unit.config_env_namespace.clone()),
+            config_env_namespace: build.unit.config_env_namespace.clone(),
             migration: migration_identity(&build.unit.id, &build.closure)?,
             catalogs: (build.unit.id == "brain-mux").then(|| Catalogs {
                 model: build

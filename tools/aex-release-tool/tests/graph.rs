@@ -952,3 +952,189 @@ fn the_shipped_prd_set_is_the_reduced_one() {
         );
     }
 }
+
+// --- published packages --------------------------------------------------------
+//
+// A registry unit trades three deployment bindings for three stronger claims.
+// These tests pin both halves of that trade: the exemptions it is granted, and
+// the checks it cannot escape.
+
+/// A published npm package unit, its scenario, and the workspace member it packs.
+const NPM_UNITS: &str = r#"
+schema = "aex.units.v1"
+
+[[unit]]
+id = "sdk"
+kind = "npm-package"
+plane = "public"
+package = "@fixture/sdk"
+target = "none"
+profile = "release"
+form = "npm-tarball"
+config_schema_version = 1
+required_receipts = ["unit", "contract"]
+"#;
+
+const NPM_SCENARIOS: &str = r#"
+schema = "aex.scenario-ownership.v1"
+
+[[scenario]]
+id = "SC-SDK"
+owner = "clients"
+deferred = "Installing from the real registry needs a version that is already published."
+observes = ["artifact:sdk"]
+"#;
+
+fn npm_package_meta() -> serde_json::Value {
+    serde_json::json!({
+        "owner": "clients",
+        "role": "client",
+        "artifact": "npm_package",
+        "layers": ["unit"],
+        "concerns": ["contract"],
+        "seams": ["npm.registry.publish"],
+        "security_tier": "public_edge",
+        "risk": ["none"],
+        "scenarios": [],
+        "targets": { "conformance": "unit" },
+        "not_applicable": {
+            "live_suite": "clean-install evidence is package-owned; the package has no deployed endpoint"
+        }
+    })
+}
+
+fn npm_unit_fixture(units: &str, meta: serde_json::Value) -> std::path::PathBuf {
+    Fixture::new()
+        .add_npm(
+            common::NpmPlan::new("@fixture/sdk", "packages/sdk")
+                .meta(meta)
+                .publishable(),
+        )
+        .units(units)
+        .scenarios(NPM_SCENARIOS)
+        .build()
+}
+
+#[test]
+fn a_published_package_needs_no_live_companion_alarm_or_config_environment() {
+    // It has no deployed endpoint, so requiring any of the three would only
+    // produce declarations nothing reads.
+    let root = npm_unit_fixture(NPM_UNITS, npm_package_meta());
+    let built = verify_fixture(&root).expect("a published package unit must verify");
+    assert!(
+        !built.live_targets.contains("aex-live-sdk"),
+        "a registry unit contributes no live companion"
+    );
+}
+
+#[test]
+fn a_published_package_that_claims_a_deployment_binding_is_refused() {
+    for binding in [
+        "live_suite = \"aex-live-sdk\"",
+        "alarm_spec = \"sdk\"",
+        "config_env_namespace = \"AEX_SDK_\"",
+    ] {
+        let units = format!("{NPM_UNITS}{binding}\n");
+        let err = verify_fixture(&npm_unit_fixture(&units, npm_package_meta())).unwrap_err();
+        assert!(
+            err.rules().contains(&"unit-publication-deployment-binding"),
+            "`{binding}` must be refused, got {:?}",
+            err.rules()
+        );
+    }
+}
+
+#[test]
+fn a_published_package_whose_member_records_no_live_exemption_is_refused() {
+    let mut meta = npm_package_meta();
+    meta["not_applicable"] = serde_json::json!({});
+    let err = verify_fixture(&npm_unit_fixture(NPM_UNITS, meta))
+        .expect_err("the exemption must be recorded where a reader looks for it");
+    assert!(
+        err.rules()
+            .contains(&"unit-publication-live-exemption-missing"),
+        "{:?}",
+        err.rules()
+    );
+}
+
+#[test]
+fn a_published_package_must_pack_the_directory_its_recipe_names() {
+    // The recipe packs `packages/<id>` because `bun pm pack` has no workspace
+    // filter. A member anywhere else would silently pack the wrong package.
+    let root = Fixture::new()
+        .add_npm(
+            common::NpmPlan::new("@fixture/sdk", "packages/client")
+                .meta(npm_package_meta())
+                .publishable(),
+        )
+        .units(NPM_UNITS)
+        .scenarios(NPM_SCENARIOS)
+        .build();
+    let err = verify_fixture(&root).expect_err("the packed directory must be the member's own");
+    assert!(
+        err.rules().contains(&"unit-publication-directory"),
+        "{:?}",
+        err.rules()
+    );
+}
+
+#[test]
+fn a_published_package_that_is_private_is_refused() {
+    let root = Fixture::new()
+        .add_npm(common::NpmPlan::new("@fixture/sdk", "packages/sdk").meta(npm_package_meta()))
+        .units(NPM_UNITS)
+        .scenarios(NPM_SCENARIOS)
+        .build();
+    let err = verify_fixture(&root).expect_err("a private member reaches no registry");
+    assert!(
+        err.rules().contains(&"unit-publication-package-private"),
+        "{:?}",
+        err.rules()
+    );
+}
+
+#[test]
+fn a_published_package_must_declare_the_packers_artifact_shape() {
+    let units = NPM_UNITS.replace("form = \"npm-tarball\"", "form = \"tar.gz\"");
+    let err = verify_fixture(&npm_unit_fixture(&units, npm_package_meta()))
+        .expect_err("a registry unit publishes the packer's tarball");
+    assert!(
+        err.rules().contains(&"unit-publication-artifact-shape"),
+        "{:?}",
+        err.rules()
+    );
+}
+
+#[test]
+fn a_published_package_still_needs_a_scenario_owner() {
+    let root = Fixture::new()
+        .add_npm(
+            common::NpmPlan::new("@fixture/sdk", "packages/sdk")
+                .meta(npm_package_meta())
+                .publishable(),
+        )
+        .units(NPM_UNITS)
+        .scenarios("schema = \"aex.scenario-ownership.v1\"\n")
+        .build();
+    let err = verify_fixture(&root).expect_err("no exemption covers scenario ownership");
+    assert!(
+        err.rules().contains(&"missing-scenario-owner"),
+        "{:?}",
+        err.rules()
+    );
+}
+
+#[test]
+fn a_deployed_unit_that_drops_its_alarm_or_config_environment_is_refused() {
+    // The other half of the trade: making those fields optional must not make
+    // them optional for anything that actually runs somewhere.
+    let units = TS_EDGE_UNITS.replace("alarm_spec = \"stripe-command-edge\"\n", "");
+    let err = verify_fixture(&ts_edge_fixture(&units))
+        .expect_err("a deployed unit still declares where it is alarmed");
+    assert!(
+        err.rules().contains(&"unit-deployment-binding-missing"),
+        "{:?}",
+        err.rules()
+    );
+}

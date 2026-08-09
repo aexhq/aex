@@ -28,6 +28,7 @@ pub mod ledger;
 pub mod manifest;
 pub mod meta;
 pub mod migration;
+pub mod npm;
 pub mod oci;
 pub mod pack;
 pub mod policy;

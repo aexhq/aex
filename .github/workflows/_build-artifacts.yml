@@ -343,9 +343,31 @@ jobs:
       - name: Install TypeScript dependencies
         run: |
           set -euo pipefail
-          if [ "$(jq -r .kind "$RELEASE_DIR/recipe.json")" = "ts-lambda" ]; then
+          kind=$(jq -r .kind "$RELEASE_DIR/recipe.json")
+          if [ "$kind" = "ts-lambda" ] || [ "$kind" = "npm-package" ]; then
             bun install --frozen-lockfile
           fi
+
+      # Only Node is installed here, never a registry credential. `registry-url`
+      # is deliberately absent: it writes an `.npmrc` line that reads
+      # `NODE_AUTH_TOKEN`, which is exactly the long-lived-token idiom trusted
+      # publishing replaces and `policy::lint_workflow_text` refuses.
+      - name: Install Node for registry publication
+        if: ${{ inputs.publish && steps.recipe.outputs.kind == 'npm-package' }}
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38  # v6.5.0
+        with:
+          node-version: "22"
+
+      - name: Install the pinned npm client that supports trusted publishing
+        if: ${{ inputs.publish && steps.recipe.outputs.kind == 'npm-package' }}
+        run: |
+          set -euo pipefail
+          # 11.5.1 is the first npm release that exchanges a workflow OIDC token
+          # for a short-lived publish credential. Node 22 ships npm 10.x, which
+          # would fall back to asking for a token, so the client is pinned here
+          # rather than inherited. Bumping it is a deliberate edit.
+          npm install -g npm@11.5.1
+          [[ "$(npm --version)" == "11.5.1" ]]
 
       - name: Build the OCI ELF once
         if: ${{ startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
@@ -446,6 +468,10 @@ jobs:
           SOURCE_DATE_EPOCH: "0"
         run: |
           set -euo pipefail
+          # The recipe names where its output lands, so create that directory
+          # rather than relying on each packager to do it. `bun pm pack` refuses
+          # to open a destination whose parent does not exist.
+          mkdir -p "$(dirname "$(jq -er .input "$RELEASE_DIR/recipe.json")")"
           # The recipe is the authority for the argv. Reading it here rather
           # than restating the command keeps the envelope's `buildCommand` and
           # what actually ran from drifting apart.
@@ -539,6 +565,78 @@ jobs:
             --arg builderId "https://github.com/$GITHUB_REPOSITORY/.github/workflows/_build-artifacts.yml@refs/heads/main" \
             '{predicateType:"https://slsa.dev/provenance/v1",uri:$uri,builderId:$builderId,attested:true}' \
             > "$RELEASE_DIR/provenance-claims.json"
+
+      # Trusted publishing. npm exchanges this job's OIDC identity token for a
+      # short-lived publish credential, so there is no stored npm token in this
+      # repository and nothing for a compromised workflow to exfiltrate. The
+      # tarball handed to the registry is the exact packaged artifact, which is
+      # what makes the SHA-256 in the envelope and the SHA-512 the registry
+      # serves two identities over the same bytes rather than two artifacts.
+      - name: Publish the packed tarball with npm provenance
+        if: ${{ inputs.publish && steps.recipe.outputs.kind == 'npm-package' }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REPOSITORY" == "aexhq/aex" ]]
+          [[ "$GITHUB_REF" == "refs/heads/main" ]]
+          # No stored credential may exist at publish time. If one did, npm
+          # would use it and publish without provenance while still succeeding,
+          # which is precisely the silent fallback trusted publishing removes.
+          if [ -f "$HOME/.npmrc" ]; then
+            ! grep -qE '_authToken|_auth=|_password' "$HOME/.npmrc"
+          fi
+          tarball=$(jq -er .input "$RELEASE_DIR/recipe.json")
+          cmp --silent "$tarball" "$RELEASE_DIR/artifact.bin"
+          npm publish "$tarball" --provenance --access public
+
+      - name: Read the published version back from the registry
+        if: ${{ inputs.publish && steps.recipe.outputs.kind == 'npm-package' }}
+        run: |
+          set -euo pipefail
+          # The packed directory comes from the recipe rather than from the unit
+          # id, so the manifest read here is the one that was actually packed.
+          manifest="$(jq -er '.argv | index("--cwd") as $i | .[$i + 1]' \
+            "$RELEASE_DIR/recipe.json")/package.json"
+          name=$(jq -er .name "$manifest")
+          version=$(jq -er .version "$manifest")
+          # The registry is eventually consistent for a few seconds after a
+          # publish. Bounded, and loud when it runs out: a readback that never
+          # succeeded must never be reported as one that did.
+          published=""
+          for attempt in 1 2 3 4 5 6; do
+            if npm view --json "$name@$version" > "$RELEASE_DIR/registry-metadata.json"; then
+              published=yes
+              break
+            fi
+            echo "registry has not served $name@$version yet (attempt $attempt)"
+            sleep 10
+          done
+          if [ -z "$published" ]; then
+            echo "the registry never served back $name@$version" >&2
+            exit 22
+          fi
+          aex-release-tool artifact npm-readback \
+            --unit "${{ matrix.name }}" \
+            --tarball "$RELEASE_DIR/artifact.bin" \
+            --manifest "$manifest" \
+            --registry-metadata "$RELEASE_DIR/registry-metadata.json" \
+            --workflow-repository "$GITHUB_REPOSITORY" \
+            --workflow-ref "$GITHUB_REF" \
+            --workflow-path .github/workflows/_build-artifacts.yml \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --job-name "${{ matrix.name }}" \
+            --builder-id "https://github.com/$GITHUB_REPOSITORY/.github/workflows/_build-artifacts.yml@refs/heads/main" \
+            --out "$RELEASE_DIR/npm-publication.json"
+
+      - name: Upload registry publication evidence
+        if: ${{ inputs.publish && steps.recipe.outputs.kind == 'npm-package' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: npm-publication-${{ matrix.name }}
+          path: |
+            ${{ env.RELEASE_DIR }}/npm-publication.json
+            ${{ env.RELEASE_DIR }}/registry-metadata.json
+          if-no-files-found: error
 
       - name: Install the pinned hands-agent signing client
         if: ${{ inputs.publish && matrix.name == 'hands-agent' }}
@@ -877,6 +975,12 @@ jobs:
           pattern: publication-*
           path: publication-units
 
+      - name: Download every registry publication identity
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          pattern: npm-publication-*
+          path: npm-publications
+
       - name: Download the required hands-agent signature
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
         with:
@@ -963,8 +1067,16 @@ jobs:
               .filter((row) => row.kind.startsWith("rust-oci-"))
               .map((row) => row.id)
               .sort();
+            // Three publication destinations, not two. A published package has
+            // packaged bytes like a blob unit, but its immutable location is a
+            // registry version, so it must never also become a release asset:
+            // two locations for one artifact is two identities to keep in step.
+            const npm = parsed.unit
+              .filter((row) => row.kind === "npm-package")
+              .map((row) => row.id)
+              .sort();
             const blobs = parsed.unit
-              .filter((row) => !row.kind.startsWith("rust-oci-"))
+              .filter((row) => !row.kind.startsWith("rust-oci-") && row.kind !== "npm-package")
               .map((row) => row.id)
               .sort();
             const signed = parsed.unit
@@ -975,6 +1087,7 @@ jobs:
             await Bun.write("dist/declared-unit-ids.txt", ids.toSorted().join("\n") + "\n");
             await Bun.write("dist/declared-blob-unit-ids.txt", blobs.length === 0 ? "" : blobs.join("\n") + "\n");
             await Bun.write("dist/declared-oci-unit-ids.txt", oci.length === 0 ? "" : oci.join("\n") + "\n");
+            await Bun.write("dist/declared-npm-unit-ids.txt", npm.length === 0 ? "" : npm.join("\n") + "\n");
             await Bun.write("dist/declared-signature-unit-ids.txt", signed.length === 0 ? "" : signed.join("\n") + "\n");
           '
           for draft in "${drafts[@]}"; do
@@ -1047,6 +1160,13 @@ jobs:
               publication_claim="$publication/oci-publication.json"
               artifact_args=()
               location=$(jq -c .location "$publication_claim")
+            elif [[ "$kind" == npm-package ]]; then
+              # The registry version is the location. No release asset is
+              # produced and none is uploaded, so `dist/unit-assets` stays the
+              # exact set of GitHub Release blobs.
+              artifact="$directory/artifact.bin"
+              artifact_args=(--file "$artifact")
+              location=$(jq -c .location "npm-publications/npm-publication-$unit/npm-publication.json")
             else
               artifact="$directory/artifact.bin"
               asset_metadata=$(dist/aex-release-tool artifact asset-name --unit "$unit" --file "$artifact")
@@ -1078,6 +1198,12 @@ jobs:
                 "https://github.com/$GITHUB_REPOSITORY/.github/workflows/_build-artifacts.yml@refs/heads/main" \
                 '{present:true,kind:"sigstore-cosign",keyId:$keyId}')
               signature_args=(--signature-bundle "$signature_bundle")
+            elif [[ "$kind" == npm-package ]]; then
+              # The registry is the signer: npm minted the attestation from this
+              # workflow's own OIDC identity and holds it. There is no detached
+              # bundle to upload, and `certify` refuses one for this kind.
+              signature=$(jq -cn --arg keyId "$builder" \
+                '{present:true,kind:"npm-provenance",keyId:$keyId}')
             fi
             jq -n \
               --arg repository "$GITHUB_REPOSITORY" --arg ref "$GITHUB_REF" \
@@ -1154,12 +1280,25 @@ jobs:
           blob_count=0
           : > dist/produced-blob-unit-ids.txt
           : > dist/produced-oci-unit-ids.txt
+          : > dist/produced-npm-unit-ids.txt
           shopt -s nullglob
           for directory in packaged-units/artifact-*; do
             unit=${directory##*/artifact-}
-            printf '%s\n' "$unit" >> dist/produced-blob-unit-ids.txt
             file="$directory/artifact.bin"
             test -f "$file"
+            # A published package is packaged like a blob and published like a
+            # registry version, so it is counted here and deliberately excluded
+            # from the release-asset inventory below.
+            if grep -Fxq "$unit" dist/declared-npm-unit-ids.txt; then
+              printf '%s\n' "$unit" >> dist/produced-npm-unit-ids.txt
+              publication="npm-publications/npm-publication-$unit/npm-publication.json"
+              jq -e --arg digest "sha256:$(sha256sum "$file" | cut -d' ' -f1)" \
+                '.schema == "aex.npm-publication.v1" and .tarballDigest == $digest and
+                 .provenance == true and .location.kind == "npm" and .location.immutable == true' \
+                "$publication" >/dev/null
+              continue
+            fi
+            printf '%s\n' "$unit" >> dist/produced-blob-unit-ids.txt
             metadata=$(dist/aex-release-tool artifact asset-name --unit "$unit" --file "$file")
             asset=$(jq -er .asset <<<"$metadata")
             cmp --silent "$file" "dist/unit-assets/$asset"
@@ -1178,10 +1317,13 @@ jobs:
           done
           sort -o dist/produced-blob-unit-ids.txt dist/produced-blob-unit-ids.txt
           sort -o dist/produced-oci-unit-ids.txt dist/produced-oci-unit-ids.txt
+          sort -o dist/produced-npm-unit-ids.txt dist/produced-npm-unit-ids.txt
           test -z "$(uniq -d dist/produced-blob-unit-ids.txt)"
           test -z "$(uniq -d dist/produced-oci-unit-ids.txt)"
+          test -z "$(uniq -d dist/produced-npm-unit-ids.txt)"
           diff -u dist/declared-blob-unit-ids.txt dist/produced-blob-unit-ids.txt
           diff -u dist/declared-oci-unit-ids.txt dist/produced-oci-unit-ids.txt
+          diff -u dist/declared-npm-unit-ids.txt dist/produced-npm-unit-ids.txt
           aux_count=$(find dist/aux-assets -maxdepth 1 -type f | wc -l)
           signature_count=$(wc -l < dist/produced-signature-unit-ids.txt)
           if [ "$aux_count" -ne "$signature_count" ]; then

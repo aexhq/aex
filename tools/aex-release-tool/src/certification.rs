@@ -368,7 +368,7 @@ fn verify_envelope(
     unit: &Unit,
     expected: &ExpectedSource<'_>,
 ) -> Result<()> {
-    envelope.verify(None, unit.kind == "rust-binary")?;
+    envelope.verify(None, crate::artifact::kind_requires_signature(&unit.kind))?;
     let required_central_head = envelope
         .identities
         .migration
@@ -391,7 +391,7 @@ fn verify_envelope(
         || envelope.output.target.triple != unit.target
         || envelope.identities.config_schema_version != unit.config_schema_version
         || envelope.identities.config_env_namespace.as_deref()
-            != Some(unit.config_env_namespace.as_str())
+            != unit.config_env_namespace.as_deref()
         || required_central_head != unit.required_central_head.as_ref()
         || !source_matches(&envelope.source.workflow, expected)
         || envelope.source.commit_sha != expected.commit_sha

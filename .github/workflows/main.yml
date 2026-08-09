@@ -250,6 +250,16 @@ jobs:
           name: certified-envelopes
           path: handoff/certified
 
+      # A registry version is not a release asset, so its version and integrity
+      # cannot be re-derived from anything in the release tag. They come from
+      # the readback the publishing job performed, which the composition
+      # re-validates rather than trusts.
+      - name: Download every registry publication identity
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          pattern: npm-publication-*
+          path: handoff/npm-publications
+
       - name: Re-acquire and verify public release inputs
         env:
           GH_TOKEN: ${{ github.token }}
@@ -348,8 +358,12 @@ jobs:
           for envelope in "${envelope_files[@]}"; do
             envelope_args+=(--envelope "$envelope")
           done
+          publication_args=()
+          for publication in handoff/npm-publications/*/npm-publication.json; do
+            publication_args+=(--npm-publication "$publication")
+          done
           public-inputs/aex-release-tool --root "$GITHUB_WORKSPACE" --json \
-            manifest inputs "${envelope_args[@]}" \
+            manifest inputs "${envelope_args[@]}" "${publication_args[@]}" \
             --release-tool public-inputs/aex-release-tool \
             --module-bundle public-inputs/terraform-modules.tar.gz \
             --regional-tables public-inputs/regional-tables.json \

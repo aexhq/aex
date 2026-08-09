@@ -278,3 +278,11 @@ observes = [
   "artifact:hands-image-4gb",
   "artifact:hands-image-8gb",
 ]
+
+# --- published packages -----------------------------------------------------------
+
+[[scenario]]
+id = "SC-SDK-INSTALL"
+owner = "clients"
+deferred = "The packed-tarball clean install proves the archive, not the registry. Installing `@aexhq/sdk` from the real registry and verifying its published provenance needs a version that is already published, so this becomes runnable only after the first release, not before it."
+observes = ["artifact:sdk"]

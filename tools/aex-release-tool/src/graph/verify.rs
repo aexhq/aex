@@ -268,18 +268,33 @@ pub fn verify(inputs: &GraphInputs) -> Result<BuiltGraph> {
         .flat_map(|scenario| scenario.observes.iter().map(String::as_str))
         .collect();
     for unit in &inputs.units.units {
-        let companion = unit
-            .live_suite
-            .clone()
-            .unwrap_or_else(|| format!("aex-live-{}", unit.id));
-        if !cargo_names.contains(companion.as_str()) {
-            violations.push(Violation::new(
-                "unit-live-companion-missing",
-                format!(
-                    "unit `{}` has no companion live package `tests/live/{companion}`",
-                    unit.id
-                ),
-            ));
+        if unit.kind == "npm-package" {
+            violations.extend(verify_registry_publication(unit, inputs));
+        } else {
+            let companion = unit
+                .live_suite
+                .clone()
+                .unwrap_or_else(|| format!("aex-live-{}", unit.id));
+            if !cargo_names.contains(companion.as_str()) {
+                violations.push(Violation::new(
+                    "unit-live-companion-missing",
+                    format!(
+                        "unit `{}` has no companion live package `tests/live/{companion}`",
+                        unit.id
+                    ),
+                ));
+            }
+            for (field, value) in [
+                ("alarm_spec", unit.alarm_spec.as_deref()),
+                ("config_env_namespace", unit.config_env_namespace.as_deref()),
+            ] {
+                if value.is_none_or(str::is_empty) {
+                    violations.push(Violation::new(
+                        "unit-deployment-binding-missing",
+                        format!("unit `{}` is deployed and must declare `{field}`", unit.id),
+                    ));
+                }
+            }
         }
         if !scenario_owners.contains(format!("artifact:{}", unit.id).as_str()) {
             violations.push(Violation::new(
@@ -716,6 +731,89 @@ fn registry_reference_violations(inputs: &GraphInputs) -> Vec<Violation> {
                 ),
             ));
         }
+    }
+    violations
+}
+
+/// A unit that publishes to a package registry instead of a plane.
+///
+/// The exemptions here are the point. A published package has no deployed
+/// endpoint, so it has no live companion, no alarm specification and no
+/// configuration environment; requiring those would only produce declarations
+/// nothing reads. Each exemption is paid for by a stronger claim in its place:
+/// the owning npm member must already have recorded *why* it has no live suite,
+/// it must be a real publishable workspace member, and its directory must be
+/// the one the recipe packs.
+fn verify_registry_publication(unit: &super::inputs::Unit, inputs: &GraphInputs) -> Vec<Violation> {
+    let mut violations = Vec::new();
+    if unit.live_suite.is_some() || unit.alarm_spec.is_some() || unit.config_env_namespace.is_some()
+    {
+        violations.push(Violation::new(
+            "unit-publication-deployment-binding",
+            format!(
+                "unit `{}` publishes to a registry and has no live endpoint to give a live suite, \
+                 an alarm specification or a configuration environment",
+                unit.id
+            ),
+        ));
+    }
+    if unit.form != "npm-tarball" || unit.target != "none" || unit.plane != "public" {
+        violations.push(Violation::new(
+            "unit-publication-artifact-shape",
+            format!(
+                "unit `{}` must publish the packer's `npm-tarball` for no triple in the `public` \
+                 plane",
+                unit.id
+            ),
+        ));
+    }
+    let Some(member) = inputs.npm.iter().find(|member| member.name == unit.package) else {
+        violations.push(Violation::new(
+            "unit-publication-package-unknown",
+            format!(
+                "unit `{}` names `{}`, which is not an npm workspace member; a registry unit's \
+                 `package` is the published name",
+                unit.id, unit.package
+            ),
+        ));
+        return violations;
+    };
+    if !member.publishable {
+        violations.push(Violation::new(
+            "unit-publication-package-private",
+            format!(
+                "unit `{}` publishes `{}`, which declares `private`",
+                unit.id, unit.package
+            ),
+        ));
+    }
+    // The recipe packs `packages/<id>` because `bun pm pack` has no workspace
+    // filter. Checking the member's real directory here is what keeps that
+    // convention from silently packing the wrong workspace member.
+    let expected_dir = format!("packages/{}", unit.id);
+    if member.dir != expected_dir {
+        violations.push(Violation::new(
+            "unit-publication-directory",
+            format!(
+                "unit `{}` packs `{expected_dir}`, but `{}` lives in `{}`",
+                unit.id, unit.package, member.dir
+            ),
+        ));
+    }
+    match member.meta.as_ref() {
+        Some(meta)
+            if meta
+                .not_applicable
+                .get("live_suite")
+                .is_some_and(|reason| !reason.trim().is_empty()) => {}
+        _ => violations.push(Violation::new(
+            "unit-publication-live-exemption-missing",
+            format!(
+                "`{}` carries no `aex.not_applicable.live_suite` reason, so unit `{}` has no \
+                 recorded justification for having no live companion",
+                member.dir, unit.id
+            ),
+        )),
     }
     violations
 }

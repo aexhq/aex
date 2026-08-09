@@ -405,7 +405,10 @@ pub fn certify(
     draft.signature = signature;
     draft.receipts = receipt_refs;
     let certified = draft.seal()?;
-    certified.verify(files.artifact, unit.kind == "rust-binary")?;
+    certified.verify(
+        files.artifact,
+        crate::artifact::kind_requires_signature(&unit.kind),
+    )?;
     Ok(certified)
 }
 
@@ -676,7 +679,25 @@ fn validate_signature(
     mut signature: Signature,
     signature_bundle: Option<&Path>,
 ) -> Result<Signature> {
-    let valid = if unit.kind == "rust-binary" {
+    // The registry itself is the signer. Trusted publishing mints the signing
+    // identity from the workflow's own OIDC token and npm attaches the
+    // attestation to the version, so there is no detached bundle to read back
+    // here — and accepting one would mean accepting a signature this repository
+    // produced over bytes the registry never saw. `npm-publication.json` is
+    // where that attestation is verified.
+    let valid = if unit.kind == "npm-package" {
+        if signature_bundle.is_some() {
+            return Err(ToolError::single(
+                Exit::ProvenanceMissing,
+                "certify-signature-bundle",
+                "registry provenance is attached by npm, not by a detached bundle",
+            ));
+        }
+        signature.present
+            && signature.kind == "npm-provenance"
+            && signature.key_id.as_deref().is_some_and(|id| !id.is_empty())
+            && signature.bundle_digest.is_none()
+    } else if unit.kind == "rust-binary" {
         let bundle = signature_bundle.ok_or_else(|| {
             ToolError::single(
                 Exit::ProvenanceMissing,

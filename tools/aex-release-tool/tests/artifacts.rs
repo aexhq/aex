@@ -584,9 +584,39 @@ fn an_envelope_with_no_receipt_proves_nothing() {
     assert!(err.rules().contains(&"envelope-no-receipts"));
 }
 
+/// A registry row matching a fixture envelope.
+///
+/// Deliberately not the shipped row for the same id: these tests fix the
+/// envelope's kind, and reading the real registry would make them fail whenever
+/// a deployable legitimately changes how it is packaged.
+fn row(id: &str, kind: &str, package: &str) -> aex_release_tool::graph::inputs::Unit {
+    toml::from_str(&format!(
+        r#"
+id = "{id}"
+kind = "{kind}"
+plane = "regional"
+package = "{package}"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release-lambda"
+form = "zip"
+config_schema_version = 1
+required_receipts = ["unit"]
+"#
+    ))
+    .expect("fixture registry row")
+}
+
 #[test]
 fn the_publication_destination_is_content_addressed_and_immutable() {
-    let destination = publish_destination(&envelope_from(valid_envelope())).unwrap();
+    let destination = publish_destination(
+        &envelope_from(valid_envelope()),
+        &row(
+            "regional-session-api",
+            "rust-lambda",
+            "regional-session-api",
+        ),
+    )
+    .unwrap();
     assert_eq!(destination.kind, "github-release");
     assert!(destination.immutable);
     assert_eq!(
@@ -601,9 +631,43 @@ fn the_publication_destination_is_content_addressed_and_immutable() {
     let mut value = valid_envelope();
     value["unit"]["kind"] = serde_json::json!("rust-oci-service");
     value["unit"]["id"] = serde_json::json!("brain-mux");
-    let destination = publish_destination(&envelope_from(value)).unwrap();
+    let destination = publish_destination(
+        &envelope_from(value),
+        &row("brain-mux", "rust-oci-service", "brain-mux"),
+    )
+    .unwrap();
     assert_eq!(destination.kind, "oci");
     assert!(destination.key.contains("@sha256:"));
+}
+
+#[test]
+fn a_published_package_destination_is_the_registry_declared_npm_name() {
+    // The whole reason the registry row is required here: a unit id matches
+    // `^[a-z][a-z0-9-]{2,63}$`, so `@aexhq/sdk` can never be derived from it.
+    let mut value = valid_envelope();
+    value["unit"]["kind"] = serde_json::json!("npm-package");
+    value["unit"]["id"] = serde_json::json!("sdk");
+    let destination = publish_destination(
+        &envelope_from(value),
+        &row("sdk", "npm-package", "@aexhq/sdk"),
+    )
+    .unwrap();
+    assert_eq!(destination.kind, "npm");
+    assert_eq!(destination.key, "@aexhq/sdk");
+    assert!(destination.immutable);
+}
+
+#[test]
+fn a_destination_cannot_be_derived_from_someone_elses_registry_row() {
+    let mut value = valid_envelope();
+    value["unit"]["kind"] = serde_json::json!("npm-package");
+    value["unit"]["id"] = serde_json::json!("sdk");
+    let error = publish_destination(
+        &envelope_from(value),
+        &row("brain-mux", "rust-oci-service", "brain-mux"),
+    )
+    .expect_err("a row for another unit cannot name this one's destination");
+    assert_eq!(error.rules(), vec!["publish-destination-unit-mismatch"]);
 }
 
 #[test]

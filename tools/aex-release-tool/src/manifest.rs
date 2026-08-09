@@ -402,6 +402,11 @@ pub const DEFAULT_ORDER: &[(&str, &[&str])] = &[
         ],
     ),
     ("web", &["dashboard", "site"]),
+    // Last, and deliberately after every plane. A published package version can
+    // never be withdrawn, so publishing an SDK that speaks routes the deployed
+    // composition does not serve yet would ship a promise nothing keeps and
+    // leave deprecation as the only reverse gear.
+    ("published-packages", &["sdk"]),
 ];
 
 impl CompositionManifest {
@@ -807,7 +812,7 @@ pub fn verify_handoff_envelopes(
                     || envelope.output.target.triple != unit.target
                     || envelope.identities.config_schema_version != unit.config_schema_version
                     || envelope.identities.config_env_namespace.as_deref()
-                        != Some(unit.config_env_namespace.as_str())
+                        != unit.config_env_namespace.as_deref()
                     || required_central_head != unit.required_central_head.as_ref()
                 {
                     topology.push(Violation::new(
@@ -832,7 +837,9 @@ pub fn verify_handoff_envelopes(
     let mut incomplete = Vec::new();
     for (id, envelope) in &indexed {
         let unit = registered[id.as_str()];
-        if let Err(err) = envelope.verify(None, unit.kind == "rust-binary") {
+        if let Err(err) =
+            envelope.verify(None, crate::artifact::kind_requires_signature(&unit.kind))
+        {
             incomplete.extend(err.violations.into_iter().map(|violation| {
                 Violation::new(violation.rule, format!("unit `{id}`: {}", violation.detail))
             }));
@@ -1212,7 +1219,43 @@ fn validate_public_inputs(manifest: &CompositionManifest, violations: &mut Vec<V
                 )),
                 Err(err) => violations.extend(err.violations),
             },
+            // A registry location names a package and version, not a digest, so
+            // the cross-check is that the composition also records that exact
+            // version under `packages.npm` — an entry the manifest cannot invent
+            // because `manifest inputs` derives it from the registry readback.
+            "npm" => match crate::publication::npm_tarball_identity(&entry.location.uri) {
+                Ok((package, version)) => {
+                    let recorded = manifest
+                        .packages
+                        .get("npm")
+                        .and_then(|registry| registry.get(&package));
+                    match recorded {
+                        Some(reference)
+                            if reference.version == version
+                                && entry.kind == "npm-package"
+                                && reference.provenance => {}
+                        _ => violations.push(Violation::new(
+                            "manifest-npm-location",
+                            format!(
+                                "unit `{unit}` publishes `{package}@{version}`, which is not \
+                                 recorded as an attested npm package identity"
+                            ),
+                        )),
+                    }
+                }
+                Err(err) => violations.extend(err.violations),
+            },
             _ => {}
+        }
+        if (entry.kind == "npm-package") != (entry.location.kind == "npm") {
+            violations.push(Violation::new(
+                "manifest-location-kind",
+                format!(
+                    "unit `{unit}` kind `{}` and location kind `{}` disagree about registry \
+                     publication",
+                    entry.kind, entry.location.kind
+                ),
+            ));
         }
     }
 }

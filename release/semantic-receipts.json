@@ -36,6 +36,7 @@
     { "unit": "hands-agent", "package": "hands-agent", "class": "property", "layer": "unit", "filterset": "all()" },
     { "unit": "hands-agent", "package": "hands-agent", "class": "contract", "layer": "unit", "filterset": "all()" },
     { "unit": "stripe-command-edge", "package": "@aexhq/stripe-command-edge", "class": "contract", "layer": "unit", "filterset": "all()" },
-    { "unit": "stripe-webhook-edge", "package": "@aexhq/stripe-webhook-edge", "class": "contract", "layer": "unit", "filterset": "all()" }
+    { "unit": "stripe-webhook-edge", "package": "@aexhq/stripe-webhook-edge", "class": "contract", "layer": "unit", "filterset": "all()" },
+    { "unit": "sdk", "package": "@aexhq/sdk", "class": "contract", "layer": "unit", "filterset": "all()" }
   ]
 }

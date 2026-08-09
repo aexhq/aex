@@ -129,6 +129,9 @@ pub struct NpmPlan {
     pub name: String,
     pub dir: String,
     pub meta: Option<Value>,
+    /// Whether the member reaches a registry. Private is the default because
+    /// almost every fixture member exists only to be a graph node.
+    pub publishable: bool,
 }
 
 impl NpmPlan {
@@ -137,12 +140,19 @@ impl NpmPlan {
             name: name.to_owned(),
             dir: dir.to_owned(),
             meta: Some(default_meta("delivery", "tool")),
+            publishable: false,
         }
     }
 
     #[must_use]
     pub fn meta(mut self, meta: Value) -> Self {
         self.meta = Some(meta);
+        self
+    }
+
+    #[must_use]
+    pub fn publishable(mut self) -> Self {
+        self.publishable = true;
         self
     }
 }
@@ -346,7 +356,7 @@ impl Fixture {
                 .unwrap(),
             );
             for plan in &self.npm {
-                let mut manifest = json!({ "name": plan.name, "private": true });
+                let mut manifest = json!({ "name": plan.name, "private": !plan.publishable });
                 if let Some(meta) = &plan.meta {
                     manifest["aex"] = meta.clone();
                 }

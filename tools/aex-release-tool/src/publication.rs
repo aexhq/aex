@@ -7,7 +7,10 @@
 use std::path::Path;
 use std::process::Command;
 
+use base64::Engine as _;
+use base64::prelude::BASE64_STANDARD;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha512};
 
 use crate::canon;
 use crate::error::{Exit, Result, ToolError, Violation};
@@ -127,6 +130,155 @@ pub fn ghcr_unit_repository(repository: &str, unit: &str) -> Result<String> {
         owner.to_ascii_lowercase(),
         repo.to_ascii_lowercase()
     ))
+}
+
+/// The public npm registry every published package resolves through.
+///
+/// It is a constant rather than a parameter for the same reason the GHCR host
+/// is: a release that could name its own registry could publish the release
+/// identity somewhere nobody verifies.
+pub const NPM_REGISTRY: &str = "https://registry.npmjs.org";
+
+/// The closed, immutable public tarball location for one published npm version.
+///
+/// A published npm version is immutable — the registry refuses to replace the
+/// bytes behind an existing `name@version` — so `name` plus `version` is the
+/// whole identity, exactly as `repository@digest` is for GHCR. The URI is the
+/// registry's own canonical tarball path, which is what an installer fetches,
+/// so the recorded location is the bytes rather than a page describing them.
+///
+/// # Errors
+/// Returns [`Exit::EnvelopeInvalid`] for a package name outside the publishable
+/// npm vocabulary or a version that is not an exact release version.
+pub fn npm_tarball_uri(package: &str, version: &str) -> Result<String> {
+    let (scope, bare) = split_npm_package(package)?;
+    if !exact_npm_version(version) {
+        return Err(ToolError::single(
+            Exit::EnvelopeInvalid,
+            "publication-npm-version",
+            format!("`{version}` is not an exact published npm version"),
+        ));
+    }
+    let scope = scope.map_or_else(String::new, |scope| format!("@{scope}/"));
+    Ok(format!(
+        "{NPM_REGISTRY}/{scope}{bare}/-/{bare}-{version}.tgz"
+    ))
+}
+
+/// Recover the exact `(package, version)` a published npm location names.
+///
+/// The URI is re-derived from what was parsed and compared to the input, so a
+/// location that merely *contains* a plausible name and version — a redirect, a
+/// query string, a second `/-/` segment — is refused rather than accepted with
+/// whatever the parser happened to pick out.
+///
+/// # Errors
+/// Returns [`Exit::EnvelopeInvalid`] when the URI is not exactly the canonical
+/// registry tarball location of the name and version it names.
+pub fn npm_tarball_identity(uri: &str) -> Result<(String, String)> {
+    let invalid = || {
+        ToolError::single(
+            Exit::EnvelopeInvalid,
+            "publication-npm-location",
+            format!("`{uri}` is not the exact immutable npm registry tarball location"),
+        )
+    };
+    let rest = uri.strip_prefix(NPM_REGISTRY).ok_or_else(invalid)?;
+    let rest = rest.strip_prefix('/').ok_or_else(invalid)?;
+    let (package, file) = rest.split_once("/-/").ok_or_else(invalid)?;
+    let file = file.strip_suffix(".tgz").ok_or_else(invalid)?;
+    let (_, bare) = split_npm_package(package)?;
+    let version = file
+        .strip_prefix(&format!("{bare}-"))
+        .ok_or_else(invalid)?
+        .to_owned();
+    if npm_tarball_uri(package, &version)? != uri {
+        return Err(invalid());
+    }
+    Ok((package.to_owned(), version))
+}
+
+/// The npm subresource integrity string the registry publishes for a tarball.
+///
+/// npm's own identity is SHA-512 SRI, which is a different function and a
+/// different encoding from the SHA-256 the envelope records over the same
+/// bytes. Both are kept: the envelope's digest is the identity this repository
+/// earned locally, and this is the one an installer will check.
+#[must_use]
+pub fn npm_integrity(bytes: &[u8]) -> String {
+    let mut hasher = Sha512::new();
+    hasher.update(bytes);
+    format!("sha512-{}", BASE64_STANDARD.encode(hasher.finalize()))
+}
+
+/// Whether a string is a well-formed SHA-512 npm integrity value.
+#[must_use]
+pub fn valid_npm_integrity(value: &str) -> bool {
+    value.strip_prefix("sha512-").is_some_and(|encoded| {
+        BASE64_STANDARD
+            .decode(encoded)
+            .is_ok_and(|bytes| bytes.len() == 64)
+    })
+}
+
+/// Whether a version is an exact published release version.
+///
+/// Prerelease and build metadata are deliberately refused: a release that
+/// published `0.50.0-rc.1` under the same composition as `0.50.0` would give
+/// two different artifacts the same recorded identity shape.
+#[must_use]
+pub fn exact_npm_version(version: &str) -> bool {
+    let mut parts = version.split('.');
+    let exact = |part: Option<&str>| {
+        part.is_some_and(|part| {
+            !part.is_empty()
+                && part.bytes().all(|byte| byte.is_ascii_digit())
+                && (part == "0" || !part.starts_with('0'))
+        })
+    };
+    exact(parts.next()) && exact(parts.next()) && exact(parts.next()) && parts.next().is_none()
+}
+
+/// Split a publishable npm package name into its optional scope and basename.
+///
+/// # Errors
+/// Returns [`Exit::EnvelopeInvalid`] for a name npm would not accept for a new
+/// package: uppercase, over 214 bytes, empty, or carrying a path or URL
+/// character that would let a name reach outside the registry namespace.
+pub fn split_npm_package(package: &str) -> Result<(Option<&str>, &str)> {
+    let invalid = || {
+        ToolError::single(
+            Exit::EnvelopeInvalid,
+            "publication-npm-package",
+            format!("`{package}` is not a publishable lowercase npm package name"),
+        )
+    };
+    if package.is_empty() || package.len() > 214 {
+        return Err(invalid());
+    }
+    let (scope, bare) = match package.strip_prefix('@') {
+        Some(scoped) => {
+            let (scope, bare) = scoped.split_once('/').ok_or_else(invalid)?;
+            (Some(scope), bare)
+        }
+        None => (None, package),
+    };
+    let segment = |segment: &str| {
+        !segment.is_empty()
+            && segment
+                .bytes()
+                .next()
+                .is_some_and(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+            && segment.bytes().all(|byte| {
+                byte.is_ascii_lowercase()
+                    || byte.is_ascii_digit()
+                    || matches!(byte, b'.' | b'_' | b'-')
+            })
+    };
+    if !segment(bare) || scope.is_some_and(|scope| !segment(scope)) {
+        return Err(invalid());
+    }
+    Ok((scope, bare))
 }
 
 /// Content-addressed release asset basename for one non-OCI unit.

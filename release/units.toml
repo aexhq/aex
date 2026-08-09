@@ -24,18 +24,38 @@
 #
 # WHAT IS DELIBERATELY MISSING
 #
-# `dashboard`, `site`, `aex-cli`, `@aexhq/sdk`, the model and tool catalogues and
-# the three generated bundles are also release artifacts, but this registry
-# models hosted deployment units rather than every customer-facing artifact.
-# The dashboard, site, SDK and CLI are already workspace members. Their
-# immutable publication or archive identities, plus any catalogue or bundle
-# identity not carried by a hosted unit, must be represented by the release
-# artifact graph before release; absence here is not evidence that they do not
-# exist. The two Stripe TypeScript edges *are* hosted workspace packages —
+# This registry models release artifacts, not only hosted deployment units:
+# `sdk` below is published to a package registry and runs on nobody's plane.
+# What is still absent is absent by decision, and each decision is named here so
+# that absence stays a choice somebody made rather than a gap nobody noticed.
+#
+#   * `dashboard` — descoped for launch. It is an internal operator console, not
+#     a customer-installable artifact, and it is deployed by hand from the
+#     private plane rather than by this graph.
+#   * `site` — descoped for launch. The marketing site carries no API surface
+#     and no compatibility contract, so an immutable release identity for it
+#     would gate launch on something no consumer pins.
+#   * `aex-cli` — descoped for launch. It is not published in the launch scope,
+#     so there is no distribution boundary for a release identity to protect.
+#
+# Re-scoping any of the three means adding its row here, not relaxing this
+# comment. The model and tool catalogues and the three generated bundles remain
+# carried by the hosted units that embed them.
+#
+# The two Stripe TypeScript edges *are* hosted workspace packages —
 # `services/stripe-{command,webhook}-edge`, named explicitly by
 # `aex_workspace_check::collect::NPM_EXPLICIT` rather than by a `workspaces`
 # glob — so they carry rows here and the graph resolves their `package` to an
 # npm node.
+#
+# PUBLISHED PACKAGES
+#
+# A row whose `kind` is `npm-package` publishes to a registry rather than to a
+# plane, so it declares no resource shape, no alarm specification, no
+# configuration environment and no live companion: there is no running resource
+# for any of those to describe. `graph verify` enforces that exemption in both
+# directions — such a row must carry none of them, and its owning npm member
+# must already record why it has no live suite.
 
 schema = "aex.units.v1"
 
@@ -998,3 +1018,25 @@ extra_inputs = ["cargo:hands-agent"]
 variant = "8gb"
 minimum_memory_mib = 8192
 browser = false
+
+# --- public plane: published packages -----------------------------------------
+
+[[unit]]
+id = "sdk"
+kind = "npm-package"
+plane = "public"
+# The published name. A unit id matches `^[a-z][a-z0-9-]{2,63}$` and can never
+# be a scoped npm name, so this field is the only place the mapping exists, and
+# `graph verify` requires it to be a publishable npm workspace member living in
+# `packages/<id>` — the directory the recipe packs.
+package = "@aexhq/sdk"
+# A published bundle is compiled for no triple, exactly as the two TypeScript
+# edges are: the package runs on whatever Node or Bun installed it.
+target = "none"
+profile = "release"
+form = "npm-tarball"
+# The client options shape, not a deployment environment: the package reads no
+# process environment at all, which is why no `config_env_namespace` is
+# declared.
+config_schema_version = 1
+required_receipts = ["unit", "contract", "lint", "package-integrity"]

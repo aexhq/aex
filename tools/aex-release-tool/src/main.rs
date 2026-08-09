@@ -203,6 +203,50 @@ enum DiffFormat {
     Json,
 }
 
+/// The protected workflow attempt a publication readback is bound to.
+///
+/// One shared group rather than a copy per readback command: the two publishing
+/// paths bind the same seven identities, and a second hand-written copy is how
+/// one of them would quietly stop requiring the protected reusable workflow.
+#[derive(Debug, Clone, clap::Args)]
+struct WorkflowRunArgs {
+    /// Publishing workflow repository.
+    #[arg(long)]
+    workflow_repository: String,
+    /// Publishing workflow ref.
+    #[arg(long)]
+    workflow_ref: String,
+    /// Publishing workflow path.
+    #[arg(long)]
+    workflow_path: String,
+    /// Publishing workflow run id.
+    #[arg(long)]
+    run_id: String,
+    /// Publishing workflow attempt.
+    #[arg(long)]
+    run_attempt: u32,
+    /// Matrix job name, exactly the unit id.
+    #[arg(long)]
+    job_name: String,
+    /// OIDC builder identity for the protected workflow.
+    #[arg(long)]
+    builder_id: String,
+}
+
+impl From<&WorkflowRunArgs> for OciWorkflowRun {
+    fn from(args: &WorkflowRunArgs) -> Self {
+        Self {
+            repository: args.workflow_repository.clone(),
+            r#ref: args.workflow_ref.clone(),
+            path: args.workflow_path.clone(),
+            run_id: args.run_id.clone(),
+            run_attempt: args.run_attempt,
+            job_name: args.job_name.clone(),
+            builder_id: args.builder_id.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Subcommand)]
 enum ArtifactCommand {
     /// Package the committed public Terraform module closure deterministically.
@@ -344,27 +388,9 @@ enum ArtifactCommand {
         /// Exact Sigstore bundle passed to the official verifier.
         #[arg(long)]
         provenance_bundle: PathBuf,
-        /// Publishing workflow repository.
-        #[arg(long)]
-        workflow_repository: String,
-        /// Publishing workflow ref.
-        #[arg(long)]
-        workflow_ref: String,
-        /// Publishing workflow path.
-        #[arg(long)]
-        workflow_path: String,
-        /// Publishing workflow run id.
-        #[arg(long)]
-        run_id: String,
-        /// Publishing workflow attempt.
-        #[arg(long)]
-        run_attempt: u32,
-        /// Matrix job name, exactly the unit id.
-        #[arg(long)]
-        job_name: String,
-        /// OIDC builder identity for the protected workflow.
-        #[arg(long)]
-        builder_id: String,
+        /// The protected workflow attempt that published the image.
+        #[command(flatten)]
+        workflow: WorkflowRunArgs,
         /// Where to write the publication record.
         #[arg(long)]
         out: PathBuf,
@@ -526,6 +552,27 @@ enum ArtifactCommand {
         #[arg(long)]
         require_signature: bool,
     },
+    /// Verify that the npm registry serves back exactly what was published.
+    NpmReadback {
+        /// Registry unit id.
+        #[arg(long)]
+        unit: String,
+        /// The exact tarball handed to `npm publish`.
+        #[arg(long)]
+        tarball: PathBuf,
+        /// `package.json` of the packed workspace member.
+        #[arg(long)]
+        manifest: PathBuf,
+        /// Registry metadata for the published version, as served back.
+        #[arg(long)]
+        registry_metadata: PathBuf,
+        /// The protected workflow attempt that published the version.
+        #[command(flatten)]
+        workflow: WorkflowRunArgs,
+        /// Where to write `npm-publication.json`.
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// Print the immutable destination an envelope publishes to.
     PublishPlan {
         /// The envelope.
@@ -593,6 +640,9 @@ enum ManifestCommand {
         /// Acquired generated regional table bundle.
         #[arg(long)]
         regional_tables: PathBuf,
+        /// Verified registry publication evidence, one per npm package unit.
+        #[arg(long = "npm-publication")]
+        npm_publications: Vec<PathBuf>,
         /// Exact GitHub `owner/repository`.
         #[arg(long)]
         repository: String,
@@ -1029,7 +1079,37 @@ enum JanitorCommand {
     Verify,
 }
 
+/// Stack the tool gives itself, rather than accepting whichever one the
+/// platform happened to hand the process.
+///
+/// The command tree is wide and the parser builds it by recursive descent, so
+/// an unoptimized build's frames are large enough that a Windows main thread —
+/// 1 MiB by linker default — overflows while constructing the parser, before
+/// `--version` can print. That failure is a stack overflow at startup: no
+/// diagnostic, no exit code anyone can classify, and it lands on whichever
+/// subcommand happens to be added next rather than on the one at fault. Owning
+/// the size here makes the limit a decision instead of a linker default.
+const STACK_BYTES: usize = 32 * 1024 * 1024;
+
 fn main() -> ExitCode {
+    let started = std::thread::Builder::new()
+        .name("aex-release-tool".to_owned())
+        .stack_size(STACK_BYTES)
+        .spawn(cli_main);
+    match started.map(std::thread::JoinHandle::join) {
+        Ok(Ok(code)) => code,
+        // A panic has already printed its own message and location; re-printing
+        // it here would only bury it. Anything else means the thread never
+        // started, which no exit code of ours would otherwise explain.
+        Ok(Err(_)) => ExitCode::from(101),
+        Err(error) => {
+            eprintln!("aex-release-tool could not start its worker thread: {error}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn cli_main() -> ExitCode {
     let cli = Cli::parse();
     match run(&cli) {
         Ok(()) => ExitCode::SUCCESS,
@@ -1242,6 +1322,9 @@ fn run_artifact(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()>
                 .iter()
                 .find(|candidate| &candidate.id == unit)
                 .ok_or_else(|| usage(format!("`{unit}` is not in release/units.toml")))?;
+            // Exhaustive on purpose. A default arm here once sent the npm
+            // tarball through the deterministic tar writer, which produced
+            // bytes the registry had never seen while still reporting success.
             let form = match form {
                 Some(form) => *form,
                 None => match artifact::plan(found)?.form.as_str() {
@@ -1249,7 +1332,13 @@ fn run_artifact(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()>
                     "oci" => Form::Oci,
                     "microvm-zip" => Form::MicrovmZip,
                     "build-output" => Form::BuildOutput,
-                    _ => Form::Tarball,
+                    "tarball" => Form::Tarball,
+                    "npm-tarball" => Form::NpmTarball,
+                    other => {
+                        return Err(usage(format!(
+                            "recipe form `{other}` has no packaging rule"
+                        )));
+                    }
                 },
             };
             let bytes = artifact::package(
@@ -1296,9 +1385,11 @@ fn run_artifact(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()>
                 &serde_json::json!({ "unit": envelope.unit.id, "verified": true }),
             )
         }
+        ArtifactCommand::NpmReadback { .. } => run_artifact_npm_readback(cli, root, command),
         ArtifactCommand::PublishPlan { envelope } => {
             let envelope: ArtifactEnvelope = read_json(envelope)?;
-            emit(cli, &artifact::publish_destination(&envelope)?)
+            let unit = find_unit(root, &envelope.unit.id)?;
+            emit(cli, &artifact::publish_destination(&envelope, &unit)?)
         }
         ArtifactCommand::AssetName { .. } => run_artifact_asset_name(cli, root, command),
     }
@@ -1439,13 +1530,7 @@ fn run_oci_readback(cli: &Cli, command: &ArtifactCommand) -> Result<()> {
         binary,
         verified_provenance,
         provenance_bundle,
-        workflow_repository,
-        workflow_ref,
-        workflow_path,
-        run_id,
-        run_attempt,
-        job_name,
-        builder_id,
+        workflow,
         out,
     } = command
     else {
@@ -1457,15 +1542,7 @@ fn run_oci_readback(cli: &Cli, command: &ArtifactCommand) -> Result<()> {
         manifest,
         config_digest,
         binary,
-        OciWorkflowRun {
-            repository: workflow_repository.clone(),
-            r#ref: workflow_ref.clone(),
-            path: workflow_path.clone(),
-            run_id: run_id.clone(),
-            run_attempt: *run_attempt,
-            job_name: job_name.clone(),
-            builder_id: builder_id.clone(),
-        },
+        workflow.into(),
         verified_provenance,
         provenance_bundle,
     )?;
@@ -1651,6 +1728,40 @@ fn run_artifact_certification_inventory(
     } else {
         Ok(())
     }
+}
+
+fn find_unit(root: &Path, unit: &str) -> Result<aex_release_tool::graph::inputs::Unit> {
+    read_units(root)?
+        .units
+        .into_iter()
+        .find(|candidate| candidate.id == unit)
+        .ok_or_else(|| usage(format!("`{unit}` is not in release/units.toml")))
+}
+
+fn run_artifact_npm_readback(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()> {
+    let ArtifactCommand::NpmReadback {
+        unit,
+        tarball,
+        manifest,
+        registry_metadata,
+        workflow,
+        out,
+    } = command
+    else {
+        return Err(usage("internal npm readback dispatch mismatch"));
+    };
+    let unit = find_unit(root, unit)?;
+    let publication = aex_release_tool::npm::verify_readback(
+        &unit,
+        aex_release_tool::npm::Readback {
+            tarball,
+            manifest,
+            registry_metadata,
+        },
+        workflow.into(),
+    )?;
+    write_canonical(out, &publication)?;
+    emit(cli, &publication)
 }
 
 fn run_artifact_asset_name(cli: &Cli, root: &Path, command: &ArtifactCommand) -> Result<()> {
@@ -1938,6 +2049,7 @@ fn run_manifest_inputs_command(cli: &Cli, root: &Path, command: &ManifestCommand
         release_tool,
         module_bundle,
         regional_tables,
+        npm_publications,
         repository,
         commit_sha,
         workflow_run_id,
@@ -1963,6 +2075,7 @@ fn run_manifest_inputs_command(cli: &Cli, root: &Path, command: &ManifestCommand
             release_tool,
             module_bundle,
             regional_tables,
+            npm_publications,
         },
         &run,
         out,

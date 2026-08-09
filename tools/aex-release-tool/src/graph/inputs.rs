@@ -138,7 +138,13 @@ pub struct Unit {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_image: Option<String>,
     /// Configuration environment namespace.
-    pub config_env_namespace: String,
+    ///
+    /// Absent only for a published package: a library a customer installs reads
+    /// no deployment environment, and naming a namespace nothing consults would
+    /// make the envelope's `configEnvNamespace` decoration. `graph verify`
+    /// requires it of every kind that is actually deployed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_env_namespace: Option<String>,
     /// Configuration schema version.
     pub config_schema_version: u32,
     /// Minimum applied central schema head.
@@ -153,7 +159,12 @@ pub struct Unit {
     /// Receipt classes required before this unit may be published.
     pub required_receipts: Vec<String>,
     /// Declarative alarm specification id.
-    pub alarm_spec: String,
+    ///
+    /// Absent only for a published package: there is no running resource to
+    /// alarm on, and an id no `[janitor]`/alarm root ever instantiates would be
+    /// a monitoring claim nobody could act on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alarm_spec: Option<String>,
     /// Companion live-test package.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub live_suite: Option<String>,

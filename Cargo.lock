@@ -1100,6 +1100,7 @@ dependencies = [
  "aex-contract-gen",
  "aex-workspace-check",
  "anyhow",
+ "base64 0.23.0",
  "clap",
  "flate2",
  "hex",
