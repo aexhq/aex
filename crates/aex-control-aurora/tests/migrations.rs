@@ -433,9 +433,7 @@ async fn the_control_roles_hold_nothing_in_finance_and_identity_writes() {
     for role in ["aex_control_api", "aex_control_worker"] {
         for object in &finance {
             for privilege in ["SELECT", "INSERT", "UPDATE", "DELETE"] {
-                let expected = role == "aex_control_api"
-                    && object == "finance.account_state_v1"
-                    && privilege == "SELECT";
+                let expected = object == "finance.account_state_v1" && privilege == "SELECT";
                 assert_eq!(
                     has_privilege(&mut connection, role, object, privilege).await,
                     expected,
