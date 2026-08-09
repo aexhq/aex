@@ -49,7 +49,7 @@
     },
     {
       "role": "regional-capacity-controller",
-      "actions": ["dynamodb:TransactWriteItems"],
+      "actions": ["dynamodb:PutItem"],
       "resources": ["table"],
       "itemTypes": ["workspace_limit", "workspace_limit_bundle_head", "workspace_limit_bundle", "workspace_edge_limits"],
       "condition": {

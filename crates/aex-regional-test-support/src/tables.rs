@@ -1029,7 +1029,7 @@ mod tests {
             assert!(
                 writer.actions.iter().all(|action| matches!(
                     action.as_str(),
-                    "dynamodb:GetItem" | "dynamodb:PutItem" | "dynamodb:TransactWriteItems"
+                    "dynamodb:GetItem" | "dynamodb:PutItem"
                 )),
                 "{} holds a broad action: {:?}",
                 writer.role,
@@ -1084,6 +1084,11 @@ mod tests {
                 "workspace_edge_limits"
             ]
         );
+        assert_eq!(
+            capacity.actions,
+            ["dynamodb:PutItem"],
+            "transactional Put actions are authorized by the underlying PutItem permission"
+        );
         // The hot admission subset is filed under the capacity partition rather
         // than the workspace's. `dynamodb:LeadingKeys` is the only key this
         // fence can condition on, so a `WS#` spelling would have handed the
@@ -1099,7 +1104,7 @@ mod tests {
     }
 
     #[test]
-    fn capacity_authority_has_one_key_scoped_transactional_writer() {
+    fn capacity_authority_has_one_key_scoped_underlying_put_writer() {
         let tables = load_all(&definitions_directory()).expect("the definitions load");
         let table = tables
             .iter()
@@ -1120,7 +1125,8 @@ mod tests {
         assert_eq!(writer.role, "regional-capacity-controller");
         assert_eq!(
             writer.actions,
-            ["dynamodb:GetItem", "dynamodb:TransactWriteItems"]
+            ["dynamodb:GetItem", "dynamodb:PutItem"],
+            "transactional Put actions are authorized by the underlying PutItem permission"
         );
         assert_eq!(writer.resources, ["table"]);
         assert_eq!(writer.item_types, ["workspace_capacity", "capacity_audit"]);
