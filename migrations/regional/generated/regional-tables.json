@@ -1,7 +1,7 @@
 {
   "schema": "aex.regional-tables.v1",
   "generation": 1,
-  "digest": "blake3:4b6392aa9f8ae66bce3fa318634c75635607d3830a39c58cb76713f4c85e2614",
+  "digest": "blake3:8fd79756354cee8d7e40ae3fbc10a8fef754a1c14bd13bfcce94e1faf792199b",
   "tables": [
     {
       "schema": "aex.regional-table.v1",
@@ -473,6 +473,7 @@
         {
           "role": "regional-capacity-controller",
           "actions": [
+            "dynamodb:PutItem",
             "dynamodb:TransactWriteItems"
           ],
           "resources": [
@@ -627,6 +628,7 @@
           "role": "regional-capacity-controller",
           "actions": [
             "dynamodb:GetItem",
+            "dynamodb:PutItem",
             "dynamodb:TransactWriteItems"
           ],
           "resources": [
