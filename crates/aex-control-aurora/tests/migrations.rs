@@ -33,51 +33,9 @@ use std::sync::Arc;
 
 use aex_test_harness::containers::PostgresContainer;
 use central_schema_admin::grants::GrantSet;
+use central_schema_admin::migration::native_migrator;
 use sqlx::{Connection, Executor as _, PgConnection, Row as _};
 use tokio::sync::OnceCell;
-
-/// The whole committed chain, identity through finance, in order.
-///
-/// There is no per-stream subset and no stub for the peer's objects: the
-/// statements this crate owns join `finance.account_state_v1` and call
-/// `finance.ensure_account`, and a fixture-shaped stand-in would prove only that
-/// the fixture agrees with itself.
-const MIGRATIONS: [(&str, &str); 8] = [
-    (
-        "20260801000000_bootstrap",
-        include_str!("../../../migrations/central/20260801000000_bootstrap.sql"),
-    ),
-    (
-        "20260801000100_identity",
-        include_str!("../../../migrations/central/20260801000100_identity.sql"),
-    ),
-    (
-        "20260801000200_control",
-        include_str!("../../../migrations/central/20260801000200_control.sql"),
-    ),
-    (
-        "20260801000300_control_functions",
-        include_str!("../../../migrations/central/20260801000300_control_functions.sql"),
-    ),
-    (
-        "20260801000400_finance_roles_and_schema",
-        include_str!("../../../migrations/central/20260801000400_finance_roles_and_schema.sql"),
-    ),
-    (
-        "20260801000500_baseline_finance",
-        include_str!("../../../migrations/central/20260801000500_baseline_finance.sql"),
-    ),
-    (
-        "20260801000600_baseline_seed_platform_accounts",
-        include_str!(
-            "../../../migrations/central/20260801000600_baseline_seed_platform_accounts.sql"
-        ),
-    ),
-    (
-        "20260801000700_finance_account_state",
-        include_str!("../../../migrations/central/20260801000700_finance_account_state.sql"),
-    ),
-];
 
 /// The login roles `central-schema-admin` attaches in production.
 const LOGIN_ROLES: &str = "\
@@ -203,14 +161,12 @@ impl Fixture {
     /// Applies the bundle, then the declared privileges, then the login roles.
     async fn migrate(&self) {
         let mut connection = self.superuser().await;
-        for (name, sql) in MIGRATIONS {
-            // Migration bodies carry no privilege and no database name, so they
-            // reach the fixture database exactly as they reach a plane.
-            connection
-                .execute(sql)
-                .await
-                .unwrap_or_else(|error| panic!("`{name}` applies: {error}"));
-        }
+        // Use the production embedded migrator so this denial suite cannot
+        // silently retain a shorter hand-written chain when a migration lands.
+        native_migrator()
+            .run(&mut connection)
+            .await
+            .unwrap_or_else(|error| panic!("the committed migration bundle applies: {error}"));
         // The production privilege model, rendered from the committed document
         // by the production renderer and pointed at this case's database. Every
         // `CONNECT`, `USAGE`, table privilege and `EXECUTE` the cases below
