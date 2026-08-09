@@ -173,6 +173,60 @@ fn route_ownership_partitions_the_regional_route_table() {
     );
 }
 
+/// `session-stream-api` is one deployable serving two owners.
+///
+/// Merging `regional-session-api` and `regional-stream` cost the artifact string
+/// its ability to identify a mount strategy: the release graph requires every
+/// `servingArtifact` to be a real unit id, so both halves now name the merged
+/// unit. `route_owner` splits them by the transport the contract declares, and
+/// this proves that split is total and disjoint rather than a lucky heuristic.
+#[test]
+fn the_two_halves_partition_the_merged_artifact_by_transport() {
+    let merged: Vec<RouteId> = RouteId::ALL
+        .iter()
+        .copied()
+        .filter(|id| {
+            route(*id).plane == Plane::Regional
+                && route(*id).serving_artifact == "session-stream-api"
+        })
+        .collect();
+    assert!(!merged.is_empty(), "the merged unit serves regional routes");
+
+    let unary = RouteOwner::SessionApi.routes();
+    let ndjson = RouteOwner::Stream.routes();
+    assert_eq!(
+        unary.len() + ndjson.len(),
+        merged.len(),
+        "every route on the merged artifact belongs to exactly one half"
+    );
+    assert!(
+        unary.iter().all(|id| !ndjson.contains(id)),
+        "the two halves must not overlap"
+    );
+    for id in &unary {
+        assert_ne!(
+            route(*id).transport,
+            aex_wire::routes::TransportKind::Ndjson,
+            "`{id}` is a frame stream and belongs to the stream half"
+        );
+    }
+    for id in &ndjson {
+        assert_eq!(
+            route(*id).transport,
+            aex_wire::routes::TransportKind::Ndjson,
+            "`{id}` is unary and belongs to the session half"
+        );
+    }
+
+    // Both halves deploy as one artifact, which is exactly what merging means.
+    assert_eq!(
+        RouteOwner::SessionApi.deployable(),
+        RouteOwner::Stream.deployable()
+    );
+    // A refusal still has to say which half it meant.
+    assert_ne!(RouteOwner::SessionApi.half(), RouteOwner::Stream.half());
+}
+
 #[test]
 fn no_central_route_has_a_regional_owner() {
     for id in RouteId::ALL.iter().copied() {

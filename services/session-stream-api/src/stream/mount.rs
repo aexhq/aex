@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use aex_regional_http::capability::{Grant, StreamSocket};
 use aex_regional_http::edge::{RegionalEdge, SystemClock};
 use aex_regional_http::envelope::ENVELOPE_BYTES;
 use aex_regional_http::mount::{AdmissionRequest, EdgeAdmission as _};
@@ -18,11 +19,11 @@ use axum::body::{Body, Bytes};
 use axum::extract::{DefaultBodyLimit, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode, Uri, header};
 use axum::response::{IntoResponse as _, Response};
-use axum::routing::{MethodFilter, get, on};
+use axum::routing::{MethodFilter, on};
 use futures::StreamExt as _;
 use regional_observation_api::{ObservationRequest, ObservationService};
 
-use crate::{ConnectionClass, QuotaManager, Reservation};
+use crate::stream::{ConnectionClass, QuotaManager, Reservation};
 
 /// The production regional edge used by this service.
 pub type Edge = RegionalEdge<
@@ -34,8 +35,17 @@ pub type Edge = RegionalEdge<
 >;
 
 /// Resolved state shared by every connection.
+///
+/// **This struct is the stream half's capability statement, and it is
+/// write-free by construction.** It holds an edge, a read-only observation
+/// service, decode limits, socket quotas and the shared drain flag. There is no
+/// [`crate::session::Stores`] here and no field from which one can be derived,
+/// which is what makes "a stream route cannot reach a write handle" a fact the
+/// compiler enforces rather than a fact the environment used to imply. Widening
+/// it is a visible diff in this file; see [`crate::capability`] for the whole
+/// argument.
 pub struct AppState {
-    /// Authenticated regional admission.
+    /// Authenticated regional admission, bound to the `RegionalStream` audience.
     pub edge: Arc<Edge>,
     /// Authoritative observation reader and stream engine.
     pub service: Arc<ObservationService>,
@@ -43,14 +53,25 @@ pub struct AppState {
     pub limits: RequestLimits,
     /// Per-task and per-workspace socket budgets.
     pub quotas: QuotaManager,
-    /// Process-wide drain signal.
+    /// Process-wide drain signal, shared with the session half and readiness.
     pub draining: Arc<AtomicBool>,
-    /// Immutable artifact identity.
-    pub release_digest: String,
 }
 
-/// Builds exactly the 24 generated NDJSON routes plus internal health.
-pub fn router(state: Arc<AppState>) -> Router {
+/// Builds exactly the 24 generated NDJSON routes.
+///
+/// Health is deliberately **not** mounted here. This function used to hand-roll
+/// `/internal/healthz` and `/internal/readyz` on the same two paths the shared
+/// [`aex_regional_http::health::router`] registers, which the session half
+/// already merges. Two routers offering the same method on the same path is a
+/// `Router::merge` panic on axum 0.8 — a start-up crash, not a duplicate
+/// endpoint — so the merged composition root mounts the shared pair once and
+/// this half reports drain through the shared [`aex_regional_http::health::Readiness`]
+/// drain signal instead of through a second copy of the same JSON body.
+///
+/// The [`Grant<StreamSocket>`] argument is unforgeable outside
+/// [`crate::capability::Composition`], so no library and no test helper can
+/// stand this router up without being handed one by the composition root.
+pub fn router(_grant: &Grant<StreamSocket>, state: Arc<AppState>) -> Router {
     let mut tree = Router::new();
     for id in RouteOwner::Stream.routes() {
         let descriptor = route(id);
@@ -64,13 +85,7 @@ pub fn router(state: Arc<AppState>) -> Router {
     // `ENVELOPE_BYTES` and would refuse a body the published contract admits
     // before this service's admission ever measures it.
     tree.layer(DefaultBodyLimit::max(ENVELOPE_BYTES))
-        .with_state(Arc::clone(&state))
-        .merge(
-            Router::new()
-                .route("/internal/healthz", get(healthz))
-                .route("/internal/readyz", get(readyz))
-                .with_state(state),
-        )
+        .with_state(state)
 }
 
 const fn method_filter(method: HttpMethod) -> MethodFilter {
@@ -91,6 +106,24 @@ async fn handle(
     body: Bytes,
 ) -> Response {
     let request_id = request_id(&headers);
+    // The drain asymmetry, stated rather than inherited.
+    //
+    // This half refuses a *new* socket the instant the drain flag rises; the
+    // shared `mount_unary::handle` the session half uses has no drain check at
+    // all and keeps serving. In two processes nobody could see that difference.
+    // In one process, sharing one flag, it is visible — so it is a decision:
+    //
+    // A new stream connection admitted during a drain would be a 15-minute lease
+    // handed out by a task with at most `AEX_DRAIN_DEADLINE_MS` left to live; it
+    // is refused so the client reconnects to a task that can honour it. A new
+    // unary request is milliseconds of work that finishes comfortably inside the
+    // same deadline, and refusing it would turn every rolling deployment into a
+    // burst of 503s during the window where the load balancer is still
+    // deregistering this target.
+    //
+    // Both halves are covered by the same `/internal/readyz` 503, which is what
+    // actually gets the target deregistered. This check is only about what to do
+    // with the requests that arrive before that finishes.
     if state.draining.load(Ordering::Acquire) {
         return unavailable(&request_id);
     }
@@ -212,37 +245,6 @@ fn unavailable(request_id: &RequestId) -> Response {
     )
 }
 
-async fn healthz(State(state): State<Arc<AppState>>) -> Response {
-    (
-        StatusCode::OK,
-        [(header::CACHE_CONTROL, "no-store")],
-        axum::Json(serde_json::json!({
-            "status": "healthy",
-            "releaseDigest": state.release_digest,
-            "unavailable": [],
-        })),
-    )
-        .into_response()
-}
-
-async fn readyz(State(state): State<Arc<AppState>>) -> Response {
-    let draining = state.draining.load(Ordering::Acquire);
-    (
-        if draining {
-            StatusCode::SERVICE_UNAVAILABLE
-        } else {
-            StatusCode::OK
-        },
-        [(header::CACHE_CONTROL, "no-store")],
-        axum::Json(serde_json::json!({
-            "status": if draining { "not_ready" } else { "ready" },
-            "releaseDigest": state.release_digest,
-            "unavailable": if draining { vec!["draining"] } else { Vec::<&str>::new() },
-        })),
-    )
-        .into_response()
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -255,7 +257,7 @@ mod tests {
     use regional_observation_api::ndjson;
 
     use super::{connection_class, render_frames};
-    use crate::{ConnectionClass, QuotaLimits, QuotaManager};
+    use crate::stream::{ConnectionClass, QuotaLimits, QuotaManager};
 
     #[tokio::test]
     async fn a_disconnect_releases_the_socket_quota_and_the_producer() {
@@ -312,22 +314,38 @@ mod tests {
         }
     }
 
+    /// The generated contract now names `session-stream-api` for both halves.
+    ///
+    /// Merging the two deployables into one unit forced this: the release graph
+    /// requires every `servingArtifact`/`servedArtifact` to resolve to a real
+    /// unit id, and `regional-stream` stopped being one the moment its row left
+    /// `release/units.toml`. What separates the two halves is therefore the
+    /// transport the contract already declares per route — which is why this
+    /// filter names the transport explicitly rather than letting an artifact
+    /// string stand in for a mount strategy.
     #[test]
     fn mounted_routes_match_the_generated_actual_mount_authority() {
         let registry: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../api/generated/registries/routes.json"
+            "../../../../api/generated/registries/routes.json"
         ))
         .expect("generated route registry");
         let generated: Vec<RouteId> = registry["routes"]
             .as_array()
             .expect("route rows")
             .iter()
-            .filter(|route| route["servedArtifact"] == "regional-stream")
+            .filter(|route| {
+                route["servedArtifact"] == "session-stream-api" && route["transport"] == "ndjson"
+            })
             .map(|route| {
                 RouteId::parse(route["operationId"].as_str().expect("operation id"))
                     .expect("generated operation id")
             })
             .collect();
         assert_eq!(RouteOwner::Stream.routes(), generated);
+        assert_eq!(
+            generated.len(),
+            24,
+            "the stream half mounts 24 NDJSON routes"
+        );
     }
 }

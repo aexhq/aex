@@ -7,7 +7,7 @@
 //! projection in the generated delivery registry.
 
 use aex_wire::error::PrecedenceStage;
-use aex_wire::routes::{Plane, RouteId, route};
+use aex_wire::routes::{Plane, RouteId, TransportKind, route};
 use aex_wire::server::RouteGroup;
 use aex_wire::types::Region;
 
@@ -40,12 +40,36 @@ impl RouteOwner {
     ];
 
     /// The deployable name this owner deploys as.
+    ///
+    /// [`Self::SessionApi`] and [`Self::Stream`] deploy as the *same* artifact:
+    /// they were merged into `session-stream-api` to halve the regional Fargate
+    /// floor. They remain two owners because they are two mount strategies — one
+    /// unary through [`crate::mount::mount_unary`], one long-lived NDJSON — and
+    /// because keeping the partition is what makes splitting them apart again a
+    /// unit-registry change rather than a contract change. Use [`Self::half`]
+    /// when a diagnostic needs to tell the two apart.
     #[must_use]
     pub const fn deployable(self) -> &'static str {
         match self {
-            Self::SessionApi => "regional-session-api",
+            Self::SessionApi | Self::Stream => "session-stream-api",
             Self::SecretApi => "regional-secret-api",
-            Self::Stream => "regional-stream",
+            Self::ObservationApi => "regional-observation-api",
+            Self::Otlp => "regional-otlp",
+        }
+    }
+
+    /// The stable spelling of this owner itself, which is unique per variant.
+    ///
+    /// [`Self::deployable`] is not: two owners share one artifact. A refusal that
+    /// says a route belongs to `session-stream-api` rather than to
+    /// `session-stream-api` helps nobody, so [`crate::mount::MountError`] names
+    /// this instead.
+    #[must_use]
+    pub const fn half(self) -> &'static str {
+        match self {
+            Self::SessionApi => "session-stream-api:unary",
+            Self::SecretApi => "regional-secret-api",
+            Self::Stream => "session-stream-api:ndjson",
             Self::ObservationApi => "regional-observation-api",
             Self::Otlp => "regional-otlp",
         }
@@ -94,6 +118,14 @@ impl RouteOwner {
 /// Resolves a generated route to its one planned regional deployable.
 ///
 /// Returns `None` for a central route, which no regional deployable may serve.
+///
+/// `session-stream-api` resolves to two owners, split by transport. That is the
+/// whole cost of merging the two deployables: the artifact string alone no
+/// longer identifies a mount strategy, so the transport the contract already
+/// declares is what separates the unary half from the NDJSON half. It is not a
+/// heuristic — [`TransportKind`] is generated per route from the same table, and
+/// `the_two_halves_partition_the_merged_artifact_by_transport` proves the split
+/// is total and disjoint.
 #[must_use]
 pub fn route_owner(id: RouteId) -> Option<RouteOwner> {
     let descriptor = route(id);
@@ -101,9 +133,11 @@ pub fn route_owner(id: RouteId) -> Option<RouteOwner> {
         return None;
     }
     match descriptor.serving_artifact {
-        "regional-session-api" => Some(RouteOwner::SessionApi),
+        "session-stream-api" => Some(match descriptor.transport {
+            TransportKind::Ndjson => RouteOwner::Stream,
+            TransportKind::Unary => RouteOwner::SessionApi,
+        }),
         "regional-secret-api" => Some(RouteOwner::SecretApi),
-        "regional-stream" => Some(RouteOwner::Stream),
         "regional-observation-api" => Some(RouteOwner::ObservationApi),
         "regional-otlp" => Some(RouteOwner::Otlp),
         _ => None,

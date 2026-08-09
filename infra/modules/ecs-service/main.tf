@@ -9,7 +9,7 @@ locals {
 # repository builds.
 #
 # The name is derived from the plane- and region-qualified family rather than
-# from `name`, because `name` is bare - `regional-stream` - and both planes live
+# from `name`, because `name` is bare - `session-stream-api` - and both planes live
 # in one account. Group names are unique per VPC, so the bare name would work
 # and would still read as though it named the only one.
 resource "aws_security_group" "task" {

@@ -112,14 +112,14 @@ variables {
   ]
 
   session_api = {
-    name               = "regional-session-api"
-    image              = "000000000000.dkr.ecr.eu-west-1.amazonaws.com/aex/regional-session-api@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    name               = "session-stream-api"
+    image              = "000000000000.dkr.ecr.eu-west-1.amazonaws.com/aex/session-stream-api@sha256:0000000000000000000000000000000000000000000000000000000000000000"
     cpu                = 1024
     memory             = 2048
     desired_count      = 2
     stop_timeout       = 30
     container_port     = 8080
-    log_group_name     = "/aex/prd/regional-session-api"
+    log_group_name     = "/aex/prd/session-stream-api"
     log_retention_days = 30
     execution_role_arn = "arn:aws:iam::000000000000:role/aex-prd-ecs-execution"
     env = {

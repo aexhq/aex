@@ -149,7 +149,15 @@ pub struct ObservationService {
     reader: ObservationReader,
     budget: aex_observation_query::plan::Budget,
     metric_scan: u64,
-    cursor_ring: CursorKeyRing,
+    /// Shared rather than owned.
+    ///
+    /// The ring carries zeroizing secret material and is deliberately not
+    /// `Clone`. A composition root that hosts more than one half — as
+    /// `session-stream-api` does, signing continuations on the unary side and
+    /// resuming them on the stream side — must give both halves the *same* ring:
+    /// reading the parameter twice would duplicate the secret and, during a key
+    /// rotation, could hand one half a ring the other half cannot verify against.
+    cursor_ring: std::sync::Arc<CursorKeyRing>,
     region: Region,
     stream: StreamPolicy,
 }
@@ -176,7 +184,7 @@ impl ObservationService {
         reader: ObservationReader,
         budget: aex_observation_query::plan::Budget,
         metric_scan: u64,
-        cursor_ring: CursorKeyRing,
+        cursor_ring: std::sync::Arc<CursorKeyRing>,
         region: Region,
         stream: StreamPolicy,
     ) -> Self {

@@ -37,8 +37,7 @@ servingArtifacts:
   regional-observation-api: regional
   regional-otlp: regional
   regional-secret-api: regional
-  regional-session-api: regional
-  regional-stream: regional
+  session-stream-api: regional
 
 # Planned delivery/test selection defaults. Most fragments are intended for one
 # release unit and one scenario family. The per-operation table below is
@@ -53,19 +52,19 @@ scenarioOwners:
   central.operations: { servingArtifact: central-control-api, scenarios: [SC-CONTROL-WORKSPACE] }
   central.organizations: { servingArtifact: central-control-api, scenarios: [SC-CONTROL-WORKSPACE] }
   central.workspaces: { servingArtifact: central-control-api, scenarios: [SC-CONTROL-WORKSPACE] }
-  regional.approvals: { servingArtifact: regional-session-api, scenarios: [SC-BRAIN-TURN] }
-  regional.files: { servingArtifact: regional-session-api, scenarios: [SC-CONTENT-LIFECYCLE] }
+  regional.approvals: { servingArtifact: session-stream-api, scenarios: [SC-BRAIN-TURN] }
+  regional.files: { servingArtifact: session-stream-api, scenarios: [SC-CONTENT-LIFECYCLE] }
   regional.observations: { servingArtifact: regional-observation-api, scenarios: [SC-OBSERVATION-QUERY] }
-  regional.operations: { servingArtifact: regional-session-api, scenarios: [SC-SESSION-TERMINAL] }
+  regional.operations: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-TERMINAL] }
   regional.otlp: { servingArtifact: regional-otlp, scenarios: [SC-OBSERVATION-ADMIT] }
-  regional.provider-credentials: { servingArtifact: regional-session-api, scenarios: [SC-SESSION-ADMIT] }
-  regional.registry: { servingArtifact: regional-session-api, scenarios: [SC-SESSION-ADMIT] }
+  regional.provider-credentials: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-ADMIT] }
+  regional.registry: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-ADMIT] }
   regional.secrets: { servingArtifact: regional-secret-api, scenarios: [SC-SECRET-CUSTODY] }
-  regional.sessions: { servingArtifact: regional-session-api, scenarios: [SC-SESSION-ADMIT, SC-SESSION-TERMINAL] }
+  regional.sessions: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-ADMIT, SC-SESSION-TERMINAL] }
   regional.telemetry-lifecycle: { servingArtifact: regional-observation-api, scenarios: [SC-OBSERVATION-EXPORT, SC-OBSERVATION-GAP] }
-  regional.uploads: { servingArtifact: regional-session-api, scenarios: [SC-CONTENT-LIFECYCLE] }
-  regional.usage: { servingArtifact: regional-session-api, scenarios: [SC-USAGE-SETTLE] }
-  regional.workspace: { servingArtifact: regional-session-api, scenarios: [SC-SESSION-ADMIT] }
+  regional.uploads: { servingArtifact: session-stream-api, scenarios: [SC-CONTENT-LIFECYCLE] }
+  regional.usage: { servingArtifact: session-stream-api, scenarios: [SC-USAGE-SETTLE] }
+  regional.workspace: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-ADMIT] }
 
 # Exceptions are keyed by operationId, never by path. The generator resolves
 # these into the runtime RouteDescriptor and the delivery registry together.
@@ -73,33 +72,33 @@ scenarioOwners:
 # in the same OpenAPI fragment. Secrets and provider credentials are split at
 # the plaintext-custody boundary.
 operationOwners:
-  observations_events_listen: { servingArtifact: regional-stream, scenarios: [SC-SESSION-STREAM] }
-  observations_events_stream: { servingArtifact: regional-stream, scenarios: [SC-SESSION-STREAM] }
-  observations_logs_listen: { servingArtifact: regional-stream, scenarios: [SC-SESSION-STREAM] }
-  observations_logs_stream: { servingArtifact: regional-stream, scenarios: [SC-SESSION-STREAM] }
-  observations_metrics_listen: { servingArtifact: regional-stream, scenarios: [SC-SESSION-STREAM] }
-  observations_metrics_stream: { servingArtifact: regional-stream, scenarios: [SC-SESSION-STREAM] }
-  observations_spans_listen: { servingArtifact: regional-stream, scenarios: [SC-SESSION-STREAM] }
-  observations_spans_stream: { servingArtifact: regional-stream, scenarios: [SC-SESSION-STREAM] }
-  observations_telemetry_listen: { servingArtifact: regional-stream, scenarios: [SC-SESSION-STREAM] }
-  observations_telemetry_stream: { servingArtifact: regional-stream, scenarios: [SC-SESSION-STREAM] }
-  observations_traces_listen: { servingArtifact: regional-stream, scenarios: [SC-SESSION-STREAM] }
-  observations_traces_stream: { servingArtifact: regional-stream, scenarios: [SC-SESSION-STREAM] }
+  observations_events_listen: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
+  observations_events_stream: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
+  observations_logs_listen: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
+  observations_logs_stream: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
+  observations_metrics_listen: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
+  observations_metrics_stream: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
+  observations_spans_listen: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
+  observations_spans_stream: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
+  observations_telemetry_listen: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
+  observations_telemetry_stream: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
+  observations_traces_listen: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
+  observations_traces_stream: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
   provider_credential_register: { servingArtifact: regional-secret-api, scenarios: [SC-SECRET-CUSTODY] }
-  secret_get: { servingArtifact: regional-session-api, scenarios: [SC-SECRET-CUSTODY] }
-  secrets_list: { servingArtifact: regional-session-api, scenarios: [SC-SECRET-CUSTODY] }
-  session_observations_events_listen: { servingArtifact: regional-stream, scenarios: [SC-SESSION-STREAM] }
-  session_observations_events_stream: { servingArtifact: regional-stream, scenarios: [SC-SESSION-STREAM] }
-  session_observations_logs_listen: { servingArtifact: regional-stream, scenarios: [SC-SESSION-STREAM] }
-  session_observations_logs_stream: { servingArtifact: regional-stream, scenarios: [SC-SESSION-STREAM] }
-  session_observations_metrics_listen: { servingArtifact: regional-stream, scenarios: [SC-SESSION-STREAM] }
-  session_observations_metrics_stream: { servingArtifact: regional-stream, scenarios: [SC-SESSION-STREAM] }
-  session_observations_spans_listen: { servingArtifact: regional-stream, scenarios: [SC-SESSION-STREAM] }
-  session_observations_spans_stream: { servingArtifact: regional-stream, scenarios: [SC-SESSION-STREAM] }
-  session_observations_telemetry_listen: { servingArtifact: regional-stream, scenarios: [SC-SESSION-STREAM] }
-  session_observations_telemetry_stream: { servingArtifact: regional-stream, scenarios: [SC-SESSION-STREAM] }
-  session_observations_traces_listen: { servingArtifact: regional-stream, scenarios: [SC-SESSION-STREAM] }
-  session_observations_traces_stream: { servingArtifact: regional-stream, scenarios: [SC-SESSION-STREAM] }
+  secret_get: { servingArtifact: session-stream-api, scenarios: [SC-SECRET-CUSTODY] }
+  secrets_list: { servingArtifact: session-stream-api, scenarios: [SC-SECRET-CUSTODY] }
+  session_observations_events_listen: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
+  session_observations_events_stream: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
+  session_observations_logs_listen: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
+  session_observations_logs_stream: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
+  session_observations_metrics_listen: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
+  session_observations_metrics_stream: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
+  session_observations_spans_listen: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
+  session_observations_spans_stream: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
+  session_observations_telemetry_listen: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
+  session_observations_telemetry_stream: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
+  session_observations_traces_listen: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
+  session_observations_traces_stream: { servingArtifact: session-stream-api, scenarios: [SC-SESSION-STREAM] }
 
 # Explicit architecture debt. Every entry names one exact operation whose
 # production handler is intentionally absent and why. The generator rejects an
@@ -225,7 +224,19 @@ servedOperations:
   regional-secret-api:
     - secret_delete
     - secret_revoke
-  regional-session-api:
+  session-stream-api:
+    - observations_events_listen
+    - observations_events_stream
+    - observations_logs_listen
+    - observations_logs_stream
+    - observations_metrics_listen
+    - observations_metrics_stream
+    - observations_spans_listen
+    - observations_spans_stream
+    - observations_telemetry_listen
+    - observations_telemetry_stream
+    - observations_traces_listen
+    - observations_traces_stream
     - provider_credential_get
     - provider_credential_revoke
     - provider_credentials_list
@@ -241,21 +252,6 @@ servedOperations:
     - secrets_list
     - session_approval_get
     - session_approvals_list
-    - session_run_get
-    - session_runs_list
-  regional-stream:
-    - observations_events_listen
-    - observations_events_stream
-    - observations_logs_listen
-    - observations_logs_stream
-    - observations_metrics_listen
-    - observations_metrics_stream
-    - observations_spans_listen
-    - observations_spans_stream
-    - observations_telemetry_listen
-    - observations_telemetry_stream
-    - observations_traces_listen
-    - observations_traces_stream
     - session_observations_events_listen
     - session_observations_events_stream
     - session_observations_logs_listen
@@ -268,3 +264,5 @@ servedOperations:
     - session_observations_telemetry_stream
     - session_observations_traces_listen
     - session_observations_traces_stream
+    - session_run_get
+    - session_runs_list

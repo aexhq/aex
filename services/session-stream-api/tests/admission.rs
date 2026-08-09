@@ -5,10 +5,10 @@ use aex_wire::idempotency::IdempotencyKey;
 use aex_wire::ids::{MessageId, PrefixedId, RunId, SessionId, Uuid7, WorkspaceId};
 use aex_wire::routes::{RouteId, TransportKind, route};
 use aex_wire::types::HttpMethod;
-use regional_session_api::admission::{
+use session_stream_api::session::admission::{
     AdmissionInput, Condition, Table, TransactionAction, compile_message_admission,
 };
-use regional_session_api::routes::session_route_ids;
+use session_stream_api::session::routes::session_route_ids;
 
 fn id<T: PrefixedId>(millis: u64, seed: u8) -> T {
     T::from_uuid7(Uuid7::compose(millis, [seed; 10]))

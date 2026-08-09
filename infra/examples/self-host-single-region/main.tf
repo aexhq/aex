@@ -75,7 +75,7 @@ module "ops_topic" {
 module "session_api_role" {
   source = "../../modules/iam-deployable-role"
 
-  deployable                  = "regional-session-api"
+  deployable                  = "session-stream-api"
   plane                       = var.plane
   region                      = var.region
   assume_principal            = var.session_api_grants.assume_principal
@@ -101,7 +101,7 @@ module "session_log_group" {
   tags           = var.tags
 }
 
-# `regional-session-api` is a Fargate service, not a function. This root stands
+# `session-stream-api` is a Fargate service, not a function. This root stands
 # it up with no public edge, exactly as it stood up the function with no API
 # gateway: a self-hoster puts their own ingress in front of it. `ecs-service`
 # rejects a health check grace period without a target group, which is why none

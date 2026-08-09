@@ -1,7 +1,7 @@
 [package]
-name = "aex-live-regional-session-api"
+name = "aex-live-session-stream-api"
 version = "0.1.0"
-description = "Live-test companion package for the `regional-session-api` deployable."
+description = "Live-test companion package for the `session-stream-api` deployable."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -16,7 +16,7 @@ workspace = true
 owner = "regional-services"
 role = "live_companion"
 artifact = "none"
-deployable = "regional-session-api"
+deployable = "session-stream-api"
 layers = ["smoke", "e2e"]
 concerns = ["fault", "security", "performance"]
 seams = ["aws.alb.framing", "aws.dynamodb.condition", "aws.dynamodb.streams", "aws.dynamodb.throughput", "aws.dynamodb.transact_write", "aws.dynamodb.ttl", "aws.iam.denial", "aws.kms.encryption_context", "aws.s3.bounded_get", "aws.s3.conditional_put", "aws.s3.multipart", "aws.s3.presigned_expiry", "aws.s3.sse_kms", "aws.s3.unversioned_delete"]

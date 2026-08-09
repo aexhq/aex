@@ -63,7 +63,7 @@ use aex_workspace_domain::upload::{Upload as StoredUpload, UploadState};
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt as _;
-use regional_session_api::handlers::{Dispatcher, Routes, Shared};
+use session_stream_api::session::handlers::{Dispatcher, Routes, Shared};
 use tower::ServiceExt as _;
 
 // --- fixtures -------------------------------------------------------------------
@@ -1003,11 +1003,16 @@ fn the_served_set_exactly_matches_the_generated_actual_mount_authority() {
         "../../../api/generated/registries/routes.json"
     ))
     .expect("generated route registry");
+    // Both halves of the merged deployable name the same artifact, so the
+    // transport is what selects the unary half. See
+    // `aex_regional_http::router::route_owner`.
     let generated: Vec<RouteId> = registry["routes"]
         .as_array()
         .expect("route rows")
         .iter()
-        .filter(|route| route["servedArtifact"] == "regional-session-api")
+        .filter(|route| {
+            route["servedArtifact"] == "session-stream-api" && route["transport"] != "ndjson"
+        })
         .map(|route| {
             RouteId::parse(route["operationId"].as_str().expect("operation id"))
                 .expect("generated operation id")

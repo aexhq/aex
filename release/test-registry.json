@@ -8,10 +8,10 @@
     "scenario_ownership": "present"
   },
   "totals": {
-    "awaiting_owner": 45,
+    "awaiting_owner": 44,
     "capacity_gates": 19,
-    "live_targets": 36,
-    "packages": 148,
+    "live_targets": 35,
+    "packages": 146,
     "seams_claimed": 33,
     "seams_declared": 35,
     "workloads": 8
@@ -623,7 +623,7 @@
         "owner": "regional-stores",
         "role": "adapter",
         "artifact": "none",
-        "live_suite": "aex-live-regional-session-api",
+        "live_suite": "aex-live-session-stream-api",
         "layers": [
           "unit",
           "integration"
@@ -1651,7 +1651,7 @@
         "owner": "regional-stores",
         "role": "adapter",
         "artifact": "none",
-        "live_suite": "aex-live-regional-session-api",
+        "live_suite": "aex-live-session-stream-api",
         "layers": [
           "unit",
           "integration"
@@ -1997,7 +1997,7 @@
         "owner": "regional-stores",
         "role": "adapter",
         "artifact": "none",
-        "live_suite": "aex-live-regional-session-api",
+        "live_suite": "aex-live-session-stream-api",
         "layers": [
           "unit",
           "integration"
@@ -2924,15 +2924,15 @@
       "unmapped_targets": [],
       "awaiting_owner": false
     },
-    "services/regional-session-api": {
-      "name": "regional-session-api",
+    "services/session-stream-api": {
+      "name": "session-stream-api",
       "kind": "cargo",
       "meta": {
         "owner": "regional-services",
         "role": "deployable",
         "artifact": "oci_image",
-        "deployable": "regional-session-api",
-        "live_suite": "aex-live-regional-session-api",
+        "deployable": "session-stream-api",
+        "live_suite": "aex-live-session-stream-api",
         "layers": [
           "unit",
           "smoke",
@@ -2947,6 +2947,7 @@
         "seams": [
           "aws.dynamodb.transact_write",
           "aws.dynamodb.condition",
+          "aws.dynamodb.streams",
           "aws.s3.conditional_put",
           "aws.iam.denial",
           "aws.alb.framing"
@@ -2961,47 +2962,7 @@
           "admission": "unit",
           "composition": "unit",
           "performance_contract": "e2e",
-          "served": "unit"
-        },
-        "not_applicable": {}
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": false
-    },
-    "services/regional-stream": {
-      "name": "regional-stream",
-      "kind": "cargo",
-      "meta": {
-        "owner": "regional-services",
-        "role": "deployable",
-        "artifact": "oci_image",
-        "deployable": "regional-stream",
-        "live_suite": "aex-live-regional-stream",
-        "layers": [
-          "unit",
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "contract",
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.dynamodb.streams",
-          "aws.alb.framing",
-          "aws.iam.denial"
-        ],
-        "security_tier": "public_edge",
-        "risk": [
-          "iam",
-          "untrusted_input"
-        ],
-        "scenarios": [],
-        "targets": {
-          "composition": "unit",
-          "performance_contract": "e2e",
+          "served": "unit",
           "streaming": "unit"
         },
         "not_applicable": {}
@@ -3991,89 +3952,6 @@
       "unmapped_targets": [],
       "awaiting_owner": true
     },
-    "tests/live/aex-live-regional-session-api": {
-      "name": "aex-live-regional-session-api",
-      "kind": "cargo",
-      "meta": {
-        "owner": "regional-services",
-        "role": "live_companion",
-        "artifact": "none",
-        "deployable": "regional-session-api",
-        "layers": [
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.alb.framing",
-          "aws.dynamodb.condition",
-          "aws.dynamodb.streams",
-          "aws.dynamodb.throughput",
-          "aws.dynamodb.transact_write",
-          "aws.dynamodb.ttl",
-          "aws.iam.denial",
-          "aws.kms.encryption_context",
-          "aws.s3.bounded_get",
-          "aws.s3.conditional_put",
-          "aws.s3.multipart",
-          "aws.s3.presigned_expiry",
-          "aws.s3.sse_kms",
-          "aws.s3.unversioned_delete"
-        ],
-        "security_tier": "public_edge",
-        "risk": [
-          "iam"
-        ],
-        "scenarios": [
-          "SC-REGIONAL-ADMISSION"
-        ],
-        "targets": {
-          "e2e": "e2e"
-        },
-        "not_applicable": {}
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": false
-    },
-    "tests/live/aex-live-regional-stream": {
-      "name": "aex-live-regional-stream",
-      "kind": "cargo",
-      "meta": {
-        "owner": "regional-services",
-        "role": "live_companion",
-        "artifact": "none",
-        "deployable": "regional-stream",
-        "layers": [
-          "smoke",
-          "e2e"
-        ],
-        "concerns": [
-          "fault",
-          "security",
-          "performance"
-        ],
-        "seams": [
-          "aws.alb.framing",
-          "aws.dynamodb.streams",
-          "aws.iam.denial"
-        ],
-        "security_tier": "public_edge",
-        "risk": [
-          "iam"
-        ],
-        "scenarios": [],
-        "targets": {},
-        "not_applicable": {
-          "targets": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
-        }
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": true
-    },
     "tests/live/aex-live-runtime-control-worker": {
       "name": "aex-live-runtime-control-worker",
       "kind": "cargo",
@@ -4147,6 +4025,54 @@
       },
       "unmapped_targets": [],
       "awaiting_owner": true
+    },
+    "tests/live/aex-live-session-stream-api": {
+      "name": "aex-live-session-stream-api",
+      "kind": "cargo",
+      "meta": {
+        "owner": "regional-services",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "session-stream-api",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.alb.framing",
+          "aws.dynamodb.condition",
+          "aws.dynamodb.streams",
+          "aws.dynamodb.throughput",
+          "aws.dynamodb.transact_write",
+          "aws.dynamodb.ttl",
+          "aws.iam.denial",
+          "aws.kms.encryption_context",
+          "aws.s3.bounded_get",
+          "aws.s3.conditional_put",
+          "aws.s3.multipart",
+          "aws.s3.presigned_expiry",
+          "aws.s3.sse_kms",
+          "aws.s3.unversioned_delete"
+        ],
+        "security_tier": "public_edge",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [
+          "SC-REGIONAL-ADMISSION"
+        ],
+        "targets": {
+          "e2e": "e2e"
+        },
+        "not_applicable": {}
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": false
     },
     "tests/live/aex-live-site": {
       "name": "aex-live-site",
@@ -5368,10 +5294,9 @@
     "aex-live-regional-otlp",
     "aex-live-regional-secret-api",
     "aex-live-regional-secret-key-admin",
-    "aex-live-regional-session-api",
-    "aex-live-regional-stream",
     "aex-live-runtime-control-worker",
     "aex-live-session-operation-worker",
+    "aex-live-session-stream-api",
     "aex-live-site",
     "aex-live-stripe-command-edge",
     "aex-live-stripe-webhook-edge",
@@ -5384,8 +5309,7 @@
     "aws.alb.framing": [
       "aex-live-central-control-api",
       "aex-live-central-identity-api",
-      "aex-live-regional-session-api",
-      "aex-live-regional-stream"
+      "aex-live-session-stream-api"
     ],
     "aws.aurora.serverless_v2": [
       "aex-live-central-control-api",
@@ -5403,9 +5327,9 @@
       "aex-live-regional-observation-api",
       "aex-live-regional-secret-api",
       "aex-live-regional-secret-key-admin",
-      "aex-live-regional-session-api",
       "aex-live-runtime-control-worker",
       "aex-live-session-operation-worker",
+      "aex-live-session-stream-api",
       "aex-live-usage-compute-worker",
       "aex-live-usage-storage-worker",
       "aex-live-usage-transfer-worker"
@@ -5413,31 +5337,30 @@
     "aws.dynamodb.streams": [
       "aex-live-observation-reconciler",
       "aex-live-regional-observation-api",
-      "aex-live-regional-session-api",
-      "aex-live-regional-stream",
+      "aex-live-session-stream-api",
       "aex-live-usage-compute-worker",
       "aex-live-usage-receipt-dispatcher",
       "aex-live-usage-storage-worker",
       "aex-live-usage-transfer-worker"
     ],
     "aws.dynamodb.throughput": [
-      "aex-live-regional-session-api"
+      "aex-live-session-stream-api"
     ],
     "aws.dynamodb.transact_write": [
       "aex-live-brain-mux",
       "aex-live-regional-capacity-controller",
       "aex-live-regional-observation-api",
       "aex-live-regional-otlp",
-      "aex-live-regional-session-api",
-      "aex-live-session-operation-worker"
+      "aex-live-session-operation-worker",
+      "aex-live-session-stream-api"
     ],
     "aws.dynamodb.ttl": [
       "aex-live-content-lifecycle-worker",
       "aex-live-observation-reconciler",
       "aex-live-regional-secret-api",
-      "aex-live-regional-session-api",
       "aex-live-runtime-control-worker",
-      "aex-live-session-operation-worker"
+      "aex-live-session-operation-worker",
+      "aex-live-session-stream-api"
     ],
     "aws.ecs.run_task": [
       "aex-live-brain-mux",
@@ -5468,10 +5391,9 @@
       "aex-live-regional-otlp",
       "aex-live-regional-secret-api",
       "aex-live-regional-secret-key-admin",
-      "aex-live-regional-session-api",
-      "aex-live-regional-stream",
       "aex-live-runtime-control-worker",
       "aex-live-session-operation-worker",
+      "aex-live-session-stream-api",
       "aex-live-stripe-command-edge",
       "aex-live-stripe-webhook-edge",
       "aex-live-usage-compute-worker",
@@ -5485,7 +5407,7 @@
     ],
     "aws.kms.encryption_context": [
       "aex-live-regional-secret-api",
-      "aex-live-regional-session-api"
+      "aex-live-session-stream-api"
     ],
     "aws.lambda.microvm": [
       "aex-live-brain-mux",
@@ -5506,28 +5428,28 @@
       "aex-live-usage-receipt-dispatcher"
     ],
     "aws.s3.bounded_get": [
-      "aex-live-regional-session-api"
+      "aex-live-session-stream-api"
     ],
     "aws.s3.conditional_put": [
       "aex-live-brain-mux",
       "aex-live-observation-reconciler",
       "aex-live-regional-observation-api",
-      "aex-live-regional-session-api",
+      "aex-live-session-stream-api",
       "aex-live-usage-storage-worker"
     ],
     "aws.s3.multipart": [
       "aex-live-observation-export-task",
-      "aex-live-regional-session-api"
+      "aex-live-session-stream-api"
     ],
     "aws.s3.presigned_expiry": [
-      "aex-live-regional-session-api"
+      "aex-live-session-stream-api"
     ],
     "aws.s3.sse_kms": [
-      "aex-live-regional-session-api"
+      "aex-live-session-stream-api"
     ],
     "aws.s3.unversioned_delete": [
       "aex-live-content-lifecycle-worker",
-      "aex-live-regional-session-api"
+      "aex-live-session-stream-api"
     ],
     "aws.sqs.fifo": [
       "aex-live-brain-mux",

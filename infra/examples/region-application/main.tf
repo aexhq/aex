@@ -9,20 +9,15 @@ module "cluster" {
   tags = var.tags
 }
 
-module "stream_log_group" {
+# One log group. `regional-session-api` and `regional-stream` merged into
+# `session-stream-api`, so the unary and NDJSON halves write to one stream and an
+# operator correlating a request with the socket it opened no longer has to join
+# two groups by timestamp.
+module "session_stream_log_group" {
   source = "../../modules/log-group"
 
-  name           = var.stream_service.log_group_name
-  retention_days = var.stream_service.log_retention_days
-  kms_key_arn    = var.kms_key_arn
-  tags           = var.tags
-}
-
-module "session_log_group" {
-  source = "../../modules/log-group"
-
-  name           = var.session_api.log_group_name
-  retention_days = var.session_api.log_retention_days
+  name           = var.session_stream_api.log_group_name
+  retention_days = var.session_stream_api.log_retention_days
   kms_key_arn    = var.kms_key_arn
   tags           = var.tags
 }
@@ -82,73 +77,65 @@ module "public_lb" {
   tags               = var.tags
 }
 
-# Two services, two target groups, and as many rules each as their pattern sets
-# need. Every regional first path segment has exactly one serving artifact, so
+# One service, one target group, and as many rules as the merged pattern set
+# needs. Every regional first path segment has exactly one serving artifact, so
 # no two rules here can both match one request and evaluation order decides
-# nothing; a priority is an address, not a tie-break. `regional-stream` is given
-# the 10s and `regional-session-api` the 20s, which leaves each service room to
-# add rules without reaching into the other's band. Were a pattern ever added
+# nothing; a priority is an address, not a tie-break. Were a pattern ever added
 # that a second rule could also match, the lower number would win, so a narrower
 # rule would have to hold a lower priority than the wider one.
-module "stream_target" {
+#
+# `/api/streams` and the unary prefixes used to be split across two target groups
+# because they were two deployables. They are one now, so the split would only
+# have cost a second group and a second idle task pair. The prefixes remain
+# disjoint in the contract, which is what would let a future root put them back
+# behind two target groups without touching a route.
+module "session_stream_target" {
   source = "../../modules/alb-service-target"
 
-  name                 = "${var.alb.name}-stream"
+  name                 = "${var.alb.name}-edge"
   listener_arn         = module.public_lb.listener_arn
   vpc_id               = var.vpc_id
-  target_port          = var.stream_service.container_port
-  rules                = var.stream_service.rules
+  target_port          = var.session_stream_api.container_port
+  rules                = var.session_stream_api.rules
   deregistration_delay = module.public_lb.deregistration_delay
   tags                 = var.tags
 }
 
-module "session_target" {
-  source = "../../modules/alb-service-target"
-
-  name                 = "${var.alb.name}-session"
-  listener_arn         = module.public_lb.listener_arn
-  vpc_id               = var.vpc_id
-  target_port          = var.session_api.container_port
-  rules                = var.session_api.rules
-  deregistration_delay = module.public_lb.deregistration_delay
-  tags                 = var.tags
-}
-
-module "stream_service" {
+module "session_stream_service" {
   source = "../../modules/ecs-service"
 
-  name                   = var.stream_service.name
-  task_definition_family = "aex-${var.plane}-${var.region}-${var.stream_service.name}"
+  name                   = var.session_stream_api.name
+  task_definition_family = "aex-${var.plane}-${var.region}-${var.session_stream_api.name}"
   cluster_arn            = module.cluster.arn
   cluster_name           = var.cluster_name
 
-  image          = var.stream_service.image
-  cpu            = var.stream_service.cpu
-  memory         = var.stream_service.memory
-  desired_count  = var.stream_service.desired_count
-  stop_timeout   = var.stream_service.stop_timeout
-  container_port = var.stream_service.container_port
+  image          = var.session_stream_api.image
+  cpu            = var.session_stream_api.cpu
+  memory         = var.session_stream_api.memory
+  desired_count  = var.session_stream_api.desired_count
+  stop_timeout   = var.session_stream_api.stop_timeout
+  container_port = var.session_stream_api.container_port
 
   # Both come from the target group in front of this service, so the load
   # balancer and the task cannot disagree about the drain window.
-  deregistration_delay = module.stream_target.deregistration_delay
-  target_group_arn     = module.stream_target.target_group_arn
+  deregistration_delay = module.session_stream_target.deregistration_delay
+  target_group_arn     = module.session_stream_target.target_group_arn
 
-  health_check_grace_period_seconds = var.stream_service.health_check_grace_period_seconds
+  health_check_grace_period_seconds = var.session_stream_api.health_check_grace_period_seconds
 
-  autoscaling_bounds  = var.stream_service.autoscaling_bounds
-  autoscaling_metrics = var.stream_service.autoscaling_metrics
+  autoscaling_bounds  = var.session_stream_api.autoscaling_bounds
+  autoscaling_metrics = var.session_stream_api.autoscaling_metrics
 
-  env                = var.stream_service.env
-  task_role_arn      = module.role["regional-stream"].role_arn
-  execution_role_arn = var.stream_service.execution_role_arn
+  env                = var.session_stream_api.env
+  task_role_arn      = module.role["session-stream-api"].role_arn
+  execution_role_arn = var.session_stream_api.execution_role_arn
   subnets            = var.private_subnet_ids
-  log_group_name     = module.stream_log_group.name
+  log_group_name     = module.session_stream_log_group.name
   region             = var.region
 
-  # Each service creates its own task group. The load balancer's group is the
-  # only source it admits, and the two endpoint handles are the whole of what it
-  # may reach outbound.
+  # One task group for one deployable. The load balancer's group is the only
+  # source it admits, and the two endpoint handles are the whole of what it may
+  # reach outbound.
   vpc_id                               = var.vpc_id
   load_balancer_security_group_ids     = [module.public_lb.security_group_id]
   interface_endpoint_security_group_id = var.interface_endpoint_security_group_id
@@ -157,42 +144,3 @@ module "stream_service" {
   tags = var.tags
 }
 
-module "session_service" {
-  source = "../../modules/ecs-service"
-
-  name                   = var.session_api.name
-  task_definition_family = "aex-${var.plane}-${var.region}-${var.session_api.name}"
-  cluster_arn            = module.cluster.arn
-  cluster_name           = var.cluster_name
-
-  image          = var.session_api.image
-  cpu            = var.session_api.cpu
-  memory         = var.session_api.memory
-  desired_count  = var.session_api.desired_count
-  stop_timeout   = var.session_api.stop_timeout
-  container_port = var.session_api.container_port
-
-  deregistration_delay = module.session_target.deregistration_delay
-  target_group_arn     = module.session_target.target_group_arn
-
-  health_check_grace_period_seconds = var.session_api.health_check_grace_period_seconds
-
-  autoscaling_bounds  = var.session_api.autoscaling_bounds
-  autoscaling_metrics = var.session_api.autoscaling_metrics
-
-  env                = var.session_api.env
-  task_role_arn      = module.role["regional-session-api"].role_arn
-  execution_role_arn = var.session_api.execution_role_arn
-  subnets            = var.private_subnet_ids
-  log_group_name     = module.session_log_group.name
-  region             = var.region
-
-  # A second task group, not a shared one. The two services are separate
-  # deployables and each admits the edge only on its own container port.
-  vpc_id                               = var.vpc_id
-  load_balancer_security_group_ids     = [module.public_lb.security_group_id]
-  interface_endpoint_security_group_id = var.interface_endpoint_security_group_id
-  gateway_endpoint_prefix_list_ids     = var.gateway_endpoint_prefix_list_ids
-
-  tags = var.tags
-}

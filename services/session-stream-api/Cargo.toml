@@ -1,0 +1,121 @@
+[package]
+name = "session-stream-api"
+version = "0.1.0"
+description = "Finite regional session API and long-lived NDJSON stream, composed into one deployable."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+autotests = false
+
+[lints]
+workspace = true
+
+[package.metadata.aex]
+owner = "regional-services"
+role = "deployable"
+artifact = "oci_image"
+deployable = "session-stream-api"
+live_suite = "aex-live-session-stream-api"
+layers = ["unit", "smoke", "e2e"]
+concerns = ["contract", "fault", "security", "performance"]
+seams = [
+    "aws.dynamodb.transact_write",
+    "aws.dynamodb.condition",
+    "aws.dynamodb.streams",
+    "aws.s3.conditional_put",
+    "aws.iam.denial",
+    "aws.alb.framing",
+]
+security_tier = "public_edge"
+risk = ["iam", "untrusted_input"]
+scenarios = []
+
+[package.metadata.aex.targets]
+admission = "unit"
+composition = "unit"
+served = "unit"
+streaming = "unit"
+performance_contract = "e2e"
+
+[[bin]]
+name = "session-stream-api"
+path = "src/main.rs"
+
+[dependencies]
+aws-config.workspace = true
+aws-sdk-dynamodb.workspace = true
+aws-sdk-dynamodbstreams.workspace = true
+# The client that invokes `central-authz`, not a hosting dependency: the
+# assertion exchange stays a direct Lambda invoke after this service moved off
+# Lambda hosting.
+aws-sdk-lambda.workspace = true
+aws-sdk-s3.workspace = true
+aws-sdk-ssm.workspace = true
+axum.workspace = true
+async-trait.workspace = true
+bytes.workspace = true
+futures.workspace = true
+tokio = { workspace = true, features = ["net"] }
+aex-content-domain = { path = "../../crates/aex-content-domain" }
+aex-operation-domain = { path = "../../crates/aex-operation-domain" }
+aex-content-dynamodb = { path = "../../crates/aex-content-dynamodb" }
+aex-registry-dynamodb = { path = "../../crates/aex-registry-dynamodb" }
+aex-runtime-activity-dynamodb = { path = "../../crates/aex-runtime-activity-dynamodb" }
+aex-secret-custody-dynamodb = { path = "../../crates/aex-secret-custody-dynamodb" }
+aex-work-dynamodb = { path = "../../crates/aex-work-dynamodb" }
+aex-observation-domain = { path = "../../crates/aex-observation-domain" }
+aex-observation-query = { path = "../../crates/aex-observation-query" }
+aex-observation-store-dynamodb = { path = "../../crates/aex-observation-store-dynamodb" }
+aex-regional-http = { path = "../../crates/aex-regional-http" }
+aex-session-dynamodb = { path = "../../crates/aex-session-dynamodb", default-features = false, features = [
+    "authz-projection",
+    "session-authority",
+] }
+aex-wire = { path = "../../crates/aex-wire" }
+aex-identity-domain = { path = "../../crates/aex-identity-domain" }
+aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }
+aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
+aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
+regional-observation-api = { path = "../regional-observation-api" }
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+aex-secret-domain = { path = "../../crates/aex-secret-domain" }
+aex-session-domain = { path = "../../crates/aex-session-domain" }
+aex-workspace-domain = { path = "../../crates/aex-workspace-domain" }
+aws-smithy-http-client.workspace = true
+aws-smithy-types.workspace = true
+axum.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+time.workspace = true
+tower.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "test-util"] }
+
+[[test]]
+name = "admission"
+path = "tests/admission.rs"
+
+[[test]]
+name = "composition"
+path = "tests/composition.rs"
+
+[[test]]
+name = "served"
+path = "tests/served.rs"
+
+[[test]]
+name = "streaming"
+path = "tests/streaming.rs"
+
+[[test]]
+name = "performance_contract"
+path = "tests/load.rs"

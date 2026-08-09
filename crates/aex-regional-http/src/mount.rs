@@ -215,8 +215,8 @@ where
             Some(actual) => {
                 return Err(MountError::WrongOwner {
                     route: id.as_str(),
-                    owner: actual.deployable(),
-                    deployable: owner.deployable(),
+                    owner: actual.half(),
+                    deployable: owner.half(),
                 });
             }
             None => {

@@ -1,7 +1,7 @@
 mock_provider "aws" {}
 
 variables {
-  name           = "/aex/dev/regional-stream"
+  name           = "/aex/dev/session-stream-api"
   retention_days = 30
   kms_key_arn    = "arn:aws:kms:eu-west-1:000000000000:key/00000000-0000-4000-8000-000000000000"
 }

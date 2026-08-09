@@ -1,15 +1,21 @@
 # `region-application`
 
-The releasable half of one region: two Fargate request-path services -
-`regional-stream` and `regional-session-api` - the operation queue and its
-stream pipe, and the one public load balancer both services sit behind.
+The releasable half of one region: one Fargate request-path service -
+`session-stream-api` - the operation queue and its stream pipe, and the one
+public load balancer it sits behind.
 
 Everything here is replaced on a deployment. Nothing here holds state, which is
 what makes it safe to plan and apply separately from `region-foundation`.
 
-`regional-session-api` was a Lambda. It is a Fargate service now, the same
-service class as `regional-stream`, carrying the same 1024/2048 task and the
-same production floor of two tasks that `release/units.toml` records for it.
+`regional-session-api` was a Lambda, then a Fargate service of the same class
+as `regional-stream`. The two are now one deployable, `session-stream-api`,
+carrying the 1024/2048 task and the production floor of two tasks that
+`release/units.toml` records for it. That floor used to be four: two idle
+listeners per region, each holding a task pair, for two services that shared a
+plane, a shape, a stop timeout, an authority set and a `central-authz`
+dependency. Both halves still exist in the contract as separately ownable route
+sets, so splitting them apart again is a second unit row rather than a route
+change.
 
 The drain window is wired rather than duplicated: each service's target group
 publishes `deregistration_delay` and the service behind it consumes that same
@@ -42,11 +48,11 @@ regional VPC stands up no NAT gateway.
 ## Two services, one listener
 
 `alb-public` owns the load balancer and the listener whose default action is a
-fixed 404. It owns no target group and no rule. Each service attaches through
-its own `alb-service-target`: one target group, and as many rules against it as
-that service's pattern set needs, each at an explicitly required priority.
-`regional-stream` is given the 10s and `regional-session-api` the 20s, so each
-can add rules without reaching into the other's band. Lower priorities are
+fixed 404. It owns no target group and no rule. The service attaches through
+`alb-service-target`: one target group, and as many rules against it as its
+pattern set needs, each at an explicitly required priority. The NDJSON half
+keeps the 10 band and the unary half the 20s, so the two remain legible in the
+listener even though one target group now serves both. Lower priorities are
 evaluated first, so a narrower rule must hold a lower number than any rule that
 would also match.
 
@@ -70,7 +76,7 @@ and the segment that told them apart came *after* a variable session id -
 routed only the part of the surface that did split and left `/api/sessions` out.
 The workspace-scoped observability routes had the same shape one level up:
 `/api/logs/query` was `regional-observation-api`'s and `/api/logs/stream` was
-`regional-stream`'s, discriminated by the last segment.
+the stream's, discriminated by the last segment.
 
 The API surface was changed instead. Every regional route now carries a first
 segment that names its owner, and `api/generated/registries/routes.json` is
@@ -78,8 +84,8 @@ where that is checked rather than asserted here:
 
 | Prefix | Owner | Regional routes |
 | --- | --- | --- |
-| `/api/sessions/`, `/api/workspace/`, `/api/operations/`, `/api/billing/` | `regional-session-api` | 61 |
-| `/api/streams/` | `regional-stream` | 24 |
+| `/api/sessions/`, `/api/workspace/`, `/api/operations/`, `/api/billing/` | `session-stream-api` (unary half) | 61 |
+| `/api/streams/` | `session-stream-api` (NDJSON half) | 24 |
 | `/api/observations/` | `regional-observation-api` | 27 |
 | `/api/secrets/` | `regional-secret-api` | 4 |
 | `/api/otlp/` | `regional-otlp` | 3 |
@@ -94,12 +100,12 @@ registry, not the path, is what binds an operation to its owner.
 
 Ownership is per *operation*, not per path, so a path can still lose only part
 of itself. `GET /api/workspace/secrets/{name}` is metadata and stays with
-`regional-session-api`; the `PUT` and `DELETE` on that same template carry
+`session-stream-api`; the `PUT` and `DELETE` on that same template carry
 plaintext and moved to `/api/secrets/{name}`. Nothing about the prefix property
 depends on that: both first segments still have exactly one owner.
 
 What is still *not* safe is matching on the trailing verb, as `/api/*/stream`
-and `/api/*/listen`. An ALB `*` matches across `/`, and `regional-session-api`
+and `/api/*/listen`. An ALB `*` matches across `/`, and `session-stream-api`
 serves `PUT /api/workspace/files/{name}` with a user-chosen name, so a file
 called `stream` would be routed to the wrong service. That shape is rejected on
 its merits, not on quota. The fixture asserts the inverse property directly: no
@@ -135,14 +141,14 @@ in any `.tf` file here.
 | `sqs-queue` | Session operation queue and its dead-letter queue. |
 | `dynamodb-stream-pipe` | Journal mutations to operation hints. |
 | `ecs-cluster` | The cluster both services run in. |
-| `log-group` | One group per service. |
+| `log-group` | One group for the one service; both halves write to it. |
 | `alb-public` | Public edge: load balancer, listeners, fixed 404 default. |
-| `alb-service-target` | One target group per service, with its listener rules. |
-| `ecs-service` | `regional-stream` and `regional-session-api`. |
+| `alb-service-target` | One target group, with its listener rules. |
+| `ecs-service` | `session-stream-api`. |
 
 ## Outputs
 
-`session_service_arn`, `operation_queue_arn`, `pipe_arn`, `stream_service_arn`,
+`session_stream_service_arn`, `operation_queue_arn`, `pipe_arn`,
 `public_dns_name`, `role_arns`.
 
 ## Test

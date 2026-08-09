@@ -1,7 +1,7 @@
 //! Stream origin, wake, quota, route and drain requirements.
 
 use aex_wire::routes::{RouteId, TransportKind, route};
-use regional_stream::{
+use session_stream_api::stream::{
     ConnectionClass, DrainCoordinator, QuotaLimits, QuotaManager, StreamOrigin, WakeMode,
     authoritative_after_wakes, stream_route_ids,
 };
@@ -79,11 +79,11 @@ fn drain_flips_readiness_and_preserves_each_exact_sent_cursor() {
 }
 
 #[test]
-fn regional_stream_owns_all_and_only_generated_ndjson_routes() {
+fn the_stream_half_owns_all_and_only_generated_ndjson_routes() {
     let routes = stream_route_ids();
     assert!(
         !routes.is_empty(),
-        "regional-stream owns no generated routes"
+        "the stream half owns no generated routes"
     );
     assert!(routes.contains(&RouteId::ObservationsEventsStream));
     assert!(routes.contains(&RouteId::SessionObservationsTelemetryListen));

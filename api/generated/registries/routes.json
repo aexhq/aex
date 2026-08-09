@@ -758,8 +758,8 @@
       "scenarios": [
         "SC-SESSION-STREAM"
       ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Listen for new workspace events observations.",
       "transport": "ndjson"
@@ -830,8 +830,8 @@
       "scenarios": [
         "SC-SESSION-STREAM"
       ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Stream workspace events observations from one origin.",
       "transport": "ndjson"
@@ -865,8 +865,8 @@
       "scenarios": [
         "SC-SESSION-STREAM"
       ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Listen for new workspace logs observations.",
       "transport": "ndjson"
@@ -937,8 +937,8 @@
       "scenarios": [
         "SC-SESSION-STREAM"
       ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Stream workspace logs observations from one origin.",
       "transport": "ndjson"
@@ -1010,8 +1010,8 @@
       "scenarios": [
         "SC-SESSION-STREAM"
       ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Listen for new workspace metrics observations.",
       "transport": "ndjson"
@@ -1082,8 +1082,8 @@
       "scenarios": [
         "SC-SESSION-STREAM"
       ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Stream workspace metrics observations from one origin.",
       "transport": "ndjson"
@@ -1117,8 +1117,8 @@
       "scenarios": [
         "SC-SESSION-STREAM"
       ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Listen for new workspace spans observations.",
       "transport": "ndjson"
@@ -1189,8 +1189,8 @@
       "scenarios": [
         "SC-SESSION-STREAM"
       ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Stream workspace spans observations from one origin.",
       "transport": "ndjson"
@@ -1224,8 +1224,8 @@
       "scenarios": [
         "SC-SESSION-STREAM"
       ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Listen for new workspace telemetry observations.",
       "transport": "ndjson"
@@ -1296,8 +1296,8 @@
       "scenarios": [
         "SC-SESSION-STREAM"
       ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Stream workspace telemetry observations from one origin.",
       "transport": "ndjson"
@@ -1331,8 +1331,8 @@
       "scenarios": [
         "SC-SESSION-STREAM"
       ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Listen for new workspace traces observations.",
       "transport": "ndjson"
@@ -1403,8 +1403,8 @@
       "scenarios": [
         "SC-SESSION-STREAM"
       ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Stream workspace traces observations from one origin.",
       "transport": "ndjson"
@@ -1653,8 +1653,8 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
-      "servedArtifact": "regional-session-api",
-      "servingArtifact": "regional-session-api",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Read one provider-credential binding.",
       "transport": "unary"
@@ -1724,8 +1724,8 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
-      "servedArtifact": "regional-session-api",
-      "servingArtifact": "regional-session-api",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Revoke a provider-credential binding.",
       "transport": "unary"
@@ -1761,8 +1761,8 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
-      "servedArtifact": "regional-session-api",
-      "servingArtifact": "regional-session-api",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "List provider-credential binding metadata.",
       "transport": "unary"
@@ -1796,8 +1796,8 @@
       "scenarios": [
         "SC-SESSION-TERMINAL"
       ],
-      "servedArtifact": "regional-session-api",
-      "servingArtifact": "regional-session-api",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Request cancellation of a regional operation.",
       "transport": "unary"
@@ -1830,8 +1830,8 @@
       "scenarios": [
         "SC-SESSION-TERMINAL"
       ],
-      "servedArtifact": "regional-session-api",
-      "servingArtifact": "regional-session-api",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Read one regional durable operation.",
       "transport": "unary"
@@ -1869,8 +1869,8 @@
       "scenarios": [
         "SC-SESSION-TERMINAL"
       ],
-      "servedArtifact": "regional-session-api",
-      "servingArtifact": "regional-session-api",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "List regional durable operations.",
       "transport": "unary"
@@ -1904,7 +1904,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 204,
       "summary": "Delete one registered entry from files.",
       "transport": "unary"
@@ -1943,7 +1943,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 201,
       "summary": "Mint a download grant for a registered file.",
       "transport": "unary"
@@ -1978,7 +1978,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Read one registered entry from files.",
       "transport": "unary"
@@ -2013,8 +2013,8 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
-      "servedArtifact": "regional-session-api",
-      "servingArtifact": "regional-session-api",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "List registered files.",
       "transport": "unary"
@@ -2053,7 +2053,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Replace one registered entry in files.",
       "transport": "unary"
@@ -2087,7 +2087,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 204,
       "summary": "Delete one registered entry from instructions.",
       "transport": "unary"
@@ -2122,7 +2122,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Read one registered entry from instructions.",
       "transport": "unary"
@@ -2157,8 +2157,8 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
-      "servedArtifact": "regional-session-api",
-      "servingArtifact": "regional-session-api",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "List registered instructions.",
       "transport": "unary"
@@ -2197,7 +2197,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Replace one registered entry in instructions.",
       "transport": "unary"
@@ -2231,7 +2231,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 204,
       "summary": "Delete one registered entry from MCP servers.",
       "transport": "unary"
@@ -2266,7 +2266,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Read one registered entry from MCP servers.",
       "transport": "unary"
@@ -2301,8 +2301,8 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
-      "servedArtifact": "regional-session-api",
-      "servingArtifact": "regional-session-api",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "List registered MCP servers.",
       "transport": "unary"
@@ -2341,7 +2341,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Replace one registered entry in MCP servers.",
       "transport": "unary"
@@ -2375,7 +2375,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 204,
       "summary": "Delete one registered entry from skills.",
       "transport": "unary"
@@ -2410,7 +2410,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Read one registered entry from skills.",
       "transport": "unary"
@@ -2445,8 +2445,8 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
-      "servedArtifact": "regional-session-api",
-      "servingArtifact": "regional-session-api",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "List registered skills.",
       "transport": "unary"
@@ -2485,7 +2485,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Replace one registered entry in skills.",
       "transport": "unary"
@@ -2519,7 +2519,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 204,
       "summary": "Delete one registered entry from tools.",
       "transport": "unary"
@@ -2554,7 +2554,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Read one registered entry from tools.",
       "transport": "unary"
@@ -2589,8 +2589,8 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
-      "servedArtifact": "regional-session-api",
-      "servingArtifact": "regional-session-api",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "List registered tools.",
       "transport": "unary"
@@ -2629,7 +2629,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Replace one registered entry in tools.",
       "transport": "unary"
@@ -2697,8 +2697,8 @@
       "scenarios": [
         "SC-SECRET-CUSTODY"
       ],
-      "servedArtifact": "regional-session-api",
-      "servingArtifact": "regional-session-api",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Read one secret metadata record.",
       "transport": "unary"
@@ -2806,8 +2806,8 @@
       "scenarios": [
         "SC-SECRET-CUSTODY"
       ],
-      "servedArtifact": "regional-session-api",
-      "servingArtifact": "regional-session-api",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "List secret metadata; values are never readable.",
       "transport": "unary"
@@ -2844,8 +2844,8 @@
       "scenarios": [
         "SC-BRAIN-TURN"
       ],
-      "servedArtifact": "regional-session-api",
-      "servingArtifact": "regional-session-api",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Read one approval and its bound-call record.",
       "transport": "unary"
@@ -2887,7 +2887,7 @@
       "scenarios": [
         "SC-BRAIN-TURN"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Decide a pending approval.",
       "transport": "unary"
@@ -2926,8 +2926,8 @@
       "scenarios": [
         "SC-BRAIN-TURN"
       ],
-      "servedArtifact": "regional-session-api",
-      "servingArtifact": "regional-session-api",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "List the approvals of a session.",
       "transport": "unary"
@@ -2970,7 +2970,7 @@
         "SC-SESSION-ADMIT",
         "SC-SESSION-TERMINAL"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 202,
       "summary": "Admit the durable clone operation.",
       "transport": "unary"
@@ -3014,7 +3014,7 @@
         "SC-SESSION-ADMIT",
         "SC-SESSION-TERMINAL"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 201,
       "summary": "Create a session.",
       "transport": "unary"
@@ -3054,7 +3054,7 @@
         "SC-SESSION-ADMIT",
         "SC-SESSION-TERMINAL"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 202,
       "summary": "Admit the durable credential-rebind operation.",
       "transport": "unary"
@@ -3098,7 +3098,7 @@
       "scenarios": [
         "SC-CONTENT-LIFECYCLE"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 201,
       "summary": "Mint a download grant for a live workspace file.",
       "transport": "unary"
@@ -3139,7 +3139,7 @@
       "scenarios": [
         "SC-CONTENT-LIFECYCLE"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "List live workspace files, optionally waking a retained session.",
       "transport": "unary"
@@ -3180,7 +3180,7 @@
       "scenarios": [
         "SC-CONTENT-LIFECYCLE"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Stat one live workspace file.",
       "transport": "unary"
@@ -3221,7 +3221,7 @@
       "scenarios": [
         "SC-CONTENT-LIFECYCLE"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 201,
       "summary": "Mint a download grant for a persisted session file.",
       "transport": "unary"
@@ -3259,7 +3259,7 @@
       "scenarios": [
         "SC-CONTENT-LIFECYCLE"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "List persisted session files; an observational read.",
       "transport": "unary"
@@ -3297,7 +3297,7 @@
       "scenarios": [
         "SC-CONTENT-LIFECYCLE"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Stat one persisted session file.",
       "transport": "unary"
@@ -3334,7 +3334,7 @@
         "SC-SESSION-ADMIT",
         "SC-SESSION-TERMINAL"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Read one session, its deleting resource, or its tombstone.",
       "transport": "unary"
@@ -3377,7 +3377,7 @@
         "SC-SESSION-ADMIT",
         "SC-SESSION-TERMINAL"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 201,
       "summary": "Admit a message and queue or start its run.",
       "transport": "unary"
@@ -3418,7 +3418,7 @@
         "SC-SESSION-ADMIT",
         "SC-SESSION-TERMINAL"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "List the messages of a session.",
       "transport": "unary"
@@ -3456,8 +3456,8 @@
       "scenarios": [
         "SC-SESSION-STREAM"
       ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Listen for new session events observations.",
       "transport": "ndjson"
@@ -3536,8 +3536,8 @@
       "scenarios": [
         "SC-SESSION-STREAM"
       ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Stream session events observations from one origin.",
       "transport": "ndjson"
@@ -3575,8 +3575,8 @@
       "scenarios": [
         "SC-SESSION-STREAM"
       ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Listen for new session logs observations.",
       "transport": "ndjson"
@@ -3655,8 +3655,8 @@
       "scenarios": [
         "SC-SESSION-STREAM"
       ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Stream session logs observations from one origin.",
       "transport": "ndjson"
@@ -3736,8 +3736,8 @@
       "scenarios": [
         "SC-SESSION-STREAM"
       ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Listen for new session metrics observations.",
       "transport": "ndjson"
@@ -3816,8 +3816,8 @@
       "scenarios": [
         "SC-SESSION-STREAM"
       ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Stream session metrics observations from one origin.",
       "transport": "ndjson"
@@ -3855,8 +3855,8 @@
       "scenarios": [
         "SC-SESSION-STREAM"
       ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Listen for new session spans observations.",
       "transport": "ndjson"
@@ -3935,8 +3935,8 @@
       "scenarios": [
         "SC-SESSION-STREAM"
       ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Stream session spans observations from one origin.",
       "transport": "ndjson"
@@ -3974,8 +3974,8 @@
       "scenarios": [
         "SC-SESSION-STREAM"
       ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Listen for new session telemetry observations.",
       "transport": "ndjson"
@@ -4054,8 +4054,8 @@
       "scenarios": [
         "SC-SESSION-STREAM"
       ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Stream session telemetry observations from one origin.",
       "transport": "ndjson"
@@ -4131,8 +4131,8 @@
       "scenarios": [
         "SC-SESSION-STREAM"
       ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Listen for new session traces observations.",
       "transport": "ndjson"
@@ -4211,8 +4211,8 @@
       "scenarios": [
         "SC-SESSION-STREAM"
       ],
-      "servedArtifact": "regional-stream",
-      "servingArtifact": "regional-stream",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Stream session traces observations from one origin.",
       "transport": "ndjson"
@@ -4255,7 +4255,7 @@
         "SC-SESSION-ADMIT",
         "SC-SESSION-TERMINAL"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 202,
       "summary": "Admit the durable persist operation.",
       "transport": "unary"
@@ -4294,7 +4294,7 @@
         "SC-SESSION-ADMIT",
         "SC-SESSION-TERMINAL"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 202,
       "summary": "Admit the durable purge operation. Purge is irreversible.",
       "transport": "unary"
@@ -4335,7 +4335,7 @@
         "SC-SESSION-ADMIT",
         "SC-SESSION-TERMINAL"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 202,
       "summary": "Admit the durable restore operation, which is legal only inside the recovery window.",
       "transport": "unary"
@@ -4372,8 +4372,8 @@
         "SC-SESSION-ADMIT",
         "SC-SESSION-TERMINAL"
       ],
-      "servedArtifact": "regional-session-api",
-      "servingArtifact": "regional-session-api",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Read one run.",
       "transport": "unary"
@@ -4413,8 +4413,8 @@
         "SC-SESSION-ADMIT",
         "SC-SESSION-TERMINAL"
       ],
-      "servedArtifact": "regional-session-api",
-      "servingArtifact": "regional-session-api",
+      "servedArtifact": "session-stream-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "List the runs of a session.",
       "transport": "unary"
@@ -4452,7 +4452,7 @@
         "SC-SESSION-ADMIT",
         "SC-SESSION-TERMINAL"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 202,
       "summary": "Admit the durable stop operation.",
       "transport": "unary"
@@ -4734,7 +4734,7 @@
         "SC-SESSION-ADMIT",
         "SC-SESSION-TERMINAL"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 202,
       "summary": "Admit the durable trash operation, which starts the recovery window.",
       "transport": "unary"
@@ -4774,7 +4774,7 @@
         "SC-SESSION-ADMIT",
         "SC-SESSION-TERMINAL"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 202,
       "summary": "Admit the durable workspace-discard operation.",
       "transport": "unary"
@@ -4812,7 +4812,7 @@
         "SC-SESSION-ADMIT",
         "SC-SESSION-TERMINAL"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "List sessions in the workspace.",
       "transport": "unary"
@@ -5069,7 +5069,7 @@
       "scenarios": [
         "SC-CONTENT-LIFECYCLE"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 204,
       "summary": "Abort a staged upload.",
       "transport": "unary"
@@ -5108,7 +5108,7 @@
       "scenarios": [
         "SC-CONTENT-LIFECYCLE"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Complete a staged upload.",
       "transport": "unary"
@@ -5143,7 +5143,7 @@
       "scenarios": [
         "SC-CONTENT-LIFECYCLE"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 201,
       "summary": "Stage a large registered-resource value.",
       "transport": "unary"
@@ -5181,7 +5181,7 @@
       "scenarios": [
         "SC-CONTENT-LIFECYCLE"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Mint presigned PUT grants for the named parts.",
       "transport": "unary"
@@ -5218,7 +5218,7 @@
       "scenarios": [
         "SC-USAGE-SETTLE"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Query rated usage for this workspace.",
       "transport": "unary"
@@ -5289,7 +5289,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Read the workspace this credential is pinned to.",
       "transport": "unary"
@@ -5399,7 +5399,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Read one effective workspace safety limit.",
       "transport": "unary"
@@ -5434,7 +5434,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
-      "servingArtifact": "regional-session-api",
+      "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "List the effective workspace safety limits.",
       "transport": "unary"

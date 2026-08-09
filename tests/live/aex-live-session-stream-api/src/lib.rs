@@ -1,4 +1,4 @@
-//! Live-test companion package for the `regional-session-api` deployable.
+//! Live-test companion package for the `session-stream-api` deployable.
 //!
 //! Primary live concerns: the admission transaction, auth assertion, idempotency, run
 //! terminal barrier and `DynamoDB`/`S3` roles.

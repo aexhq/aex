@@ -20,6 +20,7 @@ pub mod capability;
 pub mod config;
 pub mod context;
 pub mod cursor;
+pub mod drain;
 pub mod edge;
 pub mod envelope;
 pub mod error;
@@ -40,6 +41,9 @@ pub use capability::{CompositionManifest, admit};
 pub use config::{Environment, Lookup, RegionalHttpConfigError};
 pub use context::{EffectiveLimits, RegionalAuthorization, RequestContext};
 pub use cursor::{CursorBinding, decode, encode};
+pub use drain::{
+    DRAIN_EXIT_MARGIN_MS, FARGATE_STOP_TIMEOUT_S, MAX_DRAIN_DEADLINE_MS, MIN_DRAIN_DEADLINE_MS,
+};
 pub use edge::{
     EdgeBinding, EdgeClock, ProjectedState, ProjectionError, ProjectionReader, RegionalEdge,
     SystemClock,

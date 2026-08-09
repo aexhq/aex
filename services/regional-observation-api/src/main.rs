@@ -201,7 +201,7 @@ pub async fn run(config: Config) -> Result<(), RegionalObservationApiRunError> {
         reader,
         config.budget,
         config.metric_aggregate_scan,
-        ring,
+        Arc::new(ring),
         config.region,
         StreamPolicy::new(Arc::new(EdgeRevalidator {
             edge: Arc::clone(&edge),

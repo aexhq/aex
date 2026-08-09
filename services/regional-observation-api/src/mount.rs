@@ -433,7 +433,7 @@ mod tests {
             reader,
             Budget::default(),
             1,
-            ring,
+            Arc::new(ring),
             Region::EuWest1,
             StreamPolicy::new(Arc::new(RefusingRevalidator)),
         );

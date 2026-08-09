@@ -4,7 +4,7 @@ use aex_regional_http::idempotency::IdempotencyIdentity;
 use aex_wire::ids::{MessageId, RunId, SessionId, WorkspaceId};
 use sha2::Digest as _;
 
-use crate::wire_pending::TransactionPlan;
+use crate::session::wire_pending::TransactionPlan;
 
 /// One of the three authority tables in admission.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

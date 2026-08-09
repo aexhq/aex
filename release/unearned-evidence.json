@@ -218,13 +218,6 @@
   },
   {
     "reason_class": "awaiting_owner",
-    "subject": "tests/live/aex-live-regional-stream",
-    "owner": "regional-services",
-    "blocking_rule": "aex-empty-unit",
-    "detail": "awaiting the regional-services stream; live evidence cannot be earned before deployment (OD-07)"
-  },
-  {
-    "reason_class": "awaiting_owner",
     "subject": "tests/live/aex-live-session-operation-worker",
     "owner": "regional-services",
     "blocking_rule": "aex-empty-unit",
@@ -354,7 +347,7 @@
     "subject": "LOAD-REGIONAL-ADMISSION",
     "owner": "regional-stores",
     "blocking_rule": "aex-workload-unowned",
-    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-regional-session-api`"
+    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-session-stream-api`"
   },
   {
     "reason_class": "pending_workload",
@@ -368,14 +361,14 @@
     "subject": "PERF-BASELINE-CODECS",
     "owner": "contracts",
     "blocking_rule": "aex-workload-unowned",
-    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-regional-session-api`"
+    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-session-stream-api`"
   },
   {
     "reason_class": "pending_workload",
     "subject": "PERF-BASELINE-JOURNAL-FOLD",
     "owner": "regional-domains",
     "blocking_rule": "aex-workload-unowned",
-    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-regional-session-api`"
+    "detail": "no descriptor under tests/load/workloads implements this gate on `aex-live-session-stream-api`"
   },
   {
     "reason_class": "requires_deployment",
@@ -596,28 +589,14 @@
   },
   {
     "reason_class": "requires_deployment",
-    "subject": "services/regional-session-api",
+    "subject": "services/session-stream-api",
     "owner": "regional-services",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `e2e` needs a deployed artifact (OD-07)"
   },
   {
     "reason_class": "requires_deployment",
-    "subject": "services/regional-session-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
-  },
-  {
-    "reason_class": "requires_deployment",
-    "subject": "services/regional-stream",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
-  },
-  {
-    "reason_class": "requires_deployment",
-    "subject": "services/regional-stream",
+    "subject": "services/session-stream-api",
     "owner": "regional-services",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `smoke` needs a deployed artifact (OD-07)"
@@ -1002,34 +981,6 @@
   },
   {
     "reason_class": "requires_deployment",
-    "subject": "tests/live/aex-live-regional-session-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
-  },
-  {
-    "reason_class": "requires_deployment",
-    "subject": "tests/live/aex-live-regional-session-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
-  },
-  {
-    "reason_class": "requires_deployment",
-    "subject": "tests/live/aex-live-regional-stream",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
-  },
-  {
-    "reason_class": "requires_deployment",
-    "subject": "tests/live/aex-live-regional-stream",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
-  },
-  {
-    "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-runtime-control-worker",
     "owner": "regional-services",
     "blocking_rule": "aex-unearned-evidence",
@@ -1052,6 +1003,20 @@
   {
     "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-session-operation-worker",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-session-stream-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-session-stream-api",
     "owner": "regional-services",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `smoke` needs a deployed artifact (OD-07)"
@@ -2234,59 +2199,45 @@
   },
   {
     "reason_class": "requires_live_seam",
-    "subject": "services/regional-session-api",
+    "subject": "services/session-stream-api",
     "owner": "regional-services",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.alb.framing` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
-    "subject": "services/regional-session-api",
+    "subject": "services/session-stream-api",
     "owner": "regional-services",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
-    "subject": "services/regional-session-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.dynamodb.transact_write` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "services/regional-session-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "services/regional-session-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.s3.conditional_put` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "services/regional-stream",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.alb.framing` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "services/regional-stream",
+    "subject": "services/session-stream-api",
     "owner": "regional-services",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.dynamodb.streams` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
-    "subject": "services/regional-stream",
+    "subject": "services/session-stream-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.transact_write` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/session-stream-api",
     "owner": "regional-services",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/session-stream-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.conditional_put` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",
@@ -2976,125 +2927,6 @@
   },
   {
     "reason_class": "requires_live_seam",
-    "subject": "tests/live/aex-live-regional-session-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.alb.framing` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "tests/live/aex-live-regional-session-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "tests/live/aex-live-regional-session-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.dynamodb.streams` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "tests/live/aex-live-regional-session-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.dynamodb.throughput` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "tests/live/aex-live-regional-session-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.dynamodb.transact_write` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "tests/live/aex-live-regional-session-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.dynamodb.ttl` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "tests/live/aex-live-regional-session-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "tests/live/aex-live-regional-session-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.kms.encryption_context` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "tests/live/aex-live-regional-session-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.s3.bounded_get` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "tests/live/aex-live-regional-session-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.s3.conditional_put` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "tests/live/aex-live-regional-session-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.s3.multipart` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "tests/live/aex-live-regional-session-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.s3.presigned_expiry` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "tests/live/aex-live-regional-session-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.s3.sse_kms` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "tests/live/aex-live-regional-session-api",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.s3.unversioned_delete` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "tests/live/aex-live-regional-stream",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.alb.framing` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "tests/live/aex-live-regional-stream",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.dynamodb.streams` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "tests/live/aex-live-regional-stream",
-    "owner": "regional-services",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
     "subject": "tests/live/aex-live-runtime-control-worker",
     "owner": "regional-services",
     "blocking_rule": "aex-unearned-evidence",
@@ -3162,6 +2994,104 @@
     "owner": "regional-services",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `aws.sqs.fifo` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-session-stream-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.alb.framing` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-session-stream-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-session-stream-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.streams` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-session-stream-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.throughput` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-session-stream-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.transact_write` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-session-stream-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.ttl` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-session-stream-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-session-stream-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.kms.encryption_context` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-session-stream-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.bounded_get` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-session-stream-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.conditional_put` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-session-stream-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.multipart` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-session-stream-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.presigned_expiry` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-session-stream-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.sse_kms` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-session-stream-api",
+    "owner": "regional-services",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.s3.unversioned_delete` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",

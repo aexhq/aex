@@ -9,7 +9,7 @@
 #
 # Every row that runs on Lambda or Fargate now carries its shape. Two of them
 # the accepted design pins outright (`brain-mux` stop timeout 120 s and a
-# production floor of two tasks, `regional-stream` stop timeout 30 s); the rest
+# production floor of two tasks, `session-stream-api` stop timeout 30 s); the rest
 # are derived from the shape a peer doing the same kind of work already carries,
 # and each says which peer and why in the comment above it. The reserved
 # concurrencies sum to 473 in the central plane
@@ -413,35 +413,57 @@ port = 0
 
 # --- regional plane: request APIs ---------------------------------------------
 
+# `regional-session-api` and `regional-stream` merged here. Both were long-lived
+# regional request-path edges on the same plane with the same task shape, the
+# same stop timeout, the same `central-authz` dependency and the same authority
+# tables, and each carried a production floor of two tasks. One deployable makes
+# that floor two tasks instead of four.
+#
+# The merge is a deployment change and not a contract change: `RouteOwner::SessionApi`
+# and `RouteOwner::Stream` both survive, the generated `servingArtifact` strings
+# are untouched, and the two route sets are mounted separately and joined with
+# `Router::merge` over URL prefixes that were already disjoint. Splitting them
+# back apart needs a new unit row and nothing else.
+#
+# `required_receipts` is the union of the two rows it replaces: the session half
+# owed `conformance` and the stream half owed `property`, and merging the
+# deployables must not quietly retire either.
 [[unit]]
-id = "regional-session-api"
+id = "session-stream-api"
 kind = "rust-oci-service"
 plane = "regional"
-package = "regional-session-api"
-bin = "regional-session-api"
+package = "session-stream-api"
+bin = "session-stream-api"
 target = "aarch64-unknown-linux-gnu.2.34"
 profile = "release"
 form = "oci-image"
 base_image = "public.ecr.aws/amazonlinux/amazonlinux:2023-minimal@sha256:f536dd770d9f7065461c786418265a13f5ba548a11a57bbbf360e677b811ed39"
-config_env_namespace = "AEX_REGIONAL_SESSION_"
+config_env_namespace = "AEX_REGIONAL_SESSION_STREAM_"
 config_schema_version = 1
 health_path = "/internal/healthz"
 ready_path = "/internal/readyz"
-required_receipts = ["unit", "contract", "conformance", "lint", "package-integrity"]
-alarm_spec = "regional-session-api"
-live_suite = "aex-live-regional-session-api"
+required_receipts = [
+    "unit",
+    "contract",
+    "conformance",
+    "property",
+    "lint",
+    "package-integrity",
+]
+alarm_spec = "session-stream-api"
+live_suite = "aex-live-session-stream-api"
 
-# Derived from `regional-stream`, the other long-lived regional request-path
-# service: same service class, same plane, so it carries the same 1024/2048 task
-# and the same production floor of two tasks rather than a separately guessed
-# capacity. The 61 generated routes and the one DynamoDB transaction per mutation
-# are per-request work, not per-task work, so what the task must hold is the
-# transaction compiler and the JSON codec, which is what `regional-stream`'s
-# memory already covers. The 30 s stop timeout is the drain deadline: ECS sends
-# SIGTERM and kills the task 30 s later, so the process's own
-# `AEX_SESSION_DRAIN_DEADLINE_MS` is set below it and the task finishes its
-# in-flight requests and exits on its own terms rather than being killed
-# mid-transaction.
+# The one long-lived multi-socket process besides the mux, now also carrying the
+# finite API. The 61 generated unary routes and the one DynamoDB transaction per
+# mutation are per-request work rather than per-task work, so what the task must
+# hold is the transaction compiler, the JSON codec and the socket buffers — which
+# is what this 1024/2048 shape already covered for the stream alone.
+#
+# The 30 s stop timeout is the drain deadline, and that relationship is now a
+# start-up refusal rather than a comment: `aex_regional_http::drain` derives the
+# admitted `AEX_DRAIN_DEADLINE_MS` ceiling from this number, so a deadline that
+# could never fire before SIGKILL refuses the process instead of being silently
+# truncated. Raising this value without raising that constant is a build failure.
 [unit.fargate]
 cpu = 1024
 memory_mb = 2048
@@ -536,34 +558,7 @@ memory_mb = 3008
 timeout_s = 30
 reserved_concurrency = 20
 
-[[unit]]
-id = "regional-stream"
-kind = "rust-oci-service"
-plane = "regional"
-package = "regional-stream"
-bin = "regional-stream"
-target = "aarch64-unknown-linux-gnu.2.34"
-profile = "release"
-form = "oci-image"
-base_image = "public.ecr.aws/amazonlinux/amazonlinux:2023-minimal@sha256:f536dd770d9f7065461c786418265a13f5ba548a11a57bbbf360e677b811ed39"
-config_env_namespace = "AEX_REGIONAL_STREAM_"
-config_schema_version = 1
-health_path = "/internal/healthz"
-ready_path = "/internal/readyz"
-required_receipts = ["unit", "contract", "property", "lint", "package-integrity"]
-alarm_spec = "regional-stream"
-live_suite = "aex-live-regional-stream"
-
-# The one long-lived multi-socket process besides the mux. The 30 s stop
-# timeout is the drain deadline the accepted design pins; the CPU, memory and
-# port values below are the module defaults a root may raise, not a guess at
-# capacity.
-[unit.fargate]
-cpu = 1024
-memory_mb = 2048
-desired_count = 2
-stop_timeout_s = 30
-port = 8080
+# `regional-stream` merged into `session-stream-api` above.
 
 # --- regional plane: workers --------------------------------------------------
 

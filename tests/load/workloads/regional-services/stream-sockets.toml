@@ -1,6 +1,6 @@
 id = "stream-sockets"
 owner = "regional-services"
-target = "aex-live-regional-stream"
+target = "aex-live-session-stream-api"
 tier = "t3"
 duration = "30m"
 ttl = "2h"

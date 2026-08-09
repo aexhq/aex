@@ -37,7 +37,10 @@ pub const GRANDFATHERED: &[(&str, &[&str])] = &[
             "crates/aex-observation-app/src/use_cases.rs",
             "crates/aex-usage-domain/src/fact.rs",
             "services/regional-secret-api/src/lib.rs",
-            "services/regional-session-api/src/admission.rs",
+            // Moved, not added: `regional-session-api` merged into
+            // `session-stream-api` and its admission module became the session
+            // half's. The grandfathered list still shrinks, it does not grow.
+            "services/session-stream-api/src/session/admission.rs",
         ],
     ),
     (

@@ -1,10 +1,13 @@
-//! Read-only regional stream admission, quotas, authoritative wakes and drain.
+//! The long-lived half: read-only stream admission, quotas, authoritative wakes
+//! and drain.
+//!
+//! This half owns no mutation of any kind. Before the merge that was enforced by
+//! refusing to start when `AEX_WORK_TABLE` was bound; it is now enforced by
+//! [`crate::capability`], because the session half in the same process requires
+//! the variable this half used to forbid.
 
-pub mod config;
 pub mod mount;
 pub mod wakes;
-
-pub use config::Config;
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};

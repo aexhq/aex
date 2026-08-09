@@ -1,11 +1,17 @@
-//! The adapter set `regional-session-api` composes.
+//! The adapter set the session half composes.
 //!
 //! The type is the capability statement: every authority this deployable may
 //! reach is a field, and nothing else is. There is no queue client and no secret
 //! `KMS` key here, which is what makes "the finite API emits no queue message"
 //! (RS-02) and "the finite API never decrypts" structural rather than reviewed.
+//!
+//! Since the stream merged into this process, the type is also the *boundary*:
+//! [`Stores`] is the only thing here holding a write handle, it can only be
+//! built by a caller holding a `Grant<WorkClaim>`, and the stream half's
+//! [`crate::stream::mount::AppState`] has no field that can name it.
 
 use aex_content_dynamodb::store::ContentStore;
+use aex_regional_http::capability::{Grant, WorkClaim};
 use aex_registry_dynamodb::store::RegistryDynamoStore;
 use aex_runtime_activity_dynamodb::store::RuntimeActivityDynamoStore;
 use aex_secret_custody_dynamodb::CustodyStore;
@@ -54,8 +60,19 @@ pub struct ObjectBinding {
 
 impl Stores {
     /// Builds every adapter from validated configuration.
+    ///
+    /// The [`Grant<WorkClaim>`] is unforgeable outside
+    /// [`crate::capability::Composition`]. It is what makes the `regional-work`
+    /// write handle unconstructible from anywhere but the composition root —
+    /// including from a stream handler that knows the table's name, which is the
+    /// case the deleted `AEX_WORK_TABLE` refusal used to cover.
     #[must_use]
-    pub fn build(config: &Config, dynamodb: &DynamoDb, objects: &ObjectStore) -> Self {
+    pub fn build(
+        _grant: &Grant<WorkClaim>,
+        config: &Config,
+        dynamodb: &DynamoDb,
+        objects: &ObjectStore,
+    ) -> Self {
         Self {
             work: WorkStore::new(dynamodb.clone(), config.work_table.clone()),
             content: ContentStore::new(dynamodb.clone(), config.content_table.clone()),

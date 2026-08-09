@@ -1,6 +1,6 @@
 variable "name" {
   type        = string
-  description = "Service name. It also selects the pins that apply to `brain-mux` and `regional-stream`."
+  description = "Service name. It also selects the pins that apply to `brain-mux` and `session-stream-api`."
 
   validation {
     condition     = can(regex("^[a-z][a-z0-9-]{2,50}$", var.name))
@@ -111,7 +111,7 @@ variable "desired_count" {
 
 variable "stop_timeout" {
   type        = number
-  description = "Seconds a container is given to drain before it is killed. 120 for `brain-mux`, 30 for `regional-stream` and `regional-session-api`."
+  description = "Seconds a container is given to drain before it is killed. 120 for `brain-mux`, 30 for `session-stream-api`."
 
   validation {
     condition     = var.stop_timeout >= 1 && var.stop_timeout <= 120
@@ -124,13 +124,8 @@ variable "stop_timeout" {
   }
 
   validation {
-    condition     = var.name != "regional-stream" || var.stop_timeout == 30
-    error_message = "`regional-stream` must use a 30 second stop timeout."
-  }
-
-  validation {
-    condition     = var.name != "regional-session-api" || var.stop_timeout == 30
-    error_message = "`regional-session-api` must use a 30 second stop timeout. It is the drain deadline the process's own `AEX_SESSION_DRAIN_DEADLINE_MS` is set below, so the task finishes its in-flight requests and exits on its own terms rather than being killed mid-transaction."
+    condition     = var.name != "session-stream-api" || var.stop_timeout == 30
+    error_message = "`session-stream-api` must use a 30 second stop timeout. The process derives its own admitted `AEX_DRAIN_DEADLINE_MS` ceiling from this exact number (`aex_regional_http::drain::FARGATE_STOP_TIMEOUT_S`), and refuses to start on a deadline that could not fire before SIGKILL. Changing it here without changing that constant makes the task's drain deadline unreachable and it is killed mid-request instead of exiting on its own terms."
   }
 }
 

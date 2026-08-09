@@ -133,7 +133,7 @@ observes = [
   "artifact:usage-storage-worker",
   "artifact:usage-compute-worker",
   "artifact:usage-transfer-worker",
-  "artifact:regional-session-api",
+  "artifact:session-stream-api",
 ]
 
 # --- regional admission and session lifecycle ---------------------------------
@@ -141,21 +141,21 @@ observes = [
 [[scenario]]
 id = "SC-REGIONAL-ADMISSION"
 owner = "regional-services"
-package = "cargo:aex-live-regional-session-api"
+package = "cargo:aex-live-session-stream-api"
 target = "e2e"
-observes = ["artifact:regional-session-api"]
+observes = ["artifact:session-stream-api"]
 
 [[scenario]]
 id = "SC-SESSION-ADMIT"
 owner = "regional-services"
 deferred = "Session admission is not mounted by the production composition and has no executable live target yet."
-observes = ["artifact:regional-session-api"]
+observes = ["artifact:session-stream-api"]
 
 [[scenario]]
 id = "SC-SESSION-TERMINAL"
 owner = "regional-services"
 deferred = "The complete session terminal-operation lifecycle has no executable live target yet."
-observes = ["artifact:regional-session-api", "artifact:session-operation-worker"]
+observes = ["artifact:session-stream-api", "artifact:session-operation-worker"]
 
 [scenario.prd]
 rule = "session_lifecycle"
@@ -174,7 +174,7 @@ provisions = [
 id = "SC-SESSION-STREAM"
 owner = "regional-services"
 deferred = "The regional streaming transport has no executable scenario target yet."
-observes = ["artifact:regional-stream"]
+observes = ["artifact:session-stream-api"]
 
 [[scenario]]
 id = "SC-SECRET-CUSTODY"
@@ -183,7 +183,7 @@ deferred = "The first-seal, key-administration, and custody lifecycle has no exe
 observes = [
   "artifact:regional-secret-api",
   "artifact:regional-secret-key-admin",
-  "artifact:regional-session-api",
+  "artifact:session-stream-api",
 ]
 
 [scenario.prd]
@@ -200,7 +200,7 @@ provisions = [
 id = "SC-CONTENT-LIFECYCLE"
 owner = "regional-stores"
 deferred = "The complete upload, persisted-content, and garbage-collection lifecycle has no executable live target yet."
-observes = ["artifact:content-lifecycle-worker", "artifact:regional-session-api"]
+observes = ["artifact:content-lifecycle-worker", "artifact:session-stream-api"]
 
 [scenario.prd]
 rule = "content_path"
@@ -264,7 +264,7 @@ observes = ["artifact:observation-reconciler", "artifact:regional-observation-ap
 id = "SC-BRAIN-TURN"
 owner = "brain-core"
 deferred = "No executable live target yet proves a complete Brain turn across mux and session authority."
-observes = ["artifact:brain-mux", "artifact:regional-session-api"]
+observes = ["artifact:brain-mux", "artifact:session-stream-api"]
 
 [[scenario]]
 id = "SC-HANDS-HOSTILE"

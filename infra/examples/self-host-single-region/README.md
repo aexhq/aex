@@ -32,7 +32,7 @@ rejects a `:tag` reference rather than accepting one.
 
 ## No public edge
 
-`regional-session-api` runs here as a Fargate service, and this root stands up
+`session-stream-api` runs here as a Fargate service, and this root stands up
 no ingress in front of it - exactly as it previously stood the function up with
 no API gateway. A self-hoster supplies their own edge. `infra/examples/region-application`
 is the worked example of the public load balancer, its listener and the

@@ -1,6 +1,6 @@
-output "session_service_arn" {
-  value       = module.session_service.service_arn
-  description = "The regional session API service. Callers reach it through the public load balancer now, not through a function alias."
+output "session_stream_service_arn" {
+  value       = module.session_stream_service.service_arn
+  description = "The merged regional request-path service, serving both the finite session API and the NDJSON stream behind the public load balancer."
 }
 
 output "operation_queue_arn" {
@@ -11,11 +11,6 @@ output "operation_queue_arn" {
 output "pipe_arn" {
   value       = module.journal_hint_pipe.pipe_arn
   description = "Pipe carrying journal mutations to the operation queue as hints."
-}
-
-output "stream_service_arn" {
-  value       = module.stream_service.service_arn
-  description = "The regional stream service."
 }
 
 output "public_dns_name" {
