@@ -474,6 +474,16 @@ VALUES (:id, :workspace_id, :organization_id, :name, \
         :region, :verifier, :pepper_version, \
         TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond', 1, :created_by_user_id)";
 
+/// Reads the material a regional key-authorization projection replicates.
+///
+/// Deliberately its own statement rather than a widened [`GET_API_KEY`]: that
+/// one feeds the public listing and detail routes, and the verifier must not
+/// travel on a path that renders a key to a customer. The only caller of this
+/// one is the projection publisher.
+pub const GET_API_KEY_MATERIAL: &str = "\
+SELECT k.id, k.workspace_id, k.verifier, k.pepper_version, k.scopes \
+  FROM control.api_key k WHERE k.id = :key_id";
+
 /// Reads one API key without exposing its verifier.
 pub const GET_API_KEY: &str = "\
 SELECT k.id, k.workspace_id, k.organization_id, k.name, k.scopes, k.region, k.pepper_version, \
@@ -650,6 +660,7 @@ pub const ALL: &[(&str, &str)] = &[
     ("COMPLETE_WORKSPACE_DELETION", COMPLETE_WORKSPACE_DELETION),
     ("INSERT_API_KEY", INSERT_API_KEY),
     ("GET_API_KEY", GET_API_KEY),
+    ("GET_API_KEY_MATERIAL", GET_API_KEY_MATERIAL),
     ("LIST_API_KEYS", LIST_API_KEYS),
     ("REVOKE_API_KEY", REVOKE_API_KEY),
     ("GET_OPERATION", GET_OPERATION),

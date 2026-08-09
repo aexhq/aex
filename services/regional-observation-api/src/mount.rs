@@ -20,7 +20,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{MethodFilter, on};
 
 use aex_internal_contracts::assertion::AssertionAudience;
-use aex_regional_http::authz::{LambdaAssertionSource, RegionalProjection};
+use aex_regional_http::authz::RegionalProjection;
 use aex_regional_http::edge::{RegionalEdge, SystemClock};
 use aex_regional_http::mount::AdmissionRequest;
 #[cfg(not(test))]
@@ -47,7 +47,6 @@ pub const AUDIENCE: AssertionAudience = AssertionAudience::RegionalObservation;
 /// that posted the customer's credential **verbatim** to a path `central-authz`
 /// does not expose. All three are gone.
 pub type Edge = RegionalEdge<
-    LambdaAssertionSource,
     RegionalProjection<aex_session_dynamodb::projection::ProjectionReader>,
     SystemClock,
 >;

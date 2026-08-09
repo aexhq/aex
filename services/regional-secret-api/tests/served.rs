@@ -232,8 +232,6 @@ fn context(request_id: RequestId, route_id: RouteId, if_match: Option<ETag>) -> 
             scopes: ScopeSet::default(),
             account_state: AccountState::Active,
             epochs: AuthorizationEpochs::default(),
-            issued_at: time::OffsetDateTime::UNIX_EPOCH,
-            expires_at: time::OffsetDateTime::UNIX_EPOCH + time::Duration::seconds(30),
         },
         limits: EffectiveLimits {
             json_body_bytes: 65_536,

@@ -51,7 +51,6 @@ aex-wire = { path = "../../crates/aex-wire" }
 async-trait.workspace = true
 aws-config.workspace = true
 # `central-authz` is IAM-invoked, so the assertion exchange is a direct invoke.
-aws-sdk-lambda.workspace = true
 # Parameter Store holds the assertion trust anchors, read once at cold start.
 aws-sdk-ssm.workspace = true
 aws-sdk-dynamodb.workspace = true

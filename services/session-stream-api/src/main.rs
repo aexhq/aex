@@ -29,10 +29,7 @@ use std::time::Duration;
 
 use aex_internal_contracts::assertion::AssertionAudience;
 use aex_observation_domain::keys::ScopeKey;
-use aex_regional_http::assertion::AuthFailure;
-use aex_regional_http::authz::{
-    LambdaAssertionSource, ParameterStore, RegionalProjection, TrustError,
-};
+use aex_regional_http::authz::{ParameterStore, RegionalProjection, TrustError};
 use aex_regional_http::capability::{CompositionError, Declares, StreamSocket, WorkClaim};
 use aex_regional_http::config::RegionalHttpConfigError;
 use aex_regional_http::edge::{EdgeBinding, RegionalEdge, SystemClock};
@@ -59,13 +56,13 @@ const DEPLOYABLE: &str = session_stream_api::config::DEPLOYABLE;
 
 /// The audience the finite unary half accepts.
 ///
-/// An assertion minted for the stream must never admit a unary request, and the
+/// A credential admitted at the stream must never admit a unary request, and the
 /// reverse. Merging the two deployables did **not** merge their audiences:
-/// inventing a combined one would reach into `central-authz` and
-/// `aex-internal-contracts`, and would hand every stream credential the finite
-/// API's write surface. The audience is checked at mint and again at verify, so
-/// the two edges below are two genuinely different trust boundaries that happen
-/// to share a process.
+/// inventing a combined one would hand every stream credential the finite API's
+/// write surface. The audience used to live in the assertion envelope and now
+/// lives on the key authorization row, checked at stage 5 of admission and again
+/// on every stream revalidation, so the two edges below remain two genuinely
+/// different trust boundaries that happen to share a process.
 const SESSION_AUDIENCE: AssertionAudience = AssertionAudience::RegionalSession;
 
 /// The audience the long-lived NDJSON half accepts.
@@ -73,7 +70,6 @@ const STREAM_AUDIENCE: AssertionAudience = AssertionAudience::RegionalStream;
 
 /// The production regional edge shape, once per audience.
 type SessionEdge = RegionalEdge<
-    LambdaAssertionSource,
     RegionalProjection<aex_session_dynamodb::projection::ProjectionReader>,
     SystemClock,
 >;
@@ -140,9 +136,6 @@ enum SessionStreamApiRunError {
     /// Start-up key material was rejected.
     #[error(transparent)]
     Trust(#[from] TrustError),
-    /// An edge could not be composed over its resolved inputs.
-    #[error("the request edge could not be composed: {0}")]
-    Edge(AuthFailure),
     /// The served unary route set could not be mounted.
     #[error(transparent)]
     Mount(#[from] MountError),
@@ -254,13 +247,13 @@ async fn run(
     .with_drain_signal(Arc::clone(&draining));
 
     // Both reads happen once, here, before the listener binds. Neither is on a
-    // request path and neither has a fallback: an unreadable trust anchor set
-    // means this process can verify nothing, and an unreadable signing ring
-    // means it can issue no continuation a later request could redeem. One ring
-    // and one anchor set serve both halves — they were always the same two
+    // request path and neither has a fallback: an unreadable pepper ring means
+    // this process can check no credential, and an unreadable signing ring means
+    // it can issue no continuation a later request could redeem. One pepper ring
+    // and one cursor ring serve both halves — they were always the same two
     // parameters read twice by two tasks.
-    let anchors = parameters
-        .trust_anchors(&config.authz_verify_keys_param)
+    let peppers = parameters
+        .pepper_ring(&config.credential_pepper_ref)
         .await?;
     // One ring, shared by both halves. The unary side signs continuations with
     // it and the stream side resumes them, so reading the parameter twice would
@@ -363,14 +356,8 @@ async fn run(
     };
 
     // --- two edges, one per audience -----------------------------------------
-    let session_edge = build_edge(config, &aws, &dynamodb, anchors.clone(), SESSION_AUDIENCE)?;
-    let stream_edge = Arc::new(build_edge(
-        config,
-        &aws,
-        &dynamodb,
-        anchors,
-        STREAM_AUDIENCE,
-    )?);
+    let session_edge = build_edge(config, &dynamodb, peppers.clone(), SESSION_AUDIENCE);
+    let stream_edge = Arc::new(build_edge(config, &dynamodb, peppers, STREAM_AUDIENCE));
 
     // --- the session half's router -------------------------------------------
     let dispatcher = Dispatcher::new(Arc::new(Shared {
@@ -524,42 +511,32 @@ async fn wait_for_termination() {
 
 /// Builds one regional edge for one audience.
 ///
-/// Called twice. The audience is threaded into both `LambdaAssertionSource` —
-/// which is what `central-authz` mints for — and `EdgeBinding` — which is what
-/// the verifier re-checks. Passing it once, here, is what keeps the two in step.
+/// Called twice, and the audience is the only thing that differs. Both edges
+/// read the same projection table and hold the same pepper ring: what separates
+/// them is the audience each requires the key row to name, which is why a
+/// credential admitted at one is not admitted at the other.
 ///
-/// The cache budget is [`Config::edge_cache_bytes`], the process-wide budget
-/// divided by the number of edges, so two edges do not silently charge
-/// `AEX_ASSERTION_CACHE_BYTES` twice.
+/// There is no cache budget and no fallible construction any more. Nothing is
+/// held between requests, so two edges in one process cost what one did.
 fn build_edge(
     config: &Config,
-    aws: &aws_config::SdkConfig,
     dynamodb: &aws_sdk_dynamodb::Client,
-    anchors: aex_identity_domain::assertion::VerificationKeySet,
+    peppers: aex_regional_http::credential::PepperRing,
     audience: AssertionAudience,
-) -> Result<SessionEdge, SessionStreamApiRunError> {
+) -> SessionEdge {
     let projection = aex_session_dynamodb::projection::ProjectionReader::new(
         dynamodb.clone(),
         config.authz_projection_table.clone(),
     );
     RegionalEdge::new(
-        LambdaAssertionSource::new(
-            aws_sdk_lambda::Client::new(aws),
-            config.authz_function.value.clone(),
-            audience,
-            config.region,
-        ),
-        anchors,
+        peppers,
         RegionalProjection::new(projection, config.region),
         SystemClock,
         EdgeBinding {
-            plane: config.plane,
             audience,
             region: config.region,
-            cache_budget_bytes: config.edge_cache_bytes(),
         },
     )
-    .map_err(SessionStreamApiRunError::Edge)
 }
 
 /// The decode bounds the generated unary dispatchers enforce.

@@ -86,6 +86,94 @@ impl AssertionAudience {
             Self::RegionalStream => "regional-stream",
         }
     }
+
+    /// The stored spelling, which is also the serialized one.
+    ///
+    /// One spelling for the wire and for the projected key row, so an audience
+    /// written by the control plane and an audience read by a regional edge
+    /// cannot come to disagree about how a variant is named.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::RegionalSession => "regional_session",
+            Self::RegionalSecret => "regional_secret",
+            Self::RegionalObservation => "regional_observation",
+            Self::RegionalOtlp => "regional_otlp",
+            Self::RegionalStream => "regional_stream",
+        }
+    }
+
+    /// Resolves a stored spelling.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|it| it.as_str() == text)
+    }
+}
+
+/// The audiences one credential may be presented to.
+///
+/// A fixed-width bitset over [`AssertionAudience::ALL`] rather than a list: it
+/// is `Copy`, it cannot hold a duplicate, and — the reason it exists — the empty
+/// set is representable. A key row that names no audience therefore admits
+/// **nothing**, which is the fail-closed direction; a list decoder that treated
+/// "absent" as "unrestricted" would be the other one.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AudienceSet(u8);
+
+impl AudienceSet {
+    /// No audience at all, which admits nothing.
+    pub const EMPTY: Self = Self(0);
+
+    /// Every audience in the vocabulary.
+    pub const ALL: Self = Self((1 << AssertionAudience::ALL.len()) - 1);
+
+    /// The bit `audience` owns.
+    ///
+    /// The enum declares no explicit discriminants, so the discriminant of
+    /// `AssertionAudience::ALL[n]` is `n`; `declaration_order_is_bit_order`
+    /// asserts exactly that, which is what makes this cast a fact.
+    const fn bit(audience: AssertionAudience) -> u8 {
+        1_u8 << (audience as u8)
+    }
+
+    /// Whether this credential may be presented to `audience`.
+    #[must_use]
+    pub const fn contains(self, audience: AssertionAudience) -> bool {
+        self.0 & Self::bit(audience) != 0
+    }
+
+    /// The set with `audience` added.
+    #[must_use]
+    pub const fn insert(self, audience: AssertionAudience) -> Self {
+        Self(self.0 | Self::bit(audience))
+    }
+
+    /// Whether the set admits nothing.
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// Every audience in the set, in wire order.
+    pub fn iter(self) -> impl Iterator<Item = AssertionAudience> {
+        AssertionAudience::ALL
+            .into_iter()
+            .filter(move |audience| self.contains(*audience))
+    }
+
+    /// The stored spellings, in wire order.
+    #[must_use]
+    pub fn to_strings(self) -> Vec<String> {
+        self.iter()
+            .map(|audience| audience.as_str().to_owned())
+            .collect()
+    }
+}
+
+impl FromIterator<AssertionAudience> for AudienceSet {
+    fn from_iter<I: IntoIterator<Item = AssertionAudience>>(iter: I) -> Self {
+        iter.into_iter().fold(Self::EMPTY, Self::insert)
+    }
 }
 
 /// Why an exchange value was refused at construction.

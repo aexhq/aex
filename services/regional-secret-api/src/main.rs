@@ -13,10 +13,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use aex_internal_contracts::assertion::AssertionAudience;
-use aex_regional_http::assertion::AuthFailure;
-use aex_regional_http::authz::{
-    LambdaAssertionSource, ParameterStore, RegionalProjection, TrustError,
-};
+use aex_regional_http::authz::{ParameterStore, RegionalProjection, TrustError};
 use aex_regional_http::config::RegionalHttpConfigError;
 use aex_regional_http::edge::{EdgeBinding, RegionalEdge, SystemClock};
 use aex_regional_http::health::Readiness;
@@ -41,9 +38,6 @@ enum RegionalSecretApiRunError {
     /// Start-up key material was rejected.
     #[error(transparent)]
     Trust(#[from] TrustError),
-    /// The edge could not be composed over its resolved inputs.
-    #[error("the request edge could not be composed: {0}")]
-    Edge(AuthFailure),
     /// The served route set could not be mounted.
     #[error(transparent)]
     Mount(#[from] MountError),
@@ -138,13 +132,13 @@ async fn run(
             .map_err(|error| RegionalSecretApiRunError::Runtime(error.to_string()))?,
     };
 
-    let anchors = parameters
-        .trust_anchors(&config.authz_verify_keys_param)
+    let peppers = parameters
+        .pepper_ring(&config.credential_pepper_ref)
         .await?;
     // This deployable serves no listing, so it resolves no cursor signing ring
     // and its configuration declares none. A key it cannot use is a key it
     // cannot leak.
-    let admission = build_edge(config, &aws, &dynamodb, anchors)?;
+    let admission = build_edge(config, &dynamodb, peppers);
     let dispatcher = Dispatcher::new(Arc::new(Shared {
         custody,
         custody_table: config.secret_custody_table.clone(),
@@ -160,41 +154,30 @@ async fn run(
     .map_err(|error| RegionalSecretApiRunError::Runtime(error.to_string()))
 }
 
-/// The shared regional edge over its three resolved inputs.
+/// The shared regional edge over its two resolved inputs.
 type Edge = RegionalEdge<
-    LambdaAssertionSource,
     RegionalProjection<aex_session_dynamodb::projection::ProjectionReader>,
     SystemClock,
 >;
 
 fn build_edge(
     config: &Config,
-    aws: &aws_config::SdkConfig,
     dynamodb: &aws_sdk_dynamodb::Client,
-    anchors: aex_identity_domain::assertion::VerificationKeySet,
-) -> Result<Edge, RegionalSecretApiRunError> {
+    peppers: aex_regional_http::credential::PepperRing,
+) -> Edge {
     let projection = aex_session_dynamodb::projection::ProjectionReader::new(
         dynamodb.clone(),
         config.authz_projection_table.clone(),
     );
     RegionalEdge::new(
-        LambdaAssertionSource::new(
-            aws_sdk_lambda::Client::new(aws),
-            config.authz_function.value.clone(),
-            AUDIENCE,
-            config.region,
-        ),
-        anchors,
+        peppers,
         RegionalProjection::new(projection, config.region),
         SystemClock,
         EdgeBinding {
-            plane: config.plane,
             audience: AUDIENCE,
             region: config.region,
-            cache_budget_bytes: config.assertion_cache_bytes,
         },
     )
-    .map_err(RegionalSecretApiRunError::Edge)
 }
 
 /// The decode bounds the generated dispatchers enforce.

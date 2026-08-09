@@ -6,11 +6,13 @@
 //! write here is monotone, so delayed cross-region delivery cannot roll central
 //! control state backwards.
 
+use aex_internal_contracts::assertion::AudienceSet;
 use aex_wire::ids::{ApiKeyId, OrganizationId, WorkspaceId};
+use aex_wire::scopes::ScopeSet;
 use aex_wire::types::{Region, Timestamp};
 use aws_sdk_dynamodb::Client;
 
-use crate::attr::{Item, ItemBuilder, n, s, stamp};
+use crate::attr::{Item, ItemBuilder, b, n, s, stamp, string_list};
 use crate::wire_pending::KeyAuthorizationState;
 
 const WORKSPACE_PLACEMENT: &str = "workspace_placement";
@@ -68,6 +70,11 @@ pub struct ProfileWrite {
 /// revoked. A revocation therefore raises an existing row rather than creating
 /// the only row a region ever had for that key, which is what lets an absent row
 /// mean "no such key here" instead of "not revoked yet".
+///
+/// The four authentication fields — verifier, pepper version, audiences and
+/// scopes — are republished on **every** publication rather than only on
+/// creation, because a revocation publication overwrites the whole row and a
+/// partial write would leave a live key without the material to check it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyAuthorizationWrite {
     /// The key.
@@ -80,6 +87,14 @@ pub struct KeyAuthorizationWrite {
     pub region: Region,
     /// Whether it may still authorize.
     pub state: KeyAuthorizationState,
+    /// The stored keyed verifier, replicated verbatim from the control plane.
+    pub verifier: [u8; 32],
+    /// Which pepper version the verifier was computed under.
+    pub pepper_version: u16,
+    /// The regional edges the key may be presented to.
+    pub audiences: AudienceSet,
+    /// The effective scopes, computed centrally.
+    pub scopes: ScopeSet,
     /// Monotone key epoch.
     pub key_epoch: u64,
     /// Monotone projection position.
@@ -251,6 +266,19 @@ fn key_authorization_item(write: &KeyAuthorizationWrite) -> Item {
         .set("organizationId", s(write.organization.to_string()))
         .set("region", s(write.region.as_str()))
         .set("state", s(write.state.as_str()))
+        .set("verifier", b(write.verifier.to_vec()))
+        .set("pepperVersion", n(u64::from(write.pepper_version)))
+        .set("audiences", string_list(write.audiences.to_strings()))
+        .set(
+            "scopes",
+            string_list(
+                write
+                    .scopes
+                    .as_slice()
+                    .iter()
+                    .map(|scope| scope.as_str().to_owned()),
+            ),
+        )
         .set("keyEpoch", n(write.key_epoch))
         .set("projectionSequence", n(write.projection_sequence))
         .set("updatedAt", stamp(write.updated_at))
@@ -265,7 +293,9 @@ mod tests {
     };
     use crate::projection::{decode_key_authorization, decode_placement, decode_profile};
     use crate::wire_pending::KeyAuthorizationState;
+    use aex_internal_contracts::assertion::{AssertionAudience, AudienceSet};
     use aex_wire::ids::{ApiKeyId, OrganizationId, PrefixedId as _, Uuid7, WorkspaceId};
+    use aex_wire::scopes::{ScopeId, ScopeSet};
     use aex_wire::types::{Region, Timestamp};
 
     #[test]
@@ -298,6 +328,10 @@ mod tests {
         assert_eq!(decoded.name, "Production");
 
         let api_key = ApiKeyId::from_uuid7(Uuid7::compose(1, [3; 10]));
+        let audiences = AudienceSet::EMPTY
+            .insert(AssertionAudience::RegionalSession)
+            .insert(AssertionAudience::RegionalStream);
+        let scopes = ScopeSet::new([ScopeId::SessionsRead, ScopeId::TelemetryWrite]);
         for state in KeyAuthorizationState::ALL {
             let authorization = KeyAuthorizationWrite {
                 api_key,
@@ -305,6 +339,10 @@ mod tests {
                 organization,
                 region: Region::EuWest1,
                 state,
+                verifier: [23; 32],
+                pepper_version: 4,
+                audiences,
+                scopes: scopes.clone(),
                 key_epoch: 7,
                 projection_sequence: 8,
                 updated_at: now,
@@ -317,6 +355,12 @@ mod tests {
             assert_eq!(decoded.state, state);
             assert_eq!(decoded.key_epoch, 7);
             assert_eq!(decoded.projection_sequence, 8);
+            // The four authentication fields survive a revocation publication,
+            // which overwrites the whole row rather than amending it.
+            assert_eq!(decoded.verifier, [23; 32]);
+            assert_eq!(decoded.pepper_version, 4);
+            assert_eq!(decoded.audiences, audiences);
+            assert_eq!(decoded.scopes, scopes);
         }
 
         // A row published for one key never decodes as another's.
@@ -327,6 +371,10 @@ mod tests {
             organization,
             region: Region::EuWest1,
             state: KeyAuthorizationState::Active,
+            verifier: [23; 32],
+            pepper_version: 1,
+            audiences,
+            scopes,
             key_epoch: 1,
             projection_sequence: 1,
             updated_at: now,
@@ -334,6 +382,34 @@ mod tests {
         assert!(
             decode_key_authorization(&key_authorization_item(&authorization), other).is_err(),
             "a key authorization row is bound to the key it names"
+        );
+    }
+
+    #[test]
+    fn a_published_row_never_renders_the_verifier_as_text() {
+        // The verifier is stored as binary rather than as a base64 string so it
+        // cannot be copied out of a console listing or a log line by eye, and so
+        // a codec cannot accept a second spelling of the same 32 bytes.
+        let item = key_authorization_item(&KeyAuthorizationWrite {
+            api_key: ApiKeyId::from_uuid7(Uuid7::compose(1, [3; 10])),
+            workspace: WorkspaceId::from_uuid7(Uuid7::compose(1, [1; 10])),
+            organization: OrganizationId::from_uuid7(Uuid7::compose(1, [2; 10])),
+            region: Region::EuWest1,
+            state: KeyAuthorizationState::Active,
+            verifier: [23; 32],
+            pepper_version: 1,
+            audiences: AudienceSet::ALL,
+            scopes: ScopeSet::new([ScopeId::SessionsRead]),
+            key_epoch: 1,
+            projection_sequence: 1,
+            updated_at: Timestamp::from_unix_millis(1_000).expect("timestamp"),
+        });
+        assert!(
+            item.get("verifier")
+                .expect("the row carries a verifier")
+                .as_b()
+                .is_ok(),
+            "the verifier must be a binary attribute"
         );
     }
 

@@ -940,8 +940,6 @@ mod tests {
                 scopes: aex_wire::scopes::ScopeSet::empty(),
                 account_state: AccountState::Active,
                 epochs: AuthorizationEpochs::default(),
-                issued_at: time::OffsetDateTime::UNIX_EPOCH,
-                expires_at: time::OffsetDateTime::UNIX_EPOCH + time::Duration::seconds(30),
             },
             limits: EffectiveLimits {
                 json_body_bytes: 1_048_576,

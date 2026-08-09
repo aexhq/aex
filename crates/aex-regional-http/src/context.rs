@@ -10,7 +10,7 @@ use time::OffsetDateTime;
 
 use crate::idempotency::IdempotencyIdentity;
 
-/// Monotonic authorization revisions carried by a central assertion.
+/// Monotonic authorization revisions, as the regional projection published them.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct AuthorizationEpochs {
     /// Workspace-key revision.
@@ -33,11 +33,21 @@ pub enum AccountState {
 }
 
 /// Verified, credential-bound regional authority.
+///
+/// # Why there is no issue or expiry instant
+///
+/// Both were the central assertion's: it was minted at one instant and hard
+/// expired thirty seconds later, and this record carried that window so a
+/// handler could see it. There is no assertion any more and therefore no window
+/// to carry — every fact here was read from the regional projection during the
+/// request that produced it, and a long-lived transport re-reads them through
+/// [`crate::edge::RegionalEdge::revalidate`] rather than trusting a lifetime.
+/// A field holding "now" and "now" would have been a lifetime nobody enforced.
 #[derive(Clone, PartialEq, Eq)]
 pub struct RegionalAuthorization {
     /// Stable principal scope, never credential material.
     pub principal: PrincipalScope,
-    /// Digest of the presented credential.
+    /// The stable, domain-separated identity of the presented credential.
     pub credential_binding: [u8; 32],
     /// Owning organization.
     pub organization_id: OrganizationId,
@@ -51,10 +61,6 @@ pub struct RegionalAuthorization {
     pub account_state: AccountState,
     /// Monotonic revisions.
     pub epochs: AuthorizationEpochs,
-    /// Assertion issue time.
-    pub issued_at: OffsetDateTime,
-    /// Hard assertion expiry.
-    pub expires_at: OffsetDateTime,
 }
 
 impl std::fmt::Debug for RegionalAuthorization {
@@ -69,8 +75,6 @@ impl std::fmt::Debug for RegionalAuthorization {
             .field("scopes", &self.scopes)
             .field("account_state", &self.account_state)
             .field("epochs", &self.epochs)
-            .field("issued_at", &self.issued_at)
-            .field("expires_at", &self.expires_at)
             .finish()
     }
 }

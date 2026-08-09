@@ -23,7 +23,7 @@ use axum::routing::{MethodFilter, on};
 
 use crate::admission::{OtlpRequest, OtlpService};
 use aex_internal_contracts::assertion::AssertionAudience;
-use aex_regional_http::authz::{LambdaAssertionSource, RegionalProjection};
+use aex_regional_http::authz::RegionalProjection;
 use aex_regional_http::edge::{RegionalEdge, SystemClock};
 use aex_regional_http::mount::{AdmissionRequest, EdgeAdmission as _};
 
@@ -45,7 +45,6 @@ pub const AUDIENCE: AssertionAudience = AssertionAudience::RegionalOtlp;
 /// that posted the customer's credential **verbatim** to a path `central-authz`
 /// does not expose. All three are gone.
 pub type Edge = RegionalEdge<
-    LambdaAssertionSource,
     RegionalProjection<aex_session_dynamodb::projection::ProjectionReader>,
     SystemClock,
 >;
@@ -341,20 +340,19 @@ mod tests {
                 .region(aws_sdk_s3::config::Region::new("eu-west-1"))
                 .build(),
         );
-        let lambda = aws_sdk_lambda::Client::from_conf(
-            aws_sdk_lambda::Config::builder()
-                .behavior_version(aws_sdk_lambda::config::BehaviorVersion::latest())
-                .region(aws_sdk_lambda::config::Region::new("eu-west-1"))
-                .build(),
-        );
-        let edge = aex_regional_http::edge::RegionalEdge::new(
-            aex_regional_http::authz::LambdaAssertionSource::new(
-                lambda,
-                "arn:aws:lambda:eu-west-1:000000000000:function:central-authz".to_owned(),
-                AUDIENCE,
-                region,
+        let peppers = aex_regional_http::authz::parse_pepper_ring(
+            "test-pepper-ring",
+            &format!(
+                r#"{{"schemaVersion":1,"peppers":[{{"version":1,"material":"{}"}}]}}"#,
+                <base64::engine::general_purpose::GeneralPurpose as base64::Engine>::encode(
+                    &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+                    [3_u8; 32],
+                )
             ),
-            aex_identity_domain::assertion::VerificationKeySet::default(),
+        )
+        .expect("a usable ring");
+        let edge = aex_regional_http::edge::RegionalEdge::new(
+            peppers,
             aex_regional_http::authz::RegionalProjection::new(
                 aex_session_dynamodb::projection::ProjectionReader::new(
                     dynamodb.clone(),
@@ -364,13 +362,10 @@ mod tests {
             ),
             aex_regional_http::edge::SystemClock,
             aex_regional_http::edge::EdgeBinding {
-                plane: aex_identity_domain::assertion::Plane::Dev,
                 audience: AUDIENCE,
                 region,
-                cache_budget_bytes: 64 * 1024,
             },
-        )
-        .expect("the edge composes");
+        );
         let service = OtlpService::new(
             AdmissionAuthority::new(
                 dynamodb.clone(),

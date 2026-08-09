@@ -142,10 +142,10 @@ pub async fn run(config: Config) -> Result<(), RegionalObservationApiRunError> {
     // All five independent provider proofs share one cold-start window. Key
     // material is still resolved exactly once and never enters the environment
     // or Terraform state.
-    let (probe, ring, anchors) = tokio::join!(
+    let (probe, ring, peppers) = tokio::join!(
         reader.probe(),
         parameters.cursor_key_ring(&config.cursor_key_ref),
-        parameters.trust_anchors(&config.authz_verify_keys_param),
+        parameters.pepper_ring(&config.credential_pepper_ref),
     );
     probe.map_err(|error| RegionalObservationApiRunError::Probe {
         reason: error.to_string(),
@@ -153,7 +153,7 @@ pub async fn run(config: Config) -> Result<(), RegionalObservationApiRunError> {
     let ring = ring.map_err(|error| RegionalObservationApiRunError::Probe {
         reason: error.to_string(),
     })?;
-    let anchors = anchors.map_err(|error| RegionalObservationApiRunError::Edge {
+    let peppers = peppers.map_err(|error| RegionalObservationApiRunError::Edge {
         reason: error.to_string(),
     })?;
 
@@ -166,36 +166,22 @@ pub async fn run(config: Config) -> Result<(), RegionalObservationApiRunError> {
 
     compose(ROLE.granted(), &passed)?;
 
-    // The one shared edge, over the one shared exchange. `central-authz` is
-    // IAM-invoked rather than routed, so this is a direct invoke and the caller's
-    // execution role is the authentication; the credential is named by
-    // `(keyId, presentedDigest)` and never sent.
+    // The one shared edge. There is no exchange left to compose it over: a
+    // presented key is checked against the verifier this region already reads
+    // on every request, so nothing on this path leaves the region.
     let projection = aex_session_dynamodb::projection::ProjectionReader::new(
         dynamodb.clone(),
         config.authz_projection_table.clone(),
     );
-    let edge = Arc::new(
-        aex_regional_http::edge::RegionalEdge::new(
-            aex_regional_http::authz::LambdaAssertionSource::new(
-                aws_sdk_lambda::Client::new(&aws),
-                config.authz_function_arn.clone(),
-                AUDIENCE,
-                config.region,
-            ),
-            anchors,
-            aex_regional_http::authz::RegionalProjection::new(projection, config.region),
-            aex_regional_http::edge::SystemClock,
-            aex_regional_http::edge::EdgeBinding {
-                plane: config.plane,
-                audience: AUDIENCE,
-                region: config.region,
-                cache_budget_bytes: config.assertion_cache_bytes,
-            },
-        )
-        .map_err(|error| RegionalObservationApiRunError::Edge {
-            reason: error.to_string(),
-        })?,
-    );
+    let edge = Arc::new(aex_regional_http::edge::RegionalEdge::new(
+        peppers,
+        aex_regional_http::authz::RegionalProjection::new(projection, config.region),
+        aex_regional_http::edge::SystemClock,
+        aex_regional_http::edge::EdgeBinding {
+            audience: AUDIENCE,
+            region: config.region,
+        },
+    ));
 
     let service = ObservationService::new(
         reader,

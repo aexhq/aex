@@ -19,12 +19,8 @@ fn complete() -> BTreeMap<&'static str, String> {
         (config::REGION, "eu-west-1".to_owned()),
         (config::RELEASE_DIGEST, "sha256:deadbeef".to_owned()),
         (
-            config::AUTHZ_FUNCTION_ARN,
-            "arn:aws:lambda:eu-west-1:000000000000:function:aex-dev-central-authz".to_owned(),
-        ),
-        (
-            config::AUTHZ_VERIFY_KEYS_PARAM,
-            "/aex/dev/authz/verify-keys".to_owned(),
+            config::CREDENTIAL_PEPPER_REF,
+            "/aex/dev/credential-pepper/ring".to_owned(),
         ),
         (
             config::AUTHZ_PROJECTION_TABLE,
@@ -45,7 +41,6 @@ fn complete() -> BTreeMap<&'static str, String> {
         ),
         (config::BRANCH_KEY_CACHE_BYTES, "1048576".to_owned()),
         (config::BRANCH_KEY_CACHE_TTL_MS, "300000".to_owned()),
-        (config::ASSERTION_CACHE_BYTES, "1048576".to_owned()),
         (config::MAX_JSON_BODY_BYTES, "65536".to_owned()),
     ])
 }

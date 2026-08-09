@@ -5,13 +5,15 @@ use std::sync::Arc;
 
 use aex_control_app::ports::{
     ClaimDueOperations, ClaimOutbox, ControlStore, ControlViewStore, FinishWorkspaceProvisionTx,
-    GcExpired, ProvisionWorkspaceRequest, RegionalControlPort, RequestId, StoreError, TxOutcome,
+    GcExpired, KeyMaterialReader, ProvisionWorkspaceRequest, RegionalControlPort, RequestId,
+    StoreError, TxOutcome,
 };
 use aex_control_domain::{
     ActorKind, AuditEvent, AuditOutcome, Operation, OperationKind, OperationStatus, OutboxMessage,
-    ResourceKind, Topic, WorkspaceStatus,
+    ResourceKind, ScopeSet, Topic, WorkspaceStatus,
 };
 use aex_identity_app::ports::Clock;
+use aex_internal_contracts::assertion::AudienceSet;
 use aex_session_dynamodb::projection_write::{
     KeyAuthorizationWrite, PlacementWrite, ProfileWrite, ProjectionWriter,
 };
@@ -22,8 +24,8 @@ use async_trait::async_trait;
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
-pub trait Store: ControlStore + ControlViewStore {}
-impl<T: ControlStore + ControlViewStore> Store for T {}
+pub trait Store: ControlStore + ControlViewStore + KeyMaterialReader {}
+impl<T: ControlStore + ControlViewStore + KeyMaterialReader> Store for T {}
 
 #[async_trait]
 pub trait Mail: Send + Sync {
@@ -416,6 +418,18 @@ impl Worker {
     /// Both events carry the whole row rather than a delta, because the two are
     /// dispatched independently and a delta would need the region to already
     /// hold the half it is being told to amend.
+    ///
+    /// # Why the material is read rather than carried
+    ///
+    /// The announcement names the key; the verifier, its pepper version and the
+    /// effective scopes are read from the authority here. Putting them in the
+    /// outbox payload would copy a credential verifier into a queue, a dead
+    /// letter and every retry of both, and would let a delayed message publish
+    /// material the authority has since re-peppered.
+    ///
+    /// A key the authority no longer holds publishes **nothing**: there is no
+    /// arm that writes a row without a verifier, because a regional edge that
+    /// read one would refuse every request against a live key.
     async fn key_authorization(
         &self,
         message: &OutboxMessage,
@@ -427,6 +441,19 @@ impl Worker {
             .projections
             .get(&payload.region)
             .ok_or_else(|| "regional_projection_not_configured".to_owned())?;
+        let material = self
+            .store
+            .workspace_key_material(payload.api_key_id)
+            .await
+            .map_err(redacted_store)?
+            .ok_or_else(|| "api_key_not_found".to_owned())?;
+        // The announcement's workspace selected which region's projection is
+        // being written. A row naming another workspace would publish a key into
+        // a region that must never serve it, so the two authorities are compared
+        // rather than one of them being trusted.
+        if material.workspace_id != payload.workspace_id {
+            return Err("key_authorization_payload_mismatch".to_owned());
+        }
         writer
             .put_key_authorization(&KeyAuthorizationWrite {
                 api_key: api_key(payload.api_key_id)?,
@@ -434,6 +461,21 @@ impl Worker {
                 organization: organization(payload.organization_id)?,
                 region: payload.region,
                 state,
+                verifier: material.verifier,
+                pepper_version: material.pepper_version,
+                // Every regional edge, which is exactly the reach a workspace key
+                // has today: `central-authz` minted an assertion for whichever
+                // audience asked and never consulted the key about it. The set is
+                // published per key so narrowing it later is a control-plane
+                // decision rather than a regional-code change.
+                audiences: AudienceSet::ALL,
+                // The mintable ceiling is applied at creation and again here, so
+                // a key whose stored row somehow exceeded it is projected without
+                // the excess rather than with it.
+                scopes: material
+                    .scopes
+                    .intersect(ScopeSet::WORKSPACE_KEY_MINTABLE)
+                    .to_wire(),
                 key_epoch: payload.epoch,
                 projection_sequence: sequence(message.created_at),
                 updated_at: timestamp(payload.changed_at)?,

@@ -32,12 +32,8 @@ fn polling() -> BTreeMap<&'static str, String> {
         // upper bound, so a deadline above the stop timeout refuses the process.
         (config::DRAIN_DEADLINE_MS, "25000".to_owned()),
         (
-            config::AUTHZ_FUNCTION_ARN,
-            "arn:aws:lambda:eu-west-1:000000000000:function:aex-dev-central-authz".to_owned(),
-        ),
-        (
-            config::AUTHZ_VERIFY_KEYS_PARAM,
-            "/aex/dev/authz/verify-keys".to_owned(),
+            config::CREDENTIAL_PEPPER_REF,
+            "/aex/dev/credential-pepper/ring".to_owned(),
         ),
         (
             config::AUTHZ_PROJECTION_TABLE,
@@ -55,7 +51,6 @@ fn polling() -> BTreeMap<&'static str, String> {
             config::CURSOR_SIGNING_KEY_REF,
             "/aex/dev/regional/cursor-signing-key".to_owned(),
         ),
-        (config::ASSERTION_CACHE_BYTES, "1048576".to_owned()),
         (
             config::REGIONAL_API_URL,
             "https://eu-west-1.api.aex.test".to_owned(),
@@ -381,29 +376,30 @@ fn a_write_stall_that_cannot_be_observed_inside_the_drain_is_refused() {
     );
 }
 
-// --- two edges from one budget ------------------------------------------------
+// --- two edges, one credential check ------------------------------------------
 
-/// Two edges, one declared budget. Before the merge each process charged
-/// `AEX_ASSERTION_CACHE_BYTES` once; a merged process that handed the same
-/// number to both edges would quietly use twice what was asked for.
+/// The two audiences this process serves stay distinct.
+///
+/// They used to be kept apart by the assertion each edge asked `central-authz`
+/// for, and by a per-edge cache funded from a process-wide byte budget. Both are
+/// gone: there is nothing cached between requests, so the budget was deleted
+/// rather than divided, and what separates the edges is the audience each
+/// requires the projected key row to name.
 #[test]
-fn the_assertion_cache_budget_is_process_wide_and_split_between_the_edges() {
+fn the_two_edges_are_two_audiences_and_no_process_wide_budget() {
     let config = read(&polling()).expect("the complete environment is accepted");
-    assert_eq!(config.assertion_cache_bytes, 1_048_576);
-    assert_eq!(config.edge_cache_bytes(), 1_048_576 / EDGE_COUNT);
+    assert_eq!(EDGE_COUNT, 2);
     assert_eq!(
-        config.edge_cache_bytes() * EDGE_COUNT,
-        config.assertion_cache_bytes,
-        "the two edges together must charge exactly the declared budget"
+        config.credential_pepper_ref,
+        "/aex/dev/credential-pepper/ring"
     );
-
-    // The floor is two edges' worth, so a budget that could only build one cache
-    // is refused rather than leaving the second edge unconstructible.
-    let mut thin = polling();
-    thin.insert(config::ASSERTION_CACHE_BYTES, "1024".to_owned());
+    // One ring, read once, shared by both edges: a second read could give one
+    // half a pepper set the other does not hold mid-rotation.
+    let mut absent = polling();
+    absent.remove(config::CREDENTIAL_PEPPER_REF);
     assert!(matches!(
-        read(&thin),
-        Err(RegionalHttpConfigError::Invalid { name, .. }) if name == config::ASSERTION_CACHE_BYTES
+        read(&absent),
+        Err(RegionalHttpConfigError::Missing { name }) if name == config::CREDENTIAL_PEPPER_REF
     ));
 }
 

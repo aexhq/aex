@@ -50,10 +50,13 @@ pub const PORT: &str = "AEX_PORT";
 /// `AEX_SESSION_DRAIN_DEADLINE_MS` and `AEX_STREAM_DRAIN_DEADLINE_MS`, which
 /// drained one process each and now drain one.
 pub const DRAIN_DEADLINE_MS: &str = "AEX_DRAIN_DEADLINE_MS";
-/// The `central-authz` function both edges resolve assertions through.
-pub const AUTHZ_FUNCTION_ARN: &str = "AEX_AUTHZ_FUNCTION_ARN";
-/// The parameter holding the assertion verification key set.
-pub const AUTHZ_VERIFY_KEYS_PARAM: &str = "AEX_AUTHZ_VERIFY_KEYS_PARAM";
+/// The parameter holding the credential pepper ring both edges verify against.
+///
+/// This replaced `AEX_AUTHZ_FUNCTION_ARN` and `AEX_AUTHZ_VERIFY_KEYS_PARAM`
+/// together: there is no `central-authz` invoke to address and no assertion
+/// signature to verify, because a presented key is checked against the verifier
+/// the control plane replicated onto its authorization row.
+pub const CREDENTIAL_PEPPER_REF: &str = "AEX_CREDENTIAL_PEPPER_REF";
 /// The regional authorization projection table.
 pub const AUTHZ_PROJECTION_TABLE: &str = "AEX_AUTHZ_PROJECTION_TABLE";
 /// The `session-authority` table.
@@ -62,15 +65,6 @@ pub const SESSION_TABLE: &str = "AEX_SESSION_TABLE";
 pub const CONTENT_BUCKET: &str = "AEX_CONTENT_BUCKET";
 /// The storage reference of the cursor signing key.
 pub const CURSOR_SIGNING_KEY_REF: &str = "AEX_CURSOR_SIGNING_KEY_REF";
-/// Assertion cache byte budget for the **whole process**.
-///
-/// This binary runs two edges — one per assertion audience — and each holds its
-/// own verified-assertion cache. Before the merge each process charged this
-/// budget once; a merged process that passed the same number to both edges would
-/// silently consume twice the memory the operator asked for. The value is
-/// therefore the process-wide total and is divided between the edges, which is
-/// why its floor is two entries' worth rather than one.
-pub const ASSERTION_CACHE_BYTES: &str = "AEX_ASSERTION_CACHE_BYTES";
 
 // --- session half ------------------------------------------------------------
 
@@ -138,19 +132,17 @@ pub const STREAM_CONNECTION_BUFFER_BYTES: &str = "AEX_STREAM_CONNECTION_BUFFER_B
 pub const STREAM_WRITE_STALL_MS: &str = "AEX_STREAM_WRITE_STALL_MS";
 
 /// Every variable a healthy `session-stream-api` requires in `poll` mode.
-pub const REQUIRED: [&str; 37] = [
+pub const REQUIRED: [&str; 35] = [
     PLANE,
     REGION,
     RELEASE_DIGEST,
     PORT,
     DRAIN_DEADLINE_MS,
-    AUTHZ_FUNCTION_ARN,
-    AUTHZ_VERIFY_KEYS_PARAM,
+    CREDENTIAL_PEPPER_REF,
     AUTHZ_PROJECTION_TABLE,
     SESSION_TABLE,
     CONTENT_BUCKET,
     CURSOR_SIGNING_KEY_REF,
-    ASSERTION_CACHE_BYTES,
     REGIONAL_API_URL,
     WORK_TABLE,
     CONTENT_TABLE,
@@ -230,14 +222,15 @@ impl WakeMode {
 /// The AWS guidance this service respects: at most two readers per shard.
 pub const MAX_STREAM_READER_TASKS: u64 = 2;
 
-/// The number of assertion caches this process funds from one budget.
+/// The number of edges this process builds.
 ///
-/// One per audience: [`aex_internal_contracts::assertion::AssertionAudience::RegionalSession`]
-/// and [`aex_internal_contracts::assertion::AssertionAudience::RegionalStream`].
+/// One per audience:
+/// [`aex_internal_contracts::assertion::AssertionAudience::RegionalSession`] and
+/// [`aex_internal_contracts::assertion::AssertionAudience::RegionalStream`].
+/// They no longer cost memory to hold — there is nothing cached between requests
+/// — but they remain two distinct trust boundaries sharing one process, which is
+/// why each is bound to exactly one audience the key row must name.
 pub const EDGE_COUNT: usize = 2;
-
-/// The smallest per-edge assertion cache the edge constructor admits.
-const MIN_EDGE_CACHE_BYTES: u64 = 1_024;
 
 /// Resolved configuration. Nothing here has a default.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -254,10 +247,8 @@ pub struct Config {
     pub port: u16,
     /// How long a drain may run before the listener is abandoned.
     pub drain_deadline_ms: u64,
-    /// `central-authz` function.
-    pub authz_function: Arn,
-    /// Verification key-set parameter name.
-    pub authz_verify_keys_param: String,
+    /// Credential pepper ring parameter name.
+    pub credential_pepper_ref: String,
     /// Regional authorization projection table.
     pub authz_projection_table: String,
     /// `session-authority` table.
@@ -310,8 +301,6 @@ pub struct Config {
     pub connection_buffer_bytes: usize,
     /// Write stall deadline in milliseconds.
     pub write_stall_ms: u64,
-    /// Process-wide assertion cache byte budget, across both edges.
-    pub assertion_cache_bytes: usize,
     /// Effective encoded JSON body bound.
     pub max_json_body_bytes: usize,
     /// Effective page item bound.
@@ -497,8 +486,7 @@ impl Config {
             release_digest: required(lookup, RELEASE_DIGEST)?,
             port,
             drain_deadline_ms,
-            authz_function: arn_in_region(lookup, AUTHZ_FUNCTION_ARN, region, "lambda")?,
-            authz_verify_keys_param: required(lookup, AUTHZ_VERIFY_KEYS_PARAM)?,
+            credential_pepper_ref: required(lookup, CREDENTIAL_PEPPER_REF)?,
             authz_projection_table: required(lookup, AUTHZ_PROJECTION_TABLE)?,
             session_table: required(lookup, SESSION_TABLE)?,
             work_table: required(lookup, WORK_TABLE)?,
@@ -540,15 +528,6 @@ impl Config {
                 64 * 1_024 * 1_024,
             )?,
             write_stall_ms,
-            assertion_cache_bytes: bounded_usize(
-                lookup,
-                ASSERTION_CACHE_BYTES,
-                // Two edges are funded from this one number, so the floor is
-                // twice the single-edge floor: a budget that can only build one
-                // cache would leave the second edge unconstructible.
-                MIN_EDGE_CACHE_BYTES * EDGE_COUNT as u64,
-                64 * 1_024 * 1_024,
-            )?,
             max_json_body_bytes: bounded_usize(
                 lookup,
                 MAX_JSON_BODY_BYTES,
@@ -558,15 +537,6 @@ impl Config {
             max_page_items: bounded_usize(lookup, MAX_PAGE_ITEMS, 1, 1_000)?,
             max_page_bytes: bounded_usize(lookup, MAX_PAGE_BYTES, 1_024, 8 * 1_024 * 1_024)?,
         })
-    }
-
-    /// The share of the process-wide assertion cache budget each edge receives.
-    ///
-    /// Even, not proportional: the two audiences are minted at comparable rates
-    /// and an unequal split would be a capacity guess nobody could check.
-    #[must_use]
-    pub const fn edge_cache_bytes(&self) -> usize {
-        self.assertion_cache_bytes / EDGE_COUNT
     }
 
     /// The effective limits this deployable's unary edge enforces.

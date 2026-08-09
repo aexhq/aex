@@ -44,18 +44,13 @@ integration-engines = ["aex-test-harness/containers"]
 [dependencies]
 axum.workspace = true
 async-trait.workspace = true
-# `central-authz` is IAM-invoked rather than routed, so the assertion exchange is
-# a direct Lambda invoke and the caller's execution role is the authentication.
-aws-sdk-lambda.workspace = true
-# Parameter Store holds the assertion trust anchors and the cursor signing ring.
-# Both are read once at cold start, before the listener binds.
+# Parameter Store holds the credential pepper ring and the cursor signing ring.
+# Both are read once at cold start, before the listener binds. There is no
+# `aws-sdk-lambda` here any more: nothing on a regional request path invokes a
+# function, because the credential check is in-process.
 aws-sdk-ssm.workspace = true
 base64.workspace = true
 bytes.workspace = true
-# The trust anchors verify with the same library the issuer signs with, so
-# `verify_strict` can reject small-order keys and non-canonical signatures
-# without rejecting anything `central-authz` produces.
-ed25519-dalek.workspace = true
 hmac.workspace = true
 http.workspace = true
 serde.workspace = true
@@ -71,9 +66,10 @@ uuid.workspace = true
 zeroize.workspace = true
 aex-wire = { path = "../aex-wire" }
 aex-internal-contracts = { path = "../aex-internal-contracts" }
-# The one assertion implementation. Both crates are pure and link no AWS SDK:
-# the envelope layout, its Ed25519 verification and the epoch vocabulary all live
-# there, and re-stating any of them here is what produced two wire forms.
+# The one credential implementation. Both crates are pure and link no AWS SDK:
+# the token grammar, the peppered MAC, its constant-time comparison and the
+# epoch vocabulary all live there, and re-stating any of them here is exactly how
+# a second, subtly different verifier gets written.
 aex-control-domain = { path = "../aex-control-domain" }
 aex-identity-domain = { path = "../aex-identity-domain" }
 # The projection module's inputs: the decoded authority rows. The alternative to

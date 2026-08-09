@@ -32,25 +32,25 @@ pub const QUERY_READ_BYTES_VAR: &str = "AEX_OBS_QUERY_READ_BYTES";
 pub const METRIC_AGGREGATE_SCAN_VAR: &str = "AEX_OBS_METRIC_AGGREGATE_SCAN";
 /// Environment variable naming the Parameter Store cursor signing key ring.
 pub const CURSOR_KEY_REF_VAR: &str = "AEX_CURSOR_SIGNING_KEY_REF";
-/// Environment variable naming the `central-authz` function this edge invokes.
+/// Environment variable naming the Parameter Store credential pepper ring.
 ///
-/// `central-authz` is IAM-invoked, not routed. There is no URL: a role without
-/// `lambda:InvokeFunction` on this one ARN cannot resolve an assertion at all.
-pub const AUTHZ_FUNCTION_ARN_VAR: &str = "AEX_AUTHZ_FUNCTION_ARN";
-/// Environment variable naming the Parameter Store trust-anchor document.
+/// The peppers are a `SecureString` document read once at cold start, not an
+/// inline environment value: a pepper rotation must not require a redeploy of
+/// every regional service, and a verifier names the version it was computed
+/// under so both halves of a rotation have to be resolvable at once.
 ///
-/// The anchors are a `SecureString`-capable document read once at cold start,
-/// not an inline environment value: rotating a signing key must not require a
-/// redeploy of every regional service.
-pub const AUTHZ_VERIFY_KEYS_PARAM_VAR: &str = "AEX_AUTHZ_VERIFY_KEYS_PARAM";
+/// This replaced `AEX_AUTHZ_FUNCTION_ARN` and `AEX_AUTHZ_VERIFY_KEYS_PARAM`
+/// together: there is no `central-authz` invoke to address and no assertion
+/// signature to verify, because a presented key is checked in-process against
+/// the verifier the control plane replicated onto its authorization row.
+pub const CREDENTIAL_PEPPER_REF_VAR: &str = "AEX_CREDENTIAL_PEPPER_REF";
 /// Environment variable naming the read-only `regional-authz-projection` table.
 ///
-/// Read on **every** request and never cached. It is the only thing that makes a
-/// 30-second assertion safe: a revoked key or a paused account takes effect
-/// inside the window rather than after it.
+/// Read on **every** request and never cached. It carries the whole
+/// authorization answer — the verifier, the pepper version, the audiences, the
+/// scopes, the placement and the revocation floors — so a revoked key or a
+/// paused account takes effect on the next request rather than after a window.
 pub const AUTHZ_PROJECTION_TABLE_VAR: &str = "AEX_AUTHZ_PROJECTION_TABLE";
-/// Environment variable naming the assertion cache byte budget.
-pub const ASSERTION_CACHE_BYTES_VAR: &str = "AEX_ASSERTION_CACHE_BYTES";
 
 /// Every variable this deployable requires, in declaration order.
 pub const REQUIRED_VARS: &[&str] = &[
@@ -65,10 +65,8 @@ pub const REQUIRED_VARS: &[&str] = &[
     QUERY_READ_BYTES_VAR,
     METRIC_AGGREGATE_SCAN_VAR,
     CURSOR_KEY_REF_VAR,
-    AUTHZ_FUNCTION_ARN_VAR,
-    AUTHZ_VERIFY_KEYS_PARAM_VAR,
+    CREDENTIAL_PEPPER_REF_VAR,
     AUTHZ_PROJECTION_TABLE_VAR,
-    ASSERTION_CACHE_BYTES_VAR,
 ];
 
 /// Planes this deployable may be bound to.
@@ -114,14 +112,10 @@ pub struct Config {
     pub metric_aggregate_scan: u64,
     /// The Parameter Store reference for the cursor signing key ring.
     pub cursor_key_ref: String,
-    /// The `central-authz` function this edge invokes for an assertion.
-    pub authz_function_arn: String,
-    /// The Parameter Store name holding the assertion trust anchors.
-    pub authz_verify_keys_param: String,
+    /// The Parameter Store name holding the credential pepper ring.
+    pub credential_pepper_ref: String,
     /// The read-only regional authorization projection table.
     pub authz_projection_table: String,
-    /// The assertion cache byte budget.
-    pub assertion_cache_bytes: usize,
 }
 
 impl Config {
@@ -218,11 +212,8 @@ impl Config {
                 limits::METRIC_AGGREGATE_SCAN,
             )?,
             cursor_key_ref: required(&lookup, CURSOR_KEY_REF_VAR)?,
-            authz_function_arn: required(&lookup, AUTHZ_FUNCTION_ARN_VAR)?,
-            authz_verify_keys_param: required(&lookup, AUTHZ_VERIFY_KEYS_PARAM_VAR)?,
+            credential_pepper_ref: required(&lookup, CREDENTIAL_PEPPER_REF_VAR)?,
             authz_projection_table: required(&lookup, AUTHZ_PROJECTION_TABLE_VAR)?,
-            assertion_cache_bytes: usize::try_from(positive(&lookup, ASSERTION_CACHE_BYTES_VAR)?)
-                .unwrap_or(usize::MAX),
         })
     }
 }
@@ -309,10 +300,9 @@ mod tests {
     use aex_observation_domain::limits;
 
     use super::{
-        ASSERTION_CACHE_BYTES_VAR, AUTHZ_FUNCTION_ARN_VAR, AUTHZ_PROJECTION_TABLE_VAR,
-        AUTHZ_VERIFY_KEYS_PARAM_VAR, CURSOR_KEY_REF_VAR, Config, INDEX_SETTLE_VAR,
-        METRIC_AGGREGATE_SCAN_VAR, OBSERVATION_BUCKET_VAR, OBSERVATION_TABLE_VAR, PLANE_VAR,
-        QUERY_READ_BYTES_VAR, QUERY_SCANNED_ITEMS_VAR, QUERY_SEGMENTS_VAR, REGION_VAR,
+        AUTHZ_PROJECTION_TABLE_VAR, CREDENTIAL_PEPPER_REF_VAR, CURSOR_KEY_REF_VAR, Config,
+        INDEX_SETTLE_VAR, METRIC_AGGREGATE_SCAN_VAR, OBSERVATION_BUCKET_VAR, OBSERVATION_TABLE_VAR,
+        PLANE_VAR, QUERY_READ_BYTES_VAR, QUERY_SCANNED_ITEMS_VAR, QUERY_SEGMENTS_VAR, REGION_VAR,
         REQUIRED_VARS, RegionalObservationApiConfigError, SESSION_TABLE_VAR,
     };
 
@@ -333,18 +323,13 @@ mod tests {
                 "/aex/dev/regional/cursor-signing-key".to_owned(),
             ),
             (
-                AUTHZ_FUNCTION_ARN_VAR,
-                "arn:aws:lambda:eu-west-1:000000000000:function:central-authz".to_owned(),
-            ),
-            (
-                AUTHZ_VERIFY_KEYS_PARAM_VAR,
-                "/aex/dev/authz/verify-keys".to_owned(),
+                CREDENTIAL_PEPPER_REF_VAR,
+                "/aex/dev/credential-pepper/ring".to_owned(),
             ),
             (
                 AUTHZ_PROJECTION_TABLE_VAR,
                 "regional-authz-projection".to_owned(),
             ),
-            (ASSERTION_CACHE_BYTES_VAR, (1024 * 1024).to_string()),
         ])
     }
 

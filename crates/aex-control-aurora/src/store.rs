@@ -8,9 +8,10 @@ use aex_control_app::ports::{
     AcceptInvitationsTx, AccountProfile, BeginWorkspaceDeletionTx, BeginWorkspaceProvisionTx,
     ClaimDueOperations, ClaimOutbox, CompleteWorkspaceDeletionTx, ControlStore, ControlViewStore,
     CreateApiKeyTx, CreateInvitationTx, CreateOrganizationTx, FinishWorkspaceProvisionTx,
-    GcExpired, GcReport, IdempotencyRecordKey, ListApiKeys, ListOperations, ListOrganizations,
-    ListWorkspaces, MembershipView, OperationView, OrganizationView, Page, PageRequest,
-    ReconcileIdentity, RevokeApiKeyTx, StoreError, TxOutcome, UnknownCommit, WorkspaceView,
+    GcExpired, GcReport, IdempotencyRecordKey, KeyMaterialReader, ListApiKeys, ListOperations,
+    ListOrganizations, ListWorkspaces, MembershipView, OperationView, OrganizationView, Page,
+    PageRequest, ReconcileIdentity, RevokeApiKeyTx, StoreError, TxOutcome, UnknownCommit,
+    WorkspaceKeyMaterial, WorkspaceView,
 };
 use aex_control_domain::{
     AccountState, ApiKey, AuditEvent, Fence, Invitation, InvitationStatus, Membership,
@@ -24,7 +25,7 @@ use crate::error::{map_commit_failure, map_store_error};
 use crate::rows::{
     AccountProfileRow, AccountStateRow, ApiKeyRow, EpochRow, IdempotencyRow, InvitationRow,
     MembershipRow, OperationRow, OptionalInstantRow, OrgRoleRow, OrganizationRow, OutboxRow,
-    TextRow, UuidRow, WorkspaceRow,
+    TextRow, UuidRow, WorkspaceKeyMaterialRow, WorkspaceRow,
 };
 use crate::sql;
 
@@ -1862,6 +1863,22 @@ impl ControlStore for AuroraControlStore {
         // `NotFound`: the caller asked "may this account spend?", and the only
         // honest answers are yes, no, and "could not establish".
         Ok(row.map_or(AccountState::Unavailable, |row| row.0))
+    }
+}
+
+#[async_trait]
+impl KeyMaterialReader for AuroraControlStore {
+    async fn workspace_key_material(
+        &self,
+        key_id: Uuid,
+    ) -> Result<Option<WorkspaceKeyMaterial>, StoreError> {
+        self.client
+            .query_opt::<WorkspaceKeyMaterialRow>(
+                Statement::new(sql::GET_API_KEY_MATERIAL).bind("key_id", SqlValue::Uuid(key_id)),
+            )
+            .await
+            .map(|row| row.map(|row| row.0))
+            .map_err(map_store_error)
     }
 }
 

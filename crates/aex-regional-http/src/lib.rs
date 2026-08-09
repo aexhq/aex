@@ -13,12 +13,11 @@
 //! - central routes (`aex-central-http`)
 //! - the wire types themselves (`aex-wire`)
 
-pub mod assertion;
-pub mod assertion_flight;
 pub mod authz;
 pub mod capability;
 pub mod config;
 pub mod context;
+pub mod credential;
 pub mod cursor;
 pub mod drain;
 pub mod edge;
@@ -34,12 +33,11 @@ pub mod release_health;
 pub mod router;
 pub mod stream;
 
-pub use authz::{
-    LambdaAssertionSource, ParameterStore, RegionalProjection, TrustError, parse_trust_anchors,
-};
+pub use authz::{ParameterStore, RegionalProjection, TrustError, parse_pepper_ring};
 pub use capability::{CompositionManifest, admit};
 pub use config::{Environment, Lookup, RegionalHttpConfigError};
 pub use context::{EffectiveLimits, RegionalAuthorization, RequestContext};
+pub use credential::{AuthFailure, PepperRing, PresentedCredential, StoredVerifier};
 pub use cursor::{CursorBinding, decode, encode};
 pub use drain::{
     DRAIN_EXIT_MARGIN_MS, FARGATE_STOP_TIMEOUT_S, MAX_DRAIN_DEADLINE_MS, MIN_DRAIN_DEADLINE_MS,

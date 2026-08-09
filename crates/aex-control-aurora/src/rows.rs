@@ -5,7 +5,8 @@
 //! zone or `DateStyle`.
 
 use aex_control_app::ports::{
-    AccountActorState, AccountProfile, CentralActorState, SigningKeyRecord, WorkspaceKeyState,
+    AccountActorState, AccountProfile, CentralActorState, SigningKeyRecord, WorkspaceKeyMaterial,
+    WorkspaceKeyState,
 };
 use aex_control_domain::{
     AccountState, ApiKey, Epoch, Fence, IntentHash, Invitation, InvitationStatus, Lease,
@@ -438,6 +439,23 @@ impl Row for IdempotencyRow {
             response_body: record.opt(2, Record::json::<serde_json::Value>)?,
             operation_id: record.opt(3, Record::uuid)?,
         })
+    }
+}
+
+/// The projection of [`crate::sql::GET_API_KEY_MATERIAL`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceKeyMaterialRow(pub WorkspaceKeyMaterial);
+
+impl Row for WorkspaceKeyMaterialRow {
+    fn from_record(record: &Record<'_>) -> Result<Self, DecodeError> {
+        record.expect_arity(5)?;
+        Ok(Self(WorkspaceKeyMaterial {
+            key_id: record.uuid(0)?,
+            workspace_id: record.uuid(1)?,
+            verifier: record.fixed::<32>(2)?,
+            pepper_version: record.u16(3)?,
+            scopes: scopes(record, 4)?,
+        }))
     }
 }
 

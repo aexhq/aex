@@ -16,12 +16,14 @@
 //! that the cancellation decoding in [`crate::error`] cannot be exact, and a
 //! caller receives an index instead of a reason.
 
+use aex_internal_contracts::assertion::AudienceSet;
 use aex_wire::idempotency::{IdempotencyKey, IntentDigest};
 use aex_wire::ids::OrganizationId;
 use aex_wire::ids::{
     AgentId, ApiKeyId, ApprovalId, ContentHash, GenerationId, ObservationId, ResourceName, RunId,
     SessionId, ToolCallId, WorkspaceId,
 };
+use aex_wire::scopes::ScopeSet;
 use aex_wire::types::Timestamp;
 
 /// Descriptive workspace facts kept off the per-request placement row.
@@ -445,6 +447,18 @@ impl KeyAuthorizationState {
 /// this key been revoked", so a region had to learn the key's workspace from a
 /// central assertion before it could read anything else. Carrying the identity
 /// on the row is what makes one snapshot read sufficient.
+///
+/// # Why the verifier is here
+///
+/// The row now carries everything a regional edge needs to *authenticate* the
+/// presented credential, not merely to decide whether an already-authenticated
+/// one is current: the peppered MAC, the pepper version it was computed under,
+/// the audiences the key may be presented to and the effective scopes it holds.
+///
+/// Replicating the verifier is safe for the same reason the central authority
+/// can hold it: it is `HMAC-SHA256(pepper, SHA-256(token))`, so holding it —
+/// with the pepper — lets a holder *check* a presented key, never mint one.
+/// Forging still needs a preimage against 256 bits of CSPRNG secret.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyAuthorization {
     /// Which key.
@@ -457,6 +471,22 @@ pub struct KeyAuthorization {
     pub region: String,
     /// Whether it may still authorize.
     pub state: KeyAuthorizationState,
+    /// `HMAC-SHA256(pepper_v, SHA-256(token))`, exactly as the control plane
+    /// stores it.
+    pub verifier: [u8; 32],
+    /// Which pepper version the verifier was computed under.
+    ///
+    /// A rotation re-peppers rows one at a time, so the version has to travel
+    /// with the verifier: an edge that assumed the current pepper would refuse
+    /// every credential minted before the rotation.
+    pub pepper_version: u16,
+    /// The regional edges this key may be presented to.
+    ///
+    /// Empty is representable and means "nothing", which is why the decoder
+    /// refuses a row that names none rather than reading absence as "any".
+    pub audiences: AudienceSet,
+    /// The effective scopes, computed centrally and never re-derived at an edge.
+    pub scopes: ScopeSet,
     /// The monotone key epoch floor.
     pub key_epoch: u64,
     /// The monotone projection position this row was published at.

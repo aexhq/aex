@@ -1,27 +1,19 @@
 //! Black-box requirements for the regional edge primitives.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::num::NonZeroUsize;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::atomic::Ordering as AtomicOrdering;
 
-use aex_control_domain::epoch::{Epoch as ControlEpoch, EpochSubjectKind};
-use aex_identity_domain::assertion::{
-    ASSERTION_MAX_LIFETIME_MS, AssertedAccountState, Assertion, AssertionClaims, Audience,
-    EpochSlot, EpochSlots, KeyId, LocalSigner, Plane as AssertionPlane, PrincipalKind,
-    VerificationKey, VerificationKeySet, issue,
-};
-use aex_internal_contracts::assertion::AssertionAudience;
-use aex_regional_http::assertion::{
-    AssertionSource, AuthFailure, CredentialFloors, NEGATIVE_TTL_MS, PresentedCredential,
-    VerifiedAuthorization, VerifyingAssertionCache, verify,
-};
-use aex_regional_http::assertion_flight::{Flight, FlightLeader, FlightRegistry, FlightRole};
+use aex_identity_domain::credential::{Pepper, PresentedDigest, verifier};
+use aex_regional_http::authz::{MAX_PARAMETER_BYTES, TrustError, parse_pepper_ring};
 use aex_regional_http::capability::{
     CapabilityBinding, CompositionManifest, DeployableId, ResolvedConfig, admit,
 };
 use aex_regional_http::context::{
     AccountState, AuthorizationEpochs, EffectiveLimits, RegionalAuthorization, RequestContext,
+};
+use aex_regional_http::credential::{
+    AuthFailure, MAX_PEPPERS, PresentedCredential, StoredVerifier,
 };
 use aex_regional_http::cursor::{
     CursorBinding, CursorError, CursorKey, CursorKeyRing, CursorRequestBinding, Order,
@@ -91,8 +83,6 @@ fn request_context() -> RequestContext {
             scopes: ScopeSet::empty(),
             account_state: AccountState::Active,
             epochs: AuthorizationEpochs::default(),
-            issued_at: OffsetDateTime::UNIX_EPOCH,
-            expires_at: OffsetDateTime::UNIX_EPOCH + time::Duration::seconds(30),
         },
         limits: EffectiveLimits {
             json_body_bytes: 65_536,
@@ -109,9 +99,9 @@ fn request_context() -> RequestContext {
 
 /// A syntactically complete workspace API key, and the credential it becomes.
 ///
-/// One minter for every credential this file needs, because a flight and a
-/// cache entry are both keyed by the digest of the *whole* token: a second
-/// minter is a second answer to "are these two credentials the same".
+/// One minter for every credential this file needs, because the verifier is a
+/// MAC over the digest of the *whole* token: a second minter is a second answer
+/// to "are these two credentials the same".
 fn fixture_credential(index: u32) -> PresentedCredential {
     let bytes = index.to_be_bytes();
     // Two of the ten entropy bytes are masked to carry the uuid version and
@@ -143,59 +133,27 @@ fn fixture_credential(index: u32) -> PresentedCredential {
     PresentedCredential::new(token.into_bytes()).expect("a workspace key is a credential")
 }
 
-fn signer() -> LocalSigner {
-    LocalSigner::new(
-        KeyId::new(uuid::Uuid::from_u128(0x515)),
-        &zeroize::Zeroizing::new([13_u8; 32]),
-    )
+/// The parameter name every pepper-ring case reports against.
+const PEPPER_PARAM: &str = "/aex/dev/credential-pepper/ring";
+
+/// A pepper ring document holding exactly these versions.
+fn pepper_document(entries: &[(u16, [u8; 32])]) -> String {
+    let peppers: Vec<String> = entries
+        .iter()
+        .map(|(version, material)| {
+            format!(
+                r#"{{"version":{version},"material":"{}"}}"#,
+                aex_control_domain::codec::base64url(material)
+            )
+        })
+        .collect();
+    format!(r#"{{"schemaVersion":1,"peppers":[{}]}}"#, peppers.join(","))
 }
 
-fn anchors() -> VerificationKeySet {
-    VerificationKeySet::new(vec![VerificationKey {
-        kid: KeyId::new(uuid::Uuid::from_u128(0x515)),
-        public_key: signer().public_key(),
-        not_after_ms: u64::MAX,
-    }])
-    .expect("one key")
-}
-
-fn audience(service: AssertionAudience) -> Audience {
-    Audience {
-        plane: AssertionPlane::Dev,
-        region: Region::EuWest1,
-        service,
-    }
-}
-
-fn raw_id<I: aex_wire::ids::PrefixedId>(id: I) -> uuid::Uuid {
-    uuid::Uuid::from_bytes(*id.uuid7().as_bytes())
-}
-
-fn signed(credential: &PresentedCredential, lifetime_ms: u64) -> Assertion {
-    let claims = AssertionClaims {
-        issued_at_ms: 1_000,
-        expires_at_ms: 1_000 + lifetime_ms,
-        audience: audience(AssertionAudience::RegionalSession),
-        principal_kind: PrincipalKind::WorkspaceKey,
-        principal_id: credential.key_id_raw(),
-        credential_binding: credential.expected_binding(),
-        organization_id: raw_id(organization(1)),
-        workspace_id: raw_id(workspace(1)),
-        workspace_region: Region::EuWest1,
-        account_state: AssertedAccountState::Active,
-        scopes: aex_control_domain::ScopeSet::EMPTY,
-        epochs: EpochSlots::new(&[EpochSlot {
-            kind: EpochSubjectKind::Key,
-            id: credential.key_id_raw(),
-            epoch: ControlEpoch::new(4),
-        }])
-        .expect("one subject"),
-    };
-    issue(&signer(), &claims).expect("a 30-second envelope")
-}
-
-fn floors(credential: &PresentedCredential, key: u64) -> CredentialFloors {
-    CredentialFloors::new(ControlEpoch::new(key), credential.key_id_raw())
+/// The verifier the control plane would have stored for this credential.
+fn stored(credential: &PresentedCredential, version: u16, pepper: [u8; 32]) -> StoredVerifier {
+    let keyed = verifier(&Pepper::new(pepper), credential.digest());
+    StoredVerifier::new(*keyed.as_bytes(), version)
 }
 
 fn binding() -> CursorBinding {
@@ -609,679 +567,174 @@ fn every_generated_regional_route_has_exactly_one_planned_owner() {
 }
 
 #[test]
-fn assertions_expire_to_the_millisecond_and_bind_every_authority_fact() {
+fn a_presented_credential_verifies_only_against_its_own_stored_verifier() {
+    let ring =
+        parse_pepper_ring(PEPPER_PARAM, &pepper_document(&[(1, [11; 32])])).expect("a usable ring");
     let credential = fixture_credential(5);
-    let assertion = signed(&credential, ASSERTION_MAX_LIFETIME_MS);
-    let session = audience(AssertionAudience::RegionalSession);
-    let floor = floors(&credential, 4);
-
-    // Accepted at expiry minus one millisecond and refused at expiry: the bound
-    // is exact, and there is no grace period anywhere.
-    assert!(
-        verify(
-            &assertion,
-            &anchors(),
-            &credential,
-            session,
-            &floor,
-            stamp(1_000 + i64::try_from(ASSERTION_MAX_LIFETIME_MS).expect("small") - 1),
-        )
-        .is_ok()
-    );
     assert_eq!(
-        verify(
-            &assertion,
-            &anchors(),
-            &credential,
-            session,
-            &floor,
-            stamp(1_000 + i64::try_from(ASSERTION_MAX_LIFETIME_MS).expect("small")),
+        ring.admits(&credential, &stored(&credential, 1, [11; 32])),
+        Ok(())
+    );
+
+    // A verifier minted for another credential, a verifier under another pepper
+    // and a verifier of pure noise are one answer: the presented secret does not
+    // produce it. Distinguishing them would be a credential oracle.
+    for (name, wrong) in [
+        (
+            "another credential's verifier",
+            stored(&fixture_credential(6), 1, [11; 32]),
         ),
-        Err(AuthFailure::Verification(
-            aex_identity_domain::assertion::VerifyError::Expired
-        ))
+        (
+            "the same credential under another pepper",
+            stored(&credential, 1, [12; 32]),
+        ),
+        ("noise", StoredVerifier::new([0; 32], 1)),
+    ] {
+        assert_eq!(
+            ring.admits(&credential, &wrong),
+            Err(AuthFailure::VerifierMismatch),
+            "{name} was admitted"
+        );
+    }
+}
+
+#[test]
+fn a_rotation_does_not_invalidate_a_pre_rotation_credential() {
+    // The ring holds both halves of a rotation and every verifier names the
+    // version it was computed under, so a credential minted before the rotation
+    // keeps verifying while one minted after it verifies too. An edge that
+    // assumed "the newest pepper" would refuse every pre-rotation credential.
+    let ring = parse_pepper_ring(
+        PEPPER_PARAM,
+        &pepper_document(&[(1, [11; 32]), (2, [22; 32])]),
+    )
+    .expect("a usable ring");
+    assert_eq!(ring.len(), 2);
+    assert_eq!(ring.versions(), vec![1, 2]);
+
+    let old = fixture_credential(11);
+    let new = fixture_credential(12);
+    assert_eq!(ring.admits(&old, &stored(&old, 1, [11; 32])), Ok(()));
+    assert_eq!(ring.admits(&new, &stored(&new, 2, [22; 32])), Ok(()));
+
+    // The version is not decorative: the same 32 bytes under the wrong declared
+    // version is still a mismatch, so a row cannot be re-pointed at a pepper it
+    // was not computed under.
+    assert_eq!(
+        ring.admits(
+            &old,
+            &StoredVerifier::new(
+                *verifier(&Pepper::new([11; 32]), old.digest()).as_bytes(),
+                2
+            )
+        ),
+        Err(AuthFailure::VerifierMismatch)
     );
 }
 
 #[test]
-fn every_authority_fact_the_envelope_binds_is_refused_on_its_own() {
+fn a_pepper_version_the_region_does_not_hold_is_a_fault_and_never_a_refusal() {
+    // The credential is *unverifiable*, not invalid. Answering `unauthenticated`
+    // would tell a customer to rotate a key that was never wrong, so this arm is
+    // the one that survives as a `503`.
+    let ring =
+        parse_pepper_ring(PEPPER_PARAM, &pepper_document(&[(1, [11; 32])])).expect("a usable ring");
     let credential = fixture_credential(5);
-    let assertion = signed(&credential, ASSERTION_MAX_LIFETIME_MS);
-    let session = audience(AssertionAudience::RegionalSession);
-    let floor = floors(&credential, 4);
+    assert_eq!(
+        ring.admits(&credential, &stored(&credential, 7, [11; 32])),
+        Err(AuthFailure::UnknownPepper { version: 7 })
+    );
+}
 
-    for (inputs, expected) in [
+#[test]
+fn the_stored_verifier_is_exactly_the_one_the_control_plane_computes() {
+    // The regional check and the central mint must agree byte for byte, or the
+    // replication is a second, subtly different verifier. Both go through the
+    // same crate, and this pins that they do.
+    let credential = fixture_credential(9);
+    let central = verifier(
+        &Pepper::new([11; 32]),
+        &PresentedDigest::of(
+            &credential.expose(|bytes| String::from_utf8(bytes.to_vec()).expect("a UTF-8 token")),
+        ),
+    );
+    let ring =
+        parse_pepper_ring(PEPPER_PARAM, &pepper_document(&[(1, [11; 32])])).expect("a usable ring");
+    assert_eq!(
+        ring.admits(&credential, &StoredVerifier::new(*central.as_bytes(), 1)),
+        Ok(())
+    );
+}
+
+#[test]
+fn no_credential_type_renders_its_secret() {
+    let credential = fixture_credential(5);
+    let rendered = format!("{credential:?}");
+    assert!(!rendered.contains("aex_wk_"), "{rendered}");
+    assert!(
+        !rendered.contains(&credential.digest().to_base64url()),
+        "{rendered}"
+    );
+
+    let stored = stored(&credential, 1, [11; 32]);
+    let rendered = format!("{stored:?}");
+    assert!(rendered.contains("<redacted:32 bytes>"), "{rendered}");
+
+    let ring = parse_pepper_ring(
+        PEPPER_PARAM,
+        &pepper_document(&[(1, [11; 32]), (4, [12; 32])]),
+    )
+    .expect("a usable ring");
+    let rendered = format!("{ring:?}");
+    assert!(rendered.contains("versions"), "{rendered}");
+    assert!(!rendered.contains("11"), "{rendered}");
+}
+
+#[test]
+fn the_pepper_ring_refuses_every_unusable_document() {
+    for (name, document) in [
+        ("empty", r#"{"schemaVersion":1,"peppers":[]}"#.to_owned()),
         (
-            (
-                audience(AssertionAudience::RegionalSecret),
-                floor,
-                credential.clone(),
-            ),
-            aex_identity_domain::assertion::VerifyError::AudienceMismatch,
+            "duplicate version",
+            pepper_document(&[(1, [11; 32]), (1, [12; 32])]),
         ),
         (
-            (
-                Audience {
-                    region: Region::UsEast1,
-                    ..session
-                },
-                floor,
-                credential.clone(),
-            ),
-            aex_identity_domain::assertion::VerifyError::AudienceMismatch,
+            "unversioned",
+            r#"{"peppers":[{"version":1,"material":"AAAA"}]}"#.to_owned(),
         ),
         (
-            (
-                Audience {
-                    plane: AssertionPlane::Prd,
-                    ..session
-                },
-                floor,
-                credential.clone(),
-            ),
-            aex_identity_domain::assertion::VerifyError::AudienceMismatch,
+            "unknown member",
+            r#"{"schemaVersion":1,"peppers":[{"version":1,"material":"AAAA"}],"rotateAt":"soon"}"#
+                .to_owned(),
         ),
         (
-            (session, floors(&credential, 5), credential.clone()),
-            aex_identity_domain::assertion::VerifyError::EpochStale {
-                kind: EpochSubjectKind::Key,
-                id: credential.key_id_raw(),
-                claimed: 4,
-                projected: 5,
-            },
+            "short material",
+            r#"{"schemaVersion":1,"peppers":[{"version":1,"material":"short"}]}"#.to_owned(),
         ),
         (
-            (session, floor, fixture_credential(6)),
-            aex_identity_domain::assertion::VerifyError::CredentialBindingMismatch,
+            "non-canonical material",
+            r#"{"schemaVersion":1,"peppers":[{"version":1,"material":"not base64url!"}]}"#
+                .to_owned(),
         ),
     ] {
-        let (audience, floor, presented) = inputs;
-        assert_eq!(
-            verify(
-                &assertion,
-                &anchors(),
-                &presented,
-                audience,
-                &floor,
-                stamp(2_000)
-            ),
-            Err(AuthFailure::Verification(expected)),
-            "{expected:?}"
+        assert!(
+            parse_pepper_ring(PEPPER_PARAM, &document).is_err(),
+            "a {name} document must stop the process"
         );
     }
 
-    // An anchor set that does not hold the signing identity verifies nothing.
-    let empty = VerificationKeySet::new(Vec::new()).expect("an empty set");
-    assert_eq!(
-        verify(
-            &assertion,
-            &empty,
-            &credential,
-            session,
-            &floor,
-            stamp(2_000)
-        ),
-        Err(AuthFailure::Verification(
-            aex_identity_domain::assertion::VerifyError::UnknownKid
-        ))
-    );
-}
+    let too_many: Vec<(u16, [u8; 32])> = (0..=u16::try_from(MAX_PEPPERS).expect("small"))
+        .map(|version| (version, [u8::try_from(version % 251).expect("small"); 32]))
+        .collect();
+    assert!(matches!(
+        parse_pepper_ring(PEPPER_PARAM, &pepper_document(&too_many)),
+        Err(TrustError::PepperRing { .. })
+    ));
 
-#[derive(Clone)]
-struct CountingSource {
-    calls: Arc<AtomicUsize>,
-    assertion: Assertion,
-}
-
-#[async_trait]
-impl AssertionSource for CountingSource {
-    async fn obtain(&self, _credential: &PresentedCredential) -> Result<Assertion, AuthFailure> {
-        self.calls.fetch_add(1, AtomicOrdering::SeqCst);
-        tokio::task::yield_now().await;
-        Ok(self.assertion)
-    }
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn assertion_refresh_is_single_flight_for_one_credential() {
-    let credential = fixture_credential(5);
-    let calls = Arc::new(AtomicUsize::new(0));
-    let cache = Arc::new(
-        VerifyingAssertionCache::new(
-            CountingSource {
-                calls: Arc::clone(&calls),
-                assertion: signed(&credential, ASSERTION_MAX_LIFETIME_MS),
-            },
-            anchors(),
-            audience(AssertionAudience::RegionalSession),
-            4_096,
-        )
-        .expect("cache"),
-    );
-    let floor = floors(&credential, 4);
-    let tasks = (0..100)
-        .map(|_| {
-            let cache = Arc::clone(&cache);
-            let credential = credential.clone();
-            tokio::spawn(async move { cache.resolve(&credential, &floor, stamp(2_000)).await })
-        })
-        .collect::<Vec<_>>();
-    for task in tasks {
-        task.await.expect("task").expect("authorization");
-    }
-    assert_eq!(calls.load(AtomicOrdering::SeqCst), 1);
-    // The flight that deduplicated those hundred callers is gone with them.
-    assert_eq!(cache.outstanding_flights(), 0);
-}
-
-/// What the gated central source answers, once it is released.
-#[derive(Clone, Copy)]
-enum GatedAnswer {
-    Issue,
-    Refuse,
-    Unavailable,
-}
-
-/// A central source that cannot answer until the test lets it.
-///
-/// The gate is what makes "exactly one call" a statement about the flight rather
-/// than about scheduling luck: while it is closed, every later caller is still
-/// inside the resolution the first one started, so a second call would have to
-/// come from a second flight.
-struct GatedSource {
-    calls: Arc<AtomicUsize>,
-    gate: Arc<tokio::sync::Semaphore>,
-    answer: GatedAnswer,
-}
-
-#[async_trait]
-impl AssertionSource for GatedSource {
-    async fn obtain(&self, credential: &PresentedCredential) -> Result<Assertion, AuthFailure> {
-        self.calls.fetch_add(1, AtomicOrdering::SeqCst);
-        self.gate
-            .acquire()
-            .await
-            .expect("the gate is never closed")
-            .forget();
-        match self.answer {
-            GatedAnswer::Issue => Ok(signed(credential, ASSERTION_MAX_LIFETIME_MS)),
-            GatedAnswer::Refuse => Err(AuthFailure::Refused),
-            GatedAnswer::Unavailable => Err(AuthFailure::SourceUnavailable),
-        }
-    }
-}
-
-/// A central source that refuses everything it is shown.
-///
-/// The shape of the attack in the finding this lane closes: a structurally valid
-/// token needs no secret to reach the authority and be refused, so the refusal
-/// path is the one whose residue matters.
-struct RefusingSource {
-    calls: Arc<AtomicUsize>,
-}
-
-#[async_trait]
-impl AssertionSource for RefusingSource {
-    async fn obtain(&self, _credential: &PresentedCredential) -> Result<Assertion, AuthFailure> {
-        self.calls.fetch_add(1, AtomicOrdering::SeqCst);
-        Err(AuthFailure::Refused)
-    }
-}
-
-/// Yields until `condition` holds.
-///
-/// Ordering here is established by the single-threaded scheduler rather than by
-/// a timer: every spawned task runs to its first pending await while this loop
-/// yields, so the bound is a test failure and never a timeout.
-async fn until(condition: impl Fn() -> bool) {
-    for _ in 0..10_000 {
-        if condition() {
-            return;
-        }
-        tokio::task::yield_now().await;
-    }
-    panic!("the awaited condition never held");
-}
-
-/// One hundred concurrent first-time callers of one credential, all of them
-/// inside the flight before the source is allowed to answer.
-///
-/// Returns what each caller got, how many times the source was called, and how
-/// many flights the cache is left holding.
-async fn stampede(
-    answer: GatedAnswer,
-) -> (
-    Vec<Result<VerifiedAuthorization, AuthFailure>>,
-    usize,
-    usize,
-) {
-    let credential = fixture_credential(5);
-    let calls = Arc::new(AtomicUsize::new(0));
-    let gate = Arc::new(tokio::sync::Semaphore::new(0));
-    let cache = Arc::new(
-        VerifyingAssertionCache::new(
-            GatedSource {
-                calls: Arc::clone(&calls),
-                gate: Arc::clone(&gate),
-                answer,
-            },
-            anchors(),
-            audience(AssertionAudience::RegionalSession),
-            4_096,
-        )
-        .expect("cache"),
-    );
-    let floor = floors(&credential, 4);
-    let boarded = Arc::new(AtomicUsize::new(0));
-    let tasks = (0..100)
-        .map(|_| {
-            let cache = Arc::clone(&cache);
-            let credential = credential.clone();
-            let boarded = Arc::clone(&boarded);
-            tokio::spawn(async move {
-                // Nothing between this count and joining the flight can park:
-                // the entry lock is uncontended and the source is the leader's
-                // to call, so a task counted here is a task inside the flight.
-                boarded.fetch_add(1, AtomicOrdering::SeqCst);
-                cache.resolve(&credential, &floor, stamp(2_000)).await
-            })
-        })
-        .collect::<Vec<_>>();
-    until(|| boarded.load(AtomicOrdering::SeqCst) == 100).await;
-    assert_eq!(cache.outstanding_flights(), 1);
-    gate.add_permits(100);
-
-    let mut outcomes = Vec::with_capacity(100);
-    for task in tasks {
-        outcomes.push(task.await.expect("task"));
-    }
-    let calls = calls.load(AtomicOrdering::SeqCst);
-    let outstanding = cache.outstanding_flights();
-    (outcomes, calls, outstanding)
-}
-
-#[tokio::test]
-async fn one_hundred_concurrent_first_time_callers_share_one_issued_assertion() {
-    let (outcomes, calls, outstanding) = stampede(GatedAnswer::Issue).await;
-    let first = *outcomes.first().expect("a hundred outcomes");
-    first.expect("the credential was issued an assertion");
-    assert!(outcomes.iter().all(|outcome| *outcome == first));
-    assert_eq!(calls, 1);
-    assert_eq!(outstanding, 0);
-}
-
-#[tokio::test]
-async fn one_hundred_concurrent_first_time_callers_share_one_refusal() {
-    let (outcomes, calls, outstanding) = stampede(GatedAnswer::Refuse).await;
-    assert!(
-        outcomes
-            .iter()
-            .all(|outcome| *outcome == Err(AuthFailure::Refused))
-    );
-    // A refusal is a shared outcome exactly as an issue is: a hundred callers
-    // presenting one rejected credential ask the authority once.
-    assert_eq!(calls, 1);
-    assert_eq!(outstanding, 0);
-}
-
-#[tokio::test]
-async fn one_hundred_concurrent_first_time_callers_share_one_unavailability() {
-    let (outcomes, calls, outstanding) = stampede(GatedAnswer::Unavailable).await;
-    assert!(
-        outcomes
-            .iter()
-            .all(|outcome| *outcome == Err(AuthFailure::SourceUnavailable))
-    );
-    // An authority that is down is not asked a hundred more times because it
-    // was down once.
-    assert_eq!(calls, 1);
-    assert_eq!(outstanding, 0);
-}
-
-#[tokio::test]
-async fn a_refused_credential_costs_one_central_exchange_per_negative_window() {
-    let credential = fixture_credential(5);
-    let calls = Arc::new(AtomicUsize::new(0));
-    let cache = VerifyingAssertionCache::new(
-        RefusingSource {
-            calls: Arc::clone(&calls),
-        },
-        anchors(),
-        audience(AssertionAudience::RegionalSession),
-        4_096,
-    )
-    .expect("cache");
-    let floor = floors(&credential, 4);
-
-    // Sequential bad-key traffic was 1:1 with central invokes for ever; the
-    // window turns it into one exchange per TTL.
-    for _ in 0..5 {
-        assert_eq!(
-            cache.resolve(&credential, &floor, stamp(2_000)).await,
-            Err(AuthFailure::Refused)
-        );
-    }
-    assert_eq!(calls.load(AtomicOrdering::SeqCst), 1);
-
-    let last_inside = 2_000 + i64::try_from(NEGATIVE_TTL_MS).expect("a small TTL") - 1;
-    assert_eq!(
-        cache.resolve(&credential, &floor, stamp(last_inside)).await,
-        Err(AuthFailure::Refused)
-    );
-    assert_eq!(
-        calls.load(AtomicOrdering::SeqCst),
-        1,
-        "the last instant inside the window still answers from memory"
-    );
-
-    assert_eq!(
-        cache
-            .resolve(&credential, &floor, stamp(last_inside + 1))
-            .await,
-        Err(AuthFailure::Refused)
-    );
-    assert_eq!(
-        calls.load(AtomicOrdering::SeqCst),
-        2,
-        "the first request past the window leads a fresh exchange"
-    );
-}
-
-/// A central source that is down for everything it is shown.
-struct UnavailableSource {
-    calls: Arc<AtomicUsize>,
-}
-
-#[async_trait]
-impl AssertionSource for UnavailableSource {
-    async fn obtain(&self, _credential: &PresentedCredential) -> Result<Assertion, AuthFailure> {
-        self.calls.fetch_add(1, AtomicOrdering::SeqCst);
-        Err(AuthFailure::SourceUnavailable)
-    }
-}
-
-#[tokio::test]
-async fn an_unavailable_authority_is_never_remembered_against_the_credential() {
-    let credential = fixture_credential(5);
-    let calls = Arc::new(AtomicUsize::new(0));
-    let cache = VerifyingAssertionCache::new(
-        UnavailableSource {
-            calls: Arc::clone(&calls),
-        },
-        anchors(),
-        audience(AssertionAudience::RegionalSession),
-        4_096,
-    )
-    .expect("cache");
-    let floor = floors(&credential, 4);
-
-    for attempt in 1..=3 {
-        assert_eq!(
-            cache.resolve(&credential, &floor, stamp(2_000)).await,
-            Err(AuthFailure::SourceUnavailable)
-        );
-        assert_eq!(
-            calls.load(AtomicOrdering::SeqCst),
-            attempt,
-            "an outage must be re-asked, or a recovered authority keeps \
-             refusing a good credential for the TTL"
-        );
-    }
-}
-
-#[tokio::test]
-async fn a_cancelled_leader_wakes_its_waiters_and_leaves_the_next_caller_a_fresh_flight() {
-    let credential = fixture_credential(5);
-    let calls = Arc::new(AtomicUsize::new(0));
-    let gate = Arc::new(tokio::sync::Semaphore::new(0));
-    let cache = Arc::new(
-        VerifyingAssertionCache::new(
-            GatedSource {
-                calls: Arc::clone(&calls),
-                gate: Arc::clone(&gate),
-                answer: GatedAnswer::Issue,
-            },
-            anchors(),
-            audience(AssertionAudience::RegionalSession),
-            4_096,
-        )
-        .expect("cache"),
-    );
-    let floor = floors(&credential, 4);
-
-    let leader = tokio::spawn({
-        let cache = Arc::clone(&cache);
-        let credential = credential.clone();
-        async move { cache.resolve(&credential, &floor, stamp(2_000)).await }
-    });
-    until(|| calls.load(AtomicOrdering::SeqCst) == 1).await;
-    assert_eq!(cache.outstanding_flights(), 1);
-
-    let boarded = Arc::new(AtomicUsize::new(0));
-    let waiters = (0..5)
-        .map(|_| {
-            let cache = Arc::clone(&cache);
-            let credential = credential.clone();
-            let boarded = Arc::clone(&boarded);
-            tokio::spawn(async move {
-                boarded.fetch_add(1, AtomicOrdering::SeqCst);
-                cache.resolve(&credential, &floor, stamp(2_000)).await
-            })
-        })
-        .collect::<Vec<_>>();
-    until(|| boarded.load(AtomicOrdering::SeqCst) == 5).await;
-
-    leader.abort();
-    assert!(
-        leader
-            .await
-            .expect_err("the leading request went away")
-            .is_cancelled()
-    );
-
-    // The gate opens before the waiters are joined, so a waiter that had *not*
-    // been inside the flight would resolve successfully here and show up as a
-    // second source call rather than as a silent pass.
-    gate.add_permits(100);
-    for waiter in waiters {
-        assert_eq!(
-            waiter.await.expect("task"),
-            Err(AuthFailure::FlightCancelled)
-        );
-    }
-    assert_eq!(calls.load(AtomicOrdering::SeqCst), 1);
-    assert_eq!(cache.outstanding_flights(), 0);
-
-    // Nothing of the cancelled flight survives to block the next caller.
-    cache
-        .resolve(&credential, &floor, stamp(2_000))
-        .await
-        .expect("a fresh resolution");
-    assert_eq!(calls.load(AtomicOrdering::SeqCst), 2);
-    assert_eq!(cache.outstanding_flights(), 0);
-}
-
-#[tokio::test]
-async fn a_long_sequence_of_distinct_refused_credentials_leaves_no_flight_behind() {
-    let calls = Arc::new(AtomicUsize::new(0));
-    let cache = VerifyingAssertionCache::new(
-        RefusingSource {
-            calls: Arc::clone(&calls),
-        },
-        anchors(),
-        audience(AssertionAudience::RegionalSession),
-        4_096,
-    )
-    .expect("cache");
-
-    // More distinct credentials than the flight ceiling admits at once: a
-    // registry that kept an entry per credential it had ever seen would refuse
-    // the later ones for capacity, and every one of them reaches the authority.
-    for index in 0..5_000 {
-        let credential = fixture_credential(index);
-        assert_eq!(
-            cache
-                .resolve(&credential, &floors(&credential, 4), stamp(2_000))
-                .await,
-            Err(AuthFailure::Refused)
-        );
-        assert_eq!(cache.outstanding_flights(), 0);
-    }
-    assert_eq!(calls.load(AtomicOrdering::SeqCst), 5_000);
-    assert_eq!(cache.outstanding_flights(), 0);
-    // A refusal is never stored, so the byte-bounded cache is untouched by any
-    // of it.
-    assert_eq!(cache.stored_assertions().await, 0);
-}
-
-#[tokio::test]
-async fn assertion_eviction_and_flight_retirement_never_touch_each_other() {
-    let calls = Arc::new(AtomicUsize::new(0));
-    let gate = Arc::new(tokio::sync::Semaphore::new(1_000));
-    let cache = VerifyingAssertionCache::new(
-        GatedSource {
-            calls: Arc::clone(&calls),
-            gate,
-            answer: GatedAnswer::Issue,
-        },
-        anchors(),
-        audience(AssertionAudience::RegionalSession),
-        // Two entries: the third credential evicts one of the first two.
-        2_048,
-    )
-    .expect("cache");
-
-    for index in 0..3 {
-        let credential = fixture_credential(index);
-        cache
-            .resolve(&credential, &floors(&credential, 4), stamp(2_000))
-            .await
-            .expect("an issued assertion");
-        // Storing, and evicting to make room for storing, retire the flight
-        // that produced the entry and nothing else.
-        assert_eq!(cache.outstanding_flights(), 0);
-    }
-    assert_eq!(calls.load(AtomicOrdering::SeqCst), 3);
-    assert_eq!(cache.stored_assertions().await, 2);
-
-    // The eviction did not disturb the decision stored by the flight that
-    // caused it, and retiring that flight did not evict it either.
-    let latest = fixture_credential(2);
-    cache
-        .resolve(&latest, &floors(&latest, 4), stamp(2_100))
-        .await
-        .expect("the stored assertion");
-    assert_eq!(calls.load(AtomicOrdering::SeqCst), 3);
-    assert_eq!(cache.stored_assertions().await, 2);
-    assert_eq!(cache.outstanding_flights(), 0);
-}
-
-/// The leader a caller becomes for a key nobody is resolving yet.
-fn lead(registry: &FlightRegistry, key: [u8; 32]) -> FlightLeader<'_> {
-    match registry.board(key) {
-        Ok(FlightRole::Leader(leader)) => leader,
-        Ok(FlightRole::Follower(_)) => panic!("that credential is already being resolved"),
-        Err(failure) => panic!("boarding was refused: {failure}"),
-    }
-}
-
-/// The flight a caller joins when one is already running for its key.
-fn follow(registry: &FlightRegistry, key: [u8; 32]) -> Arc<Flight> {
-    match registry.board(key) {
-        Ok(FlightRole::Follower(flight)) => flight,
-        Ok(FlightRole::Leader(_)) => panic!("nobody is resolving that credential"),
-        Err(failure) => panic!("boarding was refused: {failure}"),
-    }
-}
-
-#[tokio::test]
-async fn a_full_flight_registry_refuses_a_new_credential_rather_than_displacing_an_active_one() {
-    let registry = FlightRegistry::new(NonZeroUsize::new(2).expect("a positive ceiling"));
-    let first = lead(&registry, [1; 32]);
-    let second = lead(&registry, [2; 32]);
-    assert_eq!(registry.outstanding(), 2);
-    assert_eq!(registry.ceiling().get(), 2);
-
-    let Err(refused) = registry.board([3; 32]) else {
-        panic!("a third credential is beyond the ceiling");
-    };
-    assert_eq!(refused, AuthFailure::FlightCapacity);
-    // Refusing cost neither running flight its place, and a caller that only
-    // wants to wait on one of them is not refused at all: joining costs no
-    // entry.
-    assert_eq!(registry.outstanding(), 2);
-    let waiting = follow(&registry, [1; 32]);
-
-    first.publish(&Err(AuthFailure::Refused));
-    assert_eq!(waiting.wait().await, Err(AuthFailure::Refused));
-    assert_eq!(registry.outstanding(), 1);
-
-    // The entry that ending a flight frees is what admits the credential that
-    // was refused a moment ago.
-    drop(lead(&registry, [3; 32]));
-    assert_eq!(registry.outstanding(), 1);
-    drop(second);
-    assert_eq!(registry.outstanding(), 0);
-}
-
-#[tokio::test]
-async fn a_retired_flight_is_never_the_one_a_later_caller_joins() {
-    let registry = FlightRegistry::new(NonZeroUsize::new(2).expect("a positive ceiling"));
-    let cancelled = lead(&registry, [7; 32]);
-    let retired = follow(&registry, [7; 32]);
-    drop(cancelled);
-    assert_eq!(retired.wait().await, Err(AuthFailure::FlightCancelled));
-    assert_eq!(registry.outstanding(), 0);
-
-    let leader = lead(&registry, [7; 32]);
-    let current = follow(&registry, [7; 32]);
-    // Same key, different flight: the outcome the retired one carries is spoken
-    // for, and no later caller may be handed it.
-    assert!(!Arc::ptr_eq(&retired, &current));
-    assert_eq!(current.outcome(), None);
-
-    leader.publish(&Err(AuthFailure::Refused));
-    assert_eq!(current.wait().await, Err(AuthFailure::Refused));
-    assert_eq!(retired.outcome(), Some(Err(AuthFailure::FlightCancelled)));
-    assert_eq!(registry.outstanding(), 0);
-}
-
-#[tokio::test]
-async fn a_cached_assertion_is_dropped_the_instant_its_credential_floor_moves() {
-    let credential = fixture_credential(5);
-    let calls = Arc::new(AtomicUsize::new(0));
-    let cache = VerifyingAssertionCache::new(
-        CountingSource {
-            calls: Arc::clone(&calls),
-            assertion: signed(&credential, ASSERTION_MAX_LIFETIME_MS),
-        },
-        anchors(),
-        audience(AssertionAudience::RegionalSession),
-        4_096,
-    )
-    .expect("cache");
-
-    cache
-        .resolve(&credential, &floors(&credential, 4), stamp(2_000))
-        .await
-        .expect("a current assertion");
-    assert_eq!(calls.load(AtomicOrdering::SeqCst), 1);
-    // Served from the cache: no second exchange.
-    cache
-        .resolve(&credential, &floors(&credential, 4), stamp(2_100))
-        .await
-        .expect("the cached assertion");
-    assert_eq!(calls.load(AtomicOrdering::SeqCst), 1);
-
-    // A revocation published a moment ago beats the cached entry, and the
-    // refreshed answer is refused too because it claims the same epoch.
-    assert!(
-        cache
-            .resolve(&credential, &floors(&credential, 5), stamp(2_200))
-            .await
-            .is_err()
-    );
-    assert_eq!(calls.load(AtomicOrdering::SeqCst), 2);
+    assert!(matches!(
+        parse_pepper_ring(PEPPER_PARAM, &" ".repeat(MAX_PARAMETER_BYTES + 1)),
+        Err(TrustError::TooLarge { .. })
+    ));
 }
 
 #[test]

@@ -2,8 +2,9 @@
 
 use aex_internal_contracts::SchemaVersion;
 use aex_internal_contracts::assertion::{
-    AssertionAudience, AssertionError, AssertionRefusal, AssertionResponse, CredentialDigest,
-    IssuedAssertion, MAX_ASSERTION_TEXT_LEN, ResolveSessionForWorkspace, ResolveWorkspaceKey,
+    AssertionAudience, AssertionError, AssertionRefusal, AssertionResponse, AudienceSet,
+    CredentialDigest, IssuedAssertion, MAX_ASSERTION_TEXT_LEN, ResolveSessionForWorkspace,
+    ResolveWorkspaceKey,
 };
 use aex_internal_contracts::control::{RegionalControlEnvelope, RegionalControlRequest};
 use aex_internal_contracts::journal::JournalEntryKind;
@@ -222,6 +223,68 @@ fn every_audience_names_exactly_one_deployable() {
             serde_json::from_str::<AssertionAudience>(&document).expect("decodes"),
             audience
         );
+        // The stored spelling on a projected key row and the serialized spelling
+        // on the internal wire are one string, so a row written by the control
+        // plane cannot name an audience a regional decoder spells differently.
+        assert_eq!(document, format!("\"{}\"", audience.as_str()));
+        assert_eq!(AssertionAudience::parse(audience.as_str()), Some(audience));
+    }
+    assert_eq!(AssertionAudience::parse("regional-session"), None);
+    assert_eq!(AssertionAudience::parse(""), None);
+}
+
+#[test]
+fn an_audience_set_admits_exactly_what_was_put_in_it() {
+    assert!(AudienceSet::EMPTY.is_empty());
+    assert!(!AudienceSet::ALL.is_empty());
+    for audience in AssertionAudience::ALL {
+        assert!(
+            AudienceSet::ALL.contains(audience),
+            "the full set must admit {audience:?}"
+        );
+        assert!(
+            !AudienceSet::EMPTY.contains(audience),
+            "the empty set admits nothing, which is what makes an unnamed row fail closed"
+        );
+        let one = AudienceSet::EMPTY.insert(audience);
+        for other in AssertionAudience::ALL {
+            assert_eq!(
+                one.contains(other),
+                other == audience,
+                "a one-audience set admitted {other:?}"
+            );
+        }
+        assert_eq!(one.insert(audience), one, "insertion is idempotent");
+    }
+    assert_eq!(
+        AssertionAudience::ALL.into_iter().collect::<AudienceSet>(),
+        AudienceSet::ALL
+    );
+    assert_eq!(
+        AudienceSet::ALL.iter().collect::<Vec<_>>(),
+        AssertionAudience::ALL.to_vec(),
+        "iteration is wire order"
+    );
+    assert_eq!(
+        AudienceSet::ALL.to_strings(),
+        AssertionAudience::ALL
+            .iter()
+            .map(|audience| audience.as_str().to_owned())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn declaration_order_is_bit_order() {
+    // The bitset casts the discriminant, which is only the declaration index
+    // while nobody has given a variant an explicit value.
+    for (index, audience) in AssertionAudience::ALL.into_iter().enumerate() {
+        let set = AudienceSet::EMPTY.insert(audience);
+        let expected = AssertionAudience::ALL
+            .get(index)
+            .copied()
+            .expect("the index is inside the vocabulary");
+        assert!(set.contains(expected), "{audience:?} sits at bit {index}");
     }
 }
 

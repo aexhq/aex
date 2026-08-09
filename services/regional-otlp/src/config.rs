@@ -35,25 +35,25 @@ pub const MEMORY_BUDGET_VAR: &str = "AEX_OTLP_MEMORY_BUDGET_BYTES";
 pub const RESERVE_WAIT_VAR: &str = "AEX_OTLP_RESERVE_WAIT_MS";
 /// Environment variable naming the reserved concurrency this function runs at.
 pub const RESERVED_CONCURRENCY_VAR: &str = "AEX_OTLP_RESERVED_CONCURRENCY";
-/// Environment variable naming the `central-authz` function this edge invokes.
+/// Environment variable naming the Parameter Store credential pepper ring.
 ///
-/// `central-authz` is IAM-invoked, not routed. There is no URL: a role without
-/// `lambda:InvokeFunction` on this one ARN cannot resolve an assertion at all.
-pub const AUTHZ_FUNCTION_ARN_VAR: &str = "AEX_AUTHZ_FUNCTION_ARN";
-/// Environment variable naming the Parameter Store trust-anchor document.
+/// The peppers are a `SecureString` document read once at cold start, not an
+/// inline environment value: a pepper rotation must not require a redeploy of
+/// every regional service, and a verifier names the version it was computed
+/// under so both halves of a rotation have to be resolvable at once.
 ///
-/// The anchors are a `SecureString`-capable document read once at cold start,
-/// not an inline environment value: rotating a signing key must not require a
-/// redeploy of every regional service.
-pub const AUTHZ_VERIFY_KEYS_PARAM_VAR: &str = "AEX_AUTHZ_VERIFY_KEYS_PARAM";
+/// This replaced `AEX_AUTHZ_FUNCTION_ARN` and `AEX_AUTHZ_VERIFY_KEYS_PARAM`
+/// together: there is no `central-authz` invoke to address and no assertion
+/// signature to verify, because a presented key is checked in-process against
+/// the verifier the control plane replicated onto its authorization row.
+pub const CREDENTIAL_PEPPER_REF_VAR: &str = "AEX_CREDENTIAL_PEPPER_REF";
 /// Environment variable naming the read-only `regional-authz-projection` table.
 ///
-/// Read on **every** request and never cached. It is the only thing that makes a
-/// 30-second assertion safe: a revoked key or a paused account takes effect
-/// inside the window rather than after it.
+/// Read on **every** request and never cached. It carries the whole
+/// authorization answer — the verifier, the pepper version, the audiences, the
+/// scopes, the placement and the revocation floors — so a revoked key or a
+/// paused account takes effect on the next request rather than after a window.
 pub const AUTHZ_PROJECTION_TABLE_VAR: &str = "AEX_AUTHZ_PROJECTION_TABLE";
-/// Environment variable naming the assertion cache byte budget.
-pub const ASSERTION_CACHE_BYTES_VAR: &str = "AEX_ASSERTION_CACHE_BYTES";
 
 /// Every variable this deployable requires, in declaration order.
 pub const REQUIRED_VARS: &[&str] = &[
@@ -69,10 +69,8 @@ pub const REQUIRED_VARS: &[&str] = &[
     MEMORY_BUDGET_VAR,
     RESERVE_WAIT_VAR,
     RESERVED_CONCURRENCY_VAR,
-    AUTHZ_FUNCTION_ARN_VAR,
-    AUTHZ_VERIFY_KEYS_PARAM_VAR,
+    CREDENTIAL_PEPPER_REF_VAR,
     AUTHZ_PROJECTION_TABLE_VAR,
-    ASSERTION_CACHE_BYTES_VAR,
 ];
 
 /// Planes this deployable may be bound to.
@@ -120,14 +118,10 @@ pub struct Config {
     pub reserve_wait: Duration,
     /// The reserved concurrency this function is deployed at.
     pub reserved_concurrency: u32,
-    /// The `central-authz` function this edge invokes for an assertion.
-    pub authz_function_arn: String,
-    /// The Parameter Store name holding the assertion trust anchors.
-    pub authz_verify_keys_param: String,
+    /// The Parameter Store name holding the credential pepper ring.
+    pub credential_pepper_ref: String,
     /// The read-only regional authorization projection table.
     pub authz_projection_table: String,
-    /// The assertion cache byte budget.
-    pub assertion_cache_bytes: usize,
 }
 
 impl Config {
@@ -220,10 +214,8 @@ impl Config {
                     reason: "reserved concurrency does not fit a 32-bit count".to_owned(),
                 }
             })?,
-            authz_function_arn: required(&lookup, AUTHZ_FUNCTION_ARN_VAR)?,
-            authz_verify_keys_param: required(&lookup, AUTHZ_VERIFY_KEYS_PARAM_VAR)?,
+            credential_pepper_ref: required(&lookup, CREDENTIAL_PEPPER_REF_VAR)?,
             authz_projection_table: required(&lookup, AUTHZ_PROJECTION_TABLE_VAR)?,
-            assertion_cache_bytes: positive(&lookup, ASSERTION_CACHE_BYTES_VAR)?,
         })
     }
 
@@ -318,11 +310,11 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        ASSERTION_CACHE_BYTES_VAR, AUTHZ_FUNCTION_ARN_VAR, AUTHZ_PROJECTION_TABLE_VAR,
-        AUTHZ_VERIFY_KEYS_PARAM_VAR, Config, DECODED_MAX_VAR, ENCODED_MAX_VAR, MAX_RECORDS_VAR,
-        MEMORY_BUDGET_VAR, OBSERVATION_BUCKET_VAR, OBSERVATION_TABLE_VAR, PLANE_VAR,
-        REDACTION_KEY_REF_VAR, REGION_VAR, REQUIRED_VARS, RESERVE_WAIT_VAR,
-        RESERVED_CONCURRENCY_VAR, RegionalOtlpConfigError, SECRET_CUSTODY_TABLE_VAR,
+        AUTHZ_PROJECTION_TABLE_VAR, CREDENTIAL_PEPPER_REF_VAR, Config, DECODED_MAX_VAR,
+        ENCODED_MAX_VAR, MAX_RECORDS_VAR, MEMORY_BUDGET_VAR, OBSERVATION_BUCKET_VAR,
+        OBSERVATION_TABLE_VAR, PLANE_VAR, REDACTION_KEY_REF_VAR, REGION_VAR, REQUIRED_VARS,
+        RESERVE_WAIT_VAR, RESERVED_CONCURRENCY_VAR, RegionalOtlpConfigError,
+        SECRET_CUSTODY_TABLE_VAR,
     };
 
     fn complete() -> BTreeMap<&'static str, String> {
@@ -346,18 +338,13 @@ mod tests {
             (RESERVE_WAIT_VAR, "50".to_owned()),
             (RESERVED_CONCURRENCY_VAR, "20".to_owned()),
             (
-                AUTHZ_FUNCTION_ARN_VAR,
-                "arn:aws:lambda:eu-west-1:000000000000:function:central-authz".to_owned(),
-            ),
-            (
-                AUTHZ_VERIFY_KEYS_PARAM_VAR,
-                "/aex/dev/authz/verify-keys".to_owned(),
+                CREDENTIAL_PEPPER_REF_VAR,
+                "/aex/dev/credential-pepper/ring".to_owned(),
             ),
             (
                 AUTHZ_PROJECTION_TABLE_VAR,
                 "regional-authz-projection".to_owned(),
             ),
-            (ASSERTION_CACHE_BYTES_VAR, (1024 * 1024).to_string()),
         ])
     }
 
@@ -373,7 +360,10 @@ mod tests {
         assert_eq!(config.limits.encoded_max, 768 * 1024);
         assert_eq!(config.limits.decoded_max, 16 * 1024 * 1024);
         assert_eq!(config.limits.max_records, 2_000);
-        assert_eq!(config.authz_verify_keys_param, "/aex/dev/authz/verify-keys");
+        assert_eq!(
+            config.credential_pepper_ref,
+            "/aex/dev/credential-pepper/ring"
+        );
         assert_eq!(
             config.regional_decode_ceiling_bytes(),
             20 * 16 * 1024 * 1024
@@ -480,20 +470,20 @@ mod tests {
     }
 
     #[test]
-    fn this_deployable_names_the_authority_and_never_carries_its_key_material() {
-        // The trust anchors are a Parameter Store document read once at cold
-        // start, not an inline environment value: rotating a signing key must
-        // not require redeploying every regional service, and a `SecureString`
-        // is not something to paste into a task definition.
+    fn this_deployable_names_its_key_material_and_never_carries_it() {
+        // The pepper ring is a Parameter Store `SecureString` read once at cold
+        // start, not an inline environment value: a pepper rotation must not
+        // require redeploying every regional service, and a secret is not
+        // something to paste into a task definition.
         let config = read(&complete()).expect("a complete environment starts");
-        assert!(config.authz_verify_keys_param.starts_with('/'));
-        assert!(!config.authz_verify_keys_param.contains(':'));
-        // `central-authz` is IAM-invoked, so what is named is a function ARN.
-        // There is no endpoint, no TLS decision and no second authentication hop.
+        assert!(config.credential_pepper_ref.starts_with('/'));
+        assert!(!config.credential_pepper_ref.contains(':'));
+        // What is named is a parameter, not a function: this deployable holds no
+        // way to invoke anything for an authorization decision.
         assert!(
-            config.authz_function_arn.starts_with("arn:aws:lambda:"),
+            !config.credential_pepper_ref.starts_with("arn:"),
             "{}",
-            config.authz_function_arn
+            config.credential_pepper_ref
         );
     }
 }

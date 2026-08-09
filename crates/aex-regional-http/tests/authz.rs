@@ -1,29 +1,24 @@
-//! Black-box requirements for the concrete edge adapters: the trust anchors, the
-//! cursor signing ring, the `central-authz` exchange payloads, the regional
-//! authorization projection, and the whole admission chain composed over them.
+//! Black-box requirements for the concrete edge adapters: the cursor signing
+//! ring, the regional authorization projection, and the whole admission chain
+//! composed over them.
 //!
-//! Nothing here reaches AWS. Every adapter is split so the decision is a pure
-//! function of bytes and the client call is the only thing left un-exercised,
-//! which is exactly the part a live companion owns.
+//! Nothing here reaches AWS, and after this revision nothing here *could*: the
+//! credential check is a pure function of the presented token, the pepper ring
+//! resolved at cold start and the row the projection returned. Every adapter is
+//! split so the decision is a pure function of bytes and the client call is the
+//! only thing left un-exercised, which is exactly the part a live companion
+//! owns.
 
-use std::sync::Mutex;
-
-use aex_control_domain::epoch::{Epoch, EpochSubjectKind};
-use aex_identity_domain::assertion::{
-    AssertedAccountState, Assertion, AssertionClaims, Audience, EpochSlot, EpochSlots, KeyId,
-    LocalSigner, Plane as AssertionPlane, PrincipalKind, VerificationKeySet, issue,
-};
-use aex_internal_contracts::assertion::{
-    AssertionAudience, AssertionRefusal, AssertionResponse, ResolveWorkspaceKey,
-};
-use aex_regional_http::assertion::{
-    AssertionSource, AuthFailure, PresentedCredential, ProjectedEpochs,
-};
+use aex_control_domain::epoch::Epoch;
+use aex_identity_domain::credential::{Pepper, PresentedDigest, verifier};
+use aex_internal_contracts::assertion::{AssertionAudience, AudienceSet};
 use aex_regional_http::authz::{
-    MAX_PARAMETER_BYTES, MAX_TRUST_ANCHORS, RegionalProjection, TrustError, decode_response,
-    issued_assertion, parse_cursor_key_ring, parse_trust_anchors, resolve_request,
+    MAX_PARAMETER_BYTES, RegionalProjection, TrustError, parse_cursor_key_ring, parse_pepper_ring,
 };
 use aex_regional_http::context::{AccountState, EffectiveLimits};
+use aex_regional_http::credential::{
+    AuthFailure, PepperRing, PresentedCredential, ProjectedEpochs, StoredVerifier,
+};
 use aex_regional_http::cursor::{CursorBinding, Order, SnapshotToken, SortTuple, decode, encode};
 use aex_regional_http::edge::{
     EdgeBinding, EdgeClock, ProjectedState, ProjectionError, ProjectionReader, RegionalEdge,
@@ -39,18 +34,25 @@ use aex_wire::error::ErrorCode;
 use aex_wire::idempotency::IdempotencyKind;
 use aex_wire::ids::{ApiKeyId, OrganizationId, PrefixedId, Uuid7, WorkspaceId};
 use aex_wire::routes::{Plane, RouteId, route};
+use aex_wire::scopes::ScopeSet;
 use aex_wire::types::{HttpMethod, Region, RequestId, Timestamp};
 use async_trait::async_trait;
 use base64::Engine as _;
 use http::{HeaderMap, HeaderValue};
+use std::sync::Mutex;
 use uuid::Uuid;
 
 // --- fixtures -------------------------------------------------------------------
 
-const ANCHOR_PARAM: &str = "/aex/dev/authz/verify-keys";
+const PEPPER_PARAM: &str = "/aex/dev/credential-pepper/ring";
 const CURSOR_PARAM: &str = "/aex/dev/regional/cursor-signing-key";
-const KID: Uuid = Uuid::from_u128(0x2026_080a);
 const NOW_MS: i64 = 1_754_051_698_000;
+
+/// The pepper every fixture verifier is computed under.
+const PEPPER: [u8; 32] = [11; 32];
+
+/// The audience the edge under test accepts.
+const AUDIENCE: AssertionAudience = AssertionAudience::RegionalSession;
 
 fn b64(bytes: &[u8]) -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
@@ -103,217 +105,24 @@ fn credential_pair(region: Region, seed: u8) -> (PresentedCredential, ApiKeyId) 
     )
 }
 
-fn signer() -> LocalSigner {
-    LocalSigner::new(KeyId::new(KID), &zeroize::Zeroizing::new([13_u8; 32]))
-}
-
-fn anchor_document(key_id: Uuid, public_key: &[u8], not_after_ms: u64) -> String {
-    format!(
-        r#"{{"schemaVersion":1,"keys":[{{"keyId":"{key_id}","publicKey":"{}","notAfterMs":{not_after_ms}}}]}}"#,
-        b64(public_key)
-    )
-}
-
-fn keys() -> VerificationKeySet {
-    parse_trust_anchors(
-        ANCHOR_PARAM,
-        &anchor_document(KID, &signer().public_key(), u64::MAX),
-    )
-    .expect("a well-formed anchor document")
-}
-
-/// The claims `central-authz` mints for a presented workspace key.
-///
-/// The epoch slots are exactly the three subjects a regional projection holds —
-/// key, workspace and account — because those are the only ones this plane can
-/// check a revocation against.
-fn claims(
-    credential: &PresentedCredential,
-    audience: AssertionAudience,
-    scopes: aex_control_domain::ScopeSet,
-    issued_at_ms: u64,
-) -> AssertionClaims {
-    AssertionClaims {
-        issued_at_ms,
-        expires_at_ms: issued_at_ms + 30_000,
-        audience: Audience {
-            plane: AssertionPlane::Dev,
-            region: Region::EuWest1,
-            service: audience,
-        },
-        principal_kind: PrincipalKind::WorkspaceKey,
-        principal_id: credential.key_id_raw(),
-        credential_binding: credential.expected_binding(),
-        organization_id: raw(organization()),
-        workspace_id: raw(workspace()),
-        workspace_region: Region::EuWest1,
-        account_state: AssertedAccountState::Active,
-        scopes,
-        epochs: EpochSlots::new(&[
-            EpochSlot {
-                kind: EpochSubjectKind::Key,
-                id: credential.key_id_raw(),
-                epoch: Epoch::new(10),
-            },
-            EpochSlot {
-                kind: EpochSubjectKind::Workspace,
-                id: raw(workspace()),
-                epoch: Epoch::new(30),
-            },
-            EpochSlot {
-                kind: EpochSubjectKind::Account,
-                id: raw(organization()),
-                epoch: Epoch::new(20),
-            },
-        ])
-        .expect("three distinct subjects"),
-    }
-}
-
-fn envelope(claims: &AssertionClaims) -> Assertion {
-    issue(&signer(), claims).expect("a 30-second envelope")
-}
-
-fn answer(claims: &AssertionClaims) -> AssertionResponse {
-    AssertionResponse::Issued {
-        assertion: envelope(claims)
-            .to_issued()
-            .expect("a fixed-length envelope"),
-    }
-}
-
-// --- trust anchors ---------------------------------------------------------------
-
-#[test]
-fn a_well_formed_anchor_document_yields_exactly_its_declared_keys() {
-    let keys = keys();
-    assert_eq!(keys.len(), 1);
-    assert!(!keys.is_empty());
-    assert!(keys.find(KeyId::new(KID), 0).is_some());
-    assert!(
-        keys.find(KeyId::new(Uuid::from_u128(1)), 0).is_none(),
-        "an identity outside the ring must never resolve"
-    );
-}
-
-#[test]
-fn an_anchor_that_has_lapsed_stops_verifying_without_a_redeploy() {
-    let keys = parse_trust_anchors(
-        ANCHOR_PARAM,
-        &anchor_document(KID, &signer().public_key(), 1_000),
-    )
-    .expect("a well-formed anchor document");
-    assert!(keys.find(KeyId::new(KID), 999).is_some());
-    assert!(
-        keys.find(KeyId::new(KID), 1_000).is_none(),
-        "`notAfterMs` is the instant the region stops accepting the key"
-    );
-}
-
-#[test]
-fn an_anchor_document_declaring_no_key_is_refused_rather_than_admitting_nothing() {
-    let error = parse_trust_anchors(ANCHOR_PARAM, r#"{"schemaVersion":1,"keys":[]}"#)
-        .expect_err("an empty anchor set cannot verify anything");
-    assert_eq!(
-        error,
-        TrustError::NoAnchors {
-            name: ANCHOR_PARAM.to_owned()
-        }
-    );
-}
-
-#[test]
-fn an_anchor_document_with_an_unknown_member_is_refused() {
-    let document = r#"{"schemaVersion":1,"keys":[],"rotateAt":"soon"}"#;
-    let error = parse_trust_anchors(ANCHOR_PARAM, document).expect_err("unknown members are typos");
-    assert!(
-        matches!(error, TrustError::Malformed { kind, .. } if kind == "trust anchor"),
-        "{error}"
-    );
-}
-
-#[test]
-fn an_anchor_document_past_the_bound_is_refused() {
-    let keys: Vec<String> = (0..=MAX_TRUST_ANCHORS)
-        .map(|index| {
-            let seed = u8::try_from(index).expect("the bound is far below 255");
-            format!(
-                r#"{{"keyId":"{}","publicKey":"{}","notAfterMs":1}}"#,
-                Uuid::from_u128(u128::try_from(index).expect("small")),
-                b64(&[seed; 32])
-            )
+fn pepper_document(entries: &[(u16, [u8; 32])]) -> String {
+    let peppers: Vec<String> = entries
+        .iter()
+        .map(|(version, material)| {
+            format!(r#"{{"version":{version},"material":"{}"}}"#, b64(material))
         })
         .collect();
-    let document = format!(r#"{{"schemaVersion":1,"keys":[{}]}}"#, keys.join(","));
-    let error = parse_trust_anchors(ANCHOR_PARAM, &document).expect_err("past the bound");
-    assert_eq!(
-        error,
-        TrustError::TooManyAnchors {
-            name: ANCHOR_PARAM.to_owned(),
-            found: MAX_TRUST_ANCHORS + 1
-        }
-    );
+    format!(r#"{{"schemaVersion":1,"peppers":[{}]}}"#, peppers.join(","))
 }
 
-#[test]
-fn two_anchors_claiming_one_identity_are_refused() {
-    let document = format!(
-        r#"{{"schemaVersion":1,"keys":[{{"keyId":"{KID}","publicKey":"{0}","notAfterMs":1}},{{"keyId":"{KID}","publicKey":"{0}","notAfterMs":2}}]}}"#,
-        b64(&[1; 32])
-    );
-    let error = parse_trust_anchors(ANCHOR_PARAM, &document).expect_err("an ambiguous ring");
-    assert_eq!(
-        error,
-        TrustError::DuplicateKeyId {
-            name: ANCHOR_PARAM.to_owned(),
-            key_id: KID.to_string()
-        }
-    );
+fn ring() -> PepperRing {
+    parse_pepper_ring(PEPPER_PARAM, &pepper_document(&[(1, PEPPER)])).expect("a usable ring")
 }
 
-#[test]
-fn key_material_that_is_not_exactly_an_ed25519_public_key_is_refused() {
-    for material in [b64(&[1; 31]), b64(&[1; 33]), "not base64".to_owned()] {
-        let document = format!(
-            r#"{{"schemaVersion":1,"keys":[{{"keyId":"{KID}","publicKey":"{material}","notAfterMs":1}}]}}"#
-        );
-        let error =
-            parse_trust_anchors(ANCHOR_PARAM, &document).expect_err("only a 32-byte key is usable");
-        assert!(
-            matches!(error, TrustError::KeyMaterial { .. }),
-            "{material}: {error}"
-        );
-    }
-}
-
-#[test]
-fn a_key_identity_that_is_not_the_envelopes_own_is_refused() {
-    // The `kid` is 16 raw bytes at a fixed offset in the envelope header, not a
-    // free string. A document naming a key the envelope cannot carry would
-    // declare an anchor nothing could ever select.
-    for key_id in ["", "2026-08-a", "not-a-uuid"] {
-        let document = format!(
-            r#"{{"schemaVersion":1,"keys":[{{"keyId":"{key_id}","publicKey":"{}","notAfterMs":1}}]}}"#,
-            b64(&[1; 32])
-        );
-        assert!(
-            parse_trust_anchors(ANCHOR_PARAM, &document).is_err(),
-            "`{key_id}` must not be a usable identity"
-        );
-    }
-}
-
-#[test]
-fn a_parameter_past_the_decode_bound_is_refused_before_it_is_parsed() {
-    let document = " ".repeat(MAX_PARAMETER_BYTES + 1);
-    assert!(matches!(
-        parse_trust_anchors(ANCHOR_PARAM, &document),
-        Err(TrustError::TooLarge { .. })
-    ));
-    assert!(matches!(
-        parse_cursor_key_ring(CURSOR_PARAM, &document),
-        Err(TrustError::TooLarge { .. })
-    ));
+/// The verifier the control plane stores for a token, under `pepper`.
+fn stored_for(token: &str, version: u16, pepper: [u8; 32]) -> StoredVerifier {
+    let keyed = verifier(&Pepper::new(pepper), &PresentedDigest::of(token));
+    StoredVerifier::new(*keyed.as_bytes(), version)
 }
 
 // --- cursor signing ring ----------------------------------------------------------
@@ -404,6 +213,19 @@ fn a_cursor_document_with_an_unknown_member_is_refused() {
     );
 }
 
+#[test]
+fn a_parameter_past_the_decode_bound_is_refused_before_it_is_parsed() {
+    let document = " ".repeat(MAX_PARAMETER_BYTES + 1);
+    assert!(matches!(
+        parse_pepper_ring(PEPPER_PARAM, &document),
+        Err(TrustError::TooLarge { .. })
+    ));
+    assert!(matches!(
+        parse_cursor_key_ring(CURSOR_PARAM, &document),
+        Err(TrustError::TooLarge { .. })
+    ));
+}
+
 // --- the regional authorization projection ---------------------------------------
 
 #[derive(Debug)]
@@ -470,6 +292,7 @@ fn placement(status: &str) -> WorkspacePlacement {
 }
 
 fn snapshot(status: &str, state: KeyAuthorizationState) -> AdmissionSnapshot {
+    let (token, _) = workspace_key(Region::EuWest1, 5);
     AdmissionSnapshot {
         key: KeyAuthorization {
             api_key: sample::<ApiKeyId>(5),
@@ -477,6 +300,10 @@ fn snapshot(status: &str, state: KeyAuthorizationState) -> AdmissionSnapshot {
             organization: organization(),
             region: "eu-west-1".to_owned(),
             state,
+            verifier: *verifier(&Pepper::new(PEPPER), &PresentedDigest::of(&token)).as_bytes(),
+            pepper_version: 1,
+            audiences: AudienceSet::EMPTY.insert(AUDIENCE),
+            scopes: ScopeSet::new(route(plain_route()).required_scope),
             key_epoch: 10,
             projection_sequence: 3,
             updated_at: moment(1_000),
@@ -495,7 +322,7 @@ fn snapshot(status: &str, state: KeyAuthorizationState) -> AdmissionSnapshot {
 }
 
 #[tokio::test]
-async fn a_snapshot_projects_its_floors_its_region_its_account_policy_and_its_ceilings() {
+async fn a_snapshot_projects_everything_admission_needs_and_nothing_it_does_not() {
     for (status, expected) in [
         ("active", AccountState::Active),
         ("paused", AccountState::Paused),
@@ -523,11 +350,19 @@ async fn a_snapshot_projects_its_floors_its_region_its_account_policy_and_its_ce
                 account: Epoch::new(20),
             }
         );
-        // The organization is read from the placement rather than taken from the
-        // assertion, because the assertion is what is being checked.
         assert_eq!(state.organization_id, raw(organization()));
         assert_eq!(state.limits.json_body_bytes, 1_048_576);
         assert_eq!(state.limits.query_page_items, 1_000);
+        // The four facts that used to arrive in a signed envelope from another
+        // plane now arrive on the row this read already returned.
+        assert_eq!(state.verifier.pepper_version(), 1);
+        assert!(state.audiences.contains(AUDIENCE));
+        assert_eq!(
+            state.scopes,
+            ScopeSet::new(route(plain_route()).required_scope)
+        );
+        let (token, _) = workspace_key(Region::EuWest1, 5);
+        assert_eq!(state.verifier, stored_for(&token, 1, PEPPER));
     }
 }
 
@@ -633,55 +468,12 @@ async fn an_absent_snapshot_is_unknown_and_an_unreadable_one_is_unavailable() {
     );
 }
 
-// --- the `central-authz` exchange -------------------------------------------------
-
-#[test]
-fn a_resolve_request_names_the_key_by_identity_and_digest_and_never_by_value() {
-    let (credential, key) = credential_pair(Region::EuWest1, 5);
-    let request = resolve_request(
-        &credential,
-        AssertionAudience::RegionalSession,
-        Region::EuWest1,
-    )
-    .expect("a workspace key resolves");
-    assert_eq!(request.key, key);
-    assert_eq!(request.region, Region::EuWest1);
-    assert_eq!(request.audience, AssertionAudience::RegionalSession);
-    // The digest the central plane receives is `SHA-256` over the whole token,
-    // which is exactly what the stored verifier is a MAC over.
-    assert_eq!(
-        request.presented_digest.get(),
-        credential.digest().as_bytes()
-    );
-
-    let encoded = serde_json::to_string(&request).expect("the request encodes");
-    let (token, _) = workspace_key(Region::EuWest1, 5);
-    assert!(
-        !encoded.contains(&token),
-        "the presented token must never appear in the central payload"
-    );
-    let round_tripped: ResolveWorkspaceKey =
-        serde_json::from_str(&encoded).expect("the request round-trips");
-    assert_eq!(round_tripped, request);
-}
-
-#[test]
-fn a_key_minted_for_another_region_never_leaves_this_one() {
-    let (credential, _) = credential_pair(Region::UsEast1, 5);
-    assert_eq!(
-        resolve_request(
-            &credential,
-            AssertionAudience::RegionalSession,
-            Region::EuWest1
-        ),
-        Err(AuthFailure::MalformedCredential)
-    );
-}
+// --- the credential itself --------------------------------------------------------
 
 #[test]
 fn a_credential_that_is_not_a_workspace_key_is_refused_before_anything_reads_it() {
     // A regional host accepts one credential. Refusing at construction means the
-    // three places that need the key id cannot each re-parse and disagree.
+    // places that need the key id cannot each re-parse and disagree.
     for value in [
         b"aex_at_not_a_workspace_key".to_vec(),
         b"Bearer something".to_vec(),
@@ -712,64 +504,16 @@ fn a_credential_never_renders_its_plaintext_or_its_digest() {
 }
 
 #[test]
-fn a_refusal_is_carried_through_as_a_decision_and_not_as_an_outage() {
-    // The two answers a caller must render differently. Collapsing either into
-    // `SourceUnavailable` would make a revoked key look like a central outage
-    // and be retried forever.
-    assert_eq!(
-        issued_assertion(AssertionResponse::Refused {
-            reason: AssertionRefusal::NotAuthorized
-        }),
-        Err(AuthFailure::Refused)
-    );
-    assert_eq!(
-        issued_assertion(AssertionResponse::Refused {
-            reason: AssertionRefusal::AccountStateUnavailable
-        }),
-        Err(AuthFailure::AccountStateUnavailable)
-    );
-}
-
-#[test]
-fn an_issued_answer_decodes_into_the_exact_envelope_that_was_signed() {
-    let (credential, _) = credential_pair(Region::EuWest1, 5);
-    let claims = claims(
-        &credential,
-        AssertionAudience::RegionalSecret,
-        aex_control_domain::ScopeSet::EMPTY,
-        u64::try_from(NOW_MS).expect("positive"),
-    );
-    let response = answer(&claims);
-    let encoded = serde_json::to_vec(&response).expect("the answer encodes");
-    assert_eq!(
-        issued_assertion(decode_response(&encoded).expect("it decodes")).expect("an envelope"),
-        envelope(&claims)
-    );
-}
-
-#[test]
-fn a_response_past_the_decode_bound_is_refused_before_it_is_parsed() {
-    let payload = vec![b' '; 64 * 1_024 + 1];
-    assert_eq!(
-        decode_response(&payload),
-        Err(AuthFailure::MalformedAssertion)
-    );
+fn the_credential_binding_separates_two_credentials_and_discloses_neither() {
+    let (one, _) = credential_pair(Region::EuWest1, 5);
+    let (two, _) = credential_pair(Region::EuWest1, 6);
+    assert_ne!(one.binding(), two.binding());
+    // The binding is a handler's stable principal identity — it keys cursors and
+    // replay records — so it must not be the digest a verifier is computed over.
+    assert_ne!(&one.binding(), one.digest().as_bytes());
 }
 
 // --- the composed edge ------------------------------------------------------------
-
-struct StubSource {
-    assertion: Assertion,
-    calls: Mutex<usize>,
-}
-
-#[async_trait]
-impl AssertionSource for StubSource {
-    async fn obtain(&self, _credential: &PresentedCredential) -> Result<Assertion, AuthFailure> {
-        *self.calls.lock().expect("an uncontended fixture") += 1;
-        Ok(self.assertion)
-    }
-}
 
 struct StubProjectionReader {
     snapshot: Result<ProjectedState, ProjectionError>,
@@ -782,7 +526,7 @@ impl ProjectionReader for StubProjectionReader {
         _key: ApiKeyId,
         _workspace: WorkspaceId,
     ) -> Result<ProjectedState, ProjectionError> {
-        self.snapshot
+        self.snapshot.clone()
     }
 }
 
@@ -794,7 +538,9 @@ impl EdgeClock for FixedClock {
     }
 }
 
+/// The projected state a current, correctly-provisioned key produces.
 fn projected(account_state: AccountState, region: Region) -> ProjectedState {
+    let (token, _) = workspace_key(Region::EuWest1, 5);
     ProjectedState {
         epochs: ProjectedEpochs {
             key: Epoch::new(10),
@@ -804,6 +550,9 @@ fn projected(account_state: AccountState, region: Region) -> ProjectedState {
         workspace_id: workspace(),
         organization_id: raw(organization()),
         key_revoked: false,
+        verifier: stored_for(&token, 1, PEPPER),
+        audiences: AudienceSet::EMPTY.insert(AUDIENCE),
+        scopes: ScopeSet::new(route(plain_route()).required_scope),
         account_state,
         region,
         limits: EffectiveLimits {
@@ -832,57 +581,23 @@ fn plain_route() -> RouteId {
         .expect("the regional table declares a scoped, non-exempt read")
 }
 
-type Edge = RegionalEdge<StubSource, StubProjectionReader, FixedClock>;
+type Edge = RegionalEdge<StubProjectionReader, FixedClock>;
 
 fn binding() -> EdgeBinding {
     EdgeBinding {
-        plane: AssertionPlane::Dev,
-        audience: AssertionAudience::RegionalSession,
+        audience: AUDIENCE,
         region: Region::EuWest1,
-        cache_budget_bytes: 64 * 1_024,
     }
 }
 
 /// Builds an edge over one snapshot answer.
-///
-/// `floor` is the key floor a revocation would have raised. There is no longer a
-/// separate credential-floor read, so it is folded into the snapshot the edge
-/// reads — which is exactly what the projection does in production.
-fn edge_over(
-    assertion: &Assertion,
-    floor: ProjectedEpochs,
-    snapshot: Result<ProjectedState, ProjectionError>,
-) -> Edge {
-    let snapshot = snapshot.map(|mut state| {
-        state.epochs.key = Epoch::new(state.epochs.key.get().max(floor.key.get()));
-        state
-    });
+fn edge(snapshot: Result<ProjectedState, ProjectionError>) -> Edge {
     RegionalEdge::new(
-        StubSource {
-            assertion: *assertion,
-            calls: Mutex::new(0),
-        },
-        keys(),
+        ring(),
         StubProjectionReader { snapshot },
         FixedClock(NOW_MS + 2_000),
         binding(),
     )
-    .expect("the cache budget holds an entry")
-}
-
-fn edge(
-    credential: &PresentedCredential,
-    scopes: aex_control_domain::ScopeSet,
-    floor: ProjectedEpochs,
-    snapshot: Result<ProjectedState, ProjectionError>,
-) -> Edge {
-    let claims = claims(
-        credential,
-        AssertionAudience::RegionalSession,
-        scopes,
-        u64::try_from(NOW_MS).expect("positive"),
-    );
-    edge_over(&envelope(&claims), floor, snapshot)
 }
 
 fn headers(credential: &str) -> HeaderMap {
@@ -911,24 +626,12 @@ async fn admit(
     .map_err(|failure| failure.code)
 }
 
-fn scoped(id: RouteId) -> aex_control_domain::ScopeSet {
-    route(id)
-        .required_scope
-        .into_iter()
-        .collect::<aex_control_domain::ScopeSet>()
-}
-
 #[tokio::test]
-async fn a_verified_credential_is_admitted_with_the_projected_account_policy() {
+async fn a_current_credential_is_admitted_with_the_projected_authority() {
     let (token, key) = workspace_key(Region::EuWest1, 5);
     let credential = PresentedCredential::new(token.clone().into_bytes()).expect("a credential");
     let id = plain_route();
-    let edge = edge(
-        &credential,
-        scoped(id),
-        ProjectedEpochs::default(),
-        Ok(projected(AccountState::Active, Region::EuWest1)),
-    );
+    let edge = edge(Ok(projected(AccountState::Active, Region::EuWest1)));
     let context = admit(&edge, id, &headers(&token))
         .await
         .expect("a current credential is admitted");
@@ -945,48 +648,48 @@ async fn a_verified_credential_is_admitted_with_the_projected_account_policy() {
             organization: organization(),
         }
     );
-    // The named epoch record is a projection of the envelope's subject slots,
-    // not a flat triple a handler has to interpret.
+    // The named epoch record is the projection's three floors. `membership` stays
+    // zero because a region holds no membership row to raise it.
     assert_eq!(context.auth.epochs.key, 10);
     assert_eq!(context.auth.epochs.workspace, 30);
     assert_eq!(context.auth.epochs.account, 20);
     assert_eq!(context.auth.epochs.membership, 0);
-    assert_eq!(
-        context.auth.credential_binding,
-        credential.expected_binding()
-    );
+    assert_eq!(context.auth.credential_binding, credential.binding());
+    assert_eq!(context.auth.scopes, ScopeSet::new(route(id).required_scope));
 }
 
 #[tokio::test]
-async fn an_assertion_minted_for_another_credential_is_refused() {
-    // The binding is inside the signed body at a fixed offset, so an envelope for
-    // another key fails verification rather than needing a sibling field checked
-    // first — and it can never enter the cache, which stores only verified
-    // authorizations.
+async fn a_key_whose_verifier_does_not_match_is_refused() {
+    // The whole authentication decision, in one case: the row exists, is current,
+    // names this edge and carries the right scope — and the presented secret does
+    // not produce its verifier.
     let (token, _) = workspace_key(Region::EuWest1, 5);
-    let (other, _) = credential_pair(Region::EuWest1, 6);
     let id = plain_route();
-    let foreign = claims(
-        &other,
-        AssertionAudience::RegionalSession,
-        scoped(id),
-        u64::try_from(NOW_MS).expect("positive"),
-    );
-    let edge = edge_over(
-        &envelope(&foreign),
-        ProjectedEpochs::default(),
-        Ok(projected(AccountState::Active, Region::EuWest1)),
-    );
+    let mut state = projected(AccountState::Active, Region::EuWest1);
+    state.verifier = StoredVerifier::new([0; 32], 1);
     assert_eq!(
-        admit(&edge, id, &headers(&token)).await.err(),
+        admit(&edge(Ok(state)), id, &headers(&token)).await.err(),
+        Some(ErrorCode::Unauthenticated)
+    );
+
+    // And the neighbouring case: a verifier that is perfectly valid for a
+    // *different* credential. A row cannot be made to admit the wrong key by
+    // swapping which verifier it carries.
+    let (other, _) = workspace_key(Region::EuWest1, 6);
+    let mut state = projected(AccountState::Active, Region::EuWest1);
+    state.verifier = stored_for(&other, 1, PEPPER);
+    assert_eq!(
+        admit(&edge(Ok(state)), id, &headers(&token)).await.err(),
         Some(ErrorCode::Unauthenticated)
     );
 }
 
 #[tokio::test]
-async fn an_assertion_minted_for_another_edge_is_refused() {
+async fn a_key_presented_to_the_wrong_audience_is_refused() {
+    // One process can serve two audiences over one projection table. Without the
+    // row naming which edges may accept it, a credential admitted at one would be
+    // admitted at the other with the same MAC.
     let (token, _) = workspace_key(Region::EuWest1, 5);
-    let credential = PresentedCredential::new(token.clone().into_bytes()).expect("a credential");
     let id = plain_route();
     for other in [
         AssertionAudience::RegionalSecret,
@@ -994,214 +697,99 @@ async fn an_assertion_minted_for_another_edge_is_refused() {
         AssertionAudience::RegionalOtlp,
         AssertionAudience::RegionalStream,
     ] {
-        let foreign = claims(
-            &credential,
-            other,
-            scoped(id),
-            u64::try_from(NOW_MS).expect("positive"),
-        );
-        let edge = edge_over(
-            &envelope(&foreign),
-            ProjectedEpochs::default(),
-            Ok(projected(AccountState::Active, Region::EuWest1)),
-        );
+        let mut state = projected(AccountState::Active, Region::EuWest1);
+        state.audiences = AudienceSet::EMPTY.insert(other);
         assert_eq!(
-            admit(&edge, id, &headers(&token)).await.err(),
+            admit(&edge(Ok(state)), id, &headers(&token)).await.err(),
             Some(ErrorCode::Unauthenticated),
             "{other:?}"
         );
     }
-}
 
-#[tokio::test]
-async fn an_expired_assertion_is_refused_even_though_it_verifies() {
-    let (token, _) = workspace_key(Region::EuWest1, 5);
-    let credential = PresentedCredential::new(token.clone().into_bytes()).expect("a credential");
-    let id = plain_route();
-    // The clock is `NOW_MS + 2_000`; this envelope expired at `NOW_MS + 1_000`.
-    let lapsed = claims(
-        &credential,
-        AssertionAudience::RegionalSession,
-        scoped(id),
-        u64::try_from(NOW_MS - 29_000).expect("positive"),
-    );
-    let edge = edge_over(
-        &envelope(&lapsed),
-        ProjectedEpochs::default(),
-        Ok(projected(AccountState::Active, Region::EuWest1)),
-    );
+    // A row that names no audience at all admits nothing rather than everything.
+    let mut none = projected(AccountState::Active, Region::EuWest1);
+    none.audiences = AudienceSet::EMPTY;
     assert_eq!(
-        admit(&edge, id, &headers(&token)).await.err(),
+        admit(&edge(Ok(none)), id, &headers(&token)).await.err(),
         Some(ErrorCode::Unauthenticated)
     );
+
+    // A row that names this edge among others is admitted: the check is
+    // membership, not equality.
+    let mut both = projected(AccountState::Active, Region::EuWest1);
+    both.audiences = AudienceSet::ALL;
+    assert!(admit(&edge(Ok(both)), id, &headers(&token)).await.is_ok());
 }
 
 #[tokio::test]
-async fn an_assertion_for_a_person_is_refused_by_a_regional_edge() {
-    // A person's envelope carries `user` and `membership` subjects the regional
-    // projection holds nothing for, so admitting one would admit a credential
-    // whose revocation cannot be observed here.
+async fn a_revoked_key_is_refused_before_its_secret_is_even_compared() {
     let (token, _) = workspace_key(Region::EuWest1, 5);
-    let credential = PresentedCredential::new(token.clone().into_bytes()).expect("a credential");
     let id = plain_route();
-    let mut person = claims(
-        &credential,
-        AssertionAudience::RegionalSession,
-        scoped(id),
-        u64::try_from(NOW_MS).expect("positive"),
-    );
-    person.principal_kind = PrincipalKind::UserSession;
-    let edge = edge_over(
-        &envelope(&person),
-        ProjectedEpochs::default(),
-        Ok(projected(AccountState::Active, Region::EuWest1)),
-    );
+    let mut revoked = projected(AccountState::Active, Region::EuWest1);
+    revoked.key_revoked = true;
     assert_eq!(
-        admit(&edge, id, &headers(&token)).await.err(),
-        Some(ErrorCode::Unauthenticated)
+        admit(&edge(Ok(revoked)), id, &headers(&token)).await.err(),
+        Some(ErrorCode::TokenRevoked)
     );
 }
 
 #[tokio::test]
-async fn an_assertion_carrying_a_subject_this_region_cannot_project_is_refused() {
-    // The fail-closed direction: an unprojectable subject is stale, never
-    // "no reason to refuse was found".
+async fn a_rotation_does_not_invalidate_a_pre_rotation_credential() {
+    // The region holds both halves of a rotation. A key whose row still names the
+    // old version keeps working, and one re-peppered to the new version works
+    // too. This is the case a ring that only held "the current pepper" would turn
+    // into a total outage for every credential minted before the rotation.
+    let rotated = parse_pepper_ring(
+        PEPPER_PARAM,
+        &pepper_document(&[(1, PEPPER), (2, [22; 32])]),
+    )
+    .expect("a usable ring");
     let (token, _) = workspace_key(Region::EuWest1, 5);
-    let credential = PresentedCredential::new(token.clone().into_bytes()).expect("a credential");
     let id = plain_route();
-    let mut smuggled = claims(
-        &credential,
-        AssertionAudience::RegionalSession,
-        scoped(id),
-        u64::try_from(NOW_MS).expect("positive"),
-    );
-    smuggled.epochs = EpochSlots::new(&[
-        EpochSlot {
-            kind: EpochSubjectKind::Key,
-            id: credential.key_id_raw(),
-            epoch: Epoch::new(10),
-        },
-        EpochSlot {
-            kind: EpochSubjectKind::Membership,
-            id: Uuid::from_u128(0x99),
-            epoch: Epoch::new(1),
-        },
-    ])
-    .expect("two distinct subjects");
-    let edge = edge_over(
-        &envelope(&smuggled),
-        ProjectedEpochs::default(),
-        Ok(projected(AccountState::Active, Region::EuWest1)),
-    );
-    assert_eq!(
-        admit(&edge, id, &headers(&token)).await.err(),
-        Some(ErrorCode::Unauthenticated)
-    );
-}
-
-#[tokio::test]
-async fn a_revocation_published_after_the_assertion_was_minted_still_wins() {
-    let (token, _) = workspace_key(Region::EuWest1, 5);
-    let credential = PresentedCredential::new(token.clone().into_bytes()).expect("a credential");
-    let id = plain_route();
-    // The assertion claims key epoch 10; the credential's own floor is now 11.
-    let edge = edge(
-        &credential,
-        scoped(id),
-        ProjectedEpochs {
-            key: Epoch::new(11),
-            ..ProjectedEpochs::default()
-        },
-        Ok(projected(AccountState::Active, Region::EuWest1)),
-    );
-    assert_eq!(
-        admit(&edge, id, &headers(&token)).await.err(),
-        Some(ErrorCode::Unauthenticated)
-    );
-}
-
-#[tokio::test]
-async fn a_placement_whose_floors_moved_refuses_a_valid_assertion() {
-    let (token, _) = workspace_key(Region::EuWest1, 5);
-    let credential = PresentedCredential::new(token.clone().into_bytes()).expect("a credential");
-    let id = plain_route();
-    for mutate in [
-        |state: &mut ProjectedState| state.epochs.account = Epoch::new(21),
-        |state: &mut ProjectedState| state.epochs.workspace = Epoch::new(31),
-        |state: &mut ProjectedState| state.epochs.key = Epoch::new(11),
-    ] {
+    for (version, pepper) in [(1_u16, PEPPER), (2, [22; 32])] {
         let mut state = projected(AccountState::Active, Region::EuWest1);
-        mutate(&mut state);
-        let edge = edge(
-            &credential,
-            scoped(id),
-            ProjectedEpochs::default(),
-            Ok(state),
+        state.verifier = stored_for(&token, version, pepper);
+        let edge = RegionalEdge::new(
+            rotated.clone(),
+            StubProjectionReader {
+                snapshot: Ok(state),
+            },
+            FixedClock(NOW_MS + 2_000),
+            binding(),
         );
-        assert_eq!(
-            admit(&edge, id, &headers(&token)).await.err(),
-            Some(ErrorCode::Unauthenticated)
+        assert!(
+            admit(&edge, id, &headers(&token)).await.is_ok(),
+            "pepper version {version} was refused"
         );
     }
 }
 
 #[tokio::test]
-async fn an_assertion_naming_another_organization_than_the_placement_is_refused() {
+async fn a_pepper_version_this_region_never_loaded_is_retryable_and_not_a_refusal() {
+    // The credential is unverifiable, not invalid. `401` would tell a customer to
+    // rotate a key that was never wrong; `503` tells them, and us, the truth.
     let (token, _) = workspace_key(Region::EuWest1, 5);
-    let credential = PresentedCredential::new(token.clone().into_bytes()).expect("a credential");
     let id = plain_route();
     let mut state = projected(AccountState::Active, Region::EuWest1);
-    state.organization_id = raw(sample::<OrganizationId>(9));
-    let edge = edge(
-        &credential,
-        scoped(id),
-        ProjectedEpochs::default(),
-        Ok(state),
-    );
+    state.verifier = stored_for(&token, 9, PEPPER);
     assert_eq!(
-        admit(&edge, id, &headers(&token)).await.err(),
-        Some(ErrorCode::Unauthenticated)
+        admit(&edge(Ok(state)), id, &headers(&token)).await.err(),
+        Some(ErrorCode::AuthenticationUnavailable)
     );
 }
 
 #[tokio::test]
 async fn a_paused_account_loses_every_route_the_table_does_not_exempt() {
     let (token, _) = workspace_key(Region::EuWest1, 5);
-    let credential = PresentedCredential::new(token.clone().into_bytes()).expect("a credential");
     let id = plain_route();
-    let edge = edge(
-        &credential,
-        scoped(id),
-        ProjectedEpochs::default(),
-        Ok(projected(AccountState::Paused, Region::EuWest1)),
-    );
     assert_eq!(
-        admit(&edge, id, &headers(&token)).await.err(),
-        Some(ErrorCode::AccountPaused)
-    );
-}
-
-#[tokio::test]
-async fn an_assertion_minted_under_a_pause_pauses_even_when_the_placement_says_active() {
-    // The two states differ only when one of them is stale, and the safe reading
-    // of a stale account state is the restrictive one.
-    let (token, _) = workspace_key(Region::EuWest1, 5);
-    let credential = PresentedCredential::new(token.clone().into_bytes()).expect("a credential");
-    let id = plain_route();
-    let mut paused = claims(
-        &credential,
-        AssertionAudience::RegionalSession,
-        scoped(id),
-        u64::try_from(NOW_MS).expect("positive"),
-    );
-    paused.account_state = AssertedAccountState::PausedTopUpRequired;
-    let edge = edge_over(
-        &envelope(&paused),
-        ProjectedEpochs::default(),
-        Ok(projected(AccountState::Active, Region::EuWest1)),
-    );
-    assert_eq!(
-        admit(&edge, id, &headers(&token)).await.err(),
+        admit(
+            &edge(Ok(projected(AccountState::Paused, Region::EuWest1))),
+            id,
+            &headers(&token)
+        )
+        .await
+        .err(),
         Some(ErrorCode::AccountPaused)
     );
 }
@@ -1209,16 +797,33 @@ async fn an_assertion_minted_under_a_pause_pauses_even_when_the_placement_says_a
 #[tokio::test]
 async fn a_workspace_placed_in_another_region_is_refused_here() {
     let (token, _) = workspace_key(Region::EuWest1, 5);
-    let credential = PresentedCredential::new(token.clone().into_bytes()).expect("a credential");
     let id = plain_route();
-    let edge = edge(
-        &credential,
-        scoped(id),
-        ProjectedEpochs::default(),
-        Ok(projected(AccountState::Active, Region::UsEast1)),
-    );
     assert_eq!(
-        admit(&edge, id, &headers(&token)).await.err(),
+        admit(
+            &edge(Ok(projected(AccountState::Active, Region::UsEast1))),
+            id,
+            &headers(&token)
+        )
+        .await
+        .err(),
+        Some(ErrorCode::WrongWorkspaceRegion)
+    );
+}
+
+#[tokio::test]
+async fn a_key_minted_for_another_region_never_reaches_the_projection() {
+    // The token's own region segment is checked at stage 1–2, before any row is
+    // addressed, so a foreign key costs no read at all.
+    let (token, _) = workspace_key(Region::UsEast1, 5);
+    let id = plain_route();
+    assert_eq!(
+        admit(
+            &edge(Err(ProjectionError::Unavailable)),
+            id,
+            &headers(&token)
+        )
+        .await
+        .err(),
         Some(ErrorCode::WrongWorkspaceRegion)
     );
 }
@@ -1226,16 +831,39 @@ async fn a_workspace_placed_in_another_region_is_refused_here() {
 #[tokio::test]
 async fn an_unavailable_projection_is_a_refusal_and_never_an_optimistic_admission() {
     let (token, _) = workspace_key(Region::EuWest1, 5);
-    let credential = PresentedCredential::new(token.clone().into_bytes()).expect("a credential");
     let id = plain_route();
-    let edge = edge(
-        &credential,
-        scoped(id),
-        ProjectedEpochs::default(),
-        Err(ProjectionError::Unavailable),
+    assert_eq!(
+        admit(
+            &edge(Err(ProjectionError::Unavailable)),
+            id,
+            &headers(&token)
+        )
+        .await
+        .err(),
+        Some(ErrorCode::AccountStateUnavailable)
+    );
+}
+
+#[tokio::test]
+async fn an_unknown_credential_and_an_unavailable_dependency_never_collapse() {
+    // The requirement in one assertion: `401` and `503` are different answers and
+    // a caller has to be able to tell them apart.
+    let (token, _) = workspace_key(Region::EuWest1, 5);
+    let id = plain_route();
+    assert_eq!(
+        admit(&edge(Err(ProjectionError::Unknown)), id, &headers(&token))
+            .await
+            .err(),
+        Some(ErrorCode::Unauthenticated)
     );
     assert_eq!(
-        admit(&edge, id, &headers(&token)).await.err(),
+        admit(
+            &edge(Err(ProjectionError::Unavailable)),
+            id,
+            &headers(&token)
+        )
+        .await
+        .err(),
         Some(ErrorCode::AccountStateUnavailable)
     );
 }
@@ -1243,33 +871,26 @@ async fn an_unavailable_projection_is_a_refusal_and_never_an_optimistic_admissio
 #[tokio::test]
 async fn a_credential_carrying_none_of_the_declared_scope_is_refused() {
     let (token, _) = workspace_key(Region::EuWest1, 5);
-    let credential = PresentedCredential::new(token.clone().into_bytes()).expect("a credential");
     let id = plain_route();
-    let edge = edge(
-        &credential,
-        aex_control_domain::ScopeSet::EMPTY,
-        ProjectedEpochs::default(),
-        Ok(projected(AccountState::Active, Region::EuWest1)),
-    );
+    let mut state = projected(AccountState::Active, Region::EuWest1);
+    state.scopes = ScopeSet::empty();
     assert_eq!(
-        admit(&edge, id, &headers(&token)).await.err(),
+        admit(&edge(Ok(state)), id, &headers(&token)).await.err(),
         Some(ErrorCode::InsufficientScope)
     );
 }
 
 #[tokio::test]
 async fn a_request_with_no_credential_never_reaches_the_projection() {
-    let (token, _) = workspace_key(Region::EuWest1, 5);
-    let credential = PresentedCredential::new(token.into_bytes()).expect("a credential");
     let id = plain_route();
-    let edge = edge(
-        &credential,
-        scoped(id),
-        ProjectedEpochs::default(),
-        Err(ProjectionError::Unavailable),
-    );
     assert_eq!(
-        admit(&edge, id, &HeaderMap::new()).await.err(),
+        admit(
+            &edge(Err(ProjectionError::Unavailable)),
+            id,
+            &HeaderMap::new()
+        )
+        .await
+        .err(),
         Some(ErrorCode::Unauthenticated)
     );
 }
@@ -1286,38 +907,29 @@ impl ProjectionReader for MutableProjection {
         _key: ApiKeyId,
         _workspace: WorkspaceId,
     ) -> Result<ProjectedState, ProjectionError> {
-        *self.snapshot.lock().expect("an uncontended fixture")
+        self.snapshot
+            .lock()
+            .expect("an uncontended fixture")
+            .clone()
     }
 }
 
 #[tokio::test]
-async fn a_long_lived_lease_observes_revocation_pause_and_placement_change() {
+async fn a_long_lived_lease_observes_revocation_pause_audience_and_placement_change() {
     let (token, _) = workspace_key(Region::EuWest1, 5);
-    let credential = PresentedCredential::new(token.clone().into_bytes()).expect("a credential");
     let id = plain_route();
     let snapshot = std::sync::Arc::new(Mutex::new(Ok(projected(
         AccountState::Active,
         Region::EuWest1,
     ))));
-    let claims = claims(
-        &credential,
-        AssertionAudience::RegionalSession,
-        scoped(id),
-        u64::try_from(NOW_MS).expect("positive"),
-    );
     let edge = RegionalEdge::new(
-        StubSource {
-            assertion: envelope(&claims),
-            calls: Mutex::new(0),
-        },
-        keys(),
+        ring(),
         MutableProjection {
             snapshot: std::sync::Arc::clone(&snapshot),
         },
         FixedClock(NOW_MS + 2_000),
         binding(),
-    )
-    .expect("the cache budget holds an entry");
+    );
     let request_id = RequestId::parse("edge-fixture").expect("a request id");
     let request_headers = headers(&token);
     let authorization = edge
@@ -1336,7 +948,7 @@ async fn a_long_lived_lease_observes_revocation_pause_and_placement_change() {
         .await
         .expect("unchanged authority renews the lease");
 
-    // A revocation raises the key floor above the assertion's.
+    // A revocation raises the key floor above the one the lease was opened at.
     let mut revoked = projected(AccountState::Active, Region::EuWest1);
     revoked.epochs.key = Epoch::new(11);
     *snapshot.lock().expect("an uncontended fixture") = Ok(revoked);
@@ -1352,6 +964,18 @@ async fn a_long_lived_lease_observes_revocation_pause_and_placement_change() {
     let mut flagged = projected(AccountState::Active, Region::EuWest1);
     flagged.key_revoked = true;
     *snapshot.lock().expect("an uncontended fixture") = Ok(flagged);
+    assert_eq!(
+        edge.revalidate(&authorization)
+            .await
+            .err()
+            .map(|error| error.code),
+        Some(ErrorCode::TokenRevoked)
+    );
+
+    // A key narrowed to no longer authorize this edge loses its open socket too.
+    let mut narrowed = projected(AccountState::Active, Region::EuWest1);
+    narrowed.audiences = AudienceSet::EMPTY.insert(AssertionAudience::RegionalSecret);
+    *snapshot.lock().expect("an uncontended fixture") = Ok(narrowed);
     assert_eq!(
         edge.revalidate(&authorization)
             .await
@@ -1404,38 +1028,27 @@ impl ProjectionReader for CountingProjection {
         _workspace: WorkspaceId,
     ) -> Result<ProjectedState, ProjectionError> {
         self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        Ok(self.state)
+        Ok(self.state.clone())
     }
 }
 
 #[tokio::test]
-async fn one_snapshot_is_read_per_request_even_when_the_assertion_is_cached() {
+async fn one_snapshot_is_read_per_request_and_nothing_is_remembered_between_them() {
+    // The revocation bound is now "the next request", and this is what makes that
+    // true: no admission decision survives the request that produced it, so there
+    // is no window inside which a revoked key is still admitted.
     let (token, _) = workspace_key(Region::EuWest1, 5);
-    let credential = PresentedCredential::new(token.clone().into_bytes()).expect("a credential");
     let id = plain_route();
     let reads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-
-    let claims = claims(
-        &credential,
-        AssertionAudience::RegionalSession,
-        scoped(id),
-        u64::try_from(NOW_MS).expect("positive"),
-    );
-    let source = StubSource {
-        assertion: envelope(&claims),
-        calls: Mutex::new(0),
-    };
     let edge = RegionalEdge::new(
-        source,
-        keys(),
+        ring(),
         CountingProjection {
             reads: std::sync::Arc::clone(&reads),
             state: projected(AccountState::Active, Region::EuWest1),
         },
         FixedClock(NOW_MS + 2_000),
         binding(),
-    )
-    .expect("the cache budget holds an entry");
+    );
 
     let request_id = RequestId::parse("edge-fixture").expect("a request id");
     let headers = headers(&token);
@@ -1453,13 +1066,13 @@ async fn one_snapshot_is_read_per_request_even_when_the_assertion_is_cached() {
     assert_eq!(
         reads.load(std::sync::atomic::Ordering::SeqCst),
         3,
-        "a cached assertion must not cache the placement with it"
+        "every request must read the projection"
     );
 }
 
 #[test]
 fn the_fixture_route_set_is_drawn_from_the_generated_table() {
-    // Guards the two fixtures above: if the table ever stops declaring a scoped,
+    // Guards the fixtures above: if the table ever stops declaring a scoped,
     // non-exempt regional read, the edge tests would silently test nothing.
     let id = plain_route();
     let descriptor = route(id);
@@ -1467,4 +1080,37 @@ fn the_fixture_route_set_is_drawn_from_the_generated_table() {
     assert!(descriptor.required_scope.is_some());
     assert!(!descriptor.pause_exempt);
     assert_eq!(descriptor.idempotency, IdempotencyKind::None);
+}
+
+#[test]
+fn no_regional_source_can_reach_central_authz() {
+    // The requirement stated as a property of the code rather than of a test
+    // run: authentication is in-process, so this crate must hold no way to
+    // invoke a function and no assertion exchange to invoke it with. The
+    // manifest is checked as well as the sources, because a dependency nobody
+    // imports today is a dependency somebody imports tomorrow.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest = std::fs::read_to_string(root.join("Cargo.toml")).expect("the manifest reads");
+    assert!(
+        !manifest.contains("aws-sdk-lambda.workspace"),
+        "the crate must not link the Lambda SDK"
+    );
+
+    let mut checked = 0_usize;
+    for entry in std::fs::read_dir(root.join("src")).expect("the source directory reads") {
+        let path = entry.expect("a directory entry").path();
+        if path.extension().is_none_or(|extension| extension != "rs") {
+            continue;
+        }
+        let source = std::fs::read_to_string(&path).expect("a source file reads");
+        for forbidden in ["aws_sdk_lambda", "AssertionSource", "IssuedAssertion"] {
+            assert!(
+                !source.contains(forbidden),
+                "`{}` still names `{forbidden}`",
+                path.display()
+            );
+        }
+        checked += 1;
+    }
+    assert!(checked > 10, "only {checked} source files were scanned");
 }

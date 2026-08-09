@@ -303,6 +303,54 @@ impl<'a> Row<'a> {
         }
     }
 
+    /// A required binary attribute of an exact width.
+    ///
+    /// Key material has one length. A codec that accepted any width would let a
+    /// truncated or padded verifier reach a comparison, where it would simply
+    /// fail to match and look like a wrong credential rather than a corrupt row.
+    ///
+    /// # Errors
+    ///
+    /// [`CodecError::Missing`], [`CodecError::WrongType`], or
+    /// [`CodecError::Malformed`] when the stored value is another width.
+    pub fn fixed_bytes<const N: usize>(
+        &self,
+        attribute: &'static str,
+    ) -> Result<[u8; N], CodecError> {
+        let bytes = self.bytes(attribute)?;
+        <[u8; N]>::try_from(bytes).map_err(|_| CodecError::Malformed {
+            item_type: self.item_type,
+            attribute,
+            reason: format!("expected exactly {N} bytes, found {}", bytes.len()),
+        })
+    }
+
+    /// A required list-of-strings attribute.
+    ///
+    /// Every member must be a string. A list holding another type is a corrupt
+    /// row rather than a member to skip: skipping one would silently narrow a
+    /// scope or an audience set, and narrowing is only safe when it is intended.
+    ///
+    /// # Errors
+    ///
+    /// [`CodecError::Missing`], [`CodecError::WrongType`] for a non-list or a
+    /// non-string member.
+    pub fn string_list(&self, attribute: &'static str) -> Result<Vec<&'a str>, CodecError> {
+        let value = self.present(attribute)?;
+        let members = value
+            .as_l()
+            .map_err(|_| self.wrong_type(attribute, "L", value))?;
+        members
+            .iter()
+            .map(|member| {
+                member
+                    .as_s()
+                    .map(String::as_str)
+                    .map_err(|_| self.wrong_type(attribute, "L of S", member))
+            })
+            .collect()
+    }
+
     /// A required timestamp in the one fixed-width spelling.
     ///
     /// # Errors

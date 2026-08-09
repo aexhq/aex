@@ -27,7 +27,6 @@ use crate::stream::{ConnectionClass, QuotaManager, Reservation};
 
 /// The production regional edge used by this service.
 pub type Edge = RegionalEdge<
-    aex_regional_http::authz::LambdaAssertionSource,
     aex_regional_http::authz::RegionalProjection<
         aex_session_dynamodb::projection::ProjectionReader,
     >,

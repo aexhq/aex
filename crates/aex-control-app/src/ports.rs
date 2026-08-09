@@ -898,6 +898,49 @@ pub struct SigningKeyRecord {
     pub retires_at: OffsetDateTime,
 }
 
+/// The authentication material a regional key-authorization projection carries.
+///
+/// Deliberately narrower than [`WorkspaceKeyState`]: the projection publisher
+/// needs the four facts a regional edge authenticates from and nothing about
+/// workspace status, organization status, account state or epochs, which the
+/// placement row already carries. A wider read here would be a second authority
+/// for values the placement projection already owns.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceKeyMaterial {
+    /// Which key the row belongs to.
+    pub key_id: Uuid,
+    /// The workspace it authorizes, so a publisher can cross-check the
+    /// announcement it is acting on against the row it is replicating.
+    pub workspace_id: Uuid,
+    /// `HMAC-SHA256(pepper_v, SHA-256(token))`, exactly as stored.
+    pub verifier: [u8; 32],
+    /// Which pepper version the verifier was computed under.
+    pub pepper_version: u16,
+    /// The scopes the row carries, before the mintable ceiling.
+    pub scopes: ScopeSet,
+}
+
+/// The read of a key's authentication material, for regional replication.
+///
+/// Separate from [`AuthorizationReader`] because the caller is different: this
+/// one is the projection publisher, which reads a key once per authorization
+/// event rather than once per request, and holds no credential-liveness or
+/// account-state read at all.
+#[async_trait]
+pub trait KeyMaterialReader: Send + Sync {
+    /// Reads one key's replicable authentication material.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for a transport or privilege failure. `Ok(None)`
+    /// means no such key, which a publisher must treat as "publish nothing"
+    /// rather than "publish a row without a verifier".
+    async fn workspace_key_material(
+        &self,
+        key_id: Uuid,
+    ) -> Result<Option<WorkspaceKeyMaterial>, StoreError>;
+}
+
 /// The read-only authorization surface.
 ///
 /// Every method performs zero writes, which the adapter proves by running it as

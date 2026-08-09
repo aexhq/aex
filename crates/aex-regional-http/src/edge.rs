@@ -5,47 +5,71 @@
 //! [`crate::router::EDGE_PRECEDENCE`] and each stage's decision comes from the
 //! generated route descriptor, never from the handler: `required_scope`,
 //! `pause_exempt` and `idempotency` are table facts.
+//!
+//! # The ten stages, after the central assertion was removed
+//!
+//! | # | What it decides |
+//! | --- | --- |
+//! | 1–2 | a credential is present, well formed, and pinned to this region |
+//! | 3 | one reconciled projection read; a revoked key stops here |
+//! | 4 | the peppered MAC of the presented secret against the projected verifier |
+//! | 5 | the key row names *this* edge's audience |
+//! | 6 | the placement the control plane published is this region |
+//! | 7 | the scope the route table declares |
+//! | 8 | the pause gate, exempt only where the table says so |
+//! | 9 | the body bound, before anything parses a body |
+//! | 10 | replay identity, strict in both directions |
+//!
+//! Still ten, but stages 4–6 are not the ones they were. Stage 4 was an Ed25519
+//! envelope verification against a cached 30-second assertion and is now the
+//! in-process credential check. Old stage 5 (principal kind, and the assertion's
+//! workspace against the key row's) is gone: there is no envelope to carry a
+//! principal kind, and the workspace agreement is now settled inside
+//! `read_admission_snapshot`'s own reconciliation, before this function sees a
+//! row. Old stage 6 — every carried epoch against the regional floor — is gone
+//! for the same reason: nothing carries a claimed epoch any more, so the floors
+//! are not a check on an assertion but the answer itself. The region pin moved
+//! down into 6 and the audience check took 5, so the count and the numbering
+//! stay honest.
+//!
+//! The epochs still matter, but at a different boundary:
+//! [`RegionalEdge::revalidate`] compares a long-lived lease's retained floors
+//! against the current projection, which is what ends an open socket when a
+//! revocation lands after it was opened.
 
-use aex_control_domain::epoch::EpochSubjectKind;
-use aex_identity_domain::assertion::{Audience, Plane, PrincipalKind, VerificationKeySet};
-use aex_internal_contracts::assertion::AssertionAudience;
+use aex_internal_contracts::assertion::{AssertionAudience, AudienceSet};
 use aex_wire::error::{ErrorCode, WireError};
 use aex_wire::idempotency::{IdempotencyKey, IdempotencyKind, PrincipalScope};
 use aex_wire::ids::{ApiKeyId, OrganizationId, PrefixedId as _, Uuid7, WorkspaceId};
 use aex_wire::routes::{BodyClass, route};
+use aex_wire::scopes::ScopeSet;
 use aex_wire::types::{ETag, Region, Timestamp};
 use http::HeaderMap;
 use sha2::Digest as _;
 use uuid::Uuid;
 
-use crate::assertion::{
-    AssertionSource, AuthFailure, CredentialFloors, PresentedCredential, ProjectedEpochs,
-    RegionalFloors, VerifiedAuthorization, VerifyingAssertionCache,
-};
 use crate::context::{
     AccountState, AuthorizationEpochs, EffectiveLimits, RegionalAuthorization, RequestContext,
+};
+use crate::credential::{
+    AuthFailure, PepperRing, PresentedCredential, ProjectedEpochs, StoredVerifier,
 };
 use crate::idempotency::{IdentityContext, identity, operation_id};
 use crate::mount::{AdmissionRequest, EdgeAdmission};
 
-/// The regional projection the edge consults before it trusts an assertion.
-///
-/// A revoked key, a paused account or an advanced revocation epoch is visible
-/// regionally before the 30-second assertion expires, which is the only reason
-/// a 30-second lifetime is safe.
-///
-/// # Why it is one read rather than three
+/// The regional projection that *is* the authorization answer.
 ///
 /// The credential names its own workspace as well as its own key, so every row
-/// admission needs is addressable before anything has been verified. All three
-/// are therefore read in one snapshot-consistent transaction rather than at the
-/// three points in the pipeline where they used to become knowable. Reading them
+/// admission needs is addressable before anything has been verified. All of them
+/// are therefore read in one reconciled snapshot rather than at the several
+/// points in the pipeline where they used to become knowable. Reading them
 /// separately was not merely slower: a revocation landing between two point
 /// reads could be missed by both.
 ///
-/// The read happens on **every** request and is never cached, which is what
-/// keeps the 30-second assertion cache safe: a cached assertion still loses to a
-/// revocation or a pause published a moment ago.
+/// The read happens on **every** request and is never cached. Nothing is held
+/// between requests any more — there is no assertion and no 30-second window —
+/// so a revoked key, a paused account or an advanced revocation epoch takes
+/// effect on the next request that reads the projection.
 #[async_trait::async_trait]
 pub trait ProjectionReader: Send + Sync + 'static {
     /// Reads the whole admission state for a known key and workspace identity.
@@ -69,9 +93,9 @@ pub trait ProjectionReader: Send + Sync + 'static {
 }
 
 /// What the regional projection says about one key and its workspace right now.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectedState {
-    /// The monotonic epochs an assertion must not predate.
+    /// The monotonic revocation floors, as published.
     pub epochs: ProjectedEpochs,
     /// The workspace the key row itself names.
     ///
@@ -81,12 +105,17 @@ pub struct ProjectedState {
     pub workspace_id: WorkspaceId,
     /// The organization the workspace belongs to.
     ///
-    /// The account epoch is keyed by organization, so the floors cannot be bound
-    /// to their subjects without it. Taking it from the placement rather than
-    /// from the assertion is deliberate: the assertion is what is being checked.
+    /// The account epoch is keyed by organization, so a long-lived lease cannot
+    /// be re-checked against its subject without it.
     pub organization_id: Uuid,
     /// Whether the key itself has been revoked.
     pub key_revoked: bool,
+    /// The proof a presented credential is checked against.
+    pub verifier: StoredVerifier,
+    /// The regional edges this key may be presented to.
+    pub audiences: AudienceSet,
+    /// The effective scopes, computed centrally and never re-derived here.
+    pub scopes: ScopeSet,
     /// Whether paid work is admitted.
     pub account_state: AccountState,
     /// The region the workspace is placed in.
@@ -125,74 +154,56 @@ impl EdgeClock for SystemClock {
 
 /// The plane-fixed settings an edge is bound to at startup.
 ///
-/// One value rather than five arguments: plane, audience, region, cache budget
-/// and effective limits are all resolved from configuration together and are
-/// never changed afterwards.
+/// One value rather than two arguments: audience and region are resolved from
+/// configuration together and are never changed afterwards.
+///
+/// # Why there is no plane here any more
+///
+/// The plane used to be part of the assertion audience, so that a `dev`
+/// assertion could never admit a `prd` request. With no assertion, plane
+/// separation is carried by the two things a request cannot cross: the
+/// authorization projection table a process is bound to holds only its own
+/// plane's keys, and the pepper ring it loads at cold start is its own plane's
+/// secret. A `dev` credential presented to a `prd` edge misses the row, and
+/// would fail the MAC even if it did not.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EdgeBinding {
-    /// The plane this process belongs to.
-    ///
-    /// Part of the audience the envelope binds, so a `dev` assertion can never
-    /// admit a `prd` request even with the same key material.
-    pub plane: Plane,
-    /// The one service that may accept this deployable's assertions.
+    /// The one audience this deployable accepts a credential for.
     pub audience: AssertionAudience,
     /// The region this process is pinned to.
     pub region: Region,
-    /// The assertion cache byte budget.
-    pub cache_budget_bytes: usize,
-}
-
-impl EdgeBinding {
-    /// The exact audience every assertion this edge admits must name.
-    #[must_use]
-    pub const fn audience(&self) -> Audience {
-        Audience {
-            plane: self.plane,
-            region: self.region,
-            service: self.audience,
-        }
-    }
 }
 
 /// The shared fail-closed regional edge.
-pub struct RegionalEdge<S, P, C> {
-    assertions: VerifyingAssertionCache<S>,
+///
+/// Two peers rather than three: the pepper ring resolved at cold start and the
+/// regional projection read on every request. There is no central authority
+/// port, because there is no longer a request path that leaves the region.
+pub struct RegionalEdge<P, C> {
+    peppers: PepperRing,
     projection: P,
     clock: C,
     region: Region,
+    audience: AssertionAudience,
 }
 
-impl<S, P, C> RegionalEdge<S, P, C>
+impl<P, C> RegionalEdge<P, C>
 where
-    S: AssertionSource,
     P: ProjectionReader,
     C: EdgeClock,
 {
-    /// Binds an edge to its verified assertion cache and regional projection.
+    /// Binds an edge to its pepper ring and regional projection.
     ///
-    /// # Errors
-    ///
-    /// Returns [`AuthFailure::CacheBudget`] when the assertion cache budget
-    /// cannot hold one entry.
-    pub fn new(
-        source: S,
-        keys: VerificationKeySet,
-        projection: P,
-        clock: C,
-        binding: EdgeBinding,
-    ) -> Result<Self, AuthFailure> {
-        Ok(Self {
-            assertions: VerifyingAssertionCache::new(
-                source,
-                keys,
-                binding.audience(),
-                binding.cache_budget_bytes,
-            )?,
+    /// Infallible: every input has already been validated by the parser that
+    /// produced it, and there is no budget left to get wrong.
+    pub const fn new(peppers: PepperRing, projection: P, clock: C, binding: EdgeBinding) -> Self {
+        Self {
+            peppers,
             projection,
             clock,
             region: binding.region,
-        })
+            audience: binding.audience,
+        }
     }
 
     /// Re-checks mutable regional authorization facts for a long-lived request.
@@ -234,6 +245,12 @@ where
         if projected.region != self.region || auth.placement != self.region {
             return Err(WireError::new(ErrorCode::WrongWorkspaceRegion));
         }
+        // A lease outlives the request that opened it, so the audience is
+        // re-read rather than remembered: a key narrowed to no longer authorize
+        // this edge must lose its open socket too, not only its next request.
+        if !projected.audiences.contains(self.audience) {
+            return Err(WireError::new(ErrorCode::TokenRevoked));
+        }
         if projected.account_state == AccountState::Paused {
             return Err(WireError::new(ErrorCode::AccountPaused));
         }
@@ -242,9 +259,8 @@ where
 }
 
 #[async_trait::async_trait]
-impl<S, P, C> EdgeAdmission for RegionalEdge<S, P, C>
+impl<P, C> EdgeAdmission for RegionalEdge<P, C>
 where
-    S: AssertionSource,
     P: ProjectionReader,
     C: EdgeClock,
 {
@@ -259,11 +275,10 @@ where
             return Err(WireError::new(ErrorCode::WrongWorkspaceRegion));
         }
 
-        // 3: one snapshot-consistent read of the key row, the placement and the
-        // hot limit ceilings. It runs before the assertion, so a revoked
-        // credential loses even while its assertion is still inside its
-        // 30-second lifetime, and the three answers cannot disagree about an
-        // instant the way three separate point reads could.
+        // 3: one reconciled read of the key row, the placement and the hot limit
+        // ceilings. It runs before the credential is checked, so a revoked key
+        // costs no MAC at all, and the answers cannot disagree about an identity
+        // the way separate point reads could.
         //
         // The workspace here is the credential's *claim*. It only selects which
         // rows are read; `read_admission_snapshot` refuses any set whose
@@ -278,68 +293,42 @@ where
             return Err(WireError::new(ErrorCode::TokenRevoked));
         }
 
-        // 4: verify the credential-bound envelope against the key floor the
-        // snapshot proved. `CredentialFloors` still defers the other subjects:
-        // they are checked at stage 6 against the same snapshot, on every
-        // request, cache hit or not.
-        let verified = self
-            .assertions
-            .resolve(
-                &credential,
-                &CredentialFloors::new(projected.epochs.key, credential.key_id_raw()),
-                now,
-            )
-            .await
+        // 4: authenticate. The peppered MAC of the presented secret must equal
+        // the verifier the control plane replicated onto this row, under the
+        // pepper version the row names. This is the stage that used to be a
+        // synchronous `central-authz` invoke and a 30-second cached envelope.
+        self.peppers
+            .admits(&credential, &projected.verifier)
             .map_err(auth_error)?;
 
-        // 5: a regional edge accepts one principal kind. An envelope for a person
-        // carries `user` and `membership` subjects this region projects nothing
-        // for, so admitting one would be admitting a credential whose revocation
-        // cannot be observed here.
-        if verified.claims.principal_kind != PrincipalKind::WorkspaceKey {
-            return Err(WireError::new(ErrorCode::Unauthenticated));
+        // 5: the key row must name *this* edge. One process can serve two
+        // audiences over one table — the unary and stream halves of
+        // `session-stream-api` do — so without this a credential admitted at one
+        // would be admitted at the other. The assertion used to carry the
+        // audience; the row carries it now.
+        if !projected.audiences.contains(self.audience) {
+            return Err(auth_error(AuthFailure::AudienceMismatch));
         }
-        // The assertion must name the same workspace the key row does. The two
-        // are independent authorities and either could be the stale one, so a
-        // disagreement is a refusal rather than a choice between them.
-        if workspace_id(verified.claims.workspace_id)? != projected.workspace_id {
-            return Err(WireError::new(ErrorCode::Unauthenticated));
-        }
-        if projected.region != self.region || verified.claims.audience.region != self.region {
+
+        // 6: the region pin, from the row rather than from the token. The
+        // credential's own segment was checked at stage 1–2 and is a claim; this
+        // is the placement the control plane published.
+        if projected.region != self.region {
             return Err(WireError::new(ErrorCode::WrongWorkspaceRegion));
         }
 
-        // 6: the full subject-bound epoch check, now that every subject id is
-        // known. The floors are re-applied on every request, so a revocation or a
-        // pause published a moment ago beats a cached assertion.
-        let floors = RegionalFloors::new(
-            projected.epochs,
-            credential.key_id_raw(),
-            verified.claims.workspace_id,
-            projected.organization_id,
-        );
-        if verified.claims.organization_id != projected.organization_id
-            || !floors.admits(&verified.claims)
-        {
-            return Err(WireError::new(ErrorCode::Unauthenticated));
-        }
-
-        // 7: the scope the table declares for this route.
+        // 7: the scope the table declares for this route, against the effective
+        // scopes computed centrally and carried on the row.
         if let Some(required) = descriptor.required_scope
-            && !verified.claims.scopes.contains(required)
+            && !projected.scopes.contains(required)
         {
             return Err(WireError::new(ErrorCode::InsufficientScope));
         }
 
-        // 8: the pause gate, exempt only where the table says so. The assertion
-        // carries the account state it was minted under and the placement carries
-        // the current one; either saying "paused" pauses, because the two differ
-        // only when one of them is stale and the safe reading of a stale state is
-        // the restrictive one.
-        let paused = projected.account_state == AccountState::Paused
-            || verified.claims.account_state
-                == aex_identity_domain::assertion::AssertedAccountState::PausedTopUpRequired;
-        if paused && !descriptor.pause_exempt {
+        // 8: the pause gate, exempt only where the table says so. There is one
+        // account state now — the placement's — rather than a projected one and
+        // an asserted one that could disagree.
+        if projected.account_state == AccountState::Paused && !descriptor.pause_exempt {
             return Err(WireError::new(ErrorCode::AccountPaused));
         }
 
@@ -361,7 +350,7 @@ where
         Ok(RequestContext {
             request_id: request.request_id.clone(),
             route: request.route,
-            auth: authorization(&credential, &verified, workspace, projected)?,
+            auth: authorization(&credential, workspace, projected)?,
             limits,
             operation_id: durable,
             idempotency,
@@ -373,69 +362,55 @@ where
 
 fn authorization(
     credential: &PresentedCredential,
-    verified: &VerifiedAuthorization,
     workspace: WorkspaceId,
     projected: ProjectedState,
 ) -> Result<RegionalAuthorization, WireError> {
-    let claims = &verified.claims;
-    let organization = prefixed::<OrganizationId>(claims.organization_id)?;
+    let organization = prefixed::<OrganizationId>(projected.organization_id)?;
     Ok(RegionalAuthorization {
         principal: PrincipalScope::WorkspaceKey {
             key: credential.key_id(),
             workspace,
             organization,
         },
-        credential_binding: verified.credential_binding,
+        credential_binding: credential.binding(),
         organization_id: organization,
         workspace_id: workspace,
-        placement: claims.audience.region,
+        // The placement the store gave, which stage 6 already proved is this
+        // region's. Taking it from the row rather than from the credential means
+        // a handler is told where the workspace *is*, not where its token claims
+        // it is.
+        placement: projected.region,
         // Effective scopes were computed centrally and are never re-derived here.
-        scopes: claims.scopes.to_wire(),
+        scopes: projected.scopes,
         account_state: projected.account_state,
-        epochs: epochs(claims),
-        issued_at: instant(claims.issued_at_ms),
-        expires_at: instant(claims.expires_at_ms),
+        epochs: epochs(&projected.epochs),
     })
 }
 
-/// Projects the envelope's subject slots onto the named record a handler reads.
+/// Projects the three floors this region publishes onto the named record a
+/// handler reads and a long-lived lease is re-checked against.
 ///
-/// A subject the assertion did not carry stays zero, which is what "no
-/// revocation is known for this subject" means everywhere else.
-fn epochs(claims: &aex_identity_domain::assertion::AssertionClaims) -> AuthorizationEpochs {
-    let mut epochs = AuthorizationEpochs::default();
-    for slot in claims.epochs.used() {
-        let value = slot.epoch.get();
-        match slot.kind {
-            EpochSubjectKind::Key => epochs.key = value,
-            EpochSubjectKind::Membership => epochs.membership = value,
-            EpochSubjectKind::Workspace => epochs.workspace = value,
-            EpochSubjectKind::Account => epochs.account = value,
-            EpochSubjectKind::Empty | EpochSubjectKind::User => {}
-        }
+/// `membership` stays zero: a region holds no membership row, so "no revocation
+/// is known for this subject" is the only honest value, and it is the same one
+/// the envelope's unused slots used to produce.
+const fn epochs(projected: &ProjectedEpochs) -> AuthorizationEpochs {
+    AuthorizationEpochs {
+        key: projected.key.get(),
+        membership: 0,
+        workspace: projected.workspace.get(),
+        account: projected.account.get(),
     }
-    epochs
 }
 
-/// The workspace the assertion names, as the public identifier type.
-fn workspace_id(raw: Uuid) -> Result<WorkspaceId, WireError> {
-    prefixed(raw)
-}
-
-/// A signed raw payload rendered as its prefixed public identifier.
+/// A raw payload rendered as its prefixed public identifier.
 ///
-/// The envelope carries 16 raw bytes; the public wire carries a prefixed
+/// The projection carries 16 raw bytes; the public wire carries a prefixed
 /// `UUIDv7`. A payload that is not a `UUIDv7` cannot have been minted by the
 /// control plane, so it is a refusal rather than a value to render anyway.
 fn prefixed<I: aex_wire::ids::PrefixedId>(raw: Uuid) -> Result<I, WireError> {
     Uuid7::from_bytes(*raw.as_bytes())
         .map(I::from_uuid7)
         .map_err(|_| WireError::new(ErrorCode::Unauthenticated))
-}
-
-fn instant(millis: u64) -> time::OffsetDateTime {
-    time::OffsetDateTime::from_unix_timestamp_nanos(i128::from(millis) * 1_000_000)
-        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH)
 }
 
 fn offset(value: Timestamp) -> time::OffsetDateTime {
@@ -463,30 +438,26 @@ fn projection_error(failure: ProjectionError) -> WireError {
     }
 }
 
-/// Maps a verification failure onto its public code.
+/// Maps an authentication failure onto its public code.
 ///
-/// Every cryptographic and semantic refusal collapses into one
-/// `unauthenticated`, so a caller cannot distinguish "wrong key" from "expired"
-/// from "revoked" by probing. Only the conditions a caller should retry are
-/// separated out.
+/// Every refusal about the credential itself collapses into one
+/// `unauthenticated`, so a caller cannot distinguish "unknown key" from "wrong
+/// secret" from "wrong edge" by probing. Only the condition a caller should
+/// retry — this process cannot check the credential at all — is separated out,
+/// and it is a `503`.
 ///
 /// The match is exhaustive rather than defaulted: a new failure that nobody
 /// classified would otherwise reach a caller as `unauthenticated`, which tells a
-/// customer their credential is bad when the truth may be that this process was
-/// busy. A new variant breaks this function instead.
+/// customer their credential is bad when the truth may be that we lost a pepper.
+/// A new variant breaks this function instead.
 fn auth_error(failure: AuthFailure) -> WireError {
     match failure {
-        // Transient and retryable: identity could not be established right now,
-        // and nothing was decided about the credential itself.
-        AuthFailure::SourceUnavailable
-        | AuthFailure::FlightCapacity
-        | AuthFailure::FlightCancelled => WireError::new(ErrorCode::AuthenticationUnavailable),
-        AuthFailure::AccountStateUnavailable => WireError::new(ErrorCode::AccountStateUnavailable),
-        AuthFailure::CacheBudget => WireError::new(ErrorCode::InternalError),
+        // Transient and retryable: the credential is unverifiable rather than
+        // invalid, and nothing at all was decided about it.
+        AuthFailure::UnknownPepper { .. } => WireError::new(ErrorCode::AuthenticationUnavailable),
         AuthFailure::MalformedCredential
-        | AuthFailure::MalformedAssertion
-        | AuthFailure::Refused
-        | AuthFailure::Verification(_) => WireError::new(ErrorCode::Unauthenticated),
+        | AuthFailure::VerifierMismatch
+        | AuthFailure::AudienceMismatch => WireError::new(ErrorCode::Unauthenticated),
     }
 }
 

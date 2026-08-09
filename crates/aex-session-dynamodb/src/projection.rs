@@ -14,8 +14,10 @@
 //! `regional-otlp` can read a placement without linking the session row codec
 //! (D-21).
 
+use aex_internal_contracts::assertion::{AssertionAudience, AudienceSet};
 use aex_wire::ids::{ApiKeyId, WorkspaceId};
 use aex_wire::limits::LimitId;
+use aex_wire::scopes::{ScopeId, ScopeSet};
 use async_trait::async_trait;
 use aws_sdk_dynamodb::Client;
 
@@ -497,11 +499,17 @@ pub const KEY_AUTHORIZATION_STATES: &[&str] = &[
 
 /// Decodes a key authorization row.
 ///
+/// Every one of the four authentication attributes is required. There is no
+/// arm that reads an absent verifier as "not yet replicated" or an absent
+/// audience list as "any edge": a row this function cannot fully decode is
+/// refused, which costs a `401` on a key nobody can check and never admits one.
+///
 /// # Errors
 ///
-/// [`CodecError`] for any missing, mistyped or out-of-vocabulary attribute, and
-/// [`CodecError::WrongTenant`] when the row names a different key than the one
-/// that was read.
+/// [`CodecError`] for any missing, mistyped or out-of-vocabulary attribute, a
+/// verifier that is not exactly 32 bytes, an audience or scope spelling outside
+/// its registry, an empty audience set, and [`CodecError::WrongTenant`] when the
+/// row names a different key than the one that was read.
 pub fn decode_key_authorization(
     item: &Item,
     asserted: ApiKeyId,
@@ -520,10 +528,68 @@ pub fn decode_key_authorization(
         organization: row.id("organizationId")?,
         region: row.string("region")?.to_owned(),
         state,
+        verifier: row.fixed_bytes::<32>("verifier")?,
+        pepper_version: pepper_version(&row)?,
+        audiences: audiences(&row)?,
+        scopes: scopes(&row)?,
         key_epoch: row.u64("keyEpoch")?,
         projection_sequence: row.u64("projectionSequence")?,
         updated_at: row.timestamp("updatedAt")?,
     })
+}
+
+/// The pepper version, narrowed onto the width the credential codec declares.
+fn pepper_version(row: &Row<'_>) -> Result<u16, CodecError> {
+    let stored = row.u64("pepperVersion")?;
+    u16::try_from(stored).map_err(|_| CodecError::Malformed {
+        item_type: KEY_AUTHORIZATION,
+        attribute: "pepperVersion",
+        reason: format!("`{stored}` is not a pepper version"),
+    })
+}
+
+/// The audiences the key may be presented to.
+///
+/// A spelling outside the vocabulary is a corrupt row rather than a member to
+/// drop, and an empty set is refused: a key row that names no edge would admit
+/// nothing anywhere, which is indistinguishable from an unpopulated row.
+fn audiences(row: &Row<'_>) -> Result<AudienceSet, CodecError> {
+    let mut set = AudienceSet::EMPTY;
+    for spelling in row.string_list("audiences")? {
+        let audience = AssertionAudience::parse(spelling).ok_or_else(|| CodecError::Malformed {
+            item_type: KEY_AUTHORIZATION,
+            attribute: "audiences",
+            reason: format!("`{spelling}` is outside the audience vocabulary"),
+        })?;
+        set = set.insert(audience);
+    }
+    if set.is_empty() {
+        return Err(CodecError::Malformed {
+            item_type: KEY_AUTHORIZATION,
+            attribute: "audiences",
+            reason: "a key row that names no audience admits nothing".to_owned(),
+        });
+    }
+    Ok(set)
+}
+
+/// The effective scopes the key carries.
+///
+/// An unknown spelling is refused rather than skipped: silently dropping one
+/// turns a key that should have been refused into a key with quietly fewer
+/// scopes, and the difference only shows up as a `403` nobody can explain.
+fn scopes(row: &Row<'_>) -> Result<ScopeSet, CodecError> {
+    let mut scopes = Vec::new();
+    for spelling in row.string_list("scopes")? {
+        scopes.push(
+            ScopeId::parse(spelling).ok_or_else(|| CodecError::Malformed {
+                item_type: KEY_AUTHORIZATION,
+                attribute: "scopes",
+                reason: format!("`{spelling}` is not a scope in the registry"),
+            })?,
+        );
+    }
+    Ok(ScopeSet::new(scopes))
 }
 
 /// Proves three separately-decoded rows describe one consistent identity.
@@ -626,6 +692,8 @@ mod tests {
     };
     use crate::attr::{CodecError, ItemBuilder, n, s};
     use crate::wire_pending::KeyAuthorizationState;
+    use aex_internal_contracts::assertion::{AssertionAudience, AudienceSet};
+    use aex_wire::scopes::{ScopeId, ScopeSet};
 
     fn workspace(byte: u8) -> WorkspaceId {
         WorkspaceId::from_uuid7(Uuid7::compose(1, [byte; 10]))
@@ -682,10 +750,17 @@ mod tests {
         assert!(matches!(error, CodecError::WrongTenant { .. }), "{error}");
     }
 
-    #[test]
-    fn a_key_authorization_and_a_frontier_decode() {
+    /// One well-formed key authorization row, with one attribute replaced.
+    ///
+    /// The overrides are how each authentication attribute is corrupted in
+    /// isolation: the point of every case below is that exactly one thing is
+    /// wrong, so an accepted row cannot be accepted for the wrong reason.
+    fn key_row(
+        state: &str,
+        overrides: &[(&str, aws_sdk_dynamodb::types::AttributeValue)],
+    ) -> crate::attr::Item {
         let api_key = ApiKeyId::from_uuid7(Uuid7::compose(1, [3; 10]));
-        let item = ItemBuilder::new(KEY_AUTHORIZATION)
+        let mut builder = ItemBuilder::new(KEY_AUTHORIZATION)
             .set("apiKeyId", s(api_key.to_string()))
             .set("workspaceId", s(workspace(1).to_string()))
             .set(
@@ -696,35 +771,44 @@ mod tests {
                 ),
             )
             .set("region", s("eu-west-1"))
-            .set("state", s("revoked"))
+            .set("state", s(state))
+            .set("verifier", crate::attr::b(vec![7; 32]))
+            .set("pepperVersion", n(3))
+            .set(
+                "audiences",
+                crate::attr::string_list(["regional_session".to_owned()]),
+            )
+            .set(
+                "scopes",
+                crate::attr::string_list(["sessions:read".to_owned()]),
+            )
             .set("keyEpoch", n(2))
             .set("projectionSequence", n(9))
-            .set("updatedAt", s("2026-08-01T00:00:00.000Z"))
-            .build();
-        let decoded = decode_key_authorization(&item, api_key).expect("decodes");
+            .set("updatedAt", s("2026-08-01T00:00:00.000Z"));
+        for (attribute, value) in overrides {
+            builder = builder.set(attribute, value.clone());
+        }
+        builder.build()
+    }
+
+    #[test]
+    fn a_key_authorization_and_a_frontier_decode() {
+        let api_key = ApiKeyId::from_uuid7(Uuid7::compose(1, [3; 10]));
+        let decoded = decode_key_authorization(&key_row("revoked", &[]), api_key).expect("decodes");
         assert_eq!(decoded.api_key, api_key);
         assert_eq!(decoded.workspace, workspace(1));
         assert_eq!(decoded.state, KeyAuthorizationState::Revoked);
         assert_eq!(decoded.key_epoch, 2);
+        assert_eq!(decoded.verifier, [7; 32]);
+        assert_eq!(decoded.pepper_version, 3);
+        assert_eq!(
+            decoded.audiences,
+            AudienceSet::EMPTY.insert(AssertionAudience::RegionalSession)
+        );
+        assert_eq!(decoded.scopes, ScopeSet::new([ScopeId::SessionsRead]));
 
-        let corrupt = ItemBuilder::new(KEY_AUTHORIZATION)
-            .set("apiKeyId", s(api_key.to_string()))
-            .set("workspaceId", s(workspace(1).to_string()))
-            .set(
-                "organizationId",
-                s(
-                    aex_wire::ids::OrganizationId::from_uuid7(Uuid7::compose(1, [2; 10]))
-                        .to_string(),
-                ),
-            )
-            .set("region", s("eu-west-1"))
-            .set("state", s("suspended"))
-            .set("keyEpoch", n(2))
-            .set("projectionSequence", n(9))
-            .set("updatedAt", s("2026-08-01T00:00:00.000Z"))
-            .build();
         assert!(matches!(
-            decode_key_authorization(&corrupt, api_key),
+            decode_key_authorization(&key_row("suspended", &[]), api_key),
             Err(CodecError::Malformed { .. })
         ));
 
@@ -735,6 +819,81 @@ mod tests {
             .set("coveredThrough", s("2026-08-01T00:00:00.000Z"))
             .build();
         assert_eq!(decode_frontier(&item).expect("decodes").sequence, 9);
+    }
+
+    #[test]
+    fn every_unusable_authentication_attribute_refuses_the_row() {
+        // The whole point of replicating the verifier is that a regional edge
+        // authenticates from this row. A row it can only partly decode must be
+        // refused, because every alternative — an absent verifier read as "check
+        // later", an absent audience list read as "any edge", an unknown scope
+        // dropped — admits something nobody published.
+        let api_key = ApiKeyId::from_uuid7(Uuid7::compose(1, [3; 10]));
+        for (name, attribute, value) in [
+            (
+                "a verifier of the wrong width",
+                "verifier",
+                crate::attr::b(vec![7; 31]),
+            ),
+            (
+                "a verifier stored as text",
+                "verifier",
+                s(aex_wire::types::Region::EuWest1.as_str()),
+            ),
+            ("a pepper version outside `u16`", "pepperVersion", n(70_000)),
+            (
+                "an audience outside the vocabulary",
+                "audiences",
+                crate::attr::string_list(["regional-session".to_owned()]),
+            ),
+            (
+                "no audience at all",
+                "audiences",
+                crate::attr::string_list([]),
+            ),
+            (
+                "an audience list that is not a list",
+                "audiences",
+                s("regional_session"),
+            ),
+            (
+                "a scope outside the registry",
+                "scopes",
+                crate::attr::string_list(["sessions:teleport".to_owned()]),
+            ),
+        ] {
+            assert!(
+                decode_key_authorization(&key_row("active", &[(attribute, value)]), api_key)
+                    .is_err(),
+                "{name} was accepted"
+            );
+        }
+
+        // A key that legitimately carries no scope still decodes: the scope gate
+        // refuses it at the edge, which is a `403` naming the missing scope
+        // rather than an undifferentiated `401`.
+        let none = decode_key_authorization(
+            &key_row("active", &[("scopes", crate::attr::string_list([]))]),
+            api_key,
+        )
+        .expect("an empty scope set is a decision, not a corrupt row");
+        assert!(none.scopes.is_empty());
+    }
+
+    #[test]
+    fn every_authentication_attribute_is_required() {
+        let api_key = ApiKeyId::from_uuid7(Uuid7::compose(1, [3; 10]));
+        for attribute in ["verifier", "pepperVersion", "audiences", "scopes"] {
+            let mut item = key_row("active", &[]);
+            item.remove(attribute);
+            assert!(
+                matches!(
+                    decode_key_authorization(&item, api_key),
+                    Err(CodecError::Missing { .. })
+                ),
+                "an absent `{attribute}` must refuse the row"
+            );
+        }
     }
 
     #[test]
@@ -840,6 +999,10 @@ mod tests {
             organization,
             region: "eu-west-1".to_owned(),
             state: KeyAuthorizationState::Active,
+            verifier: [7; 32],
+            pepper_version: 1,
+            audiences: AudienceSet::ALL,
+            scopes: ScopeSet::new([ScopeId::SessionsRead]),
             key_epoch: 1,
             projection_sequence: 1,
             updated_at: stamp,

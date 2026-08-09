@@ -146,13 +146,12 @@ pub async fn run(
 
     compose(ROLE.granted(), &passed)?;
 
-    // The one shared edge, over the one shared exchange. `central-authz` is
-    // IAM-invoked rather than routed, so this is a direct invoke and the caller's
-    // execution role is the authentication; the credential is named by
-    // `(keyId, presentedDigest)` and never sent.
+    // The one shared edge. There is no exchange left to compose it over: a
+    // presented key is checked against the verifier this region already reads
+    // on every request, so nothing on this path leaves the region.
     let parameters = aex_regional_http::authz::ParameterStore::new(aws_sdk_ssm::Client::new(&aws));
-    let anchors = parameters
-        .trust_anchors(&config.authz_verify_keys_param)
+    let peppers = parameters
+        .pepper_ring(&config.credential_pepper_ref)
         .await
         .map_err(|error| RegionalOtlpRunError::Edge {
             reason: error.to_string(),
@@ -162,25 +161,14 @@ pub async fn run(
         config.authz_projection_table.clone(),
     );
     let edge = aex_regional_http::edge::RegionalEdge::new(
-        aex_regional_http::authz::LambdaAssertionSource::new(
-            aws_sdk_lambda::Client::new(&aws),
-            config.authz_function_arn.clone(),
-            AUDIENCE,
-            config.region,
-        ),
-        anchors,
+        peppers,
         aex_regional_http::authz::RegionalProjection::new(projection, config.region),
         aex_regional_http::edge::SystemClock,
         aex_regional_http::edge::EdgeBinding {
-            plane: config.plane,
             audience: AUDIENCE,
             region: config.region,
-            cache_budget_bytes: config.assertion_cache_bytes,
         },
-    )
-    .map_err(|error| RegionalOtlpRunError::Edge {
-        reason: error.to_string(),
-    })?;
+    );
 
     let service = OtlpService::new(
         authority,

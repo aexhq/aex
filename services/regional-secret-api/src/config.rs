@@ -22,10 +22,13 @@ pub const PLANE: &str = "AEX_PLANE";
 pub const REGION: &str = "AEX_REGION";
 /// The release digest reported by `/internal/readyz`.
 pub const RELEASE_DIGEST: &str = "AEX_RELEASE_DIGEST";
-/// The `central-authz` function this edge resolves assertions through.
-pub const AUTHZ_FUNCTION_ARN: &str = "AEX_AUTHZ_FUNCTION_ARN";
-/// The parameter holding the assertion verification key set.
-pub const AUTHZ_VERIFY_KEYS_PARAM: &str = "AEX_AUTHZ_VERIFY_KEYS_PARAM";
+/// The parameter holding the credential pepper ring this edge verifies against.
+///
+/// This replaced `AEX_AUTHZ_FUNCTION_ARN` and `AEX_AUTHZ_VERIFY_KEYS_PARAM`
+/// together: there is no `central-authz` invoke to address and no assertion
+/// signature to verify, because a presented key is checked in-process against
+/// the verifier the control plane replicated onto its authorization row.
+pub const CREDENTIAL_PEPPER_REF: &str = "AEX_CREDENTIAL_PEPPER_REF";
 /// The regional authorization projection table.
 pub const AUTHZ_PROJECTION_TABLE: &str = "AEX_AUTHZ_PROJECTION_TABLE";
 /// The `regional-secret-custody` table.
@@ -38,25 +41,21 @@ pub const SECRET_KMS_KEY_ARN: &str = "AEX_SECRET_KMS_KEY_ARN";
 pub const BRANCH_KEY_CACHE_BYTES: &str = "AEX_SECRET_BRANCH_KEY_CACHE_BYTES";
 /// Branch-key cache lifetime in milliseconds.
 pub const BRANCH_KEY_CACHE_TTL_MS: &str = "AEX_SECRET_BRANCH_KEY_CACHE_TTL_MS";
-/// Assertion cache byte budget.
-pub const ASSERTION_CACHE_BYTES: &str = "AEX_ASSERTION_CACHE_BYTES";
 /// The effective encoded JSON body bound.
 pub const MAX_JSON_BODY_BYTES: &str = "AEX_MAX_JSON_BODY_BYTES";
 
 /// Every variable a healthy `regional-secret-api` requires, in declaration order.
-pub const REQUIRED: [&str; 13] = [
+pub const REQUIRED: [&str; 11] = [
     PLANE,
     REGION,
     RELEASE_DIGEST,
-    AUTHZ_FUNCTION_ARN,
-    AUTHZ_VERIFY_KEYS_PARAM,
+    CREDENTIAL_PEPPER_REF,
     AUTHZ_PROJECTION_TABLE,
     SECRET_CUSTODY_TABLE,
     SECRET_KEYSTORE_TABLE,
     SECRET_KMS_KEY_ARN,
     BRANCH_KEY_CACHE_BYTES,
     BRANCH_KEY_CACHE_TTL_MS,
-    ASSERTION_CACHE_BYTES,
     MAX_JSON_BODY_BYTES,
 ];
 
@@ -98,10 +97,8 @@ pub struct Config {
     pub region: Region,
     /// Release digest reported by readiness.
     pub release_digest: String,
-    /// `central-authz` function.
-    pub authz_function: Arn,
-    /// Verification key-set parameter name.
-    pub authz_verify_keys_param: String,
+    /// Credential pepper ring parameter name.
+    pub credential_pepper_ref: String,
     /// Regional authorization projection table.
     pub authz_projection_table: String,
     /// `regional-secret-custody` table.
@@ -114,8 +111,6 @@ pub struct Config {
     pub branch_key_cache_bytes: usize,
     /// Branch-key cache lifetime in milliseconds.
     pub branch_key_cache_ttl_ms: u64,
-    /// Assertion cache byte budget.
-    pub assertion_cache_bytes: usize,
     /// Effective encoded JSON body bound.
     pub max_json_body_bytes: usize,
 }
@@ -145,8 +140,7 @@ impl Config {
             plane,
             region,
             release_digest: required(lookup, RELEASE_DIGEST)?,
-            authz_function: arn_in_region(lookup, AUTHZ_FUNCTION_ARN, region, "lambda")?,
-            authz_verify_keys_param: required(lookup, AUTHZ_VERIFY_KEYS_PARAM)?,
+            credential_pepper_ref: required(lookup, CREDENTIAL_PEPPER_REF)?,
             authz_projection_table: required(lookup, AUTHZ_PROJECTION_TABLE)?,
             secret_custody_table: required(lookup, SECRET_CUSTODY_TABLE)?,
             secret_keystore_table: required(lookup, SECRET_KEYSTORE_TABLE)?,
@@ -162,12 +156,6 @@ impl Config {
                 BRANCH_KEY_CACHE_TTL_MS,
                 1_000,
                 3_600_000,
-            )?,
-            assertion_cache_bytes: bounded_usize(
-                lookup,
-                ASSERTION_CACHE_BYTES,
-                1_024,
-                64 * 1_024 * 1_024,
             )?,
             max_json_body_bytes: bounded_usize(
                 lookup,
