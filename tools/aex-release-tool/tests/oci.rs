@@ -398,12 +398,17 @@ fn ghcr_visibility_is_fail_closed_and_bootstrap_never_claims_to_change_it() {
 
 #[test]
 fn workflow_closes_toolchain_source_visibility_and_digest_only_publication() {
+    // Producing the image and pushing it are two workflows now. Both halves are
+    // asserted here, against the file that actually owns each step, so moving a
+    // step across the boundary fails rather than silently disappearing.
+    let compile =
+        std::fs::read_to_string(repository_root().join(".github/workflows/_compile-artifacts.yml"))
+            .expect("compile workflow");
     let workflow =
         std::fs::read_to_string(repository_root().join(".github/workflows/_build-artifacts.yml"))
             .expect("artifact workflow");
+
     for required in [
-        "push-by-digest=true",
-        "name-canonical=true",
         "rewrite-timestamp=true",
         "moby/buildkit:v0.30.0@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f",
         "version: v0.34.1",
@@ -413,17 +418,37 @@ fn workflow_closes_toolchain_source_visibility_and_digest_only_publication() {
         "c3a62288419645c4172ba8bda7f6af6ef24df8a2cc264a401e4c4373e22649cf",
         "f1332ddb9010bd0b72628266c3a906d9a6979848033df4c8d9bd2cd113bae12b",
         "--platform linux/arm64",
+        "artifact oci-prepare",
+        "artifact oci-inspect",
+        "artifact oci-compare",
+        "artifact oci-toolchain",
+        "artifact oci-source-clean",
+    ] {
+        assert!(
+            compile.contains(required),
+            "compile workflow lacks `{required}`"
+        );
+    }
+    assert!(
+        !compile.contains("tags:"),
+        "the compiled layout must not mint a tag"
+    );
+
+    for required in [
+        "push-by-digest=true",
+        "name-canonical=true",
+        "rewrite-timestamp=true",
+        "moby/buildkit:v0.30.0@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f",
+        "version: v0.34.1",
+        "f1332ddb9010bd0b72628266c3a906d9a6979848033df4c8d9bd2cd113bae12b",
+        "--platform linux/arm64",
         "actions/attest@",
         "gh attestation verify",
         "anonymous-docker",
         "docker buildx imagetools inspect --raw",
         "docker pull --platform linux/arm64",
         "docker cp",
-        "artifact oci-prepare",
-        "artifact oci-inspect",
-        "artifact oci-compare",
         "artifact oci-readback",
-        "artifact oci-toolchain",
         "artifact oci-source-clean",
         "artifact oci-visibility",
         "AEX_GHCR_VISIBILITY_BOOTSTRAP",
@@ -438,12 +463,22 @@ fn workflow_closes_toolchain_source_visibility_and_digest_only_publication() {
     );
     assert!(!workflow.contains("--method PATCH"));
     assert!(!workflow.contains("--method PUT"));
-    assert!(workflow.matches("artifact oci-source-clean").count() >= 3);
 
-    let clean_before_plan = workflow
+    // One clean-source proof before planning, two around the push. The total is
+    // what the receipt claims, so it is asserted as a sum rather than per file.
+    let compile_cleans = compile.matches("artifact oci-source-clean").count();
+    let publish_cleans = workflow.matches("artifact oci-source-clean").count();
+    assert!(compile_cleans >= 1, "compile proves a clean source once");
+    assert!(
+        publish_cleans >= 2,
+        "publication proves a clean source twice"
+    );
+    assert!(compile_cleans + publish_cleans >= 3);
+
+    let clean_before_plan = compile
         .find("Verify clean source before planning and building")
         .unwrap();
-    let plan = workflow.find("Print the recipe").unwrap();
+    let plan = compile.find("Print the recipe").unwrap();
     let visibility = workflow
         .find("Require a public GHCR package or explicit bootstrap authority")
         .unwrap();

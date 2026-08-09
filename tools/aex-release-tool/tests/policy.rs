@@ -181,9 +181,11 @@ fn every_shipped_workflow_passes_the_structural_gates() {
 
 #[test]
 fn protected_brain_publication_requires_catalog_preflight_before_build() {
+    // Compilation moved to its own read-only workflow, so the preflight and the
+    // build it guards both live there now.
     let workflow =
-        std::fs::read_to_string(repo_root().join(".github/workflows/_build-artifacts.yml"))
-            .expect("artifact workflow");
+        std::fs::read_to_string(repo_root().join(".github/workflows/_compile-artifacts.yml"))
+            .expect("compile workflow");
     let preflight = workflow
         .find("--require-model-catalog")
         .expect("protected catalog preflight");
@@ -192,9 +194,21 @@ fn protected_brain_publication_requires_catalog_preflight_before_build() {
         preflight < build,
         "catalog preflight must run before compilation"
     );
-    assert!(workflow.contains("inputs.publish"));
+    assert!(workflow.contains("inputs.for_publication"));
     assert!(workflow.contains("matrix.name }}\" = \"brain-mux"));
     assert!(workflow.contains("env.update(recipe['env'])"));
+
+    // The publishing half still owns `publish`, and must never regain the
+    // recipe-driven compile: a job that can rebuild the bytes can publish bytes
+    // no lane ever tested.
+    let publish =
+        std::fs::read_to_string(repo_root().join(".github/workflows/_build-artifacts.yml"))
+            .expect("artifact workflow");
+    assert!(publish.contains("inputs.publish"));
+    assert!(
+        !publish.contains("env.update(recipe['env'])"),
+        "the publishing job must not run the recipe's build command"
+    );
 }
 
 #[test]

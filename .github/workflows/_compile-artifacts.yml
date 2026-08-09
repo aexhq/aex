@@ -1,0 +1,515 @@
+# Compile, package and describe one artifact. Mints no identity, publishes
+# nothing, and holds no write scope.
+#
+# Packaging is done by `aex-release-tool artifact package`, never by the
+# packager's own archive writer, because artifact identity is the archive
+# digest and those writers embed the wall clock and the host operating system.
+#
+# This file exists so that the units compile while the test lanes are still
+# running, which is only safe because it is structurally incapable of
+# publishing: `contents: read`, no secrets, and no step that reaches a
+# registry. `_build-artifacts.yml` holds every write scope and every identity
+# string, and it is the job that waits for the gate.
+#
+# `for_publication` is not a publish switch and grants nothing. It only
+# tightens planning: a `brain-mux` destined for publication must plan against a
+# signed model catalog rather than the release-input blocker.
+
+name: compile-artifacts
+
+on:
+  workflow_call:
+    inputs:
+      matrix:
+        type: string
+        required: true
+      lane:
+        type: string
+        required: true
+      for_publication:
+        description: Plan as if the result will be published; adds no capability.
+        type: boolean
+        required: false
+        default: false
+      release_tool_sha256:
+        description: SHA-256 of the run's prepared aex-release-tool.
+        type: string
+        required: true
+      workspace_check_sha256:
+        description: SHA-256 of the run's prepared aex-workspace-check.
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_DIR: target/aex-release/${{ matrix.name }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(inputs.matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c  # master
+        with:
+          toolchain: "1.97.1"
+          targets: aarch64-unknown-linux-gnu,aarch64-unknown-linux-musl
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@bc2d2e71bd35c5549942babaa51a89c586b981d1  # v2.8.1
+        with:
+          save-if: ${{ inputs.lane == 'main' }}
+          shared-key: artifacts
+
+      # The toolchain and the cache above stay: this job compiles the artifact
+      # itself. Only the release tool is no longer rebuilt here.
+      - name: Download the prepared workspace tools
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+        with:
+          name: workspace-tools-${{ github.run_id }}
+          path: ${{ runner.temp }}/aex-tools
+
+      # The digests arrive through the job-output channel, not inside the
+      # artifact, so an artifact that lies about itself cannot self-certify.
+      - name: Use the prepared workspace tools
+        env:
+          RELEASE_TOOL_SHA256: ${{ inputs.release_tool_sha256 }}
+          WORKSPACE_CHECK_SHA256: ${{ inputs.workspace_check_sha256 }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/aex-tools"
+          [[ "$RELEASE_TOOL_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$WORKSPACE_CHECK_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          printf '%s  %s\n' "$RELEASE_TOOL_SHA256" aex-release-tool > expected.sha256
+          printf '%s  %s\n' "$WORKSPACE_CHECK_SHA256" aex-workspace-check >> expected.sha256
+          sha256sum --check --strict expected.sha256
+          [[ "$(find . -maxdepth 1 -type f ! -name expected.sha256 | wc -l)" -eq 2 ]]
+          chmod 0755 aex-release-tool aex-workspace-check
+          ./aex-release-tool --version | grep -Eq '^aex-release-tool [0-9]+\.[0-9]+\.[0-9]+'
+          ./aex-workspace-check --version | grep -Eq '^aex-workspace-check [0-9]+\.[0-9]+\.[0-9]+'
+          echo "$RUNNER_TEMP/aex-tools" >> "$GITHUB_PATH"
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
+        with:
+          bun-version: "1.3.14"
+
+      - name: Install the cross-compiler and packagers
+        uses: taiki-e/install-action@2cdf2d81f4edfc3b41d5ddf56083c70b48ac2475  # v2.62.35
+        with:
+          tool: cargo-lambda@1.8.6,cargo-auditable@0.7.1
+          fallback: none
+
+      - name: Verify clean source before planning and building
+        run: |
+          set -euo pipefail
+          mkdir -p "$RELEASE_DIR"
+          aex-release-tool artifact oci-source-clean \
+            --out "$RELEASE_DIR/source-clean-before-plan.json"
+
+      - name: Bind the immutable Brain tool catalogue
+        if: ${{ matrix.name == 'brain-mux' }}
+        run: |
+          set -euo pipefail
+          identity=$(aex-release-tool artifact tool-catalog)
+          digest=$(jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))' <<<"$identity")
+          echo "AEX_TOOL_CATALOG_SHA256=$digest" >> "$GITHUB_ENV"
+
+      - name: Acquire the last-good signed model-catalog binding
+        if: ${{ matrix.name == 'brain-mux' }}
+        env:
+          AEX_MODEL_CATALOG_BINDING_JSON: ${{ vars.AEX_MODEL_CATALOG_BINDING_JSON }}
+        run: |
+          set -euo pipefail
+          binding="${AEX_MODEL_CATALOG_BINDING_JSON:-}"
+          if [[ -z "$binding" ]]; then
+            echo "::warning title=brain-mux built without a model catalog::AEX_MODEL_CATALOG_BINDING_JSON is empty, so this brain-mux image compiles the release-input blocker instead of a signed model catalog. The binary refuses to start on every launch and the image can never become ready. Set the repository variable to the last-good signed binding before shipping this image."
+            exit 0
+          fi
+          (( ${#binding} <= 49152 )) || {
+            echo "model-catalog build binding exceeds the repository-variable bound" >&2
+            exit 21
+          }
+          canonical_binding=$(jq -cS . <<<"$binding")
+          [[ "$binding" == "$canonical_binding" ]] || {
+            echo "model-catalog build binding is not canonical compact JSON" >&2
+            exit 21
+          }
+          jq -e '
+            type == "object" and
+            keys == ["collectionSha256", "collectionUri", "schema", "trustRootsJson", "trustRootsSha256"] and
+            .schema == "aex.model-catalog-build-binding.v1" and
+            (.collectionUri | type == "string") and
+            (.collectionSha256 | type == "string" and test("^sha256:[0-9a-f]{64}$")) and
+            (.trustRootsJson | type == "string" and length > 0) and
+            (.trustRootsSha256 | type == "string" and test("^sha256:[0-9a-f]{64}$"))
+          ' <<<"$binding" >/dev/null || {
+            echo "model-catalog build binding has an invalid or open shape" >&2
+            exit 21
+          }
+          uri=$(jq -er .collectionUri <<<"$binding")
+          digest=$(jq -er .collectionSha256 <<<"$binding")
+          roots_json=$(jq -er .trustRootsJson <<<"$binding")
+          roots_digest=$(jq -er .trustRootsSha256 <<<"$binding")
+          expected_prefix="https://github.com/${GITHUB_REPOSITORY}/releases/download/"
+          [[ "$uri" == "$expected_prefix"* ]] || {
+            echo "model-catalog collection URI must be an immutable release asset in this repository" >&2
+            exit 21
+          }
+          [[ "$uri" != *'?'* && "$uri" != *'#'* && "$uri" != *'..'* ]] || {
+            echo "model-catalog collection URI must not carry a query, fragment, or parent path" >&2
+            exit 21
+          }
+          collection_file=".tmp/model-catalog/collection.json"
+          mkdir -p "$(dirname "$collection_file")"
+          roots_file=".tmp/model-catalog/trust-roots.json"
+          printf '%s' "$roots_json" > "$roots_file"
+          [[ "$roots_json" == "$(jq -cS . "$roots_file")" ]] || {
+            echo "model-catalog trust roots are not canonical compact JSON" >&2
+            exit 21
+          }
+          [[ "sha256:$(sha256sum "$roots_file" | cut -d' ' -f1)" == "$roots_digest" ]] || {
+            echo "model-catalog trust-root digest does not match the atomic binding" >&2
+            exit 21
+          }
+          curl --fail --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
+            --max-time 60 --max-filesize 67108864 \
+            --output "$collection_file" "$uri"
+          actual="sha256:$(sha256sum "$collection_file" | cut -d' ' -f1)"
+          [[ "$actual" == "$digest" ]] || {
+            echo "downloaded model-catalog collection digest does not match its release binding" >&2
+            exit 21
+          }
+          {
+            echo "AEX_MODEL_CATALOG_TRUST_ROOTS_JSON=$roots_json"
+            echo "AEX_MODEL_CATALOG_TRUST_ROOTS_SHA256=$roots_digest"
+            echo "AEX_MODEL_CATALOG_COLLECTION_URI=$uri"
+            echo "AEX_MODEL_CATALOG_COLLECTION_SHA256=$digest"
+            echo "AEX_MODEL_CATALOG_COLLECTION_FILE=$collection_file"
+          } >> "$GITHUB_ENV"
+
+      - name: Print the recipe
+        id: recipe
+        run: |
+          set -euo pipefail
+          mkdir -p "$RELEASE_DIR"
+          required=()
+          if [ "${{ inputs.for_publication }}" = "true" ] && [ "${{ matrix.name }}" = "brain-mux" ]; then
+            required+=(--require-model-catalog)
+          fi
+          aex-release-tool artifact plan --unit "${{ matrix.name }}" "${required[@]}" | tee "$RELEASE_DIR/recipe.json"
+          kind=$(jq -r .kind "$RELEASE_DIR/recipe.json")
+          [[ -n "$kind" && "$kind" != "null" ]]
+          echo "kind=$kind" >> "$GITHUB_OUTPUT"
+
+      - name: Set up pinned Buildx and BuildKit
+        if: ${{ startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
+        id: buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd  # v4.0.0
+        with:
+          version: v0.34.1
+          driver-opts: image=moby/buildkit:v0.30.0@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f
+
+      - name: Install and verify the pinned Rust cross-linker toolchain
+        if: ${{ steps.recipe.outputs.kind == 'rust-lambda' || steps.recipe.outputs.kind == 'microvm-image' || steps.recipe.outputs.kind == 'rust-binary' || startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
+        run: |
+          set -euo pipefail
+          tool_root="$RUNNER_TEMP/aex-rust-cross-tools"
+          mkdir -p "$tool_root/bin" "$tool_root/zig" "$tool_root/cargo-zigbuild"
+
+          zig_archive="$tool_root/zig-x86_64-linux-0.15.2.tar.xz"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$zig_archive" \
+            https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz
+          echo "02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239  $zig_archive" \
+            | sha256sum --check --strict
+          tar -xJf "$zig_archive" --strip-components=1 -C "$tool_root/zig"
+          echo "2858dc89dbbfdd08cceda1b841e7fd0a793a1a67b49f150bc3d0d1de44ed7f51  $tool_root/zig/zig" \
+            | sha256sum --check --strict
+          [[ "$("$tool_root/zig/zig" version)" == "0.15.2" ]]
+
+          cargo_zigbuild_archive="$tool_root/cargo-zigbuild-x86_64-unknown-linux-gnu.tar.xz"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$cargo_zigbuild_archive" \
+            https://github.com/rust-cross/cargo-zigbuild/releases/download/v0.22.3/cargo-zigbuild-x86_64-unknown-linux-gnu.tar.xz
+          echo "6a014d41ba41ca4b69ca4c4819b9f78a41b0197b5d486904e31c1244e3686190  $cargo_zigbuild_archive" \
+            | sha256sum --check --strict
+          tar -xJf "$cargo_zigbuild_archive" -C "$tool_root/cargo-zigbuild"
+          install -m 0755 \
+            "$tool_root/cargo-zigbuild/cargo-zigbuild-x86_64-unknown-linux-gnu/cargo-zigbuild" \
+            "$tool_root/bin/cargo-zigbuild"
+          echo "c3a62288419645c4172ba8bda7f6af6ef24df8a2cc264a401e4c4373e22649cf  $tool_root/bin/cargo-zigbuild" \
+            | sha256sum --check --strict
+          [[ "$("$tool_root/bin/cargo-zigbuild" --version)" == "cargo-zigbuild 0.22.3" ]]
+          # Zig resolves its lib directory relative to its executable. Put the
+          # preserved extracted installation on PATH; copying only the binary to
+          # bin/ makes `zig cc` unable to find that adjacent toolchain tree.
+          echo "$tool_root/zig" >> "$GITHUB_PATH"
+          echo "$tool_root/bin" >> "$GITHUB_PATH"
+
+      - name: Record and verify the pinned OCI producer toolchain
+        if: ${{ startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
+        env:
+          BUILDX_NODES: ${{ steps.buildx.outputs.nodes }}
+        run: |
+          set -euo pipefail
+          tool_root="$RUNNER_TEMP/aex-rust-cross-tools"
+
+          buildx_binary="${DOCKER_CONFIG:-$HOME/.docker}/cli-plugins/docker-buildx"
+          test -x "$buildx_binary"
+          echo "f1332ddb9010bd0b72628266c3a906d9a6979848033df4c8d9bd2cd113bae12b  $buildx_binary" \
+            | sha256sum --check --strict
+          docker buildx version | grep -F 'v0.34.1'
+          [[ "$(jq -er 'if length == 1 then .[0].buildkit else error("expected one BuildKit node") end' <<<"$BUILDX_NODES")" == "v0.30.0" ]]
+          buildkit_node=$(jq -er '.[0].name' <<<"$BUILDX_NODES")
+          buildkit_container="buildx_buildkit_${buildkit_node}"
+          [[ "$(docker inspect --format '{{.Config.Image}}' "$buildkit_container")" == \
+            "moby/buildkit:v0.30.0@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f" ]]
+          aex-release-tool artifact oci-toolchain \
+            --buildx-binary "$buildx_binary" \
+            --zig-binary "$tool_root/zig/zig" \
+            --cargo-zigbuild-binary "$tool_root/bin/cargo-zigbuild" \
+            --out "$RELEASE_DIR/oci-toolchain.json"
+
+      - name: Install TypeScript dependencies
+        run: |
+          set -euo pipefail
+          kind=$(jq -r .kind "$RELEASE_DIR/recipe.json")
+          if [ "$kind" = "ts-lambda" ] || [ "$kind" = "npm-package" ]; then
+            bun install --frozen-lockfile
+          fi
+
+      - name: Build the OCI ELF once
+        if: ${{ startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
+        env:
+          CARGO_INCREMENTAL: "0"
+          SOURCE_DATE_EPOCH: "0"
+        run: |
+          set -euo pipefail
+          input=$(jq -er .input "$RELEASE_DIR/recipe.json")
+          [[ "$input" == target/* ]]
+          suffix=${input#target/}
+          target_dir="$RELEASE_DIR/cargo"
+          CARGO_TARGET_DIR="$target_dir" python3 -c \
+            "import json,os,subprocess,sys; recipe=json.load(open(sys.argv[1])); env=os.environ.copy(); env.update(recipe['env']); sys.exit(subprocess.call(recipe['argv'], env=env))" \
+            "$RELEASE_DIR/recipe.json"
+          binary="$target_dir/$suffix"
+          test -f "$binary"
+          # One compile, two contexts. The pair below proves that packaging the
+          # same ELF twice reaches the same image digest, which is the whole of
+          # the `package-integrity` receipt these units carry; no receipt here
+          # ever claimed the compiler was reproducible. `oci-prepare` refuses a
+          # destination that already exists, so the second context still cannot
+          # inherit a file from the first.
+          for attempt in 1 2; do
+            aex-release-tool artifact oci-prepare --unit "${{ matrix.name }}" \
+              --recipe "$RELEASE_DIR/recipe.json" \
+              --input "$binary" \
+              --context "$RELEASE_DIR/context-$attempt" \
+              --out "$RELEASE_DIR/binding-$attempt.json" \
+              --repository "$GITHUB_REPOSITORY" \
+              --commit-sha "$GITHUB_SHA" \
+              --toolchain "$RELEASE_DIR/oci-toolchain.json"
+          done
+
+      - name: Bind the pinned AWS RDS CA bundle for central schema admin
+        if: ${{ matrix.name == 'central-schema-admin' && startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
+        run: |
+          set -euo pipefail
+          ca="$RUNNER_TEMP/aex-rds-global-bundle.pem"
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$ca" \
+            https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
+          echo "e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3  $ca" \
+            | sha256sum --check --strict
+          ca_digest="sha256:e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3"
+          for attempt in 1 2; do
+            context="$RELEASE_DIR/context-$attempt"
+            install -m 0644 "$ca" "$context/aws-rds-global-bundle.pem"
+            sed -i '/^COPY --chmod=0555 artifact/i LABEL dev.aex.rds-ca-bundle-sha256="sha256:e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3"' "$context/Dockerfile"
+            sed -i '/^COPY --chmod=0555 artifact/i COPY aws-rds-global-bundle.pem /usr/local/share/aex/aws-rds-global-bundle.pem' "$context/Dockerfile"
+            jq --arg digest "$ca_digest" '.labels["dev.aex.rds-ca-bundle-sha256"] = $digest' \
+              "$RELEASE_DIR/binding-$attempt.json" > "$RELEASE_DIR/binding-$attempt.tmp.json"
+            mv "$RELEASE_DIR/binding-$attempt.tmp.json" "$RELEASE_DIR/binding-$attempt.json"
+          done
+
+      - name: Build and inspect two independent OCI layouts
+        if: ${{ startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
+        run: |
+          set -euo pipefail
+          for attempt in 1 2; do
+            docker buildx build \
+              --builder "${{ steps.buildx.outputs.name }}" \
+              --platform linux/arm64 \
+              --no-cache \
+              --build-arg SOURCE_DATE_EPOCH=0 \
+              --provenance=false \
+              --sbom=false \
+              --file "$RELEASE_DIR/context-$attempt/Dockerfile" \
+              --output "type=oci,dest=$RELEASE_DIR/image-$attempt.tar,oci-mediatypes=true,rewrite-timestamp=true,compression=gzip,compression-level=9,force-compression=true" \
+              "$RELEASE_DIR/context-$attempt"
+            mkdir "$RELEASE_DIR/layout-$attempt"
+            tar -xf "$RELEASE_DIR/image-$attempt.tar" -C "$RELEASE_DIR/layout-$attempt"
+            aex-release-tool artifact oci-inspect \
+              --layout "$RELEASE_DIR/layout-$attempt" \
+              --binding "$RELEASE_DIR/binding-$attempt.json" \
+              --out "$RELEASE_DIR/identity-$attempt.json" \
+              --manifest-out "$RELEASE_DIR/manifest-$attempt.json"
+          done
+          aex-release-tool artifact oci-compare \
+            --first "$RELEASE_DIR/identity-1.json" \
+            --second "$RELEASE_DIR/identity-2.json"
+          # `packagings`, not `builds`. One compile now feeds both contexts, so
+          # what these two independent `docker buildx build --no-cache` runs
+          # prove is that packaging the same ELF twice reaches the same digest.
+          # The id is the machine-readable claim; a verifier diffing receipts
+          # across commits has no other way to see that it narrowed.
+          jq -n \
+            --arg producer "aex-release-tool $(aex-release-tool --version | awk '{print $2}')" \
+            '{schema:"aex.check-report.v1",producer:$producer,checks:[
+              {id:"independent-oci-packagings-match",status:"passed"},
+              {id:"inspected-manifest-digests-match",status:"passed"}
+            ]}' > "$RELEASE_DIR/package-integrity-report.json"
+
+      - name: Build
+        if: ${{ !startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
+        env:
+          CARGO_INCREMENTAL: "0"
+          SOURCE_DATE_EPOCH: "0"
+        run: |
+          set -euo pipefail
+          # The recipe names where its output lands, so create that directory
+          # rather than relying on each packager to do it. `bun pm pack` refuses
+          # to open a destination whose parent does not exist.
+          mkdir -p "$(dirname "$(jq -er .input "$RELEASE_DIR/recipe.json")")"
+          # The recipe is the authority for the argv. Reading it here rather
+          # than restating the command keeps the envelope's `buildCommand` and
+          # what actually ran from drifting apart.
+          python3 -c "import json,os,subprocess,sys; recipe=json.load(open(sys.argv[1])); env=os.environ.copy(); env.update(recipe['env']); sys.exit(subprocess.call(recipe['argv'], env=env))" \
+            "$RELEASE_DIR/recipe.json"
+
+      - name: Package
+        if: ${{ !startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
+        run: |
+          set -euo pipefail
+          input="$(jq -er .input "$RELEASE_DIR/recipe.json")"
+          if [ ! -e "$input" ]; then
+            echo "the authoritative build output does not exist: $input" >&2
+            exit 30
+          fi
+          aex-release-tool artifact package --unit "${{ matrix.name }}" \
+            --input "$input" \
+            --out "$RELEASE_DIR/artifact.bin"
+          kind=$(jq -er .kind "$RELEASE_DIR/recipe.json")
+          determinism_check=()
+          if [[ "$kind" == "rust-binary" || "$kind" == "microvm-image" ]]; then
+            [[ "$input" == target/* && "$input" != target/ ]]
+            first_input="$RELEASE_DIR/first-build-input"
+            test ! -e "$first_input"
+            mv -- "$input" "$first_input"
+            python3 -c "import json,os,subprocess,sys; recipe=json.load(open(sys.argv[1])); env=os.environ.copy(); env.update(recipe['env']); sys.exit(subprocess.call(recipe['argv'], env=env))" \
+              "$RELEASE_DIR/recipe.json"
+            test -e "$input"
+            determinism_check+=(--argjson deterministic true)
+          else
+            determinism_check+=(--argjson deterministic false)
+          fi
+          aex-release-tool artifact package --unit "${{ matrix.name }}" \
+            --input "$input" \
+            --out "$RELEASE_DIR/artifact.check.bin"
+          cmp --silent "$RELEASE_DIR/artifact.bin" "$RELEASE_DIR/artifact.check.bin"
+          rm "$RELEASE_DIR/artifact.check.bin"
+          jq -n \
+            --arg producer "aex-release-tool $(aex-release-tool --version | awk '{print $2}')" \
+            "${determinism_check[@]}" \
+            '{schema:"aex.check-report.v1",producer:$producer,checks:([
+              {id:"independent-packages-byte-identical",status:"passed"},
+              {id:"authoritative-build-input-packaged",status:"passed"}
+            ] + (if $deterministic then [{id:"authoritative-build-rerun-byte-identical",status:"passed"}] else [] end))}' \
+            > "$RELEASE_DIR/package-integrity-report.json"
+
+          # The registry-publishing job no longer holds the recipe's build
+          # output, so the proof that the packed tarball and the packaged
+          # artifact are the same bytes is made here, where both still exist.
+          if [ "$kind" = "npm-package" ]; then
+            cmp --silent "$input" "$RELEASE_DIR/artifact.bin"
+          fi
+
+      - name: Describe the locally earned artifact identity
+        if: ${{ !startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
+        run: |
+          set -euo pipefail
+          contract_digest=$(jq -er .contractDigest api/generated/bundle.lock.json)
+          aex-release-tool artifact describe --unit "${{ matrix.name }}" \
+            --file "$RELEASE_DIR/artifact.bin" \
+            --recipe "$RELEASE_DIR/recipe.json" \
+            --contract-digest "$contract_digest" \
+            --out "$RELEASE_DIR/draft-envelope.json" \
+            --unearned-out "$RELEASE_DIR/unearned.json"
+
+      - name: Describe the reproducible OCI artifact identity
+        if: ${{ startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
+        run: |
+          set -euo pipefail
+          contract_digest=$(jq -er .contractDigest api/generated/bundle.lock.json)
+          aex-release-tool artifact describe --unit "${{ matrix.name }}" \
+            --file "$RELEASE_DIR/manifest-1.json" \
+            --recipe "$RELEASE_DIR/recipe.json" \
+            --oci-identity "$RELEASE_DIR/identity-1.json" \
+            --contract-digest "$contract_digest" \
+            --out "$RELEASE_DIR/draft-envelope.json" \
+            --unearned-out "$RELEASE_DIR/unearned.json"
+
+      - name: Upload the packaged bytes
+        if: ${{ !startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: artifact-${{ matrix.name }}
+          path: |
+            ${{ env.RELEASE_DIR }}/artifact.bin
+            ${{ env.RELEASE_DIR }}/draft-envelope.json
+            ${{ env.RELEASE_DIR }}/unearned.json
+            ${{ env.RELEASE_DIR }}/package-integrity-report.json
+            ${{ env.RELEASE_DIR }}/recipe.json
+          if-no-files-found: error
+
+      - name: Upload reproducible OCI build evidence
+        if: ${{ always() && startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: oci-artifact-${{ matrix.name }}
+          path: |
+            ${{ env.RELEASE_DIR }}/binding-1.json
+            ${{ env.RELEASE_DIR }}/binding-2.json
+            ${{ env.RELEASE_DIR }}/identity-1.json
+            ${{ env.RELEASE_DIR }}/identity-2.json
+            ${{ env.RELEASE_DIR }}/manifest-1.json
+            ${{ env.RELEASE_DIR }}/manifest-2.json
+            ${{ env.RELEASE_DIR }}/draft-envelope.json
+            ${{ env.RELEASE_DIR }}/unearned.json
+            ${{ env.RELEASE_DIR }}/oci-toolchain.json
+            ${{ env.RELEASE_DIR }}/source-clean-before-plan.json
+            ${{ env.RELEASE_DIR }}/package-integrity-report.json
+            ${{ env.RELEASE_DIR }}/recipe.json
+          if-no-files-found: error
+
+      # A separate artifact on purpose. `public_release_inputs` downloads
+      # `oci-artifact-*`, and folding the context into that name would drag the
+      # ELF through the post-gate critical path. `oci-context-*` matches no
+      # existing downloader pattern.
+      - name: Upload the exact OCI publish context
+        if: ${{ startsWith(steps.recipe.outputs.kind, 'rust-oci-') }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: oci-context-${{ matrix.name }}
+          path: ${{ env.RELEASE_DIR }}/context-1
+          if-no-files-found: error

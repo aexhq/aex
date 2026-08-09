@@ -341,7 +341,10 @@ describe("workflow evidence producers", () => {
       },
       {
         path: ".github/workflows/main.yml",
-        resultJobs: ["tools", "route", "gates", "verify", "integration", "node", "scenarios", "terraform", "build", "manifest"],
+        // `compile` gates nothing but is required to have SUCCEEDED: it is the
+        // only producer of the bytes `build` publishes, so a red compile that
+        // was merely tolerated would publish a shorter release.
+        resultJobs: ["tools", "route", "gates", "verify", "integration", "node", "scenarios", "terraform", "compile", "build", "manifest"],
         receiptJobs: ["verify", "node", "terraform"]
       }
     ] as const;
@@ -498,6 +501,7 @@ describe("workflow evidence producers", () => {
       [".github/workflows/_terraform-lane.yml", "terraform"],
       [".github/workflows/_receipts.yml", "aggregate"],
       [".github/workflows/_build-artifacts.yml", "build"],
+      [".github/workflows/_compile-artifacts.yml", "compile"],
       [".github/workflows/main.yml", "gates"],
       [".github/workflows/pr.yml", "gates"]
     ] as const) {
@@ -539,7 +543,7 @@ describe("workflow evidence producers", () => {
 
   test("every caller of a tool-consuming lane reads the digests from its own tools job", () => {
     for (const [path, jobIds] of [
-      [".github/workflows/main.yml", ["route", "verify", "node", "terraform", "build", "receipts"]],
+      [".github/workflows/main.yml", ["route", "verify", "node", "terraform", "compile", "build", "receipts"]],
       [".github/workflows/pr.yml", ["route", "rust", "node", "terraform", "checks"]]
     ] as const) {
       const workflow = readWorkflow(path);

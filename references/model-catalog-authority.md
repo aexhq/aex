@@ -14,6 +14,7 @@ related:
   - references/develop.md
   - references/repository-hygiene.md
   - references/ghcr-visibility-bootstrap.md
+  - .github/workflows/_compile-artifacts.yml
   - .github/workflows/_build-artifacts.yml
   - .github/workflows/model-catalog-publish.yml
   - infra/modules/model-catalog-authority/README.md
@@ -48,11 +49,14 @@ last-good signed collection.
   is the protected authority lane. It runs automatically only after a merge to
   `main` changes one `release/model-catalog/*.source.json`, and can also be
   dispatched manually with an exact current-main source path and digest.
-- [`_build-artifacts.yml`](../.github/workflows/_build-artifacts.yml) consumes
-  one repository variable, validates its closed canonical shape, materializes
-  the exact trust roots and immutable collection, then exports the existing
-  release-tool environment variables. The release tool and runtime remain the
-  final canonical, signature, chain, and serviceability gates.
+- [`_compile-artifacts.yml`](../.github/workflows/_compile-artifacts.yml)
+  consumes one repository variable, validates its closed canonical shape,
+  materializes the exact trust roots and immutable collection, then exports the
+  existing release-tool environment variables. The release tool and runtime
+  remain the final canonical, signature, chain, and serviceability gates. That
+  workflow compiles `brain-mux`; the publishing half in
+  [`_build-artifacts.yml`](../.github/workflows/_build-artifacts.yml) never
+  reads the binding, because the catalogue is already inside the bytes.
 - [`model-catalog-authority`](../infra/modules/model-catalog-authority/) creates
   the dedicated P-256 key and exact OIDC role. The private platform composition
   owns the AWS environment while this public repository owns the reusable

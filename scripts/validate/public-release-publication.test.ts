@@ -19,7 +19,8 @@ describe("public main-push publication", () => {
       "integration",
       "node",
       "scenarios",
-      "terraform"
+      "terraform",
+      "compile"
     ]);
     // The engine-backed lane gates publication exactly as the others do. It is
     // allowed to be `skipped` because the router selects it only when an
@@ -30,6 +31,10 @@ describe("public main-push publication", () => {
     );
     expect(workflow.jobs.build.if).toContain("needs.tools.result == 'success'");
     expect(workflow.jobs.build.if).toContain("needs.gates.result == 'success'");
+    // The compile lane runs beside the test lanes, so it is the one dependency
+    // of `build` that is NOT a gate. It still has to have succeeded, because a
+    // publish job with nothing to publish must fail rather than publish less.
+    expect(workflow.jobs.build.if).toContain("needs.compile.result == 'success'");
     expect(workflow.jobs.manifest.needs).toBe("build");
     expect(workflow.jobs.manifest.if).toBe("always() && needs.build.result == 'success'");
     expect(source).not.toContain("needs.route.outputs.has_artifact == 'true'");
@@ -69,6 +74,132 @@ describe("public main-push publication", () => {
     expect(source).not.toMatch(/^\s+(id-token|attestations|packages|contents|actions):\s*write\s*$/m);
   });
 
+  test("the ungated compile lane can build but cannot publish", () => {
+    // This lane deliberately does not wait for the test lanes, so the only
+    // thing standing between a red run and a published artifact is that the
+    // workflow it calls is structurally incapable of publishing. Assert that
+    // shape here rather than trusting a reviewer to notice a step being added.
+    const main = Bun.YAML.parse(read(".github/workflows/main.yml")) as { jobs: Record<string, any> };
+    expect(main.jobs.compile.uses).toBe("./.github/workflows/_compile-artifacts.yml");
+    expect(main.jobs.compile.needs).toEqual(["tools", "route"]);
+    expect(main.jobs.compile.with.matrix).toBe("${{ needs.route.outputs.artifact_matrix }}");
+    expect(main.jobs.compile.with.for_publication).toBeTrue();
+    // No caller-side grant at all: a reusable workflow cannot hold more than
+    // its caller, and main.yml's root grant is `contents: read`.
+    expect(main.jobs.compile.permissions).toBeUndefined();
+
+    const source = read(".github/workflows/_compile-artifacts.yml");
+    const compile = Bun.YAML.parse(source) as { permissions: unknown; jobs: Record<string, any> };
+    expect(compile.permissions).toEqual({ contents: "read" });
+    expect(compile.jobs.compile.permissions).toEqual({ contents: "read" });
+    expect(compile.jobs.compile.strategy["fail-fast"]).toBeFalse();
+    for (const forbidden of [
+      "actions/attest@", "id-token", "attestations", "packages: write",
+      "docker login", "push=true", "npm publish", "cosign", "gh release",
+      "secrets.", "AEX_GHCR_VISIBILITY_BOOTSTRAP", "aws-actions/configure-aws-credentials"
+    ]) expect(source, forbidden).not.toContain(forbidden);
+  });
+
+  test("the compile lane owns the compiler, the packagers and the packaging proof", () => {
+    const source = read(".github/workflows/_compile-artifacts.yml");
+    const workflow = Bun.YAML.parse(source) as { readonly jobs: Record<string, any> };
+    const compileJob = workflow.jobs.compile;
+    const packagers = compileJob.steps.find(
+      (step: { readonly name?: string }) => step.name === "Install the cross-compiler and packagers"
+    );
+    const rustCrossToolchain = compileJob.steps.find(
+      (step: { readonly name?: string }) =>
+        step.name === "Install and verify the pinned Rust cross-linker toolchain"
+    );
+    const ociToolchain = compileJob.steps.find(
+      (step: { readonly name?: string }) =>
+        step.name === "Record and verify the pinned OCI producer toolchain"
+    );
+    const packageStep = compileJob.steps.find(
+      (step: { readonly name?: string }) => step.name === "Package"
+    );
+    const rdsBundle = compileJob.steps.find(
+      (step: { readonly name?: string }) =>
+        step.name === "Bind the pinned AWS RDS CA bundle for central schema admin"
+    );
+
+    expect(packagers?.with.tool).toBe("cargo-lambda@1.8.6,cargo-auditable@0.7.1");
+    expect(packagers?.with.fallback).toBe("none");
+    expect(rustCrossToolchain?.if).toContain("steps.recipe.outputs.kind == 'rust-lambda'");
+    expect(rustCrossToolchain?.if).toContain("steps.recipe.outputs.kind == 'microvm-image'");
+    expect(rustCrossToolchain?.if).toContain("steps.recipe.outputs.kind == 'rust-binary'");
+    expect(rustCrossToolchain?.if).toContain("startsWith(steps.recipe.outputs.kind, 'rust-oci-')");
+    expect(rustCrossToolchain?.run).toContain("zig-x86_64-linux-0.15.2.tar.xz");
+    expect(rustCrossToolchain?.run).toContain("02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239");
+    expect(rustCrossToolchain?.run).toContain("cargo-zigbuild/releases/download/v0.22.3");
+    expect(rustCrossToolchain?.run).toContain("6a014d41ba41ca4b69ca4c4819b9f78a41b0197b5d486904e31c1244e3686190");
+    expect(rustCrossToolchain?.run).toContain('echo "$tool_root/zig" >> "$GITHUB_PATH"');
+    expect(rustCrossToolchain?.run).toContain('echo "$tool_root/bin" >> "$GITHUB_PATH"');
+    expect(rustCrossToolchain?.run).toContain('"$tool_root/zig/zig" version');
+    expect(rustCrossToolchain?.run).not.toContain('install -m 0755 "$tool_root/zig/zig" "$tool_root/bin/zig"');
+    expect(ociToolchain?.run).toContain('--zig-binary "$tool_root/zig/zig"');
+    expect(ociToolchain?.run).toContain('--cargo-zigbuild-binary "$tool_root/bin/cargo-zigbuild"');
+    expect(packageStep?.run).toContain('checks:([');
+    expect(packageStep?.run).toContain('] + (if $deterministic then');
+    // The equality the npm publication step used to prove inline. The recipe's
+    // build output exists only in this job now, so the proof lives here.
+    expect(packageStep?.run).toContain('cmp --silent "$input" "$RELEASE_DIR/artifact.bin"');
+    expect(rdsBundle?.if).toContain("matrix.name == 'central-schema-admin'");
+    expect(rdsBundle?.run).toContain("https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem");
+    expect(rdsBundle?.run).toContain("e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3");
+    expect(rdsBundle?.run).toContain("/usr/local/share/aex/aws-rds-global-bundle.pem");
+    expect(rdsBundle?.run).toContain("dev.aex.rds-ca-bundle-sha256");
+
+    // The publish job reads `kind` and, for `sdk`, the packed tarball's own
+    // basename out of the recipe, so the recipe has to travel with the bytes.
+    const blobUpload = compileJob.steps.find(
+      (step: { readonly name?: string }) => step.name === "Upload the packaged bytes"
+    );
+    const ociUpload = compileJob.steps.find(
+      (step: { readonly name?: string }) => step.name === "Upload reproducible OCI build evidence"
+    );
+    const contextUpload = compileJob.steps.find(
+      (step: { readonly name?: string }) => step.name === "Upload the exact OCI publish context"
+    );
+    expect(blobUpload?.with.name).toBe("artifact-${{ matrix.name }}");
+    expect(blobUpload?.with.path).toContain("${{ env.RELEASE_DIR }}/recipe.json");
+    expect(ociUpload?.with.name).toBe("oci-artifact-${{ matrix.name }}");
+    expect(ociUpload?.with.path).toContain("${{ env.RELEASE_DIR }}/recipe.json");
+    // A separate artifact on purpose: `public_release_inputs` downloads
+    // `oci-artifact-*`, and folding the context in would drag the ELF through
+    // the post-gate critical path.
+    expect(contextUpload?.with.name).toBe("oci-context-${{ matrix.name }}");
+    expect(contextUpload?.with.path).toBe("${{ env.RELEASE_DIR }}/context-1");
+    expect(contextUpload?.with["if-no-files-found"]).toBe("error");
+  });
+
+  test("the publish job admits exactly one compiled unit before it can publish", () => {
+    const source = read(".github/workflows/_build-artifacts.yml");
+    const workflow = Bun.YAML.parse(source) as { readonly jobs: Record<string, any> };
+    const build = workflow.jobs.build;
+    const admit = build.steps.find(
+      (step: { readonly name?: string }) => step.name === "Admit exactly one compiled unit and read its kind"
+    );
+
+    expect(admit?.id).toBe("compiled");
+    // Two shapes present, or none, is a transport defect and must not publish.
+    expect(admit?.run).toContain('[ "$present" -eq 1 ]');
+    expect(admit?.run).toContain('kind=$(jq -er .unit.kind "$RELEASE_DIR/draft-envelope.json")');
+    expect(admit?.run).toContain('[[ "$kind" == "$(jq -er .kind "$RELEASE_DIR/recipe.json")" ]]');
+    expect(admit?.run).toContain('find "$RELEASE_DIR/context-1" -type f -exec chmod 0644 {} +');
+    // Nothing in this job may compile: the bytes it publishes are the bytes the
+    // compile lane produced, or it fails. (`Build the published release tool`
+    // in `public_release_inputs` is the one compile this file still owns, and
+    // it builds the tool, not a unit.)
+    expect(build.steps.map((step: { readonly name?: string }) => step.name)).not.toContain("Build");
+    expect(source).not.toContain("artifact oci-prepare");
+    expect(source).not.toContain("artifact package --unit");
+    expect(source).not.toContain("artifact describe --unit");
+    expect(source).not.toContain("env.update(recipe['env'])");
+    // Every gated step now reads the admitted kind, never a recipe printed here.
+    expect(source).not.toContain("steps.recipe.outputs.kind");
+  });
+
   test("main publication uses the same root gates as pull requests", () => {
     const main = Bun.YAML.parse(read(".github/workflows/main.yml")) as {
       readonly jobs: Record<string, any>;
@@ -96,20 +227,10 @@ describe("public main-push publication", () => {
       (step: { readonly name?: string }) =>
         step.name === "Read back and verify every published unit and auxiliary asset"
     );
-    const packagers = buildJob.steps.find(
-      (step: { readonly name?: string }) => step.name === "Install the cross-compiler and packagers"
-    );
-    const rustCrossToolchain = buildJob.steps.find(
-      (step: { readonly name?: string }) =>
-        step.name === "Install and verify the pinned Rust cross-linker toolchain"
-    );
-    const ociToolchain = buildJob.steps.find(
-      (step: { readonly name?: string }) =>
-        step.name === "Record and verify the pinned OCI producer toolchain"
-    );
-    const packageStep = buildJob.steps.find(
-      (step: { readonly name?: string }) => step.name === "Package"
-    );
+    // The compiler, the packagers, the cross-linker, the OCI producer
+    // toolchain, the `Package` step and the RDS bundle binding now belong to
+    // `_compile-artifacts.yml`; they are asserted in the compile-lane test
+    // above. What stays here is everything that mints or publishes.
     const handsAgentSignature = buildJob.steps.find(
       (step: { readonly name?: string }) =>
         step.name === "Sign and verify the exact hands-agent bytes"
@@ -126,24 +247,6 @@ describe("public main-push publication", () => {
     expect(source).toContain("x86_64-unknown-linux-musl");
     expect(source).toContain("CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: rust-lld");
     expect(source).toContain("link-self-contained=yes");
-    expect(packagers?.with.tool).toBe("cargo-lambda@1.8.6,cargo-auditable@0.7.1");
-    expect(packagers?.with.fallback).toBe("none");
-    expect(rustCrossToolchain?.if).toContain("steps.recipe.outputs.kind == 'rust-lambda'");
-    expect(rustCrossToolchain?.if).toContain("steps.recipe.outputs.kind == 'microvm-image'");
-    expect(rustCrossToolchain?.if).toContain("steps.recipe.outputs.kind == 'rust-binary'");
-    expect(rustCrossToolchain?.if).toContain("startsWith(steps.recipe.outputs.kind, 'rust-oci-')");
-    expect(rustCrossToolchain?.run).toContain("zig-x86_64-linux-0.15.2.tar.xz");
-    expect(rustCrossToolchain?.run).toContain("02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239");
-    expect(rustCrossToolchain?.run).toContain("cargo-zigbuild/releases/download/v0.22.3");
-    expect(rustCrossToolchain?.run).toContain("6a014d41ba41ca4b69ca4c4819b9f78a41b0197b5d486904e31c1244e3686190");
-    expect(rustCrossToolchain?.run).toContain('echo "$tool_root/zig" >> "$GITHUB_PATH"');
-    expect(rustCrossToolchain?.run).toContain('echo "$tool_root/bin" >> "$GITHUB_PATH"');
-    expect(rustCrossToolchain?.run).toContain('"$tool_root/zig/zig" version');
-    expect(rustCrossToolchain?.run).not.toContain('install -m 0755 "$tool_root/zig/zig" "$tool_root/bin/zig"');
-    expect(ociToolchain?.run).toContain('--zig-binary "$tool_root/zig/zig"');
-    expect(ociToolchain?.run).toContain('--cargo-zigbuild-binary "$tool_root/bin/cargo-zigbuild"');
-    expect(packageStep?.run).toContain('checks:([');
-    expect(packageStep?.run).toContain('] + (if $deterministic then');
     expect(handsAgentSignature?.run).toContain(
       'identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/_build-artifacts.yml@refs/heads/main"'
     );
@@ -165,15 +268,6 @@ describe("public main-push publication", () => {
     expect(source).toContain("--draft --prerelease");
     expect(source).not.toContain("--clobber");
     expect(source).toContain("push-by-digest=true");
-    const rdsBundle = buildJob.steps.find(
-      (step: { readonly name?: string }) =>
-        step.name === "Bind the pinned AWS RDS CA bundle for central schema admin"
-    );
-    expect(rdsBundle?.if).toContain("matrix.name == 'central-schema-admin'");
-    expect(rdsBundle?.run).toContain("https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem");
-    expect(rdsBundle?.run).toContain("e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3");
-    expect(rdsBundle?.run).toContain("/usr/local/share/aex/aws-rds-global-bundle.pem");
-    expect(rdsBundle?.run).toContain("dev.aex.rds-ca-bundle-sha256");
     expect(source).toContain("subject-digest: ${{ steps.publish_oci.outputs.digest }}");
     expect(source).not.toContain("gh release edit \"$tag\"");
     expect(source).not.toContain("aws-actions/configure-aws-credentials");
@@ -211,9 +305,12 @@ describe("public main-push publication", () => {
   });
 
   test("catalog acquisition consumes one atomic last-good binding", () => {
-    const source = read(".github/workflows/_build-artifacts.yml");
+    // The binding is consumed where the compile happens. The publish job never
+    // sees it, which the cross-file negatives at the end of this test pin.
+    const source = read(".github/workflows/_compile-artifacts.yml");
+    const publishSource = read(".github/workflows/_build-artifacts.yml");
     const workflow = Bun.YAML.parse(source) as { readonly jobs: Record<string, any> };
-    const build = workflow.jobs.build;
+    const build = workflow.jobs.compile;
     const acquire = build.steps.find(
       (step: { readonly name?: string }) =>
         step.name === "Acquire the last-good signed model-catalog binding"
@@ -245,12 +342,21 @@ describe("public main-push publication", () => {
     expect(acquire?.run).toContain("invalid or open shape");
     expect(acquire?.run).toContain("must not carry a query, fragment, or parent path");
     expect(recipe?.env).not.toHaveProperty("AEX_MODEL_CATALOG_COLLECTION_FILE");
-    expect(source).not.toContain("vars.AEX_MODEL_CATALOG_COLLECTION_FILE");
-    expect(source).not.toContain("vars.AEX_MODEL_CATALOG_COLLECTION_URI");
-    expect(source).not.toContain("vars.AEX_MODEL_CATALOG_COLLECTION_SHA256");
-    expect(source).not.toContain("vars.AEX_MODEL_CATALOG_TRUST_ROOTS_JSON");
-    expect(source).not.toContain("vars.AEX_MODEL_CATALOG_TRUST_ROOTS_SHA256");
-    expect(source).not.toContain("aws-actions/configure-aws-credentials");
+    // The repository variable is the ONLY catalogue authority, in either file.
+    for (const text of [source, publishSource]) {
+      expect(text).not.toContain("vars.AEX_MODEL_CATALOG_COLLECTION_FILE");
+      expect(text).not.toContain("vars.AEX_MODEL_CATALOG_COLLECTION_URI");
+      expect(text).not.toContain("vars.AEX_MODEL_CATALOG_COLLECTION_SHA256");
+      expect(text).not.toContain("vars.AEX_MODEL_CATALOG_TRUST_ROOTS_JSON");
+      expect(text).not.toContain("vars.AEX_MODEL_CATALOG_TRUST_ROOTS_SHA256");
+      expect(text).not.toContain("aws-actions/configure-aws-credentials");
+    }
+    // The publish job may not print a recipe of its own: it publishes the unit
+    // the compile lane planned, or it publishes nothing.
+    const publishBuild = (Bun.YAML.parse(publishSource) as { readonly jobs: Record<string, any> }).jobs.build;
+    expect(publishBuild.steps.map((step: { readonly name?: string }) => step.name)).not.toContain(
+      "Print the recipe"
+    );
   });
 
   test("catalog authority documentation keeps external prerequisites explicit", () => {

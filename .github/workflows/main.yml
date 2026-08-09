@@ -183,14 +183,31 @@ jobs:
       release_tool_sha256: ${{ needs.tools.outputs.release_tool_sha256 }}
       workspace_check_sha256: ${{ needs.tools.outputs.workspace_check_sha256 }}
 
+  # Compilation is not publication. This lane holds `contents: read`, calls a
+  # workflow with no secrets and no registry step, and therefore does not need
+  # the test lanes to have concluded: the worst a red lane can do is waste the
+  # bytes it produced. `build` below is what waits for every gate, and it can
+  # only publish what this lane already compiled.
+  compile:
+    name: Compile
+    needs: [tools, route]
+    uses: ./.github/workflows/_compile-artifacts.yml
+    with:
+      matrix: ${{ needs.route.outputs.artifact_matrix }}
+      lane: main
+      for_publication: true
+      release_tool_sha256: ${{ needs.tools.outputs.release_tool_sha256 }}
+      workspace_check_sha256: ${{ needs.tools.outputs.workspace_check_sha256 }}
+
   build:
     name: Build and publish
-    needs: [tools, route, gates, verify, integration, node, scenarios, terraform]
+    needs: [tools, route, gates, verify, integration, node, scenarios, terraform, compile]
     if: >-
       always() &&
       needs.tools.result == 'success' &&
       needs.route.result == 'success' &&
       needs.gates.result == 'success' &&
+      needs.compile.result == 'success' &&
       (needs.verify.result == 'success' || needs.verify.result == 'skipped') &&
       (needs.integration.result == 'success' || needs.integration.result == 'skipped') &&
       (needs.node.result == 'success' || needs.node.result == 'skipped') &&
@@ -488,7 +505,7 @@ jobs:
 
   receipts:
     name: Checks
-    needs: [tools, route, gates, verify, integration, node, scenarios, terraform, build, manifest]
+    needs: [tools, route, gates, verify, integration, node, scenarios, terraform, compile, build, manifest]
     if: always()
     uses: ./.github/workflows/_receipts.yml
     with:
@@ -501,4 +518,4 @@ jobs:
       node_matrix: ${{ needs.route.outputs.node_matrix }}
       terraform_matrix: ${{ needs.route.outputs.terraform_matrix }}
       required_job_results: >-
-        {"tools":{"result":"${{ needs.tools.result }}","allowSkipped":false},"route":{"result":"${{ needs.route.result }}","allowSkipped":false},"gates":{"result":"${{ needs.gates.result }}","allowSkipped":false},"verify":{"result":"${{ needs.verify.result }}","allowSkipped":true},"integration":{"result":"${{ needs.integration.result }}","allowSkipped":true},"node":{"result":"${{ needs.node.result }}","allowSkipped":true},"scenarios":{"result":"${{ needs.scenarios.result }}","allowSkipped":true},"terraform":{"result":"${{ needs.terraform.result }}","allowSkipped":true},"build":{"result":"${{ needs.build.result }}","allowSkipped":false},"manifest":{"result":"${{ needs.manifest.result }}","allowSkipped":false}}
+        {"tools":{"result":"${{ needs.tools.result }}","allowSkipped":false},"route":{"result":"${{ needs.route.result }}","allowSkipped":false},"gates":{"result":"${{ needs.gates.result }}","allowSkipped":false},"verify":{"result":"${{ needs.verify.result }}","allowSkipped":true},"integration":{"result":"${{ needs.integration.result }}","allowSkipped":true},"node":{"result":"${{ needs.node.result }}","allowSkipped":true},"scenarios":{"result":"${{ needs.scenarios.result }}","allowSkipped":true},"terraform":{"result":"${{ needs.terraform.result }}","allowSkipped":true},"compile":{"result":"${{ needs.compile.result }}","allowSkipped":false},"build":{"result":"${{ needs.build.result }}","allowSkipped":false},"manifest":{"result":"${{ needs.manifest.result }}","allowSkipped":false}}
