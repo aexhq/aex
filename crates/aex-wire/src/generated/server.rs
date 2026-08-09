@@ -3,7 +3,7 @@
 //! The server traits and the total dispatch surface, one group per authoring fragment.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:c65ec229eb23ad2ff1780c8b3d08c838e3fefd3cef57b39bab55ce8bad19de06`.
+//! `sha256:bd7052cb0fe98ca6622d42d82e3a3adfec7f8a2ef4d890f7f2c31fcc1e0df4a6`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -1483,7 +1483,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
     /// composition crate supplies the concrete type and its own bound.
     type FrameStream: Send + 'static;
 
-    /// `POST /api/events/listen`
+    /// `POST /api/streams/events/listen`
     /// Listen for new workspace events observations.
     fn observations_events_listen(
         &self,
@@ -1491,7 +1491,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: ObservationListenRequest,
     ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
 
-    /// `POST /api/events/query`
+    /// `POST /api/observations/events/query`
     /// Query workspace events observations.
     fn observations_events_query(
         &self,
@@ -1499,7 +1499,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: ObservationQuery,
     ) -> impl Future<Output = WireResult<ObservationPage>> + Send;
 
-    /// `POST /api/events/stream`
+    /// `POST /api/streams/events/stream`
     /// Stream workspace events observations from one origin.
     fn observations_events_stream(
         &self,
@@ -1507,7 +1507,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: ObservationStreamRequest,
     ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
 
-    /// `POST /api/logs/listen`
+    /// `POST /api/streams/logs/listen`
     /// Listen for new workspace logs observations.
     fn observations_logs_listen(
         &self,
@@ -1515,7 +1515,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: ObservationListenRequest,
     ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
 
-    /// `POST /api/logs/query`
+    /// `POST /api/observations/logs/query`
     /// Query workspace logs observations.
     fn observations_logs_query(
         &self,
@@ -1523,7 +1523,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: ObservationQuery,
     ) -> impl Future<Output = WireResult<ObservationPage>> + Send;
 
-    /// `POST /api/logs/stream`
+    /// `POST /api/streams/logs/stream`
     /// Stream workspace logs observations from one origin.
     fn observations_logs_stream(
         &self,
@@ -1531,7 +1531,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: ObservationStreamRequest,
     ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
 
-    /// `POST /api/metrics/aggregate`
+    /// `POST /api/observations/metrics/aggregate`
     /// Aggregate workspace metric observations.
     fn observations_metrics_aggregate(
         &self,
@@ -1539,7 +1539,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: MetricAggregationRequest,
     ) -> impl Future<Output = WireResult<MetricAggregationPage>> + Send;
 
-    /// `POST /api/metrics/listen`
+    /// `POST /api/streams/metrics/listen`
     /// Listen for new workspace metrics observations.
     fn observations_metrics_listen(
         &self,
@@ -1547,7 +1547,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: ObservationListenRequest,
     ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
 
-    /// `POST /api/metrics/query`
+    /// `POST /api/observations/metrics/query`
     /// Query workspace metrics observations.
     fn observations_metrics_query(
         &self,
@@ -1555,7 +1555,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: ObservationQuery,
     ) -> impl Future<Output = WireResult<ObservationPage>> + Send;
 
-    /// `POST /api/metrics/stream`
+    /// `POST /api/streams/metrics/stream`
     /// Stream workspace metrics observations from one origin.
     fn observations_metrics_stream(
         &self,
@@ -1563,7 +1563,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: ObservationStreamRequest,
     ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
 
-    /// `POST /api/spans/listen`
+    /// `POST /api/streams/spans/listen`
     /// Listen for new workspace spans observations.
     fn observations_spans_listen(
         &self,
@@ -1571,7 +1571,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: ObservationListenRequest,
     ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
 
-    /// `POST /api/spans/query`
+    /// `POST /api/observations/spans/query`
     /// Query workspace spans observations.
     fn observations_spans_query(
         &self,
@@ -1579,7 +1579,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: ObservationQuery,
     ) -> impl Future<Output = WireResult<ObservationPage>> + Send;
 
-    /// `POST /api/spans/stream`
+    /// `POST /api/streams/spans/stream`
     /// Stream workspace spans observations from one origin.
     fn observations_spans_stream(
         &self,
@@ -1587,7 +1587,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: ObservationStreamRequest,
     ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
 
-    /// `POST /api/telemetry/listen`
+    /// `POST /api/streams/telemetry/listen`
     /// Listen for new workspace telemetry observations.
     fn observations_telemetry_listen(
         &self,
@@ -1595,7 +1595,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: ObservationListenRequest,
     ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
 
-    /// `POST /api/telemetry/query`
+    /// `POST /api/observations/telemetry/query`
     /// Query workspace telemetry observations.
     fn observations_telemetry_query(
         &self,
@@ -1603,7 +1603,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: ObservationQuery,
     ) -> impl Future<Output = WireResult<ObservationPage>> + Send;
 
-    /// `POST /api/telemetry/stream`
+    /// `POST /api/streams/telemetry/stream`
     /// Stream workspace telemetry observations from one origin.
     fn observations_telemetry_stream(
         &self,
@@ -1611,7 +1611,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: ObservationStreamRequest,
     ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
 
-    /// `POST /api/traces/listen`
+    /// `POST /api/streams/traces/listen`
     /// Listen for new workspace traces observations.
     fn observations_traces_listen(
         &self,
@@ -1619,7 +1619,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: ObservationListenRequest,
     ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
 
-    /// `POST /api/traces/query`
+    /// `POST /api/observations/traces/query`
     /// Query workspace traces observations.
     fn observations_traces_query(
         &self,
@@ -1627,7 +1627,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: ObservationQuery,
     ) -> impl Future<Output = WireResult<ObservationPage>> + Send;
 
-    /// `POST /api/traces/stream`
+    /// `POST /api/streams/traces/stream`
     /// Stream workspace traces observations from one origin.
     fn observations_traces_stream(
         &self,
@@ -1635,7 +1635,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: ObservationStreamRequest,
     ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
 
-    /// `POST /api/sessions/{sessionId}/events/listen`
+    /// `POST /api/streams/{sessionId}/events/listen`
     /// Listen for new session events observations.
     fn session_observations_events_listen(
         &self,
@@ -1644,7 +1644,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: ObservationListenRequest,
     ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
 
-    /// `POST /api/sessions/{sessionId}/events/query`
+    /// `POST /api/observations/{sessionId}/events/query`
     /// Query session events observations.
     fn session_observations_events_query(
         &self,
@@ -1653,7 +1653,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: ObservationQuery,
     ) -> impl Future<Output = WireResult<ObservationPage>> + Send;
 
-    /// `POST /api/sessions/{sessionId}/events/stream`
+    /// `POST /api/streams/{sessionId}/events/stream`
     /// Stream session events observations from one origin.
     fn session_observations_events_stream(
         &self,
@@ -1662,7 +1662,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: ObservationStreamRequest,
     ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
 
-    /// `POST /api/sessions/{sessionId}/logs/listen`
+    /// `POST /api/streams/{sessionId}/logs/listen`
     /// Listen for new session logs observations.
     fn session_observations_logs_listen(
         &self,
@@ -1671,7 +1671,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: ObservationListenRequest,
     ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
 
-    /// `POST /api/sessions/{sessionId}/logs/query`
+    /// `POST /api/observations/{sessionId}/logs/query`
     /// Query session logs observations.
     fn session_observations_logs_query(
         &self,
@@ -1680,7 +1680,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: ObservationQuery,
     ) -> impl Future<Output = WireResult<ObservationPage>> + Send;
 
-    /// `POST /api/sessions/{sessionId}/logs/stream`
+    /// `POST /api/streams/{sessionId}/logs/stream`
     /// Stream session logs observations from one origin.
     fn session_observations_logs_stream(
         &self,
@@ -1689,7 +1689,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: ObservationStreamRequest,
     ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
 
-    /// `POST /api/sessions/{sessionId}/metrics/aggregate`
+    /// `POST /api/observations/{sessionId}/metrics/aggregate`
     /// Aggregate session metric observations.
     fn session_observations_metrics_aggregate(
         &self,
@@ -1698,7 +1698,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: MetricAggregationRequest,
     ) -> impl Future<Output = WireResult<MetricAggregationPage>> + Send;
 
-    /// `POST /api/sessions/{sessionId}/metrics/listen`
+    /// `POST /api/streams/{sessionId}/metrics/listen`
     /// Listen for new session metrics observations.
     fn session_observations_metrics_listen(
         &self,
@@ -1707,7 +1707,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: ObservationListenRequest,
     ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
 
-    /// `POST /api/sessions/{sessionId}/metrics/query`
+    /// `POST /api/observations/{sessionId}/metrics/query`
     /// Query session metrics observations.
     fn session_observations_metrics_query(
         &self,
@@ -1716,7 +1716,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: ObservationQuery,
     ) -> impl Future<Output = WireResult<ObservationPage>> + Send;
 
-    /// `POST /api/sessions/{sessionId}/metrics/stream`
+    /// `POST /api/streams/{sessionId}/metrics/stream`
     /// Stream session metrics observations from one origin.
     fn session_observations_metrics_stream(
         &self,
@@ -1725,7 +1725,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: ObservationStreamRequest,
     ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
 
-    /// `POST /api/sessions/{sessionId}/spans/listen`
+    /// `POST /api/streams/{sessionId}/spans/listen`
     /// Listen for new session spans observations.
     fn session_observations_spans_listen(
         &self,
@@ -1734,7 +1734,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: ObservationListenRequest,
     ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
 
-    /// `POST /api/sessions/{sessionId}/spans/query`
+    /// `POST /api/observations/{sessionId}/spans/query`
     /// Query session spans observations.
     fn session_observations_spans_query(
         &self,
@@ -1743,7 +1743,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: ObservationQuery,
     ) -> impl Future<Output = WireResult<ObservationPage>> + Send;
 
-    /// `POST /api/sessions/{sessionId}/spans/stream`
+    /// `POST /api/streams/{sessionId}/spans/stream`
     /// Stream session spans observations from one origin.
     fn session_observations_spans_stream(
         &self,
@@ -1752,7 +1752,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: ObservationStreamRequest,
     ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
 
-    /// `POST /api/sessions/{sessionId}/telemetry/listen`
+    /// `POST /api/streams/{sessionId}/telemetry/listen`
     /// Listen for new session telemetry observations.
     fn session_observations_telemetry_listen(
         &self,
@@ -1761,7 +1761,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: ObservationListenRequest,
     ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
 
-    /// `POST /api/sessions/{sessionId}/telemetry/query`
+    /// `POST /api/observations/{sessionId}/telemetry/query`
     /// Query session telemetry observations.
     fn session_observations_telemetry_query(
         &self,
@@ -1770,7 +1770,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: ObservationQuery,
     ) -> impl Future<Output = WireResult<ObservationPage>> + Send;
 
-    /// `POST /api/sessions/{sessionId}/telemetry/stream`
+    /// `POST /api/streams/{sessionId}/telemetry/stream`
     /// Stream session telemetry observations from one origin.
     fn session_observations_telemetry_stream(
         &self,
@@ -1779,7 +1779,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: ObservationStreamRequest,
     ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
 
-    /// `GET /api/sessions/{sessionId}/traces/{traceId}`
+    /// `GET /api/observations/{sessionId}/traces/{traceId}`
     /// Read one assembled trace by its W3C identifier.
     fn session_observations_trace_get(
         &self,
@@ -1788,7 +1788,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         trace_id: TraceId,
     ) -> impl Future<Output = WireResult<TraceDetail>> + Send;
 
-    /// `POST /api/sessions/{sessionId}/traces/listen`
+    /// `POST /api/streams/{sessionId}/traces/listen`
     /// Listen for new session traces observations.
     fn session_observations_traces_listen(
         &self,
@@ -1797,7 +1797,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: ObservationListenRequest,
     ) -> impl Future<Output = WireResult<NdjsonStream<Self::FrameStream>>> + Send;
 
-    /// `POST /api/sessions/{sessionId}/traces/query`
+    /// `POST /api/observations/{sessionId}/traces/query`
     /// Query session traces observations.
     fn session_observations_traces_query(
         &self,
@@ -1806,7 +1806,7 @@ pub trait ObservationsApi: Send + Sync + 'static {
         body: ObservationQuery,
     ) -> impl Future<Output = WireResult<ObservationPage>> + Send;
 
-    /// `POST /api/sessions/{sessionId}/traces/stream`
+    /// `POST /api/streams/{sessionId}/traces/stream`
     /// Stream session traces observations from one origin.
     fn session_observations_traces_stream(
         &self,
@@ -2205,7 +2205,7 @@ pub async fn dispatch_organizations<A: OrganizationsApi + ?Sized>(
 /// wrapping. A method never names a status: the response type it returns is the status the route
 /// declares.
 pub trait OtlpApi: Send + Sync + 'static {
-    /// `POST /api/telemetry/otlp/v1/logs`
+    /// `POST /api/otlp/v1/logs`
     /// Admit an OTLP logs batch.
     fn otlp_logs_ingest(
         &self,
@@ -2213,7 +2213,7 @@ pub trait OtlpApi: Send + Sync + 'static {
         body: &[u8],
     ) -> impl Future<Output = WireResult<TelemetryAdmissionReceipt>> + Send;
 
-    /// `POST /api/telemetry/otlp/v1/metrics`
+    /// `POST /api/otlp/v1/metrics`
     /// Admit an OTLP metrics batch.
     fn otlp_metrics_ingest(
         &self,
@@ -2221,7 +2221,7 @@ pub trait OtlpApi: Send + Sync + 'static {
         body: &[u8],
     ) -> impl Future<Output = WireResult<TelemetryAdmissionReceipt>> + Send;
 
-    /// `POST /api/telemetry/otlp/v1/traces`
+    /// `POST /api/otlp/v1/traces`
     /// Admit an OTLP traces batch.
     fn otlp_traces_ingest(
         &self,
@@ -2281,7 +2281,7 @@ pub trait ProviderCredentialsApi: Send + Sync + 'static {
         provider_credential_id: ProviderCredentialId,
     ) -> impl Future<Output = WireResult<WithETag<ProviderCredential>>> + Send;
 
-    /// `POST /api/workspace/provider-credentials`
+    /// `POST /api/secrets/provider-credentials`
     /// Register a BYOK provider credential; carries plaintext.
     fn provider_credential_register(
         &self,
@@ -2827,7 +2827,7 @@ pub async fn dispatch_registry<A: RegistryApi + ?Sized>(
 /// wrapping. A method never names a status: the response type it returns is the status the route
 /// declares.
 pub trait SecretsApi: Send + Sync + 'static {
-    /// `DELETE /api/workspace/secrets/{name}`
+    /// `DELETE /api/secrets/{name}`
     /// Delete a secret, affecting future admission only.
     fn secret_delete(
         &self,
@@ -2843,7 +2843,7 @@ pub trait SecretsApi: Send + Sync + 'static {
         name: ResourceName,
     ) -> impl Future<Output = WireResult<WithETag<SecretMetadata>>> + Send;
 
-    /// `PUT /api/workspace/secrets/{name}`
+    /// `PUT /api/secrets/{name}`
     /// Set a secret value for future admission.
     fn secret_put(
         &self,
@@ -2852,7 +2852,7 @@ pub trait SecretsApi: Send + Sync + 'static {
         body: SecretPutRequest,
     ) -> impl Future<Output = WireResult<WithETag<SecretMetadata>>> + Send;
 
-    /// `POST /api/workspace/secrets/{name}/revocations`
+    /// `POST /api/secrets/{name}/revocations`
     /// Revoke a secret and cancel current custody.
     fn secret_revoke(
         &self,
@@ -3214,7 +3214,7 @@ pub async fn dispatch_sessions<A: SessionsApi + ?Sized>(
 /// wrapping. A method never names a status: the response type it returns is the status the route
 /// declares.
 pub trait TelemetryLifecycleApi: Send + Sync + 'static {
-    /// `POST /api/sessions/{sessionId}/telemetry/exports`
+    /// `POST /api/observations/{sessionId}/telemetry/exports`
     /// Admit the durable session telemetry-export operation.
     fn session_telemetry_export_create(
         &self,
@@ -3223,7 +3223,7 @@ pub trait TelemetryLifecycleApi: Send + Sync + 'static {
         body: TelemetryExportRequest,
     ) -> impl Future<Output = WireResult<Accepted>> + Send;
 
-    /// `POST /api/sessions/{sessionId}/telemetry/exports/{exportId}/downloads`
+    /// `POST /api/observations/{sessionId}/telemetry/exports/{exportId}/downloads`
     /// Mint a download grant for a ready session telemetry export.
     fn session_telemetry_export_download_create(
         &self,
@@ -3233,7 +3233,7 @@ pub trait TelemetryLifecycleApi: Send + Sync + 'static {
         body: EmptyRequest,
     ) -> impl Future<Output = WireResult<Created<DownloadGrant>>> + Send;
 
-    /// `GET /api/sessions/{sessionId}/telemetry/exports/{exportId}`
+    /// `GET /api/observations/{sessionId}/telemetry/exports/{exportId}`
     /// Read one session telemetry export record.
     fn session_telemetry_export_get(
         &self,
@@ -3242,7 +3242,7 @@ pub trait TelemetryLifecycleApi: Send + Sync + 'static {
         export_id: ExportId,
     ) -> impl Future<Output = WireResult<TelemetryExport>> + Send;
 
-    /// `POST /api/sessions/{sessionId}/telemetry/exports/{exportId}/revocations`
+    /// `POST /api/observations/{sessionId}/telemetry/exports/{exportId}/revocations`
     /// Revoke a session telemetry export and its outstanding grants.
     fn session_telemetry_export_revoke(
         &self,
@@ -3252,7 +3252,7 @@ pub trait TelemetryLifecycleApi: Send + Sync + 'static {
         body: EmptyRequest,
     ) -> impl Future<Output = WireResult<TelemetryExport>> + Send;
 
-    /// `GET /api/sessions/{sessionId}/telemetry/gaps/{gapId}`
+    /// `GET /api/observations/{sessionId}/telemetry/gaps/{gapId}`
     /// Read one recorded session telemetry gap.
     fn session_telemetry_gap_get(
         &self,
@@ -3261,7 +3261,7 @@ pub trait TelemetryLifecycleApi: Send + Sync + 'static {
         gap_id: TelemetryGapId,
     ) -> impl Future<Output = WireResult<TelemetryGap>> + Send;
 
-    /// `POST /api/sessions/{sessionId}/telemetry/gaps/query`
+    /// `POST /api/observations/{sessionId}/telemetry/gaps/query`
     /// Query recorded session telemetry gaps.
     fn session_telemetry_gaps_query(
         &self,
@@ -3270,7 +3270,7 @@ pub trait TelemetryLifecycleApi: Send + Sync + 'static {
         body: TelemetryGapQuery,
     ) -> impl Future<Output = WireResult<TelemetryGapPage>> + Send;
 
-    /// `POST /api/telemetry/exports`
+    /// `POST /api/observations/telemetry/exports`
     /// Admit the durable workspace telemetry-export operation.
     fn telemetry_export_create(
         &self,
@@ -3278,7 +3278,7 @@ pub trait TelemetryLifecycleApi: Send + Sync + 'static {
         body: TelemetryExportRequest,
     ) -> impl Future<Output = WireResult<Accepted>> + Send;
 
-    /// `POST /api/telemetry/exports/{exportId}/downloads`
+    /// `POST /api/observations/telemetry/exports/{exportId}/downloads`
     /// Mint a download grant for a ready telemetry export.
     fn telemetry_export_download_create(
         &self,
@@ -3287,7 +3287,7 @@ pub trait TelemetryLifecycleApi: Send + Sync + 'static {
         body: EmptyRequest,
     ) -> impl Future<Output = WireResult<Created<DownloadGrant>>> + Send;
 
-    /// `GET /api/telemetry/exports/{exportId}`
+    /// `GET /api/observations/telemetry/exports/{exportId}`
     /// Read one telemetry export record.
     fn telemetry_export_get(
         &self,
@@ -3295,7 +3295,7 @@ pub trait TelemetryLifecycleApi: Send + Sync + 'static {
         export_id: ExportId,
     ) -> impl Future<Output = WireResult<TelemetryExport>> + Send;
 
-    /// `POST /api/telemetry/exports/{exportId}/revocations`
+    /// `POST /api/observations/telemetry/exports/{exportId}/revocations`
     /// Revoke a telemetry export and its outstanding grants.
     fn telemetry_export_revoke(
         &self,
@@ -3304,7 +3304,7 @@ pub trait TelemetryLifecycleApi: Send + Sync + 'static {
         body: EmptyRequest,
     ) -> impl Future<Output = WireResult<TelemetryExport>> + Send;
 
-    /// `GET /api/telemetry/gaps/{gapId}`
+    /// `GET /api/observations/telemetry/gaps/{gapId}`
     /// Read one recorded telemetry gap.
     fn telemetry_gap_get(
         &self,
@@ -3312,7 +3312,7 @@ pub trait TelemetryLifecycleApi: Send + Sync + 'static {
         gap_id: TelemetryGapId,
     ) -> impl Future<Output = WireResult<TelemetryGap>> + Send;
 
-    /// `POST /api/telemetry/gaps/query`
+    /// `POST /api/observations/telemetry/gaps/query`
     /// Query recorded workspace telemetry gaps.
     fn telemetry_gaps_query(
         &self,

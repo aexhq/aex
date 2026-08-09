@@ -34,7 +34,7 @@ not:
 
 So a service needing more than five patterns is not inexpressible - it needs
 more than one rule. Six top-level prefixes are one rule of five and one of one.
-Six anchored session-scoped patterns like `/api/sessions/*/events/*`, two
+Six anchored session-scoped patterns like `/api/observations/*/events/*`, two
 wildcards each, are two rules of three. Both stay far inside 100.
 
 This module validates the two fixed quotas **per element**, so a rule that is

@@ -516,8 +516,8 @@ mod tests {
     #[tokio::test]
     async fn telemetry_export_admission_is_absent_from_the_real_router() {
         for path in [
-            "/api/telemetry/exports",
-            "/api/sessions/ses_0000000001e40r2081040g2081/telemetry/exports",
+            "/api/observations/telemetry/exports",
+            "/api/observations/ses_0000000001e40r2081040g2081/telemetry/exports",
         ] {
             let response = router(test_state())
                 .oneshot(

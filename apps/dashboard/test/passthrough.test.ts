@@ -181,7 +181,7 @@ describe("mutation admission", () => {
     );
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.request.path).toBe("/api/workspace/secrets/token");
+    expect(result.request.path).toBe("/api/secrets/token");
     expect(result.request.headers.get("authorization")).toBe("Bearer aex_ds_fixture");
     expect(result.request.headers.get("Idempotency-Key")).toBe("idk_1");
     expect(new TextDecoder().decode(result.request.body)).toBe('{"value":"v"}');

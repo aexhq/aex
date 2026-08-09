@@ -3,7 +3,7 @@
 //! The route registry: one row per public operation.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:c65ec229eb23ad2ff1780c8b3d08c838e3fefd3cef57b39bab55ce8bad19de06`.
+//! `sha256:bd7052cb0fe98ca6622d42d82e3a3adfec7f8a2ef4d890f7f2c31fcc1e0df4a6`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -75,43 +75,44 @@ pub enum RouteId {
     /// `GET /api/organizations/{organizationId}/memberships` — List the memberships of an
     /// organization.
     MembershipsList,
-    /// `POST /api/events/listen` — Listen for new workspace events observations.
+    /// `POST /api/streams/events/listen` — Listen for new workspace events observations.
     ObservationsEventsListen,
-    /// `POST /api/events/query` — Query workspace events observations.
+    /// `POST /api/observations/events/query` — Query workspace events observations.
     ObservationsEventsQuery,
-    /// `POST /api/events/stream` — Stream workspace events observations from one origin.
+    /// `POST /api/streams/events/stream` — Stream workspace events observations from one origin.
     ObservationsEventsStream,
-    /// `POST /api/logs/listen` — Listen for new workspace logs observations.
+    /// `POST /api/streams/logs/listen` — Listen for new workspace logs observations.
     ObservationsLogsListen,
-    /// `POST /api/logs/query` — Query workspace logs observations.
+    /// `POST /api/observations/logs/query` — Query workspace logs observations.
     ObservationsLogsQuery,
-    /// `POST /api/logs/stream` — Stream workspace logs observations from one origin.
+    /// `POST /api/streams/logs/stream` — Stream workspace logs observations from one origin.
     ObservationsLogsStream,
-    /// `POST /api/metrics/aggregate` — Aggregate workspace metric observations.
+    /// `POST /api/observations/metrics/aggregate` — Aggregate workspace metric observations.
     ObservationsMetricsAggregate,
-    /// `POST /api/metrics/listen` — Listen for new workspace metrics observations.
+    /// `POST /api/streams/metrics/listen` — Listen for new workspace metrics observations.
     ObservationsMetricsListen,
-    /// `POST /api/metrics/query` — Query workspace metrics observations.
+    /// `POST /api/observations/metrics/query` — Query workspace metrics observations.
     ObservationsMetricsQuery,
-    /// `POST /api/metrics/stream` — Stream workspace metrics observations from one origin.
+    /// `POST /api/streams/metrics/stream` — Stream workspace metrics observations from one origin.
     ObservationsMetricsStream,
-    /// `POST /api/spans/listen` — Listen for new workspace spans observations.
+    /// `POST /api/streams/spans/listen` — Listen for new workspace spans observations.
     ObservationsSpansListen,
-    /// `POST /api/spans/query` — Query workspace spans observations.
+    /// `POST /api/observations/spans/query` — Query workspace spans observations.
     ObservationsSpansQuery,
-    /// `POST /api/spans/stream` — Stream workspace spans observations from one origin.
+    /// `POST /api/streams/spans/stream` — Stream workspace spans observations from one origin.
     ObservationsSpansStream,
-    /// `POST /api/telemetry/listen` — Listen for new workspace telemetry observations.
+    /// `POST /api/streams/telemetry/listen` — Listen for new workspace telemetry observations.
     ObservationsTelemetryListen,
-    /// `POST /api/telemetry/query` — Query workspace telemetry observations.
+    /// `POST /api/observations/telemetry/query` — Query workspace telemetry observations.
     ObservationsTelemetryQuery,
-    /// `POST /api/telemetry/stream` — Stream workspace telemetry observations from one origin.
+    /// `POST /api/streams/telemetry/stream` — Stream workspace telemetry observations from one
+    /// origin.
     ObservationsTelemetryStream,
-    /// `POST /api/traces/listen` — Listen for new workspace traces observations.
+    /// `POST /api/streams/traces/listen` — Listen for new workspace traces observations.
     ObservationsTracesListen,
-    /// `POST /api/traces/query` — Query workspace traces observations.
+    /// `POST /api/observations/traces/query` — Query workspace traces observations.
     ObservationsTracesQuery,
-    /// `POST /api/traces/stream` — Stream workspace traces observations from one origin.
+    /// `POST /api/streams/traces/stream` — Stream workspace traces observations from one origin.
     ObservationsTracesStream,
     /// `POST /api/organizations` — Create an organization whose creator becomes owner.
     OrganizationCreate,
@@ -119,16 +120,16 @@ pub enum RouteId {
     OrganizationGet,
     /// `GET /api/organizations` — List organizations the caller belongs to.
     OrganizationsList,
-    /// `POST /api/telemetry/otlp/v1/logs` — Admit an OTLP logs batch.
+    /// `POST /api/otlp/v1/logs` — Admit an OTLP logs batch.
     OtlpLogsIngest,
-    /// `POST /api/telemetry/otlp/v1/metrics` — Admit an OTLP metrics batch.
+    /// `POST /api/otlp/v1/metrics` — Admit an OTLP metrics batch.
     OtlpMetricsIngest,
-    /// `POST /api/telemetry/otlp/v1/traces` — Admit an OTLP traces batch.
+    /// `POST /api/otlp/v1/traces` — Admit an OTLP traces batch.
     OtlpTracesIngest,
     /// `GET /api/workspace/provider-credentials/{providerCredentialId}` — Read one
     /// provider-credential binding.
     ProviderCredentialGet,
-    /// `POST /api/workspace/provider-credentials` — Register a BYOK provider credential; carries
+    /// `POST /api/secrets/provider-credentials` — Register a BYOK provider credential; carries
     /// plaintext.
     ProviderCredentialRegister,
     /// `POST /api/workspace/provider-credentials/{providerCredentialId}/revocations` — Revoke a
@@ -185,14 +186,13 @@ pub enum RouteId {
     RegistryToolsList,
     /// `PUT /api/workspace/tools/{name}` — Replace one registered entry in tools.
     RegistryToolsPut,
-    /// `DELETE /api/workspace/secrets/{name}` — Delete a secret, affecting future admission only.
+    /// `DELETE /api/secrets/{name}` — Delete a secret, affecting future admission only.
     SecretDelete,
     /// `GET /api/workspace/secrets/{name}` — Read one secret metadata record.
     SecretGet,
-    /// `PUT /api/workspace/secrets/{name}` — Set a secret value for future admission.
+    /// `PUT /api/secrets/{name}` — Set a secret value for future admission.
     SecretPut,
-    /// `POST /api/workspace/secrets/{name}/revocations` — Revoke a secret and cancel current
-    /// custody.
+    /// `POST /api/secrets/{name}/revocations` — Revoke a secret and cancel current custody.
     SecretRevoke,
     /// `GET /api/workspace/secrets` — List secret metadata; values are never readable.
     SecretsList,
@@ -233,53 +233,54 @@ pub enum RouteId {
     SessionMessageSend,
     /// `GET /api/sessions/{sessionId}/messages` — List the messages of a session.
     SessionMessagesList,
-    /// `POST /api/sessions/{sessionId}/events/listen` — Listen for new session events observations.
+    /// `POST /api/streams/{sessionId}/events/listen` — Listen for new session events observations.
     SessionObservationsEventsListen,
-    /// `POST /api/sessions/{sessionId}/events/query` — Query session events observations.
+    /// `POST /api/observations/{sessionId}/events/query` — Query session events observations.
     SessionObservationsEventsQuery,
-    /// `POST /api/sessions/{sessionId}/events/stream` — Stream session events observations from one
+    /// `POST /api/streams/{sessionId}/events/stream` — Stream session events observations from one
     /// origin.
     SessionObservationsEventsStream,
-    /// `POST /api/sessions/{sessionId}/logs/listen` — Listen for new session logs observations.
+    /// `POST /api/streams/{sessionId}/logs/listen` — Listen for new session logs observations.
     SessionObservationsLogsListen,
-    /// `POST /api/sessions/{sessionId}/logs/query` — Query session logs observations.
+    /// `POST /api/observations/{sessionId}/logs/query` — Query session logs observations.
     SessionObservationsLogsQuery,
-    /// `POST /api/sessions/{sessionId}/logs/stream` — Stream session logs observations from one
+    /// `POST /api/streams/{sessionId}/logs/stream` — Stream session logs observations from one
     /// origin.
     SessionObservationsLogsStream,
-    /// `POST /api/sessions/{sessionId}/metrics/aggregate` — Aggregate session metric observations.
+    /// `POST /api/observations/{sessionId}/metrics/aggregate` — Aggregate session metric
+    /// observations.
     SessionObservationsMetricsAggregate,
-    /// `POST /api/sessions/{sessionId}/metrics/listen` — Listen for new session metrics
+    /// `POST /api/streams/{sessionId}/metrics/listen` — Listen for new session metrics
     /// observations.
     SessionObservationsMetricsListen,
-    /// `POST /api/sessions/{sessionId}/metrics/query` — Query session metrics observations.
+    /// `POST /api/observations/{sessionId}/metrics/query` — Query session metrics observations.
     SessionObservationsMetricsQuery,
-    /// `POST /api/sessions/{sessionId}/metrics/stream` — Stream session metrics observations from
+    /// `POST /api/streams/{sessionId}/metrics/stream` — Stream session metrics observations from
     /// one origin.
     SessionObservationsMetricsStream,
-    /// `POST /api/sessions/{sessionId}/spans/listen` — Listen for new session spans observations.
+    /// `POST /api/streams/{sessionId}/spans/listen` — Listen for new session spans observations.
     SessionObservationsSpansListen,
-    /// `POST /api/sessions/{sessionId}/spans/query` — Query session spans observations.
+    /// `POST /api/observations/{sessionId}/spans/query` — Query session spans observations.
     SessionObservationsSpansQuery,
-    /// `POST /api/sessions/{sessionId}/spans/stream` — Stream session spans observations from one
+    /// `POST /api/streams/{sessionId}/spans/stream` — Stream session spans observations from one
     /// origin.
     SessionObservationsSpansStream,
-    /// `POST /api/sessions/{sessionId}/telemetry/listen` — Listen for new session telemetry
+    /// `POST /api/streams/{sessionId}/telemetry/listen` — Listen for new session telemetry
     /// observations.
     SessionObservationsTelemetryListen,
-    /// `POST /api/sessions/{sessionId}/telemetry/query` — Query session telemetry observations.
+    /// `POST /api/observations/{sessionId}/telemetry/query` — Query session telemetry observations.
     SessionObservationsTelemetryQuery,
-    /// `POST /api/sessions/{sessionId}/telemetry/stream` — Stream session telemetry observations
+    /// `POST /api/streams/{sessionId}/telemetry/stream` — Stream session telemetry observations
     /// from one origin.
     SessionObservationsTelemetryStream,
-    /// `GET /api/sessions/{sessionId}/traces/{traceId}` — Read one assembled trace by its W3C
+    /// `GET /api/observations/{sessionId}/traces/{traceId}` — Read one assembled trace by its W3C
     /// identifier.
     SessionObservationsTraceGet,
-    /// `POST /api/sessions/{sessionId}/traces/listen` — Listen for new session traces observations.
+    /// `POST /api/streams/{sessionId}/traces/listen` — Listen for new session traces observations.
     SessionObservationsTracesListen,
-    /// `POST /api/sessions/{sessionId}/traces/query` — Query session traces observations.
+    /// `POST /api/observations/{sessionId}/traces/query` — Query session traces observations.
     SessionObservationsTracesQuery,
-    /// `POST /api/sessions/{sessionId}/traces/stream` — Stream session traces observations from one
+    /// `POST /api/streams/{sessionId}/traces/stream` — Stream session traces observations from one
     /// origin.
     SessionObservationsTracesStream,
     /// `POST /api/sessions/{sessionId}/persists` — Admit the durable persist operation.
@@ -296,22 +297,22 @@ pub enum RouteId {
     SessionRunsList,
     /// `POST /api/sessions/{sessionId}/stops` — Admit the durable stop operation.
     SessionStop,
-    /// `POST /api/sessions/{sessionId}/telemetry/exports` — Admit the durable session
+    /// `POST /api/observations/{sessionId}/telemetry/exports` — Admit the durable session
     /// telemetry-export operation.
     SessionTelemetryExportCreate,
-    /// `POST /api/sessions/{sessionId}/telemetry/exports/{exportId}/downloads` — Mint a download
-    /// grant for a ready session telemetry export.
+    /// `POST /api/observations/{sessionId}/telemetry/exports/{exportId}/downloads` — Mint a
+    /// download grant for a ready session telemetry export.
     SessionTelemetryExportDownloadCreate,
-    /// `GET /api/sessions/{sessionId}/telemetry/exports/{exportId}` — Read one session telemetry
-    /// export record.
+    /// `GET /api/observations/{sessionId}/telemetry/exports/{exportId}` — Read one session
+    /// telemetry export record.
     SessionTelemetryExportGet,
-    /// `POST /api/sessions/{sessionId}/telemetry/exports/{exportId}/revocations` — Revoke a session
-    /// telemetry export and its outstanding grants.
+    /// `POST /api/observations/{sessionId}/telemetry/exports/{exportId}/revocations` — Revoke a
+    /// session telemetry export and its outstanding grants.
     SessionTelemetryExportRevoke,
-    /// `GET /api/sessions/{sessionId}/telemetry/gaps/{gapId}` — Read one recorded session telemetry
-    /// gap.
+    /// `GET /api/observations/{sessionId}/telemetry/gaps/{gapId}` — Read one recorded session
+    /// telemetry gap.
     SessionTelemetryGapGet,
-    /// `POST /api/sessions/{sessionId}/telemetry/gaps/query` — Query recorded session telemetry
+    /// `POST /api/observations/{sessionId}/telemetry/gaps/query` — Query recorded session telemetry
     /// gaps.
     SessionTelemetryGapsQuery,
     /// `POST /api/sessions/{sessionId}/trashes` — Admit the durable trash operation, which starts
@@ -322,19 +323,20 @@ pub enum RouteId {
     SessionWorkspaceDiscard,
     /// `GET /api/sessions` — List sessions in the workspace.
     SessionsList,
-    /// `POST /api/telemetry/exports` — Admit the durable workspace telemetry-export operation.
+    /// `POST /api/observations/telemetry/exports` — Admit the durable workspace telemetry-export
+    /// operation.
     TelemetryExportCreate,
-    /// `POST /api/telemetry/exports/{exportId}/downloads` — Mint a download grant for a ready
-    /// telemetry export.
+    /// `POST /api/observations/telemetry/exports/{exportId}/downloads` — Mint a download grant for
+    /// a ready telemetry export.
     TelemetryExportDownloadCreate,
-    /// `GET /api/telemetry/exports/{exportId}` — Read one telemetry export record.
+    /// `GET /api/observations/telemetry/exports/{exportId}` — Read one telemetry export record.
     TelemetryExportGet,
-    /// `POST /api/telemetry/exports/{exportId}/revocations` — Revoke a telemetry export and its
-    /// outstanding grants.
+    /// `POST /api/observations/telemetry/exports/{exportId}/revocations` — Revoke a telemetry
+    /// export and its outstanding grants.
     TelemetryExportRevoke,
-    /// `GET /api/telemetry/gaps/{gapId}` — Read one recorded telemetry gap.
+    /// `GET /api/observations/telemetry/gaps/{gapId}` — Read one recorded telemetry gap.
     TelemetryGapGet,
-    /// `POST /api/telemetry/gaps/query` — Query recorded workspace telemetry gaps.
+    /// `POST /api/observations/telemetry/gaps/query` — Query recorded workspace telemetry gaps.
     TelemetryGapsQuery,
     /// `DELETE /api/workspace/uploads/{uploadId}` — Abort a staged upload.
     UploadAbort,
@@ -1289,7 +1291,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-stream",
         method: HttpMethod::Post,
-        template: "/api/events/listen",
+        template: "/api/streams/events/listen",
         path_params: &[],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -1320,7 +1322,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-observation-api",
         method: HttpMethod::Post,
-        template: "/api/events/query",
+        template: "/api/observations/events/query",
         path_params: &[],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -1353,7 +1355,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-stream",
         method: HttpMethod::Post,
-        template: "/api/events/stream",
+        template: "/api/streams/events/stream",
         path_params: &[],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -1384,7 +1386,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-stream",
         method: HttpMethod::Post,
-        template: "/api/logs/listen",
+        template: "/api/streams/logs/listen",
         path_params: &[],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -1415,7 +1417,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-observation-api",
         method: HttpMethod::Post,
-        template: "/api/logs/query",
+        template: "/api/observations/logs/query",
         path_params: &[],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -1448,7 +1450,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-stream",
         method: HttpMethod::Post,
-        template: "/api/logs/stream",
+        template: "/api/streams/logs/stream",
         path_params: &[],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -1479,7 +1481,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-observation-api",
         method: HttpMethod::Post,
-        template: "/api/metrics/aggregate",
+        template: "/api/observations/metrics/aggregate",
         path_params: &[],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -1513,7 +1515,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-stream",
         method: HttpMethod::Post,
-        template: "/api/metrics/listen",
+        template: "/api/streams/metrics/listen",
         path_params: &[],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -1544,7 +1546,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-observation-api",
         method: HttpMethod::Post,
-        template: "/api/metrics/query",
+        template: "/api/observations/metrics/query",
         path_params: &[],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -1577,7 +1579,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-stream",
         method: HttpMethod::Post,
-        template: "/api/metrics/stream",
+        template: "/api/streams/metrics/stream",
         path_params: &[],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -1608,7 +1610,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-stream",
         method: HttpMethod::Post,
-        template: "/api/spans/listen",
+        template: "/api/streams/spans/listen",
         path_params: &[],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -1639,7 +1641,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-observation-api",
         method: HttpMethod::Post,
-        template: "/api/spans/query",
+        template: "/api/observations/spans/query",
         path_params: &[],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -1672,7 +1674,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-stream",
         method: HttpMethod::Post,
-        template: "/api/spans/stream",
+        template: "/api/streams/spans/stream",
         path_params: &[],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -1703,7 +1705,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-stream",
         method: HttpMethod::Post,
-        template: "/api/telemetry/listen",
+        template: "/api/streams/telemetry/listen",
         path_params: &[],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -1734,7 +1736,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-observation-api",
         method: HttpMethod::Post,
-        template: "/api/telemetry/query",
+        template: "/api/observations/telemetry/query",
         path_params: &[],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -1767,7 +1769,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-stream",
         method: HttpMethod::Post,
-        template: "/api/telemetry/stream",
+        template: "/api/streams/telemetry/stream",
         path_params: &[],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -1798,7 +1800,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-stream",
         method: HttpMethod::Post,
-        template: "/api/traces/listen",
+        template: "/api/streams/traces/listen",
         path_params: &[],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -1829,7 +1831,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-observation-api",
         method: HttpMethod::Post,
-        template: "/api/traces/query",
+        template: "/api/observations/traces/query",
         path_params: &[],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -1862,7 +1864,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-stream",
         method: HttpMethod::Post,
-        template: "/api/traces/stream",
+        template: "/api/streams/traces/stream",
         path_params: &[],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -1980,7 +1982,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "otlp",
         serving_artifact: "regional-otlp",
         method: HttpMethod::Post,
-        template: "/api/telemetry/otlp/v1/logs",
+        template: "/api/otlp/v1/logs",
         path_params: &[],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryWrite),
@@ -2013,7 +2015,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "otlp",
         serving_artifact: "regional-otlp",
         method: HttpMethod::Post,
-        template: "/api/telemetry/otlp/v1/metrics",
+        template: "/api/otlp/v1/metrics",
         path_params: &[],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryWrite),
@@ -2046,7 +2048,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "otlp",
         serving_artifact: "regional-otlp",
         method: HttpMethod::Post,
-        template: "/api/telemetry/otlp/v1/traces",
+        template: "/api/otlp/v1/traces",
         path_params: &[],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryWrite),
@@ -2108,7 +2110,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "provider-credentials",
         serving_artifact: "regional-secret-api",
         method: HttpMethod::Post,
-        template: "/api/workspace/provider-credentials",
+        template: "/api/secrets/provider-credentials",
         path_params: &[],
         query_params: &[],
         required_scope: Some(ScopeId::SecretsWrite),
@@ -2912,7 +2914,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "secrets",
         serving_artifact: "regional-secret-api",
         method: HttpMethod::Delete,
-        template: "/api/workspace/secrets/{name}",
+        template: "/api/secrets/{name}",
         path_params: &["name"],
         query_params: &[],
         required_scope: Some(ScopeId::SecretsWrite),
@@ -2969,7 +2971,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "secrets",
         serving_artifact: "regional-secret-api",
         method: HttpMethod::Put,
-        template: "/api/workspace/secrets/{name}",
+        template: "/api/secrets/{name}",
         path_params: &["name"],
         query_params: &[],
         required_scope: Some(ScopeId::SecretsWrite),
@@ -3001,7 +3003,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "secrets",
         serving_artifact: "regional-secret-api",
         method: HttpMethod::Post,
-        template: "/api/workspace/secrets/{name}/revocations",
+        template: "/api/secrets/{name}/revocations",
         path_params: &["name"],
         query_params: &[],
         required_scope: Some(ScopeId::SecretsRevoke),
@@ -3568,7 +3570,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-stream",
         method: HttpMethod::Post,
-        template: "/api/sessions/{sessionId}/events/listen",
+        template: "/api/streams/{sessionId}/events/listen",
         path_params: &["sessionId"],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -3601,7 +3603,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-observation-api",
         method: HttpMethod::Post,
-        template: "/api/sessions/{sessionId}/events/query",
+        template: "/api/observations/{sessionId}/events/query",
         path_params: &["sessionId"],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -3636,7 +3638,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-stream",
         method: HttpMethod::Post,
-        template: "/api/sessions/{sessionId}/events/stream",
+        template: "/api/streams/{sessionId}/events/stream",
         path_params: &["sessionId"],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -3669,7 +3671,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-stream",
         method: HttpMethod::Post,
-        template: "/api/sessions/{sessionId}/logs/listen",
+        template: "/api/streams/{sessionId}/logs/listen",
         path_params: &["sessionId"],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -3702,7 +3704,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-observation-api",
         method: HttpMethod::Post,
-        template: "/api/sessions/{sessionId}/logs/query",
+        template: "/api/observations/{sessionId}/logs/query",
         path_params: &["sessionId"],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -3737,7 +3739,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-stream",
         method: HttpMethod::Post,
-        template: "/api/sessions/{sessionId}/logs/stream",
+        template: "/api/streams/{sessionId}/logs/stream",
         path_params: &["sessionId"],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -3770,7 +3772,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-observation-api",
         method: HttpMethod::Post,
-        template: "/api/sessions/{sessionId}/metrics/aggregate",
+        template: "/api/observations/{sessionId}/metrics/aggregate",
         path_params: &["sessionId"],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -3806,7 +3808,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-stream",
         method: HttpMethod::Post,
-        template: "/api/sessions/{sessionId}/metrics/listen",
+        template: "/api/streams/{sessionId}/metrics/listen",
         path_params: &["sessionId"],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -3839,7 +3841,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-observation-api",
         method: HttpMethod::Post,
-        template: "/api/sessions/{sessionId}/metrics/query",
+        template: "/api/observations/{sessionId}/metrics/query",
         path_params: &["sessionId"],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -3874,7 +3876,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-stream",
         method: HttpMethod::Post,
-        template: "/api/sessions/{sessionId}/metrics/stream",
+        template: "/api/streams/{sessionId}/metrics/stream",
         path_params: &["sessionId"],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -3907,7 +3909,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-stream",
         method: HttpMethod::Post,
-        template: "/api/sessions/{sessionId}/spans/listen",
+        template: "/api/streams/{sessionId}/spans/listen",
         path_params: &["sessionId"],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -3940,7 +3942,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-observation-api",
         method: HttpMethod::Post,
-        template: "/api/sessions/{sessionId}/spans/query",
+        template: "/api/observations/{sessionId}/spans/query",
         path_params: &["sessionId"],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -3975,7 +3977,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-stream",
         method: HttpMethod::Post,
-        template: "/api/sessions/{sessionId}/spans/stream",
+        template: "/api/streams/{sessionId}/spans/stream",
         path_params: &["sessionId"],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -4008,7 +4010,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-stream",
         method: HttpMethod::Post,
-        template: "/api/sessions/{sessionId}/telemetry/listen",
+        template: "/api/streams/{sessionId}/telemetry/listen",
         path_params: &["sessionId"],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -4041,7 +4043,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-observation-api",
         method: HttpMethod::Post,
-        template: "/api/sessions/{sessionId}/telemetry/query",
+        template: "/api/observations/{sessionId}/telemetry/query",
         path_params: &["sessionId"],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -4076,7 +4078,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-stream",
         method: HttpMethod::Post,
-        template: "/api/sessions/{sessionId}/telemetry/stream",
+        template: "/api/streams/{sessionId}/telemetry/stream",
         path_params: &["sessionId"],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -4109,7 +4111,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-observation-api",
         method: HttpMethod::Get,
-        template: "/api/sessions/{sessionId}/traces/{traceId}",
+        template: "/api/observations/{sessionId}/traces/{traceId}",
         path_params: &["sessionId", "traceId"],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -4140,7 +4142,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-stream",
         method: HttpMethod::Post,
-        template: "/api/sessions/{sessionId}/traces/listen",
+        template: "/api/streams/{sessionId}/traces/listen",
         path_params: &["sessionId"],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -4173,7 +4175,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-observation-api",
         method: HttpMethod::Post,
-        template: "/api/sessions/{sessionId}/traces/query",
+        template: "/api/observations/{sessionId}/traces/query",
         path_params: &["sessionId"],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -4208,7 +4210,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "observations",
         serving_artifact: "regional-stream",
         method: HttpMethod::Post,
-        template: "/api/sessions/{sessionId}/traces/stream",
+        template: "/api/streams/{sessionId}/traces/stream",
         path_params: &["sessionId"],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -4435,7 +4437,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "telemetry-lifecycle",
         serving_artifact: "regional-observation-api",
         method: HttpMethod::Post,
-        template: "/api/sessions/{sessionId}/telemetry/exports",
+        template: "/api/observations/{sessionId}/telemetry/exports",
         path_params: &["sessionId"],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -4471,7 +4473,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "telemetry-lifecycle",
         serving_artifact: "regional-observation-api",
         method: HttpMethod::Post,
-        template: "/api/sessions/{sessionId}/telemetry/exports/{exportId}/downloads",
+        template: "/api/observations/{sessionId}/telemetry/exports/{exportId}/downloads",
         path_params: &["sessionId", "exportId"],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -4506,7 +4508,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "telemetry-lifecycle",
         serving_artifact: "regional-observation-api",
         method: HttpMethod::Get,
-        template: "/api/sessions/{sessionId}/telemetry/exports/{exportId}",
+        template: "/api/observations/{sessionId}/telemetry/exports/{exportId}",
         path_params: &["sessionId", "exportId"],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -4537,7 +4539,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "telemetry-lifecycle",
         serving_artifact: "regional-observation-api",
         method: HttpMethod::Post,
-        template: "/api/sessions/{sessionId}/telemetry/exports/{exportId}/revocations",
+        template: "/api/observations/{sessionId}/telemetry/exports/{exportId}/revocations",
         path_params: &["sessionId", "exportId"],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -4568,7 +4570,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "telemetry-lifecycle",
         serving_artifact: "regional-observation-api",
         method: HttpMethod::Get,
-        template: "/api/sessions/{sessionId}/telemetry/gaps/{gapId}",
+        template: "/api/observations/{sessionId}/telemetry/gaps/{gapId}",
         path_params: &["sessionId", "gapId"],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -4598,7 +4600,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "telemetry-lifecycle",
         serving_artifact: "regional-observation-api",
         method: HttpMethod::Post,
-        template: "/api/sessions/{sessionId}/telemetry/gaps/query",
+        template: "/api/observations/{sessionId}/telemetry/gaps/query",
         path_params: &["sessionId"],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -4726,7 +4728,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "telemetry-lifecycle",
         serving_artifact: "regional-observation-api",
         method: HttpMethod::Post,
-        template: "/api/telemetry/exports",
+        template: "/api/observations/telemetry/exports",
         path_params: &[],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -4760,7 +4762,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "telemetry-lifecycle",
         serving_artifact: "regional-observation-api",
         method: HttpMethod::Post,
-        template: "/api/telemetry/exports/{exportId}/downloads",
+        template: "/api/observations/telemetry/exports/{exportId}/downloads",
         path_params: &["exportId"],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -4793,7 +4795,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "telemetry-lifecycle",
         serving_artifact: "regional-observation-api",
         method: HttpMethod::Get,
-        template: "/api/telemetry/exports/{exportId}",
+        template: "/api/observations/telemetry/exports/{exportId}",
         path_params: &["exportId"],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -4822,7 +4824,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "telemetry-lifecycle",
         serving_artifact: "regional-observation-api",
         method: HttpMethod::Post,
-        template: "/api/telemetry/exports/{exportId}/revocations",
+        template: "/api/observations/telemetry/exports/{exportId}/revocations",
         path_params: &["exportId"],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -4851,7 +4853,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "telemetry-lifecycle",
         serving_artifact: "regional-observation-api",
         method: HttpMethod::Get,
-        template: "/api/telemetry/gaps/{gapId}",
+        template: "/api/observations/telemetry/gaps/{gapId}",
         path_params: &["gapId"],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),
@@ -4880,7 +4882,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         fragment: "telemetry-lifecycle",
         serving_artifact: "regional-observation-api",
         method: HttpMethod::Post,
-        template: "/api/telemetry/gaps/query",
+        template: "/api/observations/telemetry/gaps/query",
         path_params: &[],
         query_params: &[],
         required_scope: Some(ScopeId::TelemetryRead),

@@ -216,7 +216,7 @@ export const ROUTES: Readonly<Record<RouteId, RouteDescriptor>> = Object.freeze(
   observations_events_query: {
     id: "observations_events_query",
     method: "POST",
-    path: "/api/events/query",
+    path: "/api/observations/events/query",
     plane: "regional",
     safeRetry: true,
     idempotency: "none",
@@ -228,7 +228,7 @@ export const ROUTES: Readonly<Record<RouteId, RouteDescriptor>> = Object.freeze(
   observations_metrics_aggregate: {
     id: "observations_metrics_aggregate",
     method: "POST",
-    path: "/api/metrics/aggregate",
+    path: "/api/observations/metrics/aggregate",
     plane: "regional",
     safeRetry: true,
     idempotency: "none",
@@ -240,7 +240,7 @@ export const ROUTES: Readonly<Record<RouteId, RouteDescriptor>> = Object.freeze(
   observations_traces_query: {
     id: "observations_traces_query",
     method: "POST",
-    path: "/api/traces/query",
+    path: "/api/observations/traces/query",
     plane: "regional",
     safeRetry: true,
     idempotency: "none",
@@ -336,7 +336,7 @@ export const ROUTES: Readonly<Record<RouteId, RouteDescriptor>> = Object.freeze(
   secret_delete: {
     id: "secret_delete",
     method: "DELETE",
-    path: "/api/workspace/secrets/{name}",
+    path: "/api/secrets/{name}",
     plane: "regional",
     safeRetry: false,
     idempotency: "none",
@@ -348,7 +348,7 @@ export const ROUTES: Readonly<Record<RouteId, RouteDescriptor>> = Object.freeze(
   secret_put: {
     id: "secret_put",
     method: "PUT",
-    path: "/api/workspace/secrets/{name}",
+    path: "/api/secrets/{name}",
     plane: "regional",
     safeRetry: false,
     idempotency: "idempotency_key",
@@ -360,7 +360,7 @@ export const ROUTES: Readonly<Record<RouteId, RouteDescriptor>> = Object.freeze(
   secret_revoke: {
     id: "secret_revoke",
     method: "POST",
-    path: "/api/workspace/secrets/{name}/revocations",
+    path: "/api/secrets/{name}/revocations",
     plane: "regional",
     safeRetry: false,
     idempotency: "idempotency_key",
@@ -456,7 +456,7 @@ export const ROUTES: Readonly<Record<RouteId, RouteDescriptor>> = Object.freeze(
   session_observations_events_query: {
     id: "session_observations_events_query",
     method: "POST",
-    path: "/api/sessions/{sessionId}/events/query",
+    path: "/api/observations/{sessionId}/events/query",
     plane: "regional",
     safeRetry: true,
     idempotency: "none",
@@ -468,7 +468,7 @@ export const ROUTES: Readonly<Record<RouteId, RouteDescriptor>> = Object.freeze(
   session_observations_trace_get: {
     id: "session_observations_trace_get",
     method: "GET",
-    path: "/api/sessions/{sessionId}/traces/{traceId}",
+    path: "/api/observations/{sessionId}/traces/{traceId}",
     plane: "regional",
     safeRetry: true,
     idempotency: "none",
@@ -504,7 +504,7 @@ export const ROUTES: Readonly<Record<RouteId, RouteDescriptor>> = Object.freeze(
   telemetry_gaps_query: {
     id: "telemetry_gaps_query",
     method: "POST",
-    path: "/api/telemetry/gaps/query",
+    path: "/api/observations/telemetry/gaps/query",
     plane: "regional",
     safeRetry: true,
     idempotency: "none",

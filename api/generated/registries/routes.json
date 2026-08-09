@@ -746,7 +746,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "observations_events_listen",
-      "path": "/api/events/listen",
+      "path": "/api/streams/events/listen",
       "pathParams": [],
       "pauseExempt": false,
       "plane": "regional",
@@ -783,7 +783,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "observations_events_query",
-      "path": "/api/events/query",
+      "path": "/api/observations/events/query",
       "pathParams": [],
       "pauseExempt": false,
       "plane": "regional",
@@ -818,7 +818,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "observations_events_stream",
-      "path": "/api/events/stream",
+      "path": "/api/streams/events/stream",
       "pathParams": [],
       "pauseExempt": false,
       "plane": "regional",
@@ -853,7 +853,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "observations_logs_listen",
-      "path": "/api/logs/listen",
+      "path": "/api/streams/logs/listen",
       "pathParams": [],
       "pauseExempt": false,
       "plane": "regional",
@@ -890,7 +890,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "observations_logs_query",
-      "path": "/api/logs/query",
+      "path": "/api/observations/logs/query",
       "pathParams": [],
       "pauseExempt": false,
       "plane": "regional",
@@ -925,7 +925,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "observations_logs_stream",
-      "path": "/api/logs/stream",
+      "path": "/api/streams/logs/stream",
       "pathParams": [],
       "pauseExempt": false,
       "plane": "regional",
@@ -963,7 +963,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "observations_metrics_aggregate",
-      "path": "/api/metrics/aggregate",
+      "path": "/api/observations/metrics/aggregate",
       "pathParams": [],
       "pauseExempt": false,
       "plane": "regional",
@@ -998,7 +998,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "observations_metrics_listen",
-      "path": "/api/metrics/listen",
+      "path": "/api/streams/metrics/listen",
       "pathParams": [],
       "pauseExempt": false,
       "plane": "regional",
@@ -1035,7 +1035,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "observations_metrics_query",
-      "path": "/api/metrics/query",
+      "path": "/api/observations/metrics/query",
       "pathParams": [],
       "pauseExempt": false,
       "plane": "regional",
@@ -1070,7 +1070,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "observations_metrics_stream",
-      "path": "/api/metrics/stream",
+      "path": "/api/streams/metrics/stream",
       "pathParams": [],
       "pauseExempt": false,
       "plane": "regional",
@@ -1105,7 +1105,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "observations_spans_listen",
-      "path": "/api/spans/listen",
+      "path": "/api/streams/spans/listen",
       "pathParams": [],
       "pauseExempt": false,
       "plane": "regional",
@@ -1142,7 +1142,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "observations_spans_query",
-      "path": "/api/spans/query",
+      "path": "/api/observations/spans/query",
       "pathParams": [],
       "pauseExempt": false,
       "plane": "regional",
@@ -1177,7 +1177,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "observations_spans_stream",
-      "path": "/api/spans/stream",
+      "path": "/api/streams/spans/stream",
       "pathParams": [],
       "pauseExempt": false,
       "plane": "regional",
@@ -1212,7 +1212,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "observations_telemetry_listen",
-      "path": "/api/telemetry/listen",
+      "path": "/api/streams/telemetry/listen",
       "pathParams": [],
       "pauseExempt": false,
       "plane": "regional",
@@ -1249,7 +1249,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "observations_telemetry_query",
-      "path": "/api/telemetry/query",
+      "path": "/api/observations/telemetry/query",
       "pathParams": [],
       "pauseExempt": false,
       "plane": "regional",
@@ -1284,7 +1284,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "observations_telemetry_stream",
-      "path": "/api/telemetry/stream",
+      "path": "/api/streams/telemetry/stream",
       "pathParams": [],
       "pauseExempt": false,
       "plane": "regional",
@@ -1319,7 +1319,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "observations_traces_listen",
-      "path": "/api/traces/listen",
+      "path": "/api/streams/traces/listen",
       "pathParams": [],
       "pauseExempt": false,
       "plane": "regional",
@@ -1356,7 +1356,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "observations_traces_query",
-      "path": "/api/traces/query",
+      "path": "/api/observations/traces/query",
       "pathParams": [],
       "pauseExempt": false,
       "plane": "regional",
@@ -1391,7 +1391,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "observations_traces_stream",
-      "path": "/api/traces/stream",
+      "path": "/api/streams/traces/stream",
       "pathParams": [],
       "pauseExempt": false,
       "plane": "regional",
@@ -1532,7 +1532,7 @@
       "idempotency": "idempotency_key",
       "method": "POST",
       "operationId": "otlp_logs_ingest",
-      "path": "/api/telemetry/otlp/v1/logs",
+      "path": "/api/otlp/v1/logs",
       "pathParams": [],
       "pauseExempt": false,
       "plane": "regional",
@@ -1569,7 +1569,7 @@
       "idempotency": "idempotency_key",
       "method": "POST",
       "operationId": "otlp_metrics_ingest",
-      "path": "/api/telemetry/otlp/v1/metrics",
+      "path": "/api/otlp/v1/metrics",
       "pathParams": [],
       "pauseExempt": false,
       "plane": "regional",
@@ -1606,7 +1606,7 @@
       "idempotency": "idempotency_key",
       "method": "POST",
       "operationId": "otlp_traces_ingest",
-      "path": "/api/telemetry/otlp/v1/traces",
+      "path": "/api/otlp/v1/traces",
       "pathParams": [],
       "pauseExempt": false,
       "plane": "regional",
@@ -1678,7 +1678,7 @@
       "idempotency": "idempotency_key",
       "method": "POST",
       "operationId": "provider_credential_register",
-      "path": "/api/workspace/provider-credentials",
+      "path": "/api/secrets/provider-credentials",
       "pathParams": [],
       "pauseExempt": false,
       "plane": "regional",
@@ -2648,7 +2648,7 @@
       "idempotency": "none",
       "method": "DELETE",
       "operationId": "secret_delete",
-      "path": "/api/workspace/secrets/{name}",
+      "path": "/api/secrets/{name}",
       "pathParams": [
         "name"
       ],
@@ -2722,7 +2722,7 @@
       "idempotency": "idempotency_key",
       "method": "PUT",
       "operationId": "secret_put",
-      "path": "/api/workspace/secrets/{name}",
+      "path": "/api/secrets/{name}",
       "pathParams": [
         "name"
       ],
@@ -2756,7 +2756,7 @@
       "idempotency": "idempotency_key",
       "method": "POST",
       "operationId": "secret_revoke",
-      "path": "/api/workspace/secrets/{name}/revocations",
+      "path": "/api/secrets/{name}/revocations",
       "pathParams": [
         "name"
       ],
@@ -3442,7 +3442,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "session_observations_events_listen",
-      "path": "/api/sessions/{sessionId}/events/listen",
+      "path": "/api/streams/{sessionId}/events/listen",
       "pathParams": [
         "sessionId"
       ],
@@ -3483,7 +3483,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "session_observations_events_query",
-      "path": "/api/sessions/{sessionId}/events/query",
+      "path": "/api/observations/{sessionId}/events/query",
       "pathParams": [
         "sessionId"
       ],
@@ -3522,7 +3522,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "session_observations_events_stream",
-      "path": "/api/sessions/{sessionId}/events/stream",
+      "path": "/api/streams/{sessionId}/events/stream",
       "pathParams": [
         "sessionId"
       ],
@@ -3561,7 +3561,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "session_observations_logs_listen",
-      "path": "/api/sessions/{sessionId}/logs/listen",
+      "path": "/api/streams/{sessionId}/logs/listen",
       "pathParams": [
         "sessionId"
       ],
@@ -3602,7 +3602,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "session_observations_logs_query",
-      "path": "/api/sessions/{sessionId}/logs/query",
+      "path": "/api/observations/{sessionId}/logs/query",
       "pathParams": [
         "sessionId"
       ],
@@ -3641,7 +3641,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "session_observations_logs_stream",
-      "path": "/api/sessions/{sessionId}/logs/stream",
+      "path": "/api/streams/{sessionId}/logs/stream",
       "pathParams": [
         "sessionId"
       ],
@@ -3683,7 +3683,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "session_observations_metrics_aggregate",
-      "path": "/api/sessions/{sessionId}/metrics/aggregate",
+      "path": "/api/observations/{sessionId}/metrics/aggregate",
       "pathParams": [
         "sessionId"
       ],
@@ -3722,7 +3722,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "session_observations_metrics_listen",
-      "path": "/api/sessions/{sessionId}/metrics/listen",
+      "path": "/api/streams/{sessionId}/metrics/listen",
       "pathParams": [
         "sessionId"
       ],
@@ -3763,7 +3763,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "session_observations_metrics_query",
-      "path": "/api/sessions/{sessionId}/metrics/query",
+      "path": "/api/observations/{sessionId}/metrics/query",
       "pathParams": [
         "sessionId"
       ],
@@ -3802,7 +3802,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "session_observations_metrics_stream",
-      "path": "/api/sessions/{sessionId}/metrics/stream",
+      "path": "/api/streams/{sessionId}/metrics/stream",
       "pathParams": [
         "sessionId"
       ],
@@ -3841,7 +3841,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "session_observations_spans_listen",
-      "path": "/api/sessions/{sessionId}/spans/listen",
+      "path": "/api/streams/{sessionId}/spans/listen",
       "pathParams": [
         "sessionId"
       ],
@@ -3882,7 +3882,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "session_observations_spans_query",
-      "path": "/api/sessions/{sessionId}/spans/query",
+      "path": "/api/observations/{sessionId}/spans/query",
       "pathParams": [
         "sessionId"
       ],
@@ -3921,7 +3921,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "session_observations_spans_stream",
-      "path": "/api/sessions/{sessionId}/spans/stream",
+      "path": "/api/streams/{sessionId}/spans/stream",
       "pathParams": [
         "sessionId"
       ],
@@ -3960,7 +3960,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "session_observations_telemetry_listen",
-      "path": "/api/sessions/{sessionId}/telemetry/listen",
+      "path": "/api/streams/{sessionId}/telemetry/listen",
       "pathParams": [
         "sessionId"
       ],
@@ -4001,7 +4001,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "session_observations_telemetry_query",
-      "path": "/api/sessions/{sessionId}/telemetry/query",
+      "path": "/api/observations/{sessionId}/telemetry/query",
       "pathParams": [
         "sessionId"
       ],
@@ -4040,7 +4040,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "session_observations_telemetry_stream",
-      "path": "/api/sessions/{sessionId}/telemetry/stream",
+      "path": "/api/streams/{sessionId}/telemetry/stream",
       "pathParams": [
         "sessionId"
       ],
@@ -4077,7 +4077,7 @@
       "idempotency": "none",
       "method": "GET",
       "operationId": "session_observations_trace_get",
-      "path": "/api/sessions/{sessionId}/traces/{traceId}",
+      "path": "/api/observations/{sessionId}/traces/{traceId}",
       "pathParams": [
         "sessionId",
         "traceId"
@@ -4117,7 +4117,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "session_observations_traces_listen",
-      "path": "/api/sessions/{sessionId}/traces/listen",
+      "path": "/api/streams/{sessionId}/traces/listen",
       "pathParams": [
         "sessionId"
       ],
@@ -4158,7 +4158,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "session_observations_traces_query",
-      "path": "/api/sessions/{sessionId}/traces/query",
+      "path": "/api/observations/{sessionId}/traces/query",
       "pathParams": [
         "sessionId"
       ],
@@ -4197,7 +4197,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "session_observations_traces_stream",
-      "path": "/api/sessions/{sessionId}/traces/stream",
+      "path": "/api/streams/{sessionId}/traces/stream",
       "pathParams": [
         "sessionId"
       ],
@@ -4480,7 +4480,7 @@
       "idempotency": "operation_id",
       "method": "POST",
       "operationId": "session_telemetry_export_create",
-      "path": "/api/sessions/{sessionId}/telemetry/exports",
+      "path": "/api/observations/{sessionId}/telemetry/exports",
       "pathParams": [
         "sessionId"
       ],
@@ -4521,7 +4521,7 @@
       "idempotency": "idempotency_key",
       "method": "POST",
       "operationId": "session_telemetry_export_download_create",
-      "path": "/api/sessions/{sessionId}/telemetry/exports/{exportId}/downloads",
+      "path": "/api/observations/{sessionId}/telemetry/exports/{exportId}/downloads",
       "pathParams": [
         "sessionId",
         "exportId"
@@ -4560,7 +4560,7 @@
       "idempotency": "none",
       "method": "GET",
       "operationId": "session_telemetry_export_get",
-      "path": "/api/sessions/{sessionId}/telemetry/exports/{exportId}",
+      "path": "/api/observations/{sessionId}/telemetry/exports/{exportId}",
       "pathParams": [
         "sessionId",
         "exportId"
@@ -4599,7 +4599,7 @@
       "idempotency": "idempotency_key",
       "method": "POST",
       "operationId": "session_telemetry_export_revoke",
-      "path": "/api/sessions/{sessionId}/telemetry/exports/{exportId}/revocations",
+      "path": "/api/observations/{sessionId}/telemetry/exports/{exportId}/revocations",
       "pathParams": [
         "sessionId",
         "exportId"
@@ -4637,7 +4637,7 @@
       "idempotency": "none",
       "method": "GET",
       "operationId": "session_telemetry_gap_get",
-      "path": "/api/sessions/{sessionId}/telemetry/gaps/{gapId}",
+      "path": "/api/observations/{sessionId}/telemetry/gaps/{gapId}",
       "pathParams": [
         "sessionId",
         "gapId"
@@ -4678,7 +4678,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "session_telemetry_gaps_query",
-      "path": "/api/sessions/{sessionId}/telemetry/gaps/query",
+      "path": "/api/observations/{sessionId}/telemetry/gaps/query",
       "pathParams": [
         "sessionId"
       ],
@@ -4838,7 +4838,7 @@
       "idempotency": "operation_id",
       "method": "POST",
       "operationId": "telemetry_export_create",
-      "path": "/api/telemetry/exports",
+      "path": "/api/observations/telemetry/exports",
       "pathParams": [],
       "pauseExempt": false,
       "plane": "regional",
@@ -4875,7 +4875,7 @@
       "idempotency": "idempotency_key",
       "method": "POST",
       "operationId": "telemetry_export_download_create",
-      "path": "/api/telemetry/exports/{exportId}/downloads",
+      "path": "/api/observations/telemetry/exports/{exportId}/downloads",
       "pathParams": [
         "exportId"
       ],
@@ -4911,7 +4911,7 @@
       "idempotency": "none",
       "method": "GET",
       "operationId": "telemetry_export_get",
-      "path": "/api/telemetry/exports/{exportId}",
+      "path": "/api/observations/telemetry/exports/{exportId}",
       "pathParams": [
         "exportId"
       ],
@@ -4947,7 +4947,7 @@
       "idempotency": "idempotency_key",
       "method": "POST",
       "operationId": "telemetry_export_revoke",
-      "path": "/api/telemetry/exports/{exportId}/revocations",
+      "path": "/api/observations/telemetry/exports/{exportId}/revocations",
       "pathParams": [
         "exportId"
       ],
@@ -4983,7 +4983,7 @@
       "idempotency": "none",
       "method": "GET",
       "operationId": "telemetry_gap_get",
-      "path": "/api/telemetry/gaps/{gapId}",
+      "path": "/api/observations/telemetry/gaps/{gapId}",
       "pathParams": [
         "gapId"
       ],
@@ -5021,7 +5021,7 @@
       "idempotency": "none",
       "method": "POST",
       "operationId": "telemetry_gaps_query",
-      "path": "/api/telemetry/gaps/query",
+      "path": "/api/observations/telemetry/gaps/query",
       "pathParams": [],
       "pauseExempt": false,
       "plane": "regional",

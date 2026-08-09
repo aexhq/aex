@@ -9,7 +9,7 @@ variables {
   rules = [
     {
       priority      = 10
-      path_patterns = ["/api/events/*"]
+      path_patterns = ["/api/streams/*"]
     },
   ]
 }
@@ -49,15 +49,15 @@ run "one_target_group_can_carry_several_rules" {
     rules = [
       {
         priority      = 10
-        path_patterns = ["/api/events/*", "/api/logs/*", "/api/metrics/*", "/api/spans/*", "/api/telemetry/*"]
+        path_patterns = ["/api/sessions/*", "/api/workspace/*", "/api/operations/*", "/api/billing/*", "/api/secrets/*"]
       },
       {
         priority      = 11
-        path_patterns = ["/api/traces/*"]
+        path_patterns = ["/api/otlp/*"]
       },
       {
         priority      = 12
-        path_patterns = ["/api/sessions/*/events/*", "/api/sessions/*/logs/*", "/api/sessions/*/metrics/*"]
+        path_patterns = ["/api/observations/*/events/*", "/api/observations/*/logs/*", "/api/observations/*/metrics/*"]
       },
     ]
   }
@@ -129,11 +129,11 @@ run "the_rules_forward_only_the_api_prefix" {
     rules = [
       {
         priority      = 10
-        path_patterns = ["/api/events/*", "/api/logs/*"]
+        path_patterns = ["/api/sessions/*", "/api/workspace/*"]
       },
       {
         priority      = 11
-        path_patterns = ["/api/traces/*"]
+        path_patterns = ["/api/streams/*"]
       },
     ]
   }
@@ -270,12 +270,12 @@ run "rejects_a_rule_that_exceeds_five_condition_values" {
       {
         priority = 10
         path_patterns = [
-          "/api/events/*",
-          "/api/logs/*",
-          "/api/metrics/*",
-          "/api/spans/*",
-          "/api/telemetry/*",
-          "/api/traces/*",
+          "/api/sessions/*",
+          "/api/workspace/*",
+          "/api/operations/*",
+          "/api/billing/*",
+          "/api/secrets/*",
+          "/api/otlp/*",
         ]
       },
     ]
@@ -293,11 +293,11 @@ run "accepts_those_same_six_patterns_split_across_two_rules" {
     rules = [
       {
         priority      = 10
-        path_patterns = ["/api/events/*", "/api/logs/*", "/api/metrics/*", "/api/spans/*", "/api/telemetry/*"]
+        path_patterns = ["/api/sessions/*", "/api/workspace/*", "/api/operations/*", "/api/billing/*", "/api/secrets/*"]
       },
       {
         priority      = 11
-        path_patterns = ["/api/traces/*"]
+        path_patterns = ["/api/otlp/*"]
       },
     ]
   }
@@ -318,10 +318,10 @@ run "rejects_a_rule_that_exceeds_six_wildcards" {
       {
         priority = 10
         path_patterns = [
-          "/api/sessions/*/events/*",
-          "/api/sessions/*/logs/*",
-          "/api/sessions/*/metrics/*",
-          "/api/sessions/*/spans/*",
+          "/api/observations/*/events/*",
+          "/api/observations/*/logs/*",
+          "/api/observations/*/metrics/*",
+          "/api/observations/*/spans/*",
         ]
       },
     ]
@@ -337,11 +337,11 @@ run "rejects_two_rules_sharing_a_priority" {
     rules = [
       {
         priority      = 10
-        path_patterns = ["/api/events/*"]
+        path_patterns = ["/api/sessions/*"]
       },
       {
         priority      = 10
-        path_patterns = ["/api/logs/*"]
+        path_patterns = ["/api/workspace/*"]
       },
     ]
   }
@@ -356,7 +356,7 @@ run "rejects_a_priority_outside_the_listener_range" {
     rules = [
       {
         priority      = 0
-        path_patterns = ["/api/events/*"]
+        path_patterns = ["/api/streams/*"]
       },
     ]
   }
@@ -371,7 +371,7 @@ run "rejects_a_fractional_priority" {
     rules = [
       {
         priority      = 10.5
-        path_patterns = ["/api/events/*"]
+        path_patterns = ["/api/streams/*"]
       },
     ]
   }

@@ -391,7 +391,7 @@ async fn a_delete_tombstones_under_the_revision_the_caller_read() {
         stored_secret("openai-key"),
     )])));
     let router = router(Arc::clone(&custody), None);
-    let (status, _) = send(&router, "DELETE", "/api/workspace/secrets/openai-key", "").await;
+    let (status, _) = send(&router, "DELETE", "/api/secrets/openai-key", "").await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 
     let writes = custody.writes();
@@ -423,10 +423,10 @@ async fn a_repeated_delete_answers_no_content_without_writing_again() {
     let router = router(Arc::clone(&custody), None);
 
     for _ in 0..2 {
-        let (status, _) = send(&router, "DELETE", "/api/workspace/secrets/gone", "").await;
+        let (status, _) = send(&router, "DELETE", "/api/secrets/gone", "").await;
         assert_eq!(status, StatusCode::NO_CONTENT);
     }
-    let (status, _) = send(&router, "DELETE", "/api/workspace/secrets/absent", "").await;
+    let (status, _) = send(&router, "DELETE", "/api/secrets/absent", "").await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     assert!(
         custody.writes().is_empty(),
@@ -444,7 +444,7 @@ async fn a_stale_if_match_refuses_the_delete_before_any_write() {
     let stale = ETag::parse("\"0000000000000000000000000000000000000000000000000000000000000000\"")
         .expect("a strong tag");
     let router = router(Arc::clone(&custody), Some(stale));
-    let (status, body) = send(&router, "DELETE", "/api/workspace/secrets/openai-key", "").await;
+    let (status, body) = send(&router, "DELETE", "/api/secrets/openai-key", "").await;
     assert_eq!(status, StatusCode::PRECONDITION_FAILED);
     assert_eq!(
         body["error"]["code"].as_str(),
@@ -463,7 +463,7 @@ async fn the_current_entity_tag_satisfies_the_delete_precondition() {
         stored,
     )])));
     let router = router(Arc::clone(&custody), Some(current));
-    let (status, _) = send(&router, "DELETE", "/api/workspace/secrets/openai-key", "").await;
+    let (status, _) = send(&router, "DELETE", "/api/secrets/openai-key", "").await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     assert_eq!(custody.writes().len(), 1);
 }
@@ -477,13 +477,7 @@ async fn a_revoke_fences_every_prior_generation_and_answers_its_receipt() {
         stored_secret("openai-key"),
     )])));
     let router = router(Arc::clone(&custody), None);
-    let (status, body) = send(
-        &router,
-        "POST",
-        "/api/workspace/secrets/openai-key/revocations",
-        "{}",
-    )
-    .await;
+    let (status, body) = send(&router, "POST", "/api/secrets/openai-key/revocations", "{}").await;
 
     assert_eq!(status, StatusCode::OK);
     let receipt: models::SecretRevocation =
@@ -528,13 +522,8 @@ async fn a_replayed_revoke_answers_the_stored_receipt_and_writes_nothing() {
 
     let mut receipts = Vec::new();
     for _ in 0..2 {
-        let (status, body) = send(
-            &router,
-            "POST",
-            "/api/workspace/secrets/openai-key/revocations",
-            "{}",
-        )
-        .await;
+        let (status, body) =
+            send(&router, "POST", "/api/secrets/openai-key/revocations", "{}").await;
         assert_eq!(status, StatusCode::OK);
         receipts.push(body);
     }
@@ -563,7 +552,7 @@ async fn revoking_an_absent_or_deleted_secret_is_not_found() {
         let (status, body) = send(
             &router,
             "POST",
-            &format!("/api/workspace/secrets/{name}/revocations"),
+            &format!("/api/secrets/{name}/revocations"),
             "{}",
         )
         .await;

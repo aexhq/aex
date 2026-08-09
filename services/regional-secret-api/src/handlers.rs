@@ -107,7 +107,7 @@ impl std::fmt::Debug for Routes {
 }
 
 impl SecretsApi for Routes {
-    /// `DELETE /api/workspace/secrets/{name}` — the tombstone.
+    /// `DELETE /api/secrets/{name}` — the tombstone.
     ///
     /// The route declares no `not_found`, and that is deliberate: deleting a
     /// name that is absent, or already a tombstone, is a completed request. Both
@@ -161,7 +161,7 @@ impl SecretsApi for Routes {
         Err(not_served(RouteId::SecretPut))
     }
 
-    /// `POST /api/workspace/secrets/{name}/revocations` — the emergency fence.
+    /// `POST /api/secrets/{name}/revocations` — the emergency fence.
     ///
     /// The route declares an `Idempotency-Key`, and this handler needs no
     /// durable receipt to honour it. Revocation is terminal and the scope

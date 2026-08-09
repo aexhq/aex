@@ -274,22 +274,32 @@ async fn a_route_owned_by_another_deployable_is_not_mounted() {
         RequestLimits::DEFAULT,
     )
     .expect("mounts");
-    // `PUT /api/workspace/secrets/{name}` is the secret edge's; the session API
-    // reads the same template with `GET`, so the refusal must come from the
-    // method filter rather than from a handler.
-    let response = mounted
-        .router
-        .oneshot(
-            Request::builder()
-                .method("PUT")
-                .uri(concrete_path(RouteId::SecretPut))
-                .header("content-type", "application/json")
-                .body(Body::from("{\"value\":\"x\"}"))
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-    assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    // The secret edge's plaintext admission now carries its own first segment,
+    // `/api/secrets/`, and the session API mounts no template under it. The
+    // refusal is the router's own `404`, reached before any handler; it used to
+    // be a `405` because `PUT` and `GET /api/workspace/secrets/{name}` shared
+    // one template across the two deployables.
+    for id in RouteOwner::SecretApi.routes() {
+        let descriptor = route(id);
+        let response = mounted
+            .router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(descriptor.method.as_str())
+                    .uri(concrete_path(id))
+                    .header("content-type", "application/json")
+                    .body(Body::from("{\"value\":\"x\"}"))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "`{id}` is the secret edge's and must not answer on the session API"
+        );
+    }
 }
 
 #[tokio::test]

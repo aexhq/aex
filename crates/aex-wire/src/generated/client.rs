@@ -3,7 +3,7 @@
 //! The low-level client: one request builder and one method per public operation.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:c65ec229eb23ad2ff1780c8b3d08c838e3fefd3cef57b39bab55ce8bad19de06`.
+//! `sha256:bd7052cb0fe98ca6622d42d82e3a3adfec7f8a2ef4d890f7f2c31fcc1e0df4a6`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -742,7 +742,7 @@ pub fn memberships_list_request(
     })
 }
 
-/// `POST /api/events/listen`
+/// `POST /api/streams/events/listen`
 /// Listen for new workspace events observations.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -765,7 +765,7 @@ pub fn observations_events_listen_request(
     })
 }
 
-/// `POST /api/events/query`
+/// `POST /api/observations/events/query`
 /// Query workspace events observations.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -788,7 +788,7 @@ pub fn observations_events_query_request(
     })
 }
 
-/// `POST /api/events/stream`
+/// `POST /api/streams/events/stream`
 /// Stream workspace events observations from one origin.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -811,7 +811,7 @@ pub fn observations_events_stream_request(
     })
 }
 
-/// `POST /api/logs/listen`
+/// `POST /api/streams/logs/listen`
 /// Listen for new workspace logs observations.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -834,7 +834,7 @@ pub fn observations_logs_listen_request(
     })
 }
 
-/// `POST /api/logs/query`
+/// `POST /api/observations/logs/query`
 /// Query workspace logs observations.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -857,7 +857,7 @@ pub fn observations_logs_query_request(
     })
 }
 
-/// `POST /api/logs/stream`
+/// `POST /api/streams/logs/stream`
 /// Stream workspace logs observations from one origin.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -880,7 +880,7 @@ pub fn observations_logs_stream_request(
     })
 }
 
-/// `POST /api/metrics/aggregate`
+/// `POST /api/observations/metrics/aggregate`
 /// Aggregate workspace metric observations.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -903,7 +903,7 @@ pub fn observations_metrics_aggregate_request(
     })
 }
 
-/// `POST /api/metrics/listen`
+/// `POST /api/streams/metrics/listen`
 /// Listen for new workspace metrics observations.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -926,7 +926,7 @@ pub fn observations_metrics_listen_request(
     })
 }
 
-/// `POST /api/metrics/query`
+/// `POST /api/observations/metrics/query`
 /// Query workspace metrics observations.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -949,7 +949,7 @@ pub fn observations_metrics_query_request(
     })
 }
 
-/// `POST /api/metrics/stream`
+/// `POST /api/streams/metrics/stream`
 /// Stream workspace metrics observations from one origin.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -972,7 +972,7 @@ pub fn observations_metrics_stream_request(
     })
 }
 
-/// `POST /api/spans/listen`
+/// `POST /api/streams/spans/listen`
 /// Listen for new workspace spans observations.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -995,7 +995,7 @@ pub fn observations_spans_listen_request(
     })
 }
 
-/// `POST /api/spans/query`
+/// `POST /api/observations/spans/query`
 /// Query workspace spans observations.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -1018,7 +1018,7 @@ pub fn observations_spans_query_request(
     })
 }
 
-/// `POST /api/spans/stream`
+/// `POST /api/streams/spans/stream`
 /// Stream workspace spans observations from one origin.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -1041,7 +1041,7 @@ pub fn observations_spans_stream_request(
     })
 }
 
-/// `POST /api/telemetry/listen`
+/// `POST /api/streams/telemetry/listen`
 /// Listen for new workspace telemetry observations.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -1064,7 +1064,7 @@ pub fn observations_telemetry_listen_request(
     })
 }
 
-/// `POST /api/telemetry/query`
+/// `POST /api/observations/telemetry/query`
 /// Query workspace telemetry observations.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -1087,7 +1087,7 @@ pub fn observations_telemetry_query_request(
     })
 }
 
-/// `POST /api/telemetry/stream`
+/// `POST /api/streams/telemetry/stream`
 /// Stream workspace telemetry observations from one origin.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -1110,7 +1110,7 @@ pub fn observations_telemetry_stream_request(
     })
 }
 
-/// `POST /api/traces/listen`
+/// `POST /api/streams/traces/listen`
 /// Listen for new workspace traces observations.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -1133,7 +1133,7 @@ pub fn observations_traces_listen_request(
     })
 }
 
-/// `POST /api/traces/query`
+/// `POST /api/observations/traces/query`
 /// Query workspace traces observations.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -1156,7 +1156,7 @@ pub fn observations_traces_query_request(
     })
 }
 
-/// `POST /api/traces/stream`
+/// `POST /api/streams/traces/stream`
 /// Stream workspace traces observations from one origin.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -1253,7 +1253,7 @@ pub fn organizations_list_request(
     })
 }
 
-/// `POST /api/telemetry/otlp/v1/logs`
+/// `POST /api/otlp/v1/logs`
 /// Admit an OTLP logs batch.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -1277,7 +1277,7 @@ pub fn otlp_logs_ingest_request(
     })
 }
 
-/// `POST /api/telemetry/otlp/v1/metrics`
+/// `POST /api/otlp/v1/metrics`
 /// Admit an OTLP metrics batch.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -1301,7 +1301,7 @@ pub fn otlp_metrics_ingest_request(
     })
 }
 
-/// `POST /api/telemetry/otlp/v1/traces`
+/// `POST /api/otlp/v1/traces`
 /// Admit an OTLP traces batch.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -1349,7 +1349,7 @@ pub fn provider_credential_get_request(
     })
 }
 
-/// `POST /api/workspace/provider-credentials`
+/// `POST /api/secrets/provider-credentials`
 /// Register a BYOK provider credential; carries plaintext.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -2030,7 +2030,7 @@ pub fn registry_tools_put_request(
     })
 }
 
-/// `DELETE /api/workspace/secrets/{name}`
+/// `DELETE /api/secrets/{name}`
 /// Delete a secret, affecting future admission only.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -2077,7 +2077,7 @@ pub fn secret_get_request(name: &ResourceName) -> Result<WireRequest, ClientErro
     })
 }
 
-/// `PUT /api/workspace/secrets/{name}`
+/// `PUT /api/secrets/{name}`
 /// Set a secret value for future admission.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -2104,7 +2104,7 @@ pub fn secret_put_request(
     })
 }
 
-/// `POST /api/workspace/secrets/{name}/revocations`
+/// `POST /api/secrets/{name}/revocations`
 /// Revoke a secret and cancel current custody.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -2540,7 +2540,7 @@ pub fn session_messages_list_request(
     })
 }
 
-/// `POST /api/sessions/{sessionId}/events/listen`
+/// `POST /api/streams/{sessionId}/events/listen`
 /// Listen for new session events observations.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -2565,7 +2565,7 @@ pub fn session_observations_events_listen_request(
     })
 }
 
-/// `POST /api/sessions/{sessionId}/events/query`
+/// `POST /api/observations/{sessionId}/events/query`
 /// Query session events observations.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -2590,7 +2590,7 @@ pub fn session_observations_events_query_request(
     })
 }
 
-/// `POST /api/sessions/{sessionId}/events/stream`
+/// `POST /api/streams/{sessionId}/events/stream`
 /// Stream session events observations from one origin.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -2615,7 +2615,7 @@ pub fn session_observations_events_stream_request(
     })
 }
 
-/// `POST /api/sessions/{sessionId}/logs/listen`
+/// `POST /api/streams/{sessionId}/logs/listen`
 /// Listen for new session logs observations.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -2640,7 +2640,7 @@ pub fn session_observations_logs_listen_request(
     })
 }
 
-/// `POST /api/sessions/{sessionId}/logs/query`
+/// `POST /api/observations/{sessionId}/logs/query`
 /// Query session logs observations.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -2665,7 +2665,7 @@ pub fn session_observations_logs_query_request(
     })
 }
 
-/// `POST /api/sessions/{sessionId}/logs/stream`
+/// `POST /api/streams/{sessionId}/logs/stream`
 /// Stream session logs observations from one origin.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -2690,7 +2690,7 @@ pub fn session_observations_logs_stream_request(
     })
 }
 
-/// `POST /api/sessions/{sessionId}/metrics/aggregate`
+/// `POST /api/observations/{sessionId}/metrics/aggregate`
 /// Aggregate session metric observations.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -2715,7 +2715,7 @@ pub fn session_observations_metrics_aggregate_request(
     })
 }
 
-/// `POST /api/sessions/{sessionId}/metrics/listen`
+/// `POST /api/streams/{sessionId}/metrics/listen`
 /// Listen for new session metrics observations.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -2740,7 +2740,7 @@ pub fn session_observations_metrics_listen_request(
     })
 }
 
-/// `POST /api/sessions/{sessionId}/metrics/query`
+/// `POST /api/observations/{sessionId}/metrics/query`
 /// Query session metrics observations.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -2765,7 +2765,7 @@ pub fn session_observations_metrics_query_request(
     })
 }
 
-/// `POST /api/sessions/{sessionId}/metrics/stream`
+/// `POST /api/streams/{sessionId}/metrics/stream`
 /// Stream session metrics observations from one origin.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -2790,7 +2790,7 @@ pub fn session_observations_metrics_stream_request(
     })
 }
 
-/// `POST /api/sessions/{sessionId}/spans/listen`
+/// `POST /api/streams/{sessionId}/spans/listen`
 /// Listen for new session spans observations.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -2815,7 +2815,7 @@ pub fn session_observations_spans_listen_request(
     })
 }
 
-/// `POST /api/sessions/{sessionId}/spans/query`
+/// `POST /api/observations/{sessionId}/spans/query`
 /// Query session spans observations.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -2840,7 +2840,7 @@ pub fn session_observations_spans_query_request(
     })
 }
 
-/// `POST /api/sessions/{sessionId}/spans/stream`
+/// `POST /api/streams/{sessionId}/spans/stream`
 /// Stream session spans observations from one origin.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -2865,7 +2865,7 @@ pub fn session_observations_spans_stream_request(
     })
 }
 
-/// `POST /api/sessions/{sessionId}/telemetry/listen`
+/// `POST /api/streams/{sessionId}/telemetry/listen`
 /// Listen for new session telemetry observations.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -2890,7 +2890,7 @@ pub fn session_observations_telemetry_listen_request(
     })
 }
 
-/// `POST /api/sessions/{sessionId}/telemetry/query`
+/// `POST /api/observations/{sessionId}/telemetry/query`
 /// Query session telemetry observations.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -2915,7 +2915,7 @@ pub fn session_observations_telemetry_query_request(
     })
 }
 
-/// `POST /api/sessions/{sessionId}/telemetry/stream`
+/// `POST /api/streams/{sessionId}/telemetry/stream`
 /// Stream session telemetry observations from one origin.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -2940,7 +2940,7 @@ pub fn session_observations_telemetry_stream_request(
     })
 }
 
-/// `GET /api/sessions/{sessionId}/traces/{traceId}`
+/// `GET /api/observations/{sessionId}/traces/{traceId}`
 /// Read one assembled trace by its W3C identifier.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -2966,7 +2966,7 @@ pub fn session_observations_trace_get_request(
     })
 }
 
-/// `POST /api/sessions/{sessionId}/traces/listen`
+/// `POST /api/streams/{sessionId}/traces/listen`
 /// Listen for new session traces observations.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -2991,7 +2991,7 @@ pub fn session_observations_traces_listen_request(
     })
 }
 
-/// `POST /api/sessions/{sessionId}/traces/query`
+/// `POST /api/observations/{sessionId}/traces/query`
 /// Query session traces observations.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -3016,7 +3016,7 @@ pub fn session_observations_traces_query_request(
     })
 }
 
-/// `POST /api/sessions/{sessionId}/traces/stream`
+/// `POST /api/streams/{sessionId}/traces/stream`
 /// Stream session traces observations from one origin.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -3200,7 +3200,7 @@ pub fn session_stop_request(
     })
 }
 
-/// `POST /api/sessions/{sessionId}/telemetry/exports`
+/// `POST /api/observations/{sessionId}/telemetry/exports`
 /// Admit the durable session telemetry-export operation.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -3226,7 +3226,7 @@ pub fn session_telemetry_export_create_request(
     })
 }
 
-/// `POST /api/sessions/{sessionId}/telemetry/exports/{exportId}/downloads`
+/// `POST /api/observations/{sessionId}/telemetry/exports/{exportId}/downloads`
 /// Mint a download grant for a ready session telemetry export.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -3254,7 +3254,7 @@ pub fn session_telemetry_export_download_create_request(
     })
 }
 
-/// `GET /api/sessions/{sessionId}/telemetry/exports/{exportId}`
+/// `GET /api/observations/{sessionId}/telemetry/exports/{exportId}`
 /// Read one session telemetry export record.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -3280,7 +3280,7 @@ pub fn session_telemetry_export_get_request(
     })
 }
 
-/// `POST /api/sessions/{sessionId}/telemetry/exports/{exportId}/revocations`
+/// `POST /api/observations/{sessionId}/telemetry/exports/{exportId}/revocations`
 /// Revoke a session telemetry export and its outstanding grants.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -3308,7 +3308,7 @@ pub fn session_telemetry_export_revoke_request(
     })
 }
 
-/// `GET /api/sessions/{sessionId}/telemetry/gaps/{gapId}`
+/// `GET /api/observations/{sessionId}/telemetry/gaps/{gapId}`
 /// Read one recorded session telemetry gap.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -3334,7 +3334,7 @@ pub fn session_telemetry_gap_get_request(
     })
 }
 
-/// `POST /api/sessions/{sessionId}/telemetry/gaps/query`
+/// `POST /api/observations/{sessionId}/telemetry/gaps/query`
 /// Query recorded session telemetry gaps.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -3436,7 +3436,7 @@ pub fn sessions_list_request(query: &SessionsListQuery) -> Result<WireRequest, C
     })
 }
 
-/// `POST /api/telemetry/exports`
+/// `POST /api/observations/telemetry/exports`
 /// Admit the durable workspace telemetry-export operation.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -3460,7 +3460,7 @@ pub fn telemetry_export_create_request(
     })
 }
 
-/// `POST /api/telemetry/exports/{exportId}/downloads`
+/// `POST /api/observations/telemetry/exports/{exportId}/downloads`
 /// Mint a download grant for a ready telemetry export.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -3486,7 +3486,7 @@ pub fn telemetry_export_download_create_request(
     })
 }
 
-/// `GET /api/telemetry/exports/{exportId}`
+/// `GET /api/observations/telemetry/exports/{exportId}`
 /// Read one telemetry export record.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -3508,7 +3508,7 @@ pub fn telemetry_export_get_request(export_id: ExportId) -> Result<WireRequest, 
     })
 }
 
-/// `POST /api/telemetry/exports/{exportId}/revocations`
+/// `POST /api/observations/telemetry/exports/{exportId}/revocations`
 /// Revoke a telemetry export and its outstanding grants.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -3534,7 +3534,7 @@ pub fn telemetry_export_revoke_request(
     })
 }
 
-/// `GET /api/telemetry/gaps/{gapId}`
+/// `GET /api/observations/telemetry/gaps/{gapId}`
 /// Read one recorded telemetry gap.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -3556,7 +3556,7 @@ pub fn telemetry_gap_get_request(gap_id: TelemetryGapId) -> Result<WireRequest, 
     })
 }
 
-/// `POST /api/telemetry/gaps/query`
+/// `POST /api/observations/telemetry/gaps/query`
 /// Query recorded workspace telemetry gaps.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
@@ -4215,7 +4215,7 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::MembershipsList, &response)
     }
 
-    /// `POST /api/events/listen`
+    /// `POST /api/streams/events/listen`
     /// Listen for new workspace events observations.
     ///
     /// # Errors
@@ -4231,7 +4231,7 @@ impl<T: Transport> WireClient<T> {
         decode_ndjson(RouteId::ObservationsEventsListen, response)
     }
 
-    /// `POST /api/events/query`
+    /// `POST /api/observations/events/query`
     /// Query workspace events observations.
     ///
     /// # Errors
@@ -4247,7 +4247,7 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::ObservationsEventsQuery, &response)
     }
 
-    /// `POST /api/events/stream`
+    /// `POST /api/streams/events/stream`
     /// Stream workspace events observations from one origin.
     ///
     /// # Errors
@@ -4263,7 +4263,7 @@ impl<T: Transport> WireClient<T> {
         decode_ndjson(RouteId::ObservationsEventsStream, response)
     }
 
-    /// `POST /api/logs/listen`
+    /// `POST /api/streams/logs/listen`
     /// Listen for new workspace logs observations.
     ///
     /// # Errors
@@ -4279,7 +4279,7 @@ impl<T: Transport> WireClient<T> {
         decode_ndjson(RouteId::ObservationsLogsListen, response)
     }
 
-    /// `POST /api/logs/query`
+    /// `POST /api/observations/logs/query`
     /// Query workspace logs observations.
     ///
     /// # Errors
@@ -4295,7 +4295,7 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::ObservationsLogsQuery, &response)
     }
 
-    /// `POST /api/logs/stream`
+    /// `POST /api/streams/logs/stream`
     /// Stream workspace logs observations from one origin.
     ///
     /// # Errors
@@ -4311,7 +4311,7 @@ impl<T: Transport> WireClient<T> {
         decode_ndjson(RouteId::ObservationsLogsStream, response)
     }
 
-    /// `POST /api/metrics/aggregate`
+    /// `POST /api/observations/metrics/aggregate`
     /// Aggregate workspace metric observations.
     ///
     /// # Errors
@@ -4327,7 +4327,7 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::ObservationsMetricsAggregate, &response)
     }
 
-    /// `POST /api/metrics/listen`
+    /// `POST /api/streams/metrics/listen`
     /// Listen for new workspace metrics observations.
     ///
     /// # Errors
@@ -4343,7 +4343,7 @@ impl<T: Transport> WireClient<T> {
         decode_ndjson(RouteId::ObservationsMetricsListen, response)
     }
 
-    /// `POST /api/metrics/query`
+    /// `POST /api/observations/metrics/query`
     /// Query workspace metrics observations.
     ///
     /// # Errors
@@ -4359,7 +4359,7 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::ObservationsMetricsQuery, &response)
     }
 
-    /// `POST /api/metrics/stream`
+    /// `POST /api/streams/metrics/stream`
     /// Stream workspace metrics observations from one origin.
     ///
     /// # Errors
@@ -4375,7 +4375,7 @@ impl<T: Transport> WireClient<T> {
         decode_ndjson(RouteId::ObservationsMetricsStream, response)
     }
 
-    /// `POST /api/spans/listen`
+    /// `POST /api/streams/spans/listen`
     /// Listen for new workspace spans observations.
     ///
     /// # Errors
@@ -4391,7 +4391,7 @@ impl<T: Transport> WireClient<T> {
         decode_ndjson(RouteId::ObservationsSpansListen, response)
     }
 
-    /// `POST /api/spans/query`
+    /// `POST /api/observations/spans/query`
     /// Query workspace spans observations.
     ///
     /// # Errors
@@ -4407,7 +4407,7 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::ObservationsSpansQuery, &response)
     }
 
-    /// `POST /api/spans/stream`
+    /// `POST /api/streams/spans/stream`
     /// Stream workspace spans observations from one origin.
     ///
     /// # Errors
@@ -4423,7 +4423,7 @@ impl<T: Transport> WireClient<T> {
         decode_ndjson(RouteId::ObservationsSpansStream, response)
     }
 
-    /// `POST /api/telemetry/listen`
+    /// `POST /api/streams/telemetry/listen`
     /// Listen for new workspace telemetry observations.
     ///
     /// # Errors
@@ -4439,7 +4439,7 @@ impl<T: Transport> WireClient<T> {
         decode_ndjson(RouteId::ObservationsTelemetryListen, response)
     }
 
-    /// `POST /api/telemetry/query`
+    /// `POST /api/observations/telemetry/query`
     /// Query workspace telemetry observations.
     ///
     /// # Errors
@@ -4455,7 +4455,7 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::ObservationsTelemetryQuery, &response)
     }
 
-    /// `POST /api/telemetry/stream`
+    /// `POST /api/streams/telemetry/stream`
     /// Stream workspace telemetry observations from one origin.
     ///
     /// # Errors
@@ -4471,7 +4471,7 @@ impl<T: Transport> WireClient<T> {
         decode_ndjson(RouteId::ObservationsTelemetryStream, response)
     }
 
-    /// `POST /api/traces/listen`
+    /// `POST /api/streams/traces/listen`
     /// Listen for new workspace traces observations.
     ///
     /// # Errors
@@ -4487,7 +4487,7 @@ impl<T: Transport> WireClient<T> {
         decode_ndjson(RouteId::ObservationsTracesListen, response)
     }
 
-    /// `POST /api/traces/query`
+    /// `POST /api/observations/traces/query`
     /// Query workspace traces observations.
     ///
     /// # Errors
@@ -4503,7 +4503,7 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::ObservationsTracesQuery, &response)
     }
 
-    /// `POST /api/traces/stream`
+    /// `POST /api/streams/traces/stream`
     /// Stream workspace traces observations from one origin.
     ///
     /// # Errors
@@ -4568,7 +4568,7 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::OrganizationsList, &response)
     }
 
-    /// `POST /api/telemetry/otlp/v1/logs`
+    /// `POST /api/otlp/v1/logs`
     /// Admit an OTLP logs batch.
     ///
     /// # Errors
@@ -4585,7 +4585,7 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::OtlpLogsIngest, &response)
     }
 
-    /// `POST /api/telemetry/otlp/v1/metrics`
+    /// `POST /api/otlp/v1/metrics`
     /// Admit an OTLP metrics batch.
     ///
     /// # Errors
@@ -4602,7 +4602,7 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::OtlpMetricsIngest, &response)
     }
 
-    /// `POST /api/telemetry/otlp/v1/traces`
+    /// `POST /api/otlp/v1/traces`
     /// Admit an OTLP traces batch.
     ///
     /// # Errors
@@ -4635,7 +4635,7 @@ impl<T: Transport> WireClient<T> {
         decode_response_with_etag(RouteId::ProviderCredentialGet, &response)
     }
 
-    /// `POST /api/workspace/provider-credentials`
+    /// `POST /api/secrets/provider-credentials`
     /// Register a BYOK provider credential; carries plaintext.
     ///
     /// # Errors
@@ -5094,7 +5094,7 @@ impl<T: Transport> WireClient<T> {
         decode_response_with_etag(RouteId::RegistryToolsPut, &response)
     }
 
-    /// `DELETE /api/workspace/secrets/{name}`
+    /// `DELETE /api/secrets/{name}`
     /// Delete a secret, affecting future admission only.
     ///
     /// # Errors
@@ -5127,7 +5127,7 @@ impl<T: Transport> WireClient<T> {
         decode_response_with_etag(RouteId::SecretGet, &response)
     }
 
-    /// `PUT /api/workspace/secrets/{name}`
+    /// `PUT /api/secrets/{name}`
     /// Set a secret value for future admission.
     ///
     /// # Errors
@@ -5146,7 +5146,7 @@ impl<T: Transport> WireClient<T> {
         decode_response_with_etag(RouteId::SecretPut, &response)
     }
 
-    /// `POST /api/workspace/secrets/{name}/revocations`
+    /// `POST /api/secrets/{name}/revocations`
     /// Revoke a secret and cancel current custody.
     ///
     /// # Errors
@@ -5443,7 +5443,7 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::SessionMessagesList, &response)
     }
 
-    /// `POST /api/sessions/{sessionId}/events/listen`
+    /// `POST /api/streams/{sessionId}/events/listen`
     /// Listen for new session events observations.
     ///
     /// # Errors
@@ -5460,7 +5460,7 @@ impl<T: Transport> WireClient<T> {
         decode_ndjson(RouteId::SessionObservationsEventsListen, response)
     }
 
-    /// `POST /api/sessions/{sessionId}/events/query`
+    /// `POST /api/observations/{sessionId}/events/query`
     /// Query session events observations.
     ///
     /// # Errors
@@ -5477,7 +5477,7 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::SessionObservationsEventsQuery, &response)
     }
 
-    /// `POST /api/sessions/{sessionId}/events/stream`
+    /// `POST /api/streams/{sessionId}/events/stream`
     /// Stream session events observations from one origin.
     ///
     /// # Errors
@@ -5494,7 +5494,7 @@ impl<T: Transport> WireClient<T> {
         decode_ndjson(RouteId::SessionObservationsEventsStream, response)
     }
 
-    /// `POST /api/sessions/{sessionId}/logs/listen`
+    /// `POST /api/streams/{sessionId}/logs/listen`
     /// Listen for new session logs observations.
     ///
     /// # Errors
@@ -5511,7 +5511,7 @@ impl<T: Transport> WireClient<T> {
         decode_ndjson(RouteId::SessionObservationsLogsListen, response)
     }
 
-    /// `POST /api/sessions/{sessionId}/logs/query`
+    /// `POST /api/observations/{sessionId}/logs/query`
     /// Query session logs observations.
     ///
     /// # Errors
@@ -5528,7 +5528,7 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::SessionObservationsLogsQuery, &response)
     }
 
-    /// `POST /api/sessions/{sessionId}/logs/stream`
+    /// `POST /api/streams/{sessionId}/logs/stream`
     /// Stream session logs observations from one origin.
     ///
     /// # Errors
@@ -5545,7 +5545,7 @@ impl<T: Transport> WireClient<T> {
         decode_ndjson(RouteId::SessionObservationsLogsStream, response)
     }
 
-    /// `POST /api/sessions/{sessionId}/metrics/aggregate`
+    /// `POST /api/observations/{sessionId}/metrics/aggregate`
     /// Aggregate session metric observations.
     ///
     /// # Errors
@@ -5562,7 +5562,7 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::SessionObservationsMetricsAggregate, &response)
     }
 
-    /// `POST /api/sessions/{sessionId}/metrics/listen`
+    /// `POST /api/streams/{sessionId}/metrics/listen`
     /// Listen for new session metrics observations.
     ///
     /// # Errors
@@ -5579,7 +5579,7 @@ impl<T: Transport> WireClient<T> {
         decode_ndjson(RouteId::SessionObservationsMetricsListen, response)
     }
 
-    /// `POST /api/sessions/{sessionId}/metrics/query`
+    /// `POST /api/observations/{sessionId}/metrics/query`
     /// Query session metrics observations.
     ///
     /// # Errors
@@ -5596,7 +5596,7 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::SessionObservationsMetricsQuery, &response)
     }
 
-    /// `POST /api/sessions/{sessionId}/metrics/stream`
+    /// `POST /api/streams/{sessionId}/metrics/stream`
     /// Stream session metrics observations from one origin.
     ///
     /// # Errors
@@ -5613,7 +5613,7 @@ impl<T: Transport> WireClient<T> {
         decode_ndjson(RouteId::SessionObservationsMetricsStream, response)
     }
 
-    /// `POST /api/sessions/{sessionId}/spans/listen`
+    /// `POST /api/streams/{sessionId}/spans/listen`
     /// Listen for new session spans observations.
     ///
     /// # Errors
@@ -5630,7 +5630,7 @@ impl<T: Transport> WireClient<T> {
         decode_ndjson(RouteId::SessionObservationsSpansListen, response)
     }
 
-    /// `POST /api/sessions/{sessionId}/spans/query`
+    /// `POST /api/observations/{sessionId}/spans/query`
     /// Query session spans observations.
     ///
     /// # Errors
@@ -5647,7 +5647,7 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::SessionObservationsSpansQuery, &response)
     }
 
-    /// `POST /api/sessions/{sessionId}/spans/stream`
+    /// `POST /api/streams/{sessionId}/spans/stream`
     /// Stream session spans observations from one origin.
     ///
     /// # Errors
@@ -5664,7 +5664,7 @@ impl<T: Transport> WireClient<T> {
         decode_ndjson(RouteId::SessionObservationsSpansStream, response)
     }
 
-    /// `POST /api/sessions/{sessionId}/telemetry/listen`
+    /// `POST /api/streams/{sessionId}/telemetry/listen`
     /// Listen for new session telemetry observations.
     ///
     /// # Errors
@@ -5681,7 +5681,7 @@ impl<T: Transport> WireClient<T> {
         decode_ndjson(RouteId::SessionObservationsTelemetryListen, response)
     }
 
-    /// `POST /api/sessions/{sessionId}/telemetry/query`
+    /// `POST /api/observations/{sessionId}/telemetry/query`
     /// Query session telemetry observations.
     ///
     /// # Errors
@@ -5698,7 +5698,7 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::SessionObservationsTelemetryQuery, &response)
     }
 
-    /// `POST /api/sessions/{sessionId}/telemetry/stream`
+    /// `POST /api/streams/{sessionId}/telemetry/stream`
     /// Stream session telemetry observations from one origin.
     ///
     /// # Errors
@@ -5715,7 +5715,7 @@ impl<T: Transport> WireClient<T> {
         decode_ndjson(RouteId::SessionObservationsTelemetryStream, response)
     }
 
-    /// `GET /api/sessions/{sessionId}/traces/{traceId}`
+    /// `GET /api/observations/{sessionId}/traces/{traceId}`
     /// Read one assembled trace by its W3C identifier.
     ///
     /// # Errors
@@ -5732,7 +5732,7 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::SessionObservationsTraceGet, &response)
     }
 
-    /// `POST /api/sessions/{sessionId}/traces/listen`
+    /// `POST /api/streams/{sessionId}/traces/listen`
     /// Listen for new session traces observations.
     ///
     /// # Errors
@@ -5749,7 +5749,7 @@ impl<T: Transport> WireClient<T> {
         decode_ndjson(RouteId::SessionObservationsTracesListen, response)
     }
 
-    /// `POST /api/sessions/{sessionId}/traces/query`
+    /// `POST /api/observations/{sessionId}/traces/query`
     /// Query session traces observations.
     ///
     /// # Errors
@@ -5766,7 +5766,7 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::SessionObservationsTracesQuery, &response)
     }
 
-    /// `POST /api/sessions/{sessionId}/traces/stream`
+    /// `POST /api/streams/{sessionId}/traces/stream`
     /// Stream session traces observations from one origin.
     ///
     /// # Errors
@@ -5890,7 +5890,7 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::SessionStop, &response)
     }
 
-    /// `POST /api/sessions/{sessionId}/telemetry/exports`
+    /// `POST /api/observations/{sessionId}/telemetry/exports`
     /// Admit the durable session telemetry-export operation.
     ///
     /// # Errors
@@ -5908,7 +5908,7 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::SessionTelemetryExportCreate, &response)
     }
 
-    /// `POST /api/sessions/{sessionId}/telemetry/exports/{exportId}/downloads`
+    /// `POST /api/observations/{sessionId}/telemetry/exports/{exportId}/downloads`
     /// Mint a download grant for a ready session telemetry export.
     ///
     /// # Errors
@@ -5932,7 +5932,7 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::SessionTelemetryExportDownloadCreate, &response)
     }
 
-    /// `GET /api/sessions/{sessionId}/telemetry/exports/{exportId}`
+    /// `GET /api/observations/{sessionId}/telemetry/exports/{exportId}`
     /// Read one session telemetry export record.
     ///
     /// # Errors
@@ -5949,7 +5949,7 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::SessionTelemetryExportGet, &response)
     }
 
-    /// `POST /api/sessions/{sessionId}/telemetry/exports/{exportId}/revocations`
+    /// `POST /api/observations/{sessionId}/telemetry/exports/{exportId}/revocations`
     /// Revoke a session telemetry export and its outstanding grants.
     ///
     /// # Errors
@@ -5969,7 +5969,7 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::SessionTelemetryExportRevoke, &response)
     }
 
-    /// `GET /api/sessions/{sessionId}/telemetry/gaps/{gapId}`
+    /// `GET /api/observations/{sessionId}/telemetry/gaps/{gapId}`
     /// Read one recorded session telemetry gap.
     ///
     /// # Errors
@@ -5986,7 +5986,7 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::SessionTelemetryGapGet, &response)
     }
 
-    /// `POST /api/sessions/{sessionId}/telemetry/gaps/query`
+    /// `POST /api/observations/{sessionId}/telemetry/gaps/query`
     /// Query recorded session telemetry gaps.
     ///
     /// # Errors
@@ -6055,7 +6055,7 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::SessionsList, &response)
     }
 
-    /// `POST /api/telemetry/exports`
+    /// `POST /api/observations/telemetry/exports`
     /// Admit the durable workspace telemetry-export operation.
     ///
     /// # Errors
@@ -6072,7 +6072,7 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::TelemetryExportCreate, &response)
     }
 
-    /// `POST /api/telemetry/exports/{exportId}/downloads`
+    /// `POST /api/observations/telemetry/exports/{exportId}/downloads`
     /// Mint a download grant for a ready telemetry export.
     ///
     /// # Errors
@@ -6090,7 +6090,7 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::TelemetryExportDownloadCreate, &response)
     }
 
-    /// `GET /api/telemetry/exports/{exportId}`
+    /// `GET /api/observations/telemetry/exports/{exportId}`
     /// Read one telemetry export record.
     ///
     /// # Errors
@@ -6106,7 +6106,7 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::TelemetryExportGet, &response)
     }
 
-    /// `POST /api/telemetry/exports/{exportId}/revocations`
+    /// `POST /api/observations/telemetry/exports/{exportId}/revocations`
     /// Revoke a telemetry export and its outstanding grants.
     ///
     /// # Errors
@@ -6124,7 +6124,7 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::TelemetryExportRevoke, &response)
     }
 
-    /// `GET /api/telemetry/gaps/{gapId}`
+    /// `GET /api/observations/telemetry/gaps/{gapId}`
     /// Read one recorded telemetry gap.
     ///
     /// # Errors
@@ -6140,7 +6140,7 @@ impl<T: Transport> WireClient<T> {
         decode_response(RouteId::TelemetryGapGet, &response)
     }
 
-    /// `POST /api/telemetry/gaps/query`
+    /// `POST /api/observations/telemetry/gaps/query`
     /// Query recorded workspace telemetry gaps.
     ///
     /// # Errors
