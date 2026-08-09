@@ -4,8 +4,8 @@
 //! Before this module the deployable emitted exactly one record in its life —
 //! the startup event — so the degraded-gate counter the spool contract
 //! documents ([`aex_observation_store_dynamodb::spool::GateState::Degraded`]:
-//! "admission proceeds and a counter is emitted") did not exist, and neither an
-//! emptying redaction manifest nor an exhausted materialization left any trace.
+//! "admission proceeds and a counter is emitted") did not exist, and an
+//! exhausted materialization left no trace at all.
 //!
 //! Counters are emitted directly per occurrence rather than through the
 //! interval publisher the stream service uses: this is a Lambda, frozen between
@@ -32,10 +32,6 @@ pub enum AdmissionCounter {
     DegradedGateAdmission,
     /// Observation records committed by an admission.
     RecordsAdmitted,
-    /// Custody manifest entries that could not be parsed. Every occurrence is
-    /// a batch that failed closed; after the fail-closed fix this counts
-    /// attempts, never silently dropped entries.
-    CustodyEntriesMalformed,
     /// Materializations that exhausted their bounded retries with unprocessed
     /// items remaining.
     MaterializeRetryExhausted,
@@ -48,7 +44,6 @@ impl AdmissionCounter {
     pub const ALL: &'static [Self] = &[
         Self::DegradedGateAdmission,
         Self::RecordsAdmitted,
-        Self::CustodyEntriesMalformed,
         Self::MaterializeRetryExhausted,
     ];
 
@@ -58,7 +53,6 @@ impl AdmissionCounter {
         match self {
             Self::DegradedGateAdmission => "degraded_gate_admission",
             Self::RecordsAdmitted => "records_admitted",
-            Self::CustodyEntriesMalformed => "custody_entries_malformed",
             Self::MaterializeRetryExhausted => "materialize_retry_exhausted",
         }
     }
@@ -149,7 +143,7 @@ mod tests {
     #[test]
     fn a_zero_delta_emits_nothing() {
         let (telemetry, _exporter) = telemetry();
-        telemetry.count(AdmissionCounter::CustodyEntriesMalformed, 0);
+        telemetry.count(AdmissionCounter::DegradedGateAdmission, 0);
         assert_eq!(telemetry.handle.pending(), 0);
     }
 

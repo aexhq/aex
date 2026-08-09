@@ -18,7 +18,7 @@ pub mod use_cases;
 
 pub use ports::{
     CommitReceipt, CommitRequest, EventPage, EventPageRequest, GapSink, ObservationAuthority,
-    PortError, SecretManifestSource, SemanticEvent, SemanticEventSource,
+    PortError, SemanticEvent, SemanticEventSource,
 };
 pub use use_cases::{
     AdmissionError, AdmitBatch, GapOnFailure, SemanticAdmission, SemanticAdmissionRequest,

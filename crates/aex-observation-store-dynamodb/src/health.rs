@@ -21,8 +21,6 @@ pub enum Probe {
     ObservationBucket,
     /// The cursor signing key ring resolves.
     CursorKeyRing,
-    /// The regional redaction key resolves.
-    RedactionKey,
     /// The regional ingress gate item is readable.
     IngressGate,
     /// `session-authority` is readable for the `events` signal.
@@ -39,7 +37,6 @@ impl Probe {
             Self::ObservationTable => "observation_table",
             Self::ObservationBucket => "observation_bucket",
             Self::CursorKeyRing => "cursor_key_ring",
-            Self::RedactionKey => "redaction_key",
             Self::IngressGate => "ingress_gate",
             Self::SessionAuthority => "session_authority",
             Self::ExportCluster => "export_cluster",
@@ -105,7 +102,7 @@ mod tests {
 
     #[test]
     fn a_probe_names_itself_in_a_failure() {
-        assert_eq!(Probe::RedactionKey.as_str(), "redaction_key");
+        assert_eq!(Probe::CursorKeyRing.as_str(), "cursor_key_ring");
         assert_eq!(Probe::IngressGate.as_str(), "ingress_gate");
     }
 }

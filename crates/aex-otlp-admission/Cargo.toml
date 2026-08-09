@@ -34,7 +34,6 @@ aex-observation-domain = { path = "../aex-observation-domain" }
 aex-wire = { path = "../aex-wire" }
 bytes.workspace = true
 flate2.workspace = true
-hmac.workspace = true
 prost.workspace = true
 prost-types.workspace = true
 serde.workspace = true

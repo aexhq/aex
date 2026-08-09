@@ -316,7 +316,7 @@ mod tests {
     use axum::http::StatusCode;
 
     use super::{AUDIENCE, AppState, GROUP, mounted_templates, owned_routes};
-    use crate::admission::{CustodyManifests, OtlpService};
+    use crate::admission::OtlpService;
     use crate::authority::AdmissionAuthority;
     use crate::counters::AdmissionTelemetry;
 
@@ -368,17 +368,15 @@ mod tests {
         );
         let service = OtlpService::new(
             AdmissionAuthority::new(
-                dynamodb.clone(),
+                dynamodb,
                 s3,
                 "test-observation-authority",
                 "test-observation-bucket",
                 region,
             ),
-            CustodyManifests::new(dynamodb, "test-secret-custody"),
             OtlpLimits::REGISTERED,
             MemoryBudget::new(32 * 1024 * 1024),
             Duration::from_millis(5),
-            vec![0u8; 32],
             AdmissionTelemetry::new(
                 aex_platform_telemetry::Handle::install(
                     &aex_platform_telemetry::Settings::default(),

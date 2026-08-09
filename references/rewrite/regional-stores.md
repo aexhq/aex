@@ -112,10 +112,13 @@ session row codec and the projection reader are not in its link graph.
 ### `crates/aex-secret-custody-dynamodb`
 
 The secret metadata, hidden source-generation, lineage, session-custody,
-managed-call authorization, redaction-manifest and provider-credential row
-families; the set, O(1) revoke, idle-only custody admission and only-before-
-decrypt authorization transactions; and strongly consistent metadata/ciphertext
-reads from deliberately separate partitions.
+managed-call authorization and provider-credential row families; the set, O(1)
+revoke, idle-only custody admission and only-before-decrypt authorization
+transactions; and strongly consistent metadata/ciphertext reads from
+deliberately separate partitions.
+
+A redaction-manifest family sat beside these until 2026-08-09. It was removed
+with the observations redactor it existed for; see §18.
 
 The metadata `Update` always writes `itemType="workspace_secret"`, including
 when it creates the row. A set plan is rejected unless the target revision is
@@ -287,7 +290,7 @@ are unchanged; everything below is the remaining seven crates.
 | `aex-content-dynamodb` | §2.3 in full: workspace-scoped body/root/tree/grant/GC keys, the SHA-256 body vs `BLAKE3` page digest split, root pins, grant rows that hold a reference and a pin, the GC epoch state machine and the fenced sweep. 58 unit + 7 engine cases. |
 | `aex-content-aws` | §5 in full: `{workspace}/{2}/{2}/{sha256}` addressing, conditional create with the HEAD-compare resolution, one-round-trip bounded immutable reads that admit provider `Content-Length` before collecting and then verify metadata/length/SHA-256, the three-fact multipart integrity argument, presigned grants behind `RedactedUrl`, the fenced delete, the S3 error table, and the bucket-policy requirements as data. 54 unit + 7 engine cases. |
 | `aex-registry-dynamodb` | §2.4 in full on `aex-workspace-domain`: pointer/`ETag`/revision, the upload state machine as conditions, native ordered listing with signed continuations, no index and no stream. 43 unit + 5 engine cases. |
-| `aex-secret-custody-dynamodb` | §2.5 plus both additions: metadata and ciphertext in separate partitions, §3.6's four expressions verbatim, the `REDACT#{session}` manifest in its own partition, and the `pcr_` provider-credential directory. 36 unit + 5 engine cases. |
+| `aex-secret-custody-dynamodb` | §2.5 plus both additions: metadata and ciphertext in separate partitions, §3.6's four expressions verbatim, the `REDACT#{session}` manifest in its own partition (removed 2026-08-09, §18), and the `pcr_` provider-credential directory. 36 unit + 5 engine cases. |
 | `aex-secret-aws` | The OD-33 envelope arm: KMS root key → per-workspace branch key → per-message HKDF-SHA512 wrapping key → AES-256-GCM with the encryption context as AAD, a bounded zeroizing role-partitioned cache, and seal/rewrap/reveal. 39 unit + 3 engine cases. |
 | `aex-secret-keystore-dynamodb` | §2.6: the provider schema verbatim, `KeyStoreBinding` with the logical name pinned to the physical table name, read-only introspection, and **no write path at all**. 24 unit + 3 engine cases. |
 | `aex-runtime-activity-dynamodb` | §2.7 in full: generation head, lifecycle intents, immutable receipts, idle probes, the current-generation pointer and the 16-shard evaluation due index. 36 unit + 4 engine cases. |
@@ -351,7 +354,7 @@ each with a case pinning it:
   GrantExpiryPage}`.
 - **`aex_content_aws`** — `ObjectKey`, `PRESIGN_EXPIRY`, `MAX_SIGNATURE_AGE_MILLIS`, `RedactedUrl`, `BucketBinding`, `ContentObjectStore` (including bounded direct immutable reads), `BoundedObject`, `S3ContentObjects`, `CompletionManifest`, `ContentObjectError`, and `policy::REQUIRED_DENIES` — the bucket-policy `Deny` statements this adapter depends on, as data the infrastructure stream can consume instead of re-deriving.
 - **`aex_registry_dynamodb`** — `keys`, `codec` (built on `aex_workspace_domain::registry`/`upload`), `expressions` (pointer create/replace/delete, the upload transitions, completion begin/finish, consume), `store::{RegistryStore, RegistryDynamoStore, PointerPage}`.
-- **`aex_secret_custody_dynamodb`** — `keys` (including `redaction_manifest` and `provider_credential`), `codec::{SecretMetadata, StoredGeneration, CustodyHead, CallAuthorization, RedactionManifest, ProviderCredential}`, `expressions::{set, revoke, admit_custody, authorize_managed_call, SET_ORDER, AUTHORIZE_ORDER}`, `store::{SecretCustodyStore, CustodyStore}`.
+- **`aex_secret_custody_dynamodb`** — `keys` (including `provider_credential`), `codec::{SecretMetadata, StoredGeneration, CustodyHead, CallAuthorization, ProviderCredential}`, `expressions::{set, revoke, admit_custody, authorize_managed_call, SET_ORDER, AUTHORIZE_ORDER}`, `store::{SecretCustodyStore, CustodyStore}`. `keys::redaction_manifest`, `codec::RedactionManifest` and `store::{put_manifest, SecretCustodyStore::load_manifest}` were also published here and are withdrawn; see §18.
 - **`aex_secret_aws`** — `context::{kms_pairs, aad_bytes, context_digest, name_digest}`, `envelope::{seal, open, header, BranchKeyMaterial, Entropy}`, `keystore::{BranchKeyProvider, KmsBranchKeys, BranchKeyCache}`, `crypto::{SecretCrypto, EnvelopeCrypto, SealedSecret, IMPLEMENTATION}`.
 - **`aex_secret_keystore_dynamodb`** — `branch_key` (the provider record and its vocabulary), `store::{KeyStoreBinding, BranchKeyStoreReader, KeyStoreReader, ActiveBranchKey}`. `KeyStoreBinding` is what `regional-secret-key-admin` and `aex-secret-aws` both take.
 - **`aex_runtime_activity_dynamodb`** — `keys` (templates including `USAGE#`, `DUE_PROJECTION`, `DUE_SHARDS`, the state spellings), `codec`, `expressions::{create_generation, transition, reschedule, record_intent, settle_intent, record_probe, point_current}`, and the canonical `aex_runtime_control::store::RuntimeActivityStore` implementation on `RuntimeActivityDynamoStore`. The canonical port atomically takes the generation/current-pointer fence with the blocking intent, persists provider request evidence before an await, and conditionally advances the durable reconciliation count to quarantine at eight attempts.
@@ -368,7 +371,7 @@ each with a case pinning it:
 | The content bucket policy must carry the three `Deny` statements in `aex_content_aws::policy::REQUIRED_DENIES` verbatim, including `s3:signatureAge > 300000`. The adapter signs for exactly 300 seconds and a case pins the two values together. | infrastructure |
 | The content and secret CMK policies still owe the `StringEquals` conditions on `kms:EncryptionContext:aex:workspace` and `aex:domain` (OD-18). `aex-secret-aws` sends the context on every `Decrypt` and `aex-content-aws` sends it on every SSE-KMS write; neither can enforce the condition. | infrastructure |
 | `regional-secret-key-admin` owns `CreateKey`/`VersionKey` and every write to `regional-secret-keystore`. It should consume `KeyStoreBinding` rather than address the table itself. | regional services |
-| `regional-otlp` reads the redaction manifest at `REDACT#{session_id}` / `MANIFEST` with `dynamodb:GetItem` and holds nothing else on that table. The manifest's HMAC algorithm and key id are row fields, so a rotation is explicit; the collector must compare digests rather than values. | observations |
+| ~~`regional-otlp` reads the redaction manifest at `REDACT#{session_id}` / `MANIFEST` with `dynamodb:GetItem` and holds nothing else on that table.~~ **Withdrawn on 2026-08-09: the observations stream reads nothing on this table and holds no grant on it. See §18.** | observations |
 
 ## 12. Decisions taken
 
@@ -386,8 +389,8 @@ each with a case pinning it:
 | RS-25 | Registry and secret names are `aex_wire::ids::ResourceName`, whose grammar is ASCII `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`. | Plan 05 asks for "the canonical NFC name". An ASCII grammar is NFC by construction, so no normalization crate is needed and none was added. |
 | RS-26 | The stored registry `ETag` is recomputed from `(kind, revision, digest)` on every read and compared. | The tag is a pure function of the row; a stored copy that disagrees describes a value that no longer exists, and handing a client that tag would make its next `If-Match` meaningless. |
 | RS-27 | `aex-secret-keystore-dynamodb` decodes without the shared typed row reader. | The provider's schema has no `itemType`. Fabricating one would make the store unreadable by the provider's own tooling, which is the entire risk D-20 exists to avoid. |
-| RS-28 | The redaction manifest lives at `REDACT#{session}` / `MANIFEST`, in its own partition. | `regional-otlp` holds `dynamodb:GetItem` and nothing else on the custody table. A manifest inside `CUSTODY#{session}` would be one key-guess away from a custody row; in its own partition, one point read is all the grant can reach. |
-| RS-29 | A metadata row, a manifest and a credential binding all **refuse to decode** if they carry `ciphertext` or `wrappedKey`. | The types have nowhere to put sealed bytes, but a row written by hand or by an older revision could still have them. Refusing on read is what stops that becoming a leak on the list path. |
+| RS-28 | The redaction manifest lives at `REDACT#{session}` / `MANIFEST`, in its own partition. | `regional-otlp` holds `dynamodb:GetItem` and nothing else on the custody table. A manifest inside `CUSTODY#{session}` would be one key-guess away from a custody row; in its own partition, one point read is all the grant can reach. **Withdrawn on 2026-08-09: the manifest and the grant are both gone. See §18.** |
+| RS-29 | A metadata row and a credential binding both **refuse to decode** if they carry `ciphertext` or `wrappedKey`. | The types have nowhere to put sealed bytes, but a row written by hand or by an older revision could still have them. Refusing on read is what stops that becoming a leak on the list path. The rule covered the manifest too until it was removed (§18). |
 | RS-30 | `aex-live-regional-stores` was not created. | It is a new workspace member, which this stream was told not to add, and the registry additionally requires a live companion to name a member deployable. The concerns are recorded against the existing companions instead. |
 
 ## 13. Gate output
@@ -627,3 +630,48 @@ branch key; it neither reads nor mints the active key ciphertext required by a
 first seal. The exact remaining route decisions and missing atomic receipt/
 registration plans are recorded in `regional-services.md`; both routes remain
 unserved.
+
+## 18. The redaction-manifest family is removed (2026-08-09)
+
+The observations stream's managed-secret redactor was deleted on the owner's
+decision — *"this is an anti-pattern and code smell that we should get a better
+system design with"* — and this table's half of it went with it. The full
+reasoning and the complete removal inventory are in
+`references/rewrite/observations.md` §13; what follows is the part that belongs
+to this stream.
+
+The manifest was the writer's side of a filter. The reader scanned admitted
+telemetry for values the platform had injected into a customer sandbox, and this
+table published `{len, hmac}` digests so it could recognise them without any
+decrypt permission. That filter compensated for a missing boundary. The boundary
+now holds instead: the platform's own credentials never enter the sandbox, so
+there is no injected value in a session's telemetry to recognise, and nothing
+for this table to declare about one.
+
+Removed here:
+
+- `keys::redaction_manifest` and the `redaction_manifest` entry in
+  `keys::ITEM_TYPES`
+- `codec::{RedactionEntry, RedactionManifest, REDACTION_MANIFEST,
+  encode_manifest, decode_manifest}` and `EncodeError::SecretTooWide`, whose
+  only producer was `RedactionEntry::digest`
+- `store::put_manifest` and `SecretCustodyStore::load_manifest`
+- the `hmac` dependency, whose only use was the manifest entry digest
+- the `redaction_manifest` item type and the whole `regional-otlp` IAM grant in
+  `migrations/regional/tables/regional-secret-custody.json`
+
+`put_manifest` had exactly one caller in the workspace and it was a test, so no
+manifest row was ever written in production and no deployed reader ever matched
+against a non-empty one. There is no migration and no row family to drain.
+
+**Everything else on this table is unaffected.** Secret metadata, hidden source
+generations carrying ciphertext, lineage, session custody heads and bindings,
+the revocation epoch, managed-call authorizations, rebind intents, the `pcr_`
+BYOK provider-credential directory and idempotency receipts are all
+non-redaction custody and are untouched. The removal cuts one row family and one
+reader's grant, not the crate.
+
+The `regional-otlp` grant existed only for the manifest point read, so the
+collector now holds nothing at all on this table. That is pinned rather than
+merely stated: `conformance::the_collector_holds_nothing_at_all_on_this_table`
+fails if any grant naming that role reappears in the table definition.

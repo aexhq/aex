@@ -136,14 +136,6 @@ impl SecretCustodyStore for FakeCustody {
         Err(Self::out_of_scope("custody.head"))
     }
 
-    async fn load_manifest(
-        &self,
-        _workspace: WorkspaceId,
-        _session: SessionId,
-    ) -> Result<Option<aex_secret_custody_dynamodb::codec::RedactionManifest>, StoreError> {
-        Err(Self::out_of_scope("redaction.manifest"))
-    }
-
     async fn list_provider_credentials(
         &self,
         _workspace: WorkspaceId,

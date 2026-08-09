@@ -58,11 +58,11 @@ fn every_capability_is_classified_as_granted_or_denied() {
 #[test]
 fn the_only_dependency_this_deployable_proves_is_the_export_cluster() {
     assert_eq!(Probe::ExportCluster.as_str(), "export_cluster");
-    // A probe naming the observation bucket or the redaction key would mean the
-    // launcher had been given a data dependency it holds no capability for.
+    // A probe naming the observation bucket or the cursor key ring would mean
+    // the launcher had been given a data dependency it holds no capability for.
     for absent in [
         Probe::ObservationBucket,
-        Probe::RedactionKey,
+        Probe::ObservationTable,
         Probe::CursorKeyRing,
     ] {
         assert_ne!(Probe::ExportCluster, absent);

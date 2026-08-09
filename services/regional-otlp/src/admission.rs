@@ -7,25 +7,22 @@
 //! OOM kill. That, plus dedicated memory and reserved concurrency, is what makes
 //! `reserved concurrency × decoded ceiling` the whole-region decode bound.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use aex_observation_domain::canonical::{BatchBinding, CanonicalValue, batch_intent_digest};
 use aex_observation_domain::keys::ScopeKey;
 use aex_otlp_admission::{
-    ContentCoding, DecodeRequest, DigestRedactor, ManagedSecretRedactor, MemoryBudget,
-    NoManagedSecrets, NormalizedBatch, OtlpEncoding, OtlpError, OtlpLimits, OtlpSignal,
-    RedactionReport, SecretDigest, SecretDigestManifest, decode, normalize, reservation_for,
+    ContentCoding, DecodeRequest, MemoryBudget, OtlpEncoding, OtlpError, OtlpLimits, OtlpSignal,
+    decode, normalize, reservation_for,
 };
 use aex_wire::error::{ErrorCode, WireError, WireResult};
 use aex_wire::idempotency::PrincipalScope;
-use aex_wire::ids::{PrefixedId as _, SessionId, TelemetryBatchId, Uuid7, WorkspaceId};
+use aex_wire::ids::{PrefixedId as _, SessionId, TelemetryBatchId, Uuid7};
 use aex_wire::models::TelemetryAdmissionReceipt;
 use aex_wire::routes::route;
 use aex_wire::server::{OtlpApi, RequestContext};
 use aex_wire::types::{DecimalU128, Timestamp};
-use aws_sdk_dynamodb::types::AttributeValue;
 
 use crate::authority::{AdmissionAuthority, AdmissionRequest, AuthorityError, PreparedObservation};
 use crate::counters::{AdmissionCounter, AdmissionTelemetry};
@@ -38,11 +35,9 @@ const RESERVE_POLL: Duration = Duration::from_millis(2);
 /// The composed admission service, shared across requests.
 pub struct OtlpService {
     authority: AdmissionAuthority,
-    custody: CustodyManifests,
     limits: OtlpLimits,
     budget: MemoryBudget,
     reserve_wait: Duration,
-    redaction_key: Vec<u8>,
     telemetry: AdmissionTelemetry,
 }
 
@@ -52,11 +47,9 @@ impl std::fmt::Debug for OtlpService {
             .debug_struct("OtlpService")
             .field("table", &self.authority.table())
             .field("bucket", &self.authority.bucket())
-            .field("custody_table", &self.custody)
             .field("limits", &self.limits)
             .field("budget_bytes", &self.budget.capacity())
             .field("reserve_wait", &self.reserve_wait)
-            .field("redaction_key", &"<redacted>")
             .field("telemetry", &self.telemetry)
             .finish()
     }
@@ -67,20 +60,16 @@ impl OtlpService {
     #[must_use]
     pub fn new(
         authority: AdmissionAuthority,
-        custody: CustodyManifests,
         limits: OtlpLimits,
         budget: MemoryBudget,
         reserve_wait: Duration,
-        redaction_key: Vec<u8>,
         telemetry: AdmissionTelemetry,
     ) -> Self {
         Self {
             authority,
-            custody,
             limits,
             budget,
             reserve_wait,
-            redaction_key,
             telemetry,
         }
     }
@@ -181,8 +170,8 @@ impl OtlpRequest {
 
     /// Admits one batch of one signal.
     // This is intentionally kept as one bounded admission transaction so the
-    // reservation, decode, normalization, redaction, and commit ordering is
-    // visible in one place.
+    // reservation, decode, normalization and commit ordering is visible in one
+    // place.
     #[allow(clippy::too_many_lines)]
     async fn admit(
         &self,
@@ -224,11 +213,12 @@ impl OtlpRequest {
             run_id: None,
             agent_id: None,
         };
-        let mut normalized =
+        // The batch is admitted as its author wrote it. Nothing rewrites a
+        // customer's bytes on this path: the platform's own credentials never
+        // enter the sandbox that produced them, so there is no platform secret
+        // in this telemetry for a filter to find.
+        let normalized =
             normalize(&batch, &scope, &service.limits).map_err(|error| otlp_error(&error))?;
-
-        // Step 4b — redact platform-injected secrets with zero decrypt permission.
-        self.redact(&mut normalized).await?;
 
         // Step 5 — canonicalize and bind the batch.
         let mut observations = Vec::with_capacity(normalized.observations.len());
@@ -310,51 +300,6 @@ impl OtlpRequest {
             rejected: DecimalU128::ZERO,
         })
     }
-
-    /// Removes AEX-managed secret values the platform itself injected.
-    async fn redact(&self, batch: &mut NormalizedBatch) -> WireResult<RedactionReport> {
-        let Some(session) = self.scope().session() else {
-            // Only a session can have had a platform secret injected into it. A
-            // workspace-key batch is customer-authored throughout, and the
-            // product never claims arbitrary customer bytes can be recognised.
-            //
-            // This is also what makes the custody read unreachable while no
-            // principal names a session: the manifest `GetItem` below is the
-            // only cross-tenant-addressable read on this path, and it can only
-            // be reached with a session the credential itself proved.
-            return apply(&NoManagedSecrets, batch).map_err(|error| otlp_error(&error));
-        };
-        let manifest = match self
-            .service
-            .custody
-            .manifest(session, self.authorized.auth.workspace_id)
-            .await
-        {
-            Ok(manifest) => manifest,
-            Err(error) => {
-                if let AuthorityError::CustodyMalformed { malformed } = &error {
-                    // Attempts, not drops: each occurrence is a batch that
-                    // failed closed rather than an entry that silently left
-                    // the redaction set.
-                    self.service
-                        .telemetry
-                        .count(AdmissionCounter::CustodyEntriesMalformed, *malformed as u64);
-                }
-                return Err(authority_error(&error));
-            }
-        };
-        if manifest.entries.is_empty() {
-            return apply(&NoManagedSecrets, batch).map_err(|error| otlp_error(&error));
-        }
-        let redactor = DigestRedactor::new(
-            self.service.redaction_key.clone(),
-            manifest,
-            self.service.limits.redact_budget_bytes,
-        );
-        // Budget exhaustion fails the batch closed: admitting unredacted bytes
-        // is never an acceptable degradation.
-        apply(&redactor, batch).map_err(|error| otlp_error(&error))
-    }
 }
 
 impl OtlpApi for OtlpRequest {
@@ -381,29 +326,6 @@ impl OtlpApi for OtlpRequest {
     ) -> WireResult<TelemetryAdmissionReceipt> {
         self.admit(cx, OtlpSignal::Traces, body).await
     }
-}
-
-/// Applies one redactor to every canonical value in the batch.
-fn apply<R: ManagedSecretRedactor + ?Sized>(
-    redactor: &R,
-    batch: &mut NormalizedBatch,
-) -> Result<RedactionReport, OtlpError> {
-    let mut report = RedactionReport::default();
-    for observation in &mut batch.observations {
-        report.merge(redactor.redact(&mut observation.body)?);
-        let keys: Vec<String> = observation.attr_s.keys().cloned().collect();
-        for key in keys {
-            let Some(current) = observation.attr_s.get(&key) else {
-                continue;
-            };
-            let mut value = CanonicalValue::Str(current.clone().into_boxed_str());
-            report.merge(redactor.redact(&mut value)?);
-            if let CanonicalValue::Str(text) = value {
-                observation.attr_s.insert(key, text.into_string());
-            }
-        }
-    }
-    Ok(report)
 }
 
 /// Waits for a decode reservation, then fails retryably rather than allocating.
@@ -446,13 +368,6 @@ fn authority_error(error: &AuthorityError) -> WireError {
     match error {
         AuthorityError::GateClosed { .. } => WireError::new(ErrorCode::ObservabilityUnavailable)
             .with_retry_after(Duration::from_secs(30)),
-        // Fail closed, retryably: the custody stream owns the manifest row and
-        // rewrites it on its next revision, so the same batch can succeed
-        // later without any change on the caller's side.
-        AuthorityError::CustodyMalformed { .. } => {
-            WireError::new(ErrorCode::ObservabilityUnavailable)
-                .with_retry_after(Duration::from_secs(30))
-        }
         // The commit is durable and the batch identity content-addressed, so a
         // retry resumes materialization from the receipt.
         AuthorityError::MaterializeExhausted { .. } => {
@@ -508,190 +423,6 @@ fn batch_id_for(digest: &aex_wire::idempotency::IntentDigest) -> TelemetryBatchI
     TelemetryBatchId::from_uuid7(Uuid7::compose(millis, entropy))
 }
 
-/// The `regional-secret-custody` redaction manifest reader.
-///
-/// **Zero decrypt permission.** The manifest is a keyed-digest directory, so
-/// this deployable can recognise an injected secret without ever being able to
-/// read one. The item family is the cross-stream contract the regional-secret
-/// stream publishes; an absent manifest means no managed secret was injected
-/// into the session, which is the only reading that does not invent one.
-#[derive(Clone, Debug)]
-pub struct CustodyManifests {
-    dynamodb: aws_sdk_dynamodb::Client,
-    table: String,
-}
-
-impl CustodyManifests {
-    /// Binds the reader to the custody table.
-    #[must_use]
-    pub fn new(dynamodb: aws_sdk_dynamodb::Client, table: impl Into<String>) -> Self {
-        Self {
-            dynamodb,
-            table: table.into(),
-        }
-    }
-
-    /// The partition key of one session's manifest.
-    #[must_use]
-    pub fn partition_key(session: SessionId) -> String {
-        format!("REDACT#{session}")
-    }
-
-    /// Reads one session's manifest, refusing one that names another workspace.
-    ///
-    /// The key is `REDACT#{session}` alone — the item family is partitioned by
-    /// session, not by tenant — so the read itself cannot be conditioned on the
-    /// caller's workspace. The row does record its owner, though
-    /// (`aex_secret_custody_dynamodb::codec::encode_manifest` writes
-    /// `workspaceId` on every manifest it emits), so the ownership assertion is
-    /// made on the returned item, exactly as that crate's own `decode_manifest`
-    /// makes it. Belt and braces: with the session now coming from the verified
-    /// credential, the caller can no longer name a session it does not own, and
-    /// this refusal is the second, independent reason a foreign manifest can
-    /// never be read.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AuthorityError::Provider`] when the read fails,
-    /// [`AuthorityError::Malformed`] when the stored manifest is absent an
-    /// owner, names a different one, or carries no `entries` attribute, and
-    /// [`AuthorityError::CustodyMalformed`] when any entry cannot be parsed.
-    /// All three fail the batch closed: admitting unredacted bytes — or bytes
-    /// checked against a silently emptier redaction set — is never an
-    /// acceptable degradation.
-    pub async fn manifest(
-        &self,
-        session: SessionId,
-        workspace: WorkspaceId,
-    ) -> Result<SecretDigestManifest, AuthorityError> {
-        let response = self
-            .dynamodb
-            .get_item()
-            .table_name(&self.table)
-            .key("pk", AttributeValue::S(Self::partition_key(session)))
-            .key("sk", AttributeValue::S("MANIFEST".to_owned()))
-            .consistent_read(true)
-            .send()
-            .await
-            .map_err(|error| AuthorityError::Provider {
-                operation: "GetItem",
-                reason: error.to_string(),
-            })?;
-        let Some(item) = response.item else {
-            // An absent item means no managed secret was injected into the
-            // session. There is no owner to compare, and inventing one would
-            // invent a manifest.
-            return Ok(SecretDigestManifest {
-                session,
-                custody_revision: 0,
-                entries: Vec::new(),
-            });
-        };
-        owned_by(&item, workspace)?;
-        let entries = parse_entries(&item)?;
-        Ok(SecretDigestManifest {
-            session,
-            custody_revision: item
-                .get("custodyRevision")
-                .and_then(|value| value.as_n().ok())
-                .and_then(|text| text.parse().ok())
-                .unwrap_or(0),
-            entries,
-        })
-    }
-}
-
-/// Asserts a stored manifest belongs to the workspace that is reading it.
-///
-/// A present row with no `workspaceId` is a refusal, not a pass: the only
-/// writer of this family stamps the attribute unconditionally, so an item
-/// without one is a row this reader cannot prove the ownership of, and an
-/// unprovable owner fails closed.
-///
-/// # Errors
-///
-/// Returns [`AuthorityError::Malformed`] when the attribute is absent,
-/// unparseable, or names another workspace.
-fn owned_by(
-    item: &HashMap<String, AttributeValue>,
-    workspace: WorkspaceId,
-) -> Result<(), AuthorityError> {
-    let malformed = AuthorityError::Malformed {
-        item: "redaction_manifest",
-        attribute: "workspaceId",
-    };
-    let owner = item
-        .get("workspaceId")
-        .and_then(|value| value.as_s().ok())
-        .ok_or_else(|| malformed.clone())?;
-    if owner.parse::<WorkspaceId>().ok() == Some(workspace) {
-        Ok(())
-    } else {
-        Err(malformed)
-    }
-}
-
-/// Reads the `{len, hmac}` rows of one manifest item.
-///
-/// The counterpart writer is
-/// `aex_secret_custody_dynamodb::codec::encode_manifest`, which emits `entries`
-/// as `L` of `M{len: N, hmac: B}`. Nothing in the compiler connects the two —
-/// this reader holds the raw `DynamoDB` client — so the shape is pinned on both
-/// sides and a test in this module encodes through that writer and parses here.
-///
-/// An unreadable entry refuses the whole manifest rather than being filtered
-/// away: a `filter_map` here silently emptied the redaction set, which is how
-/// an injected secret would have reached storage unredacted.
-///
-/// An **absent** `entries` attribute is the same refusal for the same reason.
-/// It used to be read as "a manifest that names no secrets", justified by a
-/// custody stream that writes an empty list before the first injection — no
-/// such stream exists, and against a malformed or wrong-shaped row that reading
-/// admitted telemetry against an empty redaction set. An explicitly present
-/// empty list still means no secrets; absence means a row this reader cannot
-/// prove the shape of, and an unprovable shape fails closed exactly as an
-/// unprovable owner does in [`owned_by`].
-///
-/// # Errors
-///
-/// Returns [`AuthorityError::Malformed`] when `entries` is absent or is not a
-/// list, and [`AuthorityError::CustodyMalformed`] carrying how many entries
-/// could not be parsed.
-fn parse_entries(
-    item: &HashMap<String, AttributeValue>,
-) -> Result<Vec<SecretDigest>, AuthorityError> {
-    let list = item
-        .get("entries")
-        .and_then(|value| value.as_l().ok())
-        .ok_or(AuthorityError::Malformed {
-            item: "redaction_manifest",
-            attribute: "entries",
-        })?;
-    let mut entries = Vec::with_capacity(list.len());
-    let mut malformed = 0usize;
-    for entry in list {
-        let parsed = entry.as_m().ok().and_then(|map| {
-            let len = map
-                .get("len")
-                .and_then(|value| value.as_n().ok())
-                .and_then(|text| text.parse::<u16>().ok())?;
-            let hmac = map
-                .get("hmac")
-                .and_then(|value| value.as_b().ok())
-                .and_then(|blob| <[u8; 32]>::try_from(blob.as_ref()).ok())?;
-            Some(SecretDigest { len, hmac })
-        });
-        match parsed {
-            Some(digest) => entries.push(digest),
-            None => malformed += 1,
-        }
-    }
-    if malformed > 0 {
-        return Err(AuthorityError::CustodyMalformed { malformed });
-    }
-    Ok(entries)
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -699,18 +430,12 @@ mod tests {
 
     use aex_observation_domain::canonical::{BatchBinding, CanonicalValue, batch_intent_digest};
     use aex_observation_domain::keys::ScopeKey;
-    use aex_otlp_admission::{
-        ContentCoding, MemoryBudget, NormalizedBatch, OtlpEncoding, OtlpError, OtlpLimits,
-        OverwriteReport,
-    };
+    use aex_otlp_admission::{ContentCoding, MemoryBudget, OtlpEncoding, OtlpError, OtlpLimits};
     use aex_wire::error::ErrorCode;
     use aex_wire::idempotency::PrincipalScope;
     use aex_wire::ids::{ApiKeyId, OrganizationId, PrefixedId as _, SessionId, WorkspaceId};
 
-    use super::{
-        CustodyManifests, OtlpRequest, OtlpService, authority_error, batch_id_for, otlp_error,
-        owned_by, reserve,
-    };
+    use super::{OtlpRequest, OtlpService, authority_error, batch_id_for, otlp_error, reserve};
     use crate::authority::{AdmissionAuthority, AuthorityError};
     use crate::counters::AdmissionTelemetry;
 
@@ -781,195 +506,6 @@ mod tests {
         assert_eq!(error.code, ErrorCode::IdempotencyConflict);
     }
 
-    /// One manifest item whose entry list is exactly `entries`.
-    fn manifest_item(
-        entries: Vec<aws_sdk_dynamodb::types::AttributeValue>,
-    ) -> std::collections::HashMap<String, aws_sdk_dynamodb::types::AttributeValue> {
-        use aws_sdk_dynamodb::types::AttributeValue;
-        std::collections::HashMap::from([
-            ("custodyRevision".to_owned(), AttributeValue::N("3".into())),
-            ("entries".to_owned(), AttributeValue::L(entries)),
-        ])
-    }
-
-    /// One well-formed `{len, hmac}` entry.
-    fn custody_entry() -> aws_sdk_dynamodb::types::AttributeValue {
-        use aws_sdk_dynamodb::types::AttributeValue;
-        AttributeValue::M(std::collections::HashMap::from([
-            ("len".to_owned(), AttributeValue::N("12".into())),
-            (
-                "hmac".to_owned(),
-                AttributeValue::B(aws_sdk_dynamodb::primitives::Blob::new(vec![7u8; 32])),
-            ),
-        ]))
-    }
-
-    #[test]
-    fn a_malformed_custody_entry_refuses_the_manifest_rather_than_shrinking_it() {
-        use aws_sdk_dynamodb::types::AttributeValue;
-        // The pre-fix `filter_map` dropped what it could not parse, so a
-        // corrupt entry silently emptied the redaction set and an injected
-        // secret would have reached storage unredacted.
-        let truncated_hmac = AttributeValue::M(std::collections::HashMap::from([
-            ("len".to_owned(), AttributeValue::N("12".into())),
-            (
-                "hmac".to_owned(),
-                AttributeValue::B(aws_sdk_dynamodb::primitives::Blob::new(vec![7u8; 16])),
-            ),
-        ]));
-        let missing_len = AttributeValue::M(std::collections::HashMap::from([(
-            "hmac".to_owned(),
-            AttributeValue::B(aws_sdk_dynamodb::primitives::Blob::new(vec![7u8; 32])),
-        )]));
-        let outcome = super::parse_entries(&manifest_item(vec![
-            custody_entry(),
-            truncated_hmac,
-            missing_len,
-        ]));
-        assert!(
-            matches!(
-                outcome.expect_err("two unreadable entries refuse the manifest"),
-                AuthorityError::CustodyMalformed { malformed: 2 }
-            ),
-            "every attempt is counted, not only the first"
-        );
-    }
-
-    #[test]
-    fn a_well_formed_manifest_parses_whole() {
-        let entries =
-            super::parse_entries(&manifest_item(vec![custody_entry()])).expect("parses whole");
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].len, 12);
-        assert_eq!(entries[0].hmac, [7u8; 32]);
-    }
-
-    #[test]
-    fn an_explicitly_empty_entry_list_is_a_session_that_names_no_secrets() {
-        let empty = super::parse_entries(&manifest_item(Vec::new()))
-            .expect("an explicit empty list names no secrets");
-        assert!(empty.is_empty());
-    }
-
-    #[test]
-    fn a_manifest_row_with_no_entry_list_is_refused_rather_than_read_as_empty() {
-        // Absent is not empty. This branch used to return an empty redaction
-        // set, justified by a custody stream that writes the row with an empty
-        // list before the first injection; no writer does that, so against a
-        // malformed or wrong-shaped row the justification admitted telemetry
-        // unredacted — the exact failure the neighbouring entry-parse refusal
-        // exists to prevent.
-        let error = super::parse_entries(&std::collections::HashMap::from([(
-            "custodyRevision".to_owned(),
-            aws_sdk_dynamodb::types::AttributeValue::N("3".into()),
-        )]))
-        .expect_err("an absent attribute is a row this reader cannot prove");
-        assert!(
-            matches!(
-                error,
-                AuthorityError::Malformed {
-                    item: "redaction_manifest",
-                    attribute: "entries"
-                }
-            ),
-            "{error}"
-        );
-        assert_eq!(
-            authority_error(&error).code,
-            ErrorCode::InternalError,
-            "a wrong-shaped custody row fails the batch closed"
-        );
-    }
-
-    #[test]
-    fn an_entry_list_of_the_wrong_type_is_refused() {
-        let error = super::parse_entries(&std::collections::HashMap::from([(
-            "entries".to_owned(),
-            aws_sdk_dynamodb::types::AttributeValue::S("[]".to_owned()),
-        )]))
-        .expect_err("a scalar is not an entry list");
-        assert!(matches!(error, AuthorityError::Malformed { .. }), "{error}");
-    }
-
-    /// The writer and the reader of the manifest agree, byte for byte.
-    ///
-    /// There is no compiler edge between
-    /// `aex_secret_custody_dynamodb::codec::encode_manifest` and
-    /// [`super::parse_entries`] — this service reaches the row through the raw
-    /// `DynamoDB` client — and the two shapes had in fact diverged: the writer
-    /// published a flat list of hex digests with no length, which this
-    /// sliding-window reader cannot use at all. The dev-dependency exists so
-    /// that divergence is a failing test rather than an empty redaction set.
-    #[test]
-    fn what_the_custody_writer_encodes_is_exactly_what_this_reader_parses() {
-        use aex_observation_domain::canonical::CanonicalValue;
-        use aex_otlp_admission::redact::REDACTED;
-        use aex_otlp_admission::{
-            DigestRedactor, ManagedSecretRedactor as _, SecretDigestManifest,
-        };
-        use aex_secret_custody_dynamodb::codec::{
-            RedactionEntry, RedactionManifest, encode_manifest,
-        };
-
-        const KEY: &[u8] = b"regional-redaction-key";
-        const SECRET: &str = "sk-live-abcdef";
-
-        let session: SessionId =
-            aex_wire::ids::PrefixedId::parse("ses_0000000003ec1r60r30c1g60r3").expect("a session");
-        let written = RedactionManifest {
-            session,
-            workspace: WorkspaceId::from_uuid7(aex_wire::Uuid7::compose(1, [1; 10])),
-            revision: aex_secret_domain::custody::CustodyRevision::FIRST,
-            algorithm: "HMAC-SHA-256".to_owned(),
-            key_id: "redact-key-1".to_owned(),
-            entries: vec![RedactionEntry::digest(KEY, SECRET.as_bytes()).expect("a narrow secret")],
-            updated_at: aex_wire::types::Timestamp::parse("2026-08-09T00:00:00.000Z")
-                .expect("a timestamp"),
-        };
-
-        let parsed = super::parse_entries(&encode_manifest(&written))
-            .expect("the reader parses what the writer wrote");
-        assert_eq!(parsed.len(), 1);
-        assert_eq!(
-            usize::from(parsed[0].len),
-            SECRET.len(),
-            "the declared length survives the row; without it there is no window to slide"
-        );
-
-        // End to end: a digest produced by the writer matches through the
-        // reader's own matcher, so the two HMAC constructions are one contract.
-        let redactor = DigestRedactor::new(
-            KEY.to_vec(),
-            SecretDigestManifest {
-                session,
-                custody_revision: 1,
-                entries: parsed,
-            },
-            u64::MAX,
-        );
-        let mut value = CanonicalValue::Str(format!("token is {SECRET} ok").into());
-        assert_eq!(
-            redactor
-                .redact(&mut value)
-                .expect("redacts")
-                .redacted_values,
-            1
-        );
-        assert_eq!(value.as_str(), Some(REDACTED));
-    }
-
-    #[test]
-    fn a_malformed_custody_manifest_fails_the_batch_closed_and_retryably() {
-        let error = AuthorityError::CustodyMalformed { malformed: 2 };
-        assert!(
-            error.retryable(),
-            "the custody stream rewrites the row; the caller retries unchanged"
-        );
-        let wire = authority_error(&error);
-        assert_eq!(wire.code, ErrorCode::ObservabilityUnavailable);
-        assert!(wire.retry_after.is_some(), "fail closed, never fail open");
-    }
-
     #[test]
     fn exhausted_materialization_is_a_retryable_five_zero_three() {
         let error = AuthorityError::MaterializeExhausted { attempts: 9 };
@@ -980,14 +516,6 @@ mod tests {
         let wire = authority_error(&error);
         assert_eq!(wire.code, ErrorCode::ObservabilityUnavailable);
         assert!(wire.retry_after.is_some());
-    }
-
-    #[test]
-    fn the_manifest_key_is_the_published_redact_family() {
-        let session = aex_wire::ids::SessionId::from_uuid7(aex_wire::Uuid7::compose(1, [4; 10]));
-        let key = CustodyManifests::partition_key(session);
-        assert!(key.starts_with("REDACT#"), "{key}");
-        assert!(key.ends_with(&session.to_string()));
     }
 
     /// The binding of one fixture batch.
@@ -1029,11 +557,6 @@ mod tests {
     /// The workspace every fixture request is authenticated for.
     fn workspace() -> WorkspaceId {
         WorkspaceId::from_uuid7(aex_wire::Uuid7::compose(1, [2; 10]))
-    }
-
-    /// A workspace nobody in these cases is authenticated for.
-    fn other_workspace() -> WorkspaceId {
-        WorkspaceId::from_uuid7(aex_wire::Uuid7::compose(1, [3; 10]))
     }
 
     /// The session a caller would have named, had there been anywhere to name
@@ -1083,16 +606,13 @@ mod tests {
         }
     }
 
-    /// One request whose custody client would fail loudly if it were used.
+    /// One request whose providers would fail loudly if they were used.
     ///
     /// The replay client is handed **no** events, so any provider call at all
-    /// is an error rather than a silently satisfied read. That is what makes
-    /// "the custody read is unreachable" a measured fact here rather than a
-    /// claim about the source.
-    fn request_with_unusable_provider() -> (
-        OtlpRequest,
-        aws_smithy_http_client::test_util::StaticReplayClient,
-    ) {
+    /// is an error rather than a silently satisfied read. The scope derivation
+    /// these cases assert is therefore proven to be a pure function of the
+    /// verified credential, with no read behind it.
+    fn request_with_unusable_provider() -> OtlpRequest {
         use aws_smithy_http_client::test_util::StaticReplayClient;
         let replay = StaticReplayClient::new(Vec::new());
         let dynamodb = aws_sdk_dynamodb::Client::from_conf(
@@ -1118,17 +638,15 @@ mod tests {
         let region = aex_wire::types::Region::from_name("eu-west-1").expect("a region");
         let service = OtlpService::new(
             AdmissionAuthority::new(
-                dynamodb.clone(),
+                dynamodb,
                 s3,
                 "test-observation-authority",
                 "test-observation-bucket",
                 region,
             ),
-            CustodyManifests::new(dynamodb, "test-secret-custody"),
             OtlpLimits::REGISTERED,
             MemoryBudget::new(1024 * 1024),
             Duration::from_millis(5),
-            vec![0u8; 32],
             AdmissionTelemetry::new(
                 aex_platform_telemetry::Handle::install(
                     &aex_platform_telemetry::Settings::default(),
@@ -1138,14 +656,11 @@ mod tests {
                 "eu-west-1",
             ),
         );
-        (
-            OtlpRequest::new(
-                Arc::new(service),
-                authorized(),
-                OtlpEncoding::Protobuf,
-                ContentCoding::Identity,
-            ),
-            replay,
+        OtlpRequest::new(
+            Arc::new(service),
+            authorized(),
+            OtlpEncoding::Protobuf,
+            ContentCoding::Identity,
         )
     }
 
@@ -1154,7 +669,7 @@ mod tests {
         // `OtlpRequest` has no session input of any kind, so the only fixture a
         // caller-controlled attribution could be built from does not exist.
         // What remains is the derivation, and it must read the credential.
-        let (request, _replay) = request_with_unusable_provider();
+        let request = request_with_unusable_provider();
         assert_eq!(
             request.scope(),
             ScopeKey::Workspace(workspace()),
@@ -1178,85 +693,12 @@ mod tests {
         // workspace, which is exactly why the scope may not come from the
         // request. With the credential as the only source, every row this
         // deployable writes today is addressable only through its tenant.
-        let (request, _replay) = request_with_unusable_provider();
+        let request = request_with_unusable_provider();
         let key = request.scope().to_key();
         assert_eq!(key, format!("W#{}", workspace()));
         assert!(
             !key.starts_with("S#"),
             "a workspace-key batch may never land in a session partition"
-        );
-    }
-
-    #[tokio::test]
-    async fn the_custody_manifest_read_is_unreachable_without_a_credential_named_session() {
-        // `redact` short-circuits on "no session", so the unconditioned
-        // `GetItem` on `REDACT#{session}` — the one cross-tenant addressable
-        // read left on this path — is never issued. The provider would fail if
-        // it were.
-        let (request, replay) = request_with_unusable_provider();
-        let mut batch = NormalizedBatch {
-            observations: Vec::new(),
-            report: OverwriteReport::default(),
-        };
-        let report = request
-            .redact(&mut batch)
-            .await
-            .expect("a workspace batch redacts against the empty managed set");
-        assert_eq!(report.redacted_values, 0);
-        assert_eq!(
-            replay.actual_requests().count(),
-            0,
-            "ingest must issue no custody read at all"
-        );
-    }
-
-    #[test]
-    fn a_custody_manifest_naming_another_workspace_is_refused() {
-        use aws_sdk_dynamodb::types::AttributeValue;
-        let mut item = manifest_item(vec![custody_entry()]);
-        item.insert(
-            "workspaceId".to_owned(),
-            AttributeValue::S(other_workspace().to_string()),
-        );
-        let error = owned_by(&item, workspace()).expect_err("a foreign manifest is refused");
-        assert!(
-            matches!(
-                error,
-                AuthorityError::Malformed {
-                    item: "redaction_manifest",
-                    attribute: "workspaceId"
-                }
-            ),
-            "{error:?}"
-        );
-        assert!(
-            !error.retryable(),
-            "a manifest owned by another tenant never becomes readable by retrying"
-        );
-
-        item.insert(
-            "workspaceId".to_owned(),
-            AttributeValue::S(workspace().to_string()),
-        );
-        owned_by(&item, workspace()).expect("the owner's own manifest reads");
-    }
-
-    #[test]
-    fn a_custody_manifest_that_cannot_prove_its_owner_is_refused() {
-        // The only writer of this family stamps `workspaceId` unconditionally,
-        // so a present row without one is a row whose ownership this reader
-        // cannot establish. It fails closed rather than being read.
-        let error = owned_by(&manifest_item(vec![custody_entry()]), workspace())
-            .expect_err("an unattributed manifest is refused");
-        assert!(
-            matches!(
-                error,
-                AuthorityError::Malformed {
-                    item: "redaction_manifest",
-                    attribute: "workspaceId"
-                }
-            ),
-            "{error:?}"
         );
     }
 

@@ -321,26 +321,3 @@ async fn a_custody_admission_is_idle_only_and_binds_under_the_revision_it_read()
         .expect("the head exists");
     assert_eq!(after.revision, CustodyRevision::FIRST);
 }
-
-#[tokio::test]
-async fn the_redaction_manifest_is_reachable_by_exactly_one_point_read() {
-    let (_engine, _client, store) = engine().await;
-    aex_secret_custody_dynamodb::store::put_manifest(&store, &support::manifest(), now())
-        .await
-        .expect("the manifest is written");
-
-    let loaded = store
-        .load_manifest(workspace(), session())
-        .await
-        .expect("the read succeeds")
-        .expect("the manifest exists");
-    assert_eq!(loaded, support::manifest());
-
-    // Nothing else lives in that partition, so a role holding only `GetItem`
-    // learns the digests and nothing else.
-    let listed = store
-        .list_secrets(workspace(), PageBudget::new(25).expect("a page"))
-        .await
-        .expect("the list succeeds");
-    assert!(listed.is_empty());
-}

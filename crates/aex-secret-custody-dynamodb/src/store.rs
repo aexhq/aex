@@ -22,8 +22,8 @@ use aws_sdk_dynamodb::types::ReturnValuesOnConditionCheckFailure;
 use aws_sdk_dynamodb::types::builders::UpdateBuilder;
 
 use crate::codec::{
-    self, CallAuthorization, CustodyBinding, CustodyHead, ProviderCredential, RedactionManifest,
-    SecretMetadata, StoredGeneration,
+    self, CallAuthorization, CustodyBinding, CustodyHead, ProviderCredential, SecretMetadata,
+    StoredGeneration,
 };
 use crate::keys;
 
@@ -95,17 +95,6 @@ pub trait SecretCustodyStore: Send + Sync + 'static {
         workspace: WorkspaceId,
         session: SessionId,
     ) -> Result<Option<CustodyHead>, StoreError>;
-
-    /// Reads the redaction manifest a collector redacts from.
-    ///
-    /// # Errors
-    ///
-    /// As [`SecretCustodyStore::load_secret`].
-    async fn load_manifest(
-        &self,
-        workspace: WorkspaceId,
-        session: SessionId,
-    ) -> Result<Option<RedactionManifest>, StoreError>;
 
     /// Lists one workspace's provider-credential bindings.
     ///
@@ -440,18 +429,6 @@ impl SecretCustodyStore for CustodyStore {
         }
     }
 
-    async fn load_manifest(
-        &self,
-        workspace: WorkspaceId,
-        session: SessionId,
-    ) -> Result<Option<RedactionManifest>, StoreError> {
-        let target = keys::redaction_manifest(session);
-        match self.get(&target.pk, &target.sk).await? {
-            None => Ok(None),
-            Some(item) => Ok(Some(codec::decode_manifest(&item, workspace)?)),
-        }
-    }
-
     async fn list_provider_credentials(
         &self,
         workspace: WorkspaceId,
@@ -604,31 +581,6 @@ impl SecretCustodyStore for CustodyStore {
             }
         }
     }
-}
-
-/// Writes one redaction manifest.
-///
-/// Exposed separately from the port because the manifest is written by the
-/// custody path and read by a role that holds nothing else on this table.
-///
-/// # Errors
-///
-/// [`StoreError`] when the write fails.
-pub async fn put_manifest(
-    store: &CustodyStore,
-    manifest: &RedactionManifest,
-    now: Timestamp,
-) -> Result<(), StoreError> {
-    let _ = now;
-    store
-        .client
-        .put_item()
-        .table_name(&store.table)
-        .set_item(Some(codec::encode_manifest(manifest)))
-        .send()
-        .await
-        .map_err(|error| classify(&error, Idempotence::Write(Resolution::TargetItem)))?;
-    Ok(())
 }
 
 /// The custody revision a session with no custody row reports.

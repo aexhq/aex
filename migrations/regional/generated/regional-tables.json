@@ -1,7 +1,7 @@
 {
   "schema": "aex.regional-tables.v1",
   "generation": 1,
-  "digest": "blake3:6afa0c5f2334609fcc572954ff2a882d79d8f110784d58659bb82376db163c0f",
+  "digest": "blake3:96c82c30edc5ab531eb500bf49b567e0948ce4437421dba9c94d7c5494c90cb3",
   "tables": [
     {
       "schema": "aex.regional-table.v1",
@@ -924,7 +924,7 @@
       "schema": "aex.regional-table.v1",
       "table": "regional-secret-custody",
       "owner": "regional-stores",
-      "purpose": "Workspace secret metadata, hidden source generations carrying ciphertext, session custody heads and bindings, the revocation epoch, managed-call authorizations, the provider-credential binding directory for BYOK, and the per-session redaction digest manifest.",
+      "purpose": "Workspace secret metadata, hidden source generations carrying ciphertext, session custody heads and bindings, the revocation epoch, managed-call authorizations, and the provider-credential binding directory for BYOK.",
       "billingMode": "PAY_PER_REQUEST",
       "deletionProtection": true,
       "pointInTimeRecovery": {
@@ -972,7 +972,6 @@
         "managed_call",
         "call_authorization",
         "rebind_intent",
-        "redaction_manifest",
         "provider_credential",
         "idempotency_receipt"
       ],
@@ -1008,15 +1007,6 @@
             "dynamodb:GetItem",
             "dynamodb:Query",
             "dynamodb:TransactWriteItems"
-          ],
-          "resources": [
-            "table"
-          ]
-        },
-        {
-          "role": "regional-otlp",
-          "actions": [
-            "dynamodb:GetItem"
           ],
           "resources": [
             "table"

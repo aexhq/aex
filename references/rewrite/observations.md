@@ -67,9 +67,9 @@ assert this.
 - `normalize` — identity overwrite, the reserved `aex.*` policy (`aex.internal.*`
   rejects the whole batch), per-signal normalization, and per-record bounds that
   report the exact record pointer.
-- `redact` — `DigestRedactor`, a keyed HMAC sliding-window matcher over a
-  `{len, hmac}` manifest, with **zero decrypt permission**; budget exhaustion
-  fails the batch closed.
+- `redact` — **removed on 2026-08-09 and not replaced; see §13.** It was
+  `DigestRedactor`, a keyed HMAC sliding-window matcher over a `{len, hmac}`
+  manifest, with zero decrypt permission and closed-fail budget exhaustion.
 - `response` — `partial_success` is the empty message on every success path.
 - `limits::OtlpLimits::REGISTERED` pins **4 MiB encoded**. The replaced
   implementation's 6 MiB is not ported, and a test asserts the difference.
@@ -121,10 +121,14 @@ assert this.
 
 ### `crates/aex-observation-app`
 
-`SemanticEventSource`, `SecretManifestSource`, `ObservationAuthority` and
-`GapSink` ports, and async `AdmitBatch::admit_semantic` with the `GapOnFailure`
-rule. A producer that elected `Open` records a complete scoped `GapRecord`
-before it completes; an unrecordable gap is **never** downgraded to success.
+`SemanticEventSource`, `ObservationAuthority` and `GapSink` ports, and async
+`AdmitBatch::admit_semantic` with the `GapOnFailure` rule. A producer that
+elected `Open` records a complete scoped `GapRecord` before it completes; an
+unrecordable gap is **never** downgraded to success.
+
+A fourth port, `SecretManifestSource`, was declared here for the redactor. It
+never acquired an implementor and was removed with the redactor on 2026-08-09;
+see §13.
 
 ### `crates/aex-observation-export`
 
@@ -223,7 +227,6 @@ aex_observation_store_dynamodb::store::{AdmissionPlan, TransactionEnvelope, Stor
 
 // aex-observation-app
 aex_observation_app::ports::SemanticEventSource;
-aex_observation_app::ports::SecretManifestSource;
 aex_observation_app::ports::ObservationAuthority;
 aex_observation_app::use_cases::{AdmitBatch, GapOnFailure, SemanticAdmission};
 
@@ -233,7 +236,8 @@ aex_observation_query::coverage::{Snapshot, Coverage, Consistency};
 aex_observation_query::cursor::{ObservationCursorBinding, TraceRevisionMode};
 
 // aex-otlp-admission
-aex_otlp_admission::{decode, OtlpLimits, MemoryBudget, normalize, ManagedSecretRedactor};
+// `ManagedSecretRedactor` was published here and is withdrawn; see §13.
+aex_otlp_admission::{decode, OtlpLimits, MemoryBudget, normalize};
 aex_otlp_admission::wire_pending::PendingErrorCode;
 ```
 
@@ -266,7 +270,7 @@ aex_otlp_admission::wire_pending::PendingErrorCode;
 | contracts | `ObservationCoverage`'s four watermarks are `DecimalU128` epoch-millisecond accepted-time positions. `snapshot` already is; `accepted`, `indexed` and `earliestReplay` are `ObservationWatermark`/`Timestamp` on the generated wire and need the same scalar treatment, or this stream must lose information at the boundary. |
 | contracts | `ExportManifest` / `ExportMember` as a published schema under `api/schemas/`. The Rust shape is in `aex_observation_export::manifest`. |
 | regional stores | (a) `session_event.eventId` must be an `ObservationId`; (b) `occurredAt` monotone with `eventSeq`; (c) one sparse workspace-axis GSI on `session-authority` (`evPk = "EVTW#{workspace_id}#{tbucket}"`, `evSk = "{occurred_at}#{session_id}#{event_id}"`); (d) the `observation-authority` entry accepted into `migrations/regional/generated/regional-tables.json`. Without (c) the workspace-axis `events` query is unimplementable, and the fallback is a peer transaction change either way. |
-| regional secrets | `regional-secret-custody` must publish a `REDACT#{session_id}` manifest of `{len, hmac}` under a regional redaction key, readable by the `regional-otlp` role **with no decrypt permission**. `ManagedSecretRedactor` is implemented against it today with a real test implementation, never a `todo!()` and never a silent no-op. |
+| ~~regional secrets~~ | ~~`regional-secret-custody` must publish a `REDACT#{session_id}` manifest of `{len, hmac}` under a regional redaction key, readable by the `regional-otlp` role **with no decrypt permission**.~~ **Withdrawn on 2026-08-09: this stream asks the secrets stream for nothing. See §13.** |
 | regional services | `aex-regional-http` must expose `cursor::{encode, decode}` with an extensible binding payload so `ObservationCursorBinding` uses the one codec (RS-17), `EdgeStack` for route mounting, and `capability::Grant<C>` constructors. This is the single blocker on both services' HTTP surface. |
 | usage | The `storage.byte_min.v1` fact field set and the regional queue identity the `SPOOL#…/OUTBOX#` item delivers to. This stream writes the fact and never rates it. |
 | delivery / infra | The observation bucket policy, the `exports/*` 25-hour backstop rule, the export ECS task definition and its execution role, and the EventBridge schedule per reconciler duty. |
@@ -283,7 +287,7 @@ aex_otlp_admission::wire_pending::PendingErrorCode;
 | OB-05 | The accepted "34-name field allowlist" is recorded as what it measurably is: **36 `(signal, field)` pairs over 28 distinct names** | `traceId`, `spanId`, `name`, `durationNs`, `serviceName` and `revision` appear on more than one signal. Both counts are asserted rather than one being quietly restated as the other. |
 | OB-06 | The t-digest carries **weights**, not bare values | An unweighted merge shifts the distribution: the first implementation returned 9001 as the median of 1..10000. Weighted centroids make the quantile a real approximation rather than a plausible-looking number. |
 | OB-07 | The decode-memory gate is an atomic counter, not a `tokio` semaphore | It keeps the decoder runtime-free and makes the `Drop`-release leak property testable synchronously. The 50 ms reservation *wait* is the service's job. |
-| OB-08 | A redaction hit replaces the **whole value**, not just the matched window | Cutting a secret out of surrounding text leaks its position and its exact length, which is most of what an attacker needs. |
+| OB-08 | A redaction hit replaces the **whole value**, not just the matched window | Cutting a secret out of surrounding text leaks its position and its exact length, which is most of what an attacker needs. **Moot since 2026-08-09: there is no redactor to hit. See §13.** |
 | OB-09 | Parquet is refused with a typed error rather than produced non-deterministically | A "deterministic hash" over a non-deterministic encoder is a false claim, and the manifest hash is the only thing that makes an export verifiable. |
 | OB-10 | The fuzz property runs as a `proptest` in the **default** lane, not only in a separate fuzz job | A fuzz target nothing gates on is not a gate. The decoder is an untrusted parser and its no-panic property blocks every merge. |
 
@@ -323,7 +327,7 @@ Nothing here is deployed, credentialed or published. No AWS call was made and no
 | Deployable | Host | What `run()` now does |
 | --- | --- | --- |
 | `regional-observation-api` | Rust Lambda ZIP, `axum` + `lambda_http` | Owns the finite routes in `RouteGroup::Observations` and `RouteGroup::TelemetryLifecycle`, narrows them through one reviewed served predicate, dispatches through the generated `dispatch_observations` / `dispatch_telemetry_lifecycle`, and serves them over a bounded `DynamoDB`/`S3` reader: frontier read, snapshot pin, per-index segment walk, residual predicate evaluation, budget classification, signed cursor, gap reads, export read, revoke and download grant. The two export-admission routes are contained in §12. |
-| `regional-otlp` | Rust Lambda ZIP, `axum` + `lambda_http` | Mounts `RouteGroup::Otlp` (3), reserves the worst-case decoded footprint **before the first decode byte**, decodes and normalizes under the reservation, redacts against the keyed digest manifest, then runs the whole staged admission protocol: ingress gate, deletion fence, frontier allocation, transaction P, staging, transaction C, replayable materialization. |
+| `regional-otlp` | Rust Lambda ZIP, `axum` + `lambda_http` | Mounts `RouteGroup::Otlp` (3), reserves the worst-case decoded footprint **before the first decode byte**, decodes and normalizes under the reservation, then runs the whole staged admission protocol: ingress gate, deletion fence, frontier allocation, transaction P, staging, transaction C, replayable materialization. A redaction pass sat between normalization and staging until 2026-08-09; the batch is now admitted as its author wrote it (§13). |
 | `observation-reconciler` | scheduled Rust Lambda, `lambda_runtime` | One duty per deployment, selected by `AEX_OBS_DUTY` from the closed `ControlDomain` vocabulary. Due-scans the sparse `gsi_control` index, takes a durable per-item claim, runs the duty body, and answers with a partial-batch failure body rather than throwing. |
 | `observation-export-launcher` | Rust Lambda, `lambda_runtime` | Due-scans `export.launch`, takes the fenced lease under an `admitted`-or-`launching` state with an expired lease and no cancellation, `RunTask`s with `clientToken = startedBy = export_id`, and reconciles every ambiguous outcome through `ListTasks{startedBy}` — never through a second `RunTask`. |
 | `observation-export-task` | one-shot Rust Fargate task | Takes the lease before any read, acquires every memory reservation before the producing loop starts, streams bounded pages into a checkpointed NDJSON member, uploads parts with a fenced checkpoint after each, verifies `ListParts` to exhaustion on resume, and publishes under one conditional update — losing which aborts the upload and exits `0`. |
@@ -372,15 +376,18 @@ statement and is constrained by
 request condition as well as by the application adapter; it cannot mutate
 admission, frontier, segment, gap, claim, or deletion rows.
 
-`regional-otlp`, fifteen:
+`regional-otlp`, as authored. Two of these no longer exist:
+`AEX_SECRET_CUSTODY_TABLE` and `AEX_OBS_REDACTION_KEY_REF` were removed with the
+redactor on 2026-08-09 (§13). `config::REQUIRED_VARS` is the authority for the
+live set.
 
 ```text
 AEX_PLANE                       dev | prd
 AEX_REGION                      a regional-plane region name
 AEX_OBSERVATION_TABLE           the observation-authority table
 AEX_OBSERVATION_BUCKET          the regional observation bucket
-AEX_SECRET_CUSTODY_TABLE        regional-secret-custody, for REDACT# manifests
-AEX_OBS_REDACTION_KEY_REF       Secrets Manager id of the regional redaction key
+AEX_SECRET_CUSTODY_TABLE        REMOVED 2026-08-09 (§13)
+AEX_OBS_REDACTION_KEY_REF       REMOVED 2026-08-09 (§13)
 AEX_OTLP_ENCODED_MAX            at most 4194304 (4 MiB); 6 MiB is refused
 AEX_OTLP_DECODED_MAX            at most 16777216 (16 MiB)
 AEX_OTLP_MAX_RECORDS            at most 2000
@@ -498,7 +505,7 @@ routes are mounted:
 | Peer | What is needed |
 | --- | --- |
 | central identity/control | The internal assertion exchange this edge consumes: `POST /internal/authz/assertions` taking `{credential, audience, region}` and answering `{assertion, keyId, credentialBinding, signature}`, where `assertion` is `aex_internal_contracts::assertion::AuthorizationAssertion` and the signature is Ed25519 over the credential-bound canonical form `aex_regional_http::assertion::SignedAssertion` already defines. Both services fail closed without it. |
-| regional secrets | The `REDACT#{session_id}` manifest item, read here as `pk = "REDACT#{session}"`, `sk = "MANIFEST"`, `custodyRevision` as a number and `entries` as a list of maps carrying `len` and a 32-byte `hmac`. An absent item means no managed secret was injected, which is the only reading that does not invent one. |
+| ~~regional secrets~~ | ~~The `REDACT#{session_id}` manifest item, read here as `pk = "REDACT#{session}"`, `sk = "MANIFEST"`, `custodyRevision` as a number and `entries` as a list of maps carrying `len` and a 32-byte `hmac`.~~ **Withdrawn on 2026-08-09 — the secrets stream owes this stream nothing. See §13.** |
 | regional services | `aex-regional-http` should absorb the composed edge layer. Each service currently carries its own edge module; the verification algebra is already the crate's, and only the layer that turns a request into a `RequestContext` is duplicated. |
 
 ### 9.7 Gate output
@@ -888,3 +895,55 @@ review and is not hidden inside this no-schema containment.
 The production-router regression drives both concrete POST paths and requires
 `404`, an empty body and no `Location`. Ownership tests retain all 27 generated
 finite routes while the served-set test pins the narrowed count at 25.
+
+## 13. The managed-secret redactor is removed (2026-08-09)
+
+The owner's decision, in their words: *"this is an anti-pattern and code smell
+that we should get a better system design with."*
+
+A redactor that scans admitted telemetry for platform secrets is a filter
+compensating for the absence of a boundary. The boundary is what actually holds:
+the platform's own credentials never enter the customer sandbox. When the model
+calls a tool such as `web_search`, the platform makes the outbound request with
+its own key and hands the results back; the sandbox holds results, never the
+key. With no platform secret in the sandbox there is nothing for that session's
+telemetry to carry, and a filter scanning for it guards a path that should not
+exist. The replacement is the tool-execution design, not a better filter.
+
+The filter had also never protected anything. `put_manifest`, the only writer of
+`REDACT#{session}`, had exactly one caller in the workspace and it was a test.
+The two components that actually inject session-scoped secrets —
+`aex-brain-managed-web` and `aex-brain-provider-custody` — declared nothing. No
+production manifest was ever written, so no production batch was ever matched
+against a non-empty digest set.
+
+### What was deleted
+
+| Where | What |
+| --- | --- |
+| `crates/aex-otlp-admission` | the whole `redact` module: `DigestRedactor`, `NoManagedSecrets`, the `ManagedSecretRedactor` trait, `SecretDigest`, `SecretDigestManifest`, `RedactionReport`, `MIN_SECRET_BYTES`, `REDACTED`; `OtlpLimits::redact_budget_bytes`; `OtlpError::RedactionBudgetExhausted`; the `hmac` dependency |
+| `crates/aex-secret-custody-dynamodb` | `RedactionEntry`, `RedactionManifest`, `REDACTION_MANIFEST`, `encode_manifest`, `decode_manifest`, `keys::redaction_manifest`, `store::put_manifest`, `SecretCustodyStore::load_manifest`, `EncodeError::SecretTooWide`, the `hmac` dependency. **The rest of the crate is untouched:** metadata, sealed generations, custody heads and bindings, revocation, managed-call authorizations and the BYOK provider-credential directory are all non-redaction custody and stay. |
+| `crates/aex-observation-app` | the `SecretManifestSource` port, which never had an implementor |
+| `crates/aex-observation-store-dynamodb` | `health::Probe::RedactionKey`, which now has no producer |
+| `services/regional-otlp` | `CustodyManifests`, `manifest`, `parse_entries`, `owned_by`, `OtlpRequest::redact`, `apply`, the `redaction_key` and `custody` service fields, `AuthorityError::CustodyMalformed`, `AdmissionCounter::CustodyEntriesMalformed`, `resolve_redaction_key`, the `AEX_OBS_REDACTION_KEY_REF` and `AEX_SECRET_CUSTODY_TABLE` variables, and the `aws-sdk-secretsmanager` dependency they were the only reader of |
+| `migrations/regional/tables/regional-secret-custody.json` | the `redaction_manifest` item type and the whole `regional-otlp` IAM grant. That grant existed only for the manifest point read, so the collector now holds nothing at all on the secret-custody table — pinned by `conformance::the_collector_holds_nothing_at_all_on_this_table`. |
+
+### What admission does differently
+
+Exactly one thing: the batch is admitted as its author wrote it. Before,
+normalization was followed by a redaction pass that walked every canonical
+string in the batch and replaced any value containing a matched window with
+`[REDACTED]`; now normalization is followed directly by canonicalization and
+staging. Because no manifest was ever written, the pass in production always ran
+against an empty digest set and rewrote nothing, so no admitted byte changes.
+
+Two failure modes disappear with it, both reachable only through a manifest that
+was never written: `RedactionBudgetExhausted` (a retryable `503` when the scan
+budget ran out) and `CustodyMalformed` (a retryable `503` when a manifest row
+could not be parsed). No other refusal is weakened, and no refusal becomes an
+admission: the encoded-size gate, decompression bounds, record and per-record
+ceilings, reserved-attribute policy, the memory reservation, the ingress gate
+and the deletion fence are all untouched.
+
+Nothing is deferred. This is not a filter awaiting a better implementation, so
+there is no backlog row: the boundary replaces the filter.

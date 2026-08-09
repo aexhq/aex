@@ -8,8 +8,6 @@
 //!   nowhere to leak one, and the decode refuses a row that grew one
 //! - revocation is one conditional update on one item and blocks every prior
 //!   generation, including copies already inside sessions and clones
-//! - the `REDACT#{session}` manifest carries HMAC digests only, so `regional-otlp`
-//!   redacts platform-injected values with **zero decrypt permission**
 //! - a `pcr_` provider-credential binding references a workspace secret and never
 //!   holds key material of its own (OD-23)
 //! - no stream, no index, no TTL: a change feed would put ciphertext in a
@@ -28,6 +26,6 @@ pub mod store;
 
 pub use codec::{
     CallAuthorization, CredentialState, CustodyBinding, CustodyHead, ProviderCredential,
-    RedactionEntry, RedactionManifest, SecretMetadata, StoredGeneration,
+    SecretMetadata, StoredGeneration,
 };
 pub use store::{CustodyStore, Page, SecretCustodyStore};

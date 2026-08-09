@@ -3,8 +3,7 @@
 mod support;
 
 use aex_secret_custody_dynamodb::codec::{
-    EncodeError, RedactionEntry, RedactionManifest, decode_manifest, decode_provider_credential,
-    decode_secret, encode_manifest, encode_provider_credential, encode_secret,
+    decode_provider_credential, decode_secret, encode_provider_credential, encode_secret,
 };
 use aex_secret_custody_dynamodb::expressions::{self, AUTHORIZE_ORDER};
 use aex_secret_domain::revocation::RevocationEpoch;
@@ -13,12 +12,10 @@ use aex_session_dynamodb::attr::CodecError;
 use aex_session_dynamodb::error::{StoreError, decode_cancellation};
 use aex_session_dynamodb::plan::Participant;
 use aws_sdk_dynamodb::operation::transact_write_items::TransactWriteItemsError;
+use aws_sdk_dynamodb::types::CancellationReason;
 use aws_sdk_dynamodb::types::error::TransactionCanceledException;
-use aws_sdk_dynamodb::types::{AttributeValue, CancellationReason};
 
-use support::{
-    TABLE, authorization, manifest, metadata, now, provider_credential, secret_name, workspace,
-};
+use support::{TABLE, authorization, metadata, now, provider_credential, secret_name, workspace};
 
 fn cancelled(codes: &[&str]) -> TransactWriteItemsError {
     TransactWriteItemsError::TransactionCanceledException(
@@ -99,140 +96,6 @@ fn a_metadata_row_that_grew_sealed_bytes_is_refused_rather_than_read() {
     );
     let error = decode_secret(&encoded, workspace()).expect_err("sealed bytes on metadata");
     assert!(matches!(error, CodecError::Malformed { .. }), "{error}");
-}
-
-#[test]
-fn a_manifest_that_grew_sealed_bytes_is_refused_rather_than_read() {
-    let mut encoded = encode_manifest(&manifest());
-    encoded.insert(
-        "wrappedKey".to_owned(),
-        aex_session_dynamodb::attr::b(vec![9; 32]),
-    );
-    let error = decode_manifest(&encoded, workspace()).expect_err("sealed bytes on a manifest");
-    assert!(matches!(error, CodecError::Malformed { .. }), "{error}");
-}
-
-#[test]
-fn a_manifest_entry_that_is_not_a_digest_is_refused() {
-    let mut encoded = encode_manifest(&manifest());
-    encoded.insert(
-        "entries".to_owned(),
-        aex_session_dynamodb::attr::string_list(["a-real-looking-value".to_owned()]),
-    );
-    let error = decode_manifest(&encoded, workspace()).expect_err("not a digest");
-    assert!(
-        matches!(error, CodecError::WrongType { .. }),
-        "a manifest that can hold a raw value is a manifest that can leak one: {error}"
-    );
-}
-
-#[test]
-fn a_manifest_entry_missing_its_length_is_refused_rather_than_read_as_a_bare_digest() {
-    // The pre-fix writer published a flat list of hex digests with no length at
-    // all. The reader slides a window of the declared length, so an entry with
-    // no length is an entry it can never match, and a manifest that silently
-    // loses a member is how an injected secret reaches storage unredacted.
-    let mut encoded = encode_manifest(&manifest());
-    encoded.insert(
-        "entries".to_owned(),
-        AttributeValue::L(vec![AttributeValue::M(
-            [(
-                "hmac".to_owned(),
-                aex_session_dynamodb::attr::b(vec![7u8; 32]),
-            )]
-            .into_iter()
-            .collect(),
-        )]),
-    );
-    let error = decode_manifest(&encoded, workspace()).expect_err("no declared length");
-    assert!(
-        matches!(
-            error,
-            CodecError::Missing {
-                attribute: "len",
-                ..
-            }
-        ),
-        "{error}"
-    );
-}
-
-#[test]
-fn a_manifest_entry_whose_digest_is_the_wrong_width_is_refused() {
-    let mut encoded = encode_manifest(&manifest());
-    encoded.insert(
-        "entries".to_owned(),
-        AttributeValue::L(vec![AttributeValue::M(
-            [
-                ("len".to_owned(), aex_session_dynamodb::attr::n(12)),
-                (
-                    "hmac".to_owned(),
-                    aex_session_dynamodb::attr::b(vec![7u8; 16]),
-                ),
-            ]
-            .into_iter()
-            .collect(),
-        )]),
-    );
-    let error = decode_manifest(&encoded, workspace()).expect_err("a truncated digest");
-    assert!(
-        matches!(
-            error,
-            CodecError::Malformed {
-                attribute: "hmac",
-                ..
-            }
-        ),
-        "{error}"
-    );
-}
-
-#[test]
-fn a_manifest_with_no_entries_attribute_is_refused_rather_than_read_as_naming_no_secrets() {
-    // Absent is not empty. An empty list is a session with no managed secret;
-    // an absent attribute is a row this writer did not produce, and reading it
-    // as "no secrets" would admit telemetry against an empty redaction set.
-    let mut encoded = encode_manifest(&manifest());
-    encoded.remove("entries");
-    let error = decode_manifest(&encoded, workspace()).expect_err("no entries attribute");
-    assert!(
-        matches!(
-            error,
-            CodecError::Missing {
-                attribute: "entries",
-                ..
-            }
-        ),
-        "{error}"
-    );
-}
-
-#[test]
-fn a_manifest_that_explicitly_names_no_secrets_still_decodes() {
-    let empty = RedactionManifest {
-        entries: Vec::new(),
-        ..manifest()
-    };
-    let encoded = encode_manifest(&empty);
-    assert!(
-        encoded["entries"].as_l().expect("a list").is_empty(),
-        "an empty manifest still writes the attribute, so the reader can tell \
-         it apart from a row that never carried one"
-    );
-    assert_eq!(
-        decode_manifest(&encoded, workspace()).expect("decodes"),
-        empty
-    );
-}
-
-#[test]
-fn a_secret_wider_than_a_declared_window_is_refused_rather_than_truncated() {
-    let error = RedactionEntry::digest(b"k", &vec![0u8; usize::from(u16::MAX) + 1])
-        .expect_err("wider than a window");
-    assert!(
-        matches!(error, EncodeError::SecretTooWide { .. }),
-        "{error}"
-    );
 }
 
 #[test]

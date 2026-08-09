@@ -99,21 +99,6 @@ pub trait SemanticEventSource: Send + Sync {
     fn read_events(&self, request: &EventPageRequest) -> Result<EventPage, PortError>;
 }
 
-/// The digest manifest the redactor matches against.
-///
-/// Published by `regional-secret-custody` under a regional redaction key, so
-/// `regional-otlp` removes platform-injected secrets with **zero decrypt
-/// permission**.
-pub trait SecretManifestSource: Send + Sync {
-    /// Reads the manifest for one scope.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`PortError::Unavailable`] when custody cannot be read. A scope
-    /// with no managed secrets returns an empty manifest, never an error.
-    fn manifest_for(&self, scope: &ScopeKey) -> Result<Vec<(u16, [u8; 32])>, PortError>;
-}
-
 /// What one admission asks the authority to commit.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CommitRequest {

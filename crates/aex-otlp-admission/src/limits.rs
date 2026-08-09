@@ -30,8 +30,6 @@ pub struct OtlpLimits {
     pub max_array_elements: usize,
     /// Maximum decompression ratio before the stream is abandoned.
     pub max_ratio: u64,
-    /// Bytes of canonical text the redactor may scan for one batch.
-    pub redact_budget_bytes: u64,
 }
 
 impl OtlpLimits {
@@ -46,7 +44,6 @@ impl OtlpLimits {
         max_attribute_value_bytes: limits::OTLP_MAX_ATTRIBUTE_VALUE_BYTES,
         max_array_elements: limits::OTLP_MAX_ARRAY_ELEMENTS,
         max_ratio: limits::OTLP_MAX_RATIO,
-        redact_budget_bytes: 64 * 1024 * 1024,
     };
 }
 

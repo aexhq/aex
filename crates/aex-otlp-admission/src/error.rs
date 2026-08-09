@@ -153,15 +153,6 @@ pub enum OtlpError {
         /// What was inconsistent.
         reason: &'static str,
     },
-    /// The redaction budget was exhausted.
-    ///
-    /// This fails the batch **closed**: admitting unredacted bytes is not an
-    /// acceptable degradation.
-    #[error("the redaction budget of {limit} bytes was exhausted")]
-    RedactionBudgetExhausted {
-        /// The effective budget.
-        limit: u64,
-    },
     /// No decode-memory permit was available inside the reservation wait.
     #[error("no decode memory available: {requested} bytes requested")]
     MemoryUnavailable {
@@ -181,9 +172,7 @@ impl OtlpError {
             Self::UnsupportedCoding { .. } | Self::UnsupportedContentType { .. } => {
                 ErrorCode::UnsupportedMediaType
             }
-            Self::MemoryUnavailable { .. } | Self::RedactionBudgetExhausted { .. } => {
-                ErrorCode::ObservabilityUnavailable
-            }
+            Self::MemoryUnavailable { .. } => ErrorCode::ObservabilityUnavailable,
             Self::Malformed { .. }
             | Self::UnknownField { .. }
             | Self::TooManyRecords { .. }
@@ -196,10 +185,7 @@ impl OtlpError {
     /// Whether a client may retry the identical request.
     #[must_use]
     pub const fn retryable(&self) -> bool {
-        matches!(
-            self,
-            Self::MemoryUnavailable { .. } | Self::RedactionBudgetExhausted { .. }
-        )
+        matches!(self, Self::MemoryUnavailable { .. })
     }
 }
 

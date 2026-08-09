@@ -4,8 +4,8 @@
 #![allow(missing_docs, reason = "the module doc states what these fixtures are")]
 
 use aex_secret_custody_dynamodb::codec::{
-    CallAuthorization, CredentialState, CustodyHead, ProviderCredential, RedactionEntry,
-    RedactionManifest, SecretMetadata, StoredGeneration,
+    CallAuthorization, CredentialState, CustodyHead, ProviderCredential, SecretMetadata,
+    StoredGeneration,
 };
 use aex_secret_domain::custody::{CustodyEntry, CustodyRevision, CustodyState, OwnerKeyEdgeId};
 use aex_secret_domain::plaintext::SecretPlaintext;
@@ -268,47 +268,6 @@ pub fn authorization() -> CallAuthorization {
         source_generation: SourceGeneration::FIRST,
         owner_key_edge: owner_key_edge(),
         created_at: now(),
-    }
-}
-
-/// The regional redaction key the fixture manifest is keyed under.
-///
-/// A fixture, never a deployed key: the real one is a regional secret the
-/// collector resolves at cold start.
-pub const REDACTION_KEY: &[u8] = b"regional-redaction-key-fixture";
-
-/// The managed secret values the fixture manifest names.
-///
-/// Two different lengths on purpose. The reader indexes by declared length and
-/// slides one window per distinct length, so a fixture whose entries were all
-/// the same width would exercise a single window and prove nothing about the
-/// length actually surviving the wire.
-pub const REDACTED_SECRETS: [&str; 2] = ["sk-live-abcdef", "0123456789abcdef0123456789"];
-
-/// One real `{len, hmac}` entry over a fixture secret.
-///
-/// The digest is `HMAC-SHA256(REDACTION_KEY, secret)` computed through the
-/// writer's own constructor rather than a literal, so the fixture cannot assert
-/// a shape the production encoder does not produce.
-#[must_use]
-pub fn redaction_entry(secret: &str) -> RedactionEntry {
-    RedactionEntry::digest(REDACTION_KEY, secret.as_bytes()).expect("a fixture secret is narrow")
-}
-
-#[must_use]
-pub fn manifest() -> RedactionManifest {
-    RedactionManifest {
-        session: session(),
-        workspace: workspace(),
-        revision: CustodyRevision::FIRST,
-        algorithm: "HMAC-SHA-256".to_owned(),
-        key_id: "redact-key-1".to_owned(),
-        entries: REDACTED_SECRETS
-            .iter()
-            .copied()
-            .map(redaction_entry)
-            .collect(),
-        updated_at: now(),
     }
 }
 

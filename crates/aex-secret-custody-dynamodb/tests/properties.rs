@@ -4,9 +4,9 @@ mod support;
 
 use aex_secret_custody_dynamodb::codec::{
     custody_state_of, custody_state_str, decode_binding, decode_custody_head, decode_generation,
-    decode_manifest, decode_provider_credential, decode_secret, encode_binding,
-    encode_custody_head, encode_generation, encode_manifest, encode_provider_credential,
-    encode_secret, secret_state_of, secret_state_str,
+    decode_provider_credential, decode_secret, encode_binding, encode_custody_head,
+    encode_generation, encode_provider_credential, encode_secret, secret_state_of,
+    secret_state_str,
 };
 use aex_secret_custody_dynamodb::keys;
 use aex_secret_domain::custody::{CustodyRevision, CustodyState};
@@ -15,8 +15,7 @@ use aex_secret_domain::secret::{SecretRevision, SecretState, SourceGeneration};
 use proptest::prelude::*;
 
 use support::{
-    custody_head, entry, generation, manifest, metadata, now, provider_credential, session,
-    workspace,
+    custody_head, entry, generation, metadata, now, provider_credential, session, workspace,
 };
 
 proptest! {
@@ -130,12 +129,6 @@ fn every_row_family_round_trips() {
             entry: entry(),
             context_digest: [3; 32],
         }
-    );
-
-    let manifest_row = encode_manifest(&manifest());
-    assert_eq!(
-        decode_manifest(&manifest_row, workspace()).expect("decodes"),
-        manifest()
     );
 
     let credential = encode_provider_credential(&provider_credential()).expect("encodes");

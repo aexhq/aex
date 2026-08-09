@@ -121,18 +121,6 @@ pub enum AuthorityError {
         /// What the provider reported, without its own body.
         reason: String,
     },
-    /// A custody manifest entry could not be parsed.
-    ///
-    /// Fail closed: an unreadable entry might name a secret this batch
-    /// carries, so admitting the batch against a silently emptier redaction
-    /// set would let the secret reach storage unredacted. Retryable because
-    /// the custody stream owns the manifest row and rewrites it on its next
-    /// revision.
-    #[error("{malformed} custody manifest entries could not be parsed; the batch fails closed")]
-    CustodyMalformed {
-        /// How many entries were unreadable.
-        malformed: usize,
-    },
     /// Materialization exhausted its bounded retries with items unprocessed.
     ///
     /// The commit is durable and the receipt idempotent, so an unchanged
@@ -152,7 +140,6 @@ impl AuthorityError {
             self,
             Self::GateClosed { .. }
                 | Self::Provider { .. }
-                | Self::CustodyMalformed { .. }
                 | Self::MaterializeExhausted { .. }
                 | Self::Store(StoreError::Unavailable { .. })
         )

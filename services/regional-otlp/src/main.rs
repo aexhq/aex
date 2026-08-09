@@ -23,7 +23,7 @@ use aex_observation_store_dynamodb::health::{Probe, Readiness, readiness};
 use aex_otlp_admission::MemoryBudget;
 use aex_wire::dispatch::RequestLimits;
 
-use crate::admission::{CustodyManifests, OtlpService};
+use crate::admission::OtlpService;
 use crate::authority::AdmissionAuthority;
 use crate::config::{Config, REQUIRED_VARS, RegionalOtlpConfigError};
 use crate::counters::AdmissionTelemetry;
@@ -36,7 +36,6 @@ pub const ROLE: Role = Role::Otlp;
 pub const REQUIRED_PROBES: &[Probe] = &[
     Probe::ObservationTable,
     Probe::ObservationBucket,
-    Probe::RedactionKey,
     Probe::IngressGate,
 ];
 
@@ -113,7 +112,6 @@ pub async fn run(
         .await;
     let dynamodb = aws_sdk_dynamodb::Client::new(&aws);
     let s3 = aws_sdk_s3::Client::new(&aws);
-    let secrets = aws_sdk_secretsmanager::Client::new(&aws);
 
     let authority = AdmissionAuthority::new(
         dynamodb.clone(),
@@ -132,9 +130,6 @@ pub async fn run(
         })?;
     passed.push(Probe::ObservationTable);
     passed.push(Probe::ObservationBucket);
-
-    let redaction_key = resolve_redaction_key(&secrets, &config.redaction_key_ref).await?;
-    passed.push(Probe::RedactionKey);
 
     authority
         .ingress_gate()
@@ -172,11 +167,9 @@ pub async fn run(
 
     let service = OtlpService::new(
         authority,
-        CustodyManifests::new(dynamodb, config.secret_custody_table.clone()),
         config.limits,
         MemoryBudget::new(config.memory_budget_bytes),
         config.reserve_wait,
-        redaction_key,
         AdmissionTelemetry::new(telemetry, config.plane.as_str(), config.region.as_str()),
     );
     let state = Arc::new(AppState {
@@ -194,42 +187,6 @@ pub async fn run(
         .map_err(|error| RegionalOtlpRunError::Runtime {
             reason: error.to_string(),
         })
-}
-
-/// Resolves the regional redaction key.
-///
-/// The key never reaches a log, a span attribute or an error message: the only
-/// thing a failure reports is that the reference did not resolve.
-async fn resolve_redaction_key(
-    secrets: &aws_sdk_secretsmanager::Client,
-    reference: &str,
-) -> Result<Vec<u8>, RegionalOtlpRunError> {
-    use base64::Engine as _;
-
-    let response = secrets
-        .get_secret_value()
-        .secret_id(reference)
-        .send()
-        .await
-        .map_err(|error| RegionalOtlpRunError::Probe {
-            reason: format!("the redaction key reference did not resolve: {error}"),
-        })?;
-    let material = response
-        .secret_string()
-        .ok_or_else(|| RegionalOtlpRunError::Probe {
-            reason: "the redaction key reference carries no string value".to_owned(),
-        })?;
-    let key = base64::engine::general_purpose::STANDARD
-        .decode(material.trim())
-        .map_err(|_| RegionalOtlpRunError::Probe {
-            reason: "the redaction key is not base64".to_owned(),
-        })?;
-    if key.len() < 32 {
-        return Err(RegionalOtlpRunError::Probe {
-            reason: "the redaction key is shorter than 32 bytes".to_owned(),
-        });
-    }
-    Ok(key)
 }
 
 /// The release digest both health endpoints report.

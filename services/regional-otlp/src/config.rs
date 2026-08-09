@@ -19,10 +19,6 @@ pub const REGION_VAR: &str = "AEX_REGION";
 pub const OBSERVATION_TABLE_VAR: &str = "AEX_OBSERVATION_TABLE";
 /// Environment variable naming the regional observation `S3` bucket.
 pub const OBSERVATION_BUCKET_VAR: &str = "AEX_OBSERVATION_BUCKET";
-/// Environment variable naming the regional secret-custody `DynamoDB` table.
-pub const SECRET_CUSTODY_TABLE_VAR: &str = "AEX_SECRET_CUSTODY_TABLE";
-/// Environment variable naming the regional redaction key secret.
-pub const REDACTION_KEY_REF_VAR: &str = "AEX_OBS_REDACTION_KEY_REF";
 /// Environment variable naming the maximum encoded OTLP body in bytes.
 pub const ENCODED_MAX_VAR: &str = "AEX_OTLP_ENCODED_MAX";
 /// Environment variable naming the maximum decoded OTLP payload in bytes.
@@ -61,8 +57,6 @@ pub const REQUIRED_VARS: &[&str] = &[
     REGION_VAR,
     OBSERVATION_TABLE_VAR,
     OBSERVATION_BUCKET_VAR,
-    SECRET_CUSTODY_TABLE_VAR,
-    REDACTION_KEY_REF_VAR,
     ENCODED_MAX_VAR,
     DECODED_MAX_VAR,
     MAX_RECORDS_VAR,
@@ -106,10 +100,6 @@ pub struct Config {
     pub observation_table: String,
     /// The regional observation bucket.
     pub observation_bucket: String,
-    /// The regional secret-custody table holding redaction manifests.
-    pub secret_custody_table: String,
-    /// The secret id of the regional redaction key.
-    pub redaction_key_ref: String,
     /// The effective admission limits.
     pub limits: OtlpLimits,
     /// The process-wide decode-memory budget, in bytes.
@@ -203,8 +193,6 @@ impl Config {
             region,
             observation_table: required(&lookup, OBSERVATION_TABLE_VAR)?,
             observation_bucket: required(&lookup, OBSERVATION_BUCKET_VAR)?,
-            secret_custody_table: required(&lookup, SECRET_CUSTODY_TABLE_VAR)?,
-            redaction_key_ref: required(&lookup, REDACTION_KEY_REF_VAR)?,
             limits,
             memory_budget_bytes,
             reserve_wait: Duration::from_millis(reserve_wait_ms as u64),
@@ -312,9 +300,8 @@ mod tests {
     use super::{
         AUTHZ_PROJECTION_TABLE_VAR, CREDENTIAL_PEPPER_REF_VAR, Config, DECODED_MAX_VAR,
         ENCODED_MAX_VAR, MAX_RECORDS_VAR, MEMORY_BUDGET_VAR, OBSERVATION_BUCKET_VAR,
-        OBSERVATION_TABLE_VAR, PLANE_VAR, REDACTION_KEY_REF_VAR, REGION_VAR, REQUIRED_VARS,
-        RESERVE_WAIT_VAR, RESERVED_CONCURRENCY_VAR, RegionalOtlpConfigError,
-        SECRET_CUSTODY_TABLE_VAR,
+        OBSERVATION_TABLE_VAR, PLANE_VAR, REGION_VAR, REQUIRED_VARS, RESERVE_WAIT_VAR,
+        RESERVED_CONCURRENCY_VAR, RegionalOtlpConfigError,
     };
 
     fn complete() -> BTreeMap<&'static str, String> {
@@ -323,14 +310,6 @@ mod tests {
             (REGION_VAR, "eu-west-1".to_owned()),
             (OBSERVATION_TABLE_VAR, "observation-authority".to_owned()),
             (OBSERVATION_BUCKET_VAR, "aex-dev-observations".to_owned()),
-            (
-                SECRET_CUSTODY_TABLE_VAR,
-                "regional-secret-custody".to_owned(),
-            ),
-            (
-                REDACTION_KEY_REF_VAR,
-                "aex/dev/observation/redact".to_owned(),
-            ),
             (ENCODED_MAX_VAR, (768 * 1024).to_string()),
             (DECODED_MAX_VAR, (16 * 1024 * 1024).to_string()),
             (MAX_RECORDS_VAR, "2000".to_owned()),

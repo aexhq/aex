@@ -30,7 +30,6 @@ pub mod limits;
 pub mod memory;
 pub mod normalize;
 pub mod proto_pin;
-pub mod redact;
 pub mod response;
 
 pub use decode::{ContentCoding, DecodeRequest, DecodedBatch, OtlpEncoding, decode};
@@ -39,8 +38,4 @@ pub use limits::OtlpLimits;
 pub use memory::{MemoryBudget, MemoryLease, reservation_for};
 pub use normalize::{
     AuthenticatedScope, NormalizedBatch, NormalizedObservation, OverwriteReport, normalize,
-};
-pub use redact::{
-    DigestRedactor, ManagedSecretRedactor, NoManagedSecrets, RedactionReport, SecretDigest,
-    SecretDigestManifest,
 };

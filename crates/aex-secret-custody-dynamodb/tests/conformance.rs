@@ -53,23 +53,18 @@ fn this_table_has_no_change_feed_no_index_and_no_timer() {
 }
 
 #[test]
-fn the_collector_holds_a_read_and_nothing_else() {
+fn the_collector_holds_nothing_at_all_on_this_table() {
+    // The OTLP collector used to hold `GetItem` here, for the one row of the
+    // removed redaction manifest. The platform's own credentials no longer
+    // enter a sandbox, so there is nothing in a session's telemetry for a
+    // collector to recognise and nothing on this table for it to read.
     let definition = definition();
     let grants = definition["iam"].as_array().expect("an array");
-    let collector = grants
-        .iter()
-        .find(|grant| grant["role"].as_str() == Some("regional-otlp"))
-        .expect("the collector is granted something");
-    let actions: Vec<&str> = collector["actions"]
-        .as_array()
-        .expect("an array")
-        .iter()
-        .map(|action| action.as_str().expect("a string"))
-        .collect();
-    assert_eq!(
-        actions,
-        ["dynamodb:GetItem"],
-        "the redaction manifest is reachable by one point read, and nothing else is"
+    assert!(
+        grants
+            .iter()
+            .all(|grant| grant["role"].as_str() != Some("regional-otlp")),
+        "a telemetry role with a grant on the secret-custody table is a path that should not exist"
     );
 }
 
@@ -180,7 +175,7 @@ async fn a_revoke_is_one_conditional_update_and_never_a_fan_out() {
 
 #[tokio::test]
 async fn every_authority_point_read_is_strongly_consistent() {
-    for read in ["secret", "generation", "custody", "manifest"] {
+    for read in ["secret", "generation", "custody"] {
         let (client, receiver) = capturing_client();
         let store = CustodyStore::new(client, TABLE);
         match read {
@@ -192,11 +187,8 @@ async fn every_authority_point_read_is_strongly_consistent() {
                     .load_generation(workspace(), &secret_name(), generation().generation)
                     .await;
             }
-            "custody" => {
-                let _ignored = store.load_custody(workspace(), session()).await;
-            }
             _ => {
-                let _ignored = store.load_manifest(workspace(), session()).await;
+                let _ignored = store.load_custody(workspace(), session()).await;
             }
         }
         let body = captured_body(receiver);

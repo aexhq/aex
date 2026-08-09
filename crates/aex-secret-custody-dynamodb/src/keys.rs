@@ -32,7 +32,6 @@ pub const ITEM_TYPES: &[&str] = &[
     "managed_call",
     "call_authorization",
     "rebind_intent",
-    "redaction_manifest",
     "provider_credential",
     "idempotency_receipt",
 ];
@@ -198,21 +197,6 @@ pub fn rebind(session: SessionId, operation: OperationId) -> Key {
     }
 }
 
-/// The per-session redaction manifest.
-///
-/// It lives in its own partition on purpose: `regional-otlp` holds
-/// `dynamodb:GetItem` on this table and nothing else, so it can read exactly
-/// this key and can reach no custody row, no generation and no ciphertext. The
-/// manifest carries HMAC digests of the values the platform injected, which is
-/// what lets the collector redact them with **zero decrypt permission**.
-#[must_use]
-pub fn redaction_manifest(session: SessionId) -> Key {
-    Key {
-        pk: format!("REDACT#{session}"),
-        sk: "MANIFEST".to_owned(),
-    }
-}
-
 /// One provider-credential binding in the BYOK directory (OD-23).
 ///
 /// # Errors
@@ -257,8 +241,7 @@ mod tests {
     use aex_wire::ids::{PrefixedId, SessionId, Uuid7, WorkspaceId};
 
     use super::{
-        binding, custody_head, generation, generation_partition, redaction_manifest, secret,
-        secret_partition,
+        binding, custody_head, generation, generation_partition, secret, secret_partition,
     };
 
     fn workspace() -> WorkspaceId {
@@ -297,18 +280,6 @@ mod tests {
         let second = binding(session(), CustodyRevision(10), "a").expect("a key");
         assert!(first.sk < second.sk);
         assert_eq!(first.pk, custody_head(session()).pk);
-    }
-
-    #[test]
-    fn the_redaction_manifest_is_reachable_by_one_point_read_and_nothing_else() {
-        let manifest = redaction_manifest(session());
-        assert_eq!(manifest.pk, format!("REDACT#{}", session()));
-        assert_ne!(
-            manifest.pk,
-            custody_head(session()).pk,
-            "the collector holds GetItem on this table; the manifest must not sit \
-             in a partition that also holds custody rows"
-        );
     }
 
     #[test]
