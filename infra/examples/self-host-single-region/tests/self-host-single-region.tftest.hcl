@@ -1,10 +1,4 @@
-mock_provider "aws" {
-  mock_data "aws_s3_object" {
-    defaults = {
-      checksum_sha256 = "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
-    }
-  }
-}
+mock_provider "aws" {}
 
 variables {
   plane                           = "prd"
@@ -13,6 +7,8 @@ variables {
   permissions_boundary_policy_arn = "arn:aws:iam::000000000000:policy/aex-dev-application-boundary"
   name_prefix                     = "aex-prd-euw1-"
   bucket_suffix                   = "0a1b2c3d"
+  cluster_name                    = "aex-prd-euw1"
+  service_security_group_ids      = ["sg-0123456789abcdef0"]
   content_bucket_purpose          = "content"
   content_lifecycle_role_arn      = "arn:aws:iam::000000000000:role/aex-prd-content-lifecycle"
   artifact_retention_days         = 90
@@ -117,23 +113,31 @@ variables {
   ]
 
   session_api = {
-    function_name           = "aex-prd-regional-session-api"
-    artifact_key            = "lambda/regional-session-api/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855.zip"
-    artifact_object_version = "aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"
-    artifact_sha256         = "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
-    memory_mb               = 512
-    timeout_s               = 30
-    log_retention_days      = 30
+    name               = "regional-session-api"
+    image              = "000000000000.dkr.ecr.eu-west-1.amazonaws.com/aex/regional-session-api@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    cpu                = 1024
+    memory             = 2048
+    desired_count      = 2
+    stop_timeout       = 30
+    container_port     = 8080
+    log_group_name     = "/aex/prd/regional-session-api"
+    log_retention_days = 30
+    execution_role_arn = "arn:aws:iam::000000000000:role/aex-prd-ecs-execution"
     env = {
       AEX_PLANE  = "prd"
       AEX_REGION = "eu-west-1"
     }
+    autoscaling_bounds = {
+      min_capacity = 2
+      max_capacity = 2
+    }
+    autoscaling_metrics = []
   }
 
   session_api_grants = {
     assume_principal = {
       type        = "Service"
-      identifiers = ["lambda.amazonaws.com"]
+      identifiers = ["ecs-tasks.amazonaws.com"]
     }
     wildcard_resource_allowlist = ["kms:GenerateRandom"]
     action_grants = [
@@ -170,12 +174,43 @@ run "the_self_host_root_plans" {
   }
 }
 
-run "the_lambda_reads_its_bytes_from_the_artifact_bucket_this_root_created" {
+run "the_service_runs_exactly_the_published_bytes" {
   command = plan
 
   assert {
-    condition     = can(regex("^lambda/[a-z0-9-]+/[0-9a-f]{64}\\.zip$", var.session_api.artifact_key))
-    error_message = "The artifact key must be digest-addressed, so a self-hoster deploys exactly the published bytes."
+    condition     = can(regex("@sha256:[0-9a-f]{64}$", var.session_api.image))
+    error_message = "The image must be digest-pinned, so a self-hoster deploys exactly the published bytes and a restart cannot land on different ones."
+  }
+
+  assert {
+    condition     = module.session_service.deregistration_delay >= 30
+    error_message = "The session service must carry a drain window of at least 30 seconds."
+  }
+}
+
+run "the_cluster_and_the_log_group_are_created_by_this_root" {
+  command = plan
+
+  assert {
+    condition     = module.cluster.name == var.cluster_name
+    error_message = "The ECS cluster must be created here, so a fresh account plans from empty."
+  }
+
+  assert {
+    condition     = module.session_log_group.name == var.session_api.log_group_name
+    error_message = "The service log group must be created here; a Fargate task has no managed group waiting for it."
+  }
+}
+
+run "the_session_service_assumes_its_role_as_a_task" {
+  command = plan
+
+  assert {
+    condition = (
+      contains(var.session_api_grants.assume_principal.identifiers, "ecs-tasks.amazonaws.com")
+      && !contains(var.session_api_grants.assume_principal.identifiers, "lambda.amazonaws.com")
+    )
+    error_message = "A Fargate task assumes its role as ecs-tasks.amazonaws.com; the Lambda trust principal would leave the task unable to assume the role at all."
   }
 }
 

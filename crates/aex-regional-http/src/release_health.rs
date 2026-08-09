@@ -28,6 +28,9 @@ pub fn router(readiness: Readiness) -> Router {
 }
 
 async fn release_health(State(readiness): State<Readiness>) -> impl axum::response::IntoResponse {
+    // Readiness owns the drain signal, so a draining task reports `not_ready`
+    // here for the same reason it does on `/internal/readyz`: one predicate,
+    // not two that can disagree about whether this task is still serving.
     let ready = readiness.is_ready();
     let body = ReleaseHealthBody {
         schema: "aex.release-health.v1",

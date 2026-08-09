@@ -8,11 +8,6 @@ output "listener_arn" {
   description = "ARN of the HTTPS listener."
 }
 
-output "target_group_arn" {
-  value       = aws_lb_target_group.this.arn
-  description = "ARN of the target group services register with."
-}
-
 output "zone_id" {
   value       = aws_lb.this.zone_id
   description = "Hosted zone id of the load balancer, for an alias record."
@@ -20,5 +15,5 @@ output "zone_id" {
 
 output "deregistration_delay" {
   value       = var.deregistration_delay
-  description = "Drain window configured on the target group. A service behind this load balancer must not stop draining sooner."
+  description = "Drain window this load balancer publishes for every service attached to it. A root passes it to each `alb-service-target` and to the service behind it, so the two cannot disagree."
 }

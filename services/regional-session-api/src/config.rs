@@ -6,8 +6,8 @@
 //! then silently writes a tenant's data outside its declared residency.
 
 use aex_regional_http::config::{
-    Arn, Lookup, RegionalHttpConfigError, arn_in_region, bounded_usize, forbidden, plane_name,
-    region, required,
+    Arn, Lookup, RegionalHttpConfigError, arn_in_region, bounded_u64, bounded_usize, forbidden,
+    plane_name, region, required,
 };
 use aex_wire::types::{HttpsUrl, Region};
 
@@ -22,6 +22,14 @@ pub const REGION: &str = "AEX_REGION";
 pub const REGIONAL_API_URL: &str = "AEX_REGIONAL_API_URL";
 /// The release digest reported by `/internal/readyz`.
 pub const RELEASE_DIGEST: &str = "AEX_RELEASE_DIGEST";
+/// The port the container listens on.
+pub const SESSION_PORT: &str = "AEX_SESSION_PORT";
+/// Drain deadline in milliseconds.
+///
+/// Bound below the task definition's stop timeout: the deadline exists to end a
+/// drain before the runtime sends `SIGKILL`, and one set above that timeout is a
+/// deadline that never fires.
+pub const SESSION_DRAIN_DEADLINE_MS: &str = "AEX_SESSION_DRAIN_DEADLINE_MS";
 /// The `central-authz` function this edge resolves assertions through.
 pub const AUTHZ_FUNCTION_ARN: &str = "AEX_AUTHZ_FUNCTION_ARN";
 /// The parameter holding the assertion verification key set.
@@ -60,11 +68,13 @@ pub const MAX_PAGE_ITEMS: &str = "AEX_MAX_PAGE_ITEMS";
 pub const MAX_PAGE_BYTES: &str = "AEX_MAX_PAGE_BYTES";
 
 /// Every variable a healthy `regional-session-api` requires, in declaration order.
-pub const REQUIRED: [&str; 22] = [
+pub const REQUIRED: [&str; 24] = [
     PLANE,
     REGION,
     REGIONAL_API_URL,
     RELEASE_DIGEST,
+    SESSION_PORT,
+    SESSION_DRAIN_DEADLINE_MS,
     AUTHZ_FUNCTION_ARN,
     AUTHZ_VERIFY_KEYS_PARAM,
     AUTHZ_PROJECTION_TABLE,
@@ -117,6 +127,10 @@ pub struct Config {
     pub regional_api_url: HttpsUrl,
     /// Release digest reported by readiness.
     pub release_digest: String,
+    /// The `TCP` port the listener binds.
+    pub port: u16,
+    /// How long a drain may run before the listener is abandoned.
+    pub drain_deadline_ms: u64,
     /// `central-authz` function.
     pub authz_function: Arn,
     /// Verification key-set parameter name.
@@ -194,11 +208,18 @@ impl Config {
                 ),
             });
         }
+        let raw_port = bounded_u64(lookup, SESSION_PORT, 1, 65_535)?;
+        let port = u16::try_from(raw_port).map_err(|_| RegionalHttpConfigError::Invalid {
+            name: SESSION_PORT,
+            reason: format!("`{raw_port}` is not a TCP port"),
+        })?;
         Ok(Self {
             plane,
             region,
             regional_api_url,
             release_digest: required(lookup, RELEASE_DIGEST)?,
+            port,
+            drain_deadline_ms: bounded_u64(lookup, SESSION_DRAIN_DEADLINE_MS, 1_000, 600_000)?,
             authz_function: arn_in_region(lookup, AUTHZ_FUNCTION_ARN, region, "lambda")?,
             authz_verify_keys_param: required(lookup, AUTHZ_VERIFY_KEYS_PARAM)?,
             authz_projection_table: required(lookup, AUTHZ_PROJECTION_TABLE)?,

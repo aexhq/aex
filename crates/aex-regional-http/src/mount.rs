@@ -140,7 +140,7 @@ pub enum MountError {
 /// A composition test asserts `routes` equals [`RouteOwner::routes`], which is
 /// what makes an unmounted route a build failure.
 pub struct Mounted {
-    /// The `axum` router, ready for `lambda_http::run` or a `hyper` listener.
+    /// The `axum` router, ready for `axum::serve` on a bound listener.
     pub router: Router,
     /// Every mounted route, in `RouteId` order.
     pub routes: Vec<RouteId>,

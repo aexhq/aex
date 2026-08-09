@@ -17,6 +17,17 @@ use aex_release_tool::evidence::{FreshnessPolicy, Receipt};
 use aex_release_tool::graph::inputs::{Unit, Units};
 use common::docs::{BUILDER, digest, sha1, valid_receipt};
 
+/// The subject every fixture below certifies.
+///
+/// These tests are about certifying a blob: file-backed evidence, a
+/// `github-release` location and an asset name derived from `form = "zip"`.
+/// The unit must therefore be a shipped Lambda unit — an OCI unit has no blob
+/// to publish, needs an inspected image identity before it can even be
+/// described, and is refused a `github-release` location by
+/// `github_release_unit_uri`. `regional-observation-api` is the shipped
+/// request-path Lambda that supplies that shape and whose `required_receipts`
+/// still carry both the `unit`/`lint` pair and the `contract` class the
+/// deferral tests split on.
 fn unit() -> Unit {
     let text = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../release/units.toml"),
@@ -26,7 +37,7 @@ fn unit() -> Unit {
     units
         .units
         .into_iter()
-        .find(|unit| unit.id == "regional-session-api")
+        .find(|unit| unit.id == "regional-observation-api")
         .unwrap()
 }
 
@@ -118,7 +129,7 @@ impl Fixture {
             path: ".github/workflows/_build-artifacts.yml".to_owned(),
             run_id: "123".to_owned(),
             run_attempt: 1,
-            job_name: "regional-session-api".to_owned(),
+            job_name: "regional-observation-api".to_owned(),
             builder_id: BUILDER.to_owned(),
         };
         let mut claims = CertificationClaims {

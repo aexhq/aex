@@ -137,18 +137,50 @@ variable "ops_subscriptions" {
   description = "Where operational notifications go."
 }
 
+variable "cluster_name" {
+  type        = string
+  description = "ECS cluster name the session service runs in."
+}
+
+variable "log_authority" {
+  type        = string
+  description = "Which authority key encrypts the service log group."
+  default     = "session"
+}
+
+variable "service_security_group_ids" {
+  type        = list(string)
+  description = "Security groups attached to the session service tasks. This root does not create them: a self-hoster decides what their tasks may reach."
+}
+
 variable "session_api" {
   type = object({
-    function_name           = string
-    artifact_key            = string
-    artifact_object_version = string
-    artifact_sha256         = string
-    memory_mb               = number
-    timeout_s               = number
-    log_retention_days      = number
-    env                     = map(string)
+    name               = string
+    image              = string
+    cpu                = number
+    memory             = number
+    desired_count      = number
+    stop_timeout       = number
+    container_port     = number
+    log_group_name     = string
+    log_retention_days = number
+    execution_role_arn = string
+    env                = map(string)
+    autoscaling_bounds = object({
+      min_capacity = number
+      max_capacity = number
+    })
+    autoscaling_metrics = list(object({
+      name               = string
+      namespace          = string
+      statistic          = string
+      target_value       = number
+      dimensions         = optional(map(string), {})
+      scale_out_cooldown = optional(number, 60)
+      scale_in_cooldown  = optional(number, 300)
+    }))
   })
-  description = "The one Lambda this example deploys, as a worked instance of the release contract."
+  description = "The one service this example deploys, as a worked instance of the release contract. It is a Fargate service running a digest-pinned image, not a Lambda reading a ZIP."
 }
 
 variable "session_api_grants" {

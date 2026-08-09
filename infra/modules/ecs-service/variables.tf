@@ -111,7 +111,7 @@ variable "desired_count" {
 
 variable "stop_timeout" {
   type        = number
-  description = "Seconds a container is given to drain before it is killed. 120 for `brain-mux`, 30 for `regional-stream`."
+  description = "Seconds a container is given to drain before it is killed. 120 for `brain-mux`, 30 for `regional-stream` and `regional-session-api`."
 
   validation {
     condition     = var.stop_timeout >= 1 && var.stop_timeout <= 120
@@ -126,6 +126,40 @@ variable "stop_timeout" {
   validation {
     condition     = var.name != "regional-stream" || var.stop_timeout == 30
     error_message = "`regional-stream` must use a 30 second stop timeout."
+  }
+
+  validation {
+    condition     = var.name != "regional-session-api" || var.stop_timeout == 30
+    error_message = "`regional-session-api` must use a 30 second stop timeout. It is the drain deadline the process's own `AEX_SESSION_DRAIN_DEADLINE_MS` is set below, so the task finishes its in-flight requests and exits on its own terms rather than being killed mid-transaction."
+  }
+}
+
+# The gap that turns a slow start into a failed apply. ECS begins counting load
+# balancer health-check failures the moment a task reaches RUNNING; with
+# `wait_for_steady_state` and the circuit breaker both on, a service that needs
+# longer than one unhealthy window to answer its first probe does not deploy
+# slowly, it fails the apply and rolls back.
+variable "health_check_grace_period_seconds" {
+  type        = number
+  default     = null
+  description = "Seconds ECS ignores load balancer health checks after a task starts. Required for a service behind a load balancer; meaningless, and rejected by ECS, without one."
+
+  validation {
+    condition = (
+      var.health_check_grace_period_seconds == null
+      || (var.health_check_grace_period_seconds >= 0 && var.health_check_grace_period_seconds <= 2147483647)
+    )
+    error_message = "The health check grace period must be between 0 and 2147483647 seconds."
+  }
+
+  validation {
+    condition     = var.target_group_arn == null || var.health_check_grace_period_seconds != null
+    error_message = "A service registered with a load balancer must state its health check grace period. Without one ECS counts health-check failures from the first second, and `wait_for_steady_state` plus the deployment circuit breaker turn a slow first start into a failed apply rather than a slow one."
+  }
+
+  validation {
+    condition     = var.target_group_arn != null || var.health_check_grace_period_seconds == null
+    error_message = "A grace period only applies to a service behind a load balancer; ECS rejects it on a service with no load balancer."
   }
 }
 
@@ -163,6 +197,18 @@ variable "autoscaling_metrics" {
     namespace    = string
     statistic    = string
     target_value = number
+
+    # An undimensioned metric in an AWS-owned namespace does not describe this
+    # service, it describes every load balancer or cluster in the account
+    # aggregated together. The policy still applies, still looks healthy, and
+    # scales on somebody else's traffic.
+    dimensions = optional(map(string), {})
+
+    # Asymmetric on purpose: come up quickly when the signal says saturated,
+    # retreat slowly so a brief dip does not shed capacity a moment before the
+    # next burst needs it.
+    scale_out_cooldown = optional(number, 60)
+    scale_in_cooldown  = optional(number, 300)
   }))
   description = "Target-tracking metrics. An empty list selects fixed-count mode. When metrics are supplied, at least one must be service-published: CPU alone does not describe a queueing workload, so scaling on it alone hides saturation."
 
@@ -179,6 +225,39 @@ variable "autoscaling_metrics" {
   validation {
     condition     = alltrue([for m in var.autoscaling_metrics : m.target_value > 0])
     error_message = "Every metric target value must be positive."
+  }
+
+  validation {
+    condition = alltrue([
+      for m in var.autoscaling_metrics :
+      length(m.dimensions) > 0
+      if startswith(m.namespace, "AWS/") || startswith(m.namespace, "ECS/")
+    ])
+    error_message = "A metric in an AWS-owned namespace such as `AWS/ApplicationELB` or `ECS/ContainerInsights` must carry dimensions. Undimensioned, CloudWatch aggregates every load balancer or cluster in the account into one series, and the policy scales this service on somebody else's traffic while looking perfectly healthy."
+  }
+
+  validation {
+    condition = alltrue([
+      for m in var.autoscaling_metrics :
+      alltrue([for k, v in m.dimensions : length(k) > 0 && length(v) > 0])
+    ])
+    error_message = "Every metric dimension must have a non-empty name and value."
+  }
+
+  validation {
+    condition = alltrue([
+      for m in var.autoscaling_metrics :
+      m.scale_out_cooldown >= 0 && m.scale_out_cooldown <= 3600
+      && m.scale_in_cooldown >= 0 && m.scale_in_cooldown <= 3600
+    ])
+    error_message = "Both cooldowns must be between 0 and 3600 seconds."
+  }
+
+  validation {
+    condition = alltrue([
+      for m in var.autoscaling_metrics : m.scale_in_cooldown >= m.scale_out_cooldown
+    ])
+    error_message = "The scale-in cooldown must be at least the scale-out cooldown. Shedding capacity faster than it is added is how a service oscillates under a load pattern it should simply have absorbed."
   }
 }
 

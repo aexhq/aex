@@ -1481,6 +1481,166 @@ async fn health_and_readiness_paths_are_internal_no_store_and_fail_closed() {
 }
 
 #[tokio::test]
+async fn a_raised_drain_signal_flips_both_readiness_surfaces_to_503() {
+    use std::sync::atomic::AtomicBool;
+
+    let draining = Arc::new(AtomicBool::new(false));
+    let readiness = aex_regional_http::health::Readiness::ready("sha256:release")
+        .with_drain_signal(Arc::clone(&draining));
+
+    // A bound but unraised signal is indistinguishable from no signal at all,
+    // which is what keeps a task ready between bind and `SIGTERM`.
+    assert!(!readiness.is_draining());
+    let ready = readiness.clone();
+    let response = aex_regional_http::health::router(ready)
+        .oneshot(
+            http::Request::builder()
+                .uri("/internal/readyz")
+                .body(axum::body::Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), 200);
+
+    draining.store(true, AtomicOrdering::Release);
+    assert!(readiness.is_draining());
+
+    let response = aex_regional_http::health::router(readiness.clone())
+        .oneshot(
+            http::Request::builder()
+                .uri("/internal/readyz")
+                .body(axum::body::Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), 503);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let value: serde_json::Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(
+        value,
+        json!({
+            "status": "not_ready",
+            "releaseDigest": "sha256:release",
+            "unavailable": ["draining"]
+        }),
+        "a draining task reports the drain by name in the unchanged body shape"
+    );
+
+    // `/internal/healthz` is liveness, not readiness: a draining task is still
+    // alive, and answering 503 here would have the runtime kill it mid-drain.
+    let response = aex_regional_http::health::router(readiness.clone())
+        .oneshot(
+            http::Request::builder()
+                .uri("/internal/healthz")
+                .body(axum::body::Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), 200);
+
+    // The public release identity is bound to the same predicate, so it cannot
+    // advertise a release the task has stopped serving.
+    let response = aex_regional_http::release_health::router(readiness)
+        .oneshot(
+            http::Request::builder()
+                .uri("/api/release/health")
+                .body(axum::body::Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), 503);
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let value: serde_json::Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(
+        value,
+        json!({
+            "schema": "aex.release-health.v1",
+            "releaseId": "sha256:release",
+            "status": "not_ready"
+        })
+    );
+}
+
+#[tokio::test]
+async fn readiness_without_a_drain_signal_is_unchanged_for_a_lambda() {
+    // The Lambda services construct readiness exactly this way and never drain.
+    // Both surfaces must answer byte-identically to what they answered before a
+    // drain signal existed.
+    let readiness = aex_regional_http::health::Readiness::ready("sha256:release");
+    assert!(!readiness.is_draining());
+    let response = aex_regional_http::health::router(readiness)
+        .oneshot(
+            http::Request::builder()
+                .uri("/internal/readyz")
+                .body(axum::body::Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), 200);
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let value: serde_json::Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(
+        value,
+        json!({
+            "status": "ready",
+            "releaseDigest": "sha256:release",
+            "unavailable": []
+        })
+    );
+
+    let unresolved =
+        aex_regional_http::health::Readiness::not_ready("sha256:release", ["cursor_key_ring"])
+            .expect("readiness");
+    assert!(!unresolved.is_draining());
+    let response = aex_regional_http::health::router(unresolved)
+        .oneshot(
+            http::Request::builder()
+                .uri("/internal/readyz")
+                .body(axum::body::Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), 503);
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let value: serde_json::Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(
+        value,
+        json!({
+            "status": "not_ready",
+            "releaseDigest": "sha256:release",
+            "unavailable": ["cursor_key_ring"]
+        })
+    );
+}
+
+#[tokio::test]
 async fn public_release_health_is_closed_no_store_and_exactly_release_bound() {
     for (readiness, expected_status, expected_body) in [
         (

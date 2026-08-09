@@ -1,10 +1,4 @@
-mock_provider "aws" {
-  mock_data "aws_s3_object" {
-    defaults = {
-      checksum_sha256 = "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
-    }
-  }
-}
+mock_provider "aws" {}
 
 variables {
   plane                           = "dev"
@@ -17,21 +11,36 @@ variables {
   alb_security_group_ids          = ["sg-0123456789abcdef1"]
   kms_key_arn                     = "arn:aws:kms:eu-west-1:000000000000:key/00000000-0000-4000-8000-000000000000"
   session_journal_stream_arn      = "arn:aws:dynamodb:eu-west-1:000000000000:table/aex-dev-euw1-session-journal/stream/2026-08-01T00:00:00.000"
-  artifact_bucket                 = "aex-infra-artifacts-dev-0a1b2c3d"
   cluster_name                    = "aex-dev-euw1"
 
+  # The `path_patterns` below are the part of the public surface that splits
+  # cleanly, and only that part. `/api/telemetry/*`, `/api/sessions` and
+  # everything under `/api/sessions/{sessionId}/` are deliberately absent:
+  # `regional-stream` and `regional-session-api` both serve routes under
+  # `/api/sessions/{sessionId}/`, discriminated by the segment *after* a
+  # variable id, so no prefix split separates them. See this root's README.
   session_api = {
-    function_name           = "aex-dev-regional-session-api"
-    artifact_key            = "lambda/regional-session-api/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855.zip"
-    artifact_object_version = "aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"
-    artifact_sha256         = "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
-    memory_mb               = 512
-    timeout_s               = 30
-    log_retention_days      = 30
+    name                              = "regional-session-api"
+    image                             = "000000000000.dkr.ecr.eu-west-1.amazonaws.com/aex/regional-session-api@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    cpu                               = 1024
+    memory                            = 2048
+    desired_count                     = 2
+    stop_timeout                      = 30
+    container_port                    = 8080
+    health_check_grace_period_seconds = 60
+    log_group_name                    = "/aex/dev/regional-session-api"
+    log_retention_days                = 30
+    execution_role_arn                = "arn:aws:iam::000000000000:role/aex-dev-ecs-execution"
+    path_patterns                     = ["/api/workspace/*", "/api/operations/*", "/api/billing/*"]
     env = {
       AEX_PLANE  = "dev"
       AEX_REGION = "eu-west-1"
     }
+    autoscaling_bounds = {
+      min_capacity = 2
+      max_capacity = 2
+    }
+    autoscaling_metrics = []
   }
 
   operation_queue = {
@@ -50,16 +59,18 @@ variables {
   }
 
   stream_service = {
-    name               = "regional-stream"
-    image              = "000000000000.dkr.ecr.eu-west-1.amazonaws.com/aex/regional-stream@sha256:0000000000000000000000000000000000000000000000000000000000000000"
-    cpu                = 1024
-    memory             = 2048
-    desired_count      = 2
-    stop_timeout       = 30
-    container_port     = 8080
-    log_group_name     = "/aex/dev/regional-stream"
-    log_retention_days = 30
-    execution_role_arn = "arn:aws:iam::000000000000:role/aex-dev-ecs-execution"
+    name                              = "regional-stream"
+    image                             = "000000000000.dkr.ecr.eu-west-1.amazonaws.com/aex/regional-stream@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    cpu                               = 1024
+    memory                            = 2048
+    desired_count                     = 2
+    stop_timeout                      = 30
+    container_port                    = 8080
+    health_check_grace_period_seconds = 60
+    log_group_name                    = "/aex/dev/regional-stream"
+    log_retention_days                = 30
+    execution_role_arn                = "arn:aws:iam::000000000000:role/aex-dev-ecs-execution"
+    path_patterns                     = ["/api/events/*", "/api/logs/*", "/api/metrics/*", "/api/spans/*", "/api/traces/*"]
     env = {
       AEX_PLANE = "dev"
     }
@@ -80,7 +91,7 @@ variables {
     "regional-session-api" = {
       assume_principal = {
         type        = "Service"
-        identifiers = ["lambda.amazonaws.com"]
+        identifiers = ["ecs-tasks.amazonaws.com"]
       }
       wildcard_resource_allowlist = ["kms:GenerateRandom"]
       action_grants = [
@@ -131,7 +142,7 @@ run "the_region_application_plans" {
   }
 }
 
-run "the_cluster_and_the_log_group_are_created_by_this_root" {
+run "the_cluster_and_the_log_groups_are_created_by_this_root" {
   command = plan
 
   assert {
@@ -141,16 +152,94 @@ run "the_cluster_and_the_log_group_are_created_by_this_root" {
 
   assert {
     condition     = module.stream_log_group.name == var.stream_service.log_group_name
-    error_message = "The service log group must be created by this root, not assumed to exist."
+    error_message = "The stream service log group must be created by this root, not assumed to exist."
+  }
+
+  assert {
+    condition     = module.session_log_group.name == var.session_api.log_group_name
+    error_message = "The session API log group must be created by this root; a Fargate service has no managed group waiting for it the way a Lambda did."
   }
 }
 
-run "the_service_drain_window_matches_the_target_group" {
+run "each_service_drain_window_matches_its_own_target_group" {
   command = plan
 
   assert {
-    condition     = module.stream_service.deregistration_delay >= 30
+    condition     = module.stream_service.deregistration_delay == module.stream_target.deregistration_delay
+    error_message = "The stream service and the target group in front of it must agree on the drain window."
+  }
+
+  assert {
+    condition     = module.session_service.deregistration_delay == module.session_target.deregistration_delay
+    error_message = "The session service and the target group in front of it must agree on the drain window."
+  }
+
+  assert {
+    condition     = module.session_service.deregistration_delay >= 30
     error_message = "The service drain window must be at least the target group deregistration delay."
+  }
+}
+
+run "both_request_path_services_attach_to_the_one_public_listener" {
+  command = plan
+
+  assert {
+    condition     = var.stream_service.name != var.session_api.name
+    error_message = "The two services are distinct deployables, each with its own target group and its own listener rule."
+  }
+
+  assert {
+    condition = length(setintersection(
+      toset(var.stream_service.path_patterns),
+      toset(var.session_api.path_patterns),
+    )) == 0
+    error_message = "The two services must not claim the same path pattern."
+  }
+
+  assert {
+    condition = alltrue([
+      for p in concat(var.stream_service.path_patterns, var.session_api.path_patterns) :
+      startswith(p, "/api/") && !startswith(p, "/internal")
+    ])
+    error_message = "Every forwarded pattern must be a public /api/ path; /internal/* stays unreachable from the public listener."
+  }
+}
+
+run "the_session_api_runs_as_a_fargate_task_not_a_function" {
+  command = plan
+
+  assert {
+    condition     = can(regex("@sha256:[0-9a-f]{64}$", var.session_api.image))
+    error_message = "The session API image must be digest-pinned."
+  }
+
+  assert {
+    condition = (
+      var.session_api.cpu == 1024
+      && var.session_api.memory == 2048
+      && var.session_api.desired_count == 2
+      && var.session_api.stop_timeout == 30
+      && var.session_api.container_port == 8080
+    )
+    error_message = "The session API must carry the reviewed Fargate shape from release/units.toml: 1024/2048, two tasks, a 30 second stop timeout on port 8080."
+  }
+
+  assert {
+    condition     = module.session_service.deregistration_delay >= 30
+    error_message = "The session API must materialize as an ECS service behind a target group, with a drain window of at least 30 seconds."
+  }
+
+  assert {
+    condition     = module.session_log_group.name == "/aex/${var.plane}/${var.session_api.name}"
+    error_message = "The session API must log to its own plane-qualified group."
+  }
+
+  assert {
+    condition = (
+      contains(var.deployable_grants["regional-session-api"].assume_principal.identifiers, "ecs-tasks.amazonaws.com")
+      && !contains(var.deployable_grants["regional-session-api"].assume_principal.identifiers, "lambda.amazonaws.com")
+    )
+    error_message = "A Fargate task assumes its role as ecs-tasks.amazonaws.com. The Lambda trust principal it used to carry would leave the task unable to assume the role at all, and the service would never start."
   }
 }
 

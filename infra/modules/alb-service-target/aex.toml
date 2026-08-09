@@ -1,0 +1,13 @@
+[aex]
+owner = "delivery"
+role = "infra_module"
+artifact = "terraform_module"
+layers = ["unit", "integration"]
+concerns = ["security"]
+seams = []
+security_tier = "internal"
+risk = ["none"]
+scenarios = []
+
+[aex.not_applicable]
+live_suite = "Target registration, health-check admission and drain are proven by the public-edge live suite of the service attached to the listener."

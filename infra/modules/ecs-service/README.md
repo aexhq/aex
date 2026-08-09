@@ -1,6 +1,7 @@
 # `ecs-service`
 
-A long-running Fargate service: `brain-mux` or `regional-stream`.
+A long-running Fargate service: `brain-mux`, `regional-stream` or
+`regional-session-api`.
 
 The image is always a digest. A service that follows a tag can restart onto
 different bytes with no deployment, no manifest and no receipt, which would make
@@ -39,21 +40,44 @@ The module has two explicit capacity modes:
   `desired_count`, so the reviewed contract cannot imply scaling that has no
   authoritative metric publisher.
 
+## Behind a load balancer
+
+A service registered with a target group must state
+`health_check_grace_period_seconds`. ECS starts counting load balancer
+health-check failures the moment a task reaches RUNNING, and this module runs
+with `wait_for_steady_state` and the deployment circuit breaker both on. Without
+a grace period a service that needs longer than one unhealthy window to answer
+its first probe does not deploy slowly - the apply fails and rolls back. The
+variable is rejected on a service with no load balancer, because ECS rejects it
+too.
+
+A metric in an AWS-owned namespace must carry `dimensions`. Undimensioned,
+`AWS/ApplicationELB` or `ECS/ContainerInsights` resolves to every load balancer
+or cluster in the account aggregated into one series: the policy stays green and
+scales this service on traffic that is not its own. Service-published namespaces
+may omit them.
+
+Each metric also carries `scale_out_cooldown` and `scale_in_cooldown`, 60 and
+300 seconds by default. The asymmetry is deliberate and enforced: scale-in may
+not be quicker than scale-out, because shedding capacity faster than it is added
+is how a service oscillates under a load pattern it should have absorbed.
+
 ## Inputs
 
 | Name | Type | Description |
 | --- | --- | --- |
-| `name` | `string` | Service name; also selects the `brain-mux` and `regional-stream` pins. |
+| `name` | `string` | Service name; also selects the `brain-mux`, `regional-stream` and `regional-session-api` pins. |
 | `task_definition_family` | `string` | Plane- and region-qualified family, `aex-<dev\|prd>-<region>-<service-name>`. |
 | `cluster_arn` / `cluster_name` | `string` | Cluster the service runs in. |
 | `image` | `string` | Digest-pinned image. |
 | `cpu` / `memory` | `number` | Fargate task size. |
 | `runtime_platform` | `object` | Explicit architecture and OS family. |
 | `desired_count` | `number` | Task count; defaults to 1. At least 2 for production `brain-mux`, exactly 1 for development `brain-mux`. |
-| `stop_timeout` | `number` | Drain window: 120 for `brain-mux`, 30 for `regional-stream`. |
+| `stop_timeout` | `number` | Drain window: 120 for `brain-mux`, 30 for `regional-stream` and `regional-session-api`. |
 | `deregistration_delay` | `number` | Target-group drain window; at least 30. |
+| `health_check_grace_period_seconds` | `number` | Required behind a load balancer, rejected without one. |
 | `circuit_breaker` | `object` | `{ enable, rollback }`; `enable` must be true. |
-| `autoscaling_metrics` | `list(object)` | Target-tracking metrics, or `[]` for fixed-count mode. |
+| `autoscaling_metrics` | `list(object)` | Target-tracking metrics with `dimensions` and both cooldowns, or `[]` for fixed-count mode. |
 | `autoscaling_bounds` | `object` | `{ min_capacity, max_capacity }`; both equal `desired_count` in fixed-count mode. |
 | `env` / `secret_env` | `map(string)` | Environment; secrets by ARN reference. |
 | `container_port` | `number` | Port the container listens on. |
@@ -80,11 +104,17 @@ The module has two explicit capacity modes:
 - `desired_count` defaults to 1. A production `brain-mux` below two tasks is
   rejected, a development `brain-mux` other than one task is rejected, and for
   `brain-mux` any capacity bound that does not equal `desired_count` is rejected.
-- `stop_timeout` is 120 for `brain-mux` and 30 for `regional-stream`; any other
-  value for those two services is rejected.
+- `stop_timeout` is 120 for `brain-mux` and 30 for `regional-stream` and
+  `regional-session-api`; any other value for those three services is rejected.
+- A service with a `target_group_arn` must set
+  `health_check_grace_period_seconds`, and a service without one may not.
 - Non-empty autoscaling configuration must include a policy that tracks a
   service-published metric. A configuration that scales on `AWS/ECS` CPU alone
   is rejected.
+- A metric in an `AWS/` or `ECS/` namespace must carry at least one dimension;
+  an undimensioned one is rejected rather than silently scaling on the account
+  aggregate.
+- `scale_in_cooldown` may not be shorter than `scale_out_cooldown`.
 - Empty autoscaling configuration creates no target or policy and is accepted
   only with capacity bounds collapsed to `desired_count`.
 - `deregistration_delay` is at least 30 seconds.

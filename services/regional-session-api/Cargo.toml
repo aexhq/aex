@@ -16,7 +16,7 @@ workspace = true
 [package.metadata.aex]
 owner = "regional-services"
 role = "deployable"
-artifact = "lambda_zip"
+artifact = "oci_image"
 deployable = "regional-session-api"
 live_suite = "aex-live-regional-session-api"
 layers = ["unit", "smoke", "e2e"]
@@ -39,11 +39,14 @@ path = "src/main.rs"
 [dependencies]
 aws-config.workspace = true
 aws-sdk-dynamodb.workspace = true
+# The client that invokes `central-authz`, not a hosting dependency: the
+# assertion exchange stays a direct Lambda invoke after this service moved off
+# Lambda hosting.
 aws-sdk-lambda.workspace = true
 aws-sdk-s3.workspace = true
 aws-sdk-ssm.workspace = true
-lambda_http.workspace = true
-tokio.workspace = true
+axum.workspace = true
+tokio = { workspace = true, features = ["net"] }
 aex-content-domain = { path = "../../crates/aex-content-domain" }
 aex-operation-domain = { path = "../../crates/aex-operation-domain" }
 aex-content-dynamodb = { path = "../../crates/aex-content-dynamodb" }

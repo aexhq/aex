@@ -18,6 +18,15 @@ module "stream_log_group" {
   tags           = var.tags
 }
 
+module "session_log_group" {
+  source = "../../modules/log-group"
+
+  name           = var.session_api.log_group_name
+  retention_days = var.session_api.log_retention_days
+  kms_key_arn    = var.kms_key_arn
+  tags           = var.tags
+}
+
 module "role" {
   source   = "../../modules/iam-deployable-role"
   for_each = var.deployable_grants
@@ -62,33 +71,44 @@ module "journal_hint_pipe" {
   tags               = var.tags
 }
 
-module "session_api" {
-  source = "../../modules/lambda-function"
-
-  function_name           = var.session_api.function_name
-  artifact_bucket         = var.artifact_bucket
-  artifact_key            = var.session_api.artifact_key
-  artifact_object_version = var.session_api.artifact_object_version
-  artifact_sha256         = var.session_api.artifact_sha256
-  memory_mb               = var.session_api.memory_mb
-  timeout_s               = var.session_api.timeout_s
-  log_retention_days      = var.session_api.log_retention_days
-  env                     = var.session_api.env
-  role_arn                = module.role["regional-session-api"].role_arn
-  tags                    = var.tags
-}
-
 module "public_lb" {
   source = "../../modules/alb-public"
 
   name               = var.alb.name
-  vpc_id             = var.vpc_id
   subnet_ids         = var.public_subnet_ids
   security_group_ids = var.alb_security_group_ids
   certificate_arn    = var.alb.certificate_arn
-  target_port        = var.stream_service.container_port
   access_logs_bucket = var.alb.access_logs_bucket
   tags               = var.tags
+}
+
+# Two services, two target groups, two rules, two explicit priorities. The
+# lower number is evaluated first, so the narrower pattern set must hold the
+# lower priority. `regional-stream` is 10 and `regional-session-api` is 20.
+module "stream_target" {
+  source = "../../modules/alb-service-target"
+
+  name                 = "${var.alb.name}-stream"
+  listener_arn         = module.public_lb.listener_arn
+  vpc_id               = var.vpc_id
+  target_port          = var.stream_service.container_port
+  priority             = 10
+  path_patterns        = var.stream_service.path_patterns
+  deregistration_delay = module.public_lb.deregistration_delay
+  tags                 = var.tags
+}
+
+module "session_target" {
+  source = "../../modules/alb-service-target"
+
+  name                 = "${var.alb.name}-session"
+  listener_arn         = module.public_lb.listener_arn
+  vpc_id               = var.vpc_id
+  target_port          = var.session_api.container_port
+  priority             = 20
+  path_patterns        = var.session_api.path_patterns
+  deregistration_delay = module.public_lb.deregistration_delay
+  tags                 = var.tags
 }
 
 module "stream_service" {
@@ -106,8 +126,12 @@ module "stream_service" {
   stop_timeout   = var.stream_service.stop_timeout
   container_port = var.stream_service.container_port
 
-  deregistration_delay = module.public_lb.deregistration_delay
-  target_group_arn     = module.public_lb.target_group_arn
+  # Both come from the target group in front of this service, so the load
+  # balancer and the task cannot disagree about the drain window.
+  deregistration_delay = module.stream_target.deregistration_delay
+  target_group_arn     = module.stream_target.target_group_arn
+
+  health_check_grace_period_seconds = var.stream_service.health_check_grace_period_seconds
 
   autoscaling_bounds  = var.stream_service.autoscaling_bounds
   autoscaling_metrics = var.stream_service.autoscaling_metrics
@@ -118,6 +142,40 @@ module "stream_service" {
   subnets            = var.private_subnet_ids
   security_group_ids = var.service_security_group_ids
   log_group_name     = module.stream_log_group.name
+  region             = var.region
+
+  tags = var.tags
+}
+
+module "session_service" {
+  source = "../../modules/ecs-service"
+
+  name                   = var.session_api.name
+  task_definition_family = "aex-${var.plane}-${var.region}-${var.session_api.name}"
+  cluster_arn            = module.cluster.arn
+  cluster_name           = var.cluster_name
+
+  image          = var.session_api.image
+  cpu            = var.session_api.cpu
+  memory         = var.session_api.memory
+  desired_count  = var.session_api.desired_count
+  stop_timeout   = var.session_api.stop_timeout
+  container_port = var.session_api.container_port
+
+  deregistration_delay = module.session_target.deregistration_delay
+  target_group_arn     = module.session_target.target_group_arn
+
+  health_check_grace_period_seconds = var.session_api.health_check_grace_period_seconds
+
+  autoscaling_bounds  = var.session_api.autoscaling_bounds
+  autoscaling_metrics = var.session_api.autoscaling_metrics
+
+  env                = var.session_api.env
+  task_role_arn      = module.role["regional-session-api"].role_arn
+  execution_role_arn = var.session_api.execution_role_arn
+  subnets            = var.private_subnet_ids
+  security_group_ids = var.service_security_group_ids
+  log_group_name     = module.session_log_group.name
   region             = var.region
 
   tags = var.tags

@@ -2,11 +2,9 @@ mock_provider "aws" {}
 
 variables {
   name               = "aex-dev-euw1-public"
-  vpc_id             = "vpc-0123456789abcdef0"
   subnet_ids         = ["subnet-0123456789abcdef0", "subnet-0123456789abcdef1"]
   security_group_ids = ["sg-0123456789abcdef0"]
   certificate_arn    = "arn:aws:acm:eu-west-1:000000000000:certificate/00000000-0000-4000-8000-000000000000"
-  target_port        = 8080
   access_logs_bucket = "aex-dev-alb-logs-0a1b2c3d"
 }
 
@@ -19,47 +17,24 @@ run "the_idle_timeout_survives_a_long_stream" {
   }
 }
 
-run "the_health_check_probes_the_internal_readiness_path" {
+run "the_drain_window_is_published_for_every_service_behind_it" {
   command = plan
 
   assert {
-    condition     = one(aws_lb_target_group.this.health_check).path == "/internal/readyz"
-    error_message = "The health check must probe /internal/readyz."
-  }
-
-  assert {
-    condition     = tonumber(aws_lb_target_group.this.deregistration_delay) >= 30
-    error_message = "The deregistration delay must be at least 30 seconds."
+    condition     = output.deregistration_delay >= 30
+    error_message = "The load balancer must publish a drain window of at least 30 seconds for the service targets attached to it."
   }
 }
 
-run "exactly_one_listener_rule_forwards_only_the_api_prefix" {
+# The target group and the listener rule moved to `alb-service-target`, so this
+# module no longer routes anything. What it still owns is the listener whose
+# default action makes every unmatched path - `/internal/*` above all - a 404.
+run "this_module_routes_nothing_itself" {
   command = plan
 
   assert {
-    condition     = aws_lb_listener_rule.api.priority == 1
-    error_message = "The single listener rule must be the first rule."
-  }
-
-  assert {
-    condition = alltrue([
-      for p in one(one(aws_lb_listener_rule.api.condition).path_pattern).values :
-      startswith(p, "/api/")
-    ])
-    error_message = "The listener rule must forward only paths under /api/."
-  }
-
-  assert {
-    condition = alltrue([
-      for p in one(one(aws_lb_listener_rule.api.condition).path_pattern).values :
-      !startswith(p, "/internal")
-    ])
-    error_message = "The listener rule must never forward /internal paths."
-  }
-
-  assert {
-    condition     = one(aws_lb_listener_rule.api.action).type == "forward"
-    error_message = "The single rule must forward to the target group."
+    condition     = length(aws_lb_listener.https.default_action) == 1
+    error_message = "The HTTPS listener must carry exactly one default action and no forwarding of its own."
   }
 }
 
@@ -118,36 +93,6 @@ run "rejects_an_idle_timeout_below_twenty_minutes" {
   }
 
   expect_failures = [var.idle_timeout]
-}
-
-run "rejects_forwarding_an_internal_path" {
-  command = plan
-
-  variables {
-    forward_path_patterns = ["/internal/*"]
-  }
-
-  expect_failures = [var.forward_path_patterns]
-}
-
-run "rejects_forwarding_everything" {
-  command = plan
-
-  variables {
-    forward_path_patterns = ["/*"]
-  }
-
-  expect_failures = [var.forward_path_patterns]
-}
-
-run "rejects_a_public_health_check_path" {
-  command = plan
-
-  variables {
-    health_check_path = "/healthz"
-  }
-
-  expect_failures = [var.health_check_path]
 }
 
 run "rejects_a_deregistration_delay_below_thirty_seconds" {

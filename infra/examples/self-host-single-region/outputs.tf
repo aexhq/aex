@@ -23,7 +23,12 @@ output "ops_topic_arn" {
   description = "Topic operational notifications go to."
 }
 
-output "session_api_alias_arn" {
-  value       = module.session_api.alias_arn
-  description = "Alias callers target for the session API."
+output "session_service_arn" {
+  value       = module.session_service.service_arn
+  description = "The session API service. This root stands up no public edge, so a self-hoster puts their own ingress in front of it."
+}
+
+output "cluster_arn" {
+  value       = module.cluster.arn
+  description = "ECS cluster the session service runs in."
 }

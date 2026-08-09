@@ -379,7 +379,10 @@ mistake that otherwise survive deployment are refused at start-up:
   secret KMS key, requires the content bucket owner to equal the content key's
   account, builds the work, content, registry, custody and runtime-activity
   adapters plus the object binding, derives readiness from the composition and
-  serves `/internal/healthz` and `/internal/readyz` under `lambda_http`.
+  serves `/internal/healthz` and `/internal/readyz` from its own `hyper`
+  listener. It is a `rust-oci-service` on Fargate, not a Lambda: the same shape
+  as `regional-stream`, so it drains on `SIGTERM` inside the task's stop timeout
+  rather than being scaled and bounded by a reserved Lambda concurrency.
 - **`regional-secret-api`** — validates 13 variables, refuses any session,
   content, bucket, work, registry or queue binding, builds the custody adapter
   and the envelope crypto over the *secret* key with a plane- and region-scoped
@@ -486,9 +489,15 @@ Forbidden bindings, which refuse the process when present:
 
 ### Resource shapes
 
-`release/units.toml` gains a `[unit.lambda]` block for the four Lambdas and a
-`[unit.fargate]` block for the key-admin task; `regional-stream` already had one.
-`graph verify` reports no `unit-resource-shape-missing` for any of the six.
+`release/units.toml` gains a `[unit.lambda]` block for the three Lambdas —
+`regional-secret-api`, `session-operation-worker`, `content-lifecycle-worker` —
+and a `[unit.fargate]` block for the key-admin task; `regional-stream` already
+had one. `regional-session-api` carries a `[unit.fargate]` block too: it is a
+`rust-oci-service`, so it declares the 1024/2048 task and the 30 s stop timeout
+it derives from `regional-stream`, and it declares no Lambda shape and no
+reserved concurrency at all. `graph verify` reports no
+`unit-resource-shape-missing` for any of the six, and rejects any row that
+declares both shapes.
 
 ### Gate note
 

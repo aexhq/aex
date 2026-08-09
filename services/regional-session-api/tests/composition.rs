@@ -17,6 +17,10 @@ fn complete() -> BTreeMap<&'static str, String> {
             "https://eu-west-1.api.aex.test".to_owned(),
         ),
         (config::RELEASE_DIGEST, "sha256:deadbeef".to_owned()),
+        (config::SESSION_PORT, "8080".to_owned()),
+        // Deliberately below the 30s ECS stop timeout: a drain deadline above
+        // it never fires, because `SIGKILL` arrives first.
+        (config::SESSION_DRAIN_DEADLINE_MS, "25000".to_owned()),
         (
             config::AUTHZ_FUNCTION_ARN,
             "arn:aws:lambda:eu-west-1:000000000000:function:aex-dev-central-authz".to_owned(),
@@ -86,6 +90,48 @@ fn a_complete_environment_is_accepted() {
     );
     assert_eq!(config.limits().json_body_bytes, 65_536);
     assert_eq!(config.limits().query_page_items, 100);
+}
+
+#[test]
+fn the_listener_binding_is_read_from_the_environment() {
+    let config = read(&complete()).expect("the complete environment is accepted");
+    assert_eq!(config.port, 8_080);
+    assert_eq!(config.drain_deadline_ms, 25_000);
+    assert!(
+        config.drain_deadline_ms < 30_000,
+        "the drain deadline must expire before the ECS stop timeout sends SIGKILL"
+    );
+}
+
+#[test]
+fn a_port_outside_the_tcp_range_refuses_the_process() {
+    for value in ["0", "65536", "not-a-port"] {
+        let mut vars = complete();
+        vars.insert(config::SESSION_PORT, value.to_owned());
+        assert!(
+            matches!(
+                read(&vars),
+                Err(RegionalHttpConfigError::Invalid { name, .. }) if name == config::SESSION_PORT
+            ),
+            "port `{value}` was admitted"
+        );
+    }
+}
+
+#[test]
+fn a_drain_deadline_outside_the_admitted_window_refuses_the_process() {
+    for value in ["999", "600001"] {
+        let mut vars = complete();
+        vars.insert(config::SESSION_DRAIN_DEADLINE_MS, value.to_owned());
+        assert!(
+            matches!(
+                read(&vars),
+                Err(RegionalHttpConfigError::Invalid { name, .. })
+                    if name == config::SESSION_DRAIN_DEADLINE_MS
+            ),
+            "drain deadline `{value}` was admitted"
+        );
+    }
 }
 
 #[test]

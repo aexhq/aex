@@ -12,12 +12,15 @@
 # production floor of two tasks, `regional-stream` stop timeout 30 s); the rest
 # are derived from the shape a peer doing the same kind of work already carries,
 # and each says which peer and why in the comment above it. The reserved
-# concurrencies sum to 477 in the central plane
-# (50 + 200 + 50 + 50 + 20 + 20 + 40 + 10 + 20 + 5 + 10 + 2)
-# and 432 in the regional plane (200 + 40 + 40 + 20 + 50 + 20 + 20 + 8 + 4 + 10 +
-# 10 + 10), both inside the 900 an account with the default 1000-concurrency
-# limit may reserve. Regional capacity adds five to the regional total, making
-# it 437; it is isolated from the request-edge reservations below.
+# concurrencies sum to 473 in the central plane
+# (50 + 200 + 50 + 40 + 20 + 20 + 40 + 10 + 30 + 2 + 10 + 1)
+# and 242 in the regional plane
+# (40 + 40 + 20 + 5 + 5 + 50 + 20 + 20 + 8 + 4 + 10 + 10 + 10),
+# both inside the 900 an account with the default 1000-concurrency limit may
+# reserve. Every addend is a row below; no row reserves concurrency that is not
+# counted here, and the standing policy is to add none. The regional total is
+# lower than it once was because `regional-session-api` moved off Lambda onto
+# Fargate and gave its 200 back to the unreserved pool.
 #
 # WHAT IS DELIBERATELY MISSING
 #
@@ -392,14 +395,14 @@ port = 0
 
 [[unit]]
 id = "regional-session-api"
-kind = "rust-lambda"
+kind = "rust-oci-service"
 plane = "regional"
 package = "regional-session-api"
 bin = "regional-session-api"
 target = "aarch64-unknown-linux-gnu.2.34"
-profile = "release-lambda"
-form = "zip"
-entrypoint = "bootstrap"
+profile = "release"
+form = "oci-image"
+base_image = "public.ecr.aws/amazonlinux/amazonlinux:2023-minimal@sha256:f536dd770d9f7065461c786418265a13f5ba548a11a57bbbf360e677b811ed39"
 config_env_namespace = "AEX_REGIONAL_SESSION_"
 config_schema_version = 1
 health_path = "/internal/healthz"
@@ -408,14 +411,23 @@ required_receipts = ["unit", "contract", "conformance", "lint", "package-integri
 alarm_spec = "regional-session-api"
 live_suite = "aex-live-regional-session-api"
 
-# The finite regional API. 61 generated routes, one DynamoDB transaction per
-# mutation; memory is sized for the transaction compiler and the JSON codec, not
-# for concurrency, and the reserved concurrency keeps a session burst from
-# starving the secret and OTLP roles that share the account's pool.
-[unit.lambda]
-memory_mb = 1024
-timeout_s = 29
-reserved_concurrency = 200
+# Derived from `regional-stream`, the other long-lived regional request-path
+# service: same service class, same plane, so it carries the same 1024/2048 task
+# and the same production floor of two tasks rather than a separately guessed
+# capacity. The 61 generated routes and the one DynamoDB transaction per mutation
+# are per-request work, not per-task work, so what the task must hold is the
+# transaction compiler and the JSON codec, which is what `regional-stream`'s
+# memory already covers. The 30 s stop timeout is the drain deadline: ECS sends
+# SIGTERM and kills the task 30 s later, so the process's own
+# `AEX_SESSION_DRAIN_DEADLINE_MS` is set below it and the task finishes its
+# in-flight requests and exits on its own terms rather than being killed
+# mid-transaction.
+[unit.fargate]
+cpu = 1024
+memory_mb = 2048
+desired_count = 2
+stop_timeout_s = 30
+port = 8080
 
 [[unit]]
 id = "regional-secret-api"

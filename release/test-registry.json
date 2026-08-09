@@ -2930,7 +2930,7 @@
       "meta": {
         "owner": "regional-services",
         "role": "deployable",
-        "artifact": "lambda_zip",
+        "artifact": "oci_image",
         "deployable": "regional-session-api",
         "live_suite": "aex-live-regional-session-api",
         "layers": [

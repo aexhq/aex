@@ -66,6 +66,8 @@ resource "aws_ecs_service" "autoscaled" {
   propagate_tags  = "SERVICE"
   tags            = var.tags
 
+  health_check_grace_period_seconds = var.health_check_grace_period_seconds
+
   # A first deployment whose tasks crash otherwise exits terraform 0 with the
   # service parked at zero tasks; waiting for steady state fails the apply loudly.
   wait_for_steady_state = true
@@ -113,6 +115,8 @@ resource "aws_ecs_service" "static" {
   launch_type     = "FARGATE"
   propagate_tags  = "SERVICE"
   tags            = var.tags
+
+  health_check_grace_period_seconds = var.health_check_grace_period_seconds
 
   # A first deployment whose tasks crash otherwise exits terraform 0 with the
   # service parked at zero tasks; waiting for steady state fails the apply loudly.
@@ -173,12 +177,26 @@ resource "aws_appautoscaling_policy" "this" {
   resource_id        = aws_appautoscaling_target.this[0].resource_id
 
   target_tracking_scaling_policy_configuration {
-    target_value = each.value.target_value
+    target_value       = each.value.target_value
+    scale_out_cooldown = each.value.scale_out_cooldown
+    scale_in_cooldown  = each.value.scale_in_cooldown
 
     customized_metric_specification {
       metric_name = each.value.name
       namespace   = each.value.namespace
       statistic   = each.value.statistic
+
+      # Without these an AWS-owned namespace resolves to every load balancer or
+      # cluster in the account aggregated together, and the policy scales this
+      # service on traffic that is not its own.
+      dynamic "dimensions" {
+        for_each = each.value.dimensions
+
+        content {
+          name  = dimensions.key
+          value = dimensions.value
+        }
+      }
     }
   }
 }

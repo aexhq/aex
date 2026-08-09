@@ -8,16 +8,6 @@ variable "name" {
   }
 }
 
-variable "vpc_id" {
-  type        = string
-  description = "VPC the target group lives in."
-
-  validation {
-    condition     = can(regex("^vpc-[0-9a-f]{8,32}$", var.vpc_id))
-    error_message = "The VPC must be a VPC id."
-  }
-}
-
 variable "subnet_ids" {
   type        = list(string)
   description = "Public subnets the load balancer sits in."
@@ -59,61 +49,14 @@ variable "idle_timeout" {
   }
 }
 
-variable "target_port" {
-  type        = number
-  description = "Port the targets listen on."
-
-  validation {
-    condition     = var.target_port >= 1 && var.target_port <= 65535
-    error_message = "The target port must be a valid port number."
-  }
-}
-
-variable "health_check_path" {
-  type        = string
-  default     = "/internal/readyz"
-  description = "Health check path. It is an internal path, which is exactly why the public listener must not be able to reach it."
-
-  validation {
-    condition     = startswith(var.health_check_path, "/")
-    error_message = "The health check path must be absolute."
-  }
-
-  validation {
-    condition     = startswith(var.health_check_path, "/internal/")
-    error_message = "The health check path must be an internal path; a readiness probe is not a public endpoint."
-  }
-}
-
 variable "deregistration_delay" {
   type        = number
   default     = 30
-  description = "Seconds a deregistering target keeps draining."
+  description = "Seconds a deregistering target keeps draining. The target groups live in `alb-service-target` now, so this is the one drain window the load balancer publishes for every service attached to it; a root hands it to each service target and to the service behind it."
 
   validation {
     condition     = var.deregistration_delay >= 30 && var.deregistration_delay <= 3600
     error_message = "The deregistration delay must be at least 30 seconds."
-  }
-}
-
-variable "forward_path_patterns" {
-  type        = list(string)
-  default     = ["/api/*"]
-  description = "The only paths the public listener forwards. Everything else, `/internal/*` above all, gets the listener default action."
-
-  validation {
-    condition     = length(var.forward_path_patterns) > 0
-    error_message = "At least one forwarded path pattern is required."
-  }
-
-  validation {
-    condition     = alltrue([for p in var.forward_path_patterns : startswith(p, "/api/")])
-    error_message = "The public listener may only forward paths under `/api/`."
-  }
-
-  validation {
-    condition     = alltrue([for p in var.forward_path_patterns : !startswith(p, "/internal")])
-    error_message = "`/internal/*` must never be reachable from the public listener."
   }
 }
 
@@ -149,31 +92,8 @@ variable "ssl_policy" {
   }
 }
 
-variable "health_check" {
-  type = object({
-    interval            = number
-    timeout             = number
-    healthy_threshold   = number
-    unhealthy_threshold = number
-    matcher             = string
-  })
-  default = {
-    interval            = 15
-    timeout             = 5
-    healthy_threshold   = 2
-    unhealthy_threshold = 3
-    matcher             = "200"
-  }
-  description = "Health check timing and expected status."
-
-  validation {
-    condition     = var.health_check.timeout < var.health_check.interval
-    error_message = "The health check timeout must be shorter than the interval."
-  }
-}
-
 variable "tags" {
   type        = map(string)
   default     = {}
-  description = "Tags applied to the load balancer and target group."
+  description = "Tags applied to the load balancer and its listeners."
 }

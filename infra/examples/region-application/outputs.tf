@@ -1,6 +1,6 @@
-output "session_api_alias_arn" {
-  value       = module.session_api.alias_arn
-  description = "Alias every caller targets for the regional session API."
+output "session_service_arn" {
+  value       = module.session_service.service_arn
+  description = "The regional session API service. Callers reach it through the public load balancer now, not through a function alias."
 }
 
 output "operation_queue_arn" {

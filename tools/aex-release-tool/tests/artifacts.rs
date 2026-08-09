@@ -80,8 +80,12 @@ fn recipes_name_the_real_build_output_instead_of_guessing_from_the_unit_id() {
     };
 
     assert_eq!(
+        recipe("regional-observation-api").input,
+        "target/lambda/regional-observation-api/bootstrap"
+    );
+    assert_eq!(
         recipe("regional-session-api").input,
-        "target/lambda/regional-session-api/bootstrap"
+        "target/aarch64-unknown-linux-gnu/release/regional-session-api"
     );
     assert_eq!(
         recipe("stripe-command-edge").input,
@@ -275,6 +279,10 @@ fn a_lambda_archive_carries_the_entrypoint_the_unit_declares() {
     assert!(rust.windows(9).any(|window| window == b"bootstrap"));
 }
 
+/// Describes a local build with no inspected image identity, so `unit_id` must
+/// name a blob unit: an OCI unit without an `oci_identity` is refused outright
+/// by `oci-identity-missing`, which is a different behaviour than the one the
+/// callers below are about.
 fn described(
     unit_id: &str,
     artifact: &std::path::Path,
@@ -329,7 +337,7 @@ fn an_envelope_records_the_command_that_ran_and_says_when_it_was_not_the_recipe(
     let artifact = temp.path().join("bootstrap.zip");
     std::fs::write(&artifact, b"PK\x03\x04 fixture archive").unwrap();
 
-    let (recipe_envelope, recipe_ledger) = described("regional-session-api", &artifact, None);
+    let (recipe_envelope, recipe_ledger) = described("regional-observation-api", &artifact, None);
     assert_eq!(recipe_envelope.inputs.build_command.argv[1], "lambda");
     assert!(
         !recipe_ledger
@@ -344,7 +352,7 @@ fn an_envelope_records_the_command_that_ran_and_says_when_it_was_not_the_recipe(
         "--profile".to_owned(),
         "release-lambda".to_owned(),
     ];
-    let (envelope, ledger) = described("regional-session-api", &artifact, Some(ran.clone()));
+    let (envelope, ledger) = described("regional-observation-api", &artifact, Some(ran.clone()));
     assert_eq!(envelope.inputs.build_command.argv, ran);
     let row = ledger
         .iter()
@@ -379,7 +387,7 @@ fn a_locally_described_envelope_records_real_bytes_and_is_still_refused() {
     let artifact = temp.path().join("bootstrap.zip");
     std::fs::write(&artifact, b"PK\x03\x04 fixture archive").unwrap();
 
-    let err = local_build_of("regional-session-api", &artifact).unwrap_err();
+    let err = local_build_of("regional-observation-api", &artifact).unwrap_err();
     assert_eq!(
         err.exit.code(),
         20,
