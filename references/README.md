@@ -14,6 +14,7 @@ related:
   - references/develop.md
   - references/backlog.md
   - references/release-evidence.md
+  - references/npm-trusted-publisher-bootstrap.md
   - references/contributing.md
   - references/repository-hygiene.md
   - references/architecture.md
@@ -34,6 +35,7 @@ executable sources.
 | Development, testing, and release routing | [`develop.md`](develop.md) |
 | Deferred work and revisit triggers | [`backlog.md`](backlog.md) |
 | One-time public GHCR namespace bootstrap | [`ghcr-visibility-bootstrap.md`](ghcr-visibility-bootstrap.md) |
+| One-time npm trusted publisher bootstrap for the SDK | [`npm-trusted-publisher-bootstrap.md`](npm-trusted-publisher-bootstrap.md) |
 | Model-catalog authority bootstrap and publication | [`model-catalog-authority.md`](model-catalog-authority.md) |
 | Release-bound E2E and public user receipt producer | [`release-evidence.md`](release-evidence.md) |
 | Contributor and review procedure | [`contributing.md`](contributing.md) |

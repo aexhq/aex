@@ -286,6 +286,14 @@ jobs:
       # tarball handed to the registry is the exact packaged artifact, which is
       # what makes the SHA-256 in the envelope and the SHA-512 the registry
       # serves two identities over the same bytes rather than two artifacts.
+      #
+      # The trusted publisher this exchange matches against must name the
+      # *calling* workflow, `main.yml`, and not this file. npm validates the
+      # OIDC `workflow_ref` claim, which for a reusable workflow is the caller;
+      # `_build-artifacts.yml` appears only in `job_workflow_ref`, which npm
+      # does not read. Every other identity in this repository is bound to this
+      # file, so the exception is easy to get wrong in exactly one direction.
+      # See `references/npm-trusted-publisher-bootstrap.md`.
       - name: Publish the packed tarball with npm provenance
         if: ${{ inputs.publish && steps.compiled.outputs.kind == 'npm-package' }}
         run: |
@@ -317,13 +325,29 @@ jobs:
           # `ENEEDAUTH`. On failure the debug log is the only record of which
           # trusted-publisher claim did not match, so surface it rather than
           # leaving it on a runner that is about to be destroyed.
-          if ! npm publish "$tarball" --provenance --access public --loglevel verbose; then
+          if ! npm publish "$tarball" --provenance --access public --loglevel verbose \
+            2>&1 | tee "$RUNNER_TEMP/npm-publish.log"; then
             for log in "$HOME"/.npm/_logs/*-debug-0.log; do
               [ -f "$log" ] || continue
               echo "::group::npm debug log $(basename "$log")"
               cat "$log"
               echo "::endgroup::"
             done
+            # The registry answers an unmatched trusted-publisher claim with a
+            # 404 on the exchange endpoint, and npm renders that as `package
+            # not found` even when the package exists and is public. The
+            # package is not what was not found; the publisher claim is. Name
+            # the one input this repository cannot supply for itself, because
+            # the default reading sends the operator to look at the package.
+            if grep -q 'token exchange error - package not found' \
+              "$RUNNER_TEMP/npm-publish.log"; then
+              echo "::error::No trusted publisher on this package matches this run." \
+                "On npmjs.com, Package settings for the published name, add a" \
+                "GitHub Actions publisher: organization \`${GITHUB_REPOSITORY%%/*}\`," \
+                "repository \`${GITHUB_REPOSITORY#*/}\`, workflow filename \`main.yml\`" \
+                "(the caller — NOT _build-artifacts.yml), environment blank." \
+                "See references/npm-trusted-publisher-bootstrap.md."
+            fi
             exit 1
           fi
 
