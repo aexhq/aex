@@ -9,6 +9,8 @@ variables {
   vpc_security_group_ids = ["sg-0123456789abcdef0"]
   region                 = "eu-west-1"
   kms_key_arn            = "arn:aws:kms:eu-west-1:000000000000:key/00000000-0000-4000-8000-000000000000"
+
+  final_snapshot_identifier = "aex-dev-central-finance-final"
 }
 
 run "backups_deletion_protection_and_the_data_api_are_all_on" {
@@ -104,16 +106,6 @@ run "rejects_backup_retention_below_seven_days" {
   expect_failures = [var.backup_retention_days]
 }
 
-run "rejects_disabling_deletion_protection" {
-  command = plan
-
-  variables {
-    deletion_protection = false
-  }
-
-  expect_failures = [var.deletion_protection]
-}
-
 run "rejects_disabling_the_data_api" {
   command = plan
 
@@ -152,4 +144,103 @@ run "rejects_an_unpinned_engine_version" {
   }
 
   expect_failures = [var.engine_version]
+}
+
+run "the_default_lifecycle_takes_a_final_snapshot_rather_than_leaving_the_cluster_undeletable" {
+  command = plan
+
+  assert {
+    condition     = aws_rds_cluster.this.skip_final_snapshot == false
+    error_message = "The default must take a final snapshot, not skip it."
+  }
+
+  assert {
+    condition     = aws_rds_cluster.this.final_snapshot_identifier == var.final_snapshot_identifier
+    error_message = "The configured final snapshot identifier must reach the cluster; RDS rejects a delete that names neither a snapshot nor a skip."
+  }
+}
+
+run "a_teardown_may_disable_deletion_protection_when_it_states_why" {
+  command = plan
+
+  variables {
+    deletion_protection                 = false
+    deletion_protection_override_reason = "The prd plane is being torn down prelaunch; the cluster holds no customer data."
+  }
+
+  assert {
+    condition     = aws_rds_cluster.this.deletion_protection == false
+    error_message = "A deliberate, justified override must be able to unprotect the cluster; otherwise the plane cannot be torn down at all."
+  }
+}
+
+run "a_teardown_may_skip_the_final_snapshot_outright" {
+  command = plan
+
+  variables {
+    skip_final_snapshot       = true
+    final_snapshot_identifier = null
+  }
+
+  assert {
+    condition     = aws_rds_cluster.this.skip_final_snapshot == true
+    error_message = "Skipping the final snapshot must be expressible for a no-recovery teardown."
+  }
+
+  assert {
+    condition     = aws_rds_cluster.this.final_snapshot_identifier == null
+    error_message = "No snapshot identifier may be carried when the snapshot is skipped."
+  }
+}
+
+run "rejects_disabling_deletion_protection_without_a_reason" {
+  command = plan
+
+  variables {
+    deletion_protection = false
+  }
+
+  expect_failures = [var.deletion_protection]
+}
+
+run "rejects_a_blank_deletion_protection_override_reason" {
+  command = plan
+
+  variables {
+    deletion_protection                 = false
+    deletion_protection_override_reason = "   "
+  }
+
+  expect_failures = [var.deletion_protection]
+}
+
+run "rejects_a_missing_final_snapshot_identifier_when_the_snapshot_is_not_skipped" {
+  command = plan
+
+  variables {
+    final_snapshot_identifier = null
+  }
+
+  expect_failures = [var.final_snapshot_identifier]
+}
+
+run "rejects_a_final_snapshot_identifier_alongside_a_skipped_snapshot" {
+  command = plan
+
+  variables {
+    skip_final_snapshot       = true
+    final_snapshot_identifier = "aex-dev-central-finance-final"
+  }
+
+  expect_failures = [var.final_snapshot_identifier]
+}
+
+run "rejects_a_final_snapshot_identifier_that_is_not_a_legal_rds_identifier" {
+  command = plan
+
+  variables {
+    final_snapshot_identifier = "9-starts-with-a-digit"
+  }
+
+  expect_failures = [var.final_snapshot_identifier]
 }

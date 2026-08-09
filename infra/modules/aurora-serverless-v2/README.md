@@ -22,7 +22,10 @@ The module does not accept a second caller-supplied secret identity.
 | `engine_version` | `string` | Pinned `<major>.<minor>`. |
 | `min_acu` / `max_acu` | `number` | Serverless v2 capacity bounds. |
 | `backup_retention_days` | `number` | At least 7. |
-| `deletion_protection` | `bool` | Must stay `true`. |
+| `deletion_protection` | `bool` | Defaults `true`. `false` is legal only with `deletion_protection_override_reason`. |
+| `deletion_protection_override_reason` | `string` | Written justification required to run unprotected. Null by default. |
+| `skip_final_snapshot` | `bool` | Defaults `false`, so a delete takes a snapshot. |
+| `final_snapshot_identifier` | `string` | Snapshot name taken on delete. Required unless the snapshot is skipped, null when it is. |
 | `data_api_enabled` | `bool` | Must stay `true`. |
 | `publicly_accessible` | `bool` | Must stay `false`. |
 | `reader_count` | `number` | Zero or one warm failover reader. |
@@ -45,7 +48,16 @@ The module does not accept a second caller-supplied secret identity.
 ## Policy asserted
 
 - Backup retention is at least 7 days; a shorter retention is rejected.
-- Deletion protection is on; disabling it is rejected.
+- Deletion protection is on by default; disabling it without a written
+  `deletion_protection_override_reason` is rejected, and so is a blank reason.
+- A delete names either a final snapshot or an explicit skip, never neither.
+  RDS rejects a delete that names neither, so a module that could express
+  neither could not be destroyed at all — the guard here is that the choice is
+  made deliberately, not that the choice is unavailable.
+- `skip_final_snapshot` and `final_snapshot_identifier` are Terraform-only
+  attributes the provider reads from state when it deletes. Changing either one
+  takes effect only after an `apply` writes it to state, which is why a teardown
+  applies first and destroys second.
 - The Data API is on; disabling it is rejected.
 - No instance is publicly accessible; setting it is rejected.
 - At most one warm failover reader is allowed; larger counts are rejected.

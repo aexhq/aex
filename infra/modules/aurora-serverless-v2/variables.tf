@@ -74,11 +74,38 @@ variable "backup_retention_days" {
 variable "deletion_protection" {
   type        = bool
   default     = true
-  description = "Deletion protection. It stays on."
+  description = "Deletion protection. It defaults on and stays on for every live plane. Turning it off is legal only alongside a written `deletion_protection_override_reason`, so a plane teardown is expressible without the guard ever coming off silently."
 
   validation {
-    condition     = var.deletion_protection
-    error_message = "Deletion protection must stay enabled on the finance cluster."
+    condition     = var.deletion_protection || try(length(trimspace(var.deletion_protection_override_reason)) > 0, false)
+    error_message = "Deletion protection may be disabled only together with a non-empty `deletion_protection_override_reason`. The cluster that holds the money ledger does not become unprotected as the side effect of a flipped default."
+  }
+}
+
+variable "deletion_protection_override_reason" {
+  type        = string
+  default     = null
+  description = "Written justification for running this cluster with `deletion_protection = false`. It exists so that the only route to an unprotected cluster is one that states, in the plan itself, why. Null whenever deletion protection is on."
+}
+
+variable "skip_final_snapshot" {
+  type        = bool
+  default     = false
+  description = "Whether the cluster may be deleted without a final snapshot. The default takes the snapshot; `true` is the deliberate no-recovery teardown path and is the one setting under which `final_snapshot_identifier` must be null."
+}
+
+variable "final_snapshot_identifier" {
+  type        = string
+  default     = null
+  description = "Identifier of the snapshot RDS takes when the cluster is deleted. Required unless `skip_final_snapshot` is true, because RDS rejects a delete that names neither."
+
+  validation {
+    condition = (
+      var.skip_final_snapshot
+      ? var.final_snapshot_identifier == null
+      : can(regex("^[a-zA-Z][a-zA-Z0-9-]{0,254}$", var.final_snapshot_identifier))
+    )
+    error_message = "Set `final_snapshot_identifier` to an RDS snapshot identifier — a letter, then letters, digits and hyphens, at most 255 characters — whenever `skip_final_snapshot` is false, and leave it null when it is true."
   }
 }
 

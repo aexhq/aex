@@ -28,6 +28,15 @@ resource "aws_rds_cluster" "this" {
   copy_tags_to_snapshot   = true
   deletion_protection     = var.deletion_protection
 
+  # RDS refuses a cluster delete that names neither a final snapshot nor a
+  # deliberate skip. Expressing both is what makes this module's lifecycle
+  # complete: without them the cluster is not merely protected, it is
+  # undeletable, and the only remaining exit is to abandon it outside Terraform.
+  # Both are Terraform-only attributes read from state at delete time, so a
+  # change here has to be applied before the destroy that consumes it.
+  skip_final_snapshot       = var.skip_final_snapshot
+  final_snapshot_identifier = var.final_snapshot_identifier
+
   serverlessv2_scaling_configuration {
     min_capacity = var.min_acu
     max_capacity = var.max_acu
