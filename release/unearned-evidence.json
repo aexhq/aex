@@ -1940,13 +1940,6 @@
   },
   {
     "reason_class": "requires_live_seam",
-    "subject": "packages/wire",
-    "owner": "contracts",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `npm.registry.publish` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
     "subject": "runtimes/brain-mux",
     "owner": "brain-core",
     "blocking_rule": "aex-unearned-evidence",

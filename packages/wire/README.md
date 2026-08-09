@@ -11,4 +11,9 @@ import { SessionSchema, type Session } from "@aexhq/wire";
 const session: Session = SessionSchema.parse(responseBody);
 ```
 
+This package is `private`: it is a workspace-internal package and is published to
+no registry. `@aexhq/sdk` does not import it — the generator emits the SDK's own
+route table and error vocabulary into `packages/sdk/src/generated/` so that the
+published SDK stays dependency-free.
+
 Run `cargo run -p aex-contract-gen -- build` after changing `api/schemas/`.

@@ -85,10 +85,10 @@ describe("publishable package metadata", () => {
   it("resolves a non-empty public module registry", () => {
     // A derived registry that silently resolves to nothing would make every
     // assertion below vacuously true.
-    expect(publishable.map((module) => module.manifest.name).sort()).toEqual([
-      "@aexhq/sdk",
-      "@aexhq/wire"
-    ]);
+    // `@aexhq/wire` is deliberately absent: it is `private`, because the SDK
+    // generates its own route table and error vocabulary rather than importing
+    // it, so nothing installs it and it publishes nowhere.
+    expect(publishable.map((module) => module.manifest.name).sort()).toEqual(["@aexhq/sdk"]);
   });
 
   it("holds every publishable package to the full metadata contract", () => {

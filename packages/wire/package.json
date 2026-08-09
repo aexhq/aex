@@ -8,7 +8,7 @@
     "artifact": "npm_package",
     "layers": ["unit", "user"],
     "concerns": ["contract", "compatibility", "property", "security"],
-    "seams": ["npm.registry.publish"],
+    "seams": [],
     "security_tier": "public_edge",
     "risk": ["generated_code"],
     "scenarios": [],
@@ -22,25 +22,11 @@
     }
   },
   "license": "Apache-2.0",
-  "keywords": [
-    "aex",
-    "wire",
-    "contracts",
-    "typescript",
-    "validation"
-  ],
-  "homepage": "https://aex.dev",
+  "private": true,
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aexhq/aex.git",
     "directory": "packages/wire"
-  },
-  "bugs": {
-    "url": "https://github.com/aexhq/aex/issues"
-  },
-  "publishConfig": {
-    "access": "public",
-    "provenance": true
   },
   "type": "module",
   "main": "./dist/index.js",
@@ -52,16 +38,13 @@
     },
     "./package.json": "./package.json"
   },
-  "files": ["dist", "README.md", "LICENSE", "NOTICE"],
   "scripts": {
     "build": "bun ../../scripts/with-generated-dist-lock.mjs bun run build:unlocked",
     "build:unlocked": "bun ./scripts/clean-dist.mjs && tsc -p tsconfig.build.json && bun ../../scripts/cicd/check-generated-dist-closure.mjs dist",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "test": "bun run test:unit",
-    "test:unit": "bun test --isolate test",
-    "prepack": "bun run build",
-    "pack:dry-run": "bun pm pack --dry-run --ignore-scripts"
+    "test:unit": "bun test --isolate test"
   },
   "dependencies": {
     "zod": "4.4.3"

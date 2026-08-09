@@ -24,10 +24,15 @@
 #
 # WHAT IS DELIBERATELY MISSING
 #
-# This registry models release artifacts, not only hosted deployment units:
-# `sdk` below is published to a package registry and runs on nobody's plane.
-# What is still absent is absent by decision, and each decision is named here so
+# This registry models release artifacts, not only hosted deployment units, so
+# an artifact with no row is absent by decision. Each decision is named here so
 # that absence stays a choice somebody made rather than a gap nobody noticed.
+#
+# MODELLED. `@aexhq/sdk` carries the `sdk` row below: it is published to a
+# package registry and runs on nobody's plane, and the row is what gives its
+# tarball the immutable release identity a consumer pins.
+#
+# DESCOPED. Four artifacts have no row, each for its own reason:
 #
 #   * `dashboard` — descoped for launch. It is an internal operator console, not
 #     a customer-installable artifact, and it is deployed by hand from the
@@ -37,10 +42,16 @@
 #     would gate launch on something no consumer pins.
 #   * `aex-cli` — descoped for launch. It is not published in the launch scope,
 #     so there is no distribution boundary for a release identity to protect.
+#   * `@aexhq/wire` — descoped and marked `private`. `aex-contract-gen` emits the
+#     SDK's route table and error vocabulary into `packages/sdk/src/generated/`
+#     rather than as an import, so nothing installs this package and it reaches
+#     no registry; its manifest declares no `npm.registry.publish` seam, and a
+#     row here would assert a distribution boundary that does not exist.
 #
-# Re-scoping any of the three means adding its row here, not relaxing this
-# comment. The model and tool catalogues and the three generated bundles remain
-# carried by the hosted units that embed them.
+# Re-scoping any of the four means adding its row here — and, for `wire`,
+# dropping `private` from its manifest first — not relaxing this comment. The
+# model and tool catalogues and the three generated bundles remain carried by
+# the hosted units that embed them.
 #
 # The two Stripe TypeScript edges *are* hosted workspace packages —
 # `services/stripe-{command,webhook}-edge`, named explicitly by
