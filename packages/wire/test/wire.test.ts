@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  ApiKeyPageSchema,
   ID_KINDS,
   SessionSchema,
   assertId,
@@ -21,6 +22,15 @@ describe("generated wire binding", () => {
   test("closed objects reject an unknown member", () => {
     const result = SessionSchema.safeParse({ unexpected: true });
     expect(result.success).toBe(false);
+  });
+
+  test("cursor validators accept every issuer envelope and reject malformed separators", () => {
+    for (const nextCursor of ["cur_cGF5bG9hZA", "cur_cGF5bG9hZA.bWFj"]) {
+      expect(ApiKeyPageSchema.safeParse({ items: [], nextCursor }).success).toBe(true);
+    }
+    for (const nextCursor of ["cur_", "cur_.tag", "cur_payload.", "cur_a.b.c"]) {
+      expect(ApiKeyPageSchema.safeParse({ items: [], nextCursor }).success).toBe(false);
+    }
   });
 
   test("identifier types stay kind-specific", () => {

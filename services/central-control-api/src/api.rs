@@ -128,12 +128,17 @@ impl ControlService {
         }
     }
 
-    fn require_workspace_creation_role(role: OrgRole) -> WireResult<()> {
+    fn admit_admin_role(role: OrgRole) -> WireResult<()> {
         if role.at_least(OrgRole::Admin) {
             Ok(())
         } else {
             Err(WireError::new(ErrorCode::Forbidden))
         }
+    }
+
+    async fn require_admin(&self, cx: &RequestContext, organization_id: Uuid) -> WireResult<()> {
+        let role = self.organization_access(cx, organization_id, true).await?;
+        Self::admit_admin_role(role)
     }
 
     async fn organization_access(
@@ -553,8 +558,7 @@ impl WorkspacesApi for ControlService {
         body: WorkspaceCreateRequest,
     ) -> WireResult<Created<Workspace>> {
         let organization_id = raw(body.organization_id);
-        let role = self.organization_access(cx, organization_id, true).await?;
-        Self::require_workspace_creation_role(role)?;
+        self.require_admin(cx, organization_id).await?;
         if body.name.is_empty() || body.name.chars().count() > 128 {
             return Err(WireError::new(ErrorCode::InvalidRequest));
         }
@@ -715,7 +719,7 @@ impl ApiKeysApi for ControlService {
     ) -> WireResult<ApiKeyPage> {
         let workspace_id = raw(query.workspace_id);
         let workspace = self.workspace_view(workspace_id).await?;
-        self.organization_access(cx, workspace.workspace.organization_id, true)
+        self.require_admin(cx, workspace.workspace.organization_id)
             .await?;
         let principal_id = Self::user(cx)?;
         let binding = self.page_binding(cx, principal_id, workspace_id, &[]);
@@ -745,7 +749,7 @@ impl ApiKeysApi for ControlService {
         }
         let workspace_id = raw(body.workspace_id);
         let workspace = self.workspace_view(workspace_id).await?;
-        self.organization_access(cx, workspace.workspace.organization_id, true)
+        self.require_admin(cx, workspace.workspace.organization_id)
             .await?;
         if workspace.workspace.status != DomainWorkspaceStatus::Active {
             return Err(WireError::new(ErrorCode::ResourceConflict));
@@ -1324,11 +1328,11 @@ mod tests {
     use aex_wire::error::ErrorCode;
 
     #[test]
-    fn workspace_creation_rejects_a_member_but_accepts_admins_and_owners() {
-        let denied = ControlService::require_workspace_creation_role(OrgRole::Member)
-            .expect_err("a member cannot create a workspace");
+    fn api_key_handler_role_gate_rejects_a_member_but_accepts_admins_and_owners() {
+        let denied = ControlService::admit_admin_role(OrgRole::Member)
+            .expect_err("a member cannot perform an admin operation");
         assert_eq!(denied.code, ErrorCode::Forbidden);
-        assert!(ControlService::require_workspace_creation_role(OrgRole::Admin).is_ok());
-        assert!(ControlService::require_workspace_creation_role(OrgRole::Owner).is_ok());
+        assert!(ControlService::admit_admin_role(OrgRole::Admin).is_ok());
+        assert!(ControlService::admit_admin_role(OrgRole::Owner).is_ok());
     }
 }

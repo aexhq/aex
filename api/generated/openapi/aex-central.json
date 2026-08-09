@@ -2822,7 +2822,37 @@
             },
             "description": "Error."
           },
+          "402": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
           "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "503": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2843,8 +2873,11 @@
           "unauthenticated",
           "forbidden",
           "insufficient_scope",
+          "not_found",
           "invalid_request",
-          "invalid_cursor"
+          "invalid_cursor",
+          "account_paused",
+          "account_state_unavailable"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "none",
@@ -2888,6 +2921,16 @@
             "description": "Error."
           },
           "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "402": {
             "content": {
               "application/json": {
                 "schema": {
@@ -2966,6 +3009,8 @@
           "invalid_scope",
           "limit_exceeded",
           "resource_conflict",
+          "account_paused",
+          "account_state_unavailable",
           "commit_outcome_unknown"
         ],
         "x-aex-etag": "none",

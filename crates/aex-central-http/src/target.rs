@@ -421,20 +421,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn workspace_create_defers_its_body_scoped_organization_gate_to_the_handler() {
-        let stub = Stub::new(None, Err(()));
-        let granted = admit_request(
-            &stub,
-            &owner(),
-            action(RouteId::WorkspaceCreate),
-            &TargetPath::default(),
-        )
-        .await
-        .expect("the edge admits the actor and scope before the body target is decoded");
-        assert_eq!(granted.organization_id, None);
-        assert_eq!(granted.role, None);
-        assert_eq!(stub.resolutions.load(Ordering::SeqCst), 0);
-        assert_eq!(stub.state_reads.load(Ordering::SeqCst), 0);
+    async fn non_path_targets_defer_their_organization_gate_to_the_handler() {
+        for route in [
+            RouteId::WorkspaceCreate,
+            RouteId::ApiKeysList,
+            RouteId::ApiKeyCreate,
+        ] {
+            let stub = Stub::new(None, Err(()));
+            let granted = admit_request(
+                &stub,
+                &owner(),
+                action(route),
+                &TargetPath::default(),
+            )
+            .await
+            .unwrap_or_else(|error| {
+                panic!("the edge must admit {route:?} before its non-path target is decoded: {error}")
+            });
+            assert_eq!(granted.organization_id, None, "{route:?}");
+            assert_eq!(granted.role, None, "{route:?}");
+            assert_eq!(stub.resolutions.load(Ordering::SeqCst), 0, "{route:?}");
+            assert_eq!(stub.state_reads.load(Ordering::SeqCst), 0, "{route:?}");
+        }
     }
 
     #[tokio::test]

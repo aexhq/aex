@@ -876,6 +876,47 @@ async fn a_bounded_page_read_reaches_its_handler_and_renders_json() {
 }
 
 #[tokio::test]
+async fn api_key_list_decodes_its_query_target_after_edge_admission() {
+    for uri in ["/api/api-keys", "/api/api-keys?workspaceId=not-a-workspace"] {
+        let api = Api::new(Answer::Success);
+        let context = owner_context(ControlScopeSet::CENTRAL);
+        let router = plane(Arc::clone(&api), edge(Resolver::new(AccountState::Active)));
+        let request = Request::builder()
+            .method("GET")
+            .uri(uri)
+            .extension(context)
+            .body(Body::empty())
+            .expect("a valid request");
+        let sent = send(router, request).await;
+        assert_eq!(sent.status, StatusCode::BAD_REQUEST, "{uri}: {}", sent.body);
+        assert!(
+            sent.body.contains("invalid_request"),
+            "{uri}: {}",
+            sent.body
+        );
+        assert_eq!(api.calls.load(Ordering::SeqCst), 0, "{uri}");
+    }
+}
+
+#[tokio::test]
+async fn api_key_create_decodes_its_body_target_after_edge_admission() {
+    let api = Api::new(Answer::Success);
+    let context = owner_context(ControlScopeSet::CENTRAL);
+    let router = plane(Arc::clone(&api), edge(Resolver::new(AccountState::Active)));
+    let request = Request::builder()
+        .method("POST")
+        .uri("/api/api-keys")
+        .header("idempotency-key", "fixture-key")
+        .extension(context)
+        .body(Body::from("{}"))
+        .expect("a valid request");
+    let sent = send(router, request).await;
+    assert_eq!(sent.status, StatusCode::BAD_REQUEST, "{}", sent.body);
+    assert!(sent.body.contains("invalid_request"), "{}", sent.body);
+    assert_eq!(api.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn an_undeclared_error_code_never_reaches_the_wire() {
     let api = Api::new(Answer::Undeclared);
     let context = owner_context(ControlScopeSet::CENTRAL);

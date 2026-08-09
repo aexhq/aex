@@ -119,6 +119,7 @@ mod tests {
     use crate::error::EdgeError;
     use aex_control_app::ports::{DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT};
     use aex_control_domain::CursorSecret;
+    use aex_wire::Cursor;
     use aex_wire::types::Region;
     use uuid::Uuid;
 
@@ -165,6 +166,7 @@ mod tests {
     fn a_minted_cursor_round_trips_into_its_recorded_position() {
         let last = (1_234_i64, Uuid::from_u128(9));
         let cursor = next_cursor(&secret(), &binding(), Some(last), 1_000).expect("a next page");
+        Cursor::parse(&cursor).expect("an issuer-minted cursor must satisfy the wire contract");
         let page = page_request(&secret(), &binding(), Some(&cursor), Some(10), 2_000)
             .expect("the cursor verifies");
         assert_eq!(page.after, Some(last));

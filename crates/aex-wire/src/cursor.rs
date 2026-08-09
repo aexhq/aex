@@ -24,9 +24,10 @@ impl Cursor {
     ///
     /// # Errors
     ///
-    /// Returns a [`ValueError`] when the prefix is missing, the body is empty or
-    /// longer than [`Cursor::MAX_BYTES`], or a byte is outside unpadded
-    /// base64url.
+    /// Returns a [`ValueError`] when the prefix is missing, the opaque envelope
+    /// is malformed or longer than [`Cursor::MAX_BYTES`], or a segment contains
+    /// a byte outside unpadded base64url. Issuers use either one segment or a
+    /// `payload.tag` pair.
     pub fn parse(text: &str) -> Result<Self, ValueError> {
         const KIND: &str = "Cursor";
         if text.len() > Self::MAX_BYTES {
@@ -49,13 +50,26 @@ impl Cursor {
                 reason: "empty cursor body",
             });
         }
-        if let Some(offset) = body
-            .bytes()
-            .position(|byte| !(byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'))
-        {
+        let mut segments = body.split('.');
+        let Some(first) = segments.next() else {
+            return Err(ValueError::Grammar {
+                kind: KIND,
+                reason: "empty cursor body",
+            });
+        };
+        let second = segments.next();
+        if first.is_empty() || second.is_some_and(str::is_empty) || segments.next().is_some() {
+            return Err(ValueError::Grammar {
+                kind: KIND,
+                reason: "malformed cursor segments",
+            });
+        }
+        if let Some(offset) = body.bytes().position(|byte| {
+            !(byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_' || byte == b'.')
+        }) {
             return Err(ValueError::Character {
                 kind: KIND,
-                offset: offset + Self::PREFIX.len(),
+                offset: Self::PREFIX.len() + offset,
             });
         }
         Ok(Self(text.into()))
@@ -83,5 +97,24 @@ impl serde::Serialize for Cursor {
 impl<'de> serde::Deserialize<'de> for Cursor {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         from_str_field(deserializer, Self::parse)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Cursor;
+
+    #[test]
+    fn accepts_single_segment_and_payload_tag_envelopes() {
+        for raw in ["cur_cGF5bG9hZA", "cur_cGF5bG9hZA.bWFj"] {
+            assert_eq!(Cursor::parse(raw).expect("a cursor").as_str(), raw);
+        }
+    }
+
+    #[test]
+    fn rejects_missing_empty_or_extra_envelope_segments() {
+        for raw in ["cur_", "cur_.tag", "cur_payload.", "cur_a.b.c"] {
+            assert!(Cursor::parse(raw).is_err(), "{raw}");
+        }
     }
 }

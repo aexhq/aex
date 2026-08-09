@@ -1,5 +1,5 @@
 {
-  "contractDigest": "sha256:5f927d858c412e8f9e20404b8564015430127f926b3b725e2d11777d37d563c4",
+  "contractDigest": "sha256:c65ec229eb23ad2ff1780c8b3d08c838e3fefd3cef57b39bab55ce8bad19de06",
   "generator": {
     "formatter": "aex-contract-gen internal renderer (rustfmt fixed point)",
     "name": "aex-contract-gen",
@@ -7,7 +7,7 @@
     "version": "0.1.0"
   },
   "sources": {
-    "api/openapi/central/api-keys.yaml": "sha256:fad9d1fe5c083ea10df51bfe14f5688e911d7ac9bfe1016300c1b6a13839a34d",
+    "api/openapi/central/api-keys.yaml": "sha256:0093357dc0b52d9a5afda25a9806fad56d0aff356cd9819c74f53bd5086a3c39",
     "api/openapi/central/auth.yaml": "sha256:e7b01cfd5d5856602e2f9f4f4ab77be54f04719c729545736b6d0c9a1a19b48d",
     "api/openapi/central/billing.yaml": "sha256:b5022c1615822bf438641e6b4a8633e80439312b49e0a416a728f424ec284b4f",
     "api/openapi/central/bootstrap.yaml": "sha256:7da7fcb45cf7186e5380e2ec5a9705addc69c3de8a7ec4dfb98b835763e059f6",

@@ -49,6 +49,8 @@
         "invalid_scope",
         "limit_exceeded",
         "resource_conflict",
+        "account_paused",
+        "account_state_unavailable",
         "commit_outcome_unknown"
       ],
       "etag": "none",
@@ -118,8 +120,11 @@
         "unauthenticated",
         "forbidden",
         "insufficient_scope",
+        "not_found",
         "invalid_request",
-        "invalid_cursor"
+        "invalid_cursor",
+        "account_paused",
+        "account_state_unavailable"
       ],
       "etag": "none",
       "fragment": "api-keys",

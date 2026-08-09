@@ -2,9 +2,9 @@
 //!
 //! Every central route runs through [`decide`] and then [`admit`]. This edge
 //! decision owns principal-kind and scope checks. A collection route whose
-//! organization exists only in its typed body stays actor-scoped here; its
+//! organization exists only in a typed query or body stays actor-scoped here; its
 //! handler must load that organization and enforce membership, role and account
-//! state from the control authority before it changes state.
+//! state from the control authority before it reads or changes tenant data.
 //!
 //! Two invariants close standing defects by construction.
 //!
@@ -12,11 +12,11 @@
 //!    A request naming a different organization or workspace is
 //!    [`Denial::WrongOrganization`] or [`Denial::WrongWorkspace`] — never a
 //!    silent narrowing to whatever the row says.
-//! 2. Every route that is not pause-exempt resolves an organization first, so an
-//!    org-less principal can never skip the `402 account_paused` gate. The
-//!    pairing is asserted over the whole generated central route table. A
-//!    body-scoped collection create is edge-exempt only because its handler
-//!    performs the same gate after decoding the target.
+//! 2. Every route that is not pause-exempt either resolves an organization at
+//!    the edge or belongs to the explicit non-path, handler-owned set. A route
+//!    in that set resolves and gates its decoded target in the handler when it
+//!    acts on one organization. The partition is asserted over the whole
+//!    generated central route table.
 
 use aex_wire::routes::{Plane, ROUTES, RouteDescriptor, RouteId};
 
@@ -456,13 +456,13 @@ const RULES: &[Rule] = &[
     // --- API keys ------------------------------------------------------------
     Rule {
         route: RouteId::ApiKeysList,
-        class: ResourceClass::Workspace,
-        min_role: Some(OrgRole::Admin),
+        class: ResourceClass::None,
+        min_role: None,
     },
     Rule {
         route: RouteId::ApiKeyCreate,
-        class: ResourceClass::Workspace,
-        min_role: Some(OrgRole::Admin),
+        class: ResourceClass::None,
+        min_role: None,
     },
     Rule {
         route: RouteId::ApiKeyRevoke,
@@ -539,12 +539,13 @@ pub struct Requirement {
     pub principal_kinds: PrincipalKinds,
     /// What the route acts on.
     pub resource_class: ResourceClass,
-    /// Whether the route runs while the account is paused.
+    /// Whether the edge skips its account-state read.
     ///
-    /// A route that resolves no organization is pause-exempt **by
-    /// construction**: there is no account state to read, so a `402` gate over
-    /// it would have nothing to evaluate. Everything else takes the generated
-    /// route table's answer verbatim.
+    /// This is not necessarily the generated route's pause policy. A route that
+    /// resolves no organization at the edge skips this read by construction;
+    /// when its descriptor is not pause-exempt, the handler must gate account
+    /// state after decoding its non-path target. Everything else takes the
+    /// generated route table's answer verbatim.
     pub pause_exempt: bool,
 }
 
@@ -827,6 +828,19 @@ mod tests {
     use aex_wire::routes::{Plane, ROUTES, RouteId};
     use std::collections::BTreeSet;
 
+    const fn handler_owns_non_path_target(route: RouteId) -> bool {
+        matches!(
+            route,
+            RouteId::OrganizationsList
+                | RouteId::OrganizationCreate
+                | RouteId::WorkspacesList
+                | RouteId::WorkspaceCreate
+                | RouteId::ApiKeysList
+                | RouteId::ApiKeyCreate
+                | RouteId::CentralOperationsList
+        )
+    }
+
     #[test]
     fn the_rule_table_covers_exactly_the_central_route_table() {
         let declared: BTreeSet<_> = RULES
@@ -846,12 +860,15 @@ mod tests {
     }
 
     #[test]
-    fn every_non_exempt_route_resolves_an_organization() {
+    fn every_non_exempt_route_resolves_an_organization_or_names_a_handler_owned_target() {
         for action in Action::all() {
             let requirement = requirement(action);
+            let descriptor = aex_wire::routes::route(action.route());
             assert!(
-                requirement.pause_exempt || requirement.resource_class != ResourceClass::None,
-                "{:?} is not pause-exempt and resolves no organization, so it would skip the 402 gate",
+                descriptor.pause_exempt
+                    || requirement.resource_class != ResourceClass::None
+                    || handler_owns_non_path_target(action.route()),
+                "{:?} is not pause-exempt, resolves no organization at the edge, and names no handler-owned non-path target",
                 action.route()
             );
         }
@@ -871,11 +888,24 @@ mod tests {
     }
 
     #[test]
-    fn workspace_create_defers_its_body_scoped_organization_gate_to_the_handler() {
-        let requirement = requirement(Action::central(RouteId::WorkspaceCreate).expect("central"));
-        assert_eq!(requirement.resource_class, ResourceClass::None);
-        assert_eq!(requirement.min_role, None);
-        assert!(requirement.pause_exempt);
+    fn non_path_targets_defer_their_organization_gate_to_the_handler() {
+        for route_id in [
+            RouteId::WorkspaceCreate,
+            RouteId::ApiKeysList,
+            RouteId::ApiKeyCreate,
+        ] {
+            let requirement = requirement(Action::central(route_id).expect("central"));
+            assert_eq!(
+                requirement.resource_class,
+                ResourceClass::None,
+                "{route_id:?}"
+            );
+            assert_eq!(requirement.min_role, None, "{route_id:?}");
+            assert!(
+                !aex_wire::routes::route(route_id).pause_exempt,
+                "{route_id:?} must gate account state after its target is decoded"
+            );
+        }
     }
 
     #[test]

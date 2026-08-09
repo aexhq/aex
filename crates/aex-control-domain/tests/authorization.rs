@@ -10,7 +10,7 @@ use aex_control_domain::{
     AccountState, Action, ActorCredential, Admission, Denial, OrgMembership, OrgRole, Principal,
     PrincipalKindTag, Resource, ResourceClass, ScopeSet, admit, decide, requirement,
 };
-use aex_wire::routes::RouteId;
+use aex_wire::routes::{RouteId, route};
 use aex_wire::scopes::ScopeId;
 use uuid::Uuid;
 
@@ -126,16 +126,6 @@ fn the_role_floor_holds_in_both_directions() {
             ResourceClass::Workspace,
             OrgRole::Owner,
         ),
-        (
-            RouteId::ApiKeysList,
-            ResourceClass::Workspace,
-            OrgRole::Admin,
-        ),
-        (
-            RouteId::ApiKeyCreate,
-            ResourceClass::Workspace,
-            OrgRole::Admin,
-        ),
         (RouteId::ApiKeyRevoke, ResourceClass::ApiKey, OrgRole::Admin),
         (
             RouteId::CentralOperationGet,
@@ -186,21 +176,34 @@ fn a_non_member_is_denied_before_any_role_or_scope_check() {
 }
 
 #[test]
-fn workspace_create_defers_membership_role_and_account_state_to_its_handler() {
-    let action = action(RouteId::WorkspaceCreate);
-    let requirement = requirement(action);
-    assert_eq!(requirement.resource_class, ResourceClass::None);
-    assert_eq!(requirement.min_role, None);
-    assert!(requirement.pause_exempt);
-    assert!(
-        decide(
-            &actor(OrgRole::Member, ScopeSet::ALL),
-            action,
-            &Resource::None
-        )
-        .is_ok(),
-        "the edge checks the actor and scope; the handler checks the decoded organization"
-    );
+fn non_path_targets_defer_membership_role_and_account_state_to_their_handlers() {
+    for route_id in [
+        RouteId::WorkspaceCreate,
+        RouteId::ApiKeysList,
+        RouteId::ApiKeyCreate,
+    ] {
+        let action = action(route_id);
+        let requirement = requirement(action);
+        assert_eq!(
+            requirement.resource_class,
+            ResourceClass::None,
+            "{route_id:?}"
+        );
+        assert_eq!(requirement.min_role, None, "{route_id:?}");
+        assert!(
+            !route(route_id).pause_exempt,
+            "{route_id:?} must gate account state after its target is decoded"
+        );
+        assert!(
+            decide(
+                &actor(OrgRole::Member, ScopeSet::ALL),
+                action,
+                &Resource::None
+            )
+            .is_ok(),
+            "the edge checks the actor and scope; the handler checks the decoded target for {route_id:?}"
+        );
+    }
 }
 
 #[test]

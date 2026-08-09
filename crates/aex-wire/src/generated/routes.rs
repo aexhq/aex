@@ -3,7 +3,7 @@
 //! The route registry: one row per public operation.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:5f927d858c412e8f9e20404b8564015430127f926b3b725e2d11777d37d563c4`.
+//! `sha256:c65ec229eb23ad2ff1780c8b3d08c838e3fefd3cef57b39bab55ce8bad19de06`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -736,6 +736,8 @@ pub static ROUTES: &[RouteDescriptor] = &[
             ErrorCode::InvalidScope,
             ErrorCode::LimitExceeded,
             ErrorCode::ResourceConflict,
+            ErrorCode::AccountPaused,
+            ErrorCode::AccountStateUnavailable,
             ErrorCode::CommitOutcomeUnknown,
         ],
         request_schema: Some("ApiKeyCreateRequest"),
@@ -795,8 +797,11 @@ pub static ROUTES: &[RouteDescriptor] = &[
             ErrorCode::Unauthenticated,
             ErrorCode::Forbidden,
             ErrorCode::InsufficientScope,
+            ErrorCode::NotFound,
             ErrorCode::InvalidRequest,
             ErrorCode::InvalidCursor,
+            ErrorCode::AccountPaused,
+            ErrorCode::AccountStateUnavailable,
         ],
         request_schema: None,
         response_schema: Some("ApiKeyPage"),

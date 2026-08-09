@@ -370,7 +370,9 @@ fn zod_type(ir: &ContractIr, owner: &str, ty: &FieldType) -> String {
         }
         FieldType::HttpsUrl => "httpsUrl".to_owned(),
         FieldType::ETag => "boundedText(1, 256).refine((value) => !/[\\u0000-\\u001f\\u007f]/.test(value), { message: \"must not contain control characters\" })".to_owned(),
-        FieldType::Cursor => "boundedText(5, 4096, /^cur_[A-Za-z0-9_-]+$/)".to_owned(),
+        FieldType::Cursor => {
+            "boundedText(5, 4096, /^cur_[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)?$/)".to_owned()
+        }
         FieldType::JsonPointer => "jsonPointer".to_owned(),
         FieldType::CanonicalJson => "z.json()".to_owned(),
         FieldType::ByteRange => "ByteRangeSchema".to_owned(),
