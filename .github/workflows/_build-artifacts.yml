@@ -586,7 +586,26 @@ jobs:
           fi
           tarball=$(jq -er .input "$RELEASE_DIR/recipe.json")
           cmp --silent "$tarball" "$RELEASE_DIR/artifact.bin"
-          npm publish "$tarball" --provenance --access public
+          # Prove the OIDC token endpoint is reachable before publishing. npm
+          # reports a failed trusted-publishing exchange as `ENEEDAUTH`, which
+          # is indistinguishable from having configured no credential at all, so
+          # assert the one precondition npm will not tell us about.
+          [[ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]] \
+            || { echo "::error::no OIDC token endpoint; the job lacks id-token: write"; exit 1; }
+          # `--loglevel verbose` is what makes a rejected exchange legible: it
+          # names the registry's response instead of collapsing every cause into
+          # `ENEEDAUTH`. On failure the debug log is the only record of which
+          # trusted-publisher claim did not match, so surface it rather than
+          # leaving it on a runner that is about to be destroyed.
+          if ! npm publish "$tarball" --provenance --access public --loglevel verbose; then
+            for log in "$HOME"/.npm/_logs/*-debug-0.log; do
+              [ -f "$log" ] || continue
+              echo "::group::npm debug log $(basename "$log")"
+              cat "$log"
+              echo "::endgroup::"
+            done
+            exit 1
+          fi
 
       - name: Read the published version back from the registry
         if: ${{ inputs.publish && steps.recipe.outputs.kind == 'npm-package' }}
