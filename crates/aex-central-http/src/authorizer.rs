@@ -297,6 +297,24 @@ impl CentralAuthorizerContext {
         Ok(context)
     }
 
+    /// Runs the shape check over a context this process minted itself.
+    ///
+    /// [`Self::parse`] already runs it on every context that arrived as a map.
+    /// A context built in-process by [`crate::admission`] never passes through
+    /// that path, so it runs the same check here rather than being trusted
+    /// because it is local: the invariants below are what the rest of the edge
+    /// relies on, and "we constructed it" is not a proof that they hold.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ContextError`] for a window that is empty or longer than
+    /// [`MAX_CONTEXT_LIFETIME_MS`], or a field set that does not match the
+    /// principal kind it claims.
+    pub fn checked(self) -> Result<Self, ContextError> {
+        self.check_shape()?;
+        Ok(self)
+    }
+
     /// Refuses a context whose fields do not match the credential it claims.
     fn check_shape(&self) -> Result<(), ContextError> {
         let lifetime = self.expires_at_ms.saturating_sub(self.issued_at_ms);

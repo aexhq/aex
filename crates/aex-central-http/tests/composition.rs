@@ -1041,3 +1041,255 @@ async fn an_anonymous_request_is_admitted_even_when_the_millisecond_ticks_mid_re
         "both anonymous routes must reach their handler"
     );
 }
+
+// ---------------------------------------------------------------------------
+// In-process authentication
+//
+// The gateway that used to verify credentials cannot integrate an ECS service,
+// so a central composition reachable through a load balancer verifies them
+// itself. These drive the whole router: nothing below constructs a context, so
+// what decides the outcome is the credential — or its absence, or its forgery.
+// ---------------------------------------------------------------------------
+
+use aex_central_http::admission::{CredentialAdmission, CredentialPeppers};
+use aex_control_app::ports::{
+    AccountActorState, AuthorizationReader, CentralActorState, SigningKeyRecord, StoreError,
+    WorkspaceKeyState,
+};
+use aex_identity_domain::credential::{
+    CredentialKind, Pepper, PepperVersion, SecretRng, mint, verifier,
+};
+
+/// A deterministic secret source, so a minted credential is stable.
+#[derive(Debug)]
+struct FixedRng;
+
+impl SecretRng for FixedRng {
+    fn fill(&self, out: &mut [u8]) {
+        out.fill(23);
+    }
+}
+
+const PEPPER_BYTES: [u8; 32] = [17; 32];
+
+/// One pepper, version 1, for whichever purpose is asked.
+#[derive(Debug, Clone, Copy)]
+struct OnePepper;
+
+#[async_trait]
+impl CredentialPeppers for OnePepper {
+    async fn pepper(&self, _kind: CredentialKind, version: PepperVersion) -> Option<Pepper> {
+        (version.get() == 1).then(|| Pepper::new(PEPPER_BYTES))
+    }
+}
+
+/// The one account-token row this suite resolves.
+#[derive(Debug, Clone)]
+struct OneToken {
+    state: CentralActorState,
+}
+
+#[async_trait]
+impl AuthorizationReader for OneToken {
+    async fn resolve_workspace_key(
+        &self,
+        _key_id: Uuid,
+    ) -> Result<Option<WorkspaceKeyState>, StoreError> {
+        Ok(None)
+    }
+
+    async fn resolve_account_token_for_workspace(
+        &self,
+        _token_id: Uuid,
+        _workspace_id: Uuid,
+        _now: OffsetDateTime,
+    ) -> Result<Option<AccountActorState>, StoreError> {
+        Ok(None)
+    }
+
+    async fn resolve_session_for_workspace(
+        &self,
+        _session_id: Uuid,
+        _workspace_id: Uuid,
+        _now: OffsetDateTime,
+    ) -> Result<Option<AccountActorState>, StoreError> {
+        Ok(None)
+    }
+
+    async fn resolve_account_token_central(
+        &self,
+        _token_id: Uuid,
+        _now: OffsetDateTime,
+    ) -> Result<Option<CentralActorState>, StoreError> {
+        Ok(Some(self.state.clone()))
+    }
+
+    async fn resolve_dashboard_session_central(
+        &self,
+        _session_id: Uuid,
+        _now: OffsetDateTime,
+    ) -> Result<Option<CentralActorState>, StoreError> {
+        Ok(Some(self.state.clone()))
+    }
+
+    async fn verification_key_set(&self) -> Result<Vec<SigningKeyRecord>, StoreError> {
+        Ok(Vec::new())
+    }
+
+    async fn active_signing_key(&self) -> Result<SigningKeyRecord, StoreError> {
+        Err(StoreError::NotFound)
+    }
+}
+
+/// A minted account token and the row that verifies it.
+fn minted_token() -> (String, CentralActorState) {
+    let (secret, digest) = mint(
+        CredentialKind::AccountToken,
+        None,
+        raw_uuid(CREDENTIAL),
+        &FixedRng,
+    );
+    let state = CentralActorState {
+        credential_id: raw_uuid(CREDENTIAL),
+        user_id: raw_uuid(USER),
+        scopes: ControlScopeSet::CENTRAL,
+        verifier: *verifier(&Pepper::new(PEPPER_BYTES), &digest).as_bytes(),
+        pepper_version: 1,
+        credential_revoked: false,
+        credential_expired: false,
+        user_active: true,
+        memberships: vec![OrgMembership {
+            organization_id: raw_uuid(ORGANIZATION),
+            membership_id: raw_uuid(MEMBERSHIP),
+            role: OrgRole::Owner,
+        }],
+    };
+    (secret.expose().to_owned(), state)
+}
+
+/// An edge that verifies the credential itself, over `state`.
+fn verifying_edge(state: CentralActorState) -> EdgeStack {
+    edge(Resolver::new(AccountState::Active)).with_in_process_authentication(Arc::new(
+        CredentialAdmission::new(OneToken { state }, OnePepper, 30_000),
+    ))
+}
+
+/// Adds a bearer credential to a request built for `id`.
+fn bearing(id: RouteId, secret: &str) -> Request<Body> {
+    let (mut parts, body) = request_for(id, None).into_parts();
+    parts.headers.insert(
+        axum::http::header::AUTHORIZATION,
+        format!("Bearer {secret}").parse().expect("a header value"),
+    );
+    Request::from_parts(parts, body)
+}
+
+#[tokio::test]
+async fn a_verified_credential_reaches_the_handler_with_no_gateway_in_front() {
+    let (secret, state) = minted_token();
+    let api = Api::new(Answer::Declared);
+    let router = plane(Arc::clone(&api), verifying_edge(state));
+    let sent = send(router, bearing(RouteId::OrganizationsList, &secret)).await;
+    assert_ne!(
+        sent.status,
+        StatusCode::UNAUTHORIZED,
+        "a valid credential was refused: {}",
+        sent.body
+    );
+    assert_eq!(
+        api.calls.load(Ordering::SeqCst),
+        1,
+        "the handler must run for a verified credential"
+    );
+}
+
+#[tokio::test]
+async fn a_forged_credential_is_refused_in_process_and_reaches_no_handler() {
+    // The row exists and its id echoes; only the secret is wrong. Behind the
+    // gateway this request never reached the service at all. It must now be
+    // refused here, by this process, before anything else runs.
+    let (secret, mut state) = minted_token();
+    state.verifier = [99; 32];
+    let api = Api::new(Answer::Declared);
+    let router = plane(Arc::clone(&api), verifying_edge(state));
+    let sent = send(router, bearing(RouteId::OrganizationsList, &secret)).await;
+    assert_eq!(sent.status, StatusCode::UNAUTHORIZED, "{}", sent.body);
+    assert!(sent.body.contains("unauthenticated"), "{}", sent.body);
+    assert_eq!(
+        api.calls.load(Ordering::SeqCst),
+        0,
+        "no handler runs for a credential that does not verify"
+    );
+}
+
+#[tokio::test]
+async fn a_credentialed_route_with_no_credential_at_all_is_refused_in_process() {
+    let (_, state) = minted_token();
+    let api = Api::new(Answer::Declared);
+    let router = plane(Arc::clone(&api), verifying_edge(state));
+    let sent = send(router, request_for(RouteId::OrganizationsList, None)).await;
+    assert_eq!(sent.status, StatusCode::UNAUTHORIZED, "{}", sent.body);
+    assert_eq!(api.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn an_injected_context_never_admits_a_request_that_verifies_no_credential() {
+    // This is the bypass a load balancer creates: behind an ALB every header
+    // and every extension is caller-authored. A composition that verifies
+    // credentials itself must ignore an ambient context entirely, or its
+    // authentication can be skipped by asserting the principal one wants.
+    let (_, state) = minted_token();
+    let api = Api::new(Answer::Declared);
+    let router = plane(Arc::clone(&api), verifying_edge(state));
+    let sent = send(
+        router,
+        request_for(
+            RouteId::OrganizationsList,
+            Some(owner_context(ControlScopeSet::ALL)),
+        ),
+    )
+    .await;
+    assert_eq!(
+        sent.status,
+        StatusCode::UNAUTHORIZED,
+        "an asserted principal was admitted without a credential: {}",
+        sent.body
+    );
+    assert_eq!(api.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn the_two_device_flow_routes_still_admit_a_caller_with_no_credential() {
+    let (_, state) = minted_token();
+    let api = Api::new(Answer::Declared);
+    let router = plane(Arc::clone(&api), verifying_edge(state));
+    for id in [
+        RouteId::DeviceAuthorizationCreate,
+        RouteId::DeviceTokenCreate,
+    ] {
+        let sent = send(router.clone(), request_for(id, None)).await;
+        assert_ne!(
+            sent.status,
+            StatusCode::UNAUTHORIZED,
+            "`{id:?}` refused an anonymous caller it declares as anonymous: {}",
+            sent.body
+        );
+    }
+    assert_eq!(api.calls.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn a_rejected_credential_never_becomes_an_anonymous_one() {
+    // A device-flow route admits *no credential*. It must not admit a rejected
+    // one as though none had been sent.
+    let (_, state) = minted_token();
+    let api = Api::new(Answer::Declared);
+    let router = plane(Arc::clone(&api), verifying_edge(state));
+    let sent = send(
+        router,
+        bearing(RouteId::DeviceTokenCreate, "not-an-aex-credential"),
+    )
+    .await;
+    assert_eq!(sent.status, StatusCode::UNAUTHORIZED, "{}", sent.body);
+    assert_eq!(api.calls.load(Ordering::SeqCst), 0);
+}

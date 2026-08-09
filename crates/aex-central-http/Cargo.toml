@@ -47,6 +47,11 @@ tracing.workspace = true
 uuid.workspace = true
 aex-control-app = { path = "../aex-control-app" }
 aex-control-domain = { path = "../aex-control-domain" }
+# In-process credential admission: the credential grammar and the peppered MAC
+# verify come from the identity domain, and the pepper itself is resolved by
+# version through the identity application's keystore port.
+aex-identity-app = { path = "../aex-identity-app" }
+aex-identity-domain = { path = "../aex-identity-domain" }
 aex-wire = { path = "../aex-wire" }
 
 [dev-dependencies]

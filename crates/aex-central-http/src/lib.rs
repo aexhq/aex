@@ -4,6 +4,8 @@
 //! # Invariants
 //!
 //! - every route is generated from the contract bundle; a hand-added route is a build failure
+//! - a composition that is not behind an authenticating gateway verifies the credential itself,
+//!   in-process, and never trusts an ambient context map
 //! - a body larger than the declared limit is rejected before it is buffered
 //! - an internal error never leaks a database or vendor message to the public wire
 //! - an unreadable account state **rejects** admission; there is no stale fallback
@@ -15,6 +17,7 @@
 //! - regional routes (`aex-regional-http`)
 //! - the wire types themselves (`aex-wire`)
 
+pub mod admission;
 pub mod authorizer;
 pub mod capability;
 pub mod config;
@@ -25,6 +28,9 @@ pub mod health;
 pub mod router;
 pub mod target;
 
+pub use admission::{
+    CentralAuthenticator, CredentialAdmission, CredentialPeppers, PurposedPeppers,
+};
 pub use authorizer::{CentralAuthorizerContext, ContextError, ContextPrincipalKind};
 pub use capability::{CompositionError, CompositionManifest, ResolvedConfig, admit};
 pub use config::{

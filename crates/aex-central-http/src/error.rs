@@ -26,6 +26,15 @@ pub enum EdgeError {
     /// The authorizer context was absent, malformed or not current.
     #[error(transparent)]
     Context(#[from] ContextError),
+    /// A presented credential was resolved in-process and not admitted.
+    ///
+    /// One arm for every refusal — unknown, mismatched, revoked, lapsed,
+    /// inactive, wrongly pinned, or a MAC that does not verify — so a caller
+    /// cannot learn which check failed. Deliberately distinct from
+    /// [`Self::AuthenticationUnavailable`], which says the answer is *unknown*
+    /// rather than negative and is the only one worth retrying.
+    #[error("the credential was refused")]
+    CredentialRefused,
     /// The authorization authority could not be reached.
     ///
     /// Deliberately distinct from every other arm: it is the only
@@ -89,7 +98,7 @@ impl EdgeError {
     pub const fn code(&self) -> ErrorCode {
         match self {
             Self::NoRoute | Self::NotFound => ErrorCode::NotFound,
-            Self::Context(_) => ErrorCode::Unauthenticated,
+            Self::Context(_) | Self::CredentialRefused => ErrorCode::Unauthenticated,
             Self::AuthenticationUnavailable => ErrorCode::AuthenticationUnavailable,
             Self::Forbidden => ErrorCode::Forbidden,
             Self::InsufficientScope => ErrorCode::InsufficientScope,
@@ -180,6 +189,7 @@ mod tests {
     fn every_edge_failure_renders_its_pinned_status() {
         let table = [
             (EdgeError::NoRoute, 404),
+            (EdgeError::CredentialRefused, 401),
             (EdgeError::AuthenticationUnavailable, 503),
             (EdgeError::Forbidden, 403),
             (EdgeError::InsufficientScope, 403),

@@ -36,11 +36,28 @@ use axum::response::{IntoResponse as _, Response};
 use axum::routing::{MethodFilter, MethodRouter, on};
 use uuid::Uuid;
 
+use crate::admission::CentralAuthenticator;
 use crate::authorizer::{CentralAuthorizerContext, ContextError, ContextPrincipalKind};
 use crate::config::HttpConfig;
 use crate::error::EdgeError;
 use crate::headers;
 use crate::target::{TargetPath, TargetResolver, admit_request};
+
+/// Where a composition's authenticated principal comes from.
+///
+/// The two are mutually exclusive on purpose. A composition reachable only
+/// through an authenticating API Gateway reads the context the gateway's
+/// authorizer produced; a composition reachable through a load balancer resolves
+/// and verifies the credential itself. A composition that did *both* would be
+/// one whose in-process verification can be skipped by supplying the context map
+/// directly, which is the bypass moving to an ALB creates.
+#[derive(Clone)]
+enum Authentication {
+    /// The request carries a context an upstream authorizer already resolved.
+    Gateway,
+    /// This process resolves and verifies the credential itself.
+    InProcess(Arc<dyn CentralAuthenticator>),
+}
 
 /// The shared services every mounted group runs behind.
 #[derive(Clone)]
@@ -49,6 +66,7 @@ pub struct EdgeStack {
     resolver: Arc<dyn TargetResolver>,
     clock: Arc<dyn Clock>,
     cursor_secret: Arc<CursorSecret>,
+    authentication: Authentication,
 }
 
 impl std::fmt::Debug for EdgeStack {
@@ -62,6 +80,12 @@ impl std::fmt::Debug for EdgeStack {
 
 impl EdgeStack {
     /// Builds the stack a composition root hands to every mount.
+    ///
+    /// The stack this returns trusts an upstream authorizer's context. That is
+    /// correct **only** behind an API Gateway REQUEST authorizer, which is the
+    /// one caller that can produce the context map and the one edge that will
+    /// not forward a caller-supplied one. Any composition reachable another way
+    /// must call [`Self::with_in_process_authentication`].
     #[must_use]
     pub fn new(
         config: HttpConfig,
@@ -74,7 +98,35 @@ impl EdgeStack {
             resolver,
             clock,
             cursor_secret,
+            authentication: Authentication::Gateway,
         }
+    }
+
+    /// Verifies the credential in this process instead of trusting a context.
+    ///
+    /// Once set, the ambient context is **never read**, on any request. A
+    /// composition behind a load balancer that still honoured an ambient context
+    /// would be one whose authentication a caller can skip by asserting the
+    /// principal it wants, so the two paths are exclusive rather than layered.
+    #[must_use]
+    pub fn with_in_process_authentication(
+        mut self,
+        authenticator: Arc<dyn CentralAuthenticator>,
+    ) -> Self {
+        self.authentication = Authentication::InProcess(authenticator);
+        self
+    }
+
+    /// Whether this stack verifies credentials itself.
+    #[must_use]
+    pub const fn authenticates_in_process(&self) -> bool {
+        matches!(self.authentication, Authentication::InProcess(_))
+    }
+
+    /// The instant this request is evaluated against.
+    #[must_use]
+    pub fn now(&self) -> time::OffsetDateTime {
+        self.clock.now()
     }
 
     /// The configuration this stack was built with.
@@ -168,9 +220,9 @@ fn admits_anonymous(id: RouteId) -> bool {
 /// reading. A second reading would lapse the window whenever the millisecond
 /// happened to tick between the two, refusing every anonymous request — which
 /// is to say both public device-flow routes, intermittently.
-fn anonymous_context(now_ms: i64) -> CentralAuthorizerContext {
+fn anonymous_context(request_id: RequestId, now_ms: i64) -> CentralAuthorizerContext {
     CentralAuthorizerContext {
-        request_id: fallback_request_id(),
+        request_id,
         kind: ContextPrincipalKind::Anonymous,
         principal_id: Uuid::nil(),
         credential_id: None,
@@ -215,8 +267,10 @@ async fn admit_edge(
     // against this instant, so a request cannot be inside its assertion's
     // window at one stage and outside it at the next — and a credential-free
     // context cannot lapse in the microseconds between being minted and being
-    // verified.
-    let now_ms = edge.now_ms();
+    // verified. The in-process authenticator resolves the credential against the
+    // same instant, so the row it read and the window it minted agree.
+    let now = edge.now();
+    let now_ms = millis(now);
 
     // 1. Transport envelope: the route comes from the one table.
     let Some((id, binding)) = match_route(Plane::Central, method, uri.path()) else {
@@ -224,16 +278,34 @@ async fn admit_edge(
     };
     let path = TargetPath::from_binding(&binding);
 
-    // 2. Authentication: the authorizer context, verified against its own window.
+    // 2. Authentication.
     //
-    // The two device-flow routes admit no credential at all, so an absent
-    // context is their normal case rather than a failure. Every other route
-    // refuses: an absent context is exactly what an unauthenticated request
-    // looks like.
+    // Behind a gateway this reads the context that gateway's authorizer already
+    // resolved. In process it *is* the authorizer: the bearer is parsed, the row
+    // is read, the peppered MAC is verified, and only then is a context minted.
+    //
+    // The two device-flow routes admit no credential at all, so "nothing was
+    // presented" is their normal case rather than a failure. Every other route
+    // refuses it: nothing presented is exactly what an unauthenticated request
+    // looks like. A credential that *was* presented and not admitted never
+    // reaches that branch — it is already a refusal.
     let context = match context {
         Some(context) => context,
-        None if admits_anonymous(id) => anonymous_context(now_ms),
-        None => return Err((fallback, unauthenticated())),
+        None => match edge.authentication.clone() {
+            Authentication::Gateway if admits_anonymous(id) => {
+                anonymous_context(fallback.clone(), now_ms)
+            }
+            Authentication::Gateway => return Err((fallback, unauthenticated())),
+            Authentication::InProcess(authenticator) => {
+                let request_id = crate::admission::request_id(headers);
+                match authenticator.authenticate(headers, now).await {
+                    Ok(Some(context)) => context,
+                    Ok(None) if admits_anonymous(id) => anonymous_context(request_id, now_ms),
+                    Ok(None) => return Err((request_id, EdgeError::CredentialRefused)),
+                    Err(failure) => return Err((request_id, failure)),
+                }
+            }
+        },
     };
     let request_id = context.request_id.clone();
     if let Err(error) = context.verify(now_ms) {
@@ -288,6 +360,11 @@ async fn admit_edge(
             granted,
         },
     ))
+}
+
+/// One instant in epoch milliseconds.
+fn millis(now: time::OffsetDateTime) -> i64 {
+    i64::try_from(now.unix_timestamp_nanos().div_euclid(1_000_000)).unwrap_or(i64::MAX)
 }
 
 /// The request id an envelope carries when authentication never established one.
@@ -451,10 +528,19 @@ macro_rules! mount_group {
             let method = request.method().clone();
             let uri = request.uri().clone();
             let headers = request.headers().clone();
-            let context = match request_authorizer_context(&request) {
-                Ok(context) => context,
-                Err(error) => {
-                    return render_edge(&fallback_request_id(), EdgeError::Context(error));
+            // A composition that verifies credentials itself never reads an
+            // ambient context. Honouring one behind a load balancer would let a
+            // caller assert the principal it wants and skip verification
+            // entirely, which is precisely the bypass in-process authentication
+            // exists to close.
+            let context = if state.edge.authenticates_in_process() {
+                None
+            } else {
+                match request_authorizer_context(&request) {
+                    Ok(context) => context,
+                    Err(error) => {
+                        return render_edge(&fallback_request_id(), EdgeError::Context(error));
+                    }
                 }
             };
             let Some(parsed) = HttpMethod::parse(method.as_str()) else {
