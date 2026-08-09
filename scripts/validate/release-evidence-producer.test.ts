@@ -319,13 +319,13 @@ describe("release-bound public evidence producer", () => {
     );
   });
 
-  it("mounts the public release-health router only in regional-session-api", () => {
+  it("mounts the public release-health router only in session-stream-api", () => {
     const root = resolve(import.meta.dir, "../..");
     const owners = [...new Bun.Glob("services/**/src/**/*.rs").scanSync({ cwd: root })]
       .filter((path) => readFileSync(resolve(root, path), "utf8").includes("release_health::router"))
       .map((path) => path.replaceAll("\\", "/"))
       .sort();
-    expect(owners).toEqual(["services/regional-session-api/src/main.rs"]);
+    expect(owners).toEqual(["services/session-stream-api/src/main.rs"]);
   });
 
   // The producer lists the live suite by RUNNING it under

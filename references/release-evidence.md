@@ -60,7 +60,7 @@ repository variables, fixtures, logs, JUnit, cleanup ledgers, or docs.
 The workflow derives the health URL as
 `https://<AEX_RELEASE_EVIDENCE_API_HOST>/api/release/health`; it is not a
 separate secret or operator-selected route. The URL must have no credentials,
-query, fragment, or redirect. `regional-session-api` alone mounts this public
+query, fragment, or redirect. `session-stream-api` alone mounts this public
 route; the `/internal/healthz` and `/internal/readyz` routes remain private.
 Immediately before the suites and again after they finish, it must return HTTP
 200, `application/json`, `Cache-Control: no-store`, and exactly:
@@ -100,7 +100,7 @@ The source now has one graph-selected E2E target, `SC-REGIONAL-ADMISSION`, and
 one deployed-plane user journey, `live.registry-list`. Both prove anonymous
 denial plus authenticated access through the served workspace-registry route,
 emit closed JUnit/inventory output, and report zero-spend cleanup hygiene. The
-exact release-health router is mounted only by `regional-session-api`.
+exact release-health router is mounted only by `session-stream-api`.
 
 The protected Environment has the reviewed dev API URL and API key, canonical
 host, zero-spend bound, exact-main deployment policy, and required-reviewer
