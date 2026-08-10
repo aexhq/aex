@@ -10,8 +10,8 @@
   "totals": {
     "awaiting_owner": 45,
     "capacity_gates": 19,
-    "live_targets": 36,
-    "packages": 148,
+    "live_targets": 37,
+    "packages": 150,
     "seams_claimed": 33,
     "seams_declared": 35,
     "workloads": 8
@@ -1177,7 +1177,8 @@
         ],
         "scenarios": [],
         "targets": {
-          "boundaries": "unit"
+          "boundaries": "unit",
+          "no_tenant_in_tool_exec": "unit"
         },
         "not_applicable": {
           "live_suite": "generated contract crate; its wire is exercised through every deployable's companion, not a live seam of its own"
@@ -3090,6 +3091,50 @@
       "unmapped_targets": [],
       "awaiting_owner": false
     },
+    "services/tool-executor": {
+      "name": "tool-executor",
+      "kind": "cargo",
+      "meta": {
+        "owner": "brain-core",
+        "role": "deployable",
+        "artifact": "oci_image",
+        "deployable": "tool-executor",
+        "live_suite": "aex-live-tool-executor",
+        "layers": [
+          "unit",
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "contract",
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.dynamodb.condition",
+          "aws.dynamodb.transact_write",
+          "aws.iam.denial"
+        ],
+        "security_tier": "secret",
+        "risk": [
+          "iam",
+          "untrusted_input"
+        ],
+        "scenarios": [
+          "SC-BRAIN-TURN"
+        ],
+        "targets": {
+          "admission": "unit",
+          "composition": "unit",
+          "performance_contract": "e2e",
+          "spend": "unit"
+        },
+        "not_applicable": {}
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": false
+    },
     "tests/live/aex-live-brain-mux": {
       "name": "aex-live-brain-mux",
       "kind": "cargo",
@@ -4254,6 +4299,41 @@
       "unmapped_targets": [],
       "awaiting_owner": true
     },
+    "tests/live/aex-live-tool-executor": {
+      "name": "aex-live-tool-executor",
+      "kind": "cargo",
+      "meta": {
+        "owner": "brain-core",
+        "role": "live_companion",
+        "artifact": "none",
+        "deployable": "tool-executor",
+        "layers": [
+          "smoke",
+          "e2e"
+        ],
+        "concerns": [
+          "fault",
+          "security",
+          "performance"
+        ],
+        "seams": [
+          "aws.dynamodb.condition",
+          "aws.dynamodb.transact_write",
+          "aws.iam.denial"
+        ],
+        "security_tier": "secret",
+        "risk": [
+          "iam"
+        ],
+        "scenarios": [],
+        "targets": {
+          "live": "e2e"
+        },
+        "not_applicable": {}
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": false
+    },
     "tests/live/aex-live-usage-compute-worker": {
       "name": "aex-live-usage-compute-worker",
       "kind": "cargo",
@@ -4657,6 +4737,7 @@
         ],
         "scenarios": [],
         "targets": {
+          "composition": "unit",
           "faults": "unit",
           "resource_envelope": "e2e",
           "security": "unit"
@@ -5379,6 +5460,7 @@
     "aex-live-site",
     "aex-live-stripe-command-edge",
     "aex-live-stripe-webhook-edge",
+    "aex-live-tool-executor",
     "aex-live-usage-compute-worker",
     "aex-live-usage-receipt-dispatcher",
     "aex-live-usage-storage-worker",
@@ -5411,6 +5493,7 @@
       "aex-live-runtime-control-worker",
       "aex-live-session-operation-worker",
       "aex-live-session-stream-api",
+      "aex-live-tool-executor",
       "aex-live-usage-compute-worker",
       "aex-live-usage-storage-worker",
       "aex-live-usage-transfer-worker"
@@ -5433,7 +5516,8 @@
       "aex-live-regional-observation-api",
       "aex-live-regional-otlp",
       "aex-live-session-operation-worker",
-      "aex-live-session-stream-api"
+      "aex-live-session-stream-api",
+      "aex-live-tool-executor"
     ],
     "aws.dynamodb.ttl": [
       "aex-live-content-lifecycle-worker",
@@ -5478,6 +5562,7 @@
       "aex-live-session-stream-api",
       "aex-live-stripe-command-edge",
       "aex-live-stripe-webhook-edge",
+      "aex-live-tool-executor",
       "aex-live-usage-compute-worker",
       "aex-live-usage-receipt-dispatcher",
       "aex-live-usage-storage-worker",

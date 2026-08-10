@@ -147,6 +147,7 @@ members = [
     "tests/live/aex-live-site",
     "tests/live/aex-live-stripe-command-edge",
     "tests/live/aex-live-stripe-webhook-edge",
+    "tests/live/aex-live-tool-executor",
     "tests/live/aex-live-usage-compute-worker",
     "tests/live/aex-live-usage-receipt-dispatcher",
     "tests/live/aex-live-usage-storage-worker",

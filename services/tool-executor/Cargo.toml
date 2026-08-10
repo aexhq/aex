@@ -1,7 +1,7 @@
 [package]
 name = "tool-executor"
 version = "0.1.0"
-description = "The platform-paid tool executor: one handler, called only by the Brain, holding the vendor credential no other process may see."
+description = "`tool-executor` runs platform-destination tool work outside `brain-mux`."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -30,6 +30,7 @@ scenarios = ["SC-BRAIN-TURN"]
 admission = "unit"
 composition = "unit"
 spend = "unit"
+performance_contract = "e2e"
 
 [[bin]]
 name = "tool-executor"
@@ -78,3 +79,7 @@ path = "tests/composition.rs"
 [[test]]
 name = "spend"
 path = "tests/spend.rs"
+
+[[test]]
+name = "performance_contract"
+path = "tests/load.rs"

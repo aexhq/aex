@@ -808,6 +808,10 @@ name = "aex-live-stripe-webhook-edge"
 version = "0.1.0"
 
 [[package]]
+name = "aex-live-tool-executor"
+version = "0.1.0"
+
+[[package]]
 name = "aex-live-usage-compute-worker"
 version = "0.1.0"
 

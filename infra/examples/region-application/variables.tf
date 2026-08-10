@@ -158,3 +158,41 @@ variable "tags" {
   description = "Tags applied to everything in the region application."
   default     = {}
 }
+
+variable "internal_namespace" {
+  type        = string
+  description = "The private DNS namespace services with no public edge are reached under, such as `aex-dev.internal`. It resolves only inside this VPC, which is what keeps a customer sandbox from having a name to dial even when it has internet egress."
+}
+
+variable "tool_executor" {
+  type = object({
+    name                      = string
+    image                     = string
+    cpu                       = number
+    memory                    = number
+    desired_count             = number
+    stop_timeout              = number
+    container_port            = number
+    log_group_name            = string
+    log_retention_days        = number
+    execution_role_arn        = string
+    env                       = map(string)
+    client_security_group_ids = list(string)
+  })
+  description = "The platform-paid tool executor. It has no public edge and no target group: `brain-mux` reaches it by the Cloud Map name and nothing else can reach it at all."
+
+  validation {
+    condition     = var.tool_executor.stop_timeout == 30
+    error_message = "The executor must be given exactly 30 seconds to drain. That is `MAX_TOOL_EXEC_DEADLINE_MS`: a shorter timeout kills the task while a caller is still blocked on a call it holds, and a longer one keeps a draining task alive past the point where any call it holds could still be answered."
+  }
+
+  validation {
+    condition     = lookup(var.tool_executor.env, "AEX_TOOL_EXECUTOR_VERIFICATION_KEYS", "") != ""
+    error_message = "The executor must be given the signing keys it accepts. The binary has no default and refuses to start without one, so an omitted value is a task that never starts; and a task that started with an empty set would report ready while refusing every request."
+  }
+
+  validation {
+    condition     = lookup(var.tool_executor.env, "AEX_TOOL_EXECUTOR_CEILING_TABLE", "") != ""
+    error_message = "The executor must be given the organization ceiling table. Without it there is no bound on platform-paid spend that survives a Brain bug, which is the one thing the separate process was bought for."
+  }
+}

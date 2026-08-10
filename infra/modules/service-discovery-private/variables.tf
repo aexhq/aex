@@ -3,7 +3,7 @@ variable "namespace" {
   description = "The private DNS namespace services are named inside, such as `aex-dev.internal`. It resolves only from the VPC it is attached to."
 
   validation {
-    condition     = can(regex("^[a-z][a-z0-9-]{1,40}(\.[a-z][a-z0-9-]{1,40})+$", var.namespace))
+    condition     = can(regex("^[a-z][a-z0-9-]{1,40}([.][a-z][a-z0-9-]{1,40})+$", var.namespace))
     error_message = "The namespace must be a lowercase dotted DNS name such as `aex-dev.internal`."
   }
 }

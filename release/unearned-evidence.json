@@ -652,6 +652,20 @@
   },
   {
     "reason_class": "requires_deployment",
+    "subject": "services/tool-executor",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "services/tool-executor",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-brain-mux",
     "owner": "brain-core",
     "blocking_rule": "aex-unearned-evidence",
@@ -1095,6 +1109,20 @@
     "reason_class": "requires_deployment",
     "subject": "tests/live/aex-live-stripe-webhook-edge",
     "owner": "central-finance",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `smoke` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-tool-executor",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "layer `e2e` needs a deployed artifact (OD-07)"
+  },
+  {
+    "reason_class": "requires_deployment",
+    "subject": "tests/live/aex-live-tool-executor",
+    "owner": "brain-core",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "layer `smoke` needs a deployed artifact (OD-07)"
   },
@@ -2318,6 +2346,27 @@
   },
   {
     "reason_class": "requires_live_seam",
+    "subject": "services/tool-executor",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/tool-executor",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.transact_write` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "services/tool-executor",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
     "subject": "tests/live/aex-live-brain-mux",
     "owner": "brain-core",
     "blocking_rule": "aex-unearned-evidence",
@@ -3211,6 +3260,27 @@
     "owner": "central-finance",
     "blocking_rule": "aex-unearned-evidence",
     "detail": "seam `stripe.test_mode.webhook` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-tool-executor",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.condition` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-tool-executor",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.dynamodb.transact_write` cannot be satisfied by any local substitute"
+  },
+  {
+    "reason_class": "requires_live_seam",
+    "subject": "tests/live/aex-live-tool-executor",
+    "owner": "brain-core",
+    "blocking_rule": "aex-unearned-evidence",
+    "detail": "seam `aws.iam.denial` cannot be satisfied by any local substitute"
   },
   {
     "reason_class": "requires_live_seam",

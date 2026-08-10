@@ -972,6 +972,65 @@ desired_count = 2
 stop_timeout_s = 120
 port = 8080
 
+# The platform-paid tool executor. `brain-mux` is its only caller and it has no
+# public listener: it is reached by the Cloud Map name `infra/modules/
+# service-discovery-private` publishes, from inside the VPC, and by no other
+# address.
+#
+# One task, by owner decision. The availability consequence is real and was
+# accepted with its name attached: a tool call holds the caller's activation,
+# lease and lane permit while it waits, so a crash here stalls in-flight agents
+# and not only new ones. Two things bound that. The request's `deadline_ms` is
+# capped at 30 s, so a stall is bounded by a deadline rather than by a deploy;
+# and ECS rolls a new task in before stopping the old one, so a deployment is not
+# an outage even at a count of one.
+#
+# `required_receipts` carries no `contract`: this deployable serves no public
+# route and appears in no generated bundle. Its wire is
+# `aex_internal_contracts::tool_exec`, which the contract crate's own receipt
+# covers.
+[[unit]]
+id = "tool-executor"
+kind = "rust-oci-service"
+plane = "runtime"
+package = "tool-executor"
+bin = "tool-executor"
+target = "aarch64-unknown-linux-gnu.2.34"
+profile = "release"
+form = "oci-image"
+base_image = "public.ecr.aws/amazonlinux/amazonlinux:2023-minimal@sha256:f536dd770d9f7065461c786418265a13f5ba548a11a57bbbf360e677b811ed39"
+config_env_namespace = "AEX_TOOL_EXECUTOR_"
+config_schema_version = 1
+health_path = "/internal/healthz"
+ready_path = "/internal/readyz"
+required_receipts = ["unit", "property", "lint", "package-integrity"]
+alarm_spec = "tool-executor"
+live_suite = "aex-live-tool-executor"
+
+# Sized from `session-stream-api` and `central-api`, the two peers of the same
+# class: a long-lived request-path task whose work is per-request rather than
+# per-task. What this task holds is one TLS session and one bounded response
+# buffer per outstanding call, plus the argument document; at the 64 concurrent
+# calls its admission is sized for and `web_search`'s declared 262 144-byte
+# result ceiling, that is about 17 MiB of buffer, well inside 2 GiB.
+#
+# The 30 s stop timeout is `MAX_TOOL_EXEC_DEADLINE_MS` exactly. A shorter one
+# would kill the task holding a call the caller is still blocked on; a longer one
+# would keep a draining task alive past the point where any call it holds could
+# still be answered.
+#
+# `desired_count = 1` is the owner's decision (R4=A, ~$36/month), not a derived
+# floor. Raising it needs no code change: the executor holds no state between
+# calls, and its ceiling is a conditional update in DynamoDB rather than a
+# per-process counter, so a second task enforces the same bound rather than a
+# second copy of it.
+[unit.fargate]
+cpu = 1024
+memory_mb = 2048
+desired_count = 1
+stop_timeout_s = 30
+port = 8080
+
 [[unit]]
 id = "hands-agent"
 kind = "rust-binary"

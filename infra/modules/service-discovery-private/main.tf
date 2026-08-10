@@ -42,12 +42,13 @@ resource "aws_service_discovery_service" "this" {
     routing_policy = "MULTIVALUE"
   }
 
-  # ECS deregisters an instance when a task stops, and this makes a task that
-  # stops answering disappear from the name without waiting for that. One
-  # failure threshold, because the only writer is ECS itself.
-  health_check_custom_config {
-    failure_threshold = 1
-  }
+  # ECS is the only writer of instance health here: it registers a task when the
+  # task starts and deregisters it when it stops. The block is declared with no
+  # arguments because `failure_threshold` is deprecated -- AWS pins it to 1 and
+  # the provider warns on any value -- and its absence would make this a
+  # Route 53-health-checked service, which is not what an ECS-managed
+  # registration is.
+  health_check_custom_config {}
 
   tags = var.tags
 }

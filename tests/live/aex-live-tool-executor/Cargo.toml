@@ -1,0 +1,28 @@
+[package]
+name = "aex-live-tool-executor"
+version = "0.1.0"
+description = "Live-test companion package for the `tool-executor` deployable."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[package.metadata.aex]
+owner = "brain-core"
+role = "live_companion"
+artifact = "none"
+deployable = "tool-executor"
+layers = ["smoke", "e2e"]
+concerns = ["fault", "security", "performance"]
+seams = ["aws.dynamodb.condition", "aws.dynamodb.transact_write", "aws.iam.denial"]
+security_tier = "secret"
+risk = ["iam"]
+scenarios = []
+
+[package.metadata.aex.targets]
+live = "e2e"
