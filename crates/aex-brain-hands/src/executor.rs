@@ -71,6 +71,7 @@ impl HandsToolExecutor {
             .await
             .map_err(hands_error)?;
         incorporate_result(result, detached.max_bytes)
+            .map(|body| DetachedStatus::Completed(Box::new(body)))
     }
 }
 
@@ -176,6 +177,14 @@ impl ToolExecutor for HandsToolExecutor {
                 .start(ticket, call.hands_generation, &start)
                 .await
                 .map_err(hands_error)?;
+            // Attached delivery: the guest answered on the connection the start
+            // held, so the result is already here and there is no detached
+            // operation to persist, no poll interval to wait out and no second
+            // round trip to make. The incorporation is the same one the pull
+            // performs — same verified checksum, same bound, same body.
+            if let Some(result) = accepted.result {
+                return incorporate_result(*result, max_bytes).map(ToolOutcome::Completed);
+            }
             let durable = encode_detached(
                 accepted.generation,
                 &accepted.operation,
@@ -288,7 +297,7 @@ struct DetachedHands {
 fn incorporate_result(
     result: HandsResult,
     max_bytes: usize,
-) -> Result<DetachedStatus, ToolDispatchError> {
+) -> Result<ToolResultBody, ToolDispatchError> {
     if result.truncated {
         return Err(dispatch_error(
             DispatchStage::Terminal,
@@ -346,13 +355,13 @@ fn incorporate_result(
         ));
     }
     let checksum = ContentHash::of(&bytes);
-    Ok(DetachedStatus::Completed(Box::new(ToolResultBody {
+    Ok(ToolResultBody {
         content: vec![part],
         is_error: result.exit_code != 0,
         duration_ms: result.duration_ms,
         executed_on: ExecutorRoute::Hands,
         checksum,
-    })))
+    })
 }
 
 /// A canonical-JSON result part and the bytes its checksum is over.
@@ -511,6 +520,8 @@ fn dispatch_error(
 mod tests {
     use std::sync::{Arc, Mutex};
 
+    mod attached;
+
     use super::{HandsToolExecutor, decode_detached, operation_for};
     use aex_brain_app::ports::{
         BoxFuture, CancelToken, ControlStateView, DetachedStatus, DispatchTicket, FenceGuard,
@@ -536,6 +547,8 @@ mod tests {
         result_checksum: Mutex<Option<ContentHash>>,
         result_truncated: Mutex<bool>,
         result_body: Mutex<String>,
+        /// What an attached start answers with on the connection it held.
+        attached: Mutex<Option<HandsResult>>,
     }
 
     impl HandsPort for FixtureHands {
@@ -569,6 +582,12 @@ mod tests {
                     generation,
                     created: true,
                     poll_after: core::time::Duration::from_millis(25),
+                    result: self
+                        .attached
+                        .lock()
+                        .expect("attached")
+                        .clone()
+                        .map(Box::new),
                 })
             })
         }
@@ -640,6 +659,7 @@ mod tests {
             result_checksum: Mutex::new(None),
             result_truncated: Mutex::new(false),
             result_body: Mutex::new("{\"bytes\":3,\"path\":\"/workspace/a.txt\"}".to_owned()),
+            attached: Mutex::new(None),
         });
         (HandsToolExecutor::new(hands.clone()), hands)
     }

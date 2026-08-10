@@ -17,8 +17,11 @@ use aex_hands_agent::wire::{
     Frame, FrameError, FrameExpectation, RequestPreamble, ResponsePreamble, ResponseStatus, Verb,
     decode_request, encode_response,
 };
-use aex_hands_protocol::operation::GuestRoot;
-use aex_hands_protocol::rpc::{CancelRequest, Fence, ResultRequest, StartRequest, StatusRequest};
+use aex_hands_protocol::operation::{DeliveryMode, GuestRoot};
+use aex_hands_protocol::rpc::{
+    AttachResponse, CancelRequest, Fence, HandsOperationId, ResultRequest, ResultResponse,
+    StartRequest, StatusRequest, StatusResponse,
+};
 use aex_internal_contracts::SchemaVersion;
 use aex_wire::types::Timestamp;
 use axum::Router;
@@ -32,6 +35,10 @@ use tokio::sync::RwLock;
 
 use crate::execute::{Dispatch, Executor};
 use crate::image::ImageValidator;
+
+mod attached;
+
+use attached::attach_handler;
 
 /// The internal liveness path.
 pub const HEALTHZ_PATH: &str = "/internal/healthz";
@@ -243,19 +250,11 @@ pub fn router(guest: Arc<Guest>) -> Router {
             post(move |state, body| verb_handler(verb, state, body)),
         );
     }
-    router = router.route(
-        "/aex/hands/v1/attach/{operation}",
-        get(|state: State<Arc<Guest>>| async move {
-            // The attached stream is `start`'s delivery mode, not a sixth verb.
-            // Until the streaming mirror lands, an attach is refused explicitly so
-            // a caller never waits on a body that will not arrive.
-            let _ = state;
-            (
-                StatusCode::NOT_IMPLEMENTED,
-                "attached delivery is declared and not yet served; pull the result instead",
-            )
-        }),
-    );
+    // Attach is `start`'s attached delivery mode, expressed as its own path only
+    // because HTTP cannot carry two response bodies. It is posted, framed and
+    // fenced exactly like the other four verbs; what differs is that the caller
+    // keeps the connection and the terminal record comes back on it.
+    router = router.route(Verb::Attach.path(), post(attach_handler));
     for hook in LifecycleHook::ALL {
         router = router.route(
             hook.path(),
@@ -585,6 +584,8 @@ fn now() -> Timestamp {
 #[cfg(test)]
 mod tests {
     use super::{Guest, HEALTHZ_PATH, READYZ_PATH, router};
+
+    mod attached;
     use crate::execute::Executor;
     use crate::host::{OutputSink, Runner, Started};
     use crate::image::{ImageError, ImageValidator};
@@ -599,8 +600,9 @@ mod tests {
         TerminalState,
     };
     use aex_hands_protocol::rpc::{
-        CancelReason, CancelRequest, CancelResponse, Fence, GenerationBinding, HandsOperationId,
-        ResultRequest, ResultResponse, StartRequest, StatusRequest, StatusResponse,
+        AttachResponse, CancelReason, CancelRequest, CancelResponse, Fence, GenerationBinding,
+        HandsOperationId, ResultRequest, ResultResponse, StartRequest, StatusRequest,
+        StatusResponse,
     };
     use aex_hands_tools::port::{Pgid, ProcError};
     use aex_wire::ids::{ContentHash, GenerationId, PrefixedId as _, Uuid7};

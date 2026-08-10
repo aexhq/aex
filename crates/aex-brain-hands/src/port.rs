@@ -245,6 +245,7 @@ mod tests {
                     generation: self.returned_generation,
                     created: true,
                     poll_after: core::time::Duration::from_millis(250),
+                    result: None,
                 })
             })
         }

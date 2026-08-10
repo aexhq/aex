@@ -224,6 +224,7 @@ impl HandsPort for StubHands {
                 generation,
                 created: true,
                 poll_after: core::time::Duration::from_millis(250),
+                result: None,
             })
         })
     }

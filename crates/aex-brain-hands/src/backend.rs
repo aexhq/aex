@@ -30,8 +30,9 @@ use aex_hands_protocol::operation::{
     DeliveryMode, OperationBounds, OperationExit, OperationRequest, TerminalMetadata, TerminalState,
 };
 use aex_hands_protocol::rpc::{
-    CallHash, CancelReason, CancelRequest, CancelResponse, GenerationBinding, HandsOperationId,
-    ResultRequest, ResultResponse, StartRequest, StartResponse, StatusRequest, StatusResponse,
+    AttachResponse, CallHash, CancelReason, CancelRequest, CancelResponse, GenerationBinding,
+    HandsOperationId, ResultChunk, ResultRequest, ResultResponse, StartRequest, StartResponse,
+    StatusRequest, StatusResponse,
 };
 use aex_internal_contracts::SchemaVersion;
 use aex_runtime_control::generation::{
@@ -59,6 +60,10 @@ use crate::{
     AuthenticatedGuestEndpoint, GuestReply, HttpGuestTransport, MAX_FRAME_BYTES,
     MAX_RESULT_BODY_BYTES, ResultAssembly, admit, launch_backoff_ms, settle,
 };
+
+mod attached;
+
+pub use attached::{ATTACH_MAX_WALL_MS, delivery_for};
 
 const MATERIALIZE_ATTEMPTS: u32 = 64;
 const STORE_ATTEMPTS: usize = 16;
@@ -897,6 +902,7 @@ impl crate::HandsBackend for ProductionHandsBackend {
                     return Err(error);
                 }
             };
+            let delivery = delivery_for(start.bounds.timeout_ms);
             let call = StartRequest {
                 binding: binding(&admitted),
                 operation,
@@ -904,9 +910,14 @@ impl crate::HandsBackend for ProductionHandsBackend {
                 request,
                 bounds: operation_bounds(&admitted, &start.bounds),
                 deadline: wire_timestamp(start.deadline)?,
-                delivery: DeliveryMode::Detached,
+                delivery,
             };
             let timeout = Duration::from_millis(u64::from(start.bounds.timeout_ms));
+            if delivery == DeliveryMode::Attached {
+                return self
+                    .start_attached(&endpoint, generation, operation, start, &call, timeout)
+                    .await;
+            }
             let reply = match self
                 .call_guest(&endpoint, Verb::Start, &call, timeout)
                 .await
@@ -936,6 +947,7 @@ impl crate::HandsBackend for ProductionHandsBackend {
                         generation,
                         created: !existing,
                         poll_after: poll_after(0),
+                        result: None,
                     })
                 }
                 StartResponse::AlreadyTerminal {
@@ -947,6 +959,7 @@ impl crate::HandsBackend for ProductionHandsBackend {
                         generation,
                         created: false,
                         poll_after: Duration::ZERO,
+                        result: None,
                     })
                 }
                 StartResponse::Conflict {

@@ -101,6 +101,14 @@ pub struct HandsAccepted {
     pub created: bool,
     /// How long to wait before the first status query.
     pub poll_after: core::time::Duration,
+    /// The finished result, when the operation was delivered **attached** and so
+    /// answered on the connection that started it.
+    ///
+    /// `None` is the ordinary detached shape and means what it always meant: ask
+    /// again later. It is also what an attached call falls back to when the body
+    /// did not fit the one attached chunk, so the resumable pull stays the single
+    /// authority on a large body rather than becoming a second one.
+    pub result: Option<Box<HandsResult>>,
 }
 
 /// Where a Hands operation stands.

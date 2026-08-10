@@ -16,6 +16,10 @@ use crate::operation::{
     TerminalState,
 };
 
+mod attached;
+
+pub use attached::AttachResponse;
+
 /// A Brain-assigned operation identity.
 ///
 /// The guest never mints one, and it is not derived from a model tool-use id or
