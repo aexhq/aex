@@ -10,6 +10,7 @@ pub mod app_ports;
 pub mod handlers;
 pub mod routes;
 pub mod stores;
+pub mod usage;
 pub mod wire_pending;
 
 pub use handlers::{Dispatcher, Routes, Shared};

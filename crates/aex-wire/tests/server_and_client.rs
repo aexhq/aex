@@ -1001,6 +1001,9 @@ fn regional_read_models_match_their_authoritative_producers() {
         .expect("complete attribution without a regional rate book");
     assert_eq!(attribution.source, "runtime_activity");
 
+    // `category` is the authority face, not a priced category: memory and
+    // compute are one contiguous fact sequence behind one authority, so there
+    // are three frontiers and not four.
     let frontier: aex_wire::models::UsageFrontier = serde_json::from_value(serde_json::json!({
         "region": "eu-west-1",
         "workspaceId": workspace_id().to_string(),
@@ -1008,10 +1011,41 @@ fn regional_read_models_match_their_authoritative_producers() {
         "acceptedSequence": "8",
         "projectedSequence": "7",
         "publishedSequence": "6",
-        "settledSequence": "5"
+        "settledSequence": "5",
+        "completeThrough": "7",
+        "includesThrough": "7",
+        "state": "advancing"
     }))
     .expect("domain stage names and an as-yet unknown service-time frontier");
     assert_eq!(frontier.projected_sequence.to_string(), "7");
     assert_eq!(frontier.published_sequence.to_string(), "6");
     assert!(frontier.service_through.is_none());
+    // A stalled fold names where it stopped and why. A lag is not a stall, and
+    // a fold parked behind a poisoned record must not be indistinguishable
+    // from one a few seconds behind.
+    assert!(frontier.stalled_at.is_none());
+    assert!(frontier.stall_reason.is_none());
+    assert_eq!(frontier.category, aex_wire::models::UsageAuthority::Compute);
+
+    // Memory has no frontier of its own to ask for.
+    assert!(
+        serde_json::from_str::<aex_wire::models::UsageAuthority>("\"memory\"").is_err(),
+        "publishing a memory frontier would claim an independence that does \
+         not exist"
+    );
+
+    // Session, run and operation are not groupable: every stored aggregate row
+    // is keyed by a hash that includes the session, so grouping by one would
+    // read hundreds of thousands of rows for one monthly total.
+    for absent in ["session", "run", "operation"] {
+        assert!(
+            serde_json::from_str::<aex_wire::models::UsageGrouping>(&format!("\"{absent}\""))
+                .is_err(),
+            "`{absent}` must not be a publishable grouping axis"
+        );
+    }
+
+    // Parquet's encoder is a typed refusal, so the wire must not be able to ask
+    // for it: a durable failure per request is a false capability.
+    assert!(serde_json::from_str::<aex_wire::models::ExportFormat>("\"parquet\"").is_err());
 }

@@ -21,7 +21,7 @@
 
 use std::time::Duration;
 
-use aex_observation_domain::keys::{ControlDomain, control_pk, control_sk, export_pk};
+use aex_observation_domain::keys::{ControlDomain, control_pk, control_sk, export_pk, export_sk};
 use aex_wire::ids::{ExportId, PrefixedId, WorkspaceId};
 use aex_wire::types::Timestamp;
 
@@ -29,7 +29,9 @@ use aex_wire::types::Timestamp;
 pub const DOMAIN: ControlDomain = ControlDomain::ExportLaunch;
 
 /// The sort key of the export state row.
-pub const EXPORT_STATE_SK: &str = "STATE";
+// An export state row is keyed `EXPORT#{workspace}` / `{export_id}`, so there
+// is no constant sort key any more; `DueItem::state_sk` derives it. The former
+// `EXPORT_STATE_SK` put every workspace's exports in their own partition.
 
 /// The state an admitted, not yet launched export carries.
 pub const STATE_ADMITTED: &str = "admitted";
@@ -120,10 +122,16 @@ pub struct DueItem {
 }
 
 impl DueItem {
-    /// The `EXPORT#{workspace}#{export}` partition key of the state row.
+    /// The `EXPORT#{workspace}` partition key of the state row.
     #[must_use]
     pub fn state_pk(&self) -> String {
-        export_pk(self.workspace, self.export)
+        export_pk(self.workspace)
+    }
+
+    /// The sort key of the state row: the bare export identity.
+    #[must_use]
+    pub fn state_sk(&self) -> String {
+        export_sk(self.export)
     }
 }
 
@@ -538,31 +546,32 @@ pub fn due_upper_bound(now: Timestamp) -> Result<String, LauncherError> {
     Ok(control_sk(ceiling, ""))
 }
 
-/// Splits an `EXPORT#{workspace}#{export}` partition key.
+/// Splits an `EXPORT#{workspace}` partition key and its `{export}` sort key.
+///
+/// The two are parsed together because the due index is `KEYS_ONLY`: a due page
+/// hands over exactly this pair and nothing else, which is what keeps the
+/// launcher's grant free of any observation read.
 ///
 /// # Errors
 ///
 /// Returns [`LauncherError::Key`] when the key does not match the template or
 /// either identifier does not parse as the kind its position declares.
-pub fn parse_export_pk(pk: &str) -> Result<(WorkspaceId, ExportId), LauncherError> {
+pub fn parse_export_key(pk: &str, sk: &str) -> Result<(WorkspaceId, ExportId), LauncherError> {
     let malformed = |reason: &str| LauncherError::Key {
-        key: pk.to_owned(),
+        key: format!("{pk}/{sk}"),
         reason: reason.to_owned(),
     };
-    let rest = pk
+    let workspace = pk
         .strip_prefix("EXPORT#")
         .ok_or_else(|| malformed("the key does not begin with `EXPORT#`"))?;
-    let (workspace, export) = rest
-        .split_once('#')
-        .ok_or_else(|| malformed("the key carries no export component"))?;
-    if export.contains('#') {
+    if workspace.contains('#') {
         return Err(malformed(
-            "the key carries more components than the template",
+            "the partition carries more components than the template",
         ));
     }
     let workspace =
         WorkspaceId::parse(workspace).map_err(|_| malformed("the workspace does not parse"))?;
-    let export = ExportId::parse(export).map_err(|_| malformed("the export does not parse"))?;
+    let export = ExportId::parse(sk).map_err(|_| malformed("the export does not parse"))?;
     Ok((workspace, export))
 }
 
@@ -590,10 +599,10 @@ mod tests {
     use aex_wire::types::Timestamp;
 
     use super::{
-        Claim, ClaimOutcome, DueItem, EXPORT_ID_ENV, EXPORT_STATE_SK, ExportRows, LaunchRequest,
-        LaunchSettings, Launcher, LauncherError, Lease, RECONCILED_STATUSES, RecordOutcome,
-        RunTaskOutcome, STATE_ADMITTED, STATE_LAUNCHING, TaskLauncher, TaskStatus,
-        WORKSPACE_ID_ENV, due_upper_bound, parse_control_sk, parse_export_pk, shard_partition,
+        Claim, ClaimOutcome, DueItem, EXPORT_ID_ENV, ExportRows, LaunchRequest, LaunchSettings,
+        Launcher, LauncherError, Lease, RECONCILED_STATUSES, RecordOutcome, RunTaskOutcome,
+        STATE_ADMITTED, STATE_LAUNCHING, TaskLauncher, TaskStatus, WORKSPACE_ID_ENV,
+        due_upper_bound, parse_control_sk, parse_export_key, shard_partition,
     };
 
     /// The instant every case sweeps at.
@@ -1118,7 +1127,6 @@ mod tests {
 
     #[test]
     fn the_durable_spellings_are_the_ones_the_api_writes() {
-        assert_eq!(EXPORT_STATE_SK, "STATE");
         assert_eq!(STATE_ADMITTED, "admitted");
         assert_eq!(STATE_LAUNCHING, "launching");
         assert_eq!(TaskStatus::Running.as_str(), "RUNNING");
@@ -1140,19 +1148,23 @@ mod tests {
     #[test]
     fn a_key_outside_the_export_template_is_refused_rather_than_guessed() {
         let good = due(1).state_pk();
+        let sort = due(1).state_sk();
         assert_eq!(
-            parse_export_pk(&good).expect("parses"),
+            parse_export_key(&good, &sort).expect("parses"),
             (workspace(), export(1))
         );
-        for hostile in [
-            "OBS#W#wsp_x#logs",
-            "EXPORT#wsp_x",
-            &format!("EXPORT#{}#not-an-export", workspace()),
-            &format!("{good}#extra"),
-        ] {
+        let hostile: [(&str, &str); 5] = [
+            ("OBS#W#wsp_x#logs", &sort),
+            ("EXPORT#wsp_x", &sort),
+            // The old two-component partition is not silently re-accepted.
+            (&format!("EXPORT#{}#{}", workspace(), export(1)), &sort),
+            (&good, "STATE"),
+            (&good, "not-an-export"),
+        ];
+        for (pk, sk) in hostile {
             assert!(
-                matches!(parse_export_pk(hostile), Err(LauncherError::Key { .. })),
-                "`{hostile}` was accepted"
+                matches!(parse_export_key(pk, sk), Err(LauncherError::Key { .. })),
+                "`{pk}`/`{sk}` was accepted"
             );
         }
     }

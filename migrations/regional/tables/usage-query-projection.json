@@ -2,7 +2,7 @@
   "schema": "aex.regional-table.v1",
   "table": "usage-query-projection",
   "owner": "observations-usage",
-  "purpose": "Rebuildable, generation-keyed customer usage read model: hourly and daily aggregates over the declared dimension tuple, bounded detail rows, the copied coverage vector and the generation pointer. It is not charge truth and may be dropped and rebuilt from the authority facts plus the settlement receipts at any time, which is exactly why it is the one table in this stream that may expire a row.",
+  "purpose": "Rebuildable, generation-keyed customer usage read model: hourly and daily aggregates over the declared dimension tuple, the coarse hourly and daily totals the customer read actually queries, bounded detail rows, the copied coverage vector and the generation pointer. It is not charge truth and may be dropped and rebuilt from the authority facts plus the settlement receipts at any time, which is exactly why it is the one table in this stream that may expire a row. The coarse totals carry no dimension identity, so exactly one row exists per generation, workspace, public category and bucket: that is what makes the number of rows a bounded range read touches pure arithmetic, known before the first read, and it is why an over-budget usage query is refused up front rather than truncated halfway through.",
   "billingMode": "PAY_PER_REQUEST",
   "deletionProtection": true,
   "pointInTimeRecovery": { "enabled": true, "retentionDays": 35 },
@@ -29,7 +29,7 @@
     "appliesTo": ["usage_detail"],
     "rationale": "Detail rows are a ninety-day convenience over facts that remain in the authority forever, so expiring one loses nothing recoverable. TTL is never the fence: every detail row also carries an explicit expiresAt string that the reader checks, so a late deletion cannot serve a row the reader should already refuse."
   },
-  "itemTypes": ["usage_aggregate", "usage_detail", "usage_coverage", "usage_generation_pointer"],
+  "itemTypes": ["usage_aggregate", "usage_total", "usage_detail", "usage_coverage", "usage_generation_pointer"],
   "iam": [
     {
       "role": "usage-storage-worker",

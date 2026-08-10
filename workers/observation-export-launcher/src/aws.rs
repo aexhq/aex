@@ -20,9 +20,9 @@ use aws_sdk_ecs::types::{
 };
 
 use crate::launcher::{
-    Claim, ClaimOutcome, DueItem, EXPORT_STATE_SK, ExportRows, LaunchRequest, LauncherError, Lease,
-    RecordOutcome, RunTaskOutcome, STATE_ADMITTED, STATE_LAUNCHING, TaskLauncher, TaskStatus,
-    due_upper_bound, parse_control_sk, parse_export_pk, shard_partition,
+    Claim, ClaimOutcome, DueItem, ExportRows, LaunchRequest, LauncherError, Lease, RecordOutcome,
+    RunTaskOutcome, STATE_ADMITTED, STATE_LAUNCHING, TaskLauncher, TaskStatus, due_upper_bound,
+    parse_control_sk, parse_export_key, shard_partition,
 };
 
 /// The `EXPORT#` and `CTRL#` rows, over `DynamoDB`.
@@ -94,7 +94,7 @@ impl ExportRows for DynamoExportRows {
         for item in response.items() {
             let pk = attribute(item, PK)?;
             let sk = attribute(item, Index::Control.sort_key())?;
-            let (workspace, export) = parse_export_pk(pk)?;
+            let (workspace, export) = parse_export_key(pk, attribute(item, SK)?)?;
             due.push(DueItem {
                 workspace,
                 export,
@@ -134,7 +134,7 @@ impl ExportRows for DynamoExportRows {
             .update_item()
             .table_name(self.table.as_str())
             .key(PK, AttributeValue::S(item.state_pk()))
-            .key(SK, AttributeValue::S(EXPORT_STATE_SK.to_owned()))
+            .key(SK, AttributeValue::S(item.state_sk()))
             .update_expression(update)
             .condition_expression(condition)
             .set_expression_attribute_names(Some(builder.names()))
@@ -191,7 +191,7 @@ impl ExportRows for DynamoExportRows {
             .update_item()
             .table_name(self.table.as_str())
             .key(PK, AttributeValue::S(item.state_pk()))
-            .key(SK, AttributeValue::S(EXPORT_STATE_SK.to_owned()))
+            .key(SK, AttributeValue::S(item.state_sk()))
             .update_expression(update)
             .condition_expression(condition)
             .set_expression_attribute_names(Some(builder.names()))

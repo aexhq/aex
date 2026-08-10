@@ -3,7 +3,7 @@
 //! The server traits and the total dispatch surface, one group per authoring fragment.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:ac9f9d4da5543cd71acab49d7078ab631b8e776b8b9e3a2239fd64ce54f060ff`.
+//! `sha256:13ff89d3e0f73ee4f62c48556767322fb3e12f9057fe8b4f2364cc1c0464f68b`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]

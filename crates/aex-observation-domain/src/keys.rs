@@ -483,10 +483,38 @@ pub fn spool_pk(workspace: WorkspaceId, shard: u8) -> String {
     format!("SPOOL#{workspace}#{shard:02}")
 }
 
-/// `EXPORT#{workspace_id}#{export_id}`.
+/// `EXPORT#{workspace_id}`.
+///
+/// One partition per workspace, with the export identity in the sort key. Every
+/// point read stays a single `GetItem` because the workspace is already on the
+/// request context, the `EXPORT#*` leading-key IAM condition holds unchanged,
+/// and a per-workspace listing becomes a native `Query` — which is what makes
+/// the concurrent-export cap enforceable at all. Exports are rare, so one
+/// partition per workspace is not a hot key.
 #[must_use]
-pub fn export_pk(workspace: WorkspaceId, export: aex_wire::ids::ExportId) -> String {
-    format!("EXPORT#{workspace}#{export}")
+pub fn export_pk(workspace: WorkspaceId) -> String {
+    format!("EXPORT#{workspace}")
+}
+
+/// The sort key of one export's state row: the bare export identity.
+#[must_use]
+pub fn export_sk(export: aex_wire::ids::ExportId) -> String {
+    export.to_string()
+}
+
+/// Splits an `EXPORT#{workspace_id}` partition key.
+///
+/// # Errors
+///
+/// Returns `None` when the key does not match the template or the workspace
+/// does not parse.
+#[must_use]
+pub fn parse_export_pk(pk: &str) -> Option<WorkspaceId> {
+    let workspace = pk.strip_prefix("EXPORT#")?;
+    if workspace.contains('#') {
+        return None;
+    }
+    WorkspaceId::parse(workspace).ok()
 }
 
 /// `GATE#{region}`.

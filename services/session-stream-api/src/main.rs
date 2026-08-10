@@ -382,6 +382,10 @@ async fn run(
         ),
         tables: regional_tables(&stores),
         authority: dynamodb.clone(),
+        usage: Arc::new(aex_usage_query_dynamodb::store::UsageQueryStore::new(
+            dynamodb.clone(),
+            stores.usage_query_table.clone(),
+        )),
         cursor_keys: Arc::clone(&cursor_keys),
     }));
     let mounted = mount_unary(Arc::new(dispatcher), Arc::new(session_edge), limits(config))?;

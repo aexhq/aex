@@ -1082,7 +1082,6 @@
       "ExportFormat": {
         "enum": [
           "ndjson",
-          "parquet",
           "otlp_json"
         ],
         "type": "string"

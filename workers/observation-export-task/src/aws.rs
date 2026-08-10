@@ -37,7 +37,10 @@ use crate::task::{
 };
 
 /// The sort key of the export state item.
-pub const STATE_SK: &str = "STATE";
+// The sort key of an export state row is the export identity itself; see
+// `aex_observation_domain::keys::export_sk`. The former `STATE` constant put
+// every workspace's exports in their own partition, which made a per-workspace
+// listing impossible without a scan.
 /// The sort key of the export checkpoint item.
 pub const CHECKPOINT_SK: &str = "CKPT";
 /// The sort key of the scope deletion item.
@@ -120,9 +123,14 @@ impl DynamoExportAuthority {
         Ok(())
     }
 
-    /// The partition key of this export's items.
+    /// The partition key of this export's items: one partition per workspace.
     fn export_pk(&self) -> String {
-        keys::export_pk(self.workspace, self.export)
+        keys::export_pk(self.workspace)
+    }
+
+    /// The sort key of this export's state row: the bare export identity.
+    fn export_sk(&self) -> String {
+        keys::export_sk(self.export)
     }
 
     /// Reads one item by its exact key.
@@ -155,7 +163,7 @@ impl DynamoExportAuthority {
     /// Names what won when the publishing condition failed.
     async fn publication_loser(&self, request: &PublishRequest) -> Result<Publication, TaskError> {
         let live = self.live_deletion_epoch(request.scope).await?;
-        let Some(item) = self.get(&self.export_pk(), STATE_SK).await? else {
+        let Some(item) = self.get(&self.export_pk(), &self.export_sk()).await? else {
             return Ok(Publication::Superseded {
                 reason: "the export row is gone",
             });
@@ -275,7 +283,7 @@ impl ExportAuthority for DynamoExportAuthority {
             .update_item()
             .table_name(&self.table)
             .key(PK, AttributeValue::S(self.export_pk()))
-            .key(SK, AttributeValue::S(STATE_SK.to_owned()))
+            .key(SK, AttributeValue::S(self.export_sk()))
             .update_expression(update)
             .condition_expression(condition)
             .set_expression_attribute_names(Some(builder.names()))
@@ -415,7 +423,7 @@ impl ExportAuthority for DynamoExportAuthority {
             .update_item()
             .table_name(&self.table)
             .key(PK, AttributeValue::S(self.export_pk()))
-            .key(SK, AttributeValue::S(STATE_SK.to_owned()))
+            .key(SK, AttributeValue::S(self.export_sk()))
             .update_expression(update)
             .condition_expression(condition)
             .set_expression_attribute_names(Some(builder.names()))

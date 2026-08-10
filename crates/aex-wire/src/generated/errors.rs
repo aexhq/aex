@@ -3,7 +3,7 @@
 //! The closed v1 public error vocabulary.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:ac9f9d4da5543cd71acab49d7078ab631b8e776b8b9e3a2239fd64ce54f060ff`.
+//! `sha256:13ff89d3e0f73ee4f62c48556767322fb3e12f9057fe8b4f2364cc1c0464f68b`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -162,6 +162,8 @@ pub enum ErrorCode {
     WrongWorkspaceRegion,
     /// `observability_unavailable` — the observation authority could not be reached
     ObservabilityUnavailable,
+    /// `usage_unavailable` — the usage projection could not be read
+    UsageUnavailable,
     /// `rate_limited` — too many requests
     RateLimited,
     /// `upstream_error` — a dependency failed
@@ -246,6 +248,7 @@ impl ErrorCode {
         ErrorCode::PreconditionFailed,
         ErrorCode::WrongWorkspaceRegion,
         ErrorCode::ObservabilityUnavailable,
+        ErrorCode::UsageUnavailable,
         ErrorCode::RateLimited,
         ErrorCode::UpstreamError,
         ErrorCode::WorkspaceProvisionPending,
@@ -326,6 +329,7 @@ impl ErrorCode {
             Self::PreconditionFailed => "precondition_failed",
             Self::WrongWorkspaceRegion => "wrong_workspace_region",
             Self::ObservabilityUnavailable => "observability_unavailable",
+            Self::UsageUnavailable => "usage_unavailable",
             Self::RateLimited => "rate_limited",
             Self::UpstreamError => "upstream_error",
             Self::WorkspaceProvisionPending => "workspace_provision_pending",
@@ -407,6 +411,7 @@ impl ErrorCode {
             Self::PreconditionFailed => 412,
             Self::WrongWorkspaceRegion => 409,
             Self::ObservabilityUnavailable => 503,
+            Self::UsageUnavailable => 503,
             Self::RateLimited => 429,
             Self::UpstreamError => 502,
             Self::WorkspaceProvisionPending => 503,
@@ -488,6 +493,7 @@ impl ErrorCode {
             Self::PreconditionFailed => false,
             Self::WrongWorkspaceRegion => false,
             Self::ObservabilityUnavailable => true,
+            Self::UsageUnavailable => true,
             Self::RateLimited => true,
             Self::UpstreamError => true,
             Self::WorkspaceProvisionPending => true,
@@ -569,6 +575,7 @@ impl ErrorCode {
             Self::PreconditionFailed => ErrorClass::Precondition,
             Self::WrongWorkspaceRegion => ErrorClass::Conflict,
             Self::ObservabilityUnavailable => ErrorClass::Unavailable,
+            Self::UsageUnavailable => ErrorClass::Unavailable,
             Self::RateLimited => ErrorClass::Quota,
             Self::UpstreamError => ErrorClass::Unavailable,
             Self::WorkspaceProvisionPending => ErrorClass::Unavailable,
@@ -650,6 +657,7 @@ impl ErrorCode {
             Self::PreconditionFailed => PrecedenceStage::Precondition,
             Self::WrongWorkspaceRegion => PrecedenceStage::Placement,
             Self::ObservabilityUnavailable => PrecedenceStage::DomainState,
+            Self::UsageUnavailable => PrecedenceStage::DomainState,
             Self::RateLimited => PrecedenceStage::DomainState,
             Self::UpstreamError => PrecedenceStage::Commit,
             Self::WorkspaceProvisionPending => PrecedenceStage::Commit,
@@ -759,6 +767,7 @@ impl ErrorCode {
             Self::PreconditionFailed => "the `If-Match` or generation precondition did not hold",
             Self::WrongWorkspaceRegion => "the workspace is placed in a different region",
             Self::ObservabilityUnavailable => "the observation authority could not be reached",
+            Self::UsageUnavailable => "the usage projection could not be read",
             Self::RateLimited => "too many requests",
             Self::UpstreamError => "a dependency failed",
             Self::WorkspaceProvisionPending => "workspace provisioning may still be completing",
@@ -850,6 +859,7 @@ impl ErrorCode {
                 Some("reissue the request against the `apiUrl` in `details`")
             }
             Self::ObservabilityUnavailable => None,
+            Self::UsageUnavailable => Some("retry the identical query"),
             Self::RateLimited => None,
             Self::UpstreamError => None,
             Self::WorkspaceProvisionPending => {

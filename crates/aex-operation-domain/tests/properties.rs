@@ -637,3 +637,19 @@ fn redaction_preserves_the_envelope() {
         }
     }
 }
+
+#[test]
+fn a_telemetry_export_is_never_cancelable_through_the_operation_row() {
+    // Two shipped crates disagreed about this: `cancelable_on_accept` said
+    // true while `aex_session_dynamodb::operation_cancel_owned` said false.
+    // An export's effect fence is the observation export row, so an
+    // operation-row update would acknowledge a command that cannot stop the
+    // launcher or the task. Cancellation lives on `telemetry_export_revoke`.
+    assert!(!OperationKind::TelemetryExport.cancelable_on_accept());
+    let queued = admitted(OperationKind::TelemetryExport);
+    assert_eq!(queued.status, OperationStatus::Queued);
+    assert!(
+        !queued.cancelable(),
+        "a 202 must not advertise a cancellation nothing behind it can honour"
+    );
+}

@@ -1,0 +1,11 @@
+{
+  "$id": "https://schemas.aex.dev/v1/UsageFrontierState.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Whether a fold is advancing or parked.",
+  "enum": [
+    "advancing",
+    "stalled"
+  ],
+  "title": "UsageFrontierState",
+  "type": "string"
+}

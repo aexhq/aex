@@ -118,7 +118,17 @@ fn a_due_sort_key_orders_lexicographically_by_instant() {
 fn the_state_row_key_is_derived_from_the_shared_key_template() {
     let workspace = WorkspaceId::from_uuid7(Uuid7::compose(1, [1; 10]));
     let export = ExportId::from_uuid7(Uuid7::compose(2, [2; 10]));
-    let pk = aex_observation_domain::keys::export_pk(workspace, export);
-    assert_eq!(pk, format!("EXPORT#{workspace}#{export}"));
+    let pk = aex_observation_domain::keys::export_pk(workspace);
+    let sk = aex_observation_domain::keys::export_sk(export);
+    // One partition per workspace, the export identity in the sort key: a
+    // per-workspace listing is a native `Query`, which is what makes the
+    // concurrent-export cap enforceable without a scan.
+    assert_eq!(pk, format!("EXPORT#{workspace}"));
+    assert_eq!(sk, export.to_string());
     assert!(pk.starts_with("EXPORT#"));
+    assert_eq!(
+        aex_observation_domain::keys::parse_export_pk(&pk),
+        Some(workspace),
+        "the key and its inverse change together"
+    );
 }

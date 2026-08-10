@@ -11,7 +11,7 @@
 //! halves of `U-20`.
 
 pub use aex_usage_domain::projection::{
-    Generation, MAX_GENERATION, ProjectionKey, ProjectionKeyError, ProjectionKeys,
+    Generation, Grain, MAX_GENERATION, ProjectionKey, ProjectionKeyError, ProjectionKeys,
 };
 
 use aex_usage_domain::frontier::{AcceptedSequence, FrontierState, PoisonReason};
@@ -156,6 +156,76 @@ pub struct AggregateRequest<'a> {
     pub after: Option<String>,
 }
 
+/// A bounded keyset read over one partition's coarse rollups.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoarsePage {
+    /// The partition to read.
+    pub partition: String,
+    /// The inclusive lower sort-key bound.
+    pub from: String,
+    /// The exclusive upper sort-key bound.
+    pub until: String,
+    /// The largest number of rows this read may return.
+    pub limit: usize,
+    /// Where the previous page stopped, when there was one.
+    pub after: Option<String>,
+}
+
+/// Everything one bounded coarse read needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoarseRequest<'a> {
+    /// The generation the read is pinned to.
+    pub generation: Generation,
+    /// The workspace being read.
+    pub workspace: &'a WorkspaceId,
+    /// The public category being read.
+    pub category: PublicCategory,
+    /// The `YYYY-MM` partition.
+    pub month: &'a str,
+    /// Which stored grain to read.
+    pub grain: Grain,
+    /// The inclusive lower bucket bound.
+    pub from_bucket: &'a str,
+    /// The exclusive upper bucket bound.
+    pub until_bucket: &'a str,
+    /// The row budget.
+    pub limit: usize,
+    /// Where the previous page stopped.
+    pub after: Option<String>,
+}
+
+/// One decoded coarse rollup.
+///
+/// It carries no dimension identity, because the row does not have one. That
+/// absence is the whole reason this face can be read online.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoarseRow {
+    /// Which public category the quantity belongs to.
+    pub public_category: PublicCategory,
+    /// The grain the bucket is at.
+    pub grain: Grain,
+    /// The bucket label.
+    pub bucket: String,
+    /// The accumulated quantity.
+    pub quantity: Quantity,
+    /// The highest accepted sequence folded into this row.
+    pub highest_sequence: AcceptedSequence,
+}
+
+impl CoarseRow {
+    /// Whether this row is covered by a committed settlement receipt.
+    ///
+    /// Computed from two numbers already on rows the query reads, so labelling
+    /// costs no extra storage and no extra read. Because coverage is read
+    /// eventually consistently, a stale `settled` can mark a genuinely settled
+    /// item `provisional` — the safe direction. The label never claims settled
+    /// when it is not.
+    #[must_use]
+    pub const fn is_settled(&self, settled: AcceptedSequence) -> bool {
+        self.highest_sequence.get() <= settled.get()
+    }
+}
+
 /// Read-only expression builders.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ProjectionReads {
@@ -206,6 +276,42 @@ impl ProjectionReads {
             partition,
             from: format!("{}{}", request.granularity.prefix(), request.from_bucket),
             until: format!("{}{}", request.granularity.prefix(), request.until_bucket),
+            limit: request.limit,
+            after: request.after.clone(),
+        })
+    }
+
+    /// A bounded page over one month of coarse rollups.
+    ///
+    /// This is the face the customer read answers from. Unlike
+    /// [`ProjectionReads::aggregate_page`] its row count is not data-dependent:
+    /// the coarse face has exactly one row per `(category, bucket)`, so the
+    /// caller already knows the exact upper bound before issuing the read.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QueryError::PageBudget`] above [`MAX_PAGE_ROWS`],
+    /// [`QueryError::InvertedRange`] for an empty or inverted range, and
+    /// [`QueryError::Key`] when the partition cannot be built.
+    pub fn coarse_page(self, request: &CoarseRequest<'_>) -> Result<CoarsePage, QueryError> {
+        if request.limit == 0 || request.limit > MAX_PAGE_ROWS {
+            return Err(QueryError::PageBudget {
+                requested: request.limit,
+            });
+        }
+        if request.until_bucket <= request.from_bucket {
+            return Err(QueryError::InvertedRange);
+        }
+        let partition = self.keys.aggregate_partition(
+            request.generation,
+            request.workspace,
+            request.category,
+            request.month,
+        )?;
+        Ok(CoarsePage {
+            partition,
+            from: format!("{}{}", request.grain.coarse_prefix(), request.from_bucket),
+            until: format!("{}{}", request.grain.coarse_prefix(), request.until_bucket),
             limit: request.limit,
             after: request.after.clone(),
         })

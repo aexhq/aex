@@ -1,14 +1,11 @@
 {
   "$id": "https://schemas.aex.dev/v1/UsageGrouping.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "The axes a usage query may group by.",
+  "description": "The axes a usage query may group by. Session, run and operation are\ndeliberately absent: every stored aggregate row is keyed by a hash of a\nseven-member dimension tuple that includes the session, so grouping by one\nof them would read hundreds of thousands of rows for a single monthly\ntotal. \"How much did session X cost?\" is not answerable by any route in\nv1, and publishing an axis that is always refused would be a false\ncapability.\n",
   "enum": [
     "category",
     "region",
-    "workspace",
-    "session",
-    "run",
-    "operation"
+    "workspace"
   ],
   "title": "UsageGrouping",
   "type": "string"

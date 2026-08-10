@@ -42,6 +42,7 @@ use aex_session_dynamodb::store::{
     OperationApiStore, OperationCancelOutcome, OperationFilter, SessionQueries, SessionScoped,
 };
 use aex_session_dynamodb::wire_pending::{Approval, ApprovalStatus, StoredOperation};
+use aex_usage_query_dynamodb::store::UsageProjectionReads;
 use aex_wire::cursor::Cursor;
 use aex_wire::dispatch::{RawRequest, RawResponse, RequestLimits};
 use aex_wire::error::{ErrorCode, WireError, WireResult};
@@ -55,6 +56,7 @@ use aex_wire::server::{
     RegionalOperationsApi, RegistryApi, RequestContext as WireContext, RouteGroup, SecretsApi,
     SessionsApi, WithETag, dispatch_approvals, dispatch_provider_credentials,
     dispatch_regional_operations, dispatch_registry, dispatch_secrets, dispatch_sessions,
+    dispatch_usage,
 };
 use aex_wire::types::Timestamp;
 
@@ -91,6 +93,11 @@ pub struct Shared {
     pub tables: RegionalTables,
     /// The client the committer submits its one transaction on.
     pub authority: aws_sdk_dynamodb::Client,
+    /// The read-only usage projection.
+    ///
+    /// A port with no method that accepts a row, so this deployable cannot be
+    /// given write authority over the billing projection by mistake.
+    pub usage: Arc<dyn UsageProjectionReads>,
     /// The signing ring every continuation is minted and verified under.
     pub cursor_keys: Arc<CursorKeyRing>,
 }
@@ -107,8 +114,8 @@ impl std::fmt::Debug for Shared {
 /// workspace for an `Account` principal, and every authority read here is
 /// workspace-scoped. Building it per request costs two `Arc` clones.
 pub struct Routes {
-    shared: Arc<Shared>,
-    cx: RequestContext,
+    pub(super) shared: Arc<Shared>,
+    pub(super) cx: RequestContext,
 }
 
 impl Routes {
@@ -158,6 +165,7 @@ const SERVED: &[RouteId] = &[
     RouteId::SessionRunsList,
     RouteId::SessionStop,
     RouteId::SessionTrash,
+    RouteId::UsageQuery,
 ];
 
 impl std::fmt::Debug for Routes {
@@ -297,7 +305,7 @@ impl Routes {
         Ok(Some(cursor))
     }
 
-    fn now(&self) -> WireResult<Timestamp> {
+    pub(super) fn now(&self) -> WireResult<Timestamp> {
         self.cx
             .now()
             .map_err(|_| WireError::new(ErrorCode::InternalError))
@@ -1487,6 +1495,7 @@ impl UnaryDispatch for Routes {
             "registry" => dispatch_registry(self, &wire, raw, limits).await?,
             "approvals" => dispatch_approvals(self, &wire, raw, limits).await?,
             "sessions" => dispatch_sessions(self, &wire, raw, limits).await?,
+            "usage" => dispatch_usage(self, &wire, raw, limits).await?,
             _ => return Err(not_served(raw.route)),
         };
         match outcome {

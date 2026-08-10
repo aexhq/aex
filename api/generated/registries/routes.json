@@ -5291,7 +5291,6 @@
     {
       "altPrincipal": "account",
       "bodyClass": "aex_json",
-      "deferredReason": "The store lacks the exact multi-category, arbitrary-range query planner and continuation contract.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -5299,7 +5298,8 @@
         "invalid_request",
         "invalid_cursor",
         "invalid_query",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "usage_unavailable"
       ],
       "etag": "none",
       "fragment": "usage",
@@ -5320,6 +5320,7 @@
       "scenarios": [
         "SC-USAGE-SETTLE"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Query rated usage for this workspace.",

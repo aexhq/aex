@@ -2,7 +2,7 @@
   "$id": "https://schemas.aex.dev/v1/UsageFrontier.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "How far the pipeline has advanced for one workspace and category.",
+  "description": "How far the pipeline has advanced for one workspace and authority. The\nanswer is exact at or below `completeThrough` and contains nothing above\n`includesThrough`; between the two it is partial, and saying so is the\npoint. Both are monotone across repeated queries.\n",
   "properties": {
     "acceptedSequence": {
       "description": "Facts accepted by the authority.",
@@ -10,8 +10,18 @@
       "type": "string"
     },
     "category": {
-      "$ref": "aex:schema:UsageCategory",
-      "description": "The priced category."
+      "$ref": "aex:schema:UsageAuthority",
+      "description": "The authority whose contiguous fact sequence this frontier describes. Not a priced category: memory and compute share one."
+    },
+    "completeThrough": {
+      "description": "The answer contains every matching fact at or below this sequence. Pinned on the first page and reported unchanged on every later page.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
+    },
+    "includesThrough": {
+      "description": "No fact above this sequence is present in the answer. Per page.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
     },
     "projectedSequence": {
       "description": "Facts folded into the query projection.",
@@ -45,6 +55,21 @@
       "pattern": "^(0|[1-9]\\d*)$",
       "type": "string"
     },
+    "stallReason": {
+      "description": "Why the fold stopped, present exactly when `state` is `stalled`. A stalled frontier is the honest signal; a lag is not a stall.",
+      "maxLength": 64,
+      "minLength": 1,
+      "type": "string"
+    },
+    "stalledAt": {
+      "description": "The sequence the fold stopped at, present exactly when `state` is `stalled`.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
+    },
+    "state": {
+      "$ref": "aex:schema:UsageFrontierState",
+      "description": "Whether the fold is advancing or parked."
+    },
     "workspaceId": {
       "description": "The workspace.",
       "pattern": "^wsp_[0-9a-hjkmnp-tv-z]{26}$",
@@ -55,10 +80,13 @@
   "required": [
     "acceptedSequence",
     "category",
+    "completeThrough",
+    "includesThrough",
     "projectedSequence",
     "publishedSequence",
     "region",
     "settledSequence",
+    "state",
     "workspaceId"
   ],
   "title": "UsageFrontier",

@@ -109,6 +109,71 @@ fn component(value: &str) -> Result<&str, ProjectionKeyError> {
     Ok(value)
 }
 
+/// The time grain a rollup row is bucketed at.
+///
+/// The grain lives in the domain rather than in either adapter because the
+/// coarse face's sort key encodes it, so the fold and the reader would otherwise
+/// each own half of one spelling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Grain {
+    /// One bucket per UTC hour, `YYYY-MM-DDTHH`.
+    Hourly,
+    /// One bucket per UTC day, `YYYY-MM-DD`.
+    Daily,
+}
+
+impl Grain {
+    /// Both grains, in bucket-width order.
+    pub const ALL: [Self; 2] = [Self::Hourly, Self::Daily];
+
+    /// The single character the sort key carries.
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::Hourly => "H",
+            Self::Daily => "D",
+        }
+    }
+
+    /// The width a bucket string must have at this grain.
+    #[must_use]
+    pub const fn bucket_width(self) -> usize {
+        match self {
+            // `YYYY-MM-DDTHH`
+            Self::Hourly => 13,
+            // `YYYY-MM-DD`
+            Self::Daily => 10,
+        }
+    }
+
+    /// The shape a bucket string must have at this grain.
+    #[must_use]
+    pub const fn bucket_shape(self) -> &'static str {
+        match self {
+            Self::Hourly => "YYYY-MM-DDTHH",
+            Self::Daily => "YYYY-MM-DD",
+        }
+    }
+
+    /// The sort-key prefix a coarse range read is bounded by.
+    ///
+    /// `T#` sorts strictly after both `D#` and `H#`, so a coarse range can never
+    /// pick up a per-tuple rollup and double-count.
+    #[must_use]
+    pub const fn coarse_prefix(self) -> &'static str {
+        match self {
+            Self::Hourly => "T#H#",
+            Self::Daily => "T#D#",
+        }
+    }
+}
+
+impl fmt::Display for Grain {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.code())
+    }
+}
+
 /// A composite key into the projection.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ProjectionKey {
@@ -196,6 +261,48 @@ impl ProjectionKeys {
                 component(day)?,
                 component(dimension_hash)?
             )),
+        })
+    }
+
+    /// The coarse rollup key: one row per generation, workspace, public
+    /// category, month and bucket, carrying no dimension identity at all.
+    ///
+    /// This is the face `usage_query` reads. The per-tuple `H#`/`D#` rows are
+    /// grouped by a seven-member dimension hash that includes the session, so a
+    /// workspace with ten thousand sessions has at least ten thousand rows per
+    /// category per day and a monthly total would read hundreds of thousands of
+    /// them. The coarse face has exactly one row per `(category, bucket)`, which
+    /// is what makes the exact upper bound on rows a query will read pure
+    /// arithmetic — known before the first read, so an over-budget query is a
+    /// pre-flight refusal rather than a mid-read truncation.
+    ///
+    /// It shares the aggregate partition with the per-tuple rows and is
+    /// separated from them by the `T#` sort-key prefix, which sorts strictly
+    /// after both `D#` and `H#`.
+    ///
+    /// # Errors
+    ///
+    /// As [`ProjectionKeys::aggregate_partition`], plus
+    /// [`ProjectionKeyError::MalformedBucket`] when `bucket` is not the shape
+    /// `grain` requires.
+    pub fn coarse(
+        self,
+        generation: Generation,
+        workspace: &WorkspaceId,
+        category: PublicCategory,
+        month: &str,
+        grain: Grain,
+        bucket: &str,
+    ) -> Result<ProjectionKey, ProjectionKeyError> {
+        if bucket.len() != grain.bucket_width() {
+            return Err(ProjectionKeyError::MalformedBucket {
+                value: bucket.to_owned(),
+                expected: grain.bucket_shape(),
+            });
+        }
+        Ok(ProjectionKey {
+            pk: self.aggregate_partition(generation, workspace, category, month)?,
+            sk: Some(format!("{}{}", grain.coarse_prefix(), component(bucket)?)),
         })
     }
 
@@ -313,7 +420,7 @@ pub const fn coverage_face(category: PublicCategory) -> PublicCategory {
 
 #[cfg(test)]
 mod tests {
-    use super::{Generation, MAX_GENERATION, ProjectionKeyError, ProjectionKeys};
+    use super::{Generation, Grain, MAX_GENERATION, ProjectionKeyError, ProjectionKeys};
     use crate::meter::PublicCategory;
     use crate::wire_pending::WorkspaceId;
 
@@ -383,6 +490,136 @@ mod tests {
             "hourly and daily rollups share one partition, so one query reads both"
         );
         assert_eq!(daily.sk.as_deref(), Some("D#2026-08-01#abcd1234"));
+    }
+
+    #[test]
+    fn the_coarse_face_shares_the_partition_and_carries_no_dimension_identity() {
+        let keys = ProjectionKeys;
+        let generation = Generation::new(2).expect("in range");
+        let hourly = keys
+            .coarse(
+                generation,
+                &workspace(),
+                PublicCategory::Compute,
+                "2026-08",
+                Grain::Hourly,
+                "2026-08-01T12",
+            )
+            .expect("builds");
+        assert_eq!(hourly.pk, "G0002#ws-1#compute#2026-08");
+        assert_eq!(hourly.sk.as_deref(), Some("T#H#2026-08-01T12"));
+
+        let daily = keys
+            .coarse(
+                generation,
+                &workspace(),
+                PublicCategory::Compute,
+                "2026-08",
+                Grain::Daily,
+                "2026-08-01",
+            )
+            .expect("builds");
+        assert_eq!(daily.pk, hourly.pk);
+        assert_eq!(daily.sk.as_deref(), Some("T#D#2026-08-01"));
+
+        // One row per (category, bucket): the sort key names no dimension hash,
+        // so the row count a range read touches is arithmetic, not data.
+        let again = keys
+            .coarse(
+                generation,
+                &workspace(),
+                PublicCategory::Compute,
+                "2026-08",
+                Grain::Hourly,
+                "2026-08-01T12",
+            )
+            .expect("builds");
+        assert_eq!(again, hourly);
+    }
+
+    #[test]
+    fn the_coarse_prefix_sorts_after_every_per_tuple_rollup() {
+        let keys = ProjectionKeys;
+        let per_tuple = keys
+            .hourly(
+                Generation::FIRST,
+                &workspace(),
+                PublicCategory::Storage,
+                "2026-08",
+                "2026-08-01T12",
+                "abcd1234abcd1234",
+            )
+            .expect("builds")
+            .sk
+            .expect("a sort key");
+        let daily = keys
+            .daily(
+                Generation::FIRST,
+                &workspace(),
+                PublicCategory::Storage,
+                "2026-08",
+                "2026-08-01",
+                "abcd1234abcd1234",
+            )
+            .expect("builds")
+            .sk
+            .expect("a sort key");
+        let coarse = keys
+            .coarse(
+                Generation::FIRST,
+                &workspace(),
+                PublicCategory::Storage,
+                "2026-08",
+                Grain::Hourly,
+                "2026-08-01T12",
+            )
+            .expect("builds")
+            .sk
+            .expect("a sort key");
+        assert!(coarse > per_tuple, "a `T#` row sorts after every `H#` row");
+        assert!(coarse > daily, "a `T#` row sorts after every `D#` row");
+        for prefix in [Grain::Hourly.coarse_prefix(), Grain::Daily.coarse_prefix()] {
+            assert!(
+                !per_tuple.starts_with(prefix) && !daily.starts_with(prefix),
+                "a coarse range must never pick up a per-tuple rollup and double-count"
+            );
+        }
+        assert!(
+            !Grain::Hourly
+                .coarse_prefix()
+                .starts_with(Grain::Daily.coarse_prefix())
+                && !Grain::Daily
+                    .coarse_prefix()
+                    .starts_with(Grain::Hourly.coarse_prefix()),
+            "the two coarse grains occupy disjoint sort-key space"
+        );
+    }
+
+    #[test]
+    fn a_coarse_bucket_of_the_wrong_shape_is_refused_rather_than_padded() {
+        let keys = ProjectionKeys;
+        for (grain, bad) in [
+            (Grain::Hourly, "2026-08-01"),
+            (Grain::Hourly, "2026-08-01T12:00"),
+            (Grain::Daily, "2026-08-01T12"),
+            (Grain::Daily, "2026-08"),
+        ] {
+            assert!(
+                matches!(
+                    keys.coarse(
+                        Generation::FIRST,
+                        &workspace(),
+                        PublicCategory::Compute,
+                        "2026-08",
+                        grain,
+                        bad,
+                    ),
+                    Err(ProjectionKeyError::MalformedBucket { .. })
+                ),
+                "`{bad}` is not a {} bucket",
+                grain.bucket_shape()
+            );
+        }
     }
 
     #[test]

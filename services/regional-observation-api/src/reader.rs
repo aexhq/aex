@@ -2197,8 +2197,16 @@ pub(crate) fn primary_key_pair(
 }
 
 /// The only key family the finite observation API may mutate.
+///
+/// The sort key is now the export identity rather than the constant `STATE`, so
+/// the guard is a prefix check on the partition plus a parse of the sort key:
+/// anything that is not a well-formed export id in a well-formed export
+/// partition is not a row this deployable may write. Keeping the check a parse
+/// rather than a pattern is what keeps the write surface proved rather than
+/// reviewed.
 fn is_export_control_key(pk: &str, sk: &str) -> bool {
-    pk.starts_with("EXPORT#") && sk == "STATE"
+    aex_observation_domain::keys::parse_export_pk(pk).is_some()
+        && <aex_wire::ids::ExportId as aex_wire::ids::PrefixedId>::parse(sk).is_ok()
 }
 
 /// Proves a new row is the exact export-control shape before any provider call.
@@ -2431,12 +2439,26 @@ mod tests {
 
     #[test]
     fn write_keys_are_confined_to_export_control_state() {
-        assert!(is_export_control_key("EXPORT#workspace#export", "STATE"));
-        assert!(!is_export_control_key("FRONTIER#workspace", "STATE"));
+        let workspace = other_workspace();
+        let export = aex_wire::ids::ExportId::from_uuid7(aex_wire::Uuid7::compose(9, [9; 10]));
+        let pk = aex_observation_domain::keys::export_pk(workspace);
+        assert!(is_export_control_key(&pk, &export.to_string()));
+        // The guard is a parse, not a pattern: anything that is not a
+        // well-formed export identity in a well-formed export partition is not
+        // a row this deployable may write.
+        assert!(
+            !is_export_control_key(&pk, "STATE"),
+            "the former constant sort key is not an export identity"
+        );
+        assert!(!is_export_control_key(&pk, "CHECKPOINT"));
         assert!(!is_export_control_key(
-            "EXPORT#workspace#export",
-            "CHECKPOINT"
+            "FRONTIER#scope",
+            &export.to_string()
         ));
+        assert!(
+            !is_export_control_key("EXPORT#a#b", &export.to_string()),
+            "the partition carries the workspace and nothing else"
+        );
     }
 
     #[test]
@@ -2445,6 +2467,7 @@ mod tests {
             ("OBS#scope#logs", "record", "observation"),
             ("FRONTIER#scope", "logs", "frontier"),
             ("EXPORT#workspace#export", "STATE", "frontier"),
+            ("EXPORT#workspace", "STATE", "export"),
         ] {
             let item = HashMap::from([
                 ("pk".to_owned(), AttributeValue::S(pk.to_owned())),

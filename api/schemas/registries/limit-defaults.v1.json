@@ -94,6 +94,13 @@
         "list_entries": 2000,
         "list_depth": 10
       }
+    },
+    {
+      "id": "telemetry.export",
+      "value": {
+        "active": 5,
+        "window_days": 90
+      }
     }
   ]
 }

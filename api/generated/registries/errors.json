@@ -622,6 +622,15 @@
       "status": 503
     },
     {
+      "class": "unavailable",
+      "code": "usage_unavailable",
+      "message": "the usage projection could not be read",
+      "precedenceStage": "domain_state",
+      "remedy": "retry the identical query",
+      "retryable": true,
+      "status": 503
+    },
+    {
       "class": "quota",
       "code": "rate_limited",
       "message": "too many requests",

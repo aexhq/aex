@@ -13,9 +13,14 @@
 //! - the authority invariants themselves (`aex-observation-domain`)
 //! - customer `HTTP` admission (`regional-otlp`)
 
+pub mod export;
 pub mod ports;
 pub mod use_cases;
 
+pub use export::{
+    EXPORT_RETENTION_MILLIS, ExportAdmission, ExportPlan, ExportPlanError, ExportRow, ExportScope,
+    derive_export_id,
+};
 pub use ports::{
     CommitReceipt, CommitRequest, EventPage, EventPageRequest, GapSink, ObservationAuthority,
     PortError, SemanticEvent, SemanticEventSource,
