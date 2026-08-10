@@ -32,9 +32,9 @@ use aex_control_app::ports::{
     WorkspaceKeyMaterial, WorkspaceView,
 };
 use aex_control_domain::{
-    AccountState, ApiKey, Fence, IntentHash, Invitation, Membership, Operation, OperationKind,
-    OperationStatus, OperationVisibility, Organization, OutboxMessage, Revision, ScopeSet, Slug,
-    Topic, Workspace, WorkspaceStatus,
+    AccountProfile, AccountState, ApiKey, Fence, IntentHash, Invitation, Membership, Operation,
+    OperationKind, OperationStatus, OperationVisibility, Organization, OutboxMessage, Revision,
+    ScopeSet, Slug, Topic, Workspace, WorkspaceStatus,
 };
 use aex_session_dynamodb::projection_write::{
     KeyAuthorizationWrite, PlacementWrite, ProfileWrite,
