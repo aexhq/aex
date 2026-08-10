@@ -1,7 +1,7 @@
 {
   "schema": "aex.regional-tables.v1",
   "generation": 1,
-  "digest": "blake3:67141463e47d0e856493f2bfb46f6989c43f3c54a0df349045deb7740cc18170",
+  "digest": "blake3:3477847969b34799f8687e840ed75b184699a558802e19f65d2e18122c18d926",
   "tables": [
     {
       "schema": "aex.regional-table.v1",
@@ -1660,6 +1660,41 @@
             "table",
             "index/*"
           ]
+        },
+        {
+          "role": "regional-observation-api",
+          "actions": [
+            "dynamodb:PutItem"
+          ],
+          "resources": [
+            "table"
+          ],
+          "itemTypes": [
+            "operation"
+          ],
+          "condition": {
+            "operator": "ForAllValues:StringLike",
+            "key": "dynamodb:LeadingKeys",
+            "values": [
+              "OP#*"
+            ]
+          }
+        },
+        {
+          "role": "regional-observation-api",
+          "actions": [
+            "dynamodb:ConditionCheckItem"
+          ],
+          "resources": [
+            "table"
+          ],
+          "condition": {
+            "operator": "ForAllValues:StringLike",
+            "key": "dynamodb:LeadingKeys",
+            "values": [
+              "SESSION#*"
+            ]
+          }
         },
         {
           "role": "regional-stream",

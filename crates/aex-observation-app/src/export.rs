@@ -98,6 +98,13 @@ pub struct ExportAdmission {
     pub normalized_query: String,
     /// The pinned, ordered partition list the walk visits.
     pub partitions: Vec<String>,
+    /// The digest of the normalized request this export was admitted for.
+    ///
+    /// Stored so a refused `attribute_not_exists` is resolvable: the same
+    /// operation id with the same intent is a replay, with a different intent
+    /// it is `operation_idempotency_conflict`. Without it the condition could
+    /// only say "something is already here".
+    pub intent: [u8; 32],
     /// The deletion epoch the scope was at when the export was admitted.
     pub deletion_epoch: u64,
     /// When admission happened.
@@ -132,6 +139,16 @@ pub struct ExportPlan {
     pub expires_at: Timestamp,
     /// The snapshot position the walk is pinned to, in epoch milliseconds.
     pub snapshot: i64,
+}
+
+/// Lower-case hex, so a digest on a row is comparable by string equality.
+fn hex(bytes: &[u8; 32]) -> String {
+    use std::fmt::Write as _;
+
+    bytes.iter().fold(String::with_capacity(64), |mut text, byte| {
+        let _ = write!(text, "{byte:02x}");
+        text
+    })
 }
 
 /// Derives the export identity from the workspace and the operation id.
@@ -215,6 +232,7 @@ pub fn plan(request: &ExportAdmission) -> Result<ExportPlan, ExportPlanError> {
             "normalizedQuery".to_owned(),
             request.normalized_query.clone(),
         ),
+        ("intentDigest".to_owned(), hex(&request.intent)),
         // The sparse due-index attributes the launcher's next sweep finds. This
         // is the whole handoff: no queue, no EventBridge rule on the row and no
         // synchronous `RunTask`, because the transaction already carries the
@@ -289,6 +307,7 @@ mod tests {
             completeness: "allow_gaps".to_owned(),
             normalized_query: "{\"signal\":\"logs\"}".to_owned(),
             partitions: vec!["OBS#W#ws#logs#2026-08-01".to_owned()],
+            intent: [7; 32],
             deletion_epoch: 3,
             now: at(),
         }
@@ -357,6 +376,11 @@ mod tests {
         );
         assert_eq!(row.flags["cancelRequested"], false);
         assert_eq!(row.text["state"], "admitted");
+        assert_eq!(
+            row.text["intentDigest"].len(),
+            64,
+            "a refused condition must be resolvable into replay or conflict"
+        );
         // The client token is the export identity, so an ambiguous launch is
         // reconciled by identity rather than by a second `RunTask`.
         assert_eq!(row.text["clientToken"], planned.export.to_string());
