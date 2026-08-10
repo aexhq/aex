@@ -127,7 +127,7 @@ pub async fn migrate(
 ///
 /// # Errors
 ///
-/// Returns [`RunnerError::Database`] when PostgreSQL refuses the binding.
+/// Returns [`RunnerError::Database`] when `PostgreSQL` refuses the binding.
 pub async fn configure_outbox_wake(
     connection: &mut PgConnection,
     lambda_arn: &str,
