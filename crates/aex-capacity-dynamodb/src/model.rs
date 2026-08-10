@@ -291,8 +291,27 @@ pub fn plan_capacity_change(
         }
     }
 
+    // A reconcile also has work to do when the stored set is not the registry.
+    //
+    // This is the one trap in the eager-materialisation design: a limit id added
+    // to the registry reaches an existing workspace only through a reconcile,
+    // and a reconcile that keyed only off the defaults revision would answer
+    // "nothing to do" whenever the new id shipped without a revision bump. The
+    // workspace would then have no effective row for a registered limit, which
+    // this design declares impossible by construction — silently, and only
+    // visibly at the enforcement point that later reads it.
+    //
+    // Comparing key sets makes the forgotten bump a repair rather than a
+    // no-op. It is not the auto-reconcile-inside-bootstrap that was rejected:
+    // bootstrap still refuses an existing workspace, and this arm is reachable
+    // only by a command that asked to reconcile.
+    let incomplete = current.is_some_and(|state| {
+        state.effective.len() != LimitId::ALL.len()
+            || LimitId::ALL.iter().any(|id| !state.effective.contains_key(id))
+    });
     let changed = current.is_none()
         || override_changed
+        || incomplete
         || current.is_some_and(|state| state.defaults_revision != defaults.revision);
     if !changed {
         let state = current.ok_or(CapacityError::Missing)?.clone();
@@ -666,5 +685,144 @@ mod tests {
                 "invalid command was admitted: {command:?}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod registry_growth {
+    //! What happens to an already-bootstrapped workspace when the registry grows.
+    //!
+    //! Eager total materialisation buys one strong property — an absent
+    //! effective row is impossible, so nothing anywhere has to decide what an
+    //! absent row would have meant. The price is that the property is only true
+    //! for the registry as it stood when the workspace was bootstrapped, and
+    //! several concurrent streams are adding limit ids.
+    //!
+    //! `Bootstrap` deliberately refuses an existing workspace, so it is not the
+    //! repair. `Reconcile` is, and these cases pin that it actually repairs.
+
+    use aex_wire::ids::{PrefixedId as _, Uuid7, WorkspaceId};
+    use aex_wire::limits::LimitId;
+    use aex_wire::types::Timestamp;
+
+    use super::{CapacityCommand, CapacityError, plan_capacity_change};
+    use crate::defaults::canonical_defaults;
+
+    fn workspace() -> WorkspaceId {
+        WorkspaceId::from_uuid7(Uuid7::compose(1, [9; 10]))
+    }
+
+    /// The transaction is `2 + N + 3` actions and `TransactWriteItems` admits
+    /// 100, so the registry cannot exceed 95 entries. Recorded here rather than
+    /// discovered at entry 96, when the failure would be a provisioning outage
+    /// with no obvious cause.
+    #[test]
+    fn the_registry_stays_inside_the_single_transaction_it_is_materialised_by() {
+        const CEILING: usize = 100 - 2 - 3;
+        assert!(
+            LimitId::ALL.len() <= CEILING,
+            "the limit registry has {} entries against a hard ceiling of {CEILING}; past it the \
+             member rows must move out of the authority transaction and be fenced by the bundle \
+             head instead",
+            LimitId::ALL.len()
+        );
+    }
+
+    /// A workspace that lost an effective row — because the registry grew after
+    /// it was bootstrapped — is repaired by a reconcile, whether or not the
+    /// defaults revision moved.
+    ///
+    /// The revision-only rule would answer "nothing to do" for the forgotten
+    /// bump and leave the workspace permanently missing a registered limit,
+    /// which is the one thing this design says cannot happen.
+    #[test]
+    fn a_reconcile_repairs_a_workspace_the_registry_grew_past() {
+        let defaults = canonical_defaults().expect("defaults");
+        let mut state = plan_capacity_change(
+            None,
+            &defaults,
+            &CapacityCommand::Bootstrap {
+                workspace_id: workspace(),
+            },
+            Timestamp::from_unix_millis(1).expect("timestamp"),
+        )
+        .expect("bootstrap")
+        .state;
+        assert_eq!(state.effective.len(), LimitId::ALL.len());
+
+        // Exactly the shape of a workspace bootstrapped before a limit id
+        // existed: complete for the registry it saw, short for the one it did
+        // not, and at the same defaults revision either way.
+        let dropped = *LimitId::ALL.last().expect("a non-empty registry");
+        state.effective.remove(&dropped);
+
+        let planned = plan_capacity_change(
+            Some(&state),
+            &defaults,
+            &CapacityCommand::Reconcile {
+                workspace_id: workspace(),
+                expected_revision: state.revision,
+            },
+            Timestamp::from_unix_millis(2).expect("timestamp"),
+        )
+        .expect("reconcile");
+        assert!(
+            planned.changed,
+            "an incomplete workspace was reported as needing no work"
+        );
+        assert_eq!(planned.state.effective.len(), LimitId::ALL.len());
+        assert!(planned.state.effective.contains_key(&dropped));
+        assert_eq!(planned.state.revision, state.revision + 1);
+    }
+
+    /// The repair is a reconcile's job and stays one. Bootstrap still refuses an
+    /// existing workspace, so the two commands never blur into each other and a
+    /// log always says which one happened.
+    #[test]
+    fn a_bootstrap_never_becomes_the_repair() {
+        let defaults = canonical_defaults().expect("defaults");
+        let mut state = plan_capacity_change(
+            None,
+            &defaults,
+            &CapacityCommand::Bootstrap {
+                workspace_id: workspace(),
+            },
+            Timestamp::from_unix_millis(1).expect("timestamp"),
+        )
+        .expect("bootstrap")
+        .state;
+        let dropped = *LimitId::ALL.last().expect("a non-empty registry");
+        state.effective.remove(&dropped);
+        // The stored `last_command` is the bootstrap, so this is the exact
+        // replay path — and even that must not quietly repair, or a caller
+        // could never tell a fresh workspace from a repaired one.
+        let replay = plan_capacity_change(
+            Some(&state),
+            &defaults,
+            &CapacityCommand::Bootstrap {
+                workspace_id: workspace(),
+            },
+            Timestamp::from_unix_millis(2).expect("timestamp"),
+        )
+        .expect("an exact bootstrap replay resolves");
+        assert!(!replay.changed);
+        assert!(!replay.state.effective.contains_key(&dropped));
+
+        // And a bootstrap after any other command is refused outright.
+        state.last_command = CapacityCommand::Reconcile {
+            workspace_id: workspace(),
+            expected_revision: 0,
+        };
+        assert_eq!(
+            plan_capacity_change(
+                Some(&state),
+                &defaults,
+                &CapacityCommand::Bootstrap {
+                    workspace_id: workspace(),
+                },
+                Timestamp::from_unix_millis(3).expect("timestamp"),
+            ),
+            Err(CapacityError::AlreadyExists)
+        );
     }
 }
