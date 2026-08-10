@@ -294,9 +294,7 @@ pub fn list_dir(
                 && entry.meta.kind == EntryKind::Directory
                 && entry.name != ".git"
                 && level + 1 < depth;
-            if descend
-                && let Ok(child) = GuestPath::parse(root, &child)
-            {
+            if descend && let Ok(child) = GuestPath::parse(root, &child) {
                 frontier.push((child, level + 1));
             }
             if after.is_some_and(|cursor| child.as_str() <= cursor) {

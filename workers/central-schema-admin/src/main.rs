@@ -612,8 +612,9 @@ mod tests {
     fn the_overdraw_allowance_frees_available_and_keeps_the_escrow_fence() {
         let baseline =
             include_str!("../../../migrations/central/20260801000500_baseline_finance.sql");
-        let ddl =
-            include_str!("../../../migrations/central/20260801001300_finance_customer_overdraw.sql");
+        let ddl = include_str!(
+            "../../../migrations/central/20260801001300_finance_customer_overdraw.sql"
+        );
         assert!(
             baseline.contains("CONSTRAINT customer_balance_never_overdrawn"),
             "the baseline is the migration whose fence this one relaxes"
