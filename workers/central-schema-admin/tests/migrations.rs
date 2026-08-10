@@ -507,7 +507,7 @@ async fn every_pepper_row_seeds_once_and_an_exact_replay_is_a_no_op() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn re_pointing_a_seeded_version_at_other_material_is_refused()  {
+async fn re_pointing_a_seeded_version_at_other_material_is_refused() {
     // Silently accepting it would make every credential fingerprinted under
     // that version unverifiable while the command reported success.
     let fixture = Fixture::start().await;

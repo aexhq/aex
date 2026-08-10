@@ -523,10 +523,7 @@ async fn a_quarantined_coverage_row_reports_the_stall_a_page_alone_cannot() {
             ("settledSequence", number(9)),
             ("state", text("quarantined")),
             ("quarantineAt", number(18)),
-            (
-                "quarantineReason",
-                text(PoisonReason::Undecodable.id()),
-            ),
+            ("quarantineReason", text(PoisonReason::Undecodable.id())),
         ],
     )
     .await;

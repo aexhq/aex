@@ -396,8 +396,14 @@ fn one_account_profile_projects_byte_identically_on_both_planes() {
     // carries no reason: the durable `CHECK` makes the two agree by construction.
     let durable: [(&str, Option<&str>); 4] = [
         ("active", None),
-        ("payment_hold", Some(AccountPauseCause::TopUpRequired.as_str())),
-        ("dispute_hold", Some(AccountPauseCause::DisputeHold.as_str())),
+        (
+            "payment_hold",
+            Some(AccountPauseCause::TopUpRequired.as_str()),
+        ),
+        (
+            "dispute_hold",
+            Some(AccountPauseCause::DisputeHold.as_str()),
+        ),
         ("closed", Some(AccountPauseCause::AccountClosed.as_str())),
     ];
 
@@ -409,8 +415,7 @@ fn one_account_profile_projects_byte_identically_on_both_planes() {
             "`{durable_state}` reaches the two planes as two different facts"
         );
 
-        let central_state =
-            account_operational_state(&central).expect("the central read projects");
+        let central_state = account_operational_state(&central).expect("the central read projects");
         let regional_state =
             account_operational_state(&regional).expect("the regional read projects");
 

@@ -50,10 +50,12 @@ fn written_head(plan: &SessionTransaction) -> aex_session_domain::Session {
 }
 
 fn version_guard(plan: &SessionTransaction) -> Option<OperationVersion> {
-    plan.conditions.iter().find_map(|condition| match condition {
-        Condition::OperationVersion { expected, .. } => Some(*expected),
-        _ => None,
-    })
+    plan.conditions
+        .iter()
+        .find_map(|condition| match condition {
+            Condition::OperationVersion { expected, .. } => Some(*expected),
+            _ => None,
+        })
 }
 
 /// What a plan's cursor guard says, as three distinguishable cases.
@@ -76,10 +78,11 @@ fn cursor_guard(plan: &SessionTransaction) -> CursorGuard {
     plan.conditions
         .iter()
         .find_map(|condition| match condition {
-            Condition::OperationCursorAt { expected, .. } => Some(expected.as_ref().map_or(
-                CursorGuard::RowAbsent,
-                |cursor| CursorGuard::At(cursor.position.clone()),
-            )),
+            Condition::OperationCursorAt { expected, .. } => {
+                Some(expected.as_ref().map_or(CursorGuard::RowAbsent, |cursor| {
+                    CursorGuard::At(cursor.position.clone())
+                }))
+            }
             _ => None,
         })
         .unwrap_or(CursorGuard::Absent)

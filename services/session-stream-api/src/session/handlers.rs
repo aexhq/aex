@@ -16,7 +16,9 @@
 
 use std::sync::Arc;
 
+use aex_content_aws::object_store::ContentObjectStore;
 use aex_content_domain::identity::RegistryKind;
+use aex_content_dynamodb::store::ContentMetadataStore;
 use aex_operation_domain::operation::{OperationKind, OperationStatus};
 use aex_regional_http::context::RequestContext;
 use aex_regional_http::cursor::{CursorBinding, CursorKeyRing, Order, SnapshotToken, SortTuple};
@@ -25,11 +27,13 @@ use aex_regional_http::projection::{
     self, ProjectionError, authority_failure, entity_tag, position_tuple, tuple_position,
 };
 use aex_regional_http::router::RouteOwner;
-use aex_content_aws::object_store::ContentObjectStore;
-use aex_content_dynamodb::store::ContentMetadataStore;
 use aex_registry_dynamodb::store::{PointerPage, RegistryStore};
+use aex_runtime_activity_dynamodb::RuntimeContinuity;
+use aex_runtime_activity_dynamodb::store::RuntimeActivityDynamoStore;
+use aex_secret_custody_dynamodb::SessionCustodyReads;
 use aex_secret_custody_dynamodb::codec::{CredentialState, ProviderCredential as StoredCredential};
 use aex_secret_custody_dynamodb::expressions;
+use aex_secret_custody_dynamodb::store::CustodyStore;
 use aex_secret_custody_dynamodb::store::SecretCustodyStore;
 use aex_session_app::plan::Planned;
 use aex_session_app::ports::AuthorityCommitter as _;
@@ -60,10 +64,6 @@ use aex_wire::server::{
     dispatch_regional_operations, dispatch_registry, dispatch_secrets, dispatch_sessions,
     dispatch_usage,
 };
-use aex_runtime_activity_dynamodb::RuntimeContinuity;
-use aex_secret_custody_dynamodb::SessionCustodyReads;
-use aex_secret_custody_dynamodb::store::CustodyStore;
-use aex_runtime_activity_dynamodb::store::RuntimeActivityDynamoStore;
 use aex_wire::types::Timestamp;
 
 /// The adapters and start-up bindings every request shares.
@@ -1457,8 +1457,12 @@ impl RegistryApi for Routes {
         _cx: &WireContext,
         name: ResourceName,
     ) -> WireResult<WithETag<models::RegisteredInstruction>> {
-        self.registry_get(RegistryKind::Instruction, &name, projection::registered_instruction)
-            .await
+        self.registry_get(
+            RegistryKind::Instruction,
+            &name,
+            projection::registered_instruction,
+        )
+        .await
     }
 
     async fn registry_instructions_list(
@@ -1509,8 +1513,12 @@ impl RegistryApi for Routes {
         _cx: &WireContext,
         name: ResourceName,
     ) -> WireResult<WithETag<models::RegisteredMcpServer>> {
-        self.registry_get(RegistryKind::McpServer, &name, projection::registered_mcp_server)
-            .await
+        self.registry_get(
+            RegistryKind::McpServer,
+            &name,
+            projection::registered_mcp_server,
+        )
+        .await
     }
 
     async fn registry_mcp_servers_list(

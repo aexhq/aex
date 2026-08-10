@@ -269,8 +269,7 @@ mod tests {
         );
 
         let mut session_scoped = context.clone();
-        session_scoped.custody_revision =
-            Some(aex_secret_domain::CustodyRevision(1));
+        session_scoped.custody_revision = Some(aex_secret_domain::CustodyRevision(1));
         assert_ne!(
             context.digest(),
             session_scoped.digest(),

@@ -4,10 +4,10 @@
 #![allow(missing_docs, reason = "the module doc states what these fixtures are")]
 
 use aex_content_domain::identity::{RegistryKind, Revision};
-use aex_wire::ids::{ContentHash, PrefixedId, ResourceName, UploadId, Uuid7, WorkspaceId};
-use aex_wire::types::Timestamp;
 use aex_registry_dynamodb::store::{SET_RESPONSE_KIND, SetReceipt};
 use aex_session_dynamodb::replay::Receipt;
+use aex_wire::ids::{ContentHash, PrefixedId, ResourceName, UploadId, Uuid7, WorkspaceId};
+use aex_wire::types::Timestamp;
 use aex_workspace_domain::registry::{
     RegistryCommit, RegistryPointer, RegistryRow, SetOutcome, ValueDocument, etag_of,
 };

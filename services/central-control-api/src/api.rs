@@ -16,12 +16,12 @@ use aex_control_app::{
 };
 use aex_control_domain::{
     AccountProjectionError, AccountState, ActorKind, ApiKey as DomainApiKey, AuditEvent,
-    AuditOutcome, CursorSecret, account_operational_state,
-    IdempotencyKeyKind, IntentHash, Invitation as DomainInvitation, MAX_ACCEPTABLE_INVITATIONS,
-    InvitationStatus as DomainInvitationStatus, MembershipStatus as DomainMembershipStatus,
-    OperationStatus as DomainOperationStatus, OrgRole, Organization as DomainOrganization,
-    OutboxMessage, PrincipalKindTag, ResourceKind, ScopeKind, ScopeSet as DomainScopeSet, Slug,
-    Topic, WorkspaceStatus as DomainWorkspaceStatus,
+    AuditOutcome, CursorSecret, IdempotencyKeyKind, IntentHash, Invitation as DomainInvitation,
+    InvitationStatus as DomainInvitationStatus, MAX_ACCEPTABLE_INVITATIONS,
+    MembershipStatus as DomainMembershipStatus, OperationStatus as DomainOperationStatus, OrgRole,
+    Organization as DomainOrganization, OutboxMessage, PrincipalKindTag, ResourceKind, ScopeKind,
+    ScopeSet as DomainScopeSet, Slug, Topic, WorkspaceStatus as DomainWorkspaceStatus,
+    account_operational_state,
 };
 use aex_identity_app::ports::{Clock, IdFactory, PepperKeystore, PepperPurpose};
 use aex_identity_domain::credential::{
@@ -35,15 +35,15 @@ use aex_wire::ids::{
     WorkspaceId,
 };
 use aex_wire::models::{
-    AccountOperationalState, ApiKey,
-    ApiKeyCreateRequest, ApiKeyPage, ApiKeysListQuery, CentralOperationsListQuery,
-    DashboardBootstrap, EmptyRequest, Invitation, InvitationAcceptResult, InvitationCreateRequest,
-    InvitationRole, InvitationStatus, Membership, MembershipPage, MembershipStatus,
-    MembershipsListQuery, NewApiKey, Operation, OperationKind, OperationPage, OperationResult,
-    OperationStatus, OperationalStateSource, Organization, OrganizationAccount, OrganizationCreateRequest,
-    OrganizationPage, OrganizationRole, OrganizationsListQuery, Workspace, WorkspaceCreateRequest,
-    WorkspaceDeleteRequest, WorkspaceOperationalState, WorkspacePage, WorkspaceStatus,
-    WorkspaceTombstone, WorkspacesListQuery,
+    AccountOperationalState, ApiKey, ApiKeyCreateRequest, ApiKeyPage, ApiKeysListQuery,
+    CentralOperationsListQuery, DashboardBootstrap, EmptyRequest, Invitation,
+    InvitationAcceptResult, InvitationCreateRequest, InvitationRole, InvitationStatus, Membership,
+    MembershipPage, MembershipStatus, MembershipsListQuery, NewApiKey, Operation, OperationKind,
+    OperationPage, OperationResult, OperationStatus, OperationalStateSource, Organization,
+    OrganizationAccount, OrganizationCreateRequest, OrganizationPage, OrganizationRole,
+    OrganizationsListQuery, Workspace, WorkspaceCreateRequest, WorkspaceDeleteRequest,
+    WorkspaceOperationalState, WorkspacePage, WorkspaceStatus, WorkspaceTombstone,
+    WorkspacesListQuery,
 };
 use aex_wire::routes::{Plane, match_route, route};
 use aex_wire::server::{
@@ -1335,9 +1335,7 @@ fn store_error(error: StoreError) -> WireError {
 )]
 fn identity_read_error(error: StoreError) -> WireError {
     match error {
-        StoreError::Unavailable | StoreError::Unknown => {
-            WireError::new(ErrorCode::UpstreamError)
-        }
+        StoreError::Unavailable | StoreError::Unknown => WireError::new(ErrorCode::UpstreamError),
         StoreError::Conflict { .. } => WireError::new(ErrorCode::ResourceConflict),
         StoreError::NotFound
         | StoreError::Decode(_)

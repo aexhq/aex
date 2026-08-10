@@ -1499,10 +1499,7 @@ mod tests {
             "not_applicable": {
                 "inline_targets": "the regional-domains stream keeps this crate's evidence in inline #[cfg(test)] modules, which the declared unit layer already collects",
                 "live_suite": "pure domain crate; no deployed seam" } }"#;
-        let mut inputs = input(
-            vec![row("crates/aex-foo", "aex-foo", Some(inline))],
-            policy,
-        );
+        let mut inputs = input(vec![row("crates/aex-foo", "aex-foo", Some(inline))], policy);
         let report = check(&inputs);
         assert!(
             details(&report, "aex-empty-unit").is_empty(),

@@ -237,11 +237,8 @@ fn campaigns_execute_against_the_bound_plane() {
         .iter()
         .filter_map(|(_, descriptor)| descriptor.budget_micro_usd)
         .sum();
-    let run = aex_test_harness::TestRun::mint(
-        aex_test_harness::Lane::Load,
-        "regional-services",
-        budget,
-    );
+    let run =
+        aex_test_harness::TestRun::mint(aex_test_harness::Lane::Load, "regional-services", budget);
     panic!(
         "`{TARGET}` holds {} campaigns and run identity {} for plane `{plane}`, and cannot \
          execute one: the socket campaign needs a listening stream endpoint and the fold \

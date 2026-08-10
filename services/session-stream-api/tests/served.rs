@@ -11,7 +11,9 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use aex_content_aws::object_store::ContentObjectStore;
 use aex_content_domain::identity::{RegistryKind, Revision};
+use aex_content_dynamodb::store::ContentMetadataStore;
 use aex_operation_domain::operation::{
     Operation, OperationKind, OperationResult, OperationScope, OperationStatus,
 };
@@ -22,8 +24,6 @@ use aex_regional_http::cursor::{CursorKey, CursorKeyRing};
 use aex_regional_http::mount::{AdmissionRequest, EdgeAdmission, mount_unary};
 use aex_regional_http::projection::entity_tag;
 use aex_regional_http::router::{RouteOwner, route_owner};
-use aex_content_aws::object_store::ContentObjectStore;
-use aex_content_dynamodb::store::ContentMetadataStore;
 use aex_registry_dynamodb::store::{
     DeleteCommitted, PointerPage, RegistryStore, SetCommit, SetCommitted,
 };
@@ -759,7 +759,10 @@ impl RegistryStore for FakeRegistry {
         Ok(self
             .pointers
             .get(kind_key(kind))
-            .and_then(|rows| rows.iter().find(|pointer| pointer.row.name.as_str() == name))
+            .and_then(|rows| {
+                rows.iter()
+                    .find(|pointer| pointer.row.name.as_str() == name)
+            })
             .cloned())
     }
 

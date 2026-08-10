@@ -348,10 +348,7 @@ mod tests {
         assert_eq!(config.limits.encoded_max, 768 * 1024);
         assert_eq!(config.limits.decoded_max, 16 * 1024 * 1024);
         assert_eq!(config.limits.max_records, 2_000);
-        assert_eq!(
-            config.credential_pepper_ref,
-            "aex/dev/central/token-pepper"
-        );
+        assert_eq!(config.credential_pepper_ref, "aex/dev/central/token-pepper");
         assert_eq!(
             config.regional_decode_ceiling_bytes(),
             20 * 16 * 1024 * 1024

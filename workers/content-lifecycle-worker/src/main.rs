@@ -103,10 +103,7 @@ async fn run(
     let role = Role {
         mode: config.mode,
         content,
-        work: aex_work_dynamodb::store::WorkStore::new(
-            dynamodb.clone(),
-            config.work_table.clone(),
-        ),
+        work: aex_work_dynamodb::store::WorkStore::new(dynamodb.clone(), config.work_table.clone()),
         registry,
         work_table: config.work_table.clone(),
         content_bucket: config.content_bucket.clone(),
@@ -174,7 +171,10 @@ impl Role {
 
     /// Walks the workspaces the schedule names, rechecking staged rows against
     /// the exact grace boundary and their live reachability.
-    async fn reconcile(&self, payload: serde_json::Value) -> Result<serde_json::Value, LambdaError> {
+    async fn reconcile(
+        &self,
+        payload: serde_json::Value,
+    ) -> Result<serde_json::Value, LambdaError> {
         let request = sweep_request(payload)?;
         let budget = PageBudget::new(page_bound(self.mark_page_items))
             .map_err(|error| LambdaError::from(error.to_string()))?;
@@ -418,7 +418,9 @@ impl UploadObjects for ObjectAdapter {
                     .metadata
                     .as_ref()
                     .and_then(|metadata| metadata.get(aex_content_aws::object_key::METADATA_DIGEST))
-                    .and_then(|hex| aex_wire::ids::ContentHash::parse(&format!("sha256:{hex}")).ok()),
+                    .and_then(|hex| {
+                        aex_wire::ids::ContentHash::parse(&format!("sha256:{hex}")).ok()
+                    }),
                 evidence: CompletionEvidence {
                     etag: response.e_tag.unwrap_or_default(),
                     checksum_sha256: response.checksum_sha256,

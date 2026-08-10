@@ -75,10 +75,7 @@ fn rust_string(body: &str) -> (String, usize) {
                     b'r' => out.push('\r'),
                     b'0' => out.push('\0'),
                     b'\n' => {
-                        while bytes
-                            .get(index)
-                            .is_some_and(u8::is_ascii_whitespace)
-                        {
+                        while bytes.get(index).is_some_and(u8::is_ascii_whitespace) {
                             index += 1;
                         }
                     }
@@ -210,7 +207,8 @@ fn every_committed_statement_that_projects_rows_is_wrapped_to_be_readable() {
                 .collect();
             let rendered = render(&sql, &parameters).expect("the statement renders");
             let upper = sql.to_ascii_uppercase();
-            let projects = upper.trim_start().starts_with("SELECT") || upper.contains(" RETURNING ");
+            let projects =
+                upper.trim_start().starts_with("SELECT") || upper.contains(" RETURNING ");
             assert_eq!(
                 rendered.returns_rows(),
                 projects,
@@ -271,8 +269,18 @@ fn a_repeated_parameter_binds_once_and_reuses_its_slot() {
     )
     .expect("renders");
     assert_eq!(rendered.binds.len(), 2);
-    assert_eq!(rendered.sql.matches("$1::text").count(), 2, "{}", rendered.sql);
-    assert_eq!(rendered.sql.matches("$2::text").count(), 1, "{}", rendered.sql);
+    assert_eq!(
+        rendered.sql.matches("$1::text").count(),
+        2,
+        "{}",
+        rendered.sql
+    );
+    assert_eq!(
+        rendered.sql.matches("$2::text").count(),
+        1,
+        "{}",
+        rendered.sql
+    );
 }
 
 #[test]

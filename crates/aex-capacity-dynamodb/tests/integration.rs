@@ -393,7 +393,8 @@ async fn an_audit_row_that_already_exists_cancels_the_commit_and_moves_nothing()
         .apply(&defaults, &override_api_body(first, 1, 262_144), at(2))
         .await
         .expect_err("an audited decision is never overwritten");
-    let CapacityStoreError::Store(StoreError::PreconditionFailed { participant, .. }) = error else {
+    let CapacityStoreError::Store(StoreError::PreconditionFailed { participant, .. }) = error
+    else {
         panic!("an immutable audit collision must name its participant, not {error}");
     };
     assert_eq!(participant, AUDIT);

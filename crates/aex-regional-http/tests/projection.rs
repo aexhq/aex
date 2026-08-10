@@ -16,8 +16,8 @@ use aex_regional_http::projection::{
     ProjectionError, entity_tag, position_tuple, provider_credential, provider_credential_page,
     registered_file, registered_file_row, registered_instruction, registered_instruction_row,
     registered_mcp_server, registered_mcp_server_row, registered_skill, registered_skill_page,
-    registered_tool, secret_metadata, secret_metadata_page,
-    secret_plaintext, secret_revocation, session_run, session_run_page, tuple_position,
+    registered_tool, secret_metadata, secret_metadata_page, secret_plaintext, secret_revocation,
+    session_run, session_run_page, tuple_position,
 };
 use aex_secret_custody_dynamodb::codec::{
     CredentialState, ProviderCredential as StoredCredential, SecretMetadata as StoredSecret,
@@ -478,12 +478,12 @@ fn a_collection_row_has_no_field_a_value_could_go_in() {
     ] {
         let row = registry_row(kind, "name");
         let encoded = match kind {
-            RegistryKind::File => serde_json::to_value(
-                registered_file_row(&row).expect("it projects"),
-            ),
-            RegistryKind::Instruction => serde_json::to_value(
-                registered_instruction_row(&row).expect("it projects"),
-            ),
+            RegistryKind::File => {
+                serde_json::to_value(registered_file_row(&row).expect("it projects"))
+            }
+            RegistryKind::Instruction => {
+                serde_json::to_value(registered_instruction_row(&row).expect("it projects"))
+            }
             _ => serde_json::to_value(registered_mcp_server_row(&row).expect("it projects")),
         }
         .expect("it encodes");

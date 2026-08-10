@@ -117,13 +117,8 @@ pub enum Mode {
 
 impl Mode {
     /// The wire spelling of every mode.
-    pub const ALL: [&'static str; 5] = [
-        "expiry",
-        "uploadexpiry",
-        "reconcile",
-        "marksweep",
-        "delete",
-    ];
+    pub const ALL: [&'static str; 5] =
+        ["expiry", "uploadexpiry", "reconcile", "marksweep", "delete"];
 
     /// Resolves a mode name.
     #[must_use]
@@ -299,23 +294,21 @@ impl Config {
         } else {
             None
         };
-        let (expiry_scan_shards, expiry_page_items) = if matches!(
-            mode,
-            Mode::Expiry | Mode::UploadExpiry
-        ) {
-            (
-                Some(
-                    u16::try_from(bounded_u64(lookup, EXPIRY_SCAN_SHARDS, 1, 64)?)
-                        .expect("the admitted bound fits u16"),
-                ),
-                Some(
-                    u32::try_from(bounded_u64(lookup, EXPIRY_PAGE_ITEMS, 1, 100)?)
-                        .expect("the admitted bound fits u32"),
-                ),
-            )
-        } else {
-            (None, None)
-        };
+        let (expiry_scan_shards, expiry_page_items) =
+            if matches!(mode, Mode::Expiry | Mode::UploadExpiry) {
+                (
+                    Some(
+                        u16::try_from(bounded_u64(lookup, EXPIRY_SCAN_SHARDS, 1, 64)?)
+                            .expect("the admitted bound fits u16"),
+                    ),
+                    Some(
+                        u32::try_from(bounded_u64(lookup, EXPIRY_PAGE_ITEMS, 1, 100)?)
+                            .expect("the admitted bound fits u32"),
+                    ),
+                )
+            } else {
+                (None, None)
+            };
 
         Ok(Self {
             mode,

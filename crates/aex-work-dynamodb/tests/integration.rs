@@ -38,11 +38,11 @@ use aex_session_dynamodb::error::{StoreError, decode_cancellation};
 use aex_session_dynamodb::paging::PageBudget;
 use aex_session_dynamodb::plan::{Participant, TransactionPlan};
 use aex_test_harness::DynamoDbLocalContainer;
+use aex_wire::types::Timestamp;
 use aex_work_dynamodb::claim::{self, WorkClaim};
 use aex_work_dynamodb::codec::{self, ReconciliationCursor, WorkRecord};
 use aex_work_dynamodb::keys;
 use aex_work_dynamodb::store::{WorkAuthority, WorkStore};
-use aex_wire::types::Timestamp;
 use aws_sdk_dynamodb::Client;
 use aws_sdk_dynamodb::config::{BehaviorVersion, Credentials, Region};
 use aws_sdk_dynamodb::types::{
@@ -235,10 +235,7 @@ fn same_shard_ids(count: usize) -> (u16, Vec<String>) {
     for window in candidates.windows(count) {
         if window.first().map(|entry| entry.0) == window.last().map(|entry| entry.0) {
             let shard = window[0].0;
-            return (
-                shard,
-                window.iter().map(|entry| entry.1.clone()).collect(),
-            );
+            return (shard, window.iter().map(|entry| entry.1.clone()).collect());
         }
     }
     panic!("64 shards over 4096 identities always yield {count} in one shard");
@@ -412,7 +409,11 @@ async fn the_due_scan_includes_work_due_at_exactly_the_scan_instant() {
         .scan_due(shard, now(), budget(10))
         .await
         .expect("the due scan");
-    let found: Vec<&str> = page.items.iter().map(|item| item.work_id.as_str()).collect();
+    let found: Vec<&str> = page
+        .items
+        .iter()
+        .map(|item| item.work_id.as_str())
+        .collect();
     assert_eq!(
         found,
         vec![due_now.work_id.as_str()],
@@ -495,7 +496,10 @@ async fn a_cursor_advance_needs_the_revision_it_observed() {
         revision: 1,
         updated_at: now(),
     };
-    store.advance_cursor(&cursor).await.expect("the first write");
+    store
+        .advance_cursor(&cursor)
+        .await
+        .expect("the first write");
 
     let error = store
         .advance_cursor(&cursor)

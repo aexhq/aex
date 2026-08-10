@@ -42,8 +42,7 @@ pub const COUNT: &str = "entryCount";
 /// A listing reads exactly these and never `valueDoc`: a thousand-row page that
 /// carried a thousand value documents would be the cost D-3 exists to avoid.
 /// `name` is a `DynamoDB` reserved word, so it is aliased.
-pub const ROW_PROJECTION: &str =
-    "itemType, workspaceId, kind, #name, revision, etag, contentDigest, sizeBytes, createdAt, \
+pub const ROW_PROJECTION: &str = "itemType, workspaceId, kind, #name, revision, etag, contentDigest, sizeBytes, createdAt, \
      updatedAt";
 
 /// How many parts one persisted block carries (E D-1).
@@ -495,10 +494,7 @@ fn decode_part_arrays(
 }
 
 /// Reads the completion evidence, when the object it proves exists.
-fn decode_completion(
-    item: &Item,
-    row: &Row<'_>,
-) -> Result<Option<CompletionEvidence>, CodecError> {
+fn decode_completion(item: &Item, row: &Row<'_>) -> Result<Option<CompletionEvidence>, CodecError> {
     let Some(etag) = row.opt_string("objectEtag")? else {
         return Ok(None);
     };
@@ -530,14 +526,15 @@ fn string_list<'a>(
     encoded
         .iter()
         .map(|entry| {
-            entry.as_s().map(String::as_str).map_err(|_| {
-                CodecError::WrongType {
+            entry
+                .as_s()
+                .map(String::as_str)
+                .map_err(|_| CodecError::WrongType {
                     item_type,
                     attribute,
                     expected: "S",
                     found: "another type",
-                }
-            })
+                })
         })
         .collect()
 }
@@ -780,8 +777,9 @@ mod tests {
                 .map(|number| PlannedPart {
                     number,
                     bytes: 5 * 1024 * 1024,
-                    sha256: Some(ContentHash::from_bytes([u8::try_from(number % 251)
-                        .expect("bounded"); 32])),
+                    sha256: Some(ContentHash::from_bytes(
+                        [u8::try_from(number % 251).expect("bounded"); 32],
+                    )),
                 })
                 .collect(),
         };

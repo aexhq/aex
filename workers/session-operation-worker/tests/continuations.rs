@@ -92,8 +92,14 @@ fn a_claim_takes_the_next_fence_and_a_renewal_never_advances_it() {
     held.lease = Some(lease);
     held.state = WorkState::Claimed;
 
-    let renewed = renew(&held, owner(1), lease.fence, moment(1), Duration::seconds(30))
-        .expect("the holder may extend its own lease");
+    let renewed = renew(
+        &held,
+        owner(1),
+        lease.fence,
+        moment(1),
+        Duration::seconds(30),
+    )
+    .expect("the holder may extend its own lease");
     assert_eq!(
         renewed.fence, lease.fence,
         "renewal churn must never invalidate the holder's own in-flight writes"
@@ -164,10 +170,14 @@ fn a_progressed_step_returns_the_item_to_the_queue_and_resets_its_attempts() {
     work.state = WorkState::Claimed;
     work.attempt = 3;
 
-    let commit = complete(&work, lease.fence, progressed(50), moment(1)).expect("the holder may commit");
+    let commit =
+        complete(&work, lease.fence, progressed(50), moment(1)).expect("the holder may commit");
     assert_eq!(commit.item.state, WorkState::Runnable);
     assert_eq!(commit.item.due_at, moment(10_000));
-    assert_eq!(commit.item.lease, None, "a committed step releases its claim");
+    assert_eq!(
+        commit.item.lease, None,
+        "a committed step releases its claim"
+    );
     assert_eq!(
         commit.item.attempt, 0,
         "progress is evidence the step is not poison, so its attempt budget resets"

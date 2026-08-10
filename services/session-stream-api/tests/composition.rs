@@ -389,10 +389,7 @@ fn a_write_stall_that_cannot_be_observed_inside_the_drain_is_refused() {
 fn the_two_edges_are_two_audiences_and_no_process_wide_budget() {
     let config = read(&polling()).expect("the complete environment is accepted");
     assert_eq!(EDGE_COUNT, 2);
-    assert_eq!(
-        config.credential_pepper_ref,
-        "aex/dev/central/token-pepper"
-    );
+    assert_eq!(config.credential_pepper_ref, "aex/dev/central/token-pepper");
     // One ring, read once, shared by both edges: a second read could give one
     // half a pepper set the other does not hold mid-rotation.
     let mut absent = polling();

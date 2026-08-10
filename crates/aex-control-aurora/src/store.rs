@@ -1955,9 +1955,12 @@ impl ControlViewStore for AuroraControlStore {
         let page = <Self as ControlStore>::list_memberships(self, organization_id, request).await?;
         let mut items = Vec::with_capacity(page.items.len());
         for membership in page.items {
-            let identity = self.user_identity(membership.user_id).await?.ok_or_else(|| {
-                StoreError::Decode("membership names no identity user".to_owned())
-            })?;
+            let identity = self
+                .user_identity(membership.user_id)
+                .await?
+                .ok_or_else(|| {
+                    StoreError::Decode("membership names no identity user".to_owned())
+                })?;
             items.push(MembershipView {
                 membership,
                 email: identity.email,

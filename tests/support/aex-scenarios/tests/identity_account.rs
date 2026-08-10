@@ -186,13 +186,10 @@ impl World {
         .await
         .expect("the sign-in ceremony commits");
 
-        let session = OpenDashboardSession::run(
-            &self.deps(),
-            &self.context("open-session"),
-            &resolved.user,
-        )
-        .await
-        .expect("the dashboard session ceremony commits");
+        let session =
+            OpenDashboardSession::run(&self.deps(), &self.context("open-session"), &resolved.user)
+                .await
+                .expect("the dashboard session ceremony commits");
 
         (
             resolved.user,

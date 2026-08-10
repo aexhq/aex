@@ -125,11 +125,7 @@ pub fn projection_of(postgres_type: &str) -> Projection {
 /// Returns [`RowTextError`] when the engine's own output does not parse as the
 /// type the column claims, which is a defect in this module rather than in the
 /// statement, and must therefore be loud.
-pub fn field(
-    index: usize,
-    postgres_type: &str,
-    text: Option<&str>,
-) -> Result<Field, RowTextError> {
+pub fn field(index: usize, postgres_type: &str, text: Option<&str>) -> Result<Field, RowTextError> {
     let Some(text) = text else {
         return Ok(Field::IsNull(true));
     };
@@ -145,11 +141,13 @@ pub fn field(
                 });
             }
         },
-        Projection::Long => Field::LongValue(text.parse().map_err(|_| RowTextError::NotANumber {
-            index,
-            postgres_type: postgres_type.to_owned(),
-            text: text.to_owned(),
-        })?),
+        Projection::Long => {
+            Field::LongValue(text.parse().map_err(|_| RowTextError::NotANumber {
+                index,
+                postgres_type: postgres_type.to_owned(),
+                text: text.to_owned(),
+            })?)
+        }
         Projection::Blob => {
             let hex = text
                 .strip_prefix("\\x")
@@ -164,9 +162,9 @@ pub fn field(
                 }
             })?))
         }
-        Projection::TextArray => Field::ArrayValue(ArrayValue::StringValues(parse_array_literal(
-            text,
-        )?)),
+        Projection::TextArray => {
+            Field::ArrayValue(ArrayValue::StringValues(parse_array_literal(text)?))
+        }
         Projection::Double => {
             Field::DoubleValue(text.parse().map_err(|_| RowTextError::NotANumber {
                 index,
@@ -220,9 +218,11 @@ pub fn parse_row_literal(text: &str) -> Result<Vec<Option<String>>, RowTextError
                 }
             }
             b'\\' if quoted => {
-                let escaped = bytes.get(index + 1).ok_or_else(|| RowTextError::Unterminated {
-                    text: text.to_owned(),
-                })?;
+                let escaped = bytes
+                    .get(index + 1)
+                    .ok_or_else(|| RowTextError::Unterminated {
+                        text: text.to_owned(),
+                    })?;
                 current.push(char::from(*escaped));
                 index += 2;
             }
@@ -278,9 +278,11 @@ pub fn parse_array_literal(text: &str) -> Result<Vec<Option<String>>, RowTextErr
                 index += 1;
             }
             b'\\' if quoted => {
-                let escaped = bytes.get(index + 1).ok_or_else(|| RowTextError::Unterminated {
-                    text: text.to_owned(),
-                })?;
+                let escaped = bytes
+                    .get(index + 1)
+                    .ok_or_else(|| RowTextError::Unterminated {
+                        text: text.to_owned(),
+                    })?;
                 current.push(char::from(*escaped));
                 index += 2;
             }

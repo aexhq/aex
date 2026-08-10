@@ -149,7 +149,12 @@ impl SessionAuthorityExternal {
                 }
                 Condition::OperationVersion { expected, .. } => {
                     observed = Some(*expected);
-                    term_eq_u64(&mut expression, &format!("c{}", id.0), "version", expected.0);
+                    term_eq_u64(
+                        &mut expression,
+                        &format!("c{}", id.0),
+                        "version",
+                        expected.0,
+                    );
                 }
                 other => return Err(unsupported_condition(other)),
             }
@@ -321,7 +326,12 @@ impl SessionAuthorityExternal {
                     term_eq_u64(&mut expression, &format!("c{}", id.0), "fence", fence.0);
                 }
                 Condition::OperationVersion { expected, .. } => {
-                    term_eq_u64(&mut expression, &format!("c{}", id.0), "version", expected.0);
+                    term_eq_u64(
+                        &mut expression,
+                        &format!("c{}", id.0),
+                        "version",
+                        expected.0,
+                    );
                 }
                 other => return Err(unsupported_condition(other)),
             }

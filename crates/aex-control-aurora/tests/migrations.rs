@@ -1082,7 +1082,10 @@ async fn credit_exhaustion_pauses_the_account_and_funding_resumes_it() {
     set_available(&mut connection, organization, 0).await;
     assert_eq!(
         account_state(&mut connection, organization).await,
-        ("payment_hold".to_owned(), Some("top_up_required".to_owned())),
+        (
+            "payment_hold".to_owned(),
+            Some("top_up_required".to_owned())
+        ),
         "a customer at zero credit must stop"
     );
 
@@ -1264,7 +1267,10 @@ async fn the_pause_crosses_a_privilege_boundary_the_balance_writer_does_not_hold
 
     assert_eq!(
         account_state(&mut superuser, organization).await,
-        ("payment_hold".to_owned(), Some("top_up_required".to_owned())),
+        (
+            "payment_hold".to_owned(),
+            Some("top_up_required".to_owned())
+        ),
         "a role that cannot write the column still stops the account"
     );
     let messages: i64 = sqlx::query_scalar(

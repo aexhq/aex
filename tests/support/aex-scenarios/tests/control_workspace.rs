@@ -542,13 +542,14 @@ async fn the_central_plane_asks_the_region_to_provision_exactly_once_and_asks_fo
 
     // And the durable half the worker later dispatches.
     let mut connection = plane.superuser().await;
-    let topics: Vec<String> = sqlx::query("SELECT topic FROM control.outbox_message ORDER BY topic")
-        .fetch_all(&mut connection)
-        .await
-        .expect("the outbox is readable")
-        .into_iter()
-        .map(|row| row.get::<String, _>(0))
-        .collect();
+    let topics: Vec<String> =
+        sqlx::query("SELECT topic FROM control.outbox_message ORDER BY topic")
+            .fetch_all(&mut connection)
+            .await
+            .expect("the outbox is readable")
+            .into_iter()
+            .map(|row| row.get::<String, _>(0))
+            .collect();
     assert_eq!(
         topics,
         vec![

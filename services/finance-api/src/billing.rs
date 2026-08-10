@@ -18,11 +18,10 @@ use aex_wire::error::{ErrorCode, WireError, WireResult};
 use aex_wire::ids::{MeasurementId, OrganizationId, PrefixedId as _, StatementId};
 use aex_wire::models::Currency;
 use aex_wire::models::{
-    AccountOperationalState,
-    AutoTopupPolicy, AutoTopupPolicyRequest, BillingBalance, BillingBalanceGetQuery,
-    BillingStatementsListQuery, DownloadGrant, EmptyRequest, HostedSession, PortalSessionRequest,
-    Statement, StatementLine, StatementSummary, StatementSummaryPage, TimeRange,
-    TopUpCheckoutRequest, UsageCategory,
+    AccountOperationalState, AutoTopupPolicy, AutoTopupPolicyRequest, BillingBalance,
+    BillingBalanceGetQuery, BillingStatementsListQuery, DownloadGrant, EmptyRequest, HostedSession,
+    PortalSessionRequest, Statement, StatementLine, StatementSummary, StatementSummaryPage,
+    TimeRange, TopUpCheckoutRequest, UsageCategory,
 };
 use aex_wire::server::{BillingApi, Created, RequestContext, WithETag};
 use aex_wire::types::{Cents, DecimalU128, ETag, HttpsUrl, Timestamp};
@@ -358,8 +357,10 @@ fn operational_state(profile: &AccountProfile) -> WireResult<AccountOperationalS
         AccountProjectionError::Unavailable => WireError::new(ErrorCode::AccountStateUnavailable),
         AccountProjectionError::MissingPauseCause
         | AccountProjectionError::UnknownPauseCause(_)
-        | AccountProjectionError::UnrepresentableInstant => WireError::new(ErrorCode::InternalError)
-            .with_message("the account state projection is off-contract"),
+        | AccountProjectionError::UnrepresentableInstant => {
+            WireError::new(ErrorCode::InternalError)
+                .with_message("the account state projection is off-contract")
+        }
     })
 }
 

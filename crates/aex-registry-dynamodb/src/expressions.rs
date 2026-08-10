@@ -114,7 +114,12 @@ pub fn put_receipt(
 /// is the condition, not a preceding `Select=COUNT`, so two concurrent creates
 /// at the boundary cannot both win.
 #[must_use]
-pub fn claim_entry(table: &str, workspace: WorkspaceId, kind: RegistryKind, cap: u64) -> UpdateBuilder {
+pub fn claim_entry(
+    table: &str,
+    workspace: WorkspaceId,
+    kind: RegistryKind,
+    cap: u64,
+) -> UpdateBuilder {
     let target = keys::count(workspace, kind);
     Update::builder()
         .table_name(table)
@@ -281,7 +286,10 @@ pub fn settle_ready(table: &str, upload: &Upload) -> Result<UpdateBuilder, Store
                 .to_owned(),
         })?;
     let target = keys::upload(upload.id);
-    let mut assignments = vec!["#state = :ready".to_owned(), "objectEtag = :etag".to_owned()];
+    let mut assignments = vec![
+        "#state = :ready".to_owned(),
+        "objectEtag = :etag".to_owned(),
+    ];
     let mut builder = Update::builder()
         .table_name(table)
         .set_key(Some(key(&target.pk, &target.sk)))
@@ -600,10 +608,11 @@ mod tests {
         assert!(condition.contains("attribute_exists(pk)"));
         assert!(condition.contains("etag = :ifMatch"));
 
-        let unconditional = delete_pointer(TABLE, workspace(), RegistryKind::File, "notes.md", None)
-            .expect("builds")
-            .build()
-            .expect("a complete delete");
+        let unconditional =
+            delete_pointer(TABLE, workspace(), RegistryKind::File, "notes.md", None)
+                .expect("builds")
+                .build()
+                .expect("a complete delete");
         assert_eq!(
             unconditional.condition_expression(),
             Some("attribute_exists(pk)"),

@@ -340,8 +340,17 @@ impl Routes {
                 let key = identity.key.clone();
                 let scope_rendered = scope.render();
                 async move {
-                    self.admit_upload(workspace, size, &body, plan, &scope_rendered, &key, intent, now)
-                        .await
+                    self.admit_upload(
+                        workspace,
+                        size,
+                        &body,
+                        plan,
+                        &scope_rendered,
+                        &key,
+                        intent,
+                        now,
+                    )
+                    .await
                 }
             },
         )
@@ -444,7 +453,10 @@ impl Routes {
         let mut transaction = TransactionPlan::new(format!("upload-create:{}", staged.id));
         transaction.put(
             Participant::REGISTRY_UPLOAD,
-            immutable_put(ports.registry_table, aex_registry_dynamodb::codec::encode_upload(&staged).head),
+            immutable_put(
+                ports.registry_table,
+                aex_registry_dynamodb::codec::encode_upload(&staged).head,
+            ),
         )?;
         transaction.put(
             Participant::WORK_NEXT_WAKE,
@@ -489,7 +501,8 @@ impl Routes {
             })
             .collect::<WireResult<Vec<_>>>()?;
 
-        let commit = upload::grant_parts(&stored, &requests, now).map_err(|error| refuse(&error))?;
+        let commit =
+            upload::grant_parts(&stored, &requests, now).map_err(|error| refuse(&error))?;
         let ports = self.upload_ports();
         ports
             .registry
@@ -579,7 +592,8 @@ impl Routes {
                 etag: part.etag.as_str().to_owned(),
             })
             .collect();
-        let begun = upload::begin_complete(&stored, &receipts, now).map_err(|error| refuse(&error))?;
+        let begun =
+            upload::begin_complete(&stored, &receipts, now).map_err(|error| refuse(&error))?;
         let intent_hash = completion_intent_hash(&begun.upload);
         let ports = self.upload_ports();
         ports
@@ -667,9 +681,13 @@ impl Routes {
                 upload_id: stored.provider_upload_id.clone(),
             };
             // S3 first, then the conditional write that records it.
-            ports.objects.abort_multipart(&handle).await.map_err(|error| {
-                WireError::new(ErrorCode::InternalError).with_message(error.to_string())
-            })?;
+            ports
+                .objects
+                .abort_multipart(&handle)
+                .await
+                .map_err(|error| {
+                    WireError::new(ErrorCode::InternalError).with_message(error.to_string())
+                })?;
             let aborted = upload::abort(&stored, now).map_err(|error| refuse(&error))?;
             return ports
                 .registry
@@ -700,9 +718,13 @@ impl Routes {
                         })?,
                         upload_id: stored.provider_upload_id.clone(),
                     };
-                    ports.objects.abort_multipart(&handle).await.map_err(|error| {
-                        WireError::new(ErrorCode::InternalError).with_message(error.to_string())
-                    })?;
+                    ports
+                        .objects
+                        .abort_multipart(&handle)
+                        .await
+                        .map_err(|error| {
+                            WireError::new(ErrorCode::InternalError).with_message(error.to_string())
+                        })?;
                     ports
                         .registry
                         .transition_upload_fenced(
@@ -755,9 +777,9 @@ fn completion_intent_hash(upload: &Upload) -> String {
 /// Sizes come from the plan and digests from the declarations, which is why the
 /// completion request carries only `{partNumber, etag}` (E D-9).
 fn completion_manifest(upload: &Upload) -> WireResult<CompletionManifest> {
-    let declared = upload
-        .declared_parts()
-        .map_err(|error| WireError::new(ErrorCode::InvalidRequest).with_message(error.to_string()))?;
+    let declared = upload.declared_parts().map_err(|error| {
+        WireError::new(ErrorCode::InvalidRequest).with_message(error.to_string())
+    })?;
     let mut parts = Vec::with_capacity(declared.len());
     for (number, bytes, digest) in declared {
         let etag = upload
@@ -844,9 +866,7 @@ impl aex_wire::server::UploadsApi for Routes {
         _cx: &aex_wire::server::RequestContext,
         body: models::UploadCreateRequest,
     ) -> WireResult<aex_wire::server::Created<models::Upload>> {
-        self.stage_upload(body)
-            .await
-            .map(aex_wire::server::Created)
+        self.stage_upload(body).await.map(aex_wire::server::Created)
     }
 
     async fn upload_parts_grant(

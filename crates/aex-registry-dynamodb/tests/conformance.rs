@@ -107,9 +107,10 @@ async fn a_first_write_of_a_name_is_one_transaction_conditional_on_its_absence()
         pointer_put["Item"]["valueKind"].is_null() && pointer_put["Item"]["valueId"].is_null(),
         "a durable pointer names a digest and nothing else (D-15)"
     );
-    assert_eq!(pointer_put["Item"]["pk"]["S"].as_str().map(str::to_owned), {
-        Some(keys::kind_partition(workspace(), RegistryKind::Tool))
-    });
+    assert_eq!(
+        pointer_put["Item"]["pk"]["S"].as_str().map(str::to_owned),
+        { Some(keys::kind_partition(workspace(), RegistryKind::Tool)) }
+    );
     let claim = &actions[1]["Update"];
     assert_eq!(
         claim["ConditionExpression"].as_str(),
@@ -259,7 +260,9 @@ async fn a_completion_begins_under_a_manifest_identity() {
     // deterministic rather than dependent on the client resending identical input.
     assert_eq!(
         body["UpdateExpression"].as_str(),
-        Some("SET #state = :completing, completionIntentHash = :hash, completionManifest = :manifest")
+        Some(
+            "SET #state = :completing, completionIntentHash = :hash, completionManifest = :manifest"
+        )
     );
 }
 

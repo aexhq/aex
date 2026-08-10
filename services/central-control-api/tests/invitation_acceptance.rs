@@ -41,8 +41,8 @@ use aex_identity_app::ports::{Clock, IdFactory, PepperKeystore, PepperPurpose};
 use aex_identity_domain::credential::SecretRng;
 use aex_identity_domain::{Pepper, PepperVersion};
 use aex_wire::error::ErrorCode;
-use aex_wire::ids::{OrganizationId, PrefixedId, UserId, Uuid7};
 use aex_wire::idempotency::PrincipalScope;
+use aex_wire::ids::{OrganizationId, PrefixedId, UserId, Uuid7};
 use aex_wire::models::{EmptyRequest, OrganizationRole};
 use aex_wire::routes::RouteId;
 use aex_wire::server::{AcceptKind, OrganizationsApi, RequestContext};
@@ -655,7 +655,10 @@ async fn a_principal_with_no_identity_row_is_refused() {
     // A credential resolved to a user that `identity.user` does not hold is not
     // an empty acceptance, it is an incoherent request. There is no address to
     // select on, so there is nothing this route could honestly do.
-    let store = Store::new(None, vec![invitation(INVITE_A, ORG_A, MINE, OrgRole::Member)]);
+    let store = Store::new(
+        None,
+        vec![invitation(INVITE_A, ORG_A, MINE, OrgRole::Member)],
+    );
     let error = service(&store)
         .invitation_accept(&context(), EmptyRequest {})
         .await
@@ -763,4 +766,3 @@ async fn accepting_raises_an_existing_membership_and_never_lowers_one() {
         "an invitation may raise a role and may never lower one"
     );
 }
-

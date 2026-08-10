@@ -536,10 +536,7 @@ impl ContentMetadataStore for ContentStore {
                     // and immutable, so it names the same bytes by construction.
                     return Ok(());
                 }
-                Err(classify(
-                    &error,
-                    Idempotence::Write(Resolution::TargetItem),
-                ))
+                Err(classify(&error, Idempotence::Write(Resolution::TargetItem)))
             }
         }
     }

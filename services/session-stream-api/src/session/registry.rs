@@ -12,27 +12,23 @@
 //! document, so it reports `Replaced` and is written, rather than comparing equal
 //! and being silently discarded.
 
+use aex_content_aws::object_store::PutImmutable;
 use aex_content_domain::identity::RegistryKind;
 use aex_content_dynamodb::codec::{ContentDescriptor, ContentPin, ObjectLocation};
 use aex_content_dynamodb::wire_pending::PinOwner;
-use aex_content_aws::object_store::PutImmutable;
 use aex_regional_http::projection::{ProjectionError, authority_failure};
-use aex_registry_dynamodb::store::{
-    SetCommit, SetCommitted, SetReceipt, SET_RESPONSE_KIND,
-};
+use aex_registry_dynamodb::store::{SET_RESPONSE_KIND, SetCommit, SetCommitted, SetReceipt};
 use aex_session_dynamodb::error::StoreError;
-use aex_session_dynamodb::replay::{
-    IdempotencyScope, RECEIPT_RETENTION, Receipt,
-};
+use aex_session_dynamodb::replay::{IdempotencyScope, RECEIPT_RETENTION, Receipt};
 use aex_wire::error::{ErrorCode, WireError, WireResult};
 use aex_wire::ids::{ContentHash, ResourceName};
 use aex_wire::models;
 use aex_wire::server::{NoContent, WithETag};
 use aex_wire::types::{DecimalU128, Timestamp};
+use aex_workspace_domain::registry::RegistryRejection;
 use aex_workspace_domain::registry::{
     ProposedValue, RegisteredValueRef, RegistryPointer, SetOutcome, ValueDocument, set,
 };
-use aex_workspace_domain::registry::RegistryRejection;
 use aex_workspace_domain::upload::UploadState;
 use serde::Serialize;
 
@@ -112,11 +108,13 @@ impl Routes {
 
         let value_doc = value_document(read)?;
         if value_doc.size_bytes() > self.shared.registry_value_bytes {
-            return Err(WireError::new(ErrorCode::LimitExceeded).with_message(format!(
-                "the canonical value document measures {} bytes; the limit is {}",
-                value_doc.size_bytes(),
-                self.shared.registry_value_bytes
-            )));
+            return Err(
+                WireError::new(ErrorCode::LimitExceeded).with_message(format!(
+                    "the canonical value document measures {} bytes; the limit is {}",
+                    value_doc.size_bytes(),
+                    self.shared.registry_value_bytes
+                )),
+            );
         }
 
         let upload_state = match &payload {
@@ -156,16 +154,19 @@ impl Routes {
             return Ok(WithETag { value, etag });
         }
 
-        let scope = IdempotencyScope::new("registry.set", Some(kind.as_str())).map_err(|error| {
-            WireError::new(ErrorCode::InternalError).with_message(error.to_string())
-        })?;
+        let scope =
+            IdempotencyScope::new("registry.set", Some(kind.as_str())).map_err(|error| {
+                WireError::new(ErrorCode::InternalError).with_message(error.to_string())
+            })?;
         let answer = SetReceipt::of(outcome, &commit.pointer);
         let receipt = Receipt {
             scope: scope.render(),
             key_sha256: aex_session_dynamodb::replay::key_digest(&identity.key),
             intent: aex_wire::idempotency::IntentDigest::from_bytes(identity.intent),
             response_kind: SET_RESPONSE_KIND.to_owned(),
-            response: answer.to_body().map_err(|error| authority_failure(&error))?,
+            response: answer
+                .to_body()
+                .map_err(|error| authority_failure(&error))?,
             committed_at: now,
             expires_at: retention_end(now)?,
         };
@@ -288,9 +289,7 @@ impl Routes {
                                 key: commit.key.as_str().to_owned(),
                                 etag: commit.etag,
                                 checksum_sha256: commit.checksum_sha256.unwrap_or_default(),
-                                checksum_crc64_nvme: commit
-                                    .checksum_crc64_nvme
-                                    .unwrap_or_default(),
+                                checksum_crc64_nvme: commit.checksum_crc64_nvme.unwrap_or_default(),
                                 part_count: commit.part_count,
                                 kms_key_id: self.shared.content_kms_key_id.clone(),
                             }),
@@ -344,9 +343,7 @@ impl Routes {
                     .await
                     .map_err(|error| authority_failure(&error))?
                     .ok_or_else(|| WireError::new(ErrorCode::ContentMissing))?;
-                if upload.state != UploadState::Ready
-                    || upload.declared_sha256 != staged.sha256
-                {
+                if upload.state != UploadState::Ready || upload.declared_sha256 != staged.sha256 {
                     return Err(WireError::new(ErrorCode::ContentMissing));
                 }
                 let descriptor = self
@@ -416,9 +413,8 @@ fn decode_inline(inline: &models::BlobInline) -> WireResult<Vec<u8>> {
 /// When a receipt written now stops being readable (OD-16).
 fn retention_end(now: Timestamp) -> WireResult<Timestamp> {
     let millis = i64::try_from(RECEIPT_RETENTION.as_millis()).unwrap_or(i64::MAX);
-    Timestamp::from_unix_millis(now.unix_millis().saturating_add(millis)).map_err(|error| {
-        WireError::new(ErrorCode::InternalError).with_message(error.to_string())
-    })
+    Timestamp::from_unix_millis(now.unix_millis().saturating_add(millis))
+        .map_err(|error| WireError::new(ErrorCode::InternalError).with_message(error.to_string()))
 }
 
 /// Renders one domain refusal as its declared code.

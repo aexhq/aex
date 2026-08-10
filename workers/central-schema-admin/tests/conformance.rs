@@ -176,5 +176,8 @@ fn a_pepper_seed_can_only_name_one_of_the_four_rows_that_exist() {
     ]);
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("api-key"), "the four values are named: {stderr}");
+    assert!(
+        stderr.contains("api-key"),
+        "the four values are named: {stderr}"
+    );
 }

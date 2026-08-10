@@ -787,10 +787,11 @@ mod tests {
     use aex_wire::types::Timestamp;
 
     use super::{
-        AmbiguityResolution, CompletionEvidence, ExpiryOutcome, HeadOracle, PART_GRANT_MAX_PER_CALL,
-        PART_MAX_BYTES, PART_MAX_COUNT, PART_MIN_BYTES, PartGrantRequest, PartReceipt,
-        RegistrySelector, Upload, UploadError, UploadState, VerifiedObject, abort, begin_complete,
-        consume, expire, finish_complete, grant_parts, plan_parts, resolve_completing,
+        AmbiguityResolution, CompletionEvidence, ExpiryOutcome, HeadOracle,
+        PART_GRANT_MAX_PER_CALL, PART_MAX_BYTES, PART_MAX_COUNT, PART_MIN_BYTES, PartGrantRequest,
+        PartReceipt, RegistrySelector, Upload, UploadError, UploadState, VerifiedObject, abort,
+        begin_complete, consume, expire, finish_complete, grant_parts, plan_parts,
+        resolve_completing,
     };
 
     fn moment(millis: i64) -> Timestamp {
@@ -1157,7 +1158,10 @@ mod tests {
     #[test]
     fn expiry_fires_only_after_the_grace_window() {
         let staged = upload(1_024);
-        assert_eq!(expire(&staged, moment(86_399_999)), ExpiryOutcome::Unchanged);
+        assert_eq!(
+            expire(&staged, moment(86_399_999)),
+            ExpiryOutcome::Unchanged
+        );
         let ExpiryOutcome::Expire(commit) = expire(&staged, moment(86_400_000)) else {
             panic!("a staged upload lapses");
         };
@@ -1185,11 +1189,19 @@ mod tests {
         assert_eq!(expire(&ready, moment(86_400_000)), ExpiryOutcome::DeleteRow);
 
         let aborted = abort(&staged, moment(1)).expect("aborts").upload;
-        assert_eq!(expire(&aborted, moment(86_400_000)), ExpiryOutcome::DeleteRow);
+        assert_eq!(
+            expire(&aborted, moment(86_400_000)),
+            ExpiryOutcome::DeleteRow
+        );
 
         // A consumed row is still named by a registry pointer, so it stays.
-        let consumed = consume(&ready, selector(), moment(3)).expect("consumes").upload;
-        assert_eq!(expire(&consumed, moment(86_400_000)), ExpiryOutcome::Unchanged);
+        let consumed = consume(&ready, selector(), moment(3))
+            .expect("consumes")
+            .upload;
+        assert_eq!(
+            expire(&consumed, moment(86_400_000)),
+            ExpiryOutcome::Unchanged
+        );
     }
 
     #[test]

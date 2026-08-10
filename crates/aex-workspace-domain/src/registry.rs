@@ -450,13 +450,8 @@ mod tests {
             .expect("creates")
             .1
             .pointer;
-        let (outcome, replaced) = set(
-            Some(&created),
-            &proposed_at("/b", b"one"),
-            None,
-            moment(10),
-        )
-        .expect("replaces");
+        let (outcome, replaced) =
+            set(Some(&created), &proposed_at("/b", b"one"), None, moment(10)).expect("replaces");
         assert_eq!(outcome, SetOutcome::Replaced);
         assert!(replaced.wrote);
         assert_eq!(replaced.pointer.row.revision, created.row.revision.next());

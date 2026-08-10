@@ -309,7 +309,10 @@ mod tests {
         // A promoted inline body is signed exactly like any other object: there
         // is no second placement arm and no redemption route to reach one.
         let (grant, pin) = mint(1_024, false, None).expect("mints");
-        assert!(matches!(grant.placement, GrantPlacement::ObjectRange { .. }));
+        assert!(matches!(
+            grant.placement,
+            GrantPlacement::ObjectRange { .. }
+        ));
         assert!(matches!(pin, Pin::Grant { .. }));
         assert_eq!(grant.whole_sha256, ContentDigest::of(b"body"));
     }

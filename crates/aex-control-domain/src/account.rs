@@ -96,10 +96,9 @@ impl AccountPauseCause {
     #[must_use]
     pub const fn published(self) -> AccountPauseReason {
         match self {
-            Self::TopUpRequired
-            | Self::PaymentHold
-            | Self::DisputeHold
-            | Self::AccountClosed => AccountPauseReason::TopUpRequired,
+            Self::TopUpRequired | Self::PaymentHold | Self::DisputeHold | Self::AccountClosed => {
+                AccountPauseReason::TopUpRequired
+            }
         }
     }
 }

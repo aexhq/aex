@@ -131,11 +131,11 @@ impl SetReceipt {
             "createdAt": self.created_at.to_string(),
             "updatedAt": self.updated_at.to_string(),
         });
-        Ok(ReceiptBody::Inline(
-            serde_json::to_vec(&body).map_err(|error| StoreError::Invalid {
+        Ok(ReceiptBody::Inline(serde_json::to_vec(&body).map_err(
+            |error| StoreError::Invalid {
                 detail: error.to_string(),
-            })?,
-        ))
+            },
+        )?))
     }
 }
 
@@ -151,7 +151,10 @@ impl DecodeReceipt for SetReceipt {
             ));
         }
         let ReceiptBody::Inline(bytes) = &receipt.response else {
-            return Err(corrupt("response", "a registry set answer is stored inline"));
+            return Err(corrupt(
+                "response",
+                "a registry set answer is stored inline",
+            ));
         };
         let body: serde_json::Value = serde_json::from_slice(bytes)
             .map_err(|error| corrupt("response", &error.to_string()))?;
@@ -766,9 +769,9 @@ impl RegistryStore for RegistryDynamoStore {
                 if stored.intent != commit.receipt.intent {
                     return Err(StoreError::IdempotencyConflict);
                 }
-                Ok(SetCommitted::Replayed(Box::new(SetReceipt::decode_receipt(
-                    &stored,
-                )?)))
+                Ok(SetCommitted::Replayed(Box::new(
+                    SetReceipt::decode_receipt(&stored)?,
+                )))
             }
             Err(error) => Err(error),
         }
@@ -842,7 +845,9 @@ impl RegistryStore for RegistryDynamoStore {
         } else {
             Vec::new()
         };
-        Ok(Some(codec::decode_upload_blocks(&head, &blocks, workspace)?))
+        Ok(Some(codec::decode_upload_blocks(
+            &head, &blocks, workspace,
+        )?))
     }
 
     async fn create_upload(&self, upload: &Upload) -> Result<(), StoreError> {

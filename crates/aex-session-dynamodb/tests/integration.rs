@@ -68,8 +68,7 @@ use aws_sdk_dynamodb::types::{
 use support::{control, later, now, root_agent, session, tables, workspace};
 
 /// The checked-in generation definition the created table must match.
-const DEFINITION: &str =
-    include_str!("../../../migrations/regional/tables/session-authority.json");
+const DEFINITION: &str = include_str!("../../../migrations/regional/tables/session-authority.json");
 
 fn client(engine: &DynamoDbLocalContainer) -> Client {
     let config = aws_sdk_dynamodb::Config::builder()
@@ -133,8 +132,8 @@ async fn create_table(client: &Client) {
         .iter()
         .map(|index| {
             let declared = index["projection"]["type"].as_str().expect("a projection");
-            let mut projection = Projection::builder()
-                .projection_type(ProjectionType::from(declared));
+            let mut projection =
+                Projection::builder().projection_type(ProjectionType::from(declared));
             if declared == "INCLUDE" {
                 projection = projection.set_non_key_attributes(Some(
                     index["projection"]["attributes"]
@@ -204,8 +203,7 @@ fn entry(seq: u64) -> JournalEntry {
 fn scope() -> IdempotencyScope<'static> {
     static SUBJECT: OnceLock<String> = OnceLock::new();
     let subject = SUBJECT.get_or_init(|| session().to_string());
-    IdempotencyScope::new("session.message", Some(subject.as_str()))
-        .expect("a registered scope")
+    IdempotencyScope::new("session.message", Some(subject.as_str())).expect("a registered scope")
 }
 
 fn replay_key() -> IdempotencyKey {
@@ -264,7 +262,11 @@ async fn a_cancelled_transaction_names_the_participant_that_lost_and_returns_the
         Participant::AGENT_JOURNAL,
         aws_sdk_dynamodb::types::Put::builder()
             .table_name(definition_table())
-            .set_item(Some(codec::encode_journal(session(), root_agent(), &journal)))
+            .set_item(Some(codec::encode_journal(
+                session(),
+                root_agent(),
+                &journal,
+            )))
             .condition_expression(IMMUTABLE),
     )
     .expect("the journal action is planned")
@@ -337,7 +339,10 @@ async fn an_expired_receipt_is_refused_while_its_row_is_demonstrably_still_prese
         .await
         .expect("the read succeeds")
         .expect("a live receipt replays");
-    assert_eq!(live.response, ReceiptBody::Inline(b"{\"runId\":\"run_x\"}".to_vec()));
+    assert_eq!(
+        live.response,
+        ReceiptBody::Inline(b"{\"runId\":\"run_x\"}".to_vec())
+    );
 
     assert!(
         store

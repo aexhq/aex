@@ -36,7 +36,9 @@ use async_trait::async_trait;
 use aws_sdk_rdsdata::types::{Field, SqlParameter};
 use sqlx::pool::PoolConnection;
 use sqlx::postgres::{PgPoolOptions, PgRow};
-use sqlx::{AssertSqlSafe, Column, Executor, PgConnection, PgPool, Postgres, Row as _, TypeInfo as _};
+use sqlx::{
+    AssertSqlSafe, Column, Executor, PgConnection, PgPool, Postgres, Row as _, TypeInfo as _,
+};
 
 use aex_rds_data::client::{ExecuteResponse, Transport, TransportError};
 use aex_rds_data::error::ExceptionKind;

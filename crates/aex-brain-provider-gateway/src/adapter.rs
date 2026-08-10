@@ -428,8 +428,8 @@ mod tests {
         Capability, CapabilitySet, ModelEntry, NamePattern, ToolArgumentEncoding, ToolEncoding,
         ToolPolicy,
     };
-    use aex_model_catalog::primitives::{BoundedString, ToolName};
     use aex_model_catalog::fixture;
+    use aex_model_catalog::primitives::{BoundedString, ToolName};
     use aex_wire::provider::ProviderId;
     use aex_wire::{CanonicalJson, ContentHash};
 
@@ -599,9 +599,7 @@ mod tests {
             let provider = entry.provider;
             let request = tool_bearing_request(entry, parallel);
             assert!(
-                adapter
-                    .build_request(&request.selection, &request)
-                    .is_ok(),
+                adapter.build_request(&request.selection, &request).is_ok(),
                 "{provider} must build a tool-bearing request from the advertised surface"
             );
         }

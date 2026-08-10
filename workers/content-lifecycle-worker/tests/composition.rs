@@ -215,11 +215,8 @@ fn the_upload_expiry_role_reaches_s3_and_still_cannot_delete_an_object() {
         "upload cleanup that could delete an object would eventually delete a          committed body on ambiguous evidence"
     );
     assert!(
-        content_lifecycle_worker::admit_mode(
-            content_lifecycle_worker::Mode::UploadExpiry,
-            true
-        )
-        .is_err(),
+        content_lifecycle_worker::admit_mode(content_lifecycle_worker::Mode::UploadExpiry, true)
+            .is_err(),
         "the delete capability is refused to this role, not merely unused"
     );
 }

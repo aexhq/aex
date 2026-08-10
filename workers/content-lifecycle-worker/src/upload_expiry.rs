@@ -26,8 +26,8 @@ use aex_session_dynamodb::error::StoreError;
 use aex_session_dynamodb::paging::PageBudget;
 use aex_wire::ids::{PrefixedId as _, UploadId, WorkspaceId};
 use aex_wire::types::Timestamp;
-use aex_work_dynamodb::codec::{ReconciliationCursor, WorkRecord};
 use aex_work_dynamodb::claim::WorkClaim;
+use aex_work_dynamodb::codec::{ReconciliationCursor, WorkRecord};
 use aex_work_dynamodb::store::{DueEntry, DuePage, WorkAuthority, WorkStore};
 use aex_workspace_domain::upload::{
     AmbiguityResolution, ExpiryOutcome, HeadOracle, Upload, UploadState, expire, resolve_completing,
@@ -350,8 +350,8 @@ where
         ..UploadExpiryReport::default()
     };
     let mut failures: Vec<String> = Vec::new();
-    let lease_until = Timestamp::from_unix_millis(now.unix_millis() + CLAIM_LEASE_MILLIS)
-        .unwrap_or(now);
+    let lease_until =
+        Timestamp::from_unix_millis(now.unix_millis() + CLAIM_LEASE_MILLIS).unwrap_or(now);
 
     for shard in 0..shards {
         let cursor = match due.load_cursor(shard).await {
@@ -361,7 +361,10 @@ where
                 continue;
             }
         };
-        let page = match due.scan_due_after(shard, now, budget, cursor.as_ref()).await {
+        let page = match due
+            .scan_due_after(shard, now, budget, cursor.as_ref())
+            .await
+        {
             Ok(page) => page,
             // A query failure never advances that shard, so nothing is skipped.
             Err(error) => {
@@ -652,12 +655,8 @@ mod tests {
             declared_digest: Some(ContentDigest::of(b"body")),
             evidence: evidence(),
         });
-        let (outcome, recorded) = sweep(
-            Some(upload(UploadState::Completing)),
-            &store,
-            86_400_000,
-        )
-        .await;
+        let (outcome, recorded) =
+            sweep(Some(upload(UploadState::Completing)), &store, 86_400_000).await;
         assert_eq!(outcome, SweepOutcome::Committed);
         assert_eq!(recorded.writes, vec!["settle_ready".to_owned()]);
         assert!(
@@ -669,12 +668,8 @@ mod tests {
     #[tokio::test]
     async fn an_absent_object_is_aborted_at_the_provider_before_the_row_moves() {
         let store = objects(HeadOracle::Absent);
-        let (outcome, recorded) = sweep(
-            Some(upload(UploadState::Completing)),
-            &store,
-            86_400_000,
-        )
-        .await;
+        let (outcome, recorded) =
+            sweep(Some(upload(UploadState::Completing)), &store, 86_400_000).await;
         assert_eq!(outcome, SweepOutcome::Expired);
         assert_eq!(
             store.aborts.lock().expect("not poisoned").as_slice(),
@@ -690,12 +685,8 @@ mod tests {
     async fn a_failed_abort_writes_nothing_and_re_arms() {
         let mut store = objects(HeadOracle::Absent);
         store.abort_fails = true;
-        let (outcome, recorded) = sweep(
-            Some(upload(UploadState::PartsGranted)),
-            &store,
-            86_400_000,
-        )
-        .await;
+        let (outcome, recorded) =
+            sweep(Some(upload(UploadState::PartsGranted)), &store, 86_400_000).await;
         assert!(matches!(outcome, SweepOutcome::Retry { .. }));
         assert!(outcome.re_arms());
         assert!(
@@ -712,12 +703,8 @@ mod tests {
             declared_digest: Some(ContentDigest::of(b"body")),
             evidence: evidence(),
         });
-        let (outcome, recorded) = sweep(
-            Some(upload(UploadState::Completing)),
-            &store,
-            86_400_000,
-        )
-        .await;
+        let (outcome, recorded) =
+            sweep(Some(upload(UploadState::Completing)), &store, 86_400_000).await;
         assert!(matches!(outcome, SweepOutcome::Integrity { .. }));
         assert!(outcome.re_arms());
         assert!(recorded.writes.is_empty());
@@ -727,12 +714,8 @@ mod tests {
     #[tokio::test]
     async fn an_unavailable_head_decides_nothing() {
         let store = objects(HeadOracle::Unavailable);
-        let (outcome, recorded) = sweep(
-            Some(upload(UploadState::Completing)),
-            &store,
-            86_400_000,
-        )
-        .await;
+        let (outcome, recorded) =
+            sweep(Some(upload(UploadState::Completing)), &store, 86_400_000).await;
         assert!(matches!(outcome, SweepOutcome::Retry { .. }));
         assert!(recorded.writes.is_empty());
         assert!(store.aborts.lock().expect("not poisoned").is_empty());
@@ -741,8 +724,7 @@ mod tests {
     #[tokio::test]
     async fn a_ready_row_past_its_grace_is_reclaimed_without_touching_the_provider() {
         let store = objects(HeadOracle::Absent);
-        let (outcome, recorded) =
-            sweep(Some(upload(UploadState::Ready)), &store, 86_400_000).await;
+        let (outcome, recorded) = sweep(Some(upload(UploadState::Ready)), &store, 86_400_000).await;
         assert_eq!(outcome, SweepOutcome::Deleted);
         assert_eq!(recorded.writes, vec!["delete_row".to_owned()]);
         assert!(store.aborts.lock().expect("not poisoned").is_empty());
@@ -751,12 +733,8 @@ mod tests {
     #[tokio::test]
     async fn a_row_that_is_not_due_yet_writes_nothing() {
         let store = objects(HeadOracle::Absent);
-        let (outcome, recorded) = sweep(
-            Some(upload(UploadState::PartsGranted)),
-            &store,
-            86_399_999,
-        )
-        .await;
+        let (outcome, recorded) =
+            sweep(Some(upload(UploadState::PartsGranted)), &store, 86_399_999).await;
         assert_eq!(outcome, SweepOutcome::Unchanged);
         assert!(recorded.writes.is_empty());
     }
