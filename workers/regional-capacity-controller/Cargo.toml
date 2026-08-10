@@ -46,6 +46,9 @@ thiserror.workspace = true
 time.workspace = true
 tokio.workspace = true
 
+[dev-dependencies]
+aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }
+
 [[test]]
 name = "composition"
 path = "tests/composition.rs"

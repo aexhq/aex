@@ -36,7 +36,15 @@ pub enum CapacityCommand {
         workspace_id: WorkspaceId,
         /// Authority revision the approval was based on.
         expected_revision: u64,
-        /// Monotonic regional headroom/capacity assessment fence.
+        /// Operator-supplied monotone approval sequence.
+        ///
+        /// **Not a headroom measurement.** Nothing assesses regional headroom
+        /// today, and a field that promised one would be publishing a number
+        /// nobody computes. What this is, and all it is, is the counter the
+        /// override runbook holds: every override must strictly advance it, which
+        /// is what serialises two concurrent support actions against one
+        /// workspace. The shape is already right for a real assessor, so one can
+        /// replace the producer later without a schema change.
         capacity_fence: u64,
         /// Stable audited support approval identity.
         approval_id: String,
@@ -51,7 +59,15 @@ pub enum CapacityCommand {
         workspace_id: WorkspaceId,
         /// Authority revision the approval was based on.
         expected_revision: u64,
-        /// Monotonic regional headroom/capacity assessment fence.
+        /// Operator-supplied monotone approval sequence.
+        ///
+        /// **Not a headroom measurement.** Nothing assesses regional headroom
+        /// today, and a field that promised one would be publishing a number
+        /// nobody computes. What this is, and all it is, is the counter the
+        /// override runbook holds: every override must strictly advance it, which
+        /// is what serialises two concurrent support actions against one
+        /// workspace. The shape is already right for a real assessor, so one can
+        /// replace the producer later without a schema change.
         capacity_fence: u64,
         /// Stable audited support approval identity.
         approval_id: String,

@@ -52,15 +52,48 @@ pub trait SigningAdmin: Send + Sync {
     async fn confirm_published(&self, secret_ref: &str) -> Result<(), String>;
 }
 
+/// The regional capacity authority this worker triggers and never writes.
+///
+/// Central owns no limit value, no default and no override. What it owns is the
+/// one moment a workspace first needs a complete effective-limit set — before
+/// its placement becomes visible — so it holds a trigger and nothing else. The
+/// producer sits behind its own Cargo feature and its own IAM keyspace, and
+/// neither of those would help if central could reach a writer from here.
+///
+/// A port rather than the concrete adapter so `tests/composition.rs` can record
+/// **when** the trigger fires relative to the two projection writes. That order
+/// is the entire correctness claim.
+#[async_trait]
+pub trait RegionalCapacity: Send + Sync {
+    /// Materialises one workspace's complete effective-limit set.
+    ///
+    /// `Ok(())` means the set is durable — including when it was already durable
+    /// because somebody else made it so.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted, greppable diagnostic. Every one of them leaves the
+    /// placement unwritten and the outbox row claimable.
+    async fn bootstrap(&self, region: Region, workspace: WorkspaceId) -> Result<(), String>;
+}
+
+#[async_trait]
+impl RegionalCapacity for aex_central_aws::LambdaRegionalCapacity {
+    async fn bootstrap(&self, region: Region, workspace: WorkspaceId) -> Result<(), String> {
+        Self::bootstrap(self, region, workspace)
+            .await
+            .map_err(|error| error.to_string())
+    }
+}
+
 /// The regional authorization projection this worker publishes into.
 ///
 /// A port rather than the concrete [`ProjectionWriter`] for one reason: the
 /// **order** of a provision's regional writes is a contract, and an order is
-/// only assertable if a test can record it. Today the order is profile then
-/// placement, so that a profile row can never be missing behind an admitted
-/// placement; `tests/composition.rs` pins exactly that sequence, which is the
-/// seam a later capacity `Bootstrap` has to be inserted ahead of rather than
-/// beside.
+/// only assertable if a test can record it. The order is capacity bootstrap,
+/// then profile, then placement — placement last, so that neither a profile row
+/// nor an effective-limit set can be missing behind an admitted placement.
+/// `tests/composition.rs` pins exactly that sequence.
 #[async_trait]
 pub trait RegionalProjection: Send + Sync {
     /// Writes the descriptive workspace row.
@@ -204,6 +237,7 @@ impl SigningAdmin for SecretsSigningAdmin {
 pub struct Worker {
     store: Arc<dyn Store>,
     regional: Arc<dyn RegionalControlPort>,
+    capacity: Arc<dyn RegionalCapacity>,
     projections: BTreeMap<Region, Arc<dyn RegionalProjection>>,
     mail: Arc<dyn Mail>,
     signing: Arc<dyn SigningAdmin>,
@@ -245,6 +279,7 @@ impl Worker {
     pub fn new(
         store: Arc<dyn Store>,
         regional: Arc<dyn RegionalControlPort>,
+        capacity: Arc<dyn RegionalCapacity>,
         projections: BTreeMap<Region, Arc<dyn RegionalProjection>>,
         mail: Arc<dyn Mail>,
         signing: Arc<dyn SigningAdmin>,
@@ -256,6 +291,7 @@ impl Worker {
         Self {
             store,
             regional,
+            capacity,
             projections,
             mail,
             signing,
@@ -703,12 +739,35 @@ impl Worker {
             .projections
             .get(&view.workspace.region)
             .ok_or_else(|| "regional_projection_not_configured".to_owned())?;
+        // The capacity bootstrap is the **first** regional write of a provision,
+        // ahead of both projection rows, and this is the one place this worker
+        // takes strong ordering against the plane's eventual-consistency default.
+        //
+        // The reason is that an eventually bootstrapped workspace does not serve
+        // stale limits. The regional admission snapshot reads the edge-limits row
+        // on every request and treats its absence as a self-contradiction, so a
+        // workspace whose placement is visible before its limits exist rejects
+        // its own API key as unknown — a `401` on every request, for as long as
+        // the gap lasts. That is not a stale answer; it is a wrong one, and it
+        // is indistinguishable from a revoked credential to whoever is holding
+        // the key.
+        //
+        // Bootstrap is idempotent, and a workspace that already has a complete
+        // set answers so rather than failing, which is what makes running this
+        // ahead of *every* projection — not only a first provision — free of
+        // consequence and a repair for any workspace that missed it.
+        self.capacity
+            .bootstrap(view.workspace.region, workspace(view.workspace.id)?)
+            .await?;
         writer
             .put_profile(&ProfileWrite {
                 workspace: workspace(view.workspace.id)?,
                 name: view.workspace.name.clone(),
                 slug: view.workspace.slug.as_str().to_owned(),
                 created_at: timestamp(view.workspace.created_at)?,
+                account_revision: view.account.profile.revision,
+                account_changed_at: timestamp(view.account.profile.changed_at)?,
+                account_pause_reason: view.account.profile.reason.clone(),
             })
             .await?;
         writer

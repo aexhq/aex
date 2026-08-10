@@ -452,6 +452,12 @@ impl WorkspaceProjection for ProjectionReader {
 
 /// Decodes cold descriptive workspace facts.
 ///
+/// `accountRevision` and `accountChangedAt` are **strict**: a row written before
+/// they existed fails to decode rather than projecting a partial account state.
+/// That is the intent. A state assembled from a row that does not carry one
+/// would be a guess, and the route that publishes it answers
+/// `account_state_unavailable` for a refusal here rather than inventing `Active`.
+///
 /// # Errors
 ///
 /// [`CodecError`] for a missing, mistyped or foreign-tenant field.
@@ -463,6 +469,9 @@ pub fn decode_profile(item: &Item, asserted: WorkspaceId) -> Result<WorkspacePro
         name: row.string("name")?.to_owned(),
         slug: row.string("slug")?.to_owned(),
         created_at: row.timestamp("createdAt")?,
+        account_revision: row.u64("accountRevision")?,
+        account_changed_at: row.timestamp("accountChangedAt")?,
+        account_pause_reason: row.opt_string("accountPauseReason")?.map(str::to_owned),
     })
 }
 

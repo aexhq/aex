@@ -10,19 +10,20 @@
 //!
 //! # The shared harness
 //!
-//! [`Harness`] records every regional effect in call order. That is here for a
-//! second reader: the capacity-bootstrap ordering constraint needs to assert
-//! that placement is never written before bootstrap applies, and an order can
-//! only be asserted if something records it. Adding that constraint is an edit
-//! to the expected sequence in
-//! [`the_regional_writes_of_one_provision_are_profile_then_placement`], not a
-//! new harness.
+//! [`Harness`] records every regional effect in call order, which is what makes
+//! the capacity-bootstrap ordering constraint assertable at all:
+//! [`the_regional_writes_of_one_provision_are_bootstrap_then_profile_then_placement`]
+//! is the one test that says a placement is never published for a workspace
+//! whose effective-limit set may not exist. There is deliberately one such test
+//! and one such journal — a second harness recording a second order would let
+//! the two disagree about which order production takes.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use aex_control_app::ports::{
-    AcceptInvitationsTx, AccountProfile, BeginWorkspaceDeletionTx, BeginWorkspaceProvisionTx,
+    AcceptInvitationsTx, AccountProjection, BeginWorkspaceDeletionTx,
+    BeginWorkspaceProvisionTx,
     ClaimDueOperations, ClaimOutbox, CompleteWorkspaceDeletionTx, ControlStore, ControlViewStore,
     CreateApiKeyTx, CreateInvitationTx, CreateOrganizationTx, DeleteWorkspaceRequest,
     DeleteWorkspaceResponse, EffectError, FinishWorkspaceProvisionTx, GcExpired, GcReport,
@@ -32,16 +33,19 @@ use aex_control_app::ports::{
     WorkspaceKeyMaterial, WorkspaceView,
 };
 use aex_control_domain::{
-    AccountState, ApiKey, Fence, IntentHash, Invitation, Membership, Operation, OperationKind,
+    AccountProfile, AccountState, ApiKey, Fence, IntentHash, Invitation, Membership, Operation, OperationKind,
     OperationStatus, OperationVisibility, Organization, OutboxMessage, Revision, ScopeSet, Slug,
     Topic, Workspace, WorkspaceStatus,
 };
 use aex_session_dynamodb::projection_write::{
     KeyAuthorizationWrite, PlacementWrite, ProfileWrite,
 };
+use aex_wire::ids::PrefixedId as _;
 use aex_wire::types::Region;
 use async_trait::async_trait;
-use central_control_worker::runtime::{Mail, RegionalProjection, SigningAdmin, Worker};
+use central_control_worker::runtime::{
+    Mail, RegionalCapacity, RegionalProjection, SigningAdmin, Worker,
+};
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
@@ -140,11 +144,13 @@ fn operation(kind: OperationKind, status: OperationStatus) -> Operation {
 fn view(status: WorkspaceStatus) -> WorkspaceView {
     WorkspaceView {
         workspace: workspace(status),
-        account: AccountProfile {
-            state: AccountState::Active,
-            reason: None,
-            revision: 1,
-            changed_at: epoch(),
+        account: AccountProjection {
+            profile: AccountProfile {
+                state: AccountState::Active,
+                reason: None,
+                revision: 1,
+                changed_at: epoch(),
+            },
             epoch: 1,
         },
         workspace_epoch: 1,
@@ -493,7 +499,7 @@ impl ControlViewStore for FakeStore {
     async fn account_profile(
         &self,
         _organization_id: Uuid,
-    ) -> Result<Option<AccountProfile>, StoreError> {
+    ) -> Result<Option<AccountProjection>, StoreError> {
         unreachable!("the worker reads the profile through the workspace view")
     }
 }
@@ -543,6 +549,32 @@ impl RegionalControlPort for FakeRegional {
             Ok(DeleteWorkspaceResponse { removed: true })
         } else {
             Err(EffectError::Unavailable)
+        }
+    }
+}
+
+/// The regional capacity authority.
+///
+/// Records the trigger in the same journal as the two projection writes, so the
+/// relative order of all three is one sequence rather than three separate facts
+/// a reader has to reconcile.
+struct FakeCapacity {
+    journal: Arc<Journal>,
+    available: bool,
+}
+
+#[async_trait]
+impl RegionalCapacity for FakeCapacity {
+    async fn bootstrap(
+        &self,
+        _region: Region,
+        workspace: aex_wire::ids::WorkspaceId,
+    ) -> Result<(), String> {
+        self.journal.record(format!("bootstrap:{workspace}"));
+        if self.available {
+            Ok(())
+        } else {
+            Err("regional_capacity_unavailable".to_owned())
         }
     }
 }
@@ -618,6 +650,7 @@ struct Availability {
     store: bool,
     mail: bool,
     regional: bool,
+    capacity: bool,
 }
 
 impl Default for Availability {
@@ -626,6 +659,7 @@ impl Default for Availability {
             store: true,
             mail: true,
             regional: true,
+            capacity: true,
         }
     }
 }
@@ -660,6 +694,10 @@ impl Harness {
             Arc::new(FakeRegional {
                 journal: Arc::clone(&journal),
                 available: availability.regional,
+            }),
+            Arc::new(FakeCapacity {
+                journal: Arc::clone(&journal),
+                available: availability.capacity,
             }),
             projections,
             Arc::new(FakeMail {
@@ -770,13 +808,8 @@ async fn a_queue_wakeup_drains_the_outbox_without_reading_the_message_body() {
     );
 }
 
-#[tokio::test]
-async fn the_regional_writes_of_one_provision_are_profile_then_placement() {
-    // The shared ordering seam. The invariant this pins today is that a profile
-    // row can never be missing behind an admitted placement, because placement
-    // is written last. A capacity bootstrap that has to precede both is an edit
-    // to `expected` below, and this test fails until it is made.
-    let harness = Harness::with(vec![message(
+fn provision_outbox() -> Vec<OutboxMessage> {
+    vec![message(
         20,
         Topic::WorkspaceProvisionRequested,
         serde_json::json!({
@@ -787,17 +820,91 @@ async fn the_regional_writes_of_one_provision_are_profile_then_placement() {
             "idempotencyId": idempotency_id(),
             "intentHash": intent_hex(),
         }),
-    )]);
-    harness.worker.tick().await.expect("the drain runs");
+    )]
+}
 
-    let expected = vec!["put_profile:fixture", "put_placement:active"];
-    let observed: Vec<String> = harness
+/// Everything this worker writes into a region, in the order it wrote it.
+fn bootstrapped() -> String {
+    let workspace = aex_wire::ids::WorkspaceId::from_uuid7(
+        aex_wire::ids::Uuid7::from_bytes(*workspace_id().as_bytes()).expect("a UUIDv7 fixture"),
+    );
+    format!("bootstrap:{workspace}")
+}
+
+fn regional_effects(harness: &Harness) -> Vec<String> {
+    harness
         .journal
         .entries()
         .into_iter()
-        .filter(|entry| entry.starts_with("put_"))
-        .collect();
-    assert_eq!(observed, expected, "the regional write order changed");
+        .filter(|entry| entry.starts_with("put_") || entry.starts_with("bootstrap:"))
+        .collect()
+}
+
+#[tokio::test]
+async fn the_regional_writes_of_one_provision_are_bootstrap_then_profile_then_placement() {
+    // The ordering seam, and the one place this worker takes strong ordering
+    // against the plane's eventual-consistency default.
+    //
+    // Placement is what makes a workspace visible to the regional edge, and the
+    // edge's admission snapshot reads the effective-limit row on every request
+    // and treats its absence as a self-contradiction. So a placement published
+    // ahead of a bootstrap does not serve stale limits — it answers `401` to
+    // every request the workspace ever makes, with its own API key, for as long
+    // as the gap lasts.
+    //
+    // Profile stays before placement for the same shape of reason it always
+    // did. The sequence below is therefore not a preference; each step is a
+    // precondition of the one after it.
+    let harness = Harness::with(provision_outbox());
+    harness.worker.tick().await.expect("the drain runs");
+
+    assert_eq!(
+        regional_effects(&harness),
+        vec![
+            bootstrapped(),
+            "put_profile:fixture".to_owned(),
+            "put_placement:active".to_owned(),
+        ],
+        "the regional write order changed"
+    );
+}
+
+#[tokio::test]
+async fn a_placement_is_never_written_when_the_capacity_bootstrap_did_not_apply() {
+    // The half the order alone does not prove. A bootstrap that ran first and
+    // failed, followed by a placement written anyway, is byte-for-byte the same
+    // outage as no bootstrap at all — so the refusal has to stop the sequence,
+    // not merely precede it.
+    let harness = Harness::build(
+        provision_outbox(),
+        Availability {
+            capacity: false,
+            ..Availability::default()
+        },
+    );
+    harness
+        .worker
+        .tick()
+        .await
+        .expect("a released row is not a drain failure");
+
+    assert_eq!(
+        regional_effects(&harness),
+        vec![bootstrapped()],
+        "a projection row was published behind a bootstrap that did not apply"
+    );
+    let journal = harness.journal.entries();
+    assert!(
+        journal.iter().any(|entry| entry
+            .starts_with(&format!("released:{}:", provision_outbox()[0].id))
+            && entry.ends_with("regional_capacity_unavailable")),
+        "the failure was not recorded on the row that owns the retry: {journal:?}"
+    );
+    assert_eq!(
+        harness.journal.count("dispatched:"),
+        0,
+        "an incomplete provision was reported as delivered"
+    );
 }
 
 #[tokio::test]

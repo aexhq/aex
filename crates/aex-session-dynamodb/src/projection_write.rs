@@ -52,6 +52,16 @@ pub struct PlacementWrite {
 }
 
 /// Descriptive workspace facts kept off the hot placement row.
+///
+/// The three account fields ride here rather than on the placement row for one
+/// reason: placement is read on **every** request and never cached, while this
+/// row is read only by the cold routes that publish the detail. Central control
+/// already holds the account projection in the same `WorkspaceView` it uses to
+/// write both rows, so carrying them costs no additional read.
+///
+/// The placement row keeps its three-value `status` and its `accountEpoch`,
+/// which is all the hot admission path gates on. What is here is detail *about*
+/// that gate, never a second copy of it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProfileWrite {
     /// Workspace being described.
@@ -62,6 +72,14 @@ pub struct ProfileWrite {
     pub slug: String,
     /// Creation instant.
     pub created_at: Timestamp,
+    /// Finance's monotone account revision, carried by copy so a stale reader
+    /// can always say which revision it is holding.
+    pub account_revision: u64,
+    /// When finance last changed the account state. Not the projection write
+    /// instant, which is a different fact and lives on the placement row.
+    pub account_changed_at: Timestamp,
+    /// The durable pause reason, present exactly when the account is paused.
+    pub account_pause_reason: Option<String>,
 }
 
 /// A monotone API-key authorization projection.
@@ -247,14 +265,22 @@ fn placement_item(write: &PlacementWrite) -> Item {
 }
 
 fn profile_item(write: &ProfileWrite) -> Item {
-    ItemBuilder::new(WORKSPACE_PROFILE)
+    let mut item = ItemBuilder::new(WORKSPACE_PROFILE)
         .set("pk", s(format!("WS#{}", write.workspace)))
         .set("sk", s("PROFILE"))
         .set("workspaceId", s(write.workspace.to_string()))
         .set("name", s(write.name.clone()))
         .set("slug", s(write.slug.clone()))
         .set("createdAt", stamp(write.created_at))
-        .build()
+        .set("accountRevision", n(write.account_revision))
+        .set("accountChangedAt", stamp(write.account_changed_at));
+    // Absent rather than empty when the account is active: an absent reason and
+    // a reason spelled `""` would decode the same way, and one of them is a
+    // paused account whose remedy was lost.
+    if let Some(reason) = &write.account_pause_reason {
+        item = item.set("accountPauseReason", s(reason.clone()));
+    }
+    item.build()
 }
 
 fn key_authorization_item(write: &KeyAuthorizationWrite) -> Item {
