@@ -85,14 +85,29 @@ struct AgentSettlement {
 /// message and the run. Everything else a B1 command writes — the durable
 /// operation row and one settled agent — arrives here.
 ///
-/// The tenant arrives with each action rather than being bound at
-/// construction: [`ExternalActionCompiler`] hands over the binding the regional
-/// edge asserted, and holding a second copy here would be two sources for one
-/// fact that could disagree.
+/// The tenant arrives **both** ways, and that is deliberate.
+/// [`ExternalActionCompiler`] hands over the binding the regional edge
+/// asserted, and this compiler also holds the one it was constructed against.
+/// Two sources for one fact could disagree — so a disagreement is a
+/// `cross_tenant` refusal rather than a silent choice between two tenants,
+/// which is the only answer that cannot pick the wrong one.
 #[derive(Debug, Clone, Copy)]
-pub struct SessionAuthorityExternal;
+pub struct SessionAuthorityExternal {
+    /// The binding this compiler was constructed against.
+    ///
+    /// Held as well as received, so that a root compiler handing down a
+    /// different one is a refusal rather than a silent choice between two
+    /// tenants — see the check in `compile_action`.
+    binding: SessionBinding,
+}
 
 impl SessionAuthorityExternal {
+    /// Binds the foreign compiler to the tenant the request was authorized for.
+    #[must_use]
+    pub const fn new(binding: SessionBinding) -> Self {
+        Self { binding }
+    }
+
     fn operation_write(
         &self,
         tables: &RegionalTables,
@@ -561,7 +576,7 @@ impl<S: HintSink> AuthorityCommitter for DynamoAuthorityCommitter<S> {
             &self.tables,
             plan,
             self.binding,
-            &SessionAuthorityExternal,
+            &SessionAuthorityExternal::new(self.binding),
         )
         .map_err(|error| store_to_commit(&error, plan))?;
 
@@ -1035,7 +1050,7 @@ mod tests {
             &tables(),
             &plan,
             binding,
-            &SessionAuthorityExternal,
+            &SessionAuthorityExternal::new(binding),
         )
         .expect("compiles");
         assert_eq!(compiled.transaction.len(), 2);
@@ -1090,7 +1105,7 @@ mod tests {
             &tables(),
             &plan,
             binding,
-            &SessionAuthorityExternal,
+            &SessionAuthorityExternal::new(binding),
         )
         .expect_err("tenant drift");
         assert!(
@@ -1128,7 +1143,7 @@ mod tests {
             &tables(),
             &plan,
             binding,
-            &SessionAuthorityExternal,
+            &SessionAuthorityExternal::new(binding),
         )
         .expect("compiles");
         assert_eq!(compiled.transaction.len(), 1);
@@ -1370,7 +1385,7 @@ mod tests {
             &tables(),
             &plan,
             binding,
-            &SessionAuthorityExternal,
+            &SessionAuthorityExternal::new(binding),
         )
         .expect_err("an unknown write must never be silently dropped");
         assert!(

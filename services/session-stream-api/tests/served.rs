@@ -2450,7 +2450,13 @@ impl UsageProjectionReads for FakeUsage {
 fn usage_router(usage: Arc<FakeUsage>) -> axum::Router {
     let shared = Arc::new(Shared {
         custody: Arc::new(FakeCustody::default()) as Arc<dyn SecretCustodyStore>,
+        custody_reads: aex_secret_custody_dynamodb::store::CustodyStore::new(
+            offline_dynamodb(),
+            CUSTODY_TABLE,
+        ),
         custody_table: CUSTODY_TABLE.to_owned(),
+        plane: aex_secret_domain::context::Plane::Dev,
+        region: aex_wire::types::Region::EuWest1,
         registry: Arc::new(FakeRegistry::default()) as Arc<dyn RegistryStore>,
         content: Arc::new(aex_content_dynamodb::store::ContentStore::new(
             offline_dynamodb(),
@@ -2481,6 +2487,10 @@ fn usage_router(usage: Arc<FakeUsage>) -> axum::Router {
         authority: offline_dynamodb(),
         usage: usage as Arc<dyn UsageProjectionReads>,
         cursor_keys: Arc::new(cursor_keys()),
+        runtime_activity: aex_runtime_activity_dynamodb::store::RuntimeActivityDynamoStore::new(
+            offline_dynamodb(),
+            RUNTIME_ACTIVITY_TABLE,
+        ),
     });
     mount_unary(
         Arc::new(Dispatcher::new(shared)),
