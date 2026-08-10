@@ -152,6 +152,10 @@ pub struct ScriptedPorts {
 
 impl ScriptedPorts {
     /// Scripts a live, idle session with a root agent and no operations.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the compile-time provider-credential fixture name is invalid.
     #[must_use]
     pub fn idle() -> Self {
         let session = session_fixture();

@@ -86,6 +86,123 @@ pub async fn create_session(
     context: &AppContext<'_>,
     command: &CreateSession,
 ) -> Result<Planned<Session>, AppError> {
+    let prepared = prepare_create(context, command).await?;
+
+    let session_id: SessionId = aex_wire::ids::PrefixedId::from_uuid7(context.ids.next_uuid_v7());
+    let root_agent: AgentId = aex_wire::ids::PrefixedId::from_uuid7(context.ids.next_uuid_v7());
+    let generation: GenerationId =
+        aex_wire::ids::PrefixedId::from_uuid7(context.ids.next_uuid_v7());
+    let now = context.clock.now();
+
+    let pinned = pinned_runtime(
+        context,
+        command,
+        session_id,
+        generation,
+        prepared.size,
+        prepared.network,
+        prepared.limits_revision,
+        &prepared.initial_root,
+    )?;
+
+    let custody = if command
+        .request
+        .credentials
+        .as_ref()
+        .is_some_and(|credentials| !credentials.secrets.is_empty())
+    {
+        Some(prepare_custody(context, command, session_id, now).await?)
+    } else {
+        None
+    };
+
+    let resolved = resolved_config(
+        command,
+        &prepared.qualified,
+        prepared.size,
+        &prepared.selectors,
+    )?;
+    let metadata = command
+        .request
+        .metadata
+        .as_ref()
+        .map(canonical_metadata)
+        .transpose()?;
+
+    let session = Session {
+        id: session_id,
+        workspace: command.workspace,
+        organization: command.organization,
+        status: SessionStatus::Idle,
+        revision: SessionRevision::INITIAL,
+        active_run: None,
+        work_admission: WorkAdmission::Open,
+        cancellation: aex_session_domain::CancellationEpoch::INITIAL,
+        deletion: DeletionGuard::live(session_id),
+        mutation_guard: None,
+        root_agent,
+        // The generation that is *live*. Nothing is running: H-LAZY means the
+        // create makes no provider call at all.
+        generation: None,
+        pinned_runtime: pinned,
+        initial_root: prepared.initial_root,
+        // A new session has persisted nothing. Its durable root is its initial
+        // one, which is what a first persist advances from.
+        persisted_root: prepared.initial_root,
+        persist_revision: aex_session_domain::PersistRevision::INITIAL,
+        last_persisted_at: None,
+        custody_revision: custody
+            .as_ref()
+            .map_or(aex_secret_domain::CustodyRevision::FIRST, |custody| {
+                custody.revision
+            }),
+        lineage: aex_session_domain::Lineage::ROOT,
+        resolved,
+        metadata,
+        created_at: now,
+        updated_at: now,
+    };
+
+    let receipt = IdempotencyReceipt {
+        key: ReceiptKey::of(CREATE_SCOPE, &command.identity).map_err(|_| {
+            AppError::Port(crate::ports::PortError::Corrupt {
+                kind: "idempotency scope",
+                reason: "the create scope is a compile-time constant and must always be usable",
+            })
+        })?,
+        identity: command.identity.clone(),
+        intent: command.identity.intent(),
+        outcome: ReceiptOutcome::Resource {
+            kind: ResourceKind::Session,
+            id: ResourceId(session_id.to_string()),
+            // The bytes that were sent, not a recipe for re-rendering them.
+            response: ResponseBody::of(&crate::projection::canonical_session_bytes(&session)?),
+        },
+        created_at: now,
+    };
+
+    let plan = build_plan(&session, root_agent_record(&session, now), receipt, custody);
+    plan.validate()?;
+
+    Ok(Planned {
+        plan,
+        projected: session,
+    })
+}
+
+struct PreparedCreate {
+    qualified: crate::ports::QualifiedModel,
+    size: ComputeSize,
+    network: aex_runtime_control::generation::NetworkPolicy,
+    limits_revision: u64,
+    selectors: Vec<RegistrySelector>,
+    initial_root: ContentRoot,
+}
+
+async fn prepare_create(
+    context: &AppContext<'_>,
+    command: &CreateSession,
+) -> Result<PreparedCreate, AppError> {
     let projection = context.accounts.projection(command.organization).await?;
     pause_gate(CommandClass::PausableMutation, &projection)?;
 
@@ -143,100 +260,13 @@ pub async fn create_session(
     let selectors = selectors_of(command);
     let initial_root = seal(context, command, &selectors).await?;
 
-    let session_id: SessionId = aex_wire::ids::PrefixedId::from_uuid7(context.ids.next_uuid_v7());
-    let root_agent: AgentId = aex_wire::ids::PrefixedId::from_uuid7(context.ids.next_uuid_v7());
-    let generation: GenerationId =
-        aex_wire::ids::PrefixedId::from_uuid7(context.ids.next_uuid_v7());
-    let now = context.clock.now();
-
-    let pinned = pinned_runtime(
-        context,
-        command,
-        session_id,
-        generation,
+    Ok(PreparedCreate {
+        qualified,
         size,
         network,
-        bundle.revision,
-        &initial_root,
-    )?;
-
-    let custody = if command
-        .request
-        .credentials
-        .as_ref()
-        .is_some_and(|credentials| !credentials.secrets.is_empty())
-    {
-        Some(prepare_custody(context, command, session_id, now).await?)
-    } else {
-        None
-    };
-
-    let resolved = resolved_config(command, &qualified, size, &selectors)?;
-    let metadata = command
-        .request
-        .metadata
-        .as_ref()
-        .map(|metadata| canonical_metadata(metadata))
-        .transpose()?;
-
-    let session = Session {
-        id: session_id,
-        workspace: command.workspace,
-        organization: command.organization,
-        status: SessionStatus::Idle,
-        revision: SessionRevision::INITIAL,
-        active_run: None,
-        work_admission: WorkAdmission::Open,
-        cancellation: aex_session_domain::CancellationEpoch::INITIAL,
-        deletion: DeletionGuard::live(session_id),
-        mutation_guard: None,
-        root_agent,
-        // The generation that is *live*. Nothing is running: H-LAZY means the
-        // create makes no provider call at all.
-        generation: None,
-        pinned_runtime: pinned,
+        limits_revision: bundle.revision,
+        selectors,
         initial_root,
-        // A new session has persisted nothing. Its durable root is its initial
-        // one, which is what a first persist advances from.
-        persisted_root: initial_root,
-        persist_revision: aex_session_domain::PersistRevision::INITIAL,
-        last_persisted_at: None,
-        custody_revision: custody
-            .as_ref()
-            .map_or(aex_secret_domain::CustodyRevision::FIRST, |custody| {
-                custody.revision
-            }),
-        lineage: aex_session_domain::Lineage::ROOT,
-        resolved,
-        metadata,
-        created_at: now,
-        updated_at: now,
-    };
-
-    let receipt = IdempotencyReceipt {
-        key: ReceiptKey::of(CREATE_SCOPE, &command.identity).map_err(|_| {
-            AppError::Port(crate::ports::PortError::Corrupt {
-                kind: "idempotency scope",
-                reason: "the create scope is a compile-time constant and must always be usable",
-            })
-        })?,
-        identity: command.identity.clone(),
-        intent: command.identity.intent(),
-        outcome: ReceiptOutcome::Resource {
-            kind: ResourceKind::Session,
-            id: ResourceId(session_id.to_string()),
-            // The bytes that were sent, not a recipe for re-rendering them.
-            response: ResponseBody::of(&crate::projection::canonical_session_bytes(&session)?),
-        },
-        created_at: now,
-    };
-
-    let plan = build_plan(&session, root_agent_record(&session, now), receipt, custody);
-    plan.validate()?;
-
-    Ok(Planned {
-        plan,
-        projected: session,
     })
 }
 
@@ -557,7 +587,7 @@ fn resolved_config(
             },
             max_disk_gi_b: gibibytes(size.disk_bytes()),
             endpoint_bandwidth_m_bps: megabytes(size.network_bytes_per_second()),
-            max_concurrent_connections: u32::try_from(size.max_connections()).unwrap_or(u32::MAX),
+            max_concurrent_connections: size.max_connections(),
         },
         model: command.request.model.clone(),
         network: models::ResolvedNetwork {
@@ -575,7 +605,7 @@ fn resolved_config(
         registered,
     };
     let canonical = CanonicalJson::parse(&to_jcs_string(&document)?)?;
-    Ok(ResolvedConfigAuthority::new(
+    ResolvedConfigAuthority::new(
         canonical,
         command.request.provider,
         command.request.model.clone(),
@@ -585,7 +615,7 @@ fn resolved_config(
             kind: "resolved configuration",
             reason: "the document this create just built does not match its own projections",
         })
-    })?)
+    })
 }
 
 /// The immutable generation definition the create decides and never revisits.
