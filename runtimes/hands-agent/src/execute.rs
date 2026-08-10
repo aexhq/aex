@@ -467,9 +467,9 @@ impl Executor {
             },
             // Each of these needs something this guest deliberately does not carry:
             // an HTTPS client for the presigned workspace grants, headless Chromium
-            // for the browser capability, and the registered-tool manifest
-            // resolver. Every one fails closed with the reason named, before
-            // anything is spawned.
+            // for the browser capability, and — for a registered tool — an
+            // implementation inside the image. Every one fails closed with the
+            // reason named, before anything is spawned.
             OperationRequest::Materialize { .. } | OperationRequest::Persist { .. } => {
                 Ok(Dispatch::Terminal(Box::new(failed(
                     meta,
@@ -489,7 +489,16 @@ impl Executor {
                 meta,
                 now,
                 "capability_unavailable",
-                "a registered tool is resolved by Brain and dispatched as an Exec",
+                // The retired message claimed Brain resolved a registered tool
+                // into an Exec. Brain does that for the *built-in* catalogue
+                // rows — `aex_brain_hands::encode` maps each one onto a
+                // structured operation — and it is exactly why a built-in never
+                // arrives here. A frame that does arrive here names a tool this
+                // image carries no implementation for, and there is nothing in
+                // the guest that could resolve one.
+                "this image carries no implementation for that registered tool, and the guest \
+                 resolves no tool manifest of its own; the built-in catalogue is mapped onto the \
+                 structured operations before dispatch",
             )))),
             _ => unreachable!("dispatch routes the structured file arms elsewhere"),
         }
