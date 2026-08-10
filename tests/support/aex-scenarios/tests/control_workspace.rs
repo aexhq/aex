@@ -311,6 +311,7 @@ async fn provision(
                 Some(workspace_id),
                 now,
             ),
+            completion_audit_id: Uuid::now_v7(),
             now,
         },
         serde_json::json!({ "resourceId": workspace_id }),

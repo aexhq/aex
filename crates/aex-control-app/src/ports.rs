@@ -198,6 +198,8 @@ pub struct BeginWorkspaceProvisionTx {
     pub outbox: OutboxMessage,
     /// The audit row committed alongside.
     pub audit: AuditEvent,
+    /// The distinct audit identity committed when the workspace becomes visible.
+    pub completion_audit_id: Uuid,
     /// When it happened.
     pub now: OffsetDateTime,
 }

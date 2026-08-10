@@ -268,7 +268,10 @@ impl CreateWorkspace {
             fence: operation.fence,
             idempotency_id: begin.idempotency.id,
             response_body,
-            audit: begin.audit.clone(),
+            audit: aex_control_domain::AuditEvent {
+                id: begin.completion_audit_id,
+                ..begin.audit.clone()
+            },
             now,
         };
         match store.finish_workspace_provision(&finish).await {

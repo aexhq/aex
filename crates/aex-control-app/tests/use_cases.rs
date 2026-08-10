@@ -104,6 +104,7 @@ fn begin() -> BeginWorkspaceProvisionTx {
         idempotency: idempotency(),
         outbox: outbox(),
         audit: audit(),
+        completion_audit_id: Uuid::from_u128(0x42),
         now: at(),
     }
 }
@@ -191,6 +192,7 @@ fn operation(status: OperationStatus) -> Operation {
 struct Script {
     begin: Option<TxOutcome<(Workspace, Operation)>>,
     finish: Option<Result<TxOutcome<Workspace>, StoreError>>,
+    finish_audit_ids: Vec<Uuid>,
     operation: Option<Operation>,
     key: Option<TxOutcome<ApiKey>>,
     calls: Vec<&'static str>,
@@ -208,6 +210,7 @@ impl Store {
                 activated_at: Some(at()),
                 ..provisioning_workspace()
             }))),
+            finish_audit_ids: Vec::new(),
             operation: None,
             key: None,
             calls: Vec::new(),
@@ -228,6 +231,10 @@ impl Store {
 
     fn calls(&self) -> Vec<&'static str> {
         self.0.lock().expect("script").calls.clone()
+    }
+
+    fn finish_audit_ids(&self) -> Vec<Uuid> {
+        self.0.lock().expect("script").finish_audit_ids.clone()
     }
 
     fn record(&self, name: &'static str) {
@@ -306,12 +313,12 @@ impl ControlStore for Store {
 
     async fn finish_workspace_provision(
         &self,
-        _command: &FinishWorkspaceProvisionTx,
+        command: &FinishWorkspaceProvisionTx,
     ) -> Result<TxOutcome<Workspace>, StoreError> {
         self.record("finish");
-        self.0
-            .lock()
-            .expect("script")
+        let mut script = self.0.lock().expect("script");
+        script.finish_audit_ids.push(command.audit.id);
+        script
             .finish
             .clone()
             .expect("a finish answer was programmed")
@@ -486,12 +493,19 @@ fn committed_store() -> Store {
 async fn row_one_the_happy_path_activates_the_workspace() {
     let store = committed_store();
     let regional = Regional::new(Ok(created()));
-    let provisioned = CreateWorkspace::run(&store, &regional, &begin(), body(), at())
+    let command = begin();
+    let provisioned = CreateWorkspace::run(&store, &regional, &command, body(), at())
         .await
         .expect("both halves are durable");
     assert_eq!(provisioned.workspace.status, WorkspaceStatus::Active);
     assert!(provisioned.workspace.is_publicly_visible());
     assert_eq!(store.calls(), vec!["begin", "finish"]);
+    assert_ne!(
+        store.finish_audit_ids(),
+        vec![command.audit.id],
+        "the two provisioning transactions must not insert the same audit primary key"
+    );
+    assert_eq!(store.finish_audit_ids(), vec![command.completion_audit_id]);
 }
 
 #[tokio::test]

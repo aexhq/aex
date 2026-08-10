@@ -721,6 +721,7 @@ impl WorkspacesApi for ControlService {
                     }),
                 },
             )?,
+            completion_audit_id: self.ids.next(),
             now: self.now(),
         };
         let created = CreateWorkspace::run(
