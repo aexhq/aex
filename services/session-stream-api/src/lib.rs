@@ -32,6 +32,7 @@
 
 pub mod capability;
 pub mod config;
+pub mod frontier;
 pub mod session;
 pub mod stream;
 

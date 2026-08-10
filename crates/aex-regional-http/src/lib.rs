@@ -23,6 +23,7 @@ pub mod drain;
 pub mod edge;
 pub mod envelope;
 pub mod error;
+pub mod frontier;
 pub mod health;
 pub mod idempotency;
 pub mod limits;
