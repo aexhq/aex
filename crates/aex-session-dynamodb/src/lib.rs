@@ -41,6 +41,8 @@
 //!   effective-limit transport. It owns no defaults or override policy.
 
 #[cfg(feature = "session-authority")]
+pub mod app_authority;
+#[cfg(feature = "session-authority")]
 pub mod application_plan;
 pub mod attr;
 #[cfg(feature = "session-authority")]

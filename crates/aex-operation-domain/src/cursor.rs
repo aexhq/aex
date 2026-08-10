@@ -11,6 +11,7 @@
 //! must not be able to move a persisted value.
 
 use aex_content_domain::NormalizedPath;
+use aex_wire::ids::{AgentId, PrefixedId as _, Uuid7};
 
 /// The one cursor envelope version.
 pub const CURSOR_VERSION: u16 = 1;
@@ -32,11 +33,20 @@ pub enum CursorKind {
     Gc,
     /// An escalated persist.
     Persist,
+    /// An escalated session stop (D-2): more agents than one bounded batch can
+    /// settle, so the run/head barrier moves only on the final step.
+    Stop,
 }
 
 impl CursorKind {
     /// Every kind, in canonical order.
-    pub const ALL: [Self; 4] = [Self::Purge, Self::Export, Self::Gc, Self::Persist];
+    pub const ALL: [Self; 5] = [
+        Self::Purge,
+        Self::Export,
+        Self::Gc,
+        Self::Persist,
+        Self::Stop,
+    ];
 
     const fn discriminant(self) -> u8 {
         match self {
@@ -44,6 +54,7 @@ impl CursorKind {
             Self::Export => 2,
             Self::Gc => 3,
             Self::Persist => 4,
+            Self::Stop => 5,
         }
     }
 
@@ -53,6 +64,7 @@ impl CursorKind {
             2 => Some(Self::Export),
             3 => Some(Self::Gc),
             4 => Some(Self::Persist),
+            5 => Some(Self::Stop),
             _ => None,
         }
     }
@@ -194,6 +206,15 @@ pub enum CursorPosition {
         /// The next path to consider.
         next_path: NormalizedPath,
     },
+    /// A paged stop, at the next agent to settle.
+    ///
+    /// The position is exclusive of everything already settled and inclusive of
+    /// `next_agent`, so a duplicate step re-reads exactly the same batch and its
+    /// `OperationCursorAt` guard refuses the second commit.
+    Stop {
+        /// The next agent to settle, in canonical agent order.
+        next_agent: AgentId,
+    },
 }
 
 impl CursorPosition {
@@ -205,6 +226,7 @@ impl CursorPosition {
             Self::Export { .. } => CursorKind::Export,
             Self::Gc { .. } => CursorKind::Gc,
             Self::Persist { .. } => CursorKind::Persist,
+            Self::Stop { .. } => CursorKind::Stop,
         }
     }
 }
@@ -279,6 +301,9 @@ impl ContinuationCursor {
             CursorPosition::Persist { next_path } => {
                 push_bytes(&mut out, next_path.as_bytes());
             }
+            CursorPosition::Stop { next_agent } => {
+                out.extend_from_slice(next_agent.uuid7().as_bytes());
+            }
         }
         out.extend_from_slice(&self.processed.to_le_bytes());
         match self.total_hint {
@@ -339,6 +364,11 @@ impl ContinuationCursor {
                     std::str::from_utf8(reader.bytes()?).map_err(|_| CursorError::Malformed)?,
                 )
                 .map_err(|_| CursorError::Malformed)?,
+            },
+            CursorKind::Stop => CursorPosition::Stop {
+                next_agent: AgentId::from_uuid7(
+                    Uuid7::from_bytes(reader.array::<16>()?).map_err(|_| CursorError::Malformed)?,
+                ),
             },
         };
         let processed = u64::from_le_bytes(reader.array::<8>()?);
@@ -512,6 +542,7 @@ pub const fn page_limit(requested: Option<u16>, effective_max: u16) -> Result<u1
 #[cfg(test)]
 mod tests {
     use aex_content_domain::NormalizedPath;
+    use aex_wire::ids::PrefixedId as _;
 
     use super::{
         CURSOR_MAX_ENCODED_BYTES, ContinuationCursor, CursorError, CursorPosition, ExportMember,
@@ -535,6 +566,12 @@ mod tests {
         });
         out.push(CursorPosition::Persist {
             next_path: NormalizedPath::parse("a/b/c.txt").expect("valid"),
+        });
+        out.push(CursorPosition::Stop {
+            next_agent: aex_wire::ids::AgentId::from_uuid7(aex_wire::ids::Uuid7::compose(
+                1_700_000_000_000,
+                [7; 10],
+            )),
         });
         out
     }

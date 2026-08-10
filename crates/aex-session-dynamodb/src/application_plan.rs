@@ -500,18 +500,18 @@ fn compile_run_check(
 }
 
 #[derive(Default)]
-struct Expression {
-    terms: Vec<String>,
-    names: HashMap<String, String>,
-    values: HashMap<String, AttributeValue>,
+pub(crate) struct Expression {
+    pub(crate) terms: Vec<String>,
+    pub(crate) names: HashMap<String, String>,
+    pub(crate) values: HashMap<String, AttributeValue>,
 }
 
 impl Expression {
-    fn and_literal(&mut self, value: &str) {
+    pub(crate) fn and_literal(&mut self, value: &str) {
         self.terms.push(value.to_owned());
     }
 
-    fn rendered(&self) -> Result<String, StoreError> {
+    pub(crate) fn rendered(&self) -> Result<String, StoreError> {
         if self.terms.is_empty() {
             return Err(StoreError::Invalid {
                 detail: "an authority action carries no condition".to_owned(),
@@ -649,7 +649,7 @@ fn compile_run_status(output: &mut Expression, prefix: &str) {
         .push(format!("{name} IN ({queued}, {running})"));
 }
 
-fn term_eq_u64(output: &mut Expression, prefix: &str, attribute: &str, value: u64) {
+pub(crate) fn term_eq_u64(output: &mut Expression, prefix: &str, attribute: &str, value: u64) {
     let name = format!("#{prefix}");
     let value_name = format!(":{prefix}");
     output.names.insert(name.clone(), attribute.to_owned());
@@ -657,7 +657,12 @@ fn term_eq_u64(output: &mut Expression, prefix: &str, attribute: &str, value: u6
     output.terms.push(format!("{name} = {value_name}"));
 }
 
-fn term_eq_string(output: &mut Expression, prefix: &str, attribute: &str, value: String) {
+pub(crate) fn term_eq_string(
+    output: &mut Expression,
+    prefix: &str,
+    attribute: &str,
+    value: String,
+) {
     let name = format!("#{prefix}");
     let value_name = format!(":{prefix}");
     output.names.insert(name.clone(), attribute.to_owned());
@@ -665,7 +670,7 @@ fn term_eq_string(output: &mut Expression, prefix: &str, attribute: &str, value:
     output.terms.push(format!("{name} = {value_name}"));
 }
 
-fn conditional_put(
+pub(crate) fn conditional_put(
     table: &str,
     item: crate::attr::Item,
     expression: Expression,
@@ -681,7 +686,7 @@ fn conditional_put(
         ))
 }
 
-fn conditional_check(
+pub(crate) fn conditional_check(
     table: &str,
     physical: &crate::keys::Key,
     expression: Expression,
@@ -762,7 +767,7 @@ const fn deletion_state(value: aex_operation_domain::DeletionState) -> &'static 
     }
 }
 
-fn cross_tenant() -> StoreError {
+pub(crate) fn cross_tenant() -> StoreError {
     StoreError::Invalid {
         detail: "a session authority write belongs to another tenant".to_owned(),
     }

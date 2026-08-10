@@ -4302,7 +4302,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The complete session restore authority and command transaction are not implemented.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -4335,6 +4334,7 @@
         "SC-SESSION-ADMIT",
         "SC-SESSION-TERMINAL"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 202,
       "summary": "Admit the durable restore operation, which is legal only inside the recovery window.",
@@ -4422,7 +4422,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The complete session stop authority and command transaction are not implemented.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -4452,6 +4451,7 @@
         "SC-SESSION-ADMIT",
         "SC-SESSION-TERMINAL"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 202,
       "summary": "Admit the durable stop operation.",
@@ -4702,7 +4702,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The complete session trash authority and command transaction are not implemented.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -4734,6 +4733,7 @@
         "SC-SESSION-ADMIT",
         "SC-SESSION-TERMINAL"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 202,
       "summary": "Admit the durable trash operation, which starts the recovery window.",

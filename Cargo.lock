@@ -7246,6 +7246,7 @@ dependencies = [
  "aex-runtime-activity-dynamodb",
  "aex-secret-custody-dynamodb",
  "aex-secret-domain",
+ "aex-session-app",
  "aex-session-domain",
  "aex-session-dynamodb",
  "aex-telemetry-schema",

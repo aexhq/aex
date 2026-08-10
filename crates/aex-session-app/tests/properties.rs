@@ -6,6 +6,8 @@
 
 use std::collections::BTreeSet;
 
+use aex_operation_domain::cursor::CursorPosition;
+use aex_operation_domain::operation::OperationStatus;
 use aex_secret_domain::context::Plane;
 use aex_secret_domain::{
     CiphertextRef, CustodyRevision, EncryptionContext, OwnerKeyEdgeId, SecretName,
@@ -13,6 +15,7 @@ use aex_secret_domain::{
 };
 use aex_session_app::plan::{Condition, TransactionIntent, Write};
 use aex_session_app::testing::{CountingIds, FixedClock, PortCall, ScriptedPorts, fixture_spend};
+use aex_session_app::use_cases::STOP_BATCH_AGENTS;
 use aex_session_app::{
     AppError, MAX_ACTIONS, Planned, Rebind, SendMessage, SessionCommand, SessionTransaction,
     StartRun, admit_message, purge_session, rebind_credentials, restore_session, start_run,
@@ -276,6 +279,7 @@ fn condition_tag(condition: &Condition) -> &'static str {
         Condition::GrantUnexpired { .. } => "GrantUnexpired",
         Condition::PersistRoot { .. } => "PersistRoot",
         Condition::OperationFence { .. } => "OperationFence",
+        Condition::OperationCursorAt { .. } => "OperationCursorAt",
         Condition::SecretRevocationEpoch { .. } => "SecretRevocationEpoch",
         Condition::CustodyRevision { .. } => "CustodyRevision",
         Condition::ItemAbsent(_) => "ItemAbsent",
@@ -597,5 +601,195 @@ async fn rebind_replay_does_not_advance_custody_or_repeat_any_custody_read() {
         !replay_ports
             .calls()
             .contains(&PortCall::Read("read_custody"))
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Paged stop — defect 9/10: the landed use case read one 100-agent page,
+// ignored `more`, and idled the head regardless, so a session with more agents
+// than one page kept spending after the customer was told it had stopped.
+// ---------------------------------------------------------------------------
+
+fn written_head(plan: &SessionTransaction) -> aex_session_domain::Session {
+    plan.writes
+        .iter()
+        .find_map(|write| match write {
+            Write::PutSessionHead(head) => Some((**head).clone()),
+            _ => None,
+        })
+        .expect("every stop step writes the head")
+}
+
+fn cancelled_agents(plan: &SessionTransaction) -> usize {
+    plan.writes
+        .iter()
+        .filter(|write| matches!(write, Write::CancelAgent { .. }))
+        .count()
+}
+
+#[tokio::test]
+async fn a_paged_stop_yields_a_continued_operation_and_idles_only_on_the_final_step() {
+    let overflow = STOP_BATCH_AGENTS + 5;
+    // A running session, so "the head reaches Idle only on the final step" is a
+    // real observation rather than a fixture that was already idle.
+    let (running, _run, _agent, _message) = aex_session_domain::testing::running_session();
+    let ports = ScriptedPorts::idle()
+        .with_active_agents(overflow)
+        .with_session(running);
+    let clock = clock();
+    let ids = CountingIds::default();
+    let context = ports.context(&clock, &ids);
+    let before = ports.session().clone();
+
+    let first = stop_session(&context, &session_command(30))
+        .await
+        .expect("admits");
+
+    // The operation is continued, not a silently truncated inline success.
+    assert_eq!(
+        first.projected.status,
+        OperationStatus::Running,
+        "a stop that could not finish must not be reported as done"
+    );
+    assert!(
+        first.projected.result.is_none(),
+        "no result is published before the final page is consumed"
+    );
+    assert!(
+        first.projected.committed_at.is_some(),
+        "the step that closes the fence is the point of no return (D-2)"
+    );
+    assert!(
+        matches!(
+            first
+                .projected
+                .cursor
+                .as_ref()
+                .map(|cursor| &cursor.position),
+            Some(CursorPosition::Stop { .. })
+        ),
+        "a continued stop parks at a stop cursor, got {:?}",
+        first.projected.cursor
+    );
+
+    // The fence closes on the first step; the head does not idle on it.
+    let first_head = written_head(&first.plan);
+    assert_ne!(
+        first_head.cancellation, before.cancellation,
+        "the cancellation epoch bumps on the first step, or nothing is fenced"
+    );
+    assert_eq!(
+        first_head.status,
+        SessionStatus::Running,
+        "the head must not reach Idle while agents remain"
+    );
+    assert!(
+        first_head.active_run.is_some(),
+        "the run barrier moves only on the final step"
+    );
+    assert_eq!(
+        cancelled_agents(&first.plan),
+        usize::from(STOP_BATCH_AGENTS),
+        "one step settles exactly one bounded batch"
+    );
+    // Defect 10: the plan fits the provider envelope rather than failing
+    // validation as an internal fault.
+    assert!(
+        first.plan.validate().expect("fits").actions <= MAX_ACTIONS,
+        "a stop step must fit the 100-action transaction budget"
+    );
+
+    // The final step.
+    let next = ScriptedPorts::idle()
+        .with_active_agents(overflow)
+        .with_settled_prefix(usize::from(STOP_BATCH_AGENTS))
+        .with_session(first_head.clone())
+        .with_operation(first.projected.clone());
+    let next_context = next.context(&clock, &ids);
+    let last = aex_session_app::continue_stop(&next_context, &session_command(30))
+        .await
+        .expect("steps");
+
+    assert_eq!(
+        last.projected.status,
+        OperationStatus::Succeeded,
+        "only the step that consumes the final page terminalizes"
+    );
+    assert!(last.projected.cursor.is_none(), "the cursor is retired");
+    let last_head = written_head(&last.plan);
+    assert_eq!(
+        last_head.status,
+        SessionStatus::Idle,
+        "the head reaches Idle exactly on the final step"
+    );
+    assert_eq!(
+        last_head.active_run, None,
+        "the run barrier commits with the final step"
+    );
+    assert_eq!(
+        cancelled_agents(&last.plan),
+        5,
+        "the residue the first batch could not reach is settled here"
+    );
+}
+
+#[tokio::test]
+async fn a_stop_that_fits_one_batch_stays_inline_and_idles_at_once() {
+    let ports = ScriptedPorts::idle().with_active_agents(3);
+    let clock = clock();
+    let ids = CountingIds::default();
+    let context = ports.context(&clock, &ids);
+
+    let planned = stop_session(&context, &session_command(31))
+        .await
+        .expect("admits");
+
+    assert_eq!(planned.projected.status, OperationStatus::Succeeded);
+    assert!(planned.projected.cursor.is_none());
+    assert!(planned.projected.committed_at.is_some());
+    assert_eq!(written_head(&planned.plan).status, SessionStatus::Idle);
+    assert_eq!(cancelled_agents(&planned.plan), 3);
+}
+
+#[tokio::test]
+async fn a_stop_step_names_the_cursor_it_advances_from() {
+    let overflow = STOP_BATCH_AGENTS + 2;
+    let ports = ScriptedPorts::idle().with_active_agents(overflow);
+    let clock = clock();
+    let ids = CountingIds::default();
+    let context = ports.context(&clock, &ids);
+    let first = stop_session(&context, &session_command(32))
+        .await
+        .expect("admits");
+
+    let next = ScriptedPorts::idle()
+        .with_active_agents(overflow)
+        .with_settled_prefix(usize::from(STOP_BATCH_AGENTS))
+        .with_session(written_head(&first.plan))
+        .with_operation(first.projected.clone());
+    let next_context = next.context(&clock, &ids);
+    let last = aex_session_app::continue_stop(&next_context, &session_command(32))
+        .await
+        .expect("steps");
+
+    // A duplicate delivery of the same step fails this condition and writes
+    // nothing, which is the whole idempotency argument for a step commit (D-4).
+    let guard = last
+        .plan
+        .conditions
+        .iter()
+        .find_map(|condition| match condition {
+            Condition::OperationCursorAt { expected, .. } => Some(expected.clone()),
+            _ => None,
+        })
+        .expect("a step commit guards the cursor it advances from");
+    assert_eq!(
+        guard.map(|cursor| cursor.position.clone()),
+        first
+            .projected
+            .cursor
+            .as_ref()
+            .map(|cursor| cursor.position.clone()),
+        "the guard names the operation's stored cursor, not the one it writes"
     );
 }

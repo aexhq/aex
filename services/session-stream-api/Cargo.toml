@@ -70,6 +70,10 @@ aex-observation-domain = { path = "../../crates/aex-observation-domain" }
 aex-observation-query = { path = "../../crates/aex-observation-query" }
 aex-observation-store-dynamodb = { path = "../../crates/aex-observation-store-dynamodb" }
 aex-regional-http = { path = "../../crates/aex-regional-http" }
+aex-secret-domain = { path = "../../crates/aex-secret-domain" }
+aex-session-app = { path = "../../crates/aex-session-app" }
+aex-session-domain = { path = "../../crates/aex-session-domain" }
+aex-workspace-domain = { path = "../../crates/aex-workspace-domain" }
 aex-session-dynamodb = { path = "../../crates/aex-session-dynamodb", default-features = false, features = [
     "authz-projection",
     "session-authority",
@@ -88,9 +92,6 @@ thiserror.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-aex-secret-domain = { path = "../../crates/aex-secret-domain" }
-aex-session-domain = { path = "../../crates/aex-session-domain" }
-aex-workspace-domain = { path = "../../crates/aex-workspace-domain" }
 aws-smithy-http-client.workspace = true
 aws-smithy-types.workspace = true
 axum.workspace = true

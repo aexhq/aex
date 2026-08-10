@@ -270,6 +270,18 @@ pub enum Condition {
         /// The expected fence.
         fence: Fence,
     },
+    /// The operation is still parked at exactly this cursor (D-4).
+    ///
+    /// This is what makes a step commit idempotent against a duplicate
+    /// delivery: the condition names the cursor the step advances *from*, so
+    /// the second delivery fails its condition and writes nothing.
+    OperationCursorAt {
+        /// Which operation.
+        operation: OperationId,
+        /// The cursor it must still carry; `None` means "no cursor yet", which
+        /// is the first step of a continued operation.
+        expected: Option<Box<aex_operation_domain::cursor::ContinuationCursor>>,
+    },
     /// The secret's revocation epoch is exactly this.
     SecretRevocationEpoch {
         /// Which workspace.
@@ -313,9 +325,9 @@ impl Condition {
             | Self::AuthorizationEpochAtLeast { .. }
             | Self::PersistRoot { .. } => TableFamily::SessionAuthority,
             Self::RegistryEtag { .. } | Self::UploadState { .. } => TableFamily::Registry,
-            Self::ReservationOpen { .. } | Self::OperationFence { .. } => {
-                TableFamily::WorkAuthority
-            }
+            Self::ReservationOpen { .. }
+            | Self::OperationFence { .. }
+            | Self::OperationCursorAt { .. } => TableFamily::WorkAuthority,
             Self::ContentOwned { .. }
             | Self::RootPinPresent { .. }
             | Self::GrantUnexpired { .. } => TableFamily::ContentAuthority,
@@ -373,7 +385,7 @@ impl Condition {
             }
             Self::RootPinPresent { root } => (format!("{:x?}", root.digest), "ROOT_PIN".to_owned()),
             Self::GrantUnexpired { grant, .. } => (grant.0.to_string(), "GRANT".to_owned()),
-            Self::OperationFence { operation, .. } => {
+            Self::OperationFence { operation, .. } | Self::OperationCursorAt { operation, .. } => {
                 (operation.to_string(), "OPERATION".to_owned())
             }
             Self::SecretRevocationEpoch {
@@ -404,6 +416,28 @@ pub enum Write {
     PutRun(Box<Run>),
     /// Replace an agent control record.
     PutAgentControl(Box<AgentControl>),
+    /// Settle exactly one agent under a session-wide cancellation.
+    ///
+    /// Deliberately narrower than [`Write::PutAgentControl`]. The physical
+    /// `agent_control` row is owned by `aex-brain-store-dynamodb` and its
+    /// schema is that crate's `AgentHead`; `aex_session_domain::AgentControl`
+    /// has **no** row codec anywhere in the tree, so a whole-record put from
+    /// this side would have to invent every attribute it cannot know and would
+    /// silently drop the ones it does not model. This arm names exactly the
+    /// facts the domain cancellation establishes, and the adapter renders it as
+    /// one conditional update that touches nothing else.
+    CancelAgent {
+        /// The owning session, required to locate the physical partition.
+        session: SessionId,
+        /// Which agent.
+        agent: AgentId,
+        /// The revision the row must still carry.
+        from_revision: AgentRevision,
+        /// The revision it moves to.
+        to_revision: AgentRevision,
+        /// When the settlement happened.
+        at: Timestamp,
+    },
     /// Append a journal page.
     AppendJournalPage {
         /// The owning session, required to locate the physical agent partition.
@@ -456,6 +490,7 @@ impl Write {
             | Self::PutAgentControl(_)
             | Self::AppendJournalPage { .. }
             | Self::PutApproval(_)
+            | Self::CancelAgent { .. }
             | Self::PutTombstone(_) => TableFamily::SessionAuthority,
             Self::PutIdempotencyReceipt(_) => TableFamily::Idempotency,
             Self::PutOperation(_) | Self::RedactOperationResult(_) | Self::PutWorkItem(_) => {
@@ -485,6 +520,9 @@ impl Write {
                 format!("{}#{}", agent.session, agent.id),
                 "CONTROL".to_owned(),
             ),
+            Self::CancelAgent { session, agent, .. } => {
+                (format!("{session}#{agent}"), "CONTROL".to_owned())
+            }
             Self::AppendJournalPage { session, page } => (
                 format!("{session}#{}", page.agent),
                 format!("JOURNAL#{}", page.first.0),

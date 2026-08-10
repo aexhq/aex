@@ -839,6 +839,33 @@ fn build_with_operations(
     )
 }
 
+/// The physical `session-authority` name the mount fixture binds.
+const SESSION_TABLE: &str = "dev-eu-west-1-session-authority";
+
+/// A `DynamoDB` client whose transport refuses every request.
+///
+/// The mount assertions here exercise routing and the absence sweep, never a
+/// command's durable effect. A client that answers nothing keeps that honest:
+/// a test that started depending on a stored row would fail rather than pass
+/// against an invented one.
+fn offline_dynamodb() -> aws_sdk_dynamodb::Client {
+    let (http_client, _receiver) = aws_smithy_http_client::test_util::capture_request(None);
+    aws_sdk_dynamodb::Client::from_conf(
+        aws_sdk_dynamodb::Config::builder()
+            .behavior_version(aws_sdk_dynamodb::config::BehaviorVersion::latest())
+            .region(aws_sdk_dynamodb::config::Region::new("eu-west-1"))
+            .credentials_provider(aws_sdk_dynamodb::config::Credentials::new(
+                "AKIDTESTTESTTESTTEST",
+                "test-secret",
+                None,
+                None,
+                "aex-tests",
+            ))
+            .http_client(http_client)
+            .build(),
+    )
+}
+
 fn build_with_authorities(
     custody: Arc<FakeCustody>,
     registry: Arc<FakeRegistry>,
@@ -851,6 +878,12 @@ fn build_with_authorities(
         registry: registry as Arc<dyn RegistryStore>,
         sessions: sessions as Arc<dyn SessionQueries>,
         operations: operations as Arc<dyn OperationApiStore>,
+        commands: aex_session_dynamodb::app_authority::SessionCommandReads::new(
+            offline_dynamodb(),
+            SESSION_TABLE,
+        ),
+        tables: aex_session_dynamodb::plan::RegionalTables::composed("dev", "eu-west-1"),
+        authority: offline_dynamodb(),
         cursor_keys: Arc::new(cursor_keys()),
     });
     let mounted = mount_unary(
@@ -1916,13 +1949,42 @@ fn the_other_half_of_each_split_fragment_is_unreachable_here() {
 
 /// Every served route's declared success status is what the router actually
 /// answers, because the handler never names one.
+///
+/// The handler's *return type* is what the generated dispatcher maps onto a
+/// status — `Accepted` is the route's declared `202`, `Created` its `201`,
+/// `NoContent` its `204` — so a handler that wanted a different status would
+/// have to return a type its trait method does not declare. This asserts the
+/// declared status stays inside that closed set; it deliberately no longer
+/// asserts `200`, which was only ever true while every served route was a read.
 #[test]
 fn no_served_route_lets_a_handler_choose_a_status() {
     for id in Routes::served() {
+        let declared = route(id).success_status;
+        assert!(
+            matches!(declared, 200 | 201 | 202 | 204),
+            "`{id}` declares {declared}, which no handler return type can render"
+        );
+    }
+}
+
+/// The first mounted session mutations answer the durable-operation shape.
+///
+/// `202 Operation` for all three, and the response shape never varies with the
+/// runtime classification: an inline stop returns an already-terminal operation
+/// carrying its result, a paged one returns the same envelope with `status`
+/// still running. Only the `status` field differs (D-3).
+#[test]
+fn the_mounted_session_mutations_are_durable_operation_admissions() {
+    for id in [
+        RouteId::SessionStop,
+        RouteId::SessionTrash,
+        RouteId::SessionRestore,
+    ] {
+        assert!(Routes::served().contains(&id), "`{id}` must be mounted");
         assert_eq!(
             route(id).success_status,
-            200,
-            "`{id}` answers a status the handler cannot name"
+            202,
+            "`{id}` admits a durable operation rather than returning a resource"
         );
     }
 }

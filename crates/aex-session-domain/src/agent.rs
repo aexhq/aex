@@ -310,6 +310,51 @@ pub struct AgentCommit {
     pub changed: bool,
 }
 
+/// The session-level half of a cancellation: the fence, without the per-agent
+/// records.
+///
+/// A paged stop settles its agents over several bounded steps but has to close
+/// the fence on the **first** one, so the two halves cannot be one value.
+/// [`cancel_session_work`] is defined in terms of this, so there is exactly one
+/// answer to "what fence does this cause establish".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionFence {
+    /// The epoch after the cancellation.
+    pub cancellation: CancellationEpoch,
+    /// The admission the session is left in.
+    pub admission: WorkAdmission,
+    /// Whether the fence moved at all.
+    pub changed: bool,
+}
+
+/// The fence a session-wide cancellation establishes.
+///
+/// `has_active_work` is the caller's bounded observation: a paged stop knows
+/// only about the agents in the page it read, and reading the whole session to
+/// answer "is anything still running" is the unbounded scan the paged protocol
+/// exists to avoid. Reporting `true` costs one epoch bump, and the epoch is
+/// monotone, so an extra bump is never wrong.
+#[must_use]
+pub fn cancel_session_fence(
+    session: &Session,
+    cause: CancelCause,
+    has_active_work: bool,
+) -> SessionFence {
+    let target = cause.target_admission();
+    if !has_active_work && session.work_admission == target {
+        return SessionFence {
+            cancellation: session.cancellation,
+            admission: session.work_admission,
+            changed: false,
+        };
+    }
+    SessionFence {
+        cancellation: session.cancellation.next(),
+        admission: target,
+        changed: true,
+    }
+}
+
 /// What a session-wide cancellation produces.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CancelSessionWorkCommit {
@@ -584,7 +629,6 @@ pub fn cancel_session_work(
     named_generation: Option<GenerationId>,
     now: Timestamp,
 ) -> CancelSessionWorkCommit {
-    let target = cause.target_admission();
     let stale_generation = cause == CancelCause::ContinuityLost
         && named_generation.is_some()
         && named_generation != session.generation;
@@ -603,7 +647,8 @@ pub fn cancel_session_work(
         })
         .collect();
 
-    if stale_generation || (active.is_empty() && session.work_admission == target) {
+    let fence = cancel_session_fence(session, cause, !active.is_empty());
+    if stale_generation || !fence.changed {
         return CancelSessionWorkCommit {
             agents: Vec::new(),
             cancellation: session.cancellation,
@@ -630,8 +675,8 @@ pub fn cancel_session_work(
 
     CancelSessionWorkCommit {
         agents: cancelled,
-        cancellation: session.cancellation.next(),
-        admission: target,
+        cancellation: fence.cancellation,
+        admission: fence.admission,
         changed: true,
     }
 }
