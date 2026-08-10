@@ -5,7 +5,7 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use aex_control_app::ports::{
-    AcceptInvitationsTx, AccountProfile, BeginWorkspaceDeletionTx, BeginWorkspaceProvisionTx,
+    AcceptInvitationsTx, AccountProjection, BeginWorkspaceDeletionTx, BeginWorkspaceProvisionTx,
     ClaimDueOperations, ClaimOutbox, CompleteWorkspaceDeletionTx, ControlStore, ControlViewStore,
     CreateApiKeyTx, CreateInvitationTx, CreateOrganizationTx, FinishWorkspaceProvisionTx,
     GcExpired, GcReport, IdempotencyRecordKey, KeyMaterialReader, ListApiKeys, ListOperations,
@@ -23,7 +23,7 @@ use aex_rds_data::{DataApiClient, Isolation, SqlValue, Statement, Transaction};
 
 use crate::error::{map_commit_failure, map_store_error};
 use crate::rows::{
-    AccountProfileRow, AccountStateRow, ApiKeyRow, EpochRow, IdempotencyRow, InvitationRow,
+    AccountProjectionRow, AccountStateRow, ApiKeyRow, EpochRow, IdempotencyRow, InvitationRow,
     MembershipRow, OperationRow, OptionalInstantRow, OrgRoleRow, OrganizationRow, OutboxRow,
     TextRow, UuidRow, WorkspaceKeyMaterialRow, WorkspaceRow,
 };
@@ -2063,9 +2063,9 @@ impl ControlViewStore for AuroraControlStore {
     async fn account_profile(
         &self,
         organization_id: Uuid,
-    ) -> Result<Option<AccountProfile>, StoreError> {
+    ) -> Result<Option<AccountProjection>, StoreError> {
         self.client
-            .query_opt::<AccountProfileRow>(
+            .query_opt::<AccountProjectionRow>(
                 Statement::new(sql::GET_ACCOUNT_PROFILE)
                     .bind("organization_id", SqlValue::Uuid(organization_id)),
             )

@@ -651,6 +651,23 @@ mod tests {
     }
 
     #[test]
+    fn the_settlement_worker_can_open_the_escrow_its_own_claim_joins() {
+        let grants = GrantSet::load(grants_path()).expect("the committed allowlist parses");
+        for privilege in ["SELECT", "INSERT", "UPDATE"] {
+            assert!(
+                grants.declares("aex_finance_settlement", "finance.reservation", privilege),
+                "`CLAIM_FACT` joins an open reservation, so the claimant must be able to open \
+                 one; without {privilege} the claim selects zero rows for every fact ever \
+                 admitted"
+            );
+        }
+        assert!(
+            !grants.declares("aex_finance_settlement", "finance.reservation", "DELETE"),
+            "an escrow is settled, released or voided by transition, never removed"
+        );
+    }
+
+    #[test]
     fn the_cost_reconciler_can_never_write_a_customer_charge() {
         let grants = GrantSet::load(grants_path()).expect("the committed allowlist parses");
         for relation in [

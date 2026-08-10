@@ -96,8 +96,23 @@ name = "finance.enqueue_billing_account_state_change()"
 revoke_public = true
 never_granted = true
 
+# The credit-exhaustion writer. A trigger on `finance.account_balance`, so the
+# rule belongs to the row rather than to whichever of the four balance-writing
+# roles remembers it. Not directly invocable by anything.
+[[function]]
+name = "finance.apply_credit_exhaustion()"
+revoke_public = true
+never_granted = true
+
 [[function]]
 name = "finance.ensure_account(uuid)"
+revoke_public = true
+
+# The one identity fact finance reads, and the only way it can: `aex_finance_api`
+# holds no privilege in `identity` at all, so the address `EnsureCustomer` needs
+# arrives through this wrapper rather than through a grant on `identity.user`.
+[[function]]
+name = "finance.billing_contact_email(uuid)"
 revoke_public = true
 
 # central-identity-api ---------------------------------------------------------
@@ -216,8 +231,12 @@ tables = [
   "finance.provider_effect:SELECT,INSERT,UPDATE",
   "finance.statement:SELECT",
   "control.organization:SELECT",
+  # The published account state. `billing_balance_get` reports the projection
+  # rather than re-deriving one from `billing_account.state` and the live
+  # balance, so that one account has exactly one published operational state.
+  "finance.account_state_v1:SELECT",
 ]
-functions = []
+functions = ["finance.billing_contact_email(uuid)"]
 
 [[role]]
 name = "aex_finance_ingest"
@@ -234,13 +253,19 @@ tables = [
 ]
 functions = []
 
+# finance-settlement-worker ----------------------------------------------------
+# `finance.reservation` carries `INSERT` because the settlement worker is the
+# only role that can open the escrow its own `CLAIM_FACT` joins. Without it the
+# claim selects zero rows for every fact ever admitted, which is not a starved
+# worker but a silent one — and `billing_balance_get.pending_cents`, which sums
+# `settled_microusd` over open and closing reservations, is structurally zero.
 [[role]]
 name = "aex_finance_settlement"
 connect = true
 schemas = ["finance"]
 tables = [
   "finance.usage_inbox:SELECT,INSERT,UPDATE",
-  "finance.reservation:SELECT,UPDATE",
+  "finance.reservation:SELECT,INSERT,UPDATE",
   "finance.reservation_closure:SELECT,INSERT,UPDATE",
   "finance.pricing_context:SELECT",
   "finance.account:SELECT",

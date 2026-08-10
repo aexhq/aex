@@ -6,12 +6,19 @@
 //! [`aex_finance_domain::Microusd::to_cents_exact`], which refuses a sub-cent
 //! remainder rather than rounding it away.
 
-use aex_finance_domain::billing_account::BillingAccountState;
+use aex_control_domain::AccountProfile;
 use aex_finance_domain::money::Microusd;
-use aex_payment_contracts::{EffectId, PaymentCommandEnvelope, PaymentResult, ProviderCustomerRef};
+use aex_payment_contracts::{
+    EffectId, PaymentCommandEnvelope, PaymentResult, ProviderCustomerRef, RedactedEmail,
+};
 use aex_wire::ids::OrganizationId;
 
 /// The prepaid position of one organization, as the projection records it.
+///
+/// It carries money and nothing else. The account's operational state is a
+/// separate read of a separate authority — see [`BillingAuthority::account_profile`]
+/// — because a state derived here from a durable column and the live balance is a
+/// second producer of a fact the control plane already publishes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BalanceRecord {
     /// Spendable now.
@@ -24,10 +31,6 @@ pub struct BalanceRecord {
     pub revision: u64,
     /// When the projection last moved, in epoch milliseconds.
     pub updated_at_millis: i64,
-    /// The account state that decides admission.
-    pub state: BillingAccountState,
-    /// Why the account is not active, when it is not.
-    pub state_reason: Option<String>,
 }
 
 /// The durable automatic top-up policy of one organization.
@@ -94,14 +97,17 @@ pub struct StatementPage {
 }
 
 /// Everything the caller needs to prepare one provider effect.
+///
+/// The provider customer is deliberately not here. `EnsureCustomer` is the one
+/// command whose whole purpose is that no customer exists yet, so a preparation
+/// that demanded one could never prepare it — which is exactly why nothing ever
+/// constructed the command and why `provider_customer_id` had no writer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EffectPreparation {
     /// The effect identity, which is also the provider idempotency key input.
     pub effect: EffectId,
     /// The account the effect belongs to.
     pub organization: OrganizationId,
-    /// The provider customer the effect acts on.
-    pub customer: ProviderCustomerRef,
     /// The canonical intent digest committed with the effect.
     pub intent_hash: [u8; 32],
 }
@@ -154,6 +160,18 @@ pub trait BillingAuthority: Send + Sync + 'static {
     /// Reads the prepaid position of one organization.
     async fn balance(&self, organization: OrganizationId) -> Result<BalanceRecord, AuthorityError>;
 
+    /// Reads the published account state of one organization.
+    ///
+    /// This is `finance.account_state_v1` — the projection finance's own pause
+    /// and resume trigger writes — and it is the sole input to the operational
+    /// state this service publishes. The state can therefore lag the balance
+    /// printed beside it by one trigger, which is the correct semantics: the
+    /// pause is the trigger's fact.
+    async fn account_profile(
+        &self,
+        organization: OrganizationId,
+    ) -> Result<AccountProfile, AuthorityError>;
+
     /// Reads the automatic top-up policy of one organization.
     async fn policy(&self, organization: OrganizationId) -> Result<PolicyRecord, AuthorityError>;
 
@@ -200,6 +218,33 @@ pub trait BillingAuthority: Send + Sync + 'static {
         amount: Option<Microusd>,
         deadline_millis: i64,
     ) -> Result<EffectPreparation, AuthorityError>;
+
+    /// The organization's provider customer, when one has been created.
+    async fn provider_customer(
+        &self,
+        organization: OrganizationId,
+    ) -> Result<Option<ProviderCustomerRef>, AuthorityError>;
+
+    /// The address a provider customer record is created against.
+    ///
+    /// Finance stores no address of its own; this reaches identity through the
+    /// one `SECURITY DEFINER` function it holds `EXECUTE` on.
+    async fn billing_contact(
+        &self,
+        organization: OrganizationId,
+    ) -> Result<RedactedEmail, AuthorityError>;
+
+    /// Closes an `EnsureCustomer` effect and records what it created, atomically.
+    ///
+    /// One commit rather than two, so no window exists in which the effect reads
+    /// `succeeded` and the organization still has no customer. Answers `None`
+    /// when the provider did not succeed; the effect is finalized either way.
+    async fn settle_customer(
+        &self,
+        effect: EffectId,
+        organization: OrganizationId,
+        result: &PaymentResult,
+    ) -> Result<Option<ProviderCustomerRef>, AuthorityError>;
 
     /// Binds the complete admitted command to its already-durable effect.
     ///

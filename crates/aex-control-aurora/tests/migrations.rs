@@ -43,10 +43,14 @@ CREATE ROLE aex_identity_api_login   LOGIN PASSWORD 'fixture'; \
 CREATE ROLE aex_authz_login          LOGIN PASSWORD 'fixture'; \
 CREATE ROLE aex_control_api_login    LOGIN PASSWORD 'fixture'; \
 CREATE ROLE aex_control_worker_login LOGIN PASSWORD 'fixture'; \
+CREATE ROLE aex_finance_api_login    LOGIN PASSWORD 'fixture'; \
+CREATE ROLE aex_finance_ingest_login LOGIN PASSWORD 'fixture'; \
 GRANT aex_identity_api   TO aex_identity_api_login; \
 GRANT aex_authz          TO aex_authz_login; \
 GRANT aex_control_api    TO aex_control_api_login; \
-GRANT aex_control_worker TO aex_control_worker_login;";
+GRANT aex_control_worker TO aex_control_worker_login; \
+GRANT aex_finance_api    TO aex_finance_api_login; \
+GRANT aex_finance_ingest TO aex_finance_ingest_login;";
 
 /// The committed privilege model, parsed once.
 fn grants() -> &'static GrantSet {
@@ -962,5 +966,317 @@ async fn an_organization_with_no_finance_row_reads_as_unavailable_and_never_as_a
     assert_eq!(
         unestablished, "unavailable",
         "a missing finance row is never active; it is `503 account_state_unavailable`"
+    );
+}
+
+/// One organization with its billing account, its creator and one live workspace.
+///
+/// Every finance case below needs the same four rows; assembling them once keeps
+/// the cases about the rule they prove rather than about the fixture.
+async fn organization_with_workspace(
+    connection: &mut PgConnection,
+    seed: u128,
+    slug: &str,
+    email: &str,
+) -> (uuid::Uuid, uuid::Uuid) {
+    let user = uuid::Uuid::from_u128(seed);
+    let organization = uuid::Uuid::from_u128(seed + 1);
+    let workspace = uuid::Uuid::from_u128(seed + 2);
+    let operation = uuid::Uuid::from_u128(seed + 3);
+    sqlx::query(
+        "INSERT INTO identity.user (id, email, status, created_at, updated_at) \
+         VALUES ($1, $2, 'active', now(), now())",
+    )
+    .bind(user)
+    .bind(email)
+    .execute(&mut *connection)
+    .await
+    .expect("person inserts");
+    sqlx::query(
+        "INSERT INTO control.organization \
+           (id, name, slug, created_at, updated_at, created_by_user_id) \
+         VALUES ($1, 'Money', $2, now(), now(), $3)",
+    )
+    .bind(organization)
+    .bind(slug)
+    .bind(user)
+    .execute(&mut *connection)
+    .await
+    .expect("organization inserts");
+    sqlx::query("SELECT finance.ensure_account($1)")
+        .bind(organization)
+        .execute(&mut *connection)
+        .await
+        .expect("the billing account and both balance rows exist");
+    sqlx::query(
+        "INSERT INTO control.workspace \
+           (id, organization_id, name, slug, region, status, provision_operation_id, \
+            provision_fence, created_at, updated_at, activated_at, created_by_user_id) \
+         VALUES ($1, $2, 'Production', 'production', 'eu-west-1', 'active', $3, 1, \
+                 now(), now(), now(), $4)",
+    )
+    .bind(workspace)
+    .bind(organization)
+    .bind(operation)
+    .bind(user)
+    .execute(&mut *connection)
+    .await
+    .expect("workspace inserts");
+    (organization, workspace)
+}
+
+/// Moves the organization's spendable credit to `microusd`.
+///
+/// `customer_available` is credit-normal, so a positive spendable amount is a
+/// negative stored balance. Writing through the projection column is exactly what
+/// `finance-ingest`'s `APPLY_PROJECTION` does when a top-up settles.
+async fn set_available(connection: &mut PgConnection, organization: uuid::Uuid, microusd: i64) {
+    sqlx::query(
+        "UPDATE finance.account_balance b \
+            SET balance_microusd = $2, updated_at = now() \
+           FROM finance.account a \
+          WHERE a.account_id = b.account_id \
+            AND a.org_id = $1 AND a.kind = 'customer_available'",
+    )
+    .bind(organization)
+    .bind(-microusd)
+    .execute(&mut *connection)
+    .await
+    .expect("the balance projection applies");
+}
+
+async fn account_state(
+    connection: &mut PgConnection,
+    organization: uuid::Uuid,
+) -> (String, Option<String>) {
+    sqlx::query_as("SELECT state, state_reason FROM finance.billing_account WHERE org_id = $1")
+        .bind(organization)
+        .fetch_one(&mut *connection)
+        .await
+        .expect("the billing account reads")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn credit_exhaustion_pauses_the_account_and_funding_resumes_it() {
+    let fixture = Fixture::start().await;
+    let mut connection = fixture.superuser().await;
+    let (organization, workspace) = organization_with_workspace(
+        &mut connection,
+        0x0192_3f2a_1c00_7000_8000_0000_0000_0050,
+        "exhaustion",
+        "exhaustion@b.test",
+    )
+    .await;
+
+    // A top-up lands. The account is funded and stays active.
+    set_available(&mut connection, organization, 5_000_000).await;
+    assert_eq!(
+        account_state(&mut connection, organization).await,
+        ("active".to_owned(), None),
+        "a funded account is not paused"
+    );
+
+    // Spend takes it to zero. Nothing calls a domain function and no worker runs:
+    // the rule is attached to the balance row, so it holds for whichever of the
+    // four balance-writing roles moved it.
+    set_available(&mut connection, organization, 0).await;
+    assert_eq!(
+        account_state(&mut connection, organization).await,
+        ("payment_hold".to_owned(), Some("top_up_required".to_owned())),
+        "a customer at zero credit must stop"
+    );
+
+    // The pause is not a local fact. The same transaction advanced the account
+    // epoch and enqueued one projection message per live workspace, which is what
+    // makes the regional edge able to refuse.
+    let payload: serde_json::Value = sqlx::query_scalar(
+        "SELECT payload FROM control.outbox_message \
+          WHERE topic = 'account.state.changed' AND payload->>'workspaceId' = $1",
+    )
+    .bind(workspace.to_string())
+    .fetch_one(&mut connection)
+    .await
+    .expect("the pause enqueued the workspace projection");
+    assert_eq!(payload["organizationId"], organization.to_string());
+    assert_eq!(
+        payload["accountRevision"], 1,
+        "the state change bumped the revision"
+    );
+    let epoch: i64 = sqlx::query_scalar(
+        "SELECT epoch FROM control.authorization_epoch \
+          WHERE subject_kind = 'account' AND subject_id = $1",
+    )
+    .bind(organization)
+    .fetch_one(&mut connection)
+    .await
+    .expect("the account epoch exists");
+    assert_eq!(
+        epoch, 2,
+        "the insert initialized one and the pause advanced it"
+    );
+
+    // Payment before pause: the remedy has to work, so funding resumes without an
+    // operator, and it enqueues its own projection rather than leaving the region
+    // holding the pause.
+    set_available(&mut connection, organization, 2_000_000).await;
+    assert_eq!(
+        account_state(&mut connection, organization).await,
+        ("active".to_owned(), None),
+        "a top-up restores service"
+    );
+    let messages: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM control.outbox_message \
+          WHERE topic = 'account.state.changed' AND payload->>'workspaceId' = $1",
+    )
+    .bind(workspace.to_string())
+    .fetch_one(&mut connection)
+    .await
+    .expect("the projection messages count");
+    assert_eq!(messages, 2, "the resume is projected as well as the pause");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_dispute_hold_is_never_resumed_by_a_payment() {
+    let fixture = Fixture::start().await;
+    let mut connection = fixture.superuser().await;
+    let (organization, _) = organization_with_workspace(
+        &mut connection,
+        0x0192_3f2a_1c00_7000_8000_0000_0000_0060,
+        "dispute",
+        "dispute@b.test",
+    )
+    .await;
+
+    sqlx::query(
+        "UPDATE finance.billing_account \
+            SET state = 'dispute_hold', state_reason = 'dispute_hold' WHERE org_id = $1",
+    )
+    .bind(organization)
+    .execute(&mut connection)
+    .await
+    .expect("the chargeback hold applies");
+
+    // Money arrives. A chargeback is not a shortage, so paying does not clear it —
+    // and the exhaustion arm does not reach it on the way back down either.
+    set_available(&mut connection, organization, 9_000_000).await;
+    assert_eq!(
+        account_state(&mut connection, organization).await,
+        ("dispute_hold".to_owned(), Some("dispute_hold".to_owned())),
+        "a top-up must never hand service back on money that is being reclaimed"
+    );
+    set_available(&mut connection, organization, 0).await;
+    assert_eq!(
+        account_state(&mut connection, organization).await,
+        ("dispute_hold".to_owned(), Some("dispute_hold".to_owned())),
+        "exhaustion must not relabel a hold it did not cause"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_never_funded_account_is_left_alone_until_its_balance_moves() {
+    let fixture = Fixture::start().await;
+    let mut connection = fixture.superuser().await;
+    let (organization, _) = organization_with_workspace(
+        &mut connection,
+        0x0192_3f2a_1c00_7000_8000_0000_0000_0070,
+        "unfunded",
+        "unfunded@b.test",
+    )
+    .await;
+
+    // `finance.ensure_account` inserts both balance rows at zero. Pausing there
+    // would pause every organization at creation, which is a product decision
+    // about the launch credit and not one this trigger may make.
+    assert_eq!(
+        account_state(&mut connection, organization).await,
+        ("active".to_owned(), None),
+        "creation is not exhaustion"
+    );
+    let messages: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM control.outbox_message WHERE topic = 'account.state.changed'",
+    )
+    .fetch_one(&mut connection)
+    .await
+    .expect("the projection messages count");
+    assert_eq!(messages, 0, "no workspace was told anything changed");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn finance_reads_one_identity_column_and_only_through_its_wrapper() {
+    let fixture = Fixture::start().await;
+    let mut superuser = fixture.superuser().await;
+    let (organization, _) = organization_with_workspace(
+        &mut superuser,
+        0x0192_3f2a_1c00_7000_8000_0000_0000_0080,
+        "contact",
+        "owner@b.test",
+    )
+    .await;
+
+    let mut finance = fixture.as_role("aex_finance_api_login").await;
+    let email: String = sqlx::query_scalar("SELECT finance.billing_contact_email($1)")
+        .bind(organization)
+        .fetch_one(&mut finance)
+        .await
+        .expect("the money surface can resolve a billing contact");
+    assert_eq!(email, "owner@b.test");
+
+    // The wrapper is the whole reach. A grant on the table would let the money
+    // surface read every address in the system.
+    let direct = sqlx::query("SELECT email FROM identity.user LIMIT 1")
+        .fetch_optional(&mut finance)
+        .await;
+    assert!(
+        direct.is_err(),
+        "aex_finance_api must hold no privilege in identity"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_pause_crosses_a_privilege_boundary_the_balance_writer_does_not_hold() {
+    let fixture = Fixture::start().await;
+    let mut superuser = fixture.superuser().await;
+    let (organization, workspace) = organization_with_workspace(
+        &mut superuser,
+        0x0192_3f2a_1c00_7000_8000_0000_0000_0090,
+        "ingest-pause",
+        "ingest-pause@b.test",
+    )
+    .await;
+
+    // This is the whole justification for putting the rule on the row. The role
+    // that applies a settled top-up holds `finance` and nothing else: no `control`
+    // schema, no `control.outbox_message`, no epoch wrapper. It cannot write the
+    // pause, cannot bump the epoch and cannot enqueue the projection — and all
+    // three still happen, in its own transaction, because the chain is
+    // `SECURITY DEFINER` from the balance row down.
+    let mut ingest = fixture.as_role("aex_finance_ingest_login").await;
+    assert!(
+        sqlx::query("SELECT 1 FROM control.outbox_message LIMIT 1")
+            .fetch_optional(&mut ingest)
+            .await
+            .is_err(),
+        "the balance writer must hold nothing in control"
+    );
+
+    set_available(&mut ingest, organization, 3_000_000).await;
+    set_available(&mut ingest, organization, 0).await;
+
+    assert_eq!(
+        account_state(&mut superuser, organization).await,
+        ("payment_hold".to_owned(), Some("top_up_required".to_owned())),
+        "a role that cannot write the column still stops the account"
+    );
+    let messages: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM control.outbox_message \
+          WHERE topic = 'account.state.changed' AND payload->>'workspaceId' = $1",
+    )
+    .bind(workspace.to_string())
+    .fetch_one(&mut superuser)
+    .await
+    .expect("the projection messages count");
+    assert_eq!(
+        messages, 1,
+        "the pause reached the region through a role that cannot reach control"
     );
 }

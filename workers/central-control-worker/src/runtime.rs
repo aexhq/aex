@@ -479,7 +479,7 @@ impl Worker {
         if view.workspace.organization_id != payload.organization_id
             || view.workspace.region != payload.region
             || view.account.epoch < payload.account_epoch
-            || view.account.revision < payload.account_revision
+            || view.account.revision() < payload.account_revision
         {
             return Err("account_state_payload_mismatch".to_owned());
         }
@@ -693,7 +693,7 @@ impl Worker {
             WorkspaceStatus::Provisioning => return Err("workspace_not_projectable_yet".to_owned()),
             WorkspaceStatus::Deleting | WorkspaceStatus::Deleted => "deleting",
             WorkspaceStatus::Active
-                if view.account.state == aex_control_domain::AccountState::PausedTopUpRequired =>
+                if view.account.state() == aex_control_domain::AccountState::PausedTopUpRequired =>
             {
                 "paused"
             }

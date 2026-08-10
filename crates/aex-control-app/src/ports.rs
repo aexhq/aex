@@ -5,8 +5,8 @@ use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
 use aex_control_domain::{
-    ApiKey, AuditEvent, Epoch, EpochSubjectKind, IntentHash, Invitation, Membership, Operation,
-    OperationStatus, OrgRole, Organization, OutboxMessage, ScopeSet, Slug, Workspace,
+    AccountProfile, ApiKey, AuditEvent, Epoch, EpochSubjectKind, IntentHash, Invitation, Membership,
+    Operation, OperationStatus, OrgRole, Organization, OutboxMessage, ScopeSet, Slug, Workspace,
 };
 
 pub use aex_identity_app::ports::{
@@ -374,19 +374,33 @@ pub struct MembershipView {
     pub email: String,
 }
 
-/// The lossless public subset of `finance.account_state_v1`.
+/// The published account fact together with the revocation epoch beside it.
+///
+/// The profile is `aex_control_domain`'s, because it is the sole input to the
+/// published operational state and both planes project it through the same
+/// function. The epoch is a `control.authorization_epoch` row read in the same
+/// statement: it is projected onto the placement item and never published, so it
+/// travels beside the profile rather than inside it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AccountProfile {
-    /// Active or paused. An absent profile is unavailable and is not a value here.
-    pub state: aex_control_domain::AccountState,
-    /// Finance's stable state reason, when present.
-    pub reason: Option<String>,
-    /// Monotonic finance revision.
-    pub revision: u64,
-    /// When finance last changed the state.
-    pub changed_at: OffsetDateTime,
-    /// The monotone account revocation epoch projected with the state.
+pub struct AccountProjection {
+    /// What every route publishes.
+    pub profile: AccountProfile,
+    /// The monotone account revocation epoch read with the state.
     pub epoch: u64,
+}
+
+impl AccountProjection {
+    /// The account state, without reaching through the profile.
+    #[must_use]
+    pub const fn state(&self) -> aex_control_domain::AccountState {
+        self.profile.state
+    }
+
+    /// The finance revision the state was read at.
+    #[must_use]
+    pub const fn revision(&self) -> u64 {
+        self.profile.revision
+    }
 }
 
 /// A workspace together with the account state it inherits.
@@ -394,8 +408,8 @@ pub struct AccountProfile {
 pub struct WorkspaceView {
     /// The durable workspace.
     pub workspace: Workspace,
-    /// The owning organization's current account profile.
-    pub account: AccountProfile,
+    /// The owning organization's current account projection.
+    pub account: AccountProjection,
     /// The workspace revocation epoch projected with its lifecycle.
     pub workspace_epoch: u64,
 }
@@ -453,11 +467,11 @@ pub trait ControlViewStore: Send + Sync {
     /// Reads one user's current normalized email.
     async fn user_email(&self, user_id: Uuid) -> Result<Option<String>, StoreError>;
 
-    /// Reads the full public account profile. Absence means unavailable.
+    /// Reads the full public account projection. Absence means unavailable.
     async fn account_profile(
         &self,
         organization_id: Uuid,
-    ) -> Result<Option<AccountProfile>, StoreError>;
+    ) -> Result<Option<AccountProjection>, StoreError>;
 
     /// Resolves the replay row attached to a durable operation. The direct
     /// operation-recovery lane needs this to close a provision even if its
