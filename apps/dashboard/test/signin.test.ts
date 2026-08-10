@@ -16,6 +16,7 @@ import {
   type ProviderId,
 } from "../src/server/signin";
 import { csrfCookie, dashboardSessionCookie, signInStateCookie } from "../src/server/session";
+import { centralBaseUrl, regionalBaseUrl } from "../src/server/upstream";
 
 const VERIFIER = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
 const STATE = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
@@ -49,6 +50,17 @@ describe("provider configuration", () => {
       clientIds: { github: "github-client", google: "google-client" },
     });
     expect(JSON.stringify(config).toLowerCase()).not.toContain("secret");
+  });
+
+  test("the central API origin is explicit and regional traffic stays in its plane", () => {
+    expect(centralBaseUrl({ AEX_CENTRAL_URL: "https://dev-api.aex.dev" }))
+      .toBe("https://dev-api.aex.dev");
+    expect(regionalBaseUrl("euw1", { AEX_CENTRAL_URL: "https://dev-api.aex.dev" }))
+      .toBe("https://eu-west-1.dev-api.aex.dev");
+    expect(regionalBaseUrl("euw1", { AEX_CENTRAL_URL: "https://api.aex.dev" }))
+      .toBe("https://eu-west-1.api.aex.dev");
+    expect(() => centralBaseUrl({})).toThrow("AEX_CENTRAL_URL");
+    expect(() => centralBaseUrl({ AEX_CENTRAL_URL: "" })).toThrow("AEX_CENTRAL_URL");
   });
 
   test("a provider endpoint pins its exact authority, callback and S256 binding", async () => {
