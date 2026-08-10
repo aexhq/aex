@@ -15,6 +15,7 @@ use uuid::Uuid;
 
 use aex_control_app::ports::AuthorizationReader;
 use aex_control_aurora::{AuroraAuthorizationReader, sql};
+use aex_control_domain::{MAX_ACCEPTABLE_INVITATIONS, ScopeSet};
 use aex_rds_data::client::ExecuteResponse;
 use aex_rds_data::{
     DataApiClient, DataApiConfig, DatabaseName, ResourceArn, SecretArn, TransactionId, Transport,
@@ -224,7 +225,14 @@ async fn the_two_workspace_actor_statements_bind_the_same_parameters() {
 }
 
 #[tokio::test]
-async fn both_central_actor_reads_are_one_statement_and_a_session_gets_only_bootstrap_scope() {
+async fn both_central_actor_reads_are_one_statement_and_a_session_gets_only_its_route_scopes() {
+    // A token carries what its row says. A browser session carries what the
+    // *contract* says: exactly the scopes of the routes declaring
+    // `altPrincipal: user_session`, assigned by the adapter because
+    // `RESOLVE_SESSION_CENTRAL` projects an empty array on purpose. That set is
+    // derived from the route table, so this asserts the derivation rather than
+    // a copy of it — and asserts the property that makes the derivation worth
+    // having: a session is strictly narrower than a central token.
     for (session, expected) in [
         (false, sql::RESOLVE_ACCOUNT_TOKEN_CENTRAL),
         (true, sql::RESOLVE_SESSION_CENTRAL),
@@ -247,7 +255,20 @@ async fn both_central_actor_reads_are_one_statement_and_a_session_gets_only_boot
         }
         .expect("the read succeeds")
         .expect("the actor exists");
-        assert_eq!(resolved.scopes.to_strings(), ["account:read"]);
+        if session {
+            assert_eq!(resolved.scopes, ScopeSet::dashboard_session());
+            assert!(
+                !resolved.scopes.is_empty(),
+                "a session that carries nothing can reach no route at all"
+            );
+            assert!(
+                ScopeSet::CENTRAL.contains_all(resolved.scopes)
+                    && resolved.scopes != ScopeSet::CENTRAL,
+                "a browser session is strictly narrower than a central token"
+            );
+        } else {
+            assert_eq!(resolved.scopes.to_strings(), ["account:read"]);
+        }
         assert_eq!(transport.statements(), 1);
         assert_eq!(transport.transactions(), 0);
         let Some(Call::Execute { sql, parameters }) = transport.calls().first().cloned() else {
@@ -255,6 +276,29 @@ async fn both_central_actor_reads_are_one_statement_and_a_session_gets_only_boot
         };
         assert_eq!(sql, expected);
         assert_eq!(parameters, ["credential_id", "now_ms"]);
+    }
+}
+
+#[test]
+fn the_browser_session_scope_set_is_exactly_what_the_contract_declares() {
+    let expected: Vec<&str> = aex_wire::routes::ROUTES
+        .iter()
+        .filter(|route| {
+            route.alt_principal == Some(aex_wire::idempotency::PrincipalKind::UserSession)
+        })
+        .filter_map(|route| route.required_scope)
+        .map(aex_wire::scopes::ScopeId::as_str)
+        .collect();
+    assert!(
+        !expected.is_empty(),
+        "at least one route admits a browser session"
+    );
+    let carried = ScopeSet::dashboard_session().to_strings();
+    for scope in expected {
+        assert!(
+            carried.iter().any(|held| held == scope),
+            "a route admits a browser session without the credential carrying `{scope}`"
+        );
     }
 }
 
@@ -407,6 +451,20 @@ fn every_collection_read_is_bounded() {
             );
         }
     }
+}
+
+#[test]
+fn the_acceptance_limit_matches_the_domain_ceiling() {
+    // SQL here is a string constant and the discipline scan forbids assembling
+    // one at run time, so the selection's `LIMIT` cannot reference the domain
+    // ceiling directly. This is the joint that holds them equal: the route
+    // preassigns exactly that many membership ids, and a selection that read
+    // more rows than the caller preassigned ids for would refuse the whole
+    // acceptance.
+    assert!(
+        sql::FIND_ACCEPTABLE_INVITATIONS.contains(&format!("LIMIT {MAX_ACCEPTABLE_INVITATIONS}")),
+        "the acceptance selection must read at most {MAX_ACCEPTABLE_INVITATIONS} rows"
+    );
 }
 
 #[test]

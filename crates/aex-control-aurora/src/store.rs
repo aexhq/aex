@@ -11,7 +11,7 @@ use aex_control_app::ports::{
     GcExpired, GcReport, IdempotencyRecordKey, KeyMaterialReader, ListApiKeys, ListOperations,
     ListOrganizations, ListWorkspaces, MembershipView, OperationView, OrganizationView, Page,
     PageRequest, ReconcileIdentity, RevokeApiKeyTx, StoreError, TxOutcome, UnknownCommit,
-    WorkspaceKeyMaterial, WorkspaceView,
+    UserIdentity, WorkspaceKeyMaterial, WorkspaceView,
 };
 use aex_control_domain::{
     AccountState, ApiKey, AuditEvent, Fence, Invitation, InvitationStatus, Membership,
@@ -25,7 +25,7 @@ use crate::error::{map_commit_failure, map_store_error};
 use crate::rows::{
     AccountProfileRow, AccountStateRow, ApiKeyRow, EpochRow, IdempotencyRow, InvitationRow,
     MembershipRow, OperationRow, OptionalInstantRow, OrgRoleRow, OrganizationRow, OutboxRow,
-    TextRow, UuidRow, WorkspaceKeyMaterialRow, WorkspaceRow,
+    UserIdentityRow, UuidRow, WorkspaceKeyMaterialRow, WorkspaceRow,
 };
 use crate::sql;
 
@@ -1010,10 +1010,17 @@ impl ControlStore for AuroraControlStore {
             let _ = transaction.rollback().await;
             return Ok(TxOutcome::Replayed(Vec::new()));
         }
-        if command.preassigned_membership_ids.len() != invitations.len() {
+        // At least one id per row, not exactly one. How many invitations a
+        // verified address can redeem is only knowable under the lock this
+        // transaction holds, so a caller that had to supply an exact count
+        // would be racing a count it took a moment earlier; it supplies the
+        // selection's own ceiling instead and a prefix is consumed. Fewer ids
+        // than rows is still fatal — that would silently drop an acceptance.
+        if command.preassigned_membership_ids.len() < invitations.len() {
             let _ = transaction.rollback().await;
             return Err(StoreError::Fatal(
-                "invitation acceptance needs one preassigned membership id per row".to_owned(),
+                "invitation acceptance needs at least one preassigned membership id per row"
+                    .to_owned(),
             ));
         }
         let mut memberships = Vec::with_capacity(invitations.len());
@@ -1054,7 +1061,7 @@ impl ControlStore for AuroraControlStore {
         }
         Self::commit(
             transaction,
-            "control.accept_invitations",
+            aex_control_app::use_cases::ceremony::ACCEPT_INVITATIONS,
             command.user_id,
             memberships,
         )
@@ -1948,10 +1955,13 @@ impl ControlViewStore for AuroraControlStore {
         let page = <Self as ControlStore>::list_memberships(self, organization_id, request).await?;
         let mut items = Vec::with_capacity(page.items.len());
         for membership in page.items {
-            let email = self.user_email(membership.user_id).await?.ok_or_else(|| {
+            let identity = self.user_identity(membership.user_id).await?.ok_or_else(|| {
                 StoreError::Decode("membership names no identity user".to_owned())
             })?;
-            items.push(MembershipView { membership, email });
+            items.push(MembershipView {
+                membership,
+                email: identity.email,
+            });
         }
         Ok(Page {
             items,
@@ -2050,10 +2060,10 @@ impl ControlViewStore for AuroraControlStore {
         })
     }
 
-    async fn user_email(&self, user_id: Uuid) -> Result<Option<String>, StoreError> {
+    async fn user_identity(&self, user_id: Uuid) -> Result<Option<UserIdentity>, StoreError> {
         self.client
-            .query_opt::<TextRow>(
-                Statement::new(sql::GET_USER_EMAIL).bind("user_id", SqlValue::Uuid(user_id)),
+            .query_opt::<UserIdentityRow>(
+                Statement::new(sql::GET_USER_IDENTITY).bind("user_id", SqlValue::Uuid(user_id)),
             )
             .await
             .map(|row| row.map(|row| row.0))

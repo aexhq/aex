@@ -5,18 +5,18 @@ use std::sync::Arc;
 
 use aex_central_http::cursor::{PageBinding, next_cursor, page_request};
 use aex_control_app::ports::{
-    AccountProfile, BeginWorkspaceDeletionTx, BeginWorkspaceProvisionTx, ControlStore,
-    ControlViewStore, CreateApiKeyTx, CreateInvitationTx, CreateOrganizationTx,
+    AcceptInvitationsTx, AccountProfile, BeginWorkspaceDeletionTx, BeginWorkspaceProvisionTx,
+    ControlStore, ControlViewStore, CreateApiKeyTx, CreateInvitationTx, CreateOrganizationTx,
     IdempotencyRecordKey, ListApiKeys, ListOperations, ListOrganizations, ListWorkspaces,
     PageRequest, RegionalControlPort, RevokeApiKeyTx, StoreError,
 };
 use aex_control_app::{
-    CancelOperation, ControlError, CreateApiKey, CreateInvitation, CreateOrganization,
-    CreateWorkspace, DeleteWorkspace, RevokeApiKey,
+    AcceptInvitations, CancelOperation, ControlError, CreateApiKey, CreateInvitation,
+    CreateOrganization, CreateWorkspace, DeleteWorkspace, RevokeApiKey,
 };
 use aex_control_domain::{
     AccountState, ActorKind, ApiKey as DomainApiKey, AuditEvent, AuditOutcome, CursorSecret,
-    IdempotencyKeyKind, IntentHash, Invitation as DomainInvitation,
+    IdempotencyKeyKind, IntentHash, Invitation as DomainInvitation, MAX_ACCEPTABLE_INVITATIONS,
     InvitationStatus as DomainInvitationStatus, MembershipStatus as DomainMembershipStatus,
     OperationStatus as DomainOperationStatus, OrgRole, Organization as DomainOrganization,
     OutboxMessage, PrincipalKindTag, ResourceKind, ScopeKind, ScopeSet as DomainScopeSet, Slug,
@@ -36,10 +36,10 @@ use aex_wire::ids::{
 use aex_wire::models::{
     AccountActiveState, AccountOperationalState, AccountPauseReason, AccountPausedState, ApiKey,
     ApiKeyCreateRequest, ApiKeyPage, ApiKeysListQuery, CentralOperationsListQuery,
-    DashboardBootstrap, EmptyRequest, Invitation, InvitationCreateRequest, InvitationRole,
-    InvitationStatus, Membership, MembershipPage, MembershipStatus, MembershipsListQuery,
-    NewApiKey, Operation, OperationKind, OperationPage, OperationResult, OperationStatus,
-    OperationalStateSource, Organization, OrganizationAccount, OrganizationCreateRequest,
+    DashboardBootstrap, EmptyRequest, Invitation, InvitationAcceptResult, InvitationCreateRequest,
+    InvitationRole, InvitationStatus, Membership, MembershipPage, MembershipStatus,
+    MembershipsListQuery, NewApiKey, Operation, OperationKind, OperationPage, OperationResult,
+    OperationStatus, OperationalStateSource, Organization, OrganizationAccount, OrganizationCreateRequest,
     OrganizationPage, OrganizationRole, OrganizationsListQuery, Workspace, WorkspaceCreateRequest,
     WorkspaceDeleteRequest, WorkspaceOperationalState, WorkspacePage, WorkspaceStatus,
     WorkspaceTombstone, WorkspacesListQuery,
@@ -507,6 +507,83 @@ impl OrganizationsApi for ControlService {
             .await
             .map_err(|error| control_error(cx, error))?;
         Ok(Created(invitation_wire(&invitation)?))
+    }
+
+    /// Redeems every pending invitation addressed to the caller's own verified
+    /// email.
+    ///
+    /// # What identifies the invitation
+    ///
+    /// Nothing the caller sends. `control.invitation` has no token column
+    /// on purpose — acceptance is a verified-email match — so the body is
+    /// empty and the selection is the caller's own address. That also makes
+    /// the route naturally idempotent without a replay identity: the
+    /// selection reads `status = 'pending'`, so a second call finds nothing
+    /// and answers an empty list rather than a conflict.
+    ///
+    /// # Why it resolves no organization
+    ///
+    /// The person redeeming is not a member of the inviting organization yet,
+    /// so there is no membership to authorize against and no role floor that
+    /// would not refuse every legitimate request. Tenant isolation is kept by
+    /// the selection instead: the transaction reads only rows whose `email`
+    /// equals this caller's verified address and takes the organization from
+    /// the row.
+    ///
+    /// # The three refusals
+    ///
+    /// An unverified address is `403 forbidden` here rather than an empty
+    /// success. `AcceptInvitations::run` answers an empty vector for it, which
+    /// is the right shape for the use case and the wrong answer for a caller:
+    /// "you have no invitations" and "your address is not verified, so none of
+    /// them can be redeemed" are different instructions. Expired, revoked and
+    /// already-accepted invitations are not refusals at all — they are simply
+    /// not selected, which is what makes a retry safe.
+    async fn invitation_accept(
+        &self,
+        cx: &RequestContext,
+        _body: EmptyRequest,
+    ) -> WireResult<InvitationAcceptResult> {
+        let user_id = Self::user(cx)?;
+        let identity = self
+            .store
+            .user_identity(user_id)
+            .await
+            .map_err(identity_read_error)?
+            .ok_or_else(|| WireError::new(ErrorCode::Forbidden))?;
+        if !identity.email_verified {
+            return Err(WireError::new(ErrorCode::Forbidden)
+                .with_message("an unverified email address cannot accept an invitation"));
+        }
+        let command = AcceptInvitationsTx {
+            user_id,
+            email: identity.email.clone(),
+            email_verified: true,
+            // The transaction learns how many invitations are acceptable only
+            // under its own lock, so the ceiling is preassigned and a prefix is
+            // consumed. Unused ids are never written anywhere.
+            preassigned_membership_ids: (0..MAX_ACCEPTABLE_INVITATIONS)
+                .map(|_| self.ids.next())
+                .collect(),
+            now: self.now(),
+        };
+        let memberships = AcceptInvitations::run(self.store.as_ref(), &command)
+            .await
+            .map_err(|error| control_error(cx, error))?;
+        Ok(InvitationAcceptResult {
+            memberships: memberships
+                .iter()
+                .map(|membership| {
+                    membership_wire(&aex_control_app::ports::MembershipView {
+                        membership: membership.clone(),
+                        // Every membership this call produced belongs to the
+                        // caller, so the address is the one already read above
+                        // rather than a second read per row.
+                        email: identity.email.clone(),
+                    })
+                })
+                .collect::<WireResult<_>>()?,
+        })
     }
 }
 
@@ -997,10 +1074,11 @@ impl BootstrapApi for ControlService {
             .map_err(store_error)?;
         let email = self
             .store
-            .user_email(user_id)
+            .user_identity(user_id)
             .await
             .map_err(store_error)?
-            .ok_or_else(|| WireError::new(ErrorCode::Forbidden))?;
+            .ok_or_else(|| WireError::new(ErrorCode::Forbidden))?
+            .email;
         let mut accounts = Vec::with_capacity(organizations.items.len());
         for organization in &organizations.items {
             let profile = self
@@ -1224,6 +1302,31 @@ fn store_error(error: StoreError) -> WireError {
         StoreError::Decode(_) | StoreError::Fatal(_) | StoreError::PermissionDenied => {
             WireError::new(ErrorCode::InternalError)
         }
+    }
+}
+
+/// A failed read of `identity.user`, on a route that reads no account state.
+///
+/// [`store_error`] maps an unreachable store to `account_state_unavailable`,
+/// which is true for every route that resolves an organization and false for
+/// `invitation_accept`, which resolves none and never touches `finance`.
+/// Publishing that code here would name a stage the request never reached, so
+/// an unreachable identity authority is `upstream_error` — retryable, and
+/// accurate about what failed.
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "Result::map_err supplies an owned store error"
+)]
+fn identity_read_error(error: StoreError) -> WireError {
+    match error {
+        StoreError::Unavailable | StoreError::Unknown => {
+            WireError::new(ErrorCode::UpstreamError)
+        }
+        StoreError::Conflict { .. } => WireError::new(ErrorCode::ResourceConflict),
+        StoreError::NotFound
+        | StoreError::Decode(_)
+        | StoreError::Fatal(_)
+        | StoreError::PermissionDenied => WireError::new(ErrorCode::InternalError),
     }
 }
 

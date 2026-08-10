@@ -161,7 +161,14 @@ pub struct AcceptInvitationsTx {
     pub email: String,
     /// Whether their address is verified. Acceptance requires `true`.
     pub email_verified: bool,
-    /// Membership ids to use, one per invitation, preassigned.
+    /// Membership ids the transaction may consume, preassigned.
+    ///
+    /// How many invitations a verified address can redeem is only known under
+    /// the lock the transaction takes, so a caller cannot count them first
+    /// without racing itself. It therefore supplies
+    /// [`MAX_ACCEPTABLE_INVITATIONS`](aex_control_domain::MAX_ACCEPTABLE_INVITATIONS)
+    /// ids — the same ceiling the selection reads — and the transaction
+    /// consumes a prefix. Unused ids are simply never written.
     pub preassigned_membership_ids: Vec<Uuid>,
     /// When it happened.
     pub now: OffsetDateTime,
@@ -374,6 +381,20 @@ pub struct MembershipView {
     pub email: String,
 }
 
+/// One person's identity facts, as the control plane is allowed to see them.
+///
+/// The control login holds `SELECT` on `identity.user` and nothing else there,
+/// so this is the whole of it. `email_verified` is projected rather than the
+/// instant it happened: the address is the proof an invitation is redeemed
+/// against, and every caller of this only ever asks whether that proof holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UserIdentity {
+    /// The normalized address.
+    pub email: String,
+    /// Whether the address has been verified. Set once and never cleared.
+    pub email_verified: bool,
+}
+
 /// The lossless public subset of `finance.account_state_v1`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountProfile {
@@ -450,8 +471,8 @@ pub trait ControlViewStore: Send + Sync {
         query: &ListOperations,
     ) -> Result<Page<OperationView>, StoreError>;
 
-    /// Reads one user's current normalized email.
-    async fn user_email(&self, user_id: Uuid) -> Result<Option<String>, StoreError>;
+    /// Reads one user's current normalized email and whether it is verified.
+    async fn user_identity(&self, user_id: Uuid) -> Result<Option<UserIdentity>, StoreError>;
 
     /// Reads the full public account profile. Absence means unavailable.
     async fn account_profile(

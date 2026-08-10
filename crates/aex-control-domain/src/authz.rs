@@ -850,6 +850,12 @@ mod tests {
                 | RouteId::ApiKeysList
                 | RouteId::ApiKeyCreate
                 | RouteId::CentralOperationsList
+                // Acceptance's target is the caller's own verified address,
+                // which no path or query carries and the edge cannot resolve.
+                // The handler reads it from `identity.user` and the acceptance
+                // transaction selects on it, so the target is owned exactly
+                // where the other seven above own theirs.
+                | RouteId::InvitationAccept
         )
     }
 
