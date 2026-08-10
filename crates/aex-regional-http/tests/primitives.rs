@@ -600,8 +600,8 @@ fn every_generated_regional_route_has_exactly_one_planned_owner() {
 
 #[test]
 fn a_presented_credential_verifies_only_against_its_own_stored_verifier() {
-    let ring =
-        parse_pepper_ring(PEPPER_SECRET, &pepper_document(&[(1, [11; 32])])).expect("a usable ring");
+    let ring = parse_pepper_ring(PEPPER_SECRET, &pepper_document(&[(1, [11; 32])]))
+        .expect("a usable ring");
     let credential = fixture_credential(5);
     assert_eq!(
         ring.admits(&credential, &stored(&credential, 1, [11; 32])),
@@ -669,8 +669,8 @@ fn a_pepper_version_the_region_does_not_hold_is_a_fault_and_never_a_refusal() {
     // The credential is *unverifiable*, not invalid. Answering `unauthenticated`
     // would tell a customer to rotate a key that was never wrong, so this arm is
     // the one that survives as a `503`.
-    let ring =
-        parse_pepper_ring(PEPPER_SECRET, &pepper_document(&[(1, [11; 32])])).expect("a usable ring");
+    let ring = parse_pepper_ring(PEPPER_SECRET, &pepper_document(&[(1, [11; 32])]))
+        .expect("a usable ring");
     let credential = fixture_credential(5);
     assert_eq!(
         ring.admits(&credential, &stored(&credential, 7, [11; 32])),
@@ -690,8 +690,8 @@ fn the_stored_verifier_is_exactly_the_one_the_control_plane_computes() {
             &credential.expose(|bytes| String::from_utf8(bytes.to_vec()).expect("a UTF-8 token")),
         ),
     );
-    let ring =
-        parse_pepper_ring(PEPPER_SECRET, &pepper_document(&[(1, [11; 32])])).expect("a usable ring");
+    let ring = parse_pepper_ring(PEPPER_SECRET, &pepper_document(&[(1, [11; 32])]))
+        .expect("a usable ring");
     assert_eq!(
         ring.admits(&credential, &StoredVerifier::new(*central.as_bytes(), 1)),
         Ok(())

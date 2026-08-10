@@ -358,3 +358,25 @@ pub enum AuthFailure {
         version: u16,
     },
 }
+
+impl AuthFailure {
+    /// A stable, log-safe name for this refusal.
+    ///
+    /// Deliberately not `Display`. `Display` is prose written for one human
+    /// reading one message and may be reworded freely; this is the token an
+    /// operator greps a whole region's logs for, and a reworded string would
+    /// silently break the query that finds it.
+    ///
+    /// It carries no part of the credential, and `UnknownPepper` deliberately
+    /// drops its version here — the version is logged as its own field by the
+    /// caller that has somewhere structured to put it.
+    #[must_use]
+    pub const fn reason(self) -> &'static str {
+        match self {
+            Self::MalformedCredential => "credential_malformed",
+            Self::VerifierMismatch => "verifier_mismatch",
+            Self::AudienceMismatch => "audience_mismatch",
+            Self::UnknownPepper { .. } => "unknown_pepper",
+        }
+    }
+}

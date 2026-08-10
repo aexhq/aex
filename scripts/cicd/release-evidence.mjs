@@ -113,6 +113,124 @@ export async function checkExactDeploymentHealth(options) {
   };
 }
 
+/**
+ * Names what an admission answer means, without ever seeing the credential.
+ *
+ * Every receipt this lane can produce rests on one request: `GET
+ * /api/workspace/files?limit=1` with the protected bearer must answer 200 with
+ * an `items` array. The `e2e` scenario's first network call and the `user`
+ * journey's only network call are both exactly that request, so one refusal
+ * costs both receipts and therefore the whole release.
+ *
+ * The plane deliberately collapses every credential refusal into one
+ * `unauthenticated`, so a caller cannot tell "unknown key" from "wrong secret"
+ * from "no projected row" by probing. That is right for a caller and useless
+ * for this lane, which is not probing — it holds the key and needs to know what
+ * to fix. Pairing the authenticated answer with an anonymous one recovers the
+ * part of the distinction the wire will still give up:
+ *
+ * | authenticated | anonymous | what it means |
+ * | --- | --- | --- |
+ * | 200 | 401/403 | admitted; both suites get past their first request |
+ * | 401 | 401/403 | the route is served and the *credential* was refused |
+ * | 404 | 404 | the route is not mounted on this plane at all |
+ * | 503 | any | the plane cannot check credentials right now; retryable |
+ * | 200 | 200 | the route admits anonymous callers, which both suites assert it must not |
+ */
+export function diagnoseAdmission(authenticated, anonymous) {
+  const seen = `authenticated HTTP ${authenticated.status}, anonymous HTTP ${anonymous.status}`;
+  if (authenticated.status === 404) {
+    throw new Error(
+      `release-evidence preflight: GET /api/workspace/files is not mounted on this plane (${seen}). ` +
+        "No e2e or user receipt can be earned until the deployable serving the regional registry is released."
+    );
+  }
+  if (authenticated.status === 503) {
+    throw new Error(
+      `release-evidence preflight: the plane cannot verify credentials right now (${seen}). ` +
+        "This is retryable and is not a bad key: the regional edge answers 503 when it holds no pepper version matching the projected row."
+    );
+  }
+  if (authenticated.status === 401 || authenticated.status === 403) {
+    throw new Error(
+      `release-evidence preflight: the plane served the route and refused the protected credential (${seen}). ` +
+        "AEX_API_KEY is set but not admitted. The wire collapses every credential refusal into one `unauthenticated`; " +
+        "the regional edge logs the deciding stage under target `aex.regional.admission` with a `reason` field, so read " +
+        `that log for request id ${authenticated.requestId ?? "<none returned>"}. ` +
+        "`no_projected_row_for_key_and_workspace` means the key exists centrally but was never replicated into this " +
+        "region, and the dev principal bootstrap must be re-run; `verifier_mismatch` means the key is stale for this plane."
+    );
+  }
+  if (authenticated.status !== 200) {
+    throw new Error(`release-evidence preflight: unexpected admission answer (${seen})`);
+  }
+  if (anonymous.status === 200) {
+    throw new Error(
+      `release-evidence preflight: the registry inventory admitted an anonymous caller (${seen}). ` +
+        "Both suites assert this route refuses anonymous access, so they would fail after the lane had provisioned."
+    );
+  }
+  if (!Array.isArray(authenticated.items)) {
+    throw new Error(
+      `release-evidence preflight: the admitted inventory omitted its items array (${seen}). ` +
+        "The published `RegisteredFilePage` shape has drifted from what both suites assert."
+    );
+  }
+  return {
+    schema: "aex.release-evidence-admission-preflight.v1",
+    admitted: true,
+    checkedAt: new Date().toISOString()
+  };
+}
+
+/**
+ * Runs the one request every receipt depends on, before the lane spends ten
+ * minutes earning the right to fail on it.
+ *
+ * This is not a new gate. The `e2e` case already opens with this request and
+ * hard-asserts 200, and the `user` journey does nothing else, so a run this
+ * refuses is a run that was going to fail regardless. What it adds is the
+ * *name* of the failure and the point in the run where it appears: twelve
+ * consecutive release-evidence runs died on this request at step 11 of 13,
+ * after a toolchain install, two attestation verifications and a dependency
+ * install, reporting `left: 401, right: 200` and nothing else.
+ *
+ * This observation is deliberately not written into any receipt. It proves
+ * nothing a receipt should carry — the suites re-prove it against the plane
+ * moments later — and a preflight that fed the evidence chain would be a second
+ * place the lane could claim a pass from.
+ */
+export async function preflightAdmission(options) {
+  const apiUrl = requiredString(options.apiUrl, "api url");
+  const apiKey = requiredString(options.apiKey, "api key");
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  const url = new URL("/api/workspace/files?limit=1", apiUrl);
+  const call = async (headers) => {
+    const response = await fetchImpl(url, {
+      headers,
+      redirect: "error",
+      signal: AbortSignal.timeout(30_000)
+    });
+    const text = await response.text();
+    let body;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      body = undefined;
+    }
+    return {
+      status: response.status,
+      items: isRecord(body) ? body.items : undefined,
+      requestId: isRecord(body) && isRecord(body.error) ? body.error.requestId : undefined
+    };
+  };
+  // Authenticated first, so a refused credential is reported as itself rather
+  // than as whatever the anonymous call went on to answer.
+  const authenticated = await call({ authorization: `Bearer ${apiKey}`, accept: "application/json" });
+  const anonymous = await call({ accept: "application/json" });
+  return diagnoseAdmission(authenticated, anonymous);
+}
+
 export function assertRunnableScenarioMatrix(value) {
   if (!isRecord(value) || !Array.isArray(value.include) || value.include.length === 0) {
     throw new Error("release-evidence requires a non-empty runnable scenario matrix");
@@ -224,6 +342,12 @@ async function main(argv) {
       writeJson(requiredOption(options, "out"), observation);
       break;
     }
+    case "admission-preflight":
+      await preflightAdmission({
+        apiUrl: requiredOption(options, "api-url"),
+        apiKey: process.env.AEX_API_KEY ?? ""
+      });
+      break;
     case "matrix":
       assertRunnableScenarioMatrix(readJson(requiredOption(options, "file")));
       break;
@@ -253,7 +377,7 @@ async function main(argv) {
       break;
     }
     default:
-      throw new Error("usage: release-evidence.mjs <coordinates|deployment-health|matrix|user-inventory|run-e2e|run-user|validate-hygiene> [options]");
+      throw new Error("usage: release-evidence.mjs <coordinates|deployment-health|admission-preflight|matrix|user-inventory|run-e2e|run-user|validate-hygiene> [options]");
   }
 }
 

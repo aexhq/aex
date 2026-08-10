@@ -242,6 +242,19 @@ jobs:
             --phase before \
             --out "$RUN_ROOT/deployment-health-before.json"
 
+      # The health probe above proves the plane serves the exact release. It
+      # does not present a credential, so it reports `ready` for a plane that
+      # refuses every key the evidence suites hold — which is precisely the
+      # state twelve consecutive runs died in, at the next step, having spent
+      # ten minutes getting there. Both suites open with this same request and
+      # hard-assert the same 200, so refusing here refuses nothing that would
+      # otherwise have passed; it only says which of eight admission stages
+      # said no, ten minutes earlier.
+      - name: Verify the protected credential is admitted before evidence
+        run: |
+          set -euo pipefail
+          bun scripts/cicd/release-evidence.mjs admission-preflight --api-url "$AEX_API_URL"
+
       - name: Run release-bound E2E and user suites
         run: |
           set -euo pipefail
