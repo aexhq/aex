@@ -112,7 +112,7 @@ pub struct OrgMembership {
 /// The authenticated principal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Principal {
-    /// No credential at all. Only the two device-flow routes admit this.
+    /// No credential at all. Only the three anonymous ceremony routes admit this.
     Anonymous,
     /// A person, through either credential.
     AccountActor {

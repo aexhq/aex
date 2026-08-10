@@ -353,11 +353,18 @@ fn route_obligations_are_internally_consistent() {
 #[test]
 fn pause_exempt_routes_are_exactly_the_declared_exemptions() {
     // Security revocation, stop, discard, destructive deletion, account and
-    // workspace state, billing, and safe control reads. Anything else that
-    // claims exemption is a bug in the fragment, not a policy question.
+    // workspace state, billing, safe control reads, and the credential ceremony.
+    // Anything else that claims exemption is a bug in the fragment, not a policy
+    // question.
+    //
+    // The ceremony is exempt for the reason the pause exists: a paused account
+    // is told to top up, and topping up happens in a browser the person must be
+    // able to sign into. A pause that locked sign-in would be unrecoverable
+    // without support.
     for descriptor in ROUTES.iter().filter(|r| r.pause_exempt) {
         let operation = descriptor.operation_id;
-        let exempt = operation.contains("revocation")
+        let exempt = operation.starts_with("dashboard_session")
+            || operation.contains("revocation")
             || operation.contains("revoke")
             || operation.contains("delete")
             || operation.contains("trash")

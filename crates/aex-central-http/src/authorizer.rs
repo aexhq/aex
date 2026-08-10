@@ -60,7 +60,7 @@ pub enum ContextPrincipalKind {
     UserSession,
     /// A workspace API key.
     WorkspaceKey,
-    /// No credential at all; only the two device-flow routes admit this.
+    /// No credential at all; only the three anonymous ceremony routes admit this.
     Anonymous,
 }
 

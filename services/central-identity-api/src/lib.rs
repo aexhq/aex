@@ -1,16 +1,17 @@
 //! `central-identity-api`: the identity half of the central HTTP surface.
 //!
-//! The browser ceremony exchange and the identity lifecycle, plus the two public
-//! device-flow routes. It writes identity DML and holds exactly one control
-//! privilege — `control.bump_user_epoch` — so a disabled person's assertions
-//! stop verifying in the same transaction that disables them.
+//! The whole credential ceremony: the two public device-flow routes, the
+//! decision that moves a grant off `pending`, and the browser-session mint and
+//! close. It writes identity DML and holds exactly one control privilege —
+//! `control.bump_user_epoch` — so a disabled person's assertions stop verifying
+//! in the same transaction that disables them.
 //!
 //! The mounted public surface is `CentralServiceId::IdentityApi.routes()` and
 //! nothing else, which `the_mounted_set_is_exactly_the_declared_one` asserts.
 //!
 //! # Why this is a library and not only a binary
 //!
-//! `services/central-api` composes the two device-flow routes into one
+//! `services/central-api` composes the `central:auth` routes into one
 //! long-lived Fargate process alongside the control and billing groups. A
 //! deployable whose service type lives in a module private to its own `main.rs`
 //! cannot be composed into another binary at all, so [`api::AuthService`], the
@@ -652,15 +653,10 @@ mod tests {
             // A route whose alternative principal is a browser session is
             // refused by the edge before any handler runs, so mounting can only
             // be observed with a credential the edge admits.
-            if descriptor.alt_principal
-                == Some(aex_wire::idempotency::PrincipalKind::UserSession)
-            {
+            if descriptor.alt_principal == Some(aex_wire::idempotency::PrincipalKind::UserSession) {
                 request.extensions_mut().insert(admitted_session());
             }
-            let response = router()
-                .oneshot(request)
-                .await
-                .expect("the router answers");
+            let response = router().oneshot(request).await.expect("the router answers");
             let status = response.status();
             let bytes = axum::body::to_bytes(response.into_body(), 1 << 16)
                 .await

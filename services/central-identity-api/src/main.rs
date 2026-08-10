@@ -80,10 +80,9 @@ async fn compose(
     // authorization — so a process that serves without this secret answers the
     // whole credential ceremony's second step with a `500` for its entire life.
     // Refusing here turns that into one start-up line naming the dependency.
-    let exchange_secret =
-        api::load_exchange_secret(&secrets, &config.sign_in_exchange_secret_id)
-            .await
-            .map_err(|reason| CentralIdentityApiRunError::Dependency("sign-in-exchange", reason))?;
+    let exchange_secret = api::load_exchange_secret(&secrets, &config.sign_in_exchange_secret_id)
+        .await
+        .map_err(|reason| CentralIdentityApiRunError::Dependency("sign-in-exchange", reason))?;
 
     let clock: Arc<dyn aex_identity_app::ports::Clock> = Arc::new(aex_central_aws::SystemClock);
     let store = Arc::new(aex_identity_aurora::AuroraIdentityStore::new(

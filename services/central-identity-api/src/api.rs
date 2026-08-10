@@ -52,8 +52,8 @@ use aex_identity_app::use_cases::{
 use aex_identity_app::{IdentityError, RequestId};
 use aex_identity_domain::credential::parse as parse_credential;
 use aex_identity_domain::{
-    CredentialKind, NormalizedEmail, ParsedCredential, PresentedDigest, Provider, ProviderAccountId,
-    SecretRng, UserCode,
+    CredentialKind, NormalizedEmail, ParsedCredential, PresentedDigest, Provider,
+    ProviderAccountId, SecretRng, UserCode,
 };
 use aex_wire::error::{ErrorCode, WireError, WireResult};
 use aex_wire::ids::{PrefixedId as _, UserId, Uuid7};
@@ -416,8 +416,8 @@ impl AuthApi for AuthService {
             WireError::new(ErrorCode::InvalidRequest)
                 .with_message("`email` is not an address this platform can normalize")
         })?;
-        let provider_account_id = ProviderAccountId::parse(&body.provider_account_id)
-            .map_err(|_| {
+        let provider_account_id =
+            ProviderAccountId::parse(&body.provider_account_id).map_err(|_| {
                 WireError::new(ErrorCode::InvalidRequest)
                     .with_message("`providerAccountId` is not a value the directory can store")
             })?;

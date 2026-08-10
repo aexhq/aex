@@ -53,7 +53,7 @@ impl DeploymentPlane {
 /// the tests below prove this runtime map agrees with it exactly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CentralServiceId {
-    /// `central-identity-api`: the two public device-flow routes.
+    /// `central-identity-api`: the public credential ceremony.
     IdentityApi,
     /// `central-authz`: an authorizer and an internal command, no public route.
     Authz,

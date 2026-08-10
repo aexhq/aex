@@ -28,10 +28,12 @@
 //!   not from the environment. The one exception is [`FINANCE_ROLE`], which
 //!   `finance-api`'s authority passes to `pg_has_role` in its own start-up
 //!   probe, so it is a functional input rather than a tautology.
-//! * `central-identity-api`'s two `VERCEL_*` values. They configure the browser
-//!   ceremony exchange, which is not one of the two device-flow routes this
-//!   process mounts. Requiring a value nothing reads is a value that will
-//!   eventually be set wrong with no test to notice.
+//!   Two `VERCEL_*` values used to be excluded here on the grounds that the
+//!   browser ceremony exchange was not a route this process mounts. It is one
+//!   now, and the exchange proves its caller with
+//!   [`SIGN_IN_EXCHANGE_SECRET_ID`] rather than an `OIDC` verifier that never
+//!   existed — so this composition requires that secret and no longer excludes
+//!   anything on that ground.
 
 use std::collections::BTreeMap;
 use std::time::Duration;

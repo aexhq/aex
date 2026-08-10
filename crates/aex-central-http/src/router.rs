@@ -211,7 +211,7 @@ fn admits_anonymous(id: RouteId) -> bool {
     })
 }
 
-/// The credential-free context the two device-flow routes run under.
+/// The credential-free context the three anonymous ceremony routes run under.
 ///
 /// The window is one millisecond wide because there is nothing to cache: no
 /// credential was resolved, so nothing about it can go stale. `[now, now+1)`
@@ -641,7 +641,7 @@ mount_group!(
     AuthApi,
     dispatch_auth,
     RouteGroup::Auth,
-    "Mounts `central:auth`: the two public device-flow routes."
+    "Mounts `central:auth`: the public credential ceremony."
 );
 mount_group!(
     mount_billing_api,

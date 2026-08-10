@@ -49,12 +49,12 @@ use aex_identity_app::ports::{
     UnlinkExternalIdentityCommand,
 };
 use aex_identity_domain::credential::parse as parse_credential;
-use aex_wire::ids::{PrefixedId as _, UserId};
 use aex_identity_domain::{
     ACCOUNT_TOKEN_TTL, AccountToken, CredentialKind, DashboardSession, DeviceAuthorization,
     DeviceState, EmailChallenge, ExternalIdentity, Pepper, PepperVersion, PresentedDigest,
     SessionState, TokenOrigin, User, UserStatus, Verifier, verify,
 };
+use aex_wire::ids::{PrefixedId as _, UserId};
 use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -689,7 +689,10 @@ async fn a_person_signs_in_approves_a_device_and_the_device_redeems_a_token() {
         .as_str()
         .expect("a device code")
         .to_owned();
-    let user_code = started["userCode"].as_str().expect("a user code").to_owned();
+    let user_code = started["userCode"]
+        .as_str()
+        .expect("a user code")
+        .to_owned();
 
     let (_credential, user_id, context) = sign_in(&router).await;
     assert_eq!(
@@ -708,7 +711,9 @@ async fn a_person_signs_in_approves_a_device_and_the_device_redeems_a_token() {
         "the mounted route did not move the grant off `Pending`"
     );
     assert_eq!(
-        store.grants.lock().expect("not poisoned")[0].record.approved_by,
+        store.grants.lock().expect("not poisoned")[0]
+            .record
+            .approved_by,
         Some(user_id),
         "the approval is attributed to whoever signed in"
     );
@@ -741,7 +746,10 @@ async fn a_denied_grant_can_never_be_redeemed() {
         .as_str()
         .expect("a device code")
         .to_owned();
-    let user_code = started["userCode"].as_str().expect("a user code").to_owned();
+    let user_code = started["userCode"]
+        .as_str()
+        .expect("a user code")
+        .to_owned();
 
     let (_credential, _user, context) = sign_in(&router).await;
     let (status, decided) = call(&router, decision_request(&context, &user_code, "deny")).await;
@@ -760,7 +768,10 @@ async fn a_denied_grant_can_never_be_redeemed() {
 async fn a_decision_without_a_browser_session_is_refused() {
     let (router, store) = composed(Probes::READY);
     let (_, started) = call(&router, start_request()).await;
-    let user_code = started["userCode"].as_str().expect("a user code").to_owned();
+    let user_code = started["userCode"]
+        .as_str()
+        .expect("a user code")
+        .to_owned();
 
     // No authorizer context at all: the edge answers before the handler runs.
     let request = Request::builder()
@@ -787,7 +798,10 @@ async fn a_decision_without_a_browser_session_is_refused() {
 async fn an_account_token_may_not_stand_in_for_the_session_that_proves_currency() {
     let (router, store) = composed(Probes::READY);
     let (_, started) = call(&router, start_request()).await;
-    let user_code = started["userCode"].as_str().expect("a user code").to_owned();
+    let user_code = started["userCode"]
+        .as_str()
+        .expect("a user code")
+        .to_owned();
 
     let (credential, user_id, session) = sign_in(&router).await;
     let mut token_context = session_context(&credential, user_id);
@@ -841,11 +855,7 @@ async fn a_user_code_outside_the_alphabet_never_reaches_the_store() {
 #[tokio::test]
 async fn the_sign_in_exchange_refuses_a_caller_that_is_not_first_party() {
     let (router, store) = composed(Probes::READY);
-    for wrong in [
-        "",
-        "short",
-        "fixture-sign-in-exchange-secret-000000001",
-    ] {
+    for wrong in ["", "short", "fixture-sign-in-exchange-secret-000000001"] {
         let (status, body) = call(&router, sign_in_request(wrong, "gh-1", true)).await;
         assert!(
             status == StatusCode::UNAUTHORIZED || status == StatusCode::BAD_REQUEST,
@@ -895,7 +905,10 @@ async fn signing_in_twice_resolves_one_person_and_two_sessions() {
 async fn closing_a_session_stops_it_approving_anything() {
     let (router, store) = composed(Probes::READY);
     let (_, started) = call(&router, start_request()).await;
-    let user_code = started["userCode"].as_str().expect("a user code").to_owned();
+    let user_code = started["userCode"]
+        .as_str()
+        .expect("a user code")
+        .to_owned();
     let (_credential, _user, context) = sign_in(&router).await;
 
     let mut close = Request::builder()
