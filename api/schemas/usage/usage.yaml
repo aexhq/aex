@@ -15,25 +15,73 @@ schemas:
       - { value: data_transfer, doc: "Measured outbound bytes." }
 
   UsageGrouping:
-    doc: The axes a usage query may group by.
+    doc: |
+      The axes a usage query may group by. Session, run and operation are
+      deliberately absent: every stored aggregate row is keyed by a hash of a
+      seven-member dimension tuple that includes the session, so grouping by one
+      of them would read hundreds of thousands of rows for a single monthly
+      total. "How much did session X cost?" is not answerable by any route in
+      v1, and publishing an axis that is always refused would be a false
+      capability.
     type: enum
     values:
       - { value: category, doc: "Priced category." }
       - { value: region, doc: "Region." }
       - { value: workspace, doc: "Workspace." }
-      - { value: session, doc: "Session." }
-      - { value: run, doc: "Run." }
-      - { value: operation, doc: "Durable operation." }
+
+  UsageBucket:
+    doc: |
+      The time grain one usage query answers at. All bucketing is UTC and there
+      is no timezone parameter; a range must be aligned to whole buckets of the
+      requested grain and a misaligned range is refused rather than widened to
+      the enclosing buckets.
+    type: enum
+    values:
+      - { value: hour, doc: "One item per whole UTC hour." }
+      - { value: day, doc: "One item per whole UTC day." }
+      - { value: total, doc: "One item for the whole range. Never paged: a partial total is a wrong number." }
+
+  UsageAuthority:
+    doc: |
+      The three authorities that admit usage facts. There are three rather than
+      four because memory and compute are one contiguous fact sequence behind
+      one authority, so they share one frontier; publishing four frontiers with
+      two of them always identical would claim an independence that does not
+      exist.
+    type: enum
+    values:
+      - { value: storage, doc: "The storage authority." }
+      - { value: compute, doc: "The compute authority, which admits both compute and memory facts." }
+      - { value: transfer, doc: "The data-transfer authority." }
+
+  UsageFrontierState:
+    doc: Whether a fold is advancing or parked.
+    type: enum
+    values:
+      - { value: advancing, doc: "The fold is applying facts in sequence." }
+      - { value: stalled, doc: "The fold is parked behind a record it refused, and nothing beyond it is in the answer." }
+
+  UsageSettlement:
+    doc: |
+      Whether an item is covered by a committed settlement receipt as of
+      `completeThrough`. Not permanently terminal: a correction or a void
+      arrives as a new fact at a higher sequence and re-opens its bucket to
+      `provisional`.
+    type: enum
+    values:
+      - { value: settled, doc: "Settled as of `completeThrough`." }
+      - { value: provisional, doc: "Not yet covered by a settlement receipt." }
 
   UsageQuery:
     doc: A bounded query over authoritative regional usage quantities.
     type: object
     fields:
       categories: { type: array, max: 4, optional: true, items: { type: ref, to: UsageCategory }, doc: "Restrict to these categories." }
-      timeRange: { type: ref, to: TimeRange, doc: "The service-time window." }
-      groupBy: { type: array, max: 6, optional: true, items: { type: ref, to: UsageGrouping }, doc: "Grouping axes." }
+      timeRange: { type: ref, to: TimeRange, doc: "The service-time window, aligned to whole `bucket` grains in UTC. A misaligned range is refused, never widened. A range longer than 400 days is refused." }
+      bucket: { type: ref, to: UsageBucket, doc: "The time grain to answer at." }
+      groupBy: { type: array, max: 3, optional: true, items: { type: ref, to: UsageGrouping }, doc: "Grouping axes." }
       cursor: { type: cursor, optional: true, doc: "Continuation token." }
-      limit: { type: integer, min: 1, max: 1000, optional: true, doc: "Page size." }
+      limit: { type: integer, min: 1, max: 100, optional: true, doc: "Page size. Absent means 25. Above the maximum the request is refused, never clamped: a caller silently given fewer items than it asked for cannot tell a short page from the end of a collection." }
 
   UsageAttribution:
     doc: What a regional aggregate is attributed to.
@@ -41,10 +89,10 @@ schemas:
     fields:
       region: { type: region, doc: "Where the usage happened." }
       workspaceId: { type: id, of: workspace, doc: "The workspace." }
-      sessionId: { type: id, of: session, optional: true, doc: "The session, when attributable." }
-      runId: { type: id, of: run, optional: true, doc: "The run, when attributable." }
-      operationId: { type: id, of: operation, optional: true, doc: "The operation, when attributable." }
-      source: { type: string, min: 1, max: 128, doc: "Which authority produced the facts." }
+      sessionId: { type: id, of: session, optional: true, doc: "The session, when attributable. Never populated by `usage_query`: that route answers from a coarse face that carries no session identity, and its absence is honest rather than an omission." }
+      runId: { type: id, of: run, optional: true, doc: "The run, when attributable. Never populated by `usage_query`, as `sessionId`." }
+      operationId: { type: id, of: operation, optional: true, doc: "The operation, when attributable. Never populated by `usage_query`, as `sessionId`." }
+      source: { type: string, min: 1, max: 128, doc: "Which authority produced the facts. One of the `UsageAuthority` identifiers, constant per partition." }
       serviceTime: { type: ref, to: TimeRange, doc: "The service-time interval." }
 
   UsageStorageAggregate:
@@ -52,6 +100,7 @@ schemas:
     type: object
     fields:
       attribution: { type: ref, to: UsageAttribution, doc: "What it is attributed to." }
+      settlement: { type: ref, to: UsageSettlement, doc: "Whether this item is settled as of `completeThrough`." }
       byteMinutes: { type: decimal, doc: "Byte-minutes of retained storage." }
 
   UsageComputeAggregate:
@@ -59,6 +108,7 @@ schemas:
     type: object
     fields:
       attribution: { type: ref, to: UsageAttribution, doc: "What it is attributed to." }
+      settlement: { type: ref, to: UsageSettlement, doc: "Whether this item is settled as of `completeThrough`." }
       millicpuMilliseconds: { type: decimal, doc: "Millicpu-milliseconds." }
 
   UsageMemoryAggregate:
@@ -66,6 +116,7 @@ schemas:
     type: object
     fields:
       attribution: { type: ref, to: UsageAttribution, doc: "What it is attributed to." }
+      settlement: { type: ref, to: UsageSettlement, doc: "Whether this item is settled as of `completeThrough`." }
       byteMilliseconds: { type: decimal, doc: "Byte-milliseconds." }
 
   UsageDataTransferAggregate:
@@ -73,6 +124,7 @@ schemas:
     type: object
     fields:
       attribution: { type: ref, to: UsageAttribution, doc: "What it is attributed to." }
+      settlement: { type: ref, to: UsageSettlement, doc: "Whether this item is settled as of `completeThrough`." }
       egressBytes: { type: decimal, doc: "Measured egress bytes." }
 
   UsageAggregate:
@@ -86,22 +138,31 @@ schemas:
       - { value: data_transfer, payload: UsageDataTransferAggregate, doc: "Data transfer." }
 
   UsageFrontier:
-    doc: How far the pipeline has advanced for one workspace and category.
+    doc: |
+      How far the pipeline has advanced for one workspace and authority. The
+      answer is exact at or below `completeThrough` and contains nothing above
+      `includesThrough`; between the two it is partial, and saying so is the
+      point. Both are monotone across repeated queries.
     type: object
     fields:
       region: { type: region, doc: "The region." }
       workspaceId: { type: id, of: workspace, doc: "The workspace." }
-      category: { type: ref, to: UsageCategory, doc: "The priced category." }
+      category: { type: ref, to: UsageAuthority, doc: "The authority whose contiguous fact sequence this frontier describes. Not a priced category: memory and compute share one." }
       acceptedSequence: { type: decimal, doc: "Facts accepted by the authority." }
       projectedSequence: { type: decimal, doc: "Facts folded into the query projection." }
       publishedSequence: { type: decimal, doc: "Facts delivered to central settlement." }
       settledSequence: { type: decimal, doc: "Facts settled centrally." }
+      completeThrough: { type: decimal, doc: "The answer contains every matching fact at or below this sequence. Pinned on the first page and reported unchanged on every later page." }
+      includesThrough: { type: decimal, doc: "No fact above this sequence is present in the answer. Per page." }
+      state: { type: ref, to: UsageFrontierState, doc: "Whether the fold is advancing or parked." }
+      stalledAt: { type: decimal, optional: true, doc: "The sequence the fold stopped at, present exactly when `state` is `stalled`." }
+      stallReason: { type: string, min: 1, max: 64, optional: true, doc: "Why the fold stopped, present exactly when `state` is `stalled`. A stalled frontier is the honest signal; a lag is not a stall." }
       serviceThrough: { type: timestamp, optional: true, doc: "Service time the authority has observed through, when any fact has been admitted." }
 
   UsagePage:
     doc: One page of usage quantities plus the frontiers that bound its completeness. Monetary statements remain a central finance read.
     type: object
     fields:
-      items: { type: array, max: 1000, items: { type: ref, to: UsageAggregate }, doc: "The page." }
-      nextCursor: { type: cursor, optional: true, doc: "Continuation token." }
-      frontiers: { type: array, max: 100, items: { type: ref, to: UsageFrontier }, doc: "Pipeline frontiers." }
+      items: { type: array, max: 100, items: { type: ref, to: UsageAggregate }, doc: "The page." }
+      nextCursor: { type: cursor, optional: true, doc: "Continuation token. Never present for `bucket: total`: a partial total is a wrong number, so an over-budget total is refused instead of paged." }
+      frontiers: { type: array, max: 100, items: { type: ref, to: UsageFrontier }, doc: "Pipeline frontiers, one per authority the query touched." }

@@ -1,0 +1,30 @@
+{
+  "$id": "https://schemas.aex.dev/v1/ExportQuery.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What one export walks. Deliberately not an `ObservationQuery`: an export\nhas no caller-visible pagination, so a cursor, a limit and a walk\ndirection are meaningless states rather than states to refuse at runtime.\nThe partition list and the snapshot position are pinned at admission and\nlive on the export row, which is the only channel the task has.\n",
+  "properties": {
+    "consistency": {
+      "$ref": "aex:schema:ObservationConsistency",
+      "description": "How much must be observed before the window is admissible."
+    },
+    "filter": {
+      "$ref": "aex:schema:ObservationFilter",
+      "description": "The bounded filter."
+    },
+    "signal": {
+      "$ref": "aex:schema:ObservationSignal",
+      "description": "Which signal."
+    },
+    "timeRange": {
+      "$ref": "aex:schema:TimeRange",
+      "description": "The observation-time window."
+    }
+  },
+  "required": [
+    "signal",
+    "timeRange"
+  ],
+  "title": "ExportQuery",
+  "type": "object"
+}

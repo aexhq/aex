@@ -5,7 +5,7 @@
   "description": "One page of usage quantities plus the frontiers that bound its completeness. Monetary statements remain a central finance read.",
   "properties": {
     "frontiers": {
-      "description": "Pipeline frontiers.",
+      "description": "Pipeline frontiers, one per authority the query touched.",
       "items": {
         "$ref": "aex:schema:UsageFrontier"
       },
@@ -17,11 +17,11 @@
       "items": {
         "$ref": "aex:schema:UsageAggregate"
       },
-      "maxItems": 1000,
+      "maxItems": 100,
       "type": "array"
     },
     "nextCursor": {
-      "description": "Continuation token.",
+      "description": "Continuation token. Never present for `bucket: total`: a partial total is a wrong number, so an over-budget total is refused instead of paged.",
       "maxLength": 4096,
       "type": "string",
       "x-aex-cursor": true

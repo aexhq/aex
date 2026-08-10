@@ -12,11 +12,16 @@
       "description": "Measured egress bytes.",
       "pattern": "^(0|[1-9]\\d*)$",
       "type": "string"
+    },
+    "settlement": {
+      "$ref": "aex:schema:UsageSettlement",
+      "description": "Whether this item is settled as of `completeThrough`."
     }
   },
   "required": [
     "attribution",
-    "egressBytes"
+    "egressBytes",
+    "settlement"
   ],
   "title": "UsageDataTransferAggregate",
   "type": "object"

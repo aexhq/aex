@@ -3,7 +3,7 @@
 //! The route registry: one row per public operation.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:bd7052cb0fe98ca6622d42d82e3a3adfec7f8a2ef4d890f7f2c31fcc1e0df4a6`.
+//! `sha256:634f3f0f9665ccf300c478c9e8fa9245f4326e739dfe5a1ae4167ae7ec27e70b`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -5055,6 +5055,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
             ErrorCode::InvalidCursor,
             ErrorCode::InvalidQuery,
             ErrorCode::WrongWorkspaceRegion,
+            ErrorCode::UsageUnavailable,
         ],
         request_schema: Some("UsageQuery"),
         response_schema: Some("UsagePage"),

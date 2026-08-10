@@ -1,4 +1,4 @@
 plane: regional
 fragment: usage
 operations:
-  - { id: usage_query, method: POST, path: /api/billing/usage/query, summary: "Query rated usage for this workspace.", scope: "billing:read", altPrincipal: account, request: UsageQuery, success: UsagePage, safeRetry: true, pauseExempt: true, errors: [unauthenticated, insufficient_scope, wrong_workspace_region, not_found, invalid_request, invalid_cursor, invalid_query], query: { workspaceId: { type: id, of: workspace, optional: true, doc: "Required when an account token selects the workspace." } } }
+  - { id: usage_query, method: POST, path: /api/billing/usage/query, summary: "Query rated usage for this workspace.", scope: "billing:read", altPrincipal: account, request: UsageQuery, success: UsagePage, safeRetry: true, pauseExempt: true, errors: [unauthenticated, insufficient_scope, wrong_workspace_region, not_found, invalid_request, invalid_cursor, invalid_query, usage_unavailable], query: { workspaceId: { type: id, of: workspace, optional: true, doc: "Required when an account token selects the workspace." } } }

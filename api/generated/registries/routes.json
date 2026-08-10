@@ -5197,7 +5197,8 @@
         "invalid_request",
         "invalid_cursor",
         "invalid_query",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "usage_unavailable"
       ],
       "etag": "none",
       "fragment": "usage",

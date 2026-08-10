@@ -4648,7 +4648,8 @@
             "invalid_request",
             "invalid_cursor",
             "invalid_query",
-            "wrong_workspace_region"
+            "wrong_workspace_region",
+            "usage_unavailable"
           ],
           "etag": "none",
           "fragment": "usage",
@@ -5383,6 +5384,15 @@
           "message": "the observation authority could not be reached",
           "precedenceStage": "domain_state",
           "remedy": null,
+          "retryable": true,
+          "status": 503
+        },
+        {
+          "class": "unavailable",
+          "code": "usage_unavailable",
+          "message": "the usage projection could not be read",
+          "precedenceStage": "domain_state",
+          "remedy": "retry the identical query",
           "retryable": true,
           "status": 503
         },
@@ -7084,10 +7094,35 @@
     "ExportFormat": {
       "enum": [
         "ndjson",
-        "parquet",
         "otlp_json"
       ],
       "type": "string"
+    },
+    "ExportQuery": {
+      "additionalProperties": false,
+      "properties": {
+        "consistency": {
+          "$ref": "aex:schema:ObservationConsistency",
+          "description": "How much must be observed before the window is admissible."
+        },
+        "filter": {
+          "$ref": "aex:schema:ObservationFilter",
+          "description": "The bounded filter."
+        },
+        "signal": {
+          "$ref": "aex:schema:ObservationSignal",
+          "description": "Which signal."
+        },
+        "timeRange": {
+          "$ref": "aex:schema:TimeRange",
+          "description": "The observation-time window."
+        }
+      },
+      "required": [
+        "signal",
+        "timeRange"
+      ],
+      "type": "object"
     },
     "ExportStatus": {
       "enum": [
@@ -11216,8 +11251,8 @@
           "description": "The artifact format."
         },
         "query": {
-          "$ref": "aex:schema:ObservationQuery",
-          "description": "What to export."
+          "$ref": "aex:schema:ExportQuery",
+          "description": "What to export. Normalized and pinned onto the export row at admission, so two runs of one export walk the same plan."
         }
       },
       "required": [
@@ -11785,7 +11820,7 @@
       "additionalProperties": false,
       "properties": {
         "operationId": {
-          "description": "The operation, when attributable.",
+          "description": "The operation, when attributable. Never populated by `usage_query`, as `sessionId`.",
           "pattern": "^op_[0-9a-hjkmnp-tv-z]{26}$",
           "type": "string",
           "x-aex-id": "operation"
@@ -11802,7 +11837,7 @@
           "type": "string"
         },
         "runId": {
-          "description": "The run, when attributable.",
+          "description": "The run, when attributable. Never populated by `usage_query`, as `sessionId`.",
           "pattern": "^run_[0-9a-hjkmnp-tv-z]{26}$",
           "type": "string",
           "x-aex-id": "run"
@@ -11812,13 +11847,13 @@
           "description": "The service-time interval."
         },
         "sessionId": {
-          "description": "The session, when attributable.",
+          "description": "The session, when attributable. Never populated by `usage_query`: that route answers from a coarse face that carries no session identity, and its absence is honest rather than an omission.",
           "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
           "type": "string",
           "x-aex-id": "session"
         },
         "source": {
-          "description": "Which authority produced the facts.",
+          "description": "Which authority produced the facts. One of the `UsageAuthority` identifiers, constant per partition.",
           "maxLength": 128,
           "minLength": 1,
           "type": "string"
@@ -11837,6 +11872,22 @@
         "workspaceId"
       ],
       "type": "object"
+    },
+    "UsageAuthority": {
+      "enum": [
+        "storage",
+        "compute",
+        "transfer"
+      ],
+      "type": "string"
+    },
+    "UsageBucket": {
+      "enum": [
+        "hour",
+        "day",
+        "total"
+      ],
+      "type": "string"
     },
     "UsageCategory": {
       "enum": [
@@ -11858,11 +11909,16 @@
           "description": "Millicpu-milliseconds.",
           "pattern": "^(0|[1-9]\\d*)$",
           "type": "string"
+        },
+        "settlement": {
+          "$ref": "aex:schema:UsageSettlement",
+          "description": "Whether this item is settled as of `completeThrough`."
         }
       },
       "required": [
         "attribution",
-        "millicpuMilliseconds"
+        "millicpuMilliseconds",
+        "settlement"
       ],
       "type": "object"
     },
@@ -11877,11 +11933,16 @@
           "description": "Measured egress bytes.",
           "pattern": "^(0|[1-9]\\d*)$",
           "type": "string"
+        },
+        "settlement": {
+          "$ref": "aex:schema:UsageSettlement",
+          "description": "Whether this item is settled as of `completeThrough`."
         }
       },
       "required": [
         "attribution",
-        "egressBytes"
+        "egressBytes",
+        "settlement"
       ],
       "type": "object"
     },
@@ -11894,8 +11955,18 @@
           "type": "string"
         },
         "category": {
-          "$ref": "aex:schema:UsageCategory",
-          "description": "The priced category."
+          "$ref": "aex:schema:UsageAuthority",
+          "description": "The authority whose contiguous fact sequence this frontier describes. Not a priced category: memory and compute share one."
+        },
+        "completeThrough": {
+          "description": "The answer contains every matching fact at or below this sequence. Pinned on the first page and reported unchanged on every later page.",
+          "pattern": "^(0|[1-9]\\d*)$",
+          "type": "string"
+        },
+        "includesThrough": {
+          "description": "No fact above this sequence is present in the answer. Per page.",
+          "pattern": "^(0|[1-9]\\d*)$",
+          "type": "string"
         },
         "projectedSequence": {
           "description": "Facts folded into the query projection.",
@@ -11929,6 +12000,21 @@
           "pattern": "^(0|[1-9]\\d*)$",
           "type": "string"
         },
+        "stallReason": {
+          "description": "Why the fold stopped, present exactly when `state` is `stalled`. A stalled frontier is the honest signal; a lag is not a stall.",
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        "stalledAt": {
+          "description": "The sequence the fold stopped at, present exactly when `state` is `stalled`.",
+          "pattern": "^(0|[1-9]\\d*)$",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "aex:schema:UsageFrontierState",
+          "description": "Whether the fold is advancing or parked."
+        },
         "workspaceId": {
           "description": "The workspace.",
           "pattern": "^wsp_[0-9a-hjkmnp-tv-z]{26}$",
@@ -11939,22 +12025,29 @@
       "required": [
         "acceptedSequence",
         "category",
+        "completeThrough",
+        "includesThrough",
         "projectedSequence",
         "publishedSequence",
         "region",
         "settledSequence",
+        "state",
         "workspaceId"
       ],
       "type": "object"
+    },
+    "UsageFrontierState": {
+      "enum": [
+        "advancing",
+        "stalled"
+      ],
+      "type": "string"
     },
     "UsageGrouping": {
       "enum": [
         "category",
         "region",
-        "workspace",
-        "session",
-        "run",
-        "operation"
+        "workspace"
       ],
       "type": "string"
     },
@@ -11969,11 +12062,16 @@
           "description": "Byte-milliseconds.",
           "pattern": "^(0|[1-9]\\d*)$",
           "type": "string"
+        },
+        "settlement": {
+          "$ref": "aex:schema:UsageSettlement",
+          "description": "Whether this item is settled as of `completeThrough`."
         }
       },
       "required": [
         "attribution",
-        "byteMilliseconds"
+        "byteMilliseconds",
+        "settlement"
       ],
       "type": "object"
     },
@@ -11981,7 +12079,7 @@
       "additionalProperties": false,
       "properties": {
         "frontiers": {
-          "description": "Pipeline frontiers.",
+          "description": "Pipeline frontiers, one per authority the query touched.",
           "items": {
             "$ref": "aex:schema:UsageFrontier"
           },
@@ -11993,11 +12091,11 @@
           "items": {
             "$ref": "aex:schema:UsageAggregate"
           },
-          "maxItems": 1000,
+          "maxItems": 100,
           "type": "array"
         },
         "nextCursor": {
-          "description": "Continuation token.",
+          "description": "Continuation token. Never present for `bucket: total`: a partial total is a wrong number, so an over-budget total is refused instead of paged.",
           "maxLength": 4096,
           "type": "string",
           "x-aex-cursor": true
@@ -12012,6 +12110,10 @@
     "UsageQuery": {
       "additionalProperties": false,
       "properties": {
+        "bucket": {
+          "$ref": "aex:schema:UsageBucket",
+          "description": "The time grain to answer at."
+        },
         "categories": {
           "description": "Restrict to these categories.",
           "items": {
@@ -12031,24 +12133,32 @@
           "items": {
             "$ref": "aex:schema:UsageGrouping"
           },
-          "maxItems": 6,
+          "maxItems": 3,
           "type": "array"
         },
         "limit": {
-          "description": "Page size.",
-          "maximum": 1000,
+          "description": "Page size. Absent means 25. Above the maximum the request is refused, never clamped: a caller silently given fewer items than it asked for cannot tell a short page from the end of a collection.",
+          "maximum": 100,
           "minimum": 1,
           "type": "integer"
         },
         "timeRange": {
           "$ref": "aex:schema:TimeRange",
-          "description": "The service-time window."
+          "description": "The service-time window, aligned to whole `bucket` grains in UTC. A misaligned range is refused, never widened. A range longer than 400 days is refused."
         }
       },
       "required": [
+        "bucket",
         "timeRange"
       ],
       "type": "object"
+    },
+    "UsageSettlement": {
+      "enum": [
+        "settled",
+        "provisional"
+      ],
+      "type": "string"
     },
     "UsageStorageAggregate": {
       "additionalProperties": false,
@@ -12061,11 +12171,16 @@
           "description": "Byte-minutes of retained storage.",
           "pattern": "^(0|[1-9]\\d*)$",
           "type": "string"
+        },
+        "settlement": {
+          "$ref": "aex:schema:UsageSettlement",
+          "description": "Whether this item is settled as of `completeThrough`."
         }
       },
       "required": [
         "attribution",
-        "byteMinutes"
+        "byteMinutes",
+        "settlement"
       ],
       "type": "object"
     },

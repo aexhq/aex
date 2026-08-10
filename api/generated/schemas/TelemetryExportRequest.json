@@ -13,8 +13,8 @@
       "description": "The artifact format."
     },
     "query": {
-      "$ref": "aex:schema:ObservationQuery",
-      "description": "What to export."
+      "$ref": "aex:schema:ExportQuery",
+      "description": "What to export. Normalized and pinned onto the export row at admission, so two runs of one export walk the same plan."
     }
   },
   "required": [
