@@ -96,20 +96,18 @@ The public user-test authority publishes
 
 ## Cross-stream pending types
 
-The contracts stream has not yet supplied the TypeScript generated boundary in
-this branch. `packages/sdk/src/wire_pending.ts` therefore carries these temporary
-items, each marked with the required cross-stream TODO:
+Closed. The contracts stream supplied the generated TypeScript boundary, the
+temporary module that stood in for it is deleted, and no `wire_pending` symbol
+survives in `packages/`. The six items it carried now come from:
 
-- `RouteId`
-- `RouteDescriptor`
-- `ROUTES`
-- `ErrorClass`
-- `AexErrorCode`
-- `ERROR_METADATA`
+- `RouteId`, `RouteDescriptor`, `ROUTES` — `packages/sdk/src/generated/routes.ts`,
+  emitted by `aex-contract-gen` and pinned to a contract digest.
+- `ErrorClass`, `ERROR_METADATA` — `packages/sdk/src/generated/errors.ts`.
+- `AexErrorCode` — `packages/sdk/src/transport/errors.ts`.
 
-They must be replaced by exports from a generated `index.ts` under
-`packages/sdk/src/` at merge, and every SDK route reference must then compile against that generated
-source without retaining `wire_pending`.
+Only the route and error projections are generated so far. The rest of the
+generated surface plan 01 describes is still owed; it is the first peer change
+below.
 
 ## Required peer changes
 
