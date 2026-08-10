@@ -292,7 +292,8 @@ impl UsageProjectionReads for UsageQueryStore {
         workspace: &WorkspaceId,
         category: PublicCategory,
     ) -> Result<Option<CoverageRow>, QueryError> {
-        self.coverage_at(generation, workspace, category, true).await
+        self.coverage_at(generation, workspace, category, true)
+            .await
     }
 
     async fn coverage_eventual(

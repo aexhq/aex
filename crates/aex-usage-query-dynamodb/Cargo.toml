@@ -1,7 +1,7 @@
 [package]
 name = "aex-usage-query-dynamodb"
 version = "0.1.0"
-description = "`aex-usage-query-dynamodb` owns the read-only `usage-query-projection` adapter: bounded aggregate and detail queries plus the cursor codec."
+description = "`aex-usage-query-dynamodb` owns the read-only `usage-query-projection` adapter: the pure query plan, bounded coarse and per-tuple reads, and the copied coverage vector."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

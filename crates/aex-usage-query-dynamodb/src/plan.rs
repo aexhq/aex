@@ -81,7 +81,7 @@ impl Bucket {
 
 /// Why a plan could not be built.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum PlanError {
+pub enum UsagePlanError {
     /// The half-open range ends at or before it starts.
     #[error("the requested range ends at or before it starts")]
     InvertedRange,
@@ -193,38 +193,40 @@ pub struct PlanRequest<'a> {
 ///
 /// # Errors
 ///
-/// Returns [`PlanError::NoCategories`] for an empty category set,
-/// [`PlanError::InvertedRange`] for an empty or inverted range,
-/// [`PlanError::Misaligned`] for a range that is not on whole buckets of the
-/// requested grain, [`PlanError::RangeTooWide`] above [`MAX_RANGE_DAYS`], and
-/// [`PlanError::TotalTooWide`] when a `total` would have to read more rows than
+/// Returns [`UsagePlanError::NoCategories`] for an empty category set,
+/// [`UsagePlanError::InvertedRange`] for an empty or inverted range,
+/// [`UsagePlanError::Misaligned`] for a range that is not on whole buckets of the
+/// requested grain, [`UsagePlanError::RangeTooWide`] above [`MAX_RANGE_DAYS`], and
+/// [`UsagePlanError::TotalTooWide`] when a `total` would have to read more rows than
 /// one answer may hold.
-pub fn plan(request: &PlanRequest<'_>) -> Result<QueryPlan, PlanError> {
+pub fn plan(request: &PlanRequest<'_>) -> Result<QueryPlan, UsagePlanError> {
     let mut categories: Vec<PublicCategory> = PublicCategory::ALL
         .into_iter()
         .filter(|candidate| request.categories.contains(candidate))
         .collect();
     categories.dedup();
     if categories.is_empty() {
-        return Err(PlanError::NoCategories);
+        return Err(UsagePlanError::NoCategories);
     }
 
     let from = request.from.unix_millis();
     let until = request.until.unix_millis();
     if until <= from {
-        return Err(PlanError::InvertedRange);
+        return Err(UsagePlanError::InvertedRange);
     }
     let alignment = request.bucket.alignment_millis();
     if from.rem_euclid(alignment) != 0 || until.rem_euclid(alignment) != 0 {
-        return Err(PlanError::Misaligned {
+        return Err(UsagePlanError::Misaligned {
             required: request.bucket.required_alignment(),
         });
     }
-    let span = until.checked_sub(from).ok_or(PlanError::Unrepresentable)?;
+    let span = until
+        .checked_sub(from)
+        .ok_or(UsagePlanError::Unrepresentable)?;
     let days = u64::try_from(span.div_euclid(DAY_MILLIS) + i64::from(span % DAY_MILLIS != 0))
-        .map_err(|_| PlanError::Unrepresentable)?;
+        .map_err(|_| UsagePlanError::Unrepresentable)?;
     if days > MAX_RANGE_DAYS {
-        return Err(PlanError::RangeTooWide { days });
+        return Err(UsagePlanError::RangeTooWide { days });
     }
 
     // A `total` is read from whichever stored grain answers it exactly: daily
@@ -246,18 +248,19 @@ pub fn plan(request: &PlanRequest<'_>) -> Result<QueryPlan, PlanError> {
         Grain::Hourly => HOUR_MILLIS,
         Grain::Daily => DAY_MILLIS,
     };
-    let buckets = u64::try_from(span.div_euclid(step)).map_err(|_| PlanError::Unrepresentable)?;
+    let buckets =
+        u64::try_from(span.div_euclid(step)).map_err(|_| UsagePlanError::Unrepresentable)?;
 
     // A total is one answer, so its whole plan is budgeted, not its pages.
     if request.bucket == Bucket::Total {
         let categories_len =
-            u64::try_from(categories.len()).map_err(|_| PlanError::Unrepresentable)?;
+            u64::try_from(categories.len()).map_err(|_| UsagePlanError::Unrepresentable)?;
         let rows = buckets
             .checked_mul(categories_len)
-            .ok_or(PlanError::Unrepresentable)?;
-        let maximum = u64::try_from(MAX_PAGE_ROWS).map_err(|_| PlanError::Unrepresentable)?;
+            .ok_or(UsagePlanError::Unrepresentable)?;
+        let maximum = u64::try_from(MAX_PAGE_ROWS).map_err(|_| UsagePlanError::Unrepresentable)?;
         if rows > maximum {
-            return Err(PlanError::TotalTooWide {
+            return Err(UsagePlanError::TotalTooWide {
                 categories: categories.len(),
                 buckets,
                 rows,
@@ -274,7 +277,7 @@ pub fn plan(request: &PlanRequest<'_>) -> Result<QueryPlan, PlanError> {
             let partition = plan_partition(*category, month, grain, from, until, step)?;
             rows = rows
                 .checked_add(partition.rows)
-                .ok_or(PlanError::Unrepresentable)?;
+                .ok_or(UsagePlanError::Unrepresentable)?;
             partitions.push(partition);
         }
     }
@@ -296,14 +299,15 @@ fn plan_partition(
     from: i64,
     until: i64,
     step: i64,
-) -> Result<PlannedPartition, PlanError> {
+) -> Result<PlannedPartition, UsagePlanError> {
     // The stored rows are bucketed by the *start* of the measurement's service
     // time, so a partition holds exactly the buckets whose start falls inside
     // both the month and the requested range.
     let lower = from.max(month.start);
     let upper = until.min(month.end);
     let count = if upper > lower {
-        u64::try_from((upper - lower).div_euclid(step)).map_err(|_| PlanError::Unrepresentable)?
+        u64::try_from((upper - lower).div_euclid(step))
+            .map_err(|_| UsagePlanError::Unrepresentable)?
     } else {
         0
     };
@@ -320,8 +324,9 @@ fn plan_partition(
 }
 
 /// The bucket label one instant falls in, at one grain.
-fn bucket_string(millis: i64, grain: Grain) -> Result<String, PlanError> {
-    let instant = Timestamp::from_unix_millis(millis).map_err(|_| PlanError::Unrepresentable)?;
+fn bucket_string(millis: i64, grain: Grain) -> Result<String, UsagePlanError> {
+    let instant =
+        Timestamp::from_unix_millis(millis).map_err(|_| UsagePlanError::Unrepresentable)?;
     Ok(match grain {
         Grain::Hourly => instant.hour_bucket(),
         Grain::Daily => instant.day_bucket(),
@@ -345,13 +350,13 @@ struct MonthSpan {
 /// range is capped at [`MAX_RANGE_DAYS`], so this is at most four hundred
 /// steps, and it cannot disagree with `Timestamp::month_bucket`, which is what
 /// the key grammar itself uses.
-fn months_between(from: Timestamp, until: Timestamp) -> Result<Vec<MonthSpan>, PlanError> {
+fn months_between(from: Timestamp, until: Timestamp) -> Result<Vec<MonthSpan>, UsagePlanError> {
     let mut spans: Vec<MonthSpan> = Vec::new();
     let mut cursor = from.unix_millis().div_euclid(DAY_MILLIS) * DAY_MILLIS;
     let end = until.unix_millis();
     while cursor < end {
         let instant =
-            Timestamp::from_unix_millis(cursor).map_err(|_| PlanError::Unrepresentable)?;
+            Timestamp::from_unix_millis(cursor).map_err(|_| UsagePlanError::Unrepresentable)?;
         let label = instant.month_bucket();
         match spans.last_mut() {
             Some(last) if last.label == label => last.end = cursor + DAY_MILLIS,
@@ -376,9 +381,7 @@ fn months_between(from: Timestamp, until: Timestamp) -> Result<Vec<MonthSpan>, P
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        Bucket, MAX_RANGE_DAYS, PlanError, PlanRequest, plan,
-    };
+    use super::{Bucket, MAX_RANGE_DAYS, PlanRequest, UsagePlanError, plan};
     use aex_usage_domain::meter::PublicCategory;
     use aex_usage_domain::projection::{Generation, Grain};
     use aex_usage_domain::wire_pending::{Timestamp, WorkspaceId};
@@ -480,7 +483,7 @@ mod tests {
         .expect_err("a part-day is not a day");
         assert_eq!(
             error,
-            PlanError::Misaligned {
+            UsagePlanError::Misaligned {
                 required: "whole UTC days"
             }
         );
@@ -495,7 +498,7 @@ mod tests {
                 &workspace,
             ))
             .expect_err("a half hour is not an hour"),
-            PlanError::Misaligned {
+            UsagePlanError::Misaligned {
                 required: "whole UTC hours"
             }
         );
@@ -517,7 +520,7 @@ mod tests {
                     &workspace
                 ))
                 .expect_err("an empty range answers nothing"),
-                PlanError::InvertedRange
+                UsagePlanError::InvertedRange
             );
         }
     }
@@ -534,7 +537,7 @@ mod tests {
         ))
         .expect_err("over the cap");
         assert!(
-            matches!(error, PlanError::RangeTooWide { days } if days > MAX_RANGE_DAYS),
+            matches!(error, UsagePlanError::RangeTooWide { days } if days > MAX_RANGE_DAYS),
             "{error}"
         );
     }
@@ -551,7 +554,7 @@ mod tests {
                 &workspace
             ))
             .expect_err("no categories"),
-            PlanError::NoCategories
+            UsagePlanError::NoCategories
         );
     }
 
@@ -598,7 +601,7 @@ mod tests {
             &workspace,
         ))
         .expect_err("a partial total is a wrong number");
-        let PlanError::TotalTooWide {
+        let UsagePlanError::TotalTooWide {
             maximum_buckets,
             rows,
             ..
@@ -619,7 +622,7 @@ mod tests {
             &workspace,
         ))
         .expect_err("four categories over seven months");
-        let PlanError::TotalTooWide {
+        let UsagePlanError::TotalTooWide {
             maximum_buckets, ..
         } = error
         else {

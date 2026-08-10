@@ -31,6 +31,6 @@ pub use expressions::{
     ProjectionKeys, ProjectionReads, QueryError,
 };
 pub use plan::{
-    Bucket, MAX_RANGE_DAYS, PlanError, PlanRequest, PlannedPartition, QueryPlan, plan,
+    Bucket, MAX_RANGE_DAYS, PlanRequest, PlannedPartition, QueryPlan, UsagePlanError, plan,
 };
 pub use store::{AggregatePageRows, CoarsePageRows, UsageProjectionReads, UsageQueryStore};
