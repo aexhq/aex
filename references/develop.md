@@ -25,6 +25,12 @@ Use Bun from the repository root or owning workspace package. `package.json`
 scripts are the command source of truth; do not copy a mutable command catalog
 into prose.
 
+For fast pre-commit feedback, the affected-development command reuses the same
+release graph that routes protected CI. It plans by default, combines committed
+and working-tree changes, and runs only when actions are requested explicitly.
+Its output names the wider evidence it does not earn; it never replaces the
+relevant root scripts, protected CI, integration engines, or hosted suites.
+
 ## Targets
 
 - `dev`: remote non-production hosted plane used for approved live user tests.

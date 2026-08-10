@@ -136,6 +136,10 @@ enum GraphCommand {
         /// Explicit changed paths, comma-separated.
         #[arg(long, value_delimiter = ',')]
         paths: Option<Vec<String>>,
+        /// NUL-delimited changed paths. Prefer this for machine callers and
+        /// paths containing commas or newlines.
+        #[arg(long)]
+        paths_file: Option<PathBuf>,
         /// How wide to select.
         #[arg(long, default_value = "affected")]
         mode: Mode,
@@ -1191,12 +1195,18 @@ fn run_graph(cli: &Cli, root: &Path, command: &GraphCommand) -> Result<()> {
             base,
             head,
             paths,
+            paths_file,
             mode,
             lane,
             out,
         } => {
-            let changed =
-                resolve_changed(root, base.as_deref(), head.as_deref(), paths.as_deref())?;
+            let changed = resolve_changed(
+                root,
+                base.as_deref(),
+                head.as_deref(),
+                paths.as_deref(),
+                paths_file.as_deref(),
+            )?;
             let built = verify::build(&inputs)?;
             let selection = select::select(&built, &inputs, &changed, *mode, *lane)?;
             if let Some(path) = out {
@@ -1205,7 +1215,7 @@ fn run_graph(cli: &Cli, root: &Path, command: &GraphCommand) -> Result<()> {
             emit(cli, &selection)
         }
         GraphCommand::Explain { unit, base, head } => {
-            let changed = resolve_changed(root, base.as_deref(), head.as_deref(), None)?;
+            let changed = resolve_changed(root, base.as_deref(), head.as_deref(), None, None)?;
             let built = verify::build(&inputs)?;
             let selection = select::select(&built, &inputs, &changed, Mode::Affected, Lane::Pr)?;
             let target = NodeId(unit.clone());
@@ -1228,7 +1238,7 @@ fn run_graph(cli: &Cli, root: &Path, command: &GraphCommand) -> Result<()> {
             }
         }
         GraphCommand::Diff { base, head, format } => {
-            let changed = resolve_changed(root, Some(base), Some(head), None)?;
+            let changed = resolve_changed(root, Some(base), Some(head), None, None)?;
             let built = verify::build(&inputs)?;
             let selection = select::select(&built, &inputs, &changed, Mode::Affected, Lane::Pr)?;
             match format {
@@ -2891,7 +2901,7 @@ fn parse_now(value: Option<&str>) -> Result<time::OffsetDateTime> {
     }
 }
 
-/// Resolve the changed path set from a commit range or an explicit list.
+/// Resolve the changed path set from a commit range, inline list, or path file.
 ///
 /// A range and an explicit list are different questions and the caller must
 /// pick one. Silently defaulting to "no paths" would let an affected selection
@@ -2901,9 +2911,38 @@ fn resolve_changed(
     base: Option<&str>,
     head: Option<&str>,
     paths: Option<&[String]>,
+    paths_file: Option<&Path>,
 ) -> Result<Vec<String>> {
+    let has_range = base.is_some() || head.is_some();
+    let input_count =
+        usize::from(has_range) + usize::from(paths.is_some()) + usize::from(paths_file.is_some());
+    if input_count > 1 {
+        return Err(ToolError::single(
+            Exit::RoutingUndecidable,
+            "routing-change-input-conflict",
+            "pass exactly one change source: --base with --head, --paths, or --paths-file",
+        ));
+    }
     if let Some(paths) = paths {
         return Ok(paths.to_vec());
+    }
+    if let Some(path) = paths_file {
+        let bytes = std::fs::read(path).map_err(|err| io(&path.display().to_string(), &err))?;
+        return bytes
+            .split(|byte| *byte == 0)
+            .filter(|entry| !entry.is_empty())
+            .map(|entry| {
+                std::str::from_utf8(entry)
+                    .map(str::to_owned)
+                    .map_err(|err| {
+                        ToolError::single(
+                            Exit::RoutingUndecidable,
+                            "routing-paths-file-utf8",
+                            format!("`{}` contains a non-UTF-8 path: {err}", path.display()),
+                        )
+                    })
+            })
+            .collect();
     }
     let (Some(base), Some(head)) = (base, head) else {
         return Err(ToolError::single(
@@ -2950,6 +2989,36 @@ mod tests {
     #[test]
     fn command_definition_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn paths_file_preserves_paths_that_cannot_use_the_comma_delimited_flag() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let path = temp.path().join("paths.zlist");
+        std::fs::write(&path, b"crates/a,b/src/lib.rs\0apps/line\nbreak.ts\0").expect("path list");
+
+        assert_eq!(
+            super::resolve_changed(temp.path(), None, None, None, Some(&path)).unwrap(),
+            ["crates/a,b/src/lib.rs", "apps/line\nbreak.ts"]
+        );
+    }
+
+    #[test]
+    fn paths_file_and_inline_paths_are_mutually_exclusive() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let path = temp.path().join("paths.zlist");
+        std::fs::write(&path, b"crates/a/src/lib.rs\0").expect("path list");
+
+        let error = super::resolve_changed(
+            temp.path(),
+            None,
+            None,
+            Some(&["crates/b/src/lib.rs".to_owned()]),
+            Some(&path),
+        )
+        .unwrap_err();
+
+        assert!(error.rules().contains(&"routing-change-input-conflict"));
     }
 
     #[test]
