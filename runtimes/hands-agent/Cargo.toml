@@ -26,7 +26,7 @@ risk = ["untrusted_input"]
 scenarios = []
 
 [package.metadata.aex.not_applicable]
-targets = "the `hands` stream keeps this binary's evidence in inline unit modules, which the declared `unit` layer already collects; everything that needs a real MicroVM to boot into is declared in tests/live/aex-live-hands-agent instead"
+inline_targets = "the `hands` stream keeps this binary's evidence in inline unit modules, which the declared `unit` layer already collects; everything that needs a real MicroVM to boot into is declared in tests/live/aex-live-hands-agent instead"
 
 [[bin]]
 name = "hands-agent"

@@ -26,18 +26,29 @@ scenarios = ["SC-REGIONAL-ADMISSION"]
 
 [package.metadata.aex.targets]
 e2e = "e2e"
+load = "e2e"
 
 [features]
 live = []
 
 [dev-dependencies]
+aex-load-harness = { path = "../../load/aex-load-harness" }
 aex-test-harness = { path = "../../support/aex-test-harness" }
 reqwest.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 tokio.workspace = true
+toml.workspace = true
 
 [[test]]
 name = "e2e"
 path = "tests/e2e.rs"
 required-features = ["live"]
+
+# `LOAD-STREAM-SOCKETS` and `PERF-BASELINE-JOURNAL-FOLD` are blocking gates whose
+# descriptors name this package. Until this target existed neither could run and
+# nothing reported them as pending, because `aex-workload-unowned` only asked
+# whether a descriptor existed.
+[[test]]
+name = "load"
+path = "tests/load.rs"

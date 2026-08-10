@@ -186,6 +186,50 @@ impl AexMeta {
                 });
             }
         }
+        violations.extend(self.check_inline_unit_evidence(subject));
+        violations
+    }
+
+    /// `inline_targets` states one thing, so it cannot be combined with a
+    /// declaration that contradicts it.
+    fn check_inline_unit_evidence(&self, subject: &Subject) -> Vec<Violation> {
+        if !self.declares_inline_unit_evidence() {
+            return Vec::new();
+        }
+        let mut violations = Vec::new();
+        if self.excused("targets").is_some() {
+            violations.push(Violation {
+                rule: "aex-not-applicable-unjustified",
+                detail: format!(
+                    "`{}` marks both `targets` and `{INLINE_TARGETS}` not-applicable; \
+                     evidence is either inline and permanently so, or unwritten and owed",
+                    subject.path
+                ),
+            });
+        }
+        if !self.declares_layer("unit") {
+            violations.push(Violation {
+                rule: "aex-not-applicable-unjustified",
+                detail: format!(
+                    "`{}` claims inline unit evidence but declares no `unit` layer to collect it",
+                    subject.path
+                ),
+            });
+        }
+        if let Some(target) = self
+            .targets
+            .iter()
+            .find(|(_, layer)| layer.as_str() == "unit")
+        {
+            violations.push(Violation {
+                rule: "aex-not-applicable-unjustified",
+                detail: format!(
+                    "`{}` claims inline unit evidence and then maps `{}` to the `unit` layer; \
+                     the unit evidence is in a target, not inline",
+                    subject.path, target.0
+                ),
+            });
+        }
         violations
     }
 
@@ -206,7 +250,20 @@ impl AexMeta {
     pub fn excused(&self, field: &str) -> Option<&str> {
         self.not_applicable.get(field).map(String::as_str)
     }
+
+    /// Whether this package declares that its unit evidence is inline.
+    ///
+    /// A separate accessor rather than a bare `excused("inline_targets")` at
+    /// each call site, because three rules ask the question and a fourth spelling
+    /// of the key would reintroduce exactly the ambiguity the key removes.
+    #[must_use]
+    pub fn declares_inline_unit_evidence(&self) -> bool {
+        self.excused(INLINE_TARGETS).is_some()
+    }
 }
+
+/// The `not_applicable` key that declares inline unit evidence.
+pub const INLINE_TARGETS: &str = "inline_targets";
 
 /// The fields a `not_applicable` entry may name.
 ///
@@ -214,10 +271,19 @@ impl AexMeta {
 /// declares what it owes but has not written it yet says so here, naming the
 /// stream that will. That is what distinguishes an unwritten suite from a
 /// silently omitted one.
+///
+/// `inline_targets` is deliberately a *different* key, because it states a
+/// different fact: the package's unit evidence lives in inline `#[cfg(test)]`
+/// modules that the declared `unit` layer already collects, so there is no
+/// `[[test]]` target to map and there never will be. That is permanently true
+/// rather than debt, and the two were indistinguishable while both wrote the
+/// same `awaiting_owner` row — which meant the candidate phase would have failed
+/// on twelve statements that can never stop being true.
 pub const NOT_APPLICABLE_FIELDS: &[&str] = &[
     "live_suite",
     "deployable",
     "targets",
+    "inline_targets",
     "smoke",
     "e2e",
     "integration",

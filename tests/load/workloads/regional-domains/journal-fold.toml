@@ -1,0 +1,43 @@
+# The journal fold's pinned performance baseline.
+#
+# The fold is the hot path of every regional read: a session's authority state
+# is a fold over its journal, so the cost of one read grows with the length of
+# the journal and with nothing else. Area 10 measured 207 ms for ten thousand
+# events on the pinned dedicated runner; the budget is 250 ms, which leaves the
+# measured figure about 20% of headroom and no more.
+#
+# This is the only `PERF-BASELINE-*` row in the registry that is a budget rather
+# than a diagnostic, and that is deliberate: a fold that has quietly become
+# quadratic does not announce itself in any throughput number, it just makes
+# every session slower as it ages.
+#
+# Arrival is closed at one because the shape under test is a single fold, not a
+# concurrency profile. Running it at one agent is what makes the number
+# comparable across releases; the concurrent behaviour of the same code is
+# covered by LOAD-STREAM-SOCKETS and LOAD-REGIONAL-ADMISSION.
+id = "journal-fold"
+owner = "regional-domains"
+target = "aex-live-session-stream-api"
+tier = "t2"
+duration = "10m"
+ttl = "1h"
+
+[arrival]
+mode = "closed"
+concurrency = 1
+mix = { fold_10000_events = 1.0 }
+
+[[gate]]
+id = "PERF-BASELINE-JOURNAL-FOLD"
+kind = "budget"
+blocking = true
+assert = "journal fold of 10000 events <= 250ms on the pinned dedicated runner"
+source = "Area 10 measured 207 ms; the only PERF-BASELINE row that is a budget rather than a diagnostic"
+
+[report]
+metrics = [
+  "completed_per_s", "queue_delay_ms", "time_to_first_token_ms", "end_to_end_ms",
+  "provider_wait_ms", "local_cpu_ms", "rss_peak_bytes", "open_fds", "tokio_tasks",
+  "sockets", "journal_bytes", "checkpoint_bytes", "affinity_hit_rate", "scale_event_s",
+  "recovery_s", "duplicate_effects", "gaps", "cost_micro_usd_per_completed_turn",
+]

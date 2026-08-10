@@ -26,7 +26,7 @@ risk = ["iam"]
 scenarios = []
 
 [package.metadata.aex.not_applicable]
-targets = "brain-core's composition, config and health cases live in the binary's #[cfg(test)] modules; the smoke, e2e and performance layers belong to the aex-live-brain-mux companion, which owns every created resource"
+inline_targets = "brain-core's composition, config and health cases live in the binary's #[cfg(test)] modules; the smoke, e2e and performance layers belong to the aex-live-brain-mux companion, which owns every created resource"
 
 [[bin]]
 name = "brain-mux"

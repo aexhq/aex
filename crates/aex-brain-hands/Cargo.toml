@@ -25,7 +25,7 @@ risk = ["concurrency"]
 scenarios = []
 
 [package.metadata.aex.not_applicable]
-targets = "the `brain-core` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
+inline_targets = "the `brain-core` stream places this crate's evidence in inline unit modules, which the declared `unit` layer already collects; the crate declares no [[test]] target, so there is nothing to map"
 
 [dependencies]
 aex-brain-app = { path = "../aex-brain-app" }
