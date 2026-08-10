@@ -25,7 +25,7 @@ use base64::Engine as _;
 use zeroize::Zeroizing;
 
 use super::{
-    BindingError, ToolExecExecutor, Transport, TransportError, parse_signing_secret,
+    BindingError, ToolExecExecutor, ToolExecTransportError, Transport, parse_signing_secret,
     validate_endpoint,
 };
 
@@ -40,7 +40,7 @@ impl Transport for FixtureTransport {
         &'a self,
         request: &'a ToolExecRequest,
         _max_result_bytes: usize,
-    ) -> aex_brain_app::ports::BoxFuture<'a, Result<ToolExecResponse, TransportError>> {
+    ) -> aex_brain_app::ports::BoxFuture<'a, Result<ToolExecResponse, ToolExecTransportError>> {
         Box::pin(async move {
             self.seen
                 .lock()

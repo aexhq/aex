@@ -152,11 +152,11 @@ trait Transport: Send + Sync + 'static {
         &'a self,
         request: &'a ToolExecRequest,
         max_result_bytes: usize,
-    ) -> BoxFuture<'a, Result<ToolExecResponse, TransportError>>;
+    ) -> BoxFuture<'a, Result<ToolExecResponse, ToolExecTransportError>>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TransportError {
+enum ToolExecTransportError {
     NotSent,
     PossiblySent,
     Response,
@@ -185,7 +185,7 @@ impl Transport for HttpTransport {
         &'a self,
         request: &'a ToolExecRequest,
         max_result_bytes: usize,
-    ) -> BoxFuture<'a, Result<ToolExecResponse, TransportError>> {
+    ) -> BoxFuture<'a, Result<ToolExecResponse, ToolExecTransportError>> {
         Box::pin(async move {
             let outbound = self
                 .client
@@ -195,32 +195,32 @@ impl Transport for HttpTransport {
                 )))
                 .json(request)
                 .build()
-                .map_err(|_| TransportError::NotSent)?;
+                .map_err(|_| ToolExecTransportError::NotSent)?;
             let response = self
                 .client
                 .execute(outbound)
                 .await
-                .map_err(|_| TransportError::PossiblySent)?;
+                .map_err(|_| ToolExecTransportError::PossiblySent)?;
             if response.status() != reqwest::StatusCode::OK {
-                return Err(TransportError::Response);
+                return Err(ToolExecTransportError::Response);
             }
             let limit = max_result_bytes.saturating_add(RESPONSE_OVERHEAD_BYTES);
             if response
                 .content_length()
                 .is_some_and(|length| usize::try_from(length).map_or(true, |length| length > limit))
             {
-                return Err(TransportError::Response);
+                return Err(ToolExecTransportError::Response);
             }
             let mut body = Vec::new();
             let mut stream = response.bytes_stream();
             while let Some(chunk) = stream.next().await {
-                let chunk = chunk.map_err(|_| TransportError::Response)?;
+                let chunk = chunk.map_err(|_| ToolExecTransportError::Response)?;
                 if body.len().saturating_add(chunk.len()) > limit {
-                    return Err(TransportError::Response);
+                    return Err(ToolExecTransportError::Response);
                 }
                 body.extend_from_slice(&chunk);
             }
-            serde_json::from_slice(&body).map_err(|_| TransportError::Response)
+            serde_json::from_slice(&body).map_err(|_| ToolExecTransportError::Response)
         })
     }
 }
@@ -467,23 +467,25 @@ fn refusal(reason: ToolExecRefusal) -> ToolDispatchError {
     )
 }
 
-fn transport_error(error: TransportError) -> ToolDispatchError {
+fn transport_error(error: ToolExecTransportError) -> ToolDispatchError {
     match error {
-        TransportError::NotSent => failure(
+        ToolExecTransportError::NotSent => failure(
             DispatchStage::PreDispatch,
             DispatchProof::NotSent,
             true,
             ProviderFailureKind::Transport,
             "tool-exec request could not be constructed",
         ),
-        TransportError::PossiblySent => failure(
+        ToolExecTransportError::PossiblySent => failure(
             DispatchStage::Dispatched,
             DispatchProof::PossiblySent,
             false,
             ProviderFailureKind::Transport,
             "tool-exec transport failed after dispatch began",
         ),
-        TransportError::Response => response_error("tool-exec returned an invalid response"),
+        ToolExecTransportError::Response => {
+            response_error("tool-exec returned an invalid response")
+        }
     }
 }
 

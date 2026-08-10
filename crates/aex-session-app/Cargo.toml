@@ -28,6 +28,7 @@ properties = "unit"
 faults = "unit"
 continuations = "unit"
 live_files = "unit"
+create = "unit"
 
 [package.metadata.aex.not_applicable]
 live_suite = "application crate; its ports are exercised through its deployable's companion"
