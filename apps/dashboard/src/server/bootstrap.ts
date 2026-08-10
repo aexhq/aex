@@ -1,7 +1,7 @@
 import { ROUTES, apiErrorFromResponse } from "@aexhq/sdk";
 
 import { readCookie } from "./passthrough";
-import { transportFor } from "./upstream";
+import { CLIENT_HEADER, transportFor } from "./upstream";
 
 /**
  * The shell's one read.
@@ -76,7 +76,7 @@ export async function readBootstrap(cookieHeader: string | null): Promise<Bootst
       headers: new Headers({
         authorization: `Bearer ${credential}`,
         accept: "application/json",
-        "Aex-Client": "aex-dashboard/0.50.0",
+        "Aex-Client": CLIENT_HEADER,
       }),
       signal: AbortSignal.timeout(BOOTSTRAP_TIMEOUT_MS),
     });

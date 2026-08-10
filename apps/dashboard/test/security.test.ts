@@ -69,6 +69,8 @@ const FORBIDDEN_ENVIRONMENT: readonly string[] = [
   "AEX_SHARED_SECRET",
   "AEX_TEST_AUTH",
   "AEX_E2E",
+  "OAUTH_GITHUB_CLIENT_SECRET",
+  "OAUTH_GOOGLE_CLIENT_SECRET",
 ];
 
 test("the manifest holds no durable-authority adapter", () => {

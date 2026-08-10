@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 
-import { currentBootstrap } from "../../src/server/context";
+import { currentBootstrap, signInDestination } from "../../src/server/context";
 import { AccountBanner } from "../../src/ui/account";
 import { Notice } from "../../src/ui/components";
 import { ContextSwitcher } from "../../src/ui/switcher";
@@ -21,7 +21,7 @@ export const dynamic = "force-dynamic";
  */
 export default async function AppLayout({ children }: Readonly<{ children: ReactNode }>) {
   const result = await currentBootstrap();
-  if (result.kind === "unauthenticated") redirect("/signin");
+  if (result.kind === "unauthenticated") redirect(await signInDestination());
 
   if (result.kind === "unavailable") {
     return (

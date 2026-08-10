@@ -1,17 +1,33 @@
 "use client";
 
 import { usePathname } from "next/navigation";
+import { useState } from "react";
 
 import type { DashboardBootstrap } from "../server/bootstrap";
 
-async function signOut(): Promise<void> {
-  const match = /(?:^|;\s*)__Host-aex_csrf=([^;]*)/.exec(document.cookie);
-  await fetch("/api/session", {
-    method: "DELETE",
-    headers: { "x-aex-csrf": match?.[1] ? decodeURIComponent(match[1]) : "" },
-    credentials: "same-origin",
-  });
-  globalThis.location.assign("/signin");
+function SignOut() {
+  const [failed, setFailed] = useState(false);
+
+  async function submit(): Promise<void> {
+    const match = /(?:^|;\s*)__Host-aex_csrf=([^;]*)/.exec(document.cookie);
+    const response = await fetch("/api/session", {
+      method: "DELETE",
+      headers: { "x-aex-csrf": match?.[1] ? decodeURIComponent(match[1]) : "" },
+      credentials: "same-origin",
+    }).catch(() => null);
+    if (!response?.ok) {
+      setFailed(true);
+      return;
+    }
+    globalThis.location.assign("/signin");
+  }
+
+  return (
+    <>
+      <button type="button" onClick={() => void submit()}>Sign out</button>
+      {failed ? <p className="menu-group small" role="alert">You are still signed in — try again.</p> : null}
+    </>
+  );
 }
 
 /**
@@ -76,7 +92,7 @@ export function ContextSwitcher({ bootstrap }: { bootstrap: DashboardBootstrap }
         <div className="menu-panel end">
           <p className="menu-group">Signed in as</p>
           <p className="menu-group mono">{bootstrap.userId}</p>
-          <button type="button" onClick={signOut}>Sign out</button>
+          <SignOut />
         </div>
       </details>
     </>

@@ -8,7 +8,7 @@ import {
 
 import { authorizeDashboardRoute } from "./routes";
 import { verifyCsrf } from "./csrf";
-import { isRegionCode, transportFor } from "./upstream";
+import { CLIENT_HEADER, isRegionCode, transportFor } from "./upstream";
 
 /** Upstream deadline. A panel's own deadline is shorter; this is the backstop. */
 export const UPSTREAM_TIMEOUT_MS = 10_000;
@@ -43,7 +43,11 @@ export function readCookie(header: string | null, name: string): string | null {
     const separator = part.indexOf("=");
     if (separator < 0) continue;
     if (part.slice(0, separator).trim() !== name) continue;
-    return decodeURIComponent(part.slice(separator + 1).trim());
+    try {
+      return decodeURIComponent(part.slice(separator + 1).trim());
+    } catch {
+      return null;
+    }
   }
   return null;
 }
@@ -123,7 +127,7 @@ export function resolvePassthrough(
   const headers = new Headers({
     authorization: `Bearer ${credential}`,
     accept: "application/json",
-    "Aex-Client": "aex-dashboard/0.50.0",
+    "Aex-Client": CLIENT_HEADER,
   });
 
   if (descriptor.idempotency === "idempotency_key") {
@@ -168,7 +172,7 @@ export function errorResponse(status: number, code: string, message: string, req
       error: {
         code,
         message,
-        retryable: status === 429 || status === 502 || status === 503,
+        retryable: status === 429 || status === 502 || status === 503 || status === 504,
         ...(requestId ? { requestId } : {}),
       },
     },

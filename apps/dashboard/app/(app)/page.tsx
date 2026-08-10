@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
-import { currentBootstrap } from "../../src/server/context";
+import { currentBootstrap, signInDestination } from "../../src/server/context";
 
 export const dynamic = "force-dynamic";
 
@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
  */
 export default async function Root() {
   const result = await currentBootstrap();
-  if (result.kind !== "ready") redirect("/signin");
+  if (result.kind !== "ready") redirect(await signInDestination());
   const workspace = result.bootstrap.workspaces.find((candidate) => candidate.status === "active")
     ?? result.bootstrap.workspaces[0];
   redirect(workspace ? `/w/${workspace.slug}/sessions` : "/welcome");

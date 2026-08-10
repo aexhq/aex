@@ -17,6 +17,8 @@ import {
 
 export const REGION_CODES = ["use1", "use2", "usw2", "apne1", "euw1"] as const;
 
+export const CLIENT_HEADER = "aex-dashboard/0.50.0";
+
 export function isRegionCode(value: string): value is RegionCode {
   return (REGION_CODES as readonly string[]).includes(value);
 }

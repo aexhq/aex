@@ -221,3 +221,8 @@ test("cookie reading returns exactly the named cookie", () => {
   expect(readCookie("a=1", "__Host-aex_session")).toBeNull();
   expect(readCookie(null, "__Host-aex_session")).toBeNull();
 });
+
+test("a malformed cookie value is absent rather than an exception", () => {
+  expect(readCookie("__Host-aex_signin=%", "__Host-aex_signin")).toBeNull();
+  expect(readCookie("__Host-aex_session=%E0%A4%A", "__Host-aex_session")).toBeNull();
+});

@@ -6,10 +6,13 @@ export interface CsrfInput {
 
 export function verifyCsrf(input: CsrfInput): boolean {
   if (!input.cookie || !input.header || input.fetchSite === "cross-site") return false;
-  const length = Math.max(input.cookie.length, input.header.length);
-  let difference = input.cookie.length ^ input.header.length;
+  return equalsConstantTime(input.cookie, input.header);
+}
+export function equalsConstantTime(left: string, right: string): boolean {
+  const length = Math.max(left.length, right.length);
+  let difference = left.length ^ right.length;
   for (let index = 0; index < length; index += 1) {
-    difference |= (input.cookie.charCodeAt(index) || 0) ^ (input.header.charCodeAt(index) || 0);
+    difference |= (left.charCodeAt(index) || 0) ^ (right.charCodeAt(index) || 0);
   }
   return difference === 0;
 }

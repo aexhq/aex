@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
-import { currentBootstrap } from "../../../src/server/context";
+import { currentBootstrap, signInDestination } from "../../../src/server/context";
 import { Card } from "../../../src/ui/components";
 import { CreateOrganization, CreateWorkspace } from "../../../src/ui/create";
 
@@ -9,7 +9,7 @@ export const metadata = { title: "Get started — AEX" };
 
 export default async function Welcome() {
   const result = await currentBootstrap();
-  if (result.kind !== "ready") redirect("/signin");
+  if (result.kind !== "ready") redirect(await signInDestination());
   const { organizations } = result.bootstrap;
 
   return (

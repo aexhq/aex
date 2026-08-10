@@ -37,7 +37,13 @@ test("the allowlist carries no operator, no session mutation and no ingest route
 });
 
 test("the bootstrap operation is not reachable through the generic passthrough", () => {
-  expect((DASHBOARD_ROUTES as readonly string[]).includes("dashboard_bootstrap_get")).toBe(false);
+  for (const dedicated of [
+    "dashboard_bootstrap_get",
+    "dashboard_session_create",
+    "dashboard_session_delete",
+  ]) {
+    expect((DASHBOARD_ROUTES as readonly string[]).includes(dedicated)).toBe(false);
+  }
   expect(ROUTES.dashboard_bootstrap_get.plane).toBe("central");
 });
 

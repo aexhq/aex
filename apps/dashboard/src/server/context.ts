@@ -4,6 +4,7 @@ import { notFound, redirect } from "next/navigation";
 import type { RegionCode } from "@aexhq/sdk";
 
 import { readBootstrap, type BootstrapResult, type Organization, type Workspace } from "./bootstrap";
+import { RETURN_HEADER, signInPath } from "./return-to";
 import { regionCodeFor } from "../ui/regions";
 
 /**
@@ -17,6 +18,11 @@ export const currentBootstrap = cache(async (): Promise<BootstrapResult> => {
   const requestHeaders = await headers();
   return readBootstrap(requestHeaders.get("cookie"));
 });
+
+export async function signInDestination(): Promise<string> {
+  const requestHeaders = await headers();
+  return signInPath(requestHeaders.get(RETURN_HEADER));
+}
 
 export interface WorkspaceContext {
   readonly workspace: Workspace;
@@ -32,7 +38,7 @@ export interface WorkspaceContext {
  */
 export async function requireWorkspace(slug: string): Promise<WorkspaceContext> {
   const result = await currentBootstrap();
-  if (result.kind !== "ready") redirect("/signin");
+  if (result.kind !== "ready") redirect(await signInDestination());
   const workspace = result.bootstrap.workspaces.find((candidate) => candidate.slug === slug);
   if (!workspace) notFound();
   const regionCode = regionCodeFor(workspace.region);
@@ -47,7 +53,7 @@ export async function requireWorkspace(slug: string): Promise<WorkspaceContext> 
 
 export async function requireOrganization(slug: string): Promise<Organization> {
   const result = await currentBootstrap();
-  if (result.kind !== "ready") redirect("/signin");
+  if (result.kind !== "ready") redirect(await signInDestination());
   const organization = result.bootstrap.organizations.find((candidate) => candidate.slug === slug);
   if (!organization) notFound();
   return organization;
