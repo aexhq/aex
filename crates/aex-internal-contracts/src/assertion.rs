@@ -63,17 +63,59 @@ pub enum AssertionAudience {
     RegionalOtlp,
     /// `regional-stream`.
     RegionalStream,
+    /// `tool-executor`.
+    ///
+    /// The one audience no customer credential ever reaches. Every audience
+    /// above answers a request a customer made with a credential they hold, and
+    /// `central-authz` mints the envelope over that presented credential. This
+    /// one is minted inside `brain-mux` from a `FenceGuard`-proved activation,
+    /// for a service whose only caller is `brain-mux`, so there is no presented
+    /// credential and no customer on the path at all.
+    ///
+    /// Appended last on purpose: declaration order is wire order and this enum
+    /// is also a `u8` bitset, so adding an arm at the end leaves every existing
+    /// code and bit where it was. Inserting one anywhere else is a silent
+    /// re-labelling of every stored audience set in the plane.
+    ToolExec,
 }
 
 impl AssertionAudience {
     /// Every audience, in wire order.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
+        Self::RegionalSession,
+        Self::RegionalSecret,
+        Self::RegionalObservation,
+        Self::RegionalOtlp,
+        Self::RegionalStream,
+        Self::ToolExec,
+    ];
+
+    /// Every audience a **customer credential** may be presented to.
+    ///
+    /// The complement of this list is not "audiences we have not got round to
+    /// granting". It is the set of audiences whose envelopes are minted from
+    /// something other than a presented credential, and a workspace key that
+    /// claimed one would be claiming a principal kind it cannot be.
+    pub const CUSTOMER_PRESENTABLE: [Self; 5] = [
         Self::RegionalSession,
         Self::RegionalSecret,
         Self::RegionalObservation,
         Self::RegionalOtlp,
         Self::RegionalStream,
     ];
+
+    /// Whether a credential a customer presents may name this audience.
+    #[must_use]
+    pub const fn is_customer_presentable(self) -> bool {
+        match self {
+            Self::RegionalSession
+            | Self::RegionalSecret
+            | Self::RegionalObservation
+            | Self::RegionalOtlp
+            | Self::RegionalStream => true,
+            Self::ToolExec => false,
+        }
+    }
 
     /// The deployable that accepts this audience.
     #[must_use]
@@ -84,6 +126,7 @@ impl AssertionAudience {
             Self::RegionalObservation => "regional-observation-api",
             Self::RegionalOtlp => "regional-otlp",
             Self::RegionalStream => "regional-stream",
+            Self::ToolExec => "tool-executor",
         }
     }
 
@@ -100,6 +143,7 @@ impl AssertionAudience {
             Self::RegionalObservation => "regional_observation",
             Self::RegionalOtlp => "regional_otlp",
             Self::RegionalStream => "regional_stream",
+            Self::ToolExec => "tool_exec",
         }
     }
 
@@ -126,6 +170,23 @@ impl AudienceSet {
 
     /// Every audience in the vocabulary.
     pub const ALL: Self = Self((1 << AssertionAudience::ALL.len()) - 1);
+
+    /// Every audience a credential a customer presents may be admitted to.
+    ///
+    /// This — not [`AudienceSet::ALL`] — is what a projected workspace-key row
+    /// carries. The difference is one bit and it is a tenant-resolution
+    /// property: the tool executor derives the tenant from the envelope alone,
+    /// so an envelope minted over a credential the customer chose to present
+    /// must never be one the executor would look at.
+    pub const CUSTOMER_PRESENTABLE: Self = {
+        let mut set = Self::EMPTY;
+        let mut index = 0;
+        while index < AssertionAudience::CUSTOMER_PRESENTABLE.len() {
+            set = set.insert(AssertionAudience::CUSTOMER_PRESENTABLE[index]);
+            index += 1;
+        }
+        set
+    };
 
     /// The bit `audience` owns.
     ///
