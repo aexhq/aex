@@ -20,6 +20,14 @@ pub enum PermitKind {
     ProviderStream,
     /// Concurrent Hands RPCs for one session generation.
     HandsRpc,
+    /// Concurrent outbound tool network calls — managed web and MCP.
+    ///
+    /// Its own pool rather than a share of [`PermitKind::ProviderStream`]: a tool
+    /// network call weighs four units against a stream's one, so a handful of
+    /// concurrent fetches drawn from the stream pool would defer every model
+    /// dispatch in the task. That is unreachable while the driver runs one tool
+    /// call at a time, and reachable the moment it does not.
+    NetworkLane,
     /// Bounded compute-lane jobs.
     ComputeLane,
     /// Bytes reserved for hydrated context.

@@ -38,6 +38,9 @@ pub struct Envelope {
     pub headroom_bytes: u64,
     /// Concurrently open provider streams.
     pub provider_streams: u64,
+    /// Concurrent outbound tool network calls, weighted by the tool's declared
+    /// concurrency weight.
+    pub network_lane: u64,
     /// Concurrent Hands RPCs per session generation.
     pub hands_rpcs: u64,
 }
@@ -48,6 +51,13 @@ impl Envelope {
     /// The 3 GiB context pool proves 48 simultaneous 64 MiB worst-case restores. Stream
     /// buffers retain their independent 128 MiB pool; cache cannot borrow admitted memory;
     /// 384 MiB remains unavailable to all permits as process/allocator failure headroom.
+    ///
+    /// The network lane is 128 units, derived rather than chosen: the safety cap admits 32
+    /// activations and the heaviest declared tool weight is 4, so 128 admits one outstanding
+    /// network call per admitted activation — the whole of what a serial driver can reach.
+    /// It is deliberately not the authoritative bound on tool spend. That belongs where a
+    /// refusal can be per-workspace and answered rather than silently deferred; this is a
+    /// coarse backstop against this task's own memory, which is what a permit should be.
     #[must_use]
     pub const fn candidate_launch() -> Self {
         const MIB: u64 = 1_024 * 1_024;
@@ -58,6 +68,7 @@ impl Envelope {
             warm_cache_bytes: 512 * MIB,
             headroom_bytes: 384 * MIB,
             provider_streams: 48,
+            network_lane: 128,
             hands_rpcs: 48,
         }
     }
@@ -159,6 +170,7 @@ impl Composition {
             context_bytes: policy.restore_resident_bytes,
             stream_buffer_bytes: u64::try_from(policy.stream_buffer_bytes).unwrap_or(u64::MAX),
             provider_streams: 1,
+            network_lane: 1,
             hands_rpcs: 1,
         };
         resources
@@ -174,6 +186,7 @@ impl Composition {
         let permits = Arc::new(PermitSet::new(BTreeMap::from([
             (PermitKind::Activation, u64::from(bounds.safety_cap)),
             (PermitKind::ProviderStream, envelope.provider_streams),
+            (PermitKind::NetworkLane, envelope.network_lane),
             (PermitKind::HandsRpc, envelope.hands_rpcs),
             (PermitKind::ComputeLane, shape.compute_permits),
             (PermitKind::ContextBytes, envelope.context_bytes),
@@ -244,6 +257,11 @@ fn validate_target_capacity(
             reason: "the admission target exceeds provider-stream capacity",
         });
     }
+    if resources.network_lane.saturating_mul(target) > envelope.network_lane {
+        return Err(CompositionError {
+            reason: "the admission target exceeds network-lane capacity",
+        });
+    }
     if resources.hands_rpcs.saturating_mul(target) > envelope.hands_rpcs {
         return Err(CompositionError {
             reason: "the admission target exceeds Hands RPC capacity",
@@ -310,6 +328,7 @@ mod tests {
         assert_eq!(envelope.warm_cache_bytes, 512 * MIB);
         assert_eq!(envelope.headroom_bytes, 384 * MIB);
         assert_eq!(envelope.provider_streams, 48);
+        assert_eq!(envelope.network_lane, 128);
         assert_eq!(envelope.hands_rpcs, 48);
         assert!(envelope.validate().is_ok());
     }
@@ -374,6 +393,7 @@ mod tests {
             context_bytes: 64 * MIB,
             stream_buffer_bytes: MIB,
             provider_streams: 1,
+            network_lane: 1,
             hands_rpcs: 1,
         };
         assert_eq!(envelope.context_bytes / resources.context_bytes, 48);
@@ -382,6 +402,7 @@ mod tests {
             128
         );
         assert_eq!(envelope.provider_streams / resources.provider_streams, 48);
+        assert_eq!(envelope.network_lane / resources.network_lane, 128);
         assert_eq!(envelope.hands_rpcs / resources.hands_rpcs, 48);
         assert!(validate_target_capacity(48, envelope, resources, 48).is_ok());
         assert_eq!(
@@ -402,6 +423,7 @@ mod tests {
                     context_bytes: 1,
                     stream_buffer_bytes: 3 * MIB,
                     provider_streams: 1,
+                    network_lane: 1,
                     hands_rpcs: 1,
                 },
                 "the admission target exceeds reserved stream-buffer capacity",
@@ -411,6 +433,7 @@ mod tests {
                     context_bytes: 1,
                     stream_buffer_bytes: 1,
                     provider_streams: 2,
+                    network_lane: 1,
                     hands_rpcs: 1,
                 },
                 "the admission target exceeds provider-stream capacity",
@@ -420,6 +443,17 @@ mod tests {
                     context_bytes: 1,
                     stream_buffer_bytes: 1,
                     provider_streams: 1,
+                    network_lane: 3,
+                    hands_rpcs: 1,
+                },
+                "the admission target exceeds network-lane capacity",
+            ),
+            (
+                ActivationResources {
+                    context_bytes: 1,
+                    stream_buffer_bytes: 1,
+                    provider_streams: 1,
+                    network_lane: 1,
                     hands_rpcs: 2,
                 },
                 "the admission target exceeds Hands RPC capacity",
@@ -465,6 +499,7 @@ mod tests {
         for kind in [
             PermitKind::Activation,
             PermitKind::ProviderStream,
+            PermitKind::NetworkLane,
             PermitKind::HandsRpc,
             PermitKind::ComputeLane,
             PermitKind::ContextBytes,

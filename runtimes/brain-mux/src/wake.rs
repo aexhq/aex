@@ -184,6 +184,7 @@ impl AdmissionControl for MuxAdmission {
 pub struct MuxDispatch {
     permits: Arc<PermitSet>,
     provider_streams: u64,
+    network_lane: u64,
     hands_rpcs: u64,
 }
 
@@ -197,6 +198,7 @@ impl MuxDispatch {
         Self {
             permits,
             provider_streams: resources.provider_streams,
+            network_lane: resources.network_lane,
             hands_rpcs: resources.hands_rpcs,
         }
     }
@@ -210,12 +212,14 @@ impl DispatchControl for MuxDispatch {
                 self.provider_streams,
                 QueuedReason::ProviderPermits,
             ),
-            // Managed web and MCP currently share the bounded outbound-I/O pool. This is a
-            // physical ceiling only; the durable tool route remains exact and a dedicated
-            // network lane can replace it without changing activation semantics.
+            // Managed web and MCP draw on their own pool. Sharing the provider pool made a
+            // handful of concurrent fetches — each weighing four units against a stream's
+            // one — able to defer every model dispatch in the task. Separate pools make the
+            // lanes independent; they do not make anything concurrent, and must not: the
+            // driver still runs one tool call at a time.
             DispatchLane::Network => (
-                PermitKind::ProviderStream,
-                self.provider_streams,
+                PermitKind::NetworkLane,
+                self.network_lane,
                 QueuedReason::RegionalCapacity,
             ),
             DispatchLane::Hands => (
@@ -1248,6 +1252,7 @@ mod tests {
             context_bytes,
             stream_buffer_bytes: 1,
             provider_streams: 1,
+            network_lane: 1,
             hands_rpcs: 1,
         }
     }
@@ -1256,21 +1261,22 @@ mod tests {
     fn phase_dispatch_permits_are_nonblocking_typed_and_raii_released() {
         let permits = Arc::new(PermitSet::new(BTreeMap::from([
             (PermitKind::ProviderStream, 4_u64),
+            (PermitKind::NetworkLane, 4_u64),
             (PermitKind::HandsRpc, 1_u64),
         ])));
         let dispatch = MuxDispatch::new(Arc::clone(&permits), activation_resources(1));
 
-        let DispatchDecision::Admitted(provider) = dispatch.admit(DispatchLane::Network, 4) else {
+        let DispatchDecision::Admitted(network) = dispatch.admit(DispatchLane::Network, 4) else {
             panic!("the weighted network lane has four slots");
         };
         assert!(matches!(
             dispatch.admit(DispatchLane::Network, 1),
             DispatchDecision::Deferred(aex_brain_domain::child::QueuedReason::RegionalCapacity)
         ));
-        assert_eq!(permits.held(PermitKind::ProviderStream), 4);
+        assert_eq!(permits.held(PermitKind::NetworkLane), 4);
         assert_eq!(permits.held(PermitKind::HandsRpc), 0);
-        drop(provider);
-        assert_eq!(permits.held(PermitKind::ProviderStream), 0);
+        drop(network);
+        assert_eq!(permits.held(PermitKind::NetworkLane), 0);
 
         let DispatchDecision::Admitted(hands) = dispatch.admit(DispatchLane::Hands, 1) else {
             panic!("the Hands lane has one slot");
@@ -1278,6 +1284,38 @@ mod tests {
         assert_eq!(permits.held(PermitKind::HandsRpc), 1);
         drop(hands);
         assert_eq!(permits.held(PermitKind::HandsRpc), 0);
+    }
+
+    /// A saturated network lane must leave model dispatch untouched.
+    ///
+    /// While both lanes drew on one pool this was not merely unenforced — it was
+    /// false: a tool call weighs four units against a stream's one, so twelve
+    /// concurrent fetches exhausted the pool and deferred every model dispatch in
+    /// the task. Unreachable today because the driver is serial, and the reason
+    /// per-batch concurrency must not land before this split.
+    #[test]
+    fn a_saturated_network_lane_never_defers_a_model_dispatch() {
+        let permits = Arc::new(PermitSet::new(BTreeMap::from([
+            (PermitKind::ProviderStream, 1_u64),
+            (PermitKind::NetworkLane, 4_u64),
+            (PermitKind::HandsRpc, 1_u64),
+        ])));
+        let dispatch = MuxDispatch::new(Arc::clone(&permits), activation_resources(1));
+
+        let DispatchDecision::Admitted(_network) = dispatch.admit(DispatchLane::Network, 4) else {
+            panic!("the network lane admits its own weighted call");
+        };
+        assert!(matches!(
+            dispatch.admit(DispatchLane::Network, 1),
+            DispatchDecision::Deferred(_)
+        ));
+        assert!(
+            matches!(
+                dispatch.admit(DispatchLane::Provider, 1),
+                DispatchDecision::Admitted(_)
+            ),
+            "an exhausted network lane must not starve the model stream it no longer shares"
+        );
     }
 
     fn block_on<F: core::future::Future>(future: F) -> F::Output {
