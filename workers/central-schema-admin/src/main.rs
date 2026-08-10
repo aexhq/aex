@@ -602,8 +602,9 @@ mod tests {
     /// conservation defences above.
     #[test]
     fn the_credit_floor_pauses_at_or_below_zero_and_never_only_at_zero() {
-        let ddl =
-            include_str!("../../../migrations/central/20260801001200_finance_credit_exhaustion.sql");
+        let ddl = include_str!(
+            "../../../migrations/central/20260801001200_finance_credit_exhaustion.sql"
+        );
         assert!(
             ddl.contains("IF -NEW.balance_microusd <= 0 THEN"),
             "the pause arm compares the spendable amount with `<=`, not `=`"

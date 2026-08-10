@@ -777,19 +777,22 @@ mod tests {
     #[test]
     fn a_listing_carries_mode_and_mtime_and_never_hashes_a_file() {
         let fs = MemoryFs::default();
-        fs.directories.lock().expect("the lock is uncontended").insert(
-            "/workspace".to_owned(),
-            vec![DirEntry {
-                name: "a.txt".to_owned(),
-                meta: Meta {
-                    kind: EntryKind::File,
-                    size: 12,
-                    mtime_ms: 1_700_000_000_123,
-                    mode: 0o644,
-                    target: None,
-                },
-            }],
-        );
+        fs.directories
+            .lock()
+            .expect("the lock is uncontended")
+            .insert(
+                "/workspace".to_owned(),
+                vec![DirEntry {
+                    name: "a.txt".to_owned(),
+                    meta: Meta {
+                        kind: EntryKind::File,
+                        size: 12,
+                        mtime_ms: 1_700_000_000_123,
+                        mode: 0o644,
+                        target: None,
+                    },
+                }],
+            );
         let outcome = list_dir(
             &fs,
             &GuestRoot::workspace(),
@@ -801,7 +804,10 @@ mod tests {
         )
         .expect("the list succeeds");
         let entry = outcome.entries.first().expect("one entry");
-        assert_eq!(entry.path, "/workspace/a.txt", "the path, not the bare name");
+        assert_eq!(
+            entry.path, "/workspace/a.txt",
+            "the path, not the bare name"
+        );
         assert_eq!(entry.mode, 0o644);
         assert_eq!(entry.mtime_ms, 1_700_000_000_123);
         assert_eq!(entry.size, 12);

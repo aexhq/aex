@@ -381,9 +381,7 @@ impl Executor {
                 // One rendered entry per line, in the same field order a stat
                 // answer uses. Nothing here reads a file: a directory listing
                 // is answered from `lstat` and never from content.
-                Ok(outcome) => {
-                    Self::text_terminal(journal, meta, now, &outcome.lines().join("\n"))
-                }
+                Ok(outcome) => Self::text_terminal(journal, meta, now, &outcome.lines().join("\n")),
                 Err(error) => Ok(Dispatch::Terminal(Box::new(failed(
                     meta,
                     now,

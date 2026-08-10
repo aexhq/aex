@@ -1193,7 +1193,9 @@ async fn a_negative_balance_pauses_and_not_only_an_exactly_zero_one() {
         .await
         .expect_err("the prepaid fence refuses a debit-positive customer balance");
     assert!(
-        refused.to_string().contains("customer_balance_never_overdrawn"),
+        refused
+            .to_string()
+            .contains("customer_balance_never_overdrawn"),
         "the refusal is the prepaid fence and not some other failure: {refused}"
     );
     assert_eq!(
@@ -1217,7 +1219,10 @@ async fn a_negative_balance_pauses_and_not_only_an_exactly_zero_one() {
     set_available(&mut connection, organization, -13_000).await;
     assert_eq!(
         account_state(&mut connection, organization).await,
-        ("payment_hold".to_owned(), Some("top_up_required".to_owned())),
+        (
+            "payment_hold".to_owned(),
+            Some("top_up_required".to_owned())
+        ),
         "an overdrawn account must stop; `= 0` would never have fired here"
     );
 
@@ -1226,7 +1231,10 @@ async fn a_negative_balance_pauses_and_not_only_an_exactly_zero_one() {
     set_available(&mut connection, organization, -26_000).await;
     assert_eq!(
         account_state(&mut connection, organization).await,
-        ("payment_hold".to_owned(), Some("top_up_required".to_owned())),
+        (
+            "payment_hold".to_owned(),
+            Some("top_up_required".to_owned())
+        ),
         "a deeper overdraw stays paused"
     );
     let messages: i64 = sqlx::query_scalar(
@@ -1244,7 +1252,10 @@ async fn a_negative_balance_pauses_and_not_only_an_exactly_zero_one() {
     set_available(&mut connection, organization, 0).await;
     assert_eq!(
         account_state(&mut connection, organization).await,
-        ("payment_hold".to_owned(), Some("top_up_required".to_owned())),
+        (
+            "payment_hold".to_owned(),
+            Some("top_up_required".to_owned())
+        ),
         "returning to exactly zero is not a restoration of service"
     );
     set_available(&mut connection, organization, 2_000_000).await;

@@ -29,8 +29,8 @@ use aex_workspace_domain::{RegistryPointer, RegistrySelector, Upload};
 
 use crate::ports::{
     AccountStateReader, AgentCancelPage, AgentCancelTarget, AgentPage, AppContext, Clock,
-    ContentReader, ContinuityReader, IdFactory, LimitsReader, LiveEntry, LiveListQuery, LiveListing,
-    LiveWorkspaceReader, PageBudget, PortError, RegistryReader, ReservationAuthority,
+    ContentReader, ContinuityReader, IdFactory, LimitsReader, LiveEntry, LiveListQuery,
+    LiveListing, LiveWorkspaceReader, PageBudget, PortError, RegistryReader, ReservationAuthority,
     ReservationGrant, ReservationRequest, SecretCustodyReader, SessionReader, SessionSnapshot,
     VersionedOperation, WorkspaceContinuity,
 };
@@ -610,11 +610,18 @@ impl LiveWorkspaceReader for ScriptedPorts {
         query: &LiveListQuery,
     ) -> Result<LiveListing, PortError> {
         self.log.record(PortCall::Read("live_list"));
-        let prefix = query.path.clone().unwrap_or_else(|| "/workspace".to_owned());
+        let prefix = query
+            .path
+            .clone()
+            .unwrap_or_else(|| "/workspace".to_owned());
         let mut matching = self
             .live_entries
             .iter()
-            .filter(|entry| entry.path.starts_with(&format!("{}/", prefix.trim_end_matches('/'))))
+            .filter(|entry| {
+                entry
+                    .path
+                    .starts_with(&format!("{}/", prefix.trim_end_matches('/')))
+            })
             .filter(|entry| {
                 query
                     .after

@@ -26,9 +26,7 @@ use aex_session_domain::{
 use aex_wire::canonical::{CanonicalJson, to_jcs_string};
 use aex_wire::error::ErrorCode;
 use aex_wire::idempotency::IntentDigest;
-use aex_wire::ids::{
-    AgentId, GenerationId, MessageId, OperationId, RunId, SessionId, WorkspaceId,
-};
+use aex_wire::ids::{AgentId, GenerationId, MessageId, OperationId, RunId, SessionId, WorkspaceId};
 use aex_wire::models::{CredentialRebindResult, SecretRef};
 use aex_wire::types::Timestamp;
 use time::Duration;

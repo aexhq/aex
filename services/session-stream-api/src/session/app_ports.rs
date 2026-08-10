@@ -95,8 +95,7 @@ const LIVE_SEAM: &str = "the persist survey manifest and the live workspace scan
 /// neither. Composing them here would also hand a `public_edge` service the
 /// same trait that carries `run`, `resume` and `terminate`, which is a
 /// lifecycle-authority decision and not a file-read one.
-const LIVE_OBSERVATION_SEAM: &str =
-    "the guest answers a listing from `lstat` with no digest; what is absent is the authenticated \
+const LIVE_OBSERVATION_SEAM: &str = "the guest answers a listing from `lstat` with no digest; what is absent is the authenticated \
      guest transport and the provider endpoint token, which this deployable does not compose";
 
 #[async_trait::async_trait]
