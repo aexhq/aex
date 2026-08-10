@@ -432,6 +432,18 @@ const RULES: &[Rule] = &[
         class: ResourceClass::Organization,
         min_role: Some(OrgRole::Admin),
     },
+    // Acceptance resolves no organization and therefore carries no role floor.
+    // It could not carry one: the caller is not yet a member of the
+    // organization that invited them, so any floor at all would refuse every
+    // legitimate request. What keeps this inside the tenant boundary is not a
+    // role but the selection — the transaction reads only invitation rows whose
+    // `email` equals the caller's own verified address, and takes the
+    // organization from the row rather than from the request.
+    Rule {
+        route: RouteId::InvitationAccept,
+        class: ResourceClass::None,
+        min_role: None,
+    },
     // --- workspaces ----------------------------------------------------------
     Rule {
         route: RouteId::WorkspacesList,

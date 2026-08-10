@@ -1044,6 +1044,23 @@
         ],
         "type": "object"
       },
+      "InvitationAcceptResult": {
+        "additionalProperties": false,
+        "properties": {
+          "memberships": {
+            "description": "One membership per invitation redeemed by this call, created or raised to the invited role. Bounded by the same 100 the acceptance transaction reads.",
+            "items": {
+              "$ref": "aex:schema:Membership"
+            },
+            "maxItems": 100,
+            "type": "array"
+          }
+        },
+        "required": [
+          "memberships"
+        ],
+        "type": "object"
+      },
       "InvitationCreateRequest": {
         "additionalProperties": false,
         "properties": {
@@ -3443,6 +3460,104 @@
         "x-aex-pause-exempt": true,
         "x-aex-safe-retry": true,
         "x-aex-scope": "account:read",
+        "x-aex-transport": "unary"
+      }
+    },
+    "/api/invitations/acceptances": {
+      "post": {
+        "operationId": "invitation_accept",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "aex:schema:EmptyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:InvitationAcceptResult"
+                }
+              }
+            },
+            "description": "Success."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
+          }
+        },
+        "summary": "Redeem every pending invitation addressed to the caller's verified email.",
+        "tags": [
+          "organizations"
+        ],
+        "x-aex-alt-principal": "user_session",
+        "x-aex-body-class": "aex_json",
+        "x-aex-errors": [
+          "unauthenticated",
+          "forbidden",
+          "insufficient_scope",
+          "resource_conflict",
+          "upstream_error",
+          "commit_outcome_unknown"
+        ],
+        "x-aex-etag": "none",
+        "x-aex-idempotency": "none",
+        "x-aex-pause-exempt": false,
+        "x-aex-safe-retry": true,
+        "x-aex-scope": "memberships:accept",
         "x-aex-transport": "unary"
       }
     },

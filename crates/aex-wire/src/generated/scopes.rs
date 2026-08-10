@@ -3,7 +3,7 @@
 //! The authorization scope registry.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:bd7052cb0fe98ca6622d42d82e3a3adfec7f8a2ef4d890f7f2c31fcc1e0df4a6`.
+//! `sha256:e6ceb49da3e57e7efaad2841048c43b74dd69ab6271a20f705c553c1644d3d67`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -32,6 +32,9 @@ pub enum ScopeId {
     /// `memberships:write` — Invite people to an organization.
     #[serde(rename = "memberships:write")]
     MembershipsWrite,
+    /// `memberships:accept` — Redeem invitations addressed to the caller's own verified email.
+    #[serde(rename = "memberships:accept")]
+    MembershipsAccept,
     /// `workspaces:read` — List and read workspaces.
     #[serde(rename = "workspaces:read")]
     WorkspacesRead,
@@ -111,6 +114,7 @@ impl ScopeId {
         ScopeId::OrganizationsWrite,
         ScopeId::MembershipsRead,
         ScopeId::MembershipsWrite,
+        ScopeId::MembershipsAccept,
         ScopeId::WorkspacesRead,
         ScopeId::WorkspacesWrite,
         ScopeId::WorkspacesDelete,
@@ -145,6 +149,7 @@ impl ScopeId {
             Self::OrganizationsWrite => "organizations:write",
             Self::MembershipsRead => "memberships:read",
             Self::MembershipsWrite => "memberships:write",
+            Self::MembershipsAccept => "memberships:accept",
             Self::WorkspacesRead => "workspaces:read",
             Self::WorkspacesWrite => "workspaces:write",
             Self::WorkspacesDelete => "workspaces:delete",

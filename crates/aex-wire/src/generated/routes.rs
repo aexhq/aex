@@ -3,7 +3,7 @@
 //! The route registry: one row per public operation.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:bd7052cb0fe98ca6622d42d82e3a3adfec7f8a2ef4d890f7f2c31fcc1e0df4a6`.
+//! `sha256:e6ceb49da3e57e7efaad2841048c43b74dd69ab6271a20f705c553c1644d3d67`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -69,6 +69,9 @@ pub enum RouteId {
     DeviceAuthorizationCreate,
     /// `POST /api/auth/device/tokens` — Exchange an approved device code for an account token.
     DeviceTokenCreate,
+    /// `POST /api/invitations/acceptances` — Redeem every pending invitation addressed to the
+    /// caller's verified email.
+    InvitationAccept,
     /// `POST /api/organizations/{organizationId}/invitations` — Invite a person to the
     /// organization.
     InvitationCreate,
@@ -387,6 +390,7 @@ impl RouteId {
         RouteId::DashboardBootstrapGet,
         RouteId::DeviceAuthorizationCreate,
         RouteId::DeviceTokenCreate,
+        RouteId::InvitationAccept,
         RouteId::InvitationCreate,
         RouteId::MembershipsList,
         RouteId::ObservationsEventsListen,
@@ -539,6 +543,7 @@ impl RouteId {
             Self::DashboardBootstrapGet => "dashboard_bootstrap_get",
             Self::DeviceAuthorizationCreate => "device_authorization_create",
             Self::DeviceTokenCreate => "device_token_create",
+            Self::InvitationAccept => "invitation_accept",
             Self::InvitationCreate => "invitation_create",
             Self::MembershipsList => "memberships_list",
             Self::ObservationsEventsListen => "observations_events_listen",
@@ -1220,6 +1225,36 @@ pub static ROUTES: &[RouteDescriptor] = &[
         response_schema: Some("DeviceToken"),
         safe_retry: true,
         pause_exempt: true,
+    },
+    RouteDescriptor {
+        id: RouteId::InvitationAccept,
+        operation_id: "invitation_accept",
+        plane: Plane::Central,
+        fragment: "organizations",
+        serving_artifact: "central-control-api",
+        method: HttpMethod::Post,
+        template: "/api/invitations/acceptances",
+        path_params: &[],
+        query_params: &[],
+        required_scope: Some(ScopeId::MembershipsAccept),
+        alt_principal: Some(PrincipalKind::UserSession),
+        idempotency: IdempotencyKind::None,
+        body_class: BodyClass::AexJson,
+        transport: TransportKind::Unary,
+        success_status: 200,
+        etag: EtagPolicy::None,
+        errors: &[
+            ErrorCode::Unauthenticated,
+            ErrorCode::Forbidden,
+            ErrorCode::InsufficientScope,
+            ErrorCode::ResourceConflict,
+            ErrorCode::UpstreamError,
+            ErrorCode::CommitOutcomeUnknown,
+        ],
+        request_schema: Some("EmptyRequest"),
+        response_schema: Some("InvitationAcceptResult"),
+        safe_retry: true,
+        pause_exempt: false,
     },
     RouteDescriptor {
         id: RouteId::InvitationCreate,

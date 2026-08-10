@@ -378,6 +378,14 @@ impl IdentityApi for Api {
 }
 
 impl OrganizationsApi for Api {
+    async fn invitation_accept(
+        &self,
+        _cx: &RequestContext,
+        _body: aex_wire::models::EmptyRequest,
+    ) -> WireResult<aex_wire::models::InvitationAcceptResult> {
+        self.refuse()
+    }
+
     async fn invitation_create(
         &self,
         _cx: &RequestContext,
@@ -609,7 +617,7 @@ fn central_routes() -> Vec<RouteId> {
 #[tokio::test]
 async fn every_generated_central_route_is_mounted() {
     let declared = central_routes();
-    assert_eq!(declared.len(), 27, "the central plane declares 27 routes");
+    assert_eq!(declared.len(), 28, "the central plane declares 28 routes");
     for id in declared {
         let router = plane(
             Api::new(Answer::Declared),

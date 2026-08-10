@@ -653,7 +653,7 @@ mount_group!(
     OrganizationsApi,
     dispatch_organizations,
     RouteGroup::Organizations,
-    "Mounts `central:organizations`: five routes."
+    "Mounts `central:organizations`: six routes."
 );
 mount_group!(
     mount_workspaces_api,

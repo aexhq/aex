@@ -18,6 +18,16 @@ use crate::authz::OrgRole;
 /// How long an invitation stays pending.
 pub const INVITATION_TTL: Duration = Duration::days(14);
 
+/// How many invitations one acceptance may redeem.
+///
+/// Acceptance names no invitation — it redeems everything pending for one
+/// verified address — so the transaction needs a ceiling, or one request could
+/// be made unboundedly large by inviting a single address from arbitrarily many
+/// organizations. The selection statement carries the same `LIMIT`, the caller
+/// preassigns this many membership ids, and the published response bounds its
+/// array here too. Anything beyond it is redeemed by asking again.
+pub const MAX_ACCEPTABLE_INVITATIONS: usize = 100;
+
 /// The lifecycle of an invitation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum InvitationStatus {

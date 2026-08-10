@@ -1,0 +1,21 @@
+{
+  "$id": "https://schemas.aex.dev/v1/InvitationAcceptResult.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What one acceptance redeemed. An invitation carries no secret, so acceptance names nothing: every pending invitation addressed to the caller's verified email is redeemed in one transaction. The list is empty when nothing was pending, which is what a repeated call answers.",
+  "properties": {
+    "memberships": {
+      "description": "One membership per invitation redeemed by this call, created or raised to the invited role. Bounded by the same 100 the acceptance transaction reads.",
+      "items": {
+        "$ref": "aex:schema:Membership"
+      },
+      "maxItems": 100,
+      "type": "array"
+    }
+  },
+  "required": [
+    "memberships"
+  ],
+  "title": "InvitationAcceptResult",
+  "type": "object"
+}

@@ -652,6 +652,40 @@
       "transport": "unary"
     },
     {
+      "altPrincipal": "user_session",
+      "bodyClass": "aex_json",
+      "errors": [
+        "unauthenticated",
+        "forbidden",
+        "insufficient_scope",
+        "resource_conflict",
+        "upstream_error",
+        "commit_outcome_unknown"
+      ],
+      "etag": "none",
+      "fragment": "organizations",
+      "idempotency": "none",
+      "method": "POST",
+      "operationId": "invitation_accept",
+      "path": "/api/invitations/acceptances",
+      "pathParams": [],
+      "pauseExempt": false,
+      "plane": "central",
+      "queryParams": [],
+      "requestSchema": "EmptyRequest",
+      "requiredScope": "memberships:accept",
+      "responseSchema": "InvitationAcceptResult",
+      "safeRetry": true,
+      "scenarios": [
+        "SC-CONTROL-WORKSPACE"
+      ],
+      "servedArtifact": "central-control-api",
+      "servingArtifact": "central-control-api",
+      "successStatus": 200,
+      "summary": "Redeem every pending invitation addressed to the caller's verified email.",
+      "transport": "unary"
+    },
+    {
       "altPrincipal": null,
       "bodyClass": "aex_json",
       "errors": [

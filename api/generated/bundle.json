@@ -579,6 +579,35 @@
           "transport": "unary"
         },
         {
+          "altPrincipal": "user_session",
+          "bodyClass": "aex_json",
+          "errors": [
+            "unauthenticated",
+            "forbidden",
+            "insufficient_scope",
+            "resource_conflict",
+            "upstream_error",
+            "commit_outcome_unknown"
+          ],
+          "etag": "none",
+          "fragment": "organizations",
+          "idempotency": "none",
+          "method": "POST",
+          "operationId": "invitation_accept",
+          "path": "/api/invitations/acceptances",
+          "pathParams": [],
+          "pauseExempt": false,
+          "plane": "central",
+          "queryParams": [],
+          "requestSchema": "EmptyRequest",
+          "requiredScope": "memberships:accept",
+          "responseSchema": "InvitationAcceptResult",
+          "safeRetry": true,
+          "successStatus": 200,
+          "summary": "Redeem every pending invitation addressed to the caller's verified email.",
+          "transport": "unary"
+        },
+        {
           "altPrincipal": null,
           "bodyClass": "aex_json",
           "errors": [
@@ -5665,6 +5694,10 @@
           "scope": "memberships:write"
         },
         {
+          "description": "Redeem invitations addressed to the caller's own verified email.",
+          "scope": "memberships:accept"
+        },
+        {
           "description": "List and read workspaces.",
           "scope": "workspaces:read"
         },
@@ -7355,6 +7388,23 @@
         "organizationId",
         "role",
         "status"
+      ],
+      "type": "object"
+    },
+    "InvitationAcceptResult": {
+      "additionalProperties": false,
+      "properties": {
+        "memberships": {
+          "description": "One membership per invitation redeemed by this call, created or raised to the invited role. Bounded by the same 100 the acceptance transaction reads.",
+          "items": {
+            "$ref": "aex:schema:Membership"
+          },
+          "maxItems": 100,
+          "type": "array"
+        }
+      },
+      "required": [
+        "memberships"
       ],
       "type": "object"
     },

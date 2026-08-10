@@ -139,6 +139,16 @@ schemas:
       email: { type: string, min: 3, max: 320, doc: "Who to invite." }
       role: { type: ref, to: InvitationRole, doc: "The role to grant." }
 
+  InvitationAcceptResult:
+    doc: >-
+      What one acceptance redeemed. An invitation carries no secret, so
+      acceptance names nothing: every pending invitation addressed to the
+      caller's verified email is redeemed in one transaction. The list is
+      empty when nothing was pending, which is what a repeated call answers.
+    type: object
+    fields:
+      memberships: { type: array, max: 100, items: { type: ref, to: Membership }, doc: "One membership per invitation redeemed by this call, created or raised to the invited role. Bounded by the same 100 the acceptance transaction reads." }
+
   WorkspaceStatus:
     doc: Whether a workspace admits work.
     type: enum
