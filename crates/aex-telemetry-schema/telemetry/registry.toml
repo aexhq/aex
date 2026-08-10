@@ -285,6 +285,19 @@ instrument = "counter"
 unit = "By"
 attributes = ["aex.plane", "aex.region", "aex.deployable"]
 
+# The one measurement of how far the regional projection lags the central
+# authority that feeds it. Every pause, revocation and limit change in this
+# system takes effect by being projected, so this is the number that says how
+# long "takes effect" is. It is measured on a schedule rather than per request:
+# doubling every hot-path read to bound a fact that changes on operator-paced
+# events would buy a per-request answer nobody acts on per request.
+[[metric]]
+name = "aex.projection.frontier.lag"
+brief = "Milliseconds between now and the instant the regional projection is proved complete through."
+instrument = "histogram"
+unit = "ms"
+attributes = ["aex.plane", "aex.region", "aex.deployable"]
+
 [[metric]]
 name = "aex.otlp.count"
 brief = "Delta of one named OTLP admission counter."

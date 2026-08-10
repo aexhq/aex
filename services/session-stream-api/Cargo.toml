@@ -61,6 +61,10 @@ bytes.workspace = true
 futures.workspace = true
 tokio = { workspace = true, features = ["net"] }
 aex-content-domain = { path = "../../crates/aex-content-domain" }
+# The one `AccountOperationalState` mapping, shared with the central plane so
+# that one account cannot be described two ways. Already a dependency of
+# `aex-regional-http`, so this adds no crate edge to the deployable.
+aex-control-domain = { path = "../../crates/aex-control-domain" }
 aex-operation-domain = { path = "../../crates/aex-operation-domain" }
 aex-content-aws = { path = "../../crates/aex-content-aws" }
 aex-capacity-dynamodb = { path = "../../crates/aex-capacity-dynamodb" }

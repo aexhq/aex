@@ -6523,6 +6523,8 @@ name = "regional-capacity-controller"
 version = "0.1.0"
 dependencies = [
  "aex-capacity-dynamodb",
+ "aex-internal-contracts",
+ "aex-session-dynamodb",
  "aex-wire",
  "async-trait",
  "aws-config",
@@ -7269,6 +7271,7 @@ dependencies = [
  "aex-content-aws",
  "aex-content-domain",
  "aex-content-dynamodb",
+ "aex-control-domain",
  "aex-identity-domain",
  "aex-internal-contracts",
  "aex-observation-domain",

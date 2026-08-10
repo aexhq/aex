@@ -1,7 +1,7 @@
 {
   "schema": "aex.regional-tables.v1",
   "generation": 1,
-  "digest": "blake3:890e1d2c5761be3c1423d5b6ca631f1ecddb7643839ea81e401cd2df61b3e63e",
+  "digest": "blake3:c13ad3ee46d35f132cb20b69c3e78391114f9b5f3242e02ad3b1b506cb0ccb76",
   "tables": [
     {
       "schema": "aex.regional-table.v1",
@@ -599,13 +599,34 @@
         {
           "name": "sk",
           "type": "S"
+        },
+        {
+          "name": "gsiAllPk",
+          "type": "S"
+        },
+        {
+          "name": "gsiAllSk",
+          "type": "S"
         }
       ],
       "keySchema": {
         "partition": "pk",
         "sort": "sk"
       },
-      "globalSecondaryIndexes": [],
+      "globalSecondaryIndexes": [
+        {
+          "name": "gsi_all_workspaces",
+          "partition": "gsiAllPk",
+          "sort": "gsiAllSk",
+          "sparse": true,
+          "projectsRecordBody": false,
+          "rationale": "The enumeration a defaults-revision sweep walks. Only the `workspace_capacity` authority row carries `gsiAllPk`, so an immutable `capacity_audit` sibling can never appear in a sweep and be reconciled twice. Both attributes were already written on every commit and indexed by nothing, which left the ordered `Reconcile` sweep undeliverable: a limit id added after a workspace was bootstrapped reaches it only through that sweep, and nothing could enumerate the workspaces to run it over. The projection is KEYS_ONLY because a sweep needs an identity and then reads the authority row it is about to condition on strongly anyway. The controller's index grant below is a separate statement from its table grant on purpose: the `WS#*` leading-key fence is the *table's*, and this index has one partition, `WORKSPACES`, so a fenced statement over it would deny the enumeration outright while protecting a keyspace the index does not expose.",
+          "projection": {
+            "type": "KEYS_ONLY",
+            "attributes": []
+          }
+        }
+      ],
       "stream": {
         "enabled": false,
         "viewType": "NONE",
@@ -643,6 +664,15 @@
               "WS#*"
             ]
           }
+        },
+        {
+          "role": "regional-capacity-controller",
+          "actions": [
+            "dynamodb:Query"
+          ],
+          "resources": [
+            "index/*"
+          ]
         }
       ],
       "tags": {

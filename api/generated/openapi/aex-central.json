@@ -38,7 +38,10 @@
       },
       "AccountPauseReason": {
         "enum": [
-          "top_up_required"
+          "top_up_required",
+          "payment_hold",
+          "dispute_hold",
+          "account_closed"
         ],
         "type": "string"
       },
@@ -52,13 +55,13 @@
             "x-aex-time": "rfc3339-ms"
           },
           "deletionScheduledAt": {
-            "description": "When unfunded content is scheduled for deletion.",
+            "description": "When unfunded content is scheduled for deletion. Published and permanently absent: this is the regional content lifecycle's fact and that authority does not exist yet.",
             "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
             "type": "string",
             "x-aex-time": "rfc3339-ms"
           },
           "minimumRestoreCents": {
-            "description": "Smallest top-up that restores service.",
+            "description": "Smallest top-up that restores service. Present exactly when `reason` is `top_up_required`; the other three holds have no paying remedy, and naming an amount for them would be a false one.",
             "pattern": "^(0|[1-9]\\d*)$",
             "type": "string",
             "x-aex-money": "cents"
@@ -68,7 +71,7 @@
             "description": "Why the account is paused."
           },
           "retentionFundedUntil": {
-            "description": "How long retained content stays funded.",
+            "description": "How long retained content stays funded. Published and permanently absent: storage is billed monthly and unfunded storage is enforced through the account pause, so no authority owns this instant yet.",
             "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
             "type": "string",
             "x-aex-time": "rfc3339-ms"
@@ -2838,10 +2841,10 @@
         "operationId": "account_get",
         "parameters": [
           {
-            "description": "Required unless the credential derives one organization.",
+            "description": "Which organization's account to read. Required: a user can belong to many organizations, so a rule that derived it from the credential would silently change meaning the day a user joins a second one.",
             "in": "query",
             "name": "organizationId",
-            "required": false,
+            "required": true,
             "schema": {
               "pattern": "^org_[0-9a-hjkmnp-tv-z]{26}$",
               "type": "string",
@@ -2896,7 +2899,7 @@
         "tags": [
           "identity"
         ],
-        "x-aex-alt-principal": "workspace_key",
+        "x-aex-alt-principal": null,
         "x-aex-body-class": "none",
         "x-aex-errors": [
           "unauthenticated",

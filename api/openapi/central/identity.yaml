@@ -1,4 +1,4 @@
 plane: central
 fragment: identity
 operations:
-  - { id: account_get, method: GET, path: /api/account, summary: "Read the account and its operational state.", scope: "account:read", altPrincipal: workspace_key, success: AccountOperationalState, pauseExempt: true, errors: [unauthenticated, forbidden, insufficient_scope, account_state_unavailable], query: { organizationId: { type: id, of: organization, optional: true, doc: "Required unless the credential derives one organization." } } }
+  - { id: account_get, method: GET, path: /api/account, summary: "Read the account and its operational state.", scope: "account:read", success: AccountOperationalState, pauseExempt: true, errors: [unauthenticated, forbidden, insufficient_scope, account_state_unavailable], query: { organizationId: { type: id, of: organization, doc: "Which organization's account to read. Required: a user can belong to many organizations, so a rule that derived it from the credential would silently change meaning the day a user joins a second one." } } }

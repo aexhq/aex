@@ -38,7 +38,10 @@
       },
       "AccountPauseReason": {
         "enum": [
-          "top_up_required"
+          "top_up_required",
+          "payment_hold",
+          "dispute_hold",
+          "account_closed"
         ],
         "type": "string"
       },
@@ -52,13 +55,13 @@
             "x-aex-time": "rfc3339-ms"
           },
           "deletionScheduledAt": {
-            "description": "When unfunded content is scheduled for deletion.",
+            "description": "When unfunded content is scheduled for deletion. Published and permanently absent: this is the regional content lifecycle's fact and that authority does not exist yet.",
             "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
             "type": "string",
             "x-aex-time": "rfc3339-ms"
           },
           "minimumRestoreCents": {
-            "description": "Smallest top-up that restores service.",
+            "description": "Smallest top-up that restores service. Present exactly when `reason` is `top_up_required`; the other three holds have no paying remedy, and naming an amount for them would be a false one.",
             "pattern": "^(0|[1-9]\\d*)$",
             "type": "string",
             "x-aex-money": "cents"
@@ -68,7 +71,7 @@
             "description": "Why the account is paused."
           },
           "retentionFundedUntil": {
-            "description": "How long retained content stays funded.",
+            "description": "How long retained content stays funded. Published and permanently absent: storage is billed monthly and unfunded storage is enforced through the account pause, so no authority owns this instant yet.",
             "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
             "type": "string",
             "x-aex-time": "rfc3339-ms"
@@ -16978,6 +16981,16 @@
               }
             },
             "description": "Error."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
           }
         },
         "summary": "Read the workspace this credential is pinned to.",
@@ -16989,7 +17002,9 @@
         "x-aex-errors": [
           "unauthenticated",
           "insufficient_scope",
+          "workspace_activation_required",
           "workspace_not_live",
+          "account_state_unavailable",
           "wrong_workspace_region"
         ],
         "x-aex-etag": "none",
@@ -17963,30 +17978,7 @@
     "/api/workspace/limits": {
       "get": {
         "operationId": "workspace_limits_list",
-        "parameters": [
-          {
-            "description": "Opaque continuation token.",
-            "in": "query",
-            "name": "cursor",
-            "required": false,
-            "schema": {
-              "maxLength": 4096,
-              "type": "string",
-              "x-aex-cursor": true
-            }
-          },
-          {
-            "description": "Page size.",
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "maximum": 1000,
-              "minimum": 1,
-              "type": "integer"
-            }
-          }
-        ],
+        "parameters": [],
         "requestBody": null,
         "responses": {
           "200": {
@@ -17998,16 +17990,6 @@
               }
             },
             "description": "Success."
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
           },
           "401": {
             "content": {
@@ -18040,7 +18022,7 @@
             "description": "Error."
           }
         },
-        "summary": "List the effective workspace safety limits.",
+        "summary": "List the effective workspace safety limits. The registry is closed and complete, so the whole set is one page and no continuation is ever minted.",
         "tags": [
           "workspace"
         ],
@@ -18049,7 +18031,7 @@
         "x-aex-errors": [
           "unauthenticated",
           "insufficient_scope",
-          "invalid_cursor",
+          "workspace_activation_required",
           "wrong_workspace_region"
         ],
         "x-aex-etag": "none",
@@ -18138,6 +18120,7 @@
           "unauthenticated",
           "insufficient_scope",
           "not_found",
+          "workspace_activation_required",
           "wrong_workspace_region"
         ],
         "x-aex-etag": "none",

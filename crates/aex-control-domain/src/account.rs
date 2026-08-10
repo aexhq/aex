@@ -18,7 +18,7 @@
 use aex_wire::models::{
     AccountActiveState, AccountOperationalState, AccountPauseReason, AccountPausedState,
 };
-use aex_wire::types::Timestamp;
+use aex_wire::types::{Cents, Timestamp};
 use time::OffsetDateTime;
 
 use crate::authz::AccountState;
@@ -88,20 +88,44 @@ impl AccountPauseCause {
 
     /// The published reason for this cause.
     ///
-    /// Today `AccountPauseReason` carries one value, so all four collapse onto
-    /// it. That collapse is the whole of the pending contract delta: when the
-    /// published enum widens to `top_up_required | payment_hold | dispute_hold |
-    /// account_closed` this becomes a four-arm identity and nothing else in the
-    /// projection changes.
+    /// A four-arm identity, as it always should have been. It was a collapse
+    /// onto `top_up_required` only while the published enum carried one value;
+    /// widening that enum was the whole of the delta, and nothing else in the
+    /// projection changed.
     #[must_use]
     pub const fn published(self) -> AccountPauseReason {
         match self {
-            Self::TopUpRequired | Self::PaymentHold | Self::DisputeHold | Self::AccountClosed => {
-                AccountPauseReason::TopUpRequired
-            }
+            Self::TopUpRequired => AccountPauseReason::TopUpRequired,
+            Self::PaymentHold => AccountPauseReason::PaymentHold,
+            Self::DisputeHold => AccountPauseReason::DisputeHold,
+            Self::AccountClosed => AccountPauseReason::AccountClosed,
+        }
+    }
+
+    /// The smallest top-up that restores service under this hold, in cents.
+    ///
+    /// `Some` for exactly one cause. A top-up does not clear a payment hold, a
+    /// dispute hold outlives any payment, and a closed account has no remedy at
+    /// all — naming an amount for any of the three would publish a false remedy,
+    /// which is the defect widening this vocabulary exists to remove.
+    #[must_use]
+    pub const fn minimum_restore_cents(self) -> Option<u64> {
+        match self {
+            Self::TopUpRequired => Some(MINIMUM_RESTORE_CENTS),
+            Self::PaymentHold | Self::DisputeHold | Self::AccountClosed => None,
         }
     }
 }
+
+/// The smallest top-up that lifts a `top_up_required` pause, in cents.
+///
+/// $20 flat, owner-settled 2026-08-10, and deliberately **the same number as the
+/// ordinary minimum top-up** rather than a second "restore" threshold. A balance-
+/// derived figure (`max(minimum_top_up, -available_balance)`) was proposed and
+/// not taken: the region cannot see finance's balance, so a balance-derived
+/// amount could never be projected, and the central and regional answers to one
+/// question would diverge permanently by construction.
+pub const MINIMUM_RESTORE_CENTS: u64 = 2000;
 
 /// Why an account profile could not be projected onto the wire.
 ///
@@ -158,12 +182,11 @@ pub fn account_operational_state(
                 // content lifecycle's facts. Both are published and permanently
                 // empty by owner decision; nothing on either plane may guess one.
                 deletion_scheduled_at: None,
-                // The smallest restoring top-up is a money fact, and the profile
-                // is the sole input to this projection by decision. The field
-                // therefore stays empty until the profile carries the amount —
-                // see the contract delta that makes it required for
-                // `top_up_required`.
-                minimum_restore_cents: None,
+                // Present exactly when the cause has a paying remedy. It is a
+                // flat constant, not a balance-derived figure, which is what
+                // lets the region publish the same number as the centre from
+                // the same profile without ever seeing a balance.
+                minimum_restore_cents: cause.minimum_restore_cents().map(Cents::new),
                 reason: cause.published(),
                 retention_funded_until: None,
                 revision: profile.revision,
@@ -236,5 +259,90 @@ mod tests {
                 .expect("an active account projects"),
             AccountOperationalState::Active(_)
         ));
+    }
+
+    /// The four holds are four remedies. Before the published vocabulary
+    /// widened, a dispute hold and a closed account both told the customer to
+    /// pay — the one defect this projection exists to remove.
+    #[test]
+    fn each_hold_publishes_its_own_remedy_and_never_another_holds() {
+        use aex_wire::models::AccountPauseReason;
+
+        let published: Vec<AccountPauseReason> = AccountPauseCause::ALL
+            .into_iter()
+            .map(AccountPauseCause::published)
+            .collect();
+        assert_eq!(
+            published,
+            vec![
+                AccountPauseReason::TopUpRequired,
+                AccountPauseReason::PaymentHold,
+                AccountPauseReason::DisputeHold,
+                AccountPauseReason::AccountClosed,
+            ],
+            "a hold published another hold's remedy"
+        );
+        assert_eq!(
+            published.len(),
+            AccountPauseReason::ALL.len(),
+            "the durable vocabulary and the published one must stay the same size"
+        );
+    }
+
+    /// `minimumRestoreCents` is a remedy, not a decoration: it is present
+    /// exactly where paying restores service, and nowhere else.
+    #[test]
+    fn the_restoring_amount_is_published_only_where_paying_restores_service() {
+        use aex_wire::models::AccountOperationalState;
+
+        for cause in AccountPauseCause::ALL {
+            let state = super::account_operational_state(&profile(
+                AccountState::PausedTopUpRequired,
+                Some(cause.as_str()),
+            ))
+            .expect("a declared cause projects");
+            let AccountOperationalState::Paused(paused) = state else {
+                panic!("{cause:?} projected as active");
+            };
+            let expected = match cause {
+                AccountPauseCause::TopUpRequired => Some(super::MINIMUM_RESTORE_CENTS),
+                AccountPauseCause::PaymentHold
+                | AccountPauseCause::DisputeHold
+                | AccountPauseCause::AccountClosed => None,
+            };
+            assert_eq!(
+                paused
+                    .minimum_restore_cents
+                    .map(aex_wire::types::Cents::get),
+                expected,
+                "{cause:?} published the wrong restoring amount"
+            );
+        }
+        assert_eq!(
+            super::MINIMUM_RESTORE_CENTS,
+            2000,
+            "the minimum top-up is $20 flat; there is no separate restore threshold"
+        );
+    }
+
+    /// Two fields stay in the contract by owner decision and have no producer.
+    /// Publishing a guess for either is worse than publishing nothing, so the
+    /// projection must never learn to fill one in without an owner.
+    #[test]
+    fn the_two_unowned_retention_fields_are_published_and_always_empty() {
+        use aex_wire::models::AccountOperationalState;
+
+        for cause in AccountPauseCause::ALL {
+            let state = super::account_operational_state(&profile(
+                AccountState::PausedTopUpRequired,
+                Some(cause.as_str()),
+            ))
+            .expect("a declared cause projects");
+            let AccountOperationalState::Paused(paused) = state else {
+                panic!("{cause:?} projected as active");
+            };
+            assert_eq!(paused.retention_funded_until, None, "{cause:?}");
+            assert_eq!(paused.deletion_scheduled_at, None, "{cause:?}");
+        }
     }
 }

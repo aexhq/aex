@@ -9,7 +9,7 @@ use aex_session_dynamodb::error::{
     Idempotence, Resolution, StoreError, classify, decode_cancellation_with_resolution,
 };
 use aex_session_dynamodb::plan::{Participant, TransactionPlan};
-use aex_wire::ids::WorkspaceId;
+use aex_wire::ids::{PrefixedId as _, WorkspaceId};
 use aex_wire::types::Timestamp;
 use aws_sdk_dynamodb::Client;
 use sha2::{Digest as _, Sha256};
@@ -28,6 +28,11 @@ const PROJECTION_MEMBER_PARTICIPANT: Participant = Participant::new("capacity.pr
 const PROJECTION_BUNDLE_PARTICIPANT: Participant = Participant::new("capacity.projection_bundle");
 const PROJECTION_HEAD_PARTICIPANT: Participant = Participant::new("capacity.projection_head");
 const PROJECTION_EDGE_PARTICIPANT: Participant = Participant::new("capacity.projection_edge");
+
+/// The index a defaults-revision sweep enumerates over.
+pub const ALL_WORKSPACES_INDEX: &str = "gsi_all_workspaces";
+/// The one partition every authority row is written into for that enumeration.
+pub const ALL_WORKSPACES_PARTITION: &str = "WORKSPACES";
 
 const CREATE_CONDITION: &str = "attribute_not_exists(#pk)";
 const REPLACE_CONDITION: &str =
@@ -97,6 +102,71 @@ impl CapacityStore {
             .item()
             .map(|item| decode_state(item, workspace).map_err(StoreError::from))
             .transpose()
+    }
+
+    /// Lists the workspaces this region holds a capacity authority for.
+    ///
+    /// The enumeration a defaults-revision sweep walks, over `gsi_all_workspaces`.
+    /// It is a **query on one partition**, not a scan: every authority row
+    /// carries the same `gsiAllPk`, sorted by workspace id, so a sweep resumes
+    /// exactly where it stopped and cannot revisit or skip a workspace when it
+    /// is restarted.
+    ///
+    /// The index is sparse and only the authority row carries the key, so the
+    /// immutable `capacity_audit` siblings — one per revision, unboundedly many —
+    /// never appear here.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed store failure. A page that cannot be decoded is an error
+    /// rather than a short page: a sweep that silently skipped a workspace would
+    /// leave exactly the incomplete effective set it exists to repair.
+    pub async fn page_workspaces(
+        &self,
+        budget: u32,
+        after: Option<WorkspaceId>,
+    ) -> Result<Vec<WorkspaceId>, StoreError> {
+        let mut query = self
+            .client
+            .query()
+            .table_name(&self.authority_table)
+            .index_name(ALL_WORKSPACES_INDEX)
+            .key_condition_expression("#pk = :pk")
+            .expression_attribute_names("#pk", "gsiAllPk")
+            .expression_attribute_values(":pk", s(ALL_WORKSPACES_PARTITION))
+            .limit(i32::try_from(budget.max(1)).unwrap_or(i32::MAX));
+        if let Some(after) = after {
+            query = query.set_exclusive_start_key(Some(std::collections::HashMap::from([
+                ("pk".to_owned(), s(workspace_pk(after))),
+                ("sk".to_owned(), s(STATE_SK.to_owned())),
+                ("gsiAllPk".to_owned(), s(ALL_WORKSPACES_PARTITION)),
+                ("gsiAllSk".to_owned(), s(after.to_string())),
+            ])));
+        }
+        let output = query
+            .send()
+            .await
+            .map_err(|error| classify(&error, Idempotence::Read))?;
+        output
+            .items
+            .unwrap_or_default()
+            .iter()
+            .map(|item| {
+                // A `KEYS_ONLY` projection carries no `itemType` and no body,
+                // so the identity is the index sort key itself — which is the
+                // whole reason the sweep sorts by workspace id rather than by
+                // anything it would have to project a body to read.
+                let raw = item
+                    .get("gsiAllSk")
+                    .and_then(|value| value.as_s().ok())
+                    .ok_or_else(|| StoreError::Invalid {
+                        detail: "a capacity enumeration row carries no workspace id".to_owned(),
+                    })?;
+                WorkspaceId::parse(raw).map_err(|error| StoreError::Invalid {
+                    detail: format!("`{raw}` is not a workspace id: {error}"),
+                })
+            })
+            .collect()
     }
 
     /// Plans and atomically commits authority, audit, all member rows and the
@@ -237,7 +307,7 @@ fn authority_put(
         .set("capacityFence", n(state.capacity_fence))
         .set("state", s(encoded))
         .set("changedAt", stamp(state.changed_at))
-        .set("gsiAllPk", s("WORKSPACES"))
+        .set("gsiAllPk", s(ALL_WORKSPACES_PARTITION))
         .set("gsiAllSk", s(state.workspace_id.to_string()))
         .build();
     let mut put = aws_sdk_dynamodb::types::Put::builder()

@@ -62,6 +62,14 @@ pub mod keys {
     pub const PLANE: &str = "AEX_CENTRAL_CONTROL_WORKER_PLANE";
     /// The bound region.
     pub const REGION: &str = "AEX_CENTRAL_CONTROL_WORKER_REGION";
+    /// Direct regional capacity-controller Lambda ARNs, `region=arn` comma-separated.
+    ///
+    /// Separate from [`REGIONAL_FUNCTIONS`] rather than folded into it: they are
+    /// two different authorities with two different failure meanings, and one
+    /// map would make a missing capacity controller look like a missing control
+    /// function on the diagnostic that names it.
+    pub const REGIONAL_CAPACITY_FUNCTIONS: &str =
+        "AEX_CENTRAL_CONTROL_WORKER_REGIONAL_CAPACITY_FUNCTION_ARNS";
     /// Direct regional control Lambda ARNs, `region=arn` comma-separated.
     pub const REGIONAL_FUNCTIONS: &str = "AEX_CENTRAL_CONTROL_WORKER_REGIONAL_FUNCTION_ARNS";
     /// Regional authz projection tables, `region=table` comma-separated.
@@ -87,6 +95,7 @@ pub mod keys {
         LEASE_MS,
         PLANE,
         REGION,
+        REGIONAL_CAPACITY_FUNCTIONS,
         REGIONAL_FUNCTIONS,
         REGIONAL_PROJECTIONS,
         ROLE,
@@ -150,6 +159,8 @@ pub struct Config {
     pub lease_ms: u64,
     /// Every region this worker may dispatch to.
     pub regional_functions: BTreeMap<Region, String>,
+    /// Every region's capacity controller.
+    pub regional_capacity_functions: BTreeMap<Region, String>,
     /// Regional authorization projection tables.
     pub regional_projections: BTreeMap<Region, String>,
 }
@@ -199,7 +210,14 @@ impl Config {
         }
         let batch_size = bounded(&lookup, keys::BATCH_SIZE, 1, MAX_BATCH)?;
         let lease_ms = bounded(&lookup, keys::LEASE_MS, 1, MAX_LEASE_MS)?;
-        let regional_functions = functions(&required(&lookup, keys::REGIONAL_FUNCTIONS)?)?;
+        let regional_functions = functions(
+            keys::REGIONAL_FUNCTIONS,
+            &required(&lookup, keys::REGIONAL_FUNCTIONS)?,
+        )?;
+        let regional_capacity_functions = functions(
+            keys::REGIONAL_CAPACITY_FUNCTIONS,
+            &required(&lookup, keys::REGIONAL_CAPACITY_FUNCTIONS)?,
+        )?;
         let regional_projections = projections(&required(&lookup, keys::REGIONAL_PROJECTIONS)?)?;
         if let Some(region) = regional_functions
             .keys()
@@ -225,6 +243,33 @@ impl Config {
                 ),
             });
         }
+        // A region this worker can project into but cannot bootstrap is exactly
+        // the outage the trigger exists to prevent: the placement would land and
+        // every request behind it would answer `401`. Refuse at start-up.
+        if let Some(region) = regional_projections
+            .keys()
+            .find(|region| !regional_capacity_functions.contains_key(region))
+        {
+            return Err(CentralControlWorkerConfigError::Invalid {
+                name: keys::REGIONAL_CAPACITY_FUNCTIONS,
+                reason: format!(
+                    "no capacity controller for configured region `{}`",
+                    region.as_str()
+                ),
+            });
+        }
+        if let Some(region) = regional_capacity_functions
+            .keys()
+            .find(|region| !regional_projections.contains_key(region))
+        {
+            return Err(CentralControlWorkerConfigError::Invalid {
+                name: keys::REGIONAL_PROJECTIONS,
+                reason: format!(
+                    "no projection table for configured region `{}`",
+                    region.as_str()
+                ),
+            });
+        }
         Ok(Self {
             plane,
             region,
@@ -241,6 +286,7 @@ impl Config {
             batch_size: u32::try_from(batch_size).unwrap_or(1),
             lease_ms,
             regional_functions,
+            regional_capacity_functions,
             regional_projections,
         })
     }
@@ -273,6 +319,14 @@ impl Config {
                 (
                     keys::REGIONAL_FUNCTIONS.to_owned(),
                     self.regional_functions
+                        .iter()
+                        .map(|(region, function)| format!("{}={function}", region.as_str()))
+                        .collect::<Vec<_>>()
+                        .join(","),
+                ),
+                (
+                    keys::REGIONAL_CAPACITY_FUNCTIONS.to_owned(),
+                    self.regional_capacity_functions
                         .iter()
                         .map(|(region, function)| format!("{}={function}", region.as_str()))
                         .collect::<Vec<_>>()
@@ -330,19 +384,22 @@ where
 ///
 /// Every configured launch region must be present. A plane may compose a
 /// strict non-empty subset while the remaining regional stacks are unpublished.
-fn functions(raw: &str) -> Result<BTreeMap<Region, String>, CentralControlWorkerConfigError> {
+fn functions(
+    name: &'static str,
+    raw: &str,
+) -> Result<BTreeMap<Region, String>, CentralControlWorkerConfigError> {
     let mut map = BTreeMap::new();
     for entry in raw.split(',').filter(|it| !it.trim().is_empty()) {
         let (region, function) =
             entry
                 .split_once('=')
                 .ok_or_else(|| CentralControlWorkerConfigError::Invalid {
-                    name: keys::REGIONAL_FUNCTIONS,
+                    name,
                     reason: "expected `region=lambda-arn` entries".to_owned(),
                 })?;
         let parsed = Region::from_name(region.trim()).ok_or_else(|| {
             CentralControlWorkerConfigError::Invalid {
-                name: keys::REGIONAL_FUNCTIONS,
+                name,
                 reason: format!("`{region}` is not a launch region"),
             }
         })?;
@@ -353,7 +410,7 @@ fn functions(raw: &str) -> Result<BTreeMap<Region, String>, CentralControlWorker
             || map.insert(parsed, function.to_owned()).is_some()
         {
             return Err(CentralControlWorkerConfigError::Invalid {
-                name: keys::REGIONAL_FUNCTIONS,
+                name,
                 reason: format!(
                     "`{}` is not a unique Lambda ARN in its region",
                     parsed.as_str()
@@ -363,7 +420,7 @@ fn functions(raw: &str) -> Result<BTreeMap<Region, String>, CentralControlWorker
     }
     if map.is_empty() {
         return Err(CentralControlWorkerConfigError::Invalid {
-            name: keys::REGIONAL_FUNCTIONS,
+            name,
             reason: "at least one configured region is required".to_owned(),
         });
     }
@@ -526,6 +583,10 @@ pub fn manifest() -> CompositionManifest {
             CapabilityBinding::arn(keys::SES_IDENTITY_ARN, MailSend::ID),
             CapabilityBinding::resource(keys::SIGNING_SECRET_PREFIX, SigningKeyAdminister::ID),
             CapabilityBinding::resource(keys::REGIONAL_FUNCTIONS, RegionalControlInvoke::ID),
+            CapabilityBinding::resource(
+                keys::REGIONAL_CAPACITY_FUNCTIONS,
+                RegionalControlInvoke::ID,
+            ),
             CapabilityBinding::resource(keys::REGIONAL_PROJECTIONS, ControlWrite::ID),
         ],
     }
@@ -569,6 +630,8 @@ pub struct Probes {
     pub queue: bool,
     /// Every direct regional function is configured.
     pub functions: bool,
+    /// Every regional capacity controller is configured.
+    pub capacity: bool,
     /// Every regional authorization projection answered.
     pub projections: bool,
     /// The signing secret prefix is listable.
@@ -581,6 +644,7 @@ impl Probes {
         aurora: false,
         queue: false,
         functions: false,
+        capacity: false,
         projections: false,
         signing: false,
     };
@@ -603,6 +667,10 @@ pub fn readiness(probes: Probes) -> Readiness {
             Dependency {
                 name: "regional-function-map",
                 resolved: probes.functions,
+            },
+            Dependency {
+                name: "regional-capacity-function-map",
+                resolved: probes.capacity,
             },
             Dependency {
                 name: "regional-authz-projections",
@@ -757,9 +825,15 @@ pub async fn run(
             aws_sdk_lambda::Client::new(&aws),
             config.regional_functions.clone(),
         ));
+    let capacity: std::sync::Arc<dyn runtime::RegionalCapacity> =
+        std::sync::Arc::new(aex_central_aws::LambdaRegionalCapacity::new(
+            aws_sdk_lambda::Client::new(&aws),
+            config.regional_capacity_functions.clone(),
+        ));
     let worker = std::sync::Arc::new(runtime::Worker::new(
         store,
         regional,
+        capacity,
         projections,
         std::sync::Arc::new(runtime::SesMail::new(ses, config.mail_from.clone())),
         signing,
@@ -877,6 +951,20 @@ mod tests {
             .join(",")
     }
 
+    fn every_capacity_function() -> String {
+        Region::ALL
+            .iter()
+            .map(|region| {
+                format!(
+                    "{}=arn:aws:lambda:{}:000000000000:function:aex-regional-capacity-controller",
+                    region.as_str(),
+                    region.as_str()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
     fn every_projection() -> String {
         Region::ALL
             .iter()
@@ -920,6 +1008,7 @@ mod tests {
             (keys::BATCH_SIZE, "10".to_owned()),
             (keys::LEASE_MS, "60000".to_owned()),
             (keys::REGIONAL_FUNCTIONS, every_function()),
+            (keys::REGIONAL_CAPACITY_FUNCTIONS, every_capacity_function()),
             (keys::REGIONAL_PROJECTIONS, every_projection()),
         ])
     }
@@ -935,6 +1024,11 @@ mod tests {
         let config = read(&complete()).expect("a complete environment");
         assert_eq!(config.batch_size, 10);
         assert_eq!(config.regional_functions.len(), Region::ALL.len());
+        assert_eq!(
+            config.regional_capacity_functions.len(),
+            Region::ALL.len(),
+            "a region this worker projects into but cannot bootstrap is the outage"
+        );
         assert_eq!(config.regional_projections.len(), Region::ALL.len());
     }
 
@@ -960,11 +1054,16 @@ mod tests {
                 .to_owned(),
         );
         vars.insert(
+            keys::REGIONAL_CAPACITY_FUNCTIONS,
+            "eu-west-1=arn:aws:lambda:eu-west-1:000000000000:function:aex-capacity".to_owned(),
+        );
+        vars.insert(
             keys::REGIONAL_PROJECTIONS,
             "eu-west-1=aex-dev-eu-west-1-regional-authz-projection".to_owned(),
         );
         let config = read(&vars).expect("a composed subset of launch regions");
         assert_eq!(config.regional_functions.len(), 1);
+        assert_eq!(config.regional_capacity_functions.len(), 1);
         assert_eq!(config.regional_projections.len(), 1);
     }
 
@@ -994,6 +1093,25 @@ mod tests {
             CentralControlWorkerConfigError::Invalid { name, .. }
                 if name == keys::REGIONAL_PROJECTIONS
         ));
+
+        // The third map has to agree too, and its disagreement is the dangerous
+        // one: a region this worker can publish a placement into but cannot
+        // bootstrap serves `401` to every request for every workspace it places
+        // there.
+        let mut projection_without_capacity = complete();
+        projection_without_capacity.insert(
+            keys::REGIONAL_CAPACITY_FUNCTIONS,
+            "eu-west-1=arn:aws:lambda:eu-west-1:000000000000:function:aex-capacity".to_owned(),
+        );
+        let error = read(&projection_without_capacity).expect_err("maps must agree");
+        assert!(
+            matches!(
+                error,
+                CentralControlWorkerConfigError::Invalid { ref name, .. }
+                    if *name == keys::REGIONAL_CAPACITY_FUNCTIONS
+            ),
+            "{error:?}"
+        );
     }
 
     #[test]
@@ -1121,6 +1239,7 @@ mod tests {
                 aurora: true,
                 queue: true,
                 functions: true,
+                capacity: true,
                 projections: false,
                 signing: true,
             })

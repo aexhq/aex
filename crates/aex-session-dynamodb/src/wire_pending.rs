@@ -27,6 +27,11 @@ use aex_wire::scopes::ScopeSet;
 use aex_wire::types::Timestamp;
 
 /// Descriptive workspace facts kept off the per-request placement row.
+///
+/// The three account fields are how the regional plane learns an account's
+/// operational state without asking central once per request. They are read only
+/// by the cold routes that publish them; the hot admission path still gates on
+/// the placement row's `status` and `accountEpoch` alone.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceProfile {
     /// The workspace.
@@ -37,6 +42,12 @@ pub struct WorkspaceProfile {
     pub slug: String,
     /// When the workspace was created.
     pub created_at: Timestamp,
+    /// Finance's monotone account revision, as central projected it.
+    pub account_revision: u64,
+    /// When finance last changed the account state.
+    pub account_changed_at: Timestamp,
+    /// The durable pause reason, present exactly when the account is paused.
+    pub account_pause_reason: Option<String>,
 }
 
 /// One durable effective limit from the regional capacity authority.

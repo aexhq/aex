@@ -9,7 +9,9 @@ use aex_capacity_dynamodb::{
 use aex_wire::ids::{PrefixedId as _, Uuid7, WorkspaceId};
 use aex_wire::types::Timestamp;
 use async_trait::async_trait;
-use regional_capacity_controller::{CapacityController, Clock, ControllerResponse, Store};
+use regional_capacity_controller::{
+    CapacityController, Clock, ControllerRequest, ControllerResponse, Store,
+};
 
 struct MemoryStore(Mutex<Option<CapacityState>>);
 
@@ -31,6 +33,21 @@ impl Store for MemoryStore {
             changed: planned.changed,
         })
     }
+
+    async fn load(
+        &self,
+        _workspace: WorkspaceId,
+    ) -> Result<Option<CapacityState>, aex_session_dynamodb::error::StoreError> {
+        Ok(self.0.lock().expect("lock").clone())
+    }
+
+    async fn page_workspaces(
+        &self,
+        _budget: u32,
+        _after: Option<WorkspaceId>,
+    ) -> Result<Vec<WorkspaceId>, aex_session_dynamodb::error::StoreError> {
+        unreachable!("this contract measures one workspace's reconcile, never a walk")
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -51,16 +68,18 @@ async fn no_op_reconciliation_remains_stable_under_load() {
         FixedClock(Timestamp::from_unix_millis(1).expect("timestamp")),
     );
     controller
-        .handle(CapacityCommand::Bootstrap { workspace_id })
+        .handle(ControllerRequest::Command(CapacityCommand::Bootstrap {
+            workspace_id,
+        }))
         .await
         .expect("bootstrap");
 
     for _ in 0..10_000 {
         let response = controller
-            .handle(CapacityCommand::Reconcile {
+            .handle(ControllerRequest::Command(CapacityCommand::Reconcile {
                 workspace_id,
                 expected_revision: 1,
-            })
+            }))
             .await
             .expect("reconcile");
         assert!(matches!(

@@ -19,6 +19,7 @@
 //! - any authority decision about the values it carries.
 
 pub mod assertion;
+pub mod capacity;
 pub mod catalog;
 pub mod control;
 pub mod journal;

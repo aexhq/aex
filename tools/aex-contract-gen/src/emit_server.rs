@@ -494,11 +494,22 @@ fn emit_arm(
     let mut call: Vec<String> = vec!["cx".to_owned()];
     for param in &operation.path_params {
         let rendered = rust_type(ir, &param.ty, imports);
-        imports.insert("crate::dispatch::path_param".to_owned());
+        // A segment whose type is a closed generated registry *names* a
+        // resource, so a value outside the registry is `404 not_found` rather
+        // than `400 invalid_request`. Every other path type describes an
+        // identifier the caller minted, where a malformed value is exactly a
+        // malformed request.
+        let reader = if matches!(param.ty, FieldType::LimitId) {
+            imports.insert("crate::dispatch::path_param_registry".to_owned());
+            "path_param_registry"
+        } else {
+            imports.insert("crate::dispatch::path_param".to_owned());
+            "path_param"
+        };
         body.bind_call(
             12,
             &param.rust,
-            &format!("path_param::<{rendered}>"),
+            &format!("{reader}::<{rendered}>"),
             &["&raw".to_owned(), quote(&param.name)],
             "?;",
         );

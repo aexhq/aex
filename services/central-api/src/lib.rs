@@ -56,7 +56,8 @@ use aex_central_http::capability::{
 use aex_central_http::health::{Dependency, Readiness};
 use aex_central_http::router::{
     EdgeStack, mount_api_keys_api, mount_auth_api, mount_billing_api, mount_bootstrap_api,
-    mount_central_operations_api, mount_organizations_api, mount_workspaces_api,
+    mount_central_operations_api, mount_identity_api, mount_organizations_api,
+    mount_workspaces_api,
 };
 use aex_wire::server::{AuthApi, BillingApi};
 use central_control_api::ControlApi;
@@ -247,10 +248,11 @@ pub enum CentralApiRunError {
 /// bound, because they are genuinely three authorities over three schemas: a
 /// single bound would let a composition satisfy the billing half with the
 /// control store.
-pub fn app<C, A, B>(
+pub fn app<C, A, B, I>(
     control: Arc<C>,
     auth: Arc<A>,
     billing: Arc<B>,
+    account: Arc<I>,
     edge: EdgeStack,
     readiness: Readiness,
 ) -> axum::Router
@@ -258,6 +260,7 @@ where
     C: ControlApi,
     A: AuthApi,
     B: BillingApi,
+    I: aex_wire::server::IdentityApi,
 {
     aex_central_http::health::router(readiness)
         .merge(mount_api_keys_api(Arc::clone(&control), edge.clone()))
@@ -269,6 +272,7 @@ where
         .merge(mount_organizations_api(Arc::clone(&control), edge.clone()))
         .merge(mount_workspaces_api(control, edge.clone()))
         .merge(mount_auth_api(auth, edge.clone()))
+        .merge(mount_identity_api(account, edge.clone()))
         .merge(mount_billing_api(billing, edge))
 }
 
@@ -283,8 +287,8 @@ mod tests {
     #[test]
     fn the_merged_deployable_declares_every_group_it_must_serve() {
         assert_eq!(DEPLOYABLE, CentralServiceId::CentralApi);
-        assert_eq!(DEPLOYABLE.groups().len(), 7);
-        assert_eq!(DEPLOYABLE.routes().len(), 30);
+        assert_eq!(DEPLOYABLE.groups().len(), 8);
+        assert_eq!(DEPLOYABLE.routes().len(), 31);
     }
 
     #[test]

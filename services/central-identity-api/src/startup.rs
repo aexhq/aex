@@ -462,6 +462,27 @@ impl IdentityStore for MemoryIdentity {
     }
 }
 
+/// The account authority, which this suite never reaches.
+struct UnreachableAccounts;
+
+#[async_trait::async_trait]
+impl crate::account::AccountReader for UnreachableAccounts {
+    async fn is_member(
+        &self,
+        _organization: uuid::Uuid,
+        _user: uuid::Uuid,
+    ) -> Result<bool, String> {
+        Err("the composition suite issues no account read".to_owned())
+    }
+
+    async fn account_profile(
+        &self,
+        _organization: uuid::Uuid,
+    ) -> Result<Option<aex_control_domain::AccountProfile>, String> {
+        Err("the composition suite issues no account read".to_owned())
+    }
+}
+
 /// The composed router, over the real service and the two in-memory ports.
 fn composed(probes: Probes) -> (axum::Router, Arc<MemoryIdentity>) {
     let store = Arc::new(MemoryIdentity::default());
@@ -483,7 +504,16 @@ fn composed(probes: Probes) -> (axum::Router, Arc<MemoryIdentity>) {
         clock,
         Arc::new(CursorSecret::new([3_u8; 32])),
     );
-    (app(Arc::new(service), edge, readiness(probes)), store)
+    // The account read is composed here with a refusing reader: this suite is
+    // about what the process mounts, and a reader that answered would make the
+    // route pass on an invented row rather than on being mounted.
+    let account = Arc::new(crate::account::AccountService::new(Arc::new(
+        UnreachableAccounts,
+    )));
+    (
+        app(Arc::new(service), account, edge, readiness(probes)),
+        store,
+    )
 }
 
 /// The environment a composed process would read.

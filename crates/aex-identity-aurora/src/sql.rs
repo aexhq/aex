@@ -317,6 +317,25 @@ SELECT version, purpose, state, secret_ref \
   FROM identity.credential_pepper \
  WHERE purpose = :purpose AND version = :version";
 
+/// Whether the caller is an active member of one organization.
+///
+/// The membership check is a **separate** statement from the account read below,
+/// and deliberately so: "you are not a member" and "this organization has no
+/// account row" are two different answers — `forbidden` and
+/// `account_state_unavailable` — and one joined query could only tell a caller
+/// that it got nothing.
+pub const CALLER_ORGANIZATION_MEMBERSHIP: &str = "SELECT 1 AS ok   FROM control.membership  WHERE organization_id = :organization_id AND user_id = :user_id AND status = 'active'";
+
+/// One organization's published account state.
+///
+/// `finance.account_state_v1` is the projection finance's own pause and resume
+/// trigger writes, and it is the sole input to every published
+/// `AccountOperationalState` on either plane. This statement reads it and
+/// nothing else: no balance, no epoch, no derivation. A second producer of this
+/// fact is how the same account came to be reported active by one route and
+/// paused by another in the same second.
+pub const ACCOUNT_OPERATIONAL_STATE: &str = "SELECT status, reason, revision, (EXTRACT(EPOCH FROM changed_at)*1000)::bigint AS changed_at_ms   FROM finance.account_state_v1  WHERE organization_id = :organization_id";
+
 /// The identity readiness probe.
 pub const READINESS_PROBE: &str = "SELECT 1 AS ok";
 
@@ -353,6 +372,11 @@ pub const ALL: &[(&str, &str)] = &[
     ("BUMP_USER_EPOCH", BUMP_USER_EPOCH),
     ("ACTIVE_IDENTITY_PEPPER", ACTIVE_IDENTITY_PEPPER),
     ("IDENTITY_PEPPER_BY_VERSION", IDENTITY_PEPPER_BY_VERSION),
+    (
+        "CALLER_ORGANIZATION_MEMBERSHIP",
+        CALLER_ORGANIZATION_MEMBERSHIP,
+    ),
+    ("ACCOUNT_OPERATIONAL_STATE", ACCOUNT_OPERATIONAL_STATE),
     ("READINESS_PROBE", READINESS_PROBE),
 ];
 

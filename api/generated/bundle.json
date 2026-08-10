@@ -18,7 +18,7 @@
       ],
       "operations": [
         {
-          "altPrincipal": "workspace_key",
+          "altPrincipal": null,
           "bodyClass": "none",
           "errors": [
             "unauthenticated",
@@ -4794,7 +4794,9 @@
           "errors": [
             "unauthenticated",
             "insufficient_scope",
+            "workspace_activation_required",
             "workspace_not_live",
+            "account_state_unavailable",
             "wrong_workspace_region"
           ],
           "etag": "none",
@@ -4822,6 +4824,7 @@
             "unauthenticated",
             "insufficient_scope",
             "not_found",
+            "workspace_activation_required",
             "wrong_workspace_region"
           ],
           "etag": "none",
@@ -4850,7 +4853,7 @@
           "errors": [
             "unauthenticated",
             "insufficient_scope",
-            "invalid_cursor",
+            "workspace_activation_required",
             "wrong_workspace_region"
           ],
           "etag": "none",
@@ -4862,16 +4865,13 @@
           "pathParams": [],
           "pauseExempt": true,
           "plane": "regional",
-          "queryParams": [
-            "cursor",
-            "limit"
-          ],
+          "queryParams": [],
           "requestSchema": null,
           "requiredScope": "workspace:read",
           "responseSchema": "EffectiveWorkspaceLimitPage",
           "safeRetry": true,
           "successStatus": 200,
-          "summary": "List the effective workspace safety limits.",
+          "summary": "List the effective workspace safety limits. The registry is closed and complete, so the whole set is one page and no continuation is ever minted.",
           "transport": "unary"
         }
       ],
@@ -5947,7 +5947,10 @@
     },
     "AccountPauseReason": {
       "enum": [
-        "top_up_required"
+        "top_up_required",
+        "payment_hold",
+        "dispute_hold",
+        "account_closed"
       ],
       "type": "string"
     },
@@ -5961,13 +5964,13 @@
           "x-aex-time": "rfc3339-ms"
         },
         "deletionScheduledAt": {
-          "description": "When unfunded content is scheduled for deletion.",
+          "description": "When unfunded content is scheduled for deletion. Published and permanently absent: this is the regional content lifecycle's fact and that authority does not exist yet.",
           "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
           "type": "string",
           "x-aex-time": "rfc3339-ms"
         },
         "minimumRestoreCents": {
-          "description": "Smallest top-up that restores service.",
+          "description": "Smallest top-up that restores service. Present exactly when `reason` is `top_up_required`; the other three holds have no paying remedy, and naming an amount for them would be a false one.",
           "pattern": "^(0|[1-9]\\d*)$",
           "type": "string",
           "x-aex-money": "cents"
@@ -5977,7 +5980,7 @@
           "description": "Why the account is paused."
         },
         "retentionFundedUntil": {
-          "description": "How long retained content stays funded.",
+          "description": "How long retained content stays funded. Published and permanently absent: storage is billed monthly and unfunded storage is enforced through the account pause, so no authority owns this instant yet.",
           "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
           "type": "string",
           "x-aex-time": "rfc3339-ms"

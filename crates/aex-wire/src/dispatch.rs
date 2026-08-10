@@ -352,6 +352,39 @@ pub fn path_param<T: FromParam>(raw: &RawRequest<'_>, name: &'static str) -> Wir
         .map_err(|reason| invalid_at(&format!("/{name}"), format!("`{name}`: {reason}")))
 }
 
+/// Reads one bound path parameter whose type is a **closed generated registry**.
+///
+/// A registry-typed segment names a resource rather than describing one, so a
+/// value outside the registry is not a malformed request — it is a request for
+/// something that does not exist, and `404 not_found` is the only answer that
+/// separates "no such limit" from "your credential is wrong" and from "the limit
+/// exists and I could not read it". That is the single meaning `not_found`
+/// carries on `workspace_limit_get`, and it is decided here, before any read: an
+/// absent row of a *registered* identifier is never a `404`.
+///
+/// The unbound-segment arm stays [`ErrorCode::InvalidRequest`]: a template that
+/// bound no such parameter is a router defect, not a customer's unknown name.
+///
+/// # Errors
+///
+/// Returns [`ErrorCode::NotFound`] when the segment is outside the registry, and
+/// [`ErrorCode::InvalidRequest`] when the matched template bound no such segment.
+pub fn path_param_registry<T: FromParam>(
+    raw: &RawRequest<'_>,
+    name: &'static str,
+) -> WireResult<T> {
+    let text = raw.path.get(name).ok_or_else(|| {
+        invalid_at(
+            &format!("/{name}"),
+            format!("`{name}` is not bound by the matched template"),
+        )
+    })?;
+    T::from_param(text).map_err(|_| {
+        WireError::new(ErrorCode::NotFound)
+            .with_message(format!("`{name}` names no registered identifier"))
+    })
+}
+
 /// Rejects a handler failure the route does not declare.
 ///
 /// The route table names every code an operation may answer with, and a

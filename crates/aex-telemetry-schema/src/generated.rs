@@ -347,6 +347,11 @@ pub const METRIC_AEX_OPERATION_DURATION: &str = "aex.operation.duration";
 /// Instrument: `counter`. Unit: `1`.
 pub const METRIC_AEX_OTLP_COUNT: &str = "aex.otlp.count";
 
+/// `aex.projection.frontier.lag` — Milliseconds between now and the instant the regional projection is proved complete through.
+///
+/// Instrument: `histogram`. Unit: `ms`.
+pub const METRIC_AEX_PROJECTION_FRONTIER_LAG: &str = "aex.projection.frontier.lag";
+
 /// `aex.stream.bytes` — Aggregate delta of authority bytes returned to open stream sockets since the previous publication.
 ///
 /// Instrument: `counter`. Unit: `By`.
@@ -398,6 +403,12 @@ pub const METRICS: &[MetricSpec] = &[
         instrument: Instrument::Counter,
         unit: "1",
         attributes: &[AEX_DEPLOYABLE, AEX_OTLP_COUNTER, AEX_PLANE, AEX_REGION],
+    },
+    MetricSpec {
+        name: METRIC_AEX_PROJECTION_FRONTIER_LAG,
+        instrument: Instrument::Histogram,
+        unit: "ms",
+        attributes: &[AEX_DEPLOYABLE, AEX_PLANE, AEX_REGION],
     },
     MetricSpec {
         name: METRIC_AEX_STREAM_BYTES,

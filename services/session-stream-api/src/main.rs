@@ -301,6 +301,25 @@ async fn run(
         Arc::clone(&draining),
     ));
 
+    // The one production reader of the projection frontier. Nothing read it
+    // before, so the bound every cluster relies on — how long a pause, a
+    // revocation or a limit change takes to reach this region — was unmeasured.
+    // It publishes; it refuses nothing.
+    tokio::spawn(session_stream_api::frontier::publish(
+        Arc::new(aex_session_dynamodb::projection::ProjectionReader::new(
+            dynamodb.clone(),
+            stores.authz_projection_table.clone(),
+        )),
+        telemetry.clone(),
+        session_stream_api::frontier::FrontierResource {
+            plane: config.plane.as_str().to_owned(),
+            region: config.region.as_str().to_owned(),
+            deployable: DEPLOYABLE,
+        },
+        session_stream_api::frontier::MEASURE_INTERVAL,
+        Arc::clone(&draining),
+    ));
+
     let wake_hub = WakeHub::default();
     let _wake_readers = if config.wake_mode == WakeMode::DdbStreams {
         let session = config.session_stream.as_ref().ok_or_else(|| {
@@ -401,6 +420,19 @@ async fn run(
             dynamodb.clone(),
             stores.session_table.clone(),
         )),
+        // The cold workspace surface, over the same projection table the edge
+        // authorizes against. Two ports over one reader rather than one wide
+        // port: a limit read must not be able to reach for a placement, and the
+        // admission path must not gain a profile read it never makes.
+        workspace: Arc::new(aex_session_dynamodb::projection::ProjectionReader::new(
+            dynamodb.clone(),
+            stores.authz_projection_table.clone(),
+        )),
+        placements: Arc::new(aex_session_dynamodb::projection::ProjectionReader::new(
+            dynamodb.clone(),
+            stores.authz_projection_table.clone(),
+        )),
+        api_url: config.regional_api_url.clone(),
         operations: Arc::new(aex_session_dynamodb::store::OperationStore::new(
             dynamodb.clone(),
             stores.session_table.clone(),

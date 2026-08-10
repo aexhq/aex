@@ -1116,10 +1116,28 @@ mod tests {
             "regional-capacity"
         );
         assert_eq!(table.item_types, ["workspace_capacity", "capacity_audit"]);
-        assert!(table.global_secondary_indexes.is_empty());
         assert!(!table.stream.enabled);
         assert!(!table.time_to_live.enabled);
-        assert_eq!(table.iam.len(), 1);
+
+        // Exactly one index, and it is the sweep enumeration. It is sparse so
+        // an immutable `capacity_audit` sibling can never appear beside its
+        // authority row and be reconciled twice, and it is KEYS_ONLY so a query
+        // over it yields an identity and never a stored capacity value.
+        assert_eq!(table.global_secondary_indexes.len(), 1);
+        let sweep = &table.global_secondary_indexes[0];
+        assert_eq!(sweep.name, "gsi_all_workspaces");
+        assert_eq!(sweep.partition, "gsiAllPk");
+        assert_eq!(sweep.sort, "gsiAllSk");
+        assert!(sweep.sparse);
+        assert!(!sweep.projects_record_body);
+        assert_eq!(sweep.projection.projection_type, "KEYS_ONLY");
+        assert!(sweep.projection.attributes.is_empty());
+
+        // Two statements for one role, deliberately. The leading-key fence is
+        // the *table's*: the sweep index has a single partition, so a fenced
+        // statement over it would deny the enumeration outright rather than
+        // protect a keyspace the index does not expose.
+        assert_eq!(table.iam.len(), 2);
 
         let writer = &table.iam[0];
         assert_eq!(writer.role, "regional-capacity-controller");
@@ -1137,6 +1155,23 @@ mod tests {
         assert_eq!(condition.operator, "ForAllValues:StringLike");
         assert_eq!(condition.key, "dynamodb:LeadingKeys");
         assert_eq!(condition.values, ["WS#*"]);
+
+        let sweeper = &table.iam[1];
+        assert_eq!(sweeper.role, "regional-capacity-controller");
+        assert_eq!(
+            sweeper.actions,
+            ["dynamodb:Query"],
+            "the sweep enumerates and never writes through the index"
+        );
+        assert_eq!(sweeper.resources, ["index/*"]);
+        assert!(
+            sweeper.item_types.is_empty(),
+            "the enumeration is read-only and owns no item family"
+        );
+        assert!(
+            sweeper.condition.is_none(),
+            "a leading-key fence over the one-partition sweep index would deny the enumeration"
+        );
     }
 
     #[test]

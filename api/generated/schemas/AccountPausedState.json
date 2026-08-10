@@ -11,13 +11,13 @@
       "x-aex-time": "rfc3339-ms"
     },
     "deletionScheduledAt": {
-      "description": "When unfunded content is scheduled for deletion.",
+      "description": "When unfunded content is scheduled for deletion. Published and permanently absent: this is the regional content lifecycle's fact and that authority does not exist yet.",
       "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
       "type": "string",
       "x-aex-time": "rfc3339-ms"
     },
     "minimumRestoreCents": {
-      "description": "Smallest top-up that restores service.",
+      "description": "Smallest top-up that restores service. Present exactly when `reason` is `top_up_required`; the other three holds have no paying remedy, and naming an amount for them would be a false one.",
       "pattern": "^(0|[1-9]\\d*)$",
       "type": "string",
       "x-aex-money": "cents"
@@ -27,7 +27,7 @@
       "description": "Why the account is paused."
     },
     "retentionFundedUntil": {
-      "description": "How long retained content stays funded.",
+      "description": "How long retained content stays funded. Published and permanently absent: storage is billed monthly and unfunded storage is enforced through the account pause, so no authority owns this instant yet.",
       "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
       "type": "string",
       "x-aex-time": "rfc3339-ms"

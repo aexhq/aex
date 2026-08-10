@@ -105,7 +105,6 @@ operationOwners:
 # unknown operation, an empty reason, or overlap with `servedOperations`.
 # Deferral is not mount evidence and is emitted only into the delivery registry.
 deferredOperations:
-  account_get: "The central identity composition does not yet mount an authoritative account operational-state read."
   registry_files_download_create: "No composed content grant and presigning authority exists yet."
   session_approval_respond: "The atomic bound-call approval writer is not composed into the regional service."
   session_clone: "The complete session authority and command transaction are not implemented."
@@ -126,9 +125,6 @@ deferredOperations:
   session_workspace_discard: "The workspace-discard operation and commit latch are incomplete."
   sessions_list: "The sparse session head cannot yet produce the complete public collection item."
   telemetry_export_create: "The durable workspace export-admission composition is incomplete."
-  workspace_current_get: "The signed and projected facts do not supply the complete account operational state."
-  workspace_limit_get: "No authoritative regional capacity default and override producer exists yet."
-  workspace_limits_list: "No authoritative regional capacity default and override producer exists yet."
 
 # Actual public mount authority. `scenarioOwners` and `operationOwners` plan
 # where a route belongs; this table says which complete handlers are mounted
@@ -156,6 +152,7 @@ servedOperations:
     - workspace_get
     - workspaces_list
   central-identity-api:
+    - account_get
     - dashboard_session_create
     - dashboard_session_delete
     - device_authorization_create
@@ -270,3 +267,6 @@ servedOperations:
     - upload_create
     - upload_parts_grant
     - usage_query
+    - workspace_current_get
+    - workspace_limit_get
+    - workspace_limits_list

@@ -25,12 +25,14 @@
 //!   `central-control-worker` owns delivery
 
 pub mod ambient;
+pub mod capacity;
 pub mod directory;
 pub mod mail;
 pub mod pepper;
 pub mod regional;
 
 pub use ambient::{OsSecretRng, SystemClock, Uuid7Factory};
+pub use capacity::{CapacityBootstrapError, LambdaRegionalCapacity};
 pub use directory::{DataApiPepperDirectory, PepperStatements};
 pub use mail::{ControlStoreOutbox, OutboxMailer, OutboxWriter, PendingNotification};
 pub use pepper::{

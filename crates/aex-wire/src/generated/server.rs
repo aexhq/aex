@@ -3,7 +3,7 @@
 //! The server traits and the total dispatch surface, one group per authoring fragment.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:079742a90257d87ada6a622050518c77f0fd98063e483130a4a334366b079850`.
+//! `sha256:d4b58a49f8f7cb8353df845d30d5f0373f7f3032ecd1ca0f38c779ceb05f3920`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -24,6 +24,7 @@ use crate::dispatch::decode_body;
 use crate::dispatch::expect_no_body;
 use crate::dispatch::otlp_body;
 use crate::dispatch::path_param;
+use crate::dispatch::path_param_registry;
 use crate::dispatch::wrong_group;
 use crate::error::WireResult;
 use crate::ids::AgentId;
@@ -181,7 +182,6 @@ use crate::models::UsageQueryQuery;
 use crate::models::Workspace;
 use crate::models::WorkspaceCreateRequest;
 use crate::models::WorkspaceDeleteRequest;
-use crate::models::WorkspaceLimitsListQuery;
 use crate::models::WorkspacePage;
 use crate::models::WorkspacesListQuery;
 use crate::routes::Plane;
@@ -1514,7 +1514,7 @@ pub async fn dispatch_identity<A: IdentityApi + ?Sized>(
     match raw.route {
         RouteId::AccountGet => {
             let query = AccountGetQuery {
-                organization_id: reader.optional("organizationId")?,
+                organization_id: reader.required("organizationId")?,
             };
             expect_no_body(&raw)?;
             let handled = api.account_get(cx, query);
@@ -3648,11 +3648,11 @@ pub trait WorkspaceApi: Send + Sync + 'static {
     ) -> impl Future<Output = WireResult<EffectiveWorkspaceLimit>> + Send;
 
     /// `GET /api/workspace/limits`
-    /// List the effective workspace safety limits.
+    /// List the effective workspace safety limits. The registry is closed and complete, so the
+    /// whole set is one page and no continuation is ever minted.
     fn workspace_limits_list(
         &self,
         cx: &RequestContext,
-        query: WorkspaceLimitsListQuery,
     ) -> impl Future<Output = WireResult<EffectiveWorkspaceLimitPage>> + Send;
 }
 
@@ -3668,7 +3668,7 @@ pub async fn dispatch_workspace<A: WorkspaceApi + ?Sized>(
     raw: RawRequest<'_>,
     _limits: RequestLimits,
 ) -> WireResult<DispatchOutcome<crate::dispatch::NoStream>> {
-    let reader = QueryReader::parse(raw.route, raw.query)?;
+    let _reader = QueryReader::parse(raw.route, raw.query)?;
     match raw.route {
         RouteId::WorkspaceCurrentGet => {
             expect_no_body(&raw)?;
@@ -3677,19 +3677,15 @@ pub async fn dispatch_workspace<A: WorkspaceApi + ?Sized>(
             Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
         }
         RouteId::WorkspaceLimitGet => {
-            let limit_id = path_param::<LimitId>(&raw, "limitId")?;
+            let limit_id = path_param_registry::<LimitId>(&raw, "limitId")?;
             expect_no_body(&raw)?;
             let handled = api.workspace_limit_get(cx, limit_id);
             let answer = declared(raw.route, handled.await)?;
             Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
         }
         RouteId::WorkspaceLimitsList => {
-            let query = WorkspaceLimitsListQuery {
-                cursor: reader.optional("cursor")?,
-                limit: reader.optional_bounded("limit", 1, 1000)?,
-            };
             expect_no_body(&raw)?;
-            let handled = api.workspace_limits_list(cx, query);
+            let handled = api.workspace_limits_list(cx);
             let answer = declared(raw.route, handled.await)?;
             Ok(DispatchOutcome::Unary(RawResponse::json(200, &answer)?))
         }

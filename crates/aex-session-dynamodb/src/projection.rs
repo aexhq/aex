@@ -438,10 +438,20 @@ impl WorkspaceProjection for ProjectionReader {
         workspace: WorkspaceId,
     ) -> Result<ProjectedLimitBundle, StoreError> {
         let (pk, sk) = limit_bundle_key(workspace);
-        // Strong like the head that selects it: an eventual payload read could
-        // serve bytes older than the revision the head just proved complete.
+        // Eventual, alone, and safe to be both.
+        //
+        // The bundle is one item written in the same transaction as the members
+        // and the head, so it can never be internally torn: a reader sees a
+        // complete revision or the previous complete revision, never a mixture.
+        // Pairing it with the strong head is what an admission *fence* needs —
+        // proof of a specific revision — and the strong pair above still exists
+        // for exactly that. A customer read of the values in force is
+        // descriptive: it carries `revision` and `changedAt` so a caller can
+        // always tell which authority revision it is holding, and paying a
+        // strong read plus a second round trip to bound a fact that changes on
+        // operator-paced events buys nothing anyone can use.
         let item = self
-            .get(&pk, &sk, Consistency::Strong)
+            .get(&pk, &sk, Consistency::Eventual)
             .await?
             .ok_or_else(|| StoreError::Misconfigured {
                 table: self.table.clone(),
@@ -451,6 +461,12 @@ impl WorkspaceProjection for ProjectionReader {
 }
 
 /// Decodes cold descriptive workspace facts.
+///
+/// `accountRevision` and `accountChangedAt` are **strict**: a row written before
+/// they existed fails to decode rather than projecting a partial account state.
+/// That is the intent. A state assembled from a row that does not carry one
+/// would be a guess, and the route that publishes it answers
+/// `account_state_unavailable` for a refusal here rather than inventing `Active`.
 ///
 /// # Errors
 ///
@@ -463,6 +479,9 @@ pub fn decode_profile(item: &Item, asserted: WorkspaceId) -> Result<WorkspacePro
         name: row.string("name")?.to_owned(),
         slug: row.string("slug")?.to_owned(),
         created_at: row.timestamp("createdAt")?,
+        account_revision: row.u64("accountRevision")?,
+        account_changed_at: row.timestamp("accountChangedAt")?,
+        account_pause_reason: row.opt_string("accountPauseReason")?.map(str::to_owned),
     })
 }
 
@@ -880,6 +899,35 @@ mod tests {
         assert!(none.scopes.is_empty());
     }
 
+    /// The account fields on the profile row are required, not optional.
+    ///
+    /// A row written before they existed must refuse rather than decode into a
+    /// partial account state, because the route that publishes it would then be
+    /// choosing what an absent revision or change instant means — and the only
+    /// answers available are a guess and `Active`. Refusing produces
+    /// `account_state_unavailable`, which is the true statement.
+    #[test]
+    fn a_profile_row_without_the_account_fields_refuses_rather_than_half_decoding() {
+        for attribute in ["accountRevision", "accountChangedAt"] {
+            let mut item = ItemBuilder::new(WORKSPACE_PROFILE)
+                .set("workspaceId", s(workspace(1).to_string()))
+                .set("name", s("Production"))
+                .set("slug", s("production"))
+                .set("createdAt", s("2026-08-01T00:00:00.000Z"))
+                .set("accountRevision", n(9))
+                .set("accountChangedAt", s("2026-08-02T00:00:00.000Z"))
+                .build();
+            item.remove(attribute);
+            assert!(
+                matches!(
+                    decode_profile(&item, workspace(1)),
+                    Err(CodecError::Missing { .. })
+                ),
+                "an absent `{attribute}` must refuse the row"
+            );
+        }
+    }
+
     #[test]
     fn every_authentication_attribute_is_required() {
         let api_key = ApiKeyId::from_uuid7(Uuid7::compose(1, [3; 10]));
@@ -903,9 +951,16 @@ mod tests {
             .set("name", s("Production"))
             .set("slug", s("production"))
             .set("createdAt", s("2026-08-01T00:00:00.000Z"))
+            .set("accountRevision", n(9))
+            .set("accountChangedAt", s("2026-08-02T00:00:00.000Z"))
             .build();
         let decoded = decode_profile(&profile, workspace(1)).expect("profile");
         assert_eq!(decoded.name, "Production");
+        assert_eq!(decoded.account_revision, 9);
+        assert_eq!(
+            decoded.account_pause_reason, None,
+            "finance publishes a reason exactly when the account is paused, so an              absent one is an active account rather than a missing field"
+        );
 
         let value = LimitValue::Map(LimitMapValue {
             values: std::collections::BTreeMap::from([
