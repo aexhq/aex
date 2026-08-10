@@ -73,4 +73,5 @@
 {"class":"unavailable","code":"upstream_error","precedenceStage":"commit","retryable":true,"status":502}
 {"class":"unavailable","code":"workspace_provision_pending","precedenceStage":"commit","retryable":true,"status":503}
 {"class":"unavailable","code":"commit_outcome_unknown","precedenceStage":"commit","retryable":true,"status":503}
+{"class":"state","code":"not_implemented","precedenceStage":"transport_envelope","retryable":false,"status":501}
 {"class":"internal","code":"internal_error","precedenceStage":"commit","retryable":false,"status":500}

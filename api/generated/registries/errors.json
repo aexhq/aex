@@ -667,6 +667,15 @@
       "status": 503
     },
     {
+      "class": "state",
+      "code": "not_implemented",
+      "message": "the operation is published in the contract but is not served yet",
+      "precedenceStage": "transport_envelope",
+      "remedy": "do not retry; the published specification marks this operation not yet available",
+      "retryable": false,
+      "status": 501
+    },
+    {
       "class": "internal",
       "code": "internal_error",
       "message": "an unexpected condition occurred",

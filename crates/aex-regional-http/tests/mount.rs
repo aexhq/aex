@@ -36,6 +36,16 @@ impl UnaryDispatch for EchoDispatch {
         self.0
     }
 
+    /// The production narrowing, derived exactly as every composition derives
+    /// it: everything owned that the contract does not defer.
+    fn served(&self) -> Vec<RouteId> {
+        self.0
+            .routes()
+            .into_iter()
+            .filter(|id| !route(*id).deferred)
+            .collect()
+    }
+
     async fn dispatch(
         &self,
         _cx: &RequestContext,
@@ -281,10 +291,13 @@ async fn a_mount_answers_exactly_the_owned_route_set() {
             RequestLimits::DEFAULT,
         )
         .expect("the owned set mounts");
+        let mut answered = mounted.routes.clone();
+        answered.extend(mounted.refused.iter().copied());
+        answered.sort_unstable();
         assert_eq!(
-            mounted.routes,
+            answered,
             owner.routes(),
-            "{} mounts its owned set",
+            "{} answers its whole owned set, serving or refusing",
             owner.deployable()
         );
 
@@ -424,13 +437,15 @@ async fn the_declared_envelope_is_the_transport_body_ceiling() {
     )
     .expect("mounts");
 
+    // A served route with a body: the refusal arm never reads one, so it could
+    // not exercise the extractor's ceiling at all.
     let inside = mounted
         .router
         .clone()
         .oneshot(
             Request::builder()
-                .method("PUT")
-                .uri(concrete_path(RouteId::SecretPut))
+                .method("POST")
+                .uri(concrete_path(RouteId::SecretRevoke))
                 .header("content-type", "application/json")
                 .body(Body::from(vec![b'x'; 3 * 1024 * 1024]))
                 .expect("request"),
@@ -447,8 +462,8 @@ async fn the_declared_envelope_is_the_transport_body_ceiling() {
         .router
         .oneshot(
             Request::builder()
-                .method("PUT")
-                .uri(concrete_path(RouteId::SecretPut))
+                .method("POST")
+                .uri(concrete_path(RouteId::SecretRevoke))
                 .header("content-type", "application/json")
                 .body(Body::from(vec![b'x'; ENVELOPE_BYTES + 1]))
                 .expect("request"),
@@ -464,13 +479,158 @@ async fn the_declared_envelope_is_the_transport_body_ceiling() {
 
 #[test]
 fn dispatcher_refuses_a_route_it_does_not_own() {
-    let refusal = not_served(RouteId::SecretPut);
+    // Owned by the secret edge, served there, and not this deployable's: "no
+    // such resource here" is the true statement, not "declared but not built".
+    let refusal = not_served(RouteId::SecretDelete);
     assert_eq!(refusal.code, ErrorCode::NotFound);
     assert!(
         !RouteOwner::SessionApi
             .routes()
-            .contains(&RouteId::SecretPut),
+            .contains(&RouteId::SecretDelete),
         "the refused route is genuinely unmounted"
+    );
+}
+
+#[test]
+fn a_stub_for_a_deferred_route_answers_the_same_code_as_the_refusal_arm() {
+    // The handler stub and the mounted arm must not disagree: a code the route
+    // does not declare is rewritten to `internal_error` by `dispatch::declared`,
+    // and only a deferred route declares `not_implemented`.
+    //
+    // The route is derived rather than named. This test named `secret_put` until
+    // P3.3a landed it, at which point the first assertion was the only thing
+    // standing between a served route and a silently vacuous check.
+    let deferred = aex_wire::routes::ROUTES
+        .iter()
+        .find(|descriptor| descriptor.deferred)
+        .expect("the contract still defers something");
+    assert_eq!(not_served(deferred.id).code, ErrorCode::NotImplemented);
+    assert!(route(deferred.id).declares(ErrorCode::NotImplemented));
+}
+
+/// An owned route the ledger defers is **mounted**, and it refuses honestly.
+///
+/// This replaces the assertion that it was absent. A bare `404` cannot be told
+/// apart from a typo, a wrong base URL or a wrong region, and that ambiguity
+/// lands in the first ten minutes of an integration.
+#[tokio::test]
+async fn a_deferred_route_answers_the_published_refusal() {
+    let mounted = mount_unary(
+        Arc::new(EchoDispatch(RouteOwner::SessionApi)),
+        // Admission would refuse every request; the arm must answer before it.
+        Arc::new(AlwaysRefuse),
+        RequestLimits::DEFAULT,
+    )
+    .expect("mounts");
+    let deferred = *mounted.refused.first().expect("the deployable owes routes");
+    let descriptor = route(deferred);
+    let response = mounted
+        .router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(descriptor.method.as_str())
+                .uri(concrete_path(deferred))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(
+        response.status(),
+        StatusCode::NOT_IMPLEMENTED,
+        "`{deferred}`"
+    );
+    let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
+        .await
+        .expect("body");
+    let envelope: aex_wire::error::ApiError = serde_json::from_slice(&body).expect("envelope");
+    assert_eq!(
+        envelope.error.code,
+        aex_wire::error::ObservedErrorCode::Known(ErrorCode::NotImplemented)
+    );
+    assert!(!envelope.error.request_id.is_empty());
+    assert!(!envelope.error.retryable);
+    // No reason text: the ledger's prose is an engineering note, and one that
+    // has drifted is worse than none.
+    assert_eq!(
+        envelope.error.message,
+        ErrorCode::NotImplemented.default_message()
+    );
+
+    // A method the template does not publish at all is the router's `405`, not
+    // a `404`. It has to be derived: several deferred templates publish three of
+    // the four verbs — `/api/workspace/files/{name}` defers GET, PUT *and*
+    // DELETE — so simply flipping to "the other method" picks another published
+    // deferred operation, whose honest answer is the `501` arm and not a `405`.
+    let published: Vec<_> = aex_wire::routes::ROUTES
+        .iter()
+        .filter(|other| other.template == descriptor.template)
+        .map(|other| other.method)
+        .collect();
+    let wrong = [
+        aex_wire::types::HttpMethod::Get,
+        aex_wire::types::HttpMethod::Put,
+        aex_wire::types::HttpMethod::Post,
+        aex_wire::types::HttpMethod::Delete,
+    ]
+    .into_iter()
+    .find(|method| !published.contains(method))
+    .expect("a template that publishes every verb has no method to refuse");
+    let response = mounted
+        .router
+        .oneshot(
+            Request::builder()
+                .method(wrong.as_str())
+                .uri(concrete_path(deferred))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+}
+
+/// The totality check: every owned route is served here or deferred by the
+/// contract, and a composition that accounts for neither refuses to build.
+#[test]
+fn an_owned_route_in_neither_set_fails_composition() {
+    struct Forgetful;
+    #[async_trait::async_trait]
+    impl UnaryDispatch for Forgetful {
+        fn owner(&self) -> RouteOwner {
+            RouteOwner::SecretApi
+        }
+        fn served(&self) -> Vec<RouteId> {
+            // Drops `secret_revoke`, which the ledger does not defer.
+            RouteOwner::SecretApi
+                .routes()
+                .into_iter()
+                .filter(|id| !route(*id).deferred && *id != RouteId::SecretRevoke)
+                .collect()
+        }
+        async fn dispatch(
+            &self,
+            _cx: &RequestContext,
+            _accept: AcceptKind,
+            _raw: RawRequest<'_>,
+            _limits: RequestLimits,
+        ) -> WireResult<RawResponse> {
+            unreachable!("never dispatched")
+        }
+    }
+    let error = mount_unary(
+        Arc::new(Forgetful),
+        Arc::new(AlwaysAdmit),
+        RequestLimits::DEFAULT,
+    )
+    .expect_err("an unaccounted route must fail composition");
+    assert_eq!(
+        error,
+        MountError::Unaccounted {
+            route: "secret_revoke",
+            deployable: RouteOwner::SecretApi.half(),
+        }
     );
 }
 

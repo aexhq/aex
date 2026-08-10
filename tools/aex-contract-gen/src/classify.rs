@@ -9,6 +9,8 @@ use std::collections::BTreeSet;
 
 use serde_json::Value;
 
+use crate::load::NOT_IMPLEMENTED;
+
 /// How compatible a single change is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -159,8 +161,33 @@ fn classify_routes(base: &Value, head: &Value, changes: &mut Vec<Change>) {
             }),
             _ => {}
         }
-        let before_errors = string_set(&before["errors"]);
-        let after_errors = string_set(&after["errors"]);
+        // Deferral is evaluated before the generic error diff, and the paired
+        // movement of `not_implemented` is suppressed as its consequence. Under
+        // the generic rule a route landing would read `Breaking` ("no longer
+        // declares error `not_implemented`"), which is exactly backwards: the
+        // platform gained a capability. A classifier that cries breaking on
+        // good news is one people learn to ignore.
+        let was_deferred = before.get("deferred").is_some();
+        let is_deferred = after.get("deferred").is_some();
+        match (was_deferred, is_deferred) {
+            (true, false) => changes.push(Change {
+                classification: Classification::MateriallyCompatible,
+                subject: Subject::Route(id.clone()),
+                detail: "deferred operation is now served".to_owned(),
+            }),
+            (false, true) => changes.push(Change {
+                classification: Classification::Breaking,
+                subject: Subject::Route(id.clone()),
+                detail: "served operation is now deferred".to_owned(),
+            }),
+            _ => {}
+        }
+        let mut before_errors = string_set(&before["errors"]);
+        let mut after_errors = string_set(&after["errors"]);
+        if was_deferred != is_deferred {
+            before_errors.remove(NOT_IMPLEMENTED);
+            after_errors.remove(NOT_IMPLEMENTED);
+        }
         for code in after_errors.difference(&before_errors) {
             changes.push(Change {
                 classification: Classification::MateriallyCompatible,

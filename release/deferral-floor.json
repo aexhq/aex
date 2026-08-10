@@ -4,13 +4,10 @@
   "regenerate": "This file is committed and hand-edited, unlike `release/test-registry.json`. An id enters `routes` or `scenarios` only with the change that defers it, and leaves only with the change that mounts, deletes or un-defers it - moving it to `retired` in the same commit unless the contract deletes it outright.",
   "routes": {
     "floor": 48,
-    "floorNote": "The approved ceiling is 48. The registry defers 49 today; the forty-ninth is `session_clone`, which P0.2 deletes from the contract entirely. `deleting` carries it until then, so the floor here is the number the plan approved rather than the number the tree currently happens to hold.",
-    "deleting": {
-      "session_clone": "Deleted from the contract by P0.2, not un-deferred: the route, both schemas, the RouteId arm, the SDK descriptor, the CLI command and both conformance goldens go with it. Remove this entry in the same commit; the id does not move to `retired`, because a deleted operation cannot return without a reviewed contract addition and `route-deferral-regression` would refuse it as an unlisted deferral if it did."
-    },
+    "floorNote": "The approved ceiling is 48 and stays 48; the ratchet is monotone non-increasing, so a tree that sits well under the ceiling does not lower it. The registry defers 21 today. Nineteen ids are still named in `deferred` below and are no longer deferred in the contract: the registry pointer lane mounted fifteen and the capacity lane mounted `account_get`, `workspace_current_get`, `workspace_limit_get` and `workspace_limits_list`, neither moving them out of this file. They stay listed here rather than moving to `retired`, because retirement is irreversible and is the mounting change's decision to make, not this merge's. The list is a ceiling, so naming an id that is no longer deferred only makes the ratchet slack, never wrong. `session_clone` left `deleting` because P0.2 deleted it from the contract outright, exactly as that entry instructed. Eleven ids are in `retired` because they were mounted rather than deleted - P1.1, P3.2 and P5.2 landed `session_restore`, `session_stop`, `session_trash` and `usage_query`; P3.4a landed the four upload routes; P3.3a landed `secret_put` and P3.3b `provider_credential_register`. `provider_credential_revoke` is retired with them: P0.1 deferred it because nothing composed ever registered a credential, and P3.3b made that premise false, so the deferral was withdrawn in the merge that brought P3.3b in. Re-deferring any of the eleven is a regression, not architecture debt. What remains deferred and belongs to P0.1 is `session_approval_get` and `session_approvals_list`: manual approval is out of launch scope by decision D4, `brain-mux` hardcodes an empty `approval_required`, nothing constructs `Write::PutApproval`, and `session_approval_respond` is still deferred - so both reads would return a confident empty page over data no producer writes, which is exactly what the `501` arm exists to prevent.",
+    "deleting": {},
     "deferred": [
       "account_get",
-      "provider_credential_register",
       "registry_files_delete",
       "registry_files_download_create",
       "registry_files_get",
@@ -27,8 +24,9 @@
       "registry_tools_delete",
       "registry_tools_get",
       "registry_tools_put",
-      "secret_put",
+      "session_approval_get",
       "session_approval_respond",
+      "session_approvals_list",
       "session_create",
       "session_credential_rebind",
       "session_files_live_download_create",
@@ -42,23 +40,27 @@
       "session_messages_list",
       "session_persist",
       "session_purge",
-      "session_restore",
-      "session_stop",
       "session_telemetry_export_create",
-      "session_trash",
       "session_workspace_discard",
       "sessions_list",
       "telemetry_export_create",
-      "upload_abort",
-      "upload_complete",
-      "upload_create",
-      "upload_parts_grant",
-      "usage_query",
       "workspace_current_get",
       "workspace_limit_get",
       "workspace_limits_list"
     ],
-    "retired": []
+    "retired": [
+      "provider_credential_register",
+      "provider_credential_revoke",
+      "secret_put",
+      "session_restore",
+      "session_stop",
+      "session_trash",
+      "upload_abort",
+      "upload_complete",
+      "upload_create",
+      "upload_parts_grant",
+      "usage_query"
+    ]
   },
   "scenarios": {
     "floor": 21,

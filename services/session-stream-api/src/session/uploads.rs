@@ -46,7 +46,6 @@ use aex_wire::error::{ErrorCode, WireError, WireResult};
 use aex_wire::idempotency::IntentDigest;
 use aex_wire::ids::{ContentHash, PrefixedId as _, UploadId, WorkspaceId};
 use aex_wire::models;
-use aex_wire::routes::RouteId;
 use aex_wire::types::{DecimalU128, HttpsUrl, Timestamp};
 use aex_workspace_domain::upload::{
     self, AmbiguityResolution, CompletionEvidence, HeadOracle, PART_GRANT_MAX_PER_CALL, PartPlan,
@@ -897,14 +896,6 @@ impl aex_wire::server::UploadsApi for Routes {
             .map(|()| aex_wire::server::NoContent)
     }
 }
-
-/// The routes this module serves.
-pub const SERVED: &[RouteId] = &[
-    RouteId::UploadAbort,
-    RouteId::UploadComplete,
-    RouteId::UploadCreate,
-    RouteId::UploadPartsGrant,
-];
 
 #[cfg(test)]
 mod tests {

@@ -30,6 +30,12 @@ use aex_regional_http::mount::{AdmissionRequest, EdgeAdmission as _};
 /// The group this deployable owns, and the only one it mounts.
 pub const GROUP: RouteGroup = RouteGroup::Otlp;
 
+/// The header a caller attributes its batch to a session with.
+///
+/// It is the caller's own claim and nothing verifies it. That is deliberate:
+/// see [`session_id`].
+pub const SESSION_HEADER: &str = "aex-session-id";
+
 /// The audience every assertion this deployable accepts must carry.
 ///
 /// One deployable, one audience: an assertion minted for another regional role
@@ -189,12 +195,25 @@ async fn handle(
         Ok(coding) => coding,
         Err(failure) => return render_error(Some(&context), &failure),
     };
-    // The only facts taken from this request's headers are the two that
-    // describe the bytes: what they are encoded as and how they are compressed.
-    // Who the batch belongs to is `authorized` and nothing else — a header
-    // cannot name a scope here because nothing downstream of this line accepts
-    // one.
-    let request = OtlpRequest::new(Arc::clone(&state.service), authorized, encoding, coding);
+    // Read strictly after the edge admitted the request, so an unauthenticated
+    // caller is refused as one and never learns anything from the syntax of a
+    // header it was never entitled to send.
+    let session = match session_id(&headers) {
+        Ok(session) => session,
+        Err(failure) => return render_error(Some(&context), &failure),
+    };
+    // Three facts come off this request's headers: what the bytes are encoded
+    // as, how they are compressed, and which session the caller says they
+    // belong to. Only the workspace half of the attribution comes from
+    // `authorized`, and it is the half that decides the partition — see
+    // `OtlpRequest::scope`.
+    let request = OtlpRequest::new(
+        Arc::clone(&state.service),
+        authorized,
+        encoding,
+        coding,
+        session,
+    );
     let raw = RawRequest {
         route: id,
         path: binding,
@@ -219,6 +238,48 @@ fn content_type(headers: &HeaderMap) -> Result<OtlpEncoding, WireError> {
     OtlpEncoding::from_content_type(value).map_err(|error| {
         WireError::new(ErrorCode::InvalidTelemetry).with_message(error.to_string())
     })
+}
+
+/// Resolves the session the caller attributes this batch to.
+///
+/// The value is parsed as a [`SessionId`] and used as-is. Nothing here proves
+/// the session exists, and nothing here proves the caller owns it — an ingest
+/// path carrying the platform's whole telemetry volume does not get to spend a
+/// session→workspace read per request to establish a fact the storage key
+/// already encodes.
+///
+/// What makes an unverified identifier safe is the key it lands in.
+/// `ScopeKey::Session` renders `S#{workspace}#{session}` with the workspace the
+/// credential proved, so the only partitions a caller can reach are inside its
+/// own workspace. A wrong session id therefore files a batch against the
+/// caller's own wrong session, which is that customer's problem to fix, and can
+/// never file it against another tenant's.
+///
+/// An earlier revision took this header and used it **as** the scope, when a
+/// session scope rendered `S#{session}` and named no workspace at all. That let
+/// any caller write into any session of any workspace, and removing the header
+/// was the correct fix for the key shape of the day.
+///
+/// # Errors
+///
+/// Returns an [`ErrorCode::InvalidRequest`] `400` when the header is present and
+/// is not a session identifier. Absent means workspace scope; a malformed value
+/// is never silently treated as absent.
+fn session_id(headers: &HeaderMap) -> Result<Option<aex_wire::ids::SessionId>, WireError> {
+    use aex_wire::ids::PrefixedId as _;
+
+    let Some(value) = headers.get(SESSION_HEADER) else {
+        return Ok(None);
+    };
+    value
+        .to_str()
+        .ok()
+        .and_then(|text| aex_wire::ids::SessionId::parse(text).ok())
+        .map(Some)
+        .ok_or_else(|| {
+            WireError::new(ErrorCode::InvalidRequest)
+                .with_message(format!("`{SESSION_HEADER}` must be a session identifier"))
+        })
 }
 
 /// Resolves the declared content coding.
@@ -439,14 +500,115 @@ mod tests {
         assert_eq!(refused.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 
+    /// This replaces `a_caller_supplied_session_header_is_not_read_and_cannot_
+    /// fail_a_request`, which pinned that `aex-session-id` was never read. That
+    /// is no longer true and is no longer what protects a tenant.
+    ///
+    /// What protects a tenant is the key. `ScopeKey::Session` renders the
+    /// workspace before the session, so an identifier a caller invents — or
+    /// copies from another customer — resolves inside the workspace its
+    /// credential proved and nowhere else. Asserted here on the key itself
+    /// rather than through the router, so it constrains **every** caller of the
+    /// scope: the reader, the exporter, the reconciler and the stream, not just
+    /// this one handler.
+    #[test]
+    fn a_session_id_from_one_workspace_can_never_address_another_workspaces_partition() {
+        use aex_observation_domain::keys::{self, BucketHour, ScopeKey};
+        use aex_observation_domain::signal::Signal;
+        use aex_wire::ids::{PrefixedId as _, SessionId, WorkspaceId};
+
+        // One session identifier, presented under two different credentials.
+        let session = SessionId::from_uuid7(aex_wire::Uuid7::compose(1, [4; 10]));
+        let mine = WorkspaceId::from_uuid7(aex_wire::Uuid7::compose(1, [2; 10]));
+        let theirs = WorkspaceId::from_uuid7(aex_wire::Uuid7::compose(1, [9; 10]));
+        let ours = ScopeKey::Session {
+            workspace: mine,
+            session,
+        };
+        let stranger = ScopeKey::Session {
+            workspace: theirs,
+            session,
+        };
+
+        assert_eq!(ours.session(), stranger.session(), "the same session id");
+        assert_ne!(ours, stranger);
+        assert_eq!(ours.workspace(), mine);
+        assert_eq!(ours.to_key(), format!("S#{mine}#{session}"));
+
+        let bucket = BucketHour::parse("2026-08-01T09").expect("a bucket");
+        let mut partitions = vec![
+            (keys::frontier_pk(&ours), keys::frontier_pk(&stranger)),
+            (keys::gap_pk(&ours), keys::gap_pk(&stranger)),
+            (
+                keys::segment_pk(&ours, Signal::Logs),
+                keys::segment_pk(&stranger, Signal::Logs),
+            ),
+            (
+                keys::time_segment_pk(&ours, Signal::Logs),
+                keys::time_segment_pk(&stranger, Signal::Logs),
+            ),
+        ];
+        for signal in Signal::AUTHORITY {
+            partitions.push((
+                keys::observation_pk(&ours, *signal, bucket, 0),
+                keys::observation_pk(&stranger, *signal, bucket, 0),
+            ));
+        }
+        for (ours, theirs_key) in partitions {
+            assert_ne!(
+                ours, theirs_key,
+                "one session id reached two workspaces' partitions"
+            );
+            assert!(
+                ours.contains(&mine.to_string()) && !ours.contains(&theirs.to_string()),
+                "`{ours}` must name its own workspace and no other"
+            );
+        }
+    }
+
+    #[test]
+    fn the_session_header_is_admitted_and_a_malformed_one_is_a_four_hundred() {
+        use axum::http::{HeaderMap, HeaderValue};
+
+        let mut headers = HeaderMap::new();
+        assert_eq!(
+            super::session_id(&headers).expect("an absent header is not a failure"),
+            None,
+            "absent means workspace scope, exactly as before"
+        );
+
+        headers.insert(
+            super::SESSION_HEADER,
+            HeaderValue::from_static("ses_01h455vb4pex5vsknk084sn02q"),
+        );
+        let parsed = super::session_id(&headers)
+            .expect("a well-formed session parses")
+            .expect("a present header yields a session");
+        assert_eq!(parsed.to_string(), "ses_01h455vb4pex5vsknk084sn02q");
+
+        // A value nothing parses is refused rather than quietly dropped back to
+        // workspace scope, which would file the batch somewhere the caller did
+        // not ask for and tell them nothing.
+        for hostile in [
+            "not-a-session-identifier",
+            "wsp_01h455vb4pex5vsknk084sn02q",
+            "",
+        ] {
+            headers.insert(
+                super::SESSION_HEADER,
+                HeaderValue::from_str(hostile).expect("a header value"),
+            );
+            let failure = super::session_id(&headers).expect_err("a malformed session is refused");
+            assert_eq!(failure.code.http_status(), 400, "`{hostile}` must be a 400");
+        }
+    }
+
     #[tokio::test]
-    async fn a_caller_supplied_session_header_is_not_read_and_cannot_fail_a_request() {
+    async fn the_session_header_never_overtakes_the_credential_check() {
         use tower::ServiceExt as _;
-        // `aex-session-id` used to be parsed here and used verbatim as the
-        // scope a batch was attributed to — a caller naming any session in any
-        // workspace. It is gone: the header is now an unknown header like any
-        // other, which shows up as the request being decided by exactly what
-        // decided it before, and never by a `400` about the header's syntax.
+        // Precedence, unchanged by re-admitting the header: an unauthenticated
+        // request is refused as unauthenticated. A caller must not be able to
+        // probe this deployable's header parsing without a credential.
         let router = super::router(offline_state());
         let without = router
             .clone()
@@ -454,23 +616,20 @@ mod tests {
             .await
             .expect("served");
         let without_status = without.status();
+        assert_ne!(without_status, StatusCode::OK);
 
         for value in ["ses_01h455vb4pex5vsknk084sn02q", "not-a-session-identifier"] {
             let mut request = ingest_request(64);
             request.headers_mut().insert(
-                "aex-session-id",
+                super::SESSION_HEADER,
                 axum::http::HeaderValue::from_static(value),
             );
             let with = router.clone().oneshot(request).await.expect("served");
             assert_eq!(
                 with.status(),
                 without_status,
-                "`aex-session-id: {value}` changed the outcome; the header is being read"
-            );
-            assert_ne!(
-                with.status(),
-                StatusCode::BAD_REQUEST,
-                "a header nothing parses can never be a syntax refusal"
+                "`{}: {value}` changed the outcome before the credential was judged",
+                super::SESSION_HEADER
             );
         }
     }

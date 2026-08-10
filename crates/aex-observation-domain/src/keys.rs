@@ -247,20 +247,44 @@ impl std::fmt::Display for BucketHour {
 /// A session when one exists and the workspace otherwise (decision O-05). Only a
 /// workspace-key OTLP call made directly against the public route lacks a
 /// session.
+///
+/// **Both variants carry their workspace, and that is the tenancy boundary.**
+/// The rendered form leads with the workspace (`S#{workspace}#{session}`), so
+/// every partition this key names — `OBS#`, `SEG#`, `SEGT#`, `FRONT#`, `GAP#`,
+/// `OBT#`, `TRC#` — is prefixed by exactly one workspace. A caller that names a
+/// session it does not own therefore addresses a partition inside **its own**
+/// workspace and never another tenant's, whatever session identifier it
+/// supplies. That is what makes an ingest path able to take a session from an
+/// untrusted header without a session→workspace lookup: the workspace half is
+/// the half a credential proved, and it is the half that decides the partition.
+///
+/// An earlier revision keyed a session scope as `S#{session}` alone. The session
+/// identifier was then the entire tenancy decision for every row a batch wrote,
+/// nothing downstream could catch a wrong one, and the only safe answer was to
+/// refuse session attribution outright.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum ScopeKey {
-    /// A session-scoped observation.
-    Session(SessionId),
+    /// A session-scoped observation, inside the workspace that owns the session.
+    Session {
+        /// The workspace the row is filed under. Never caller-supplied.
+        workspace: WorkspaceId,
+        /// The session inside that workspace.
+        session: SessionId,
+    },
     /// A workspace-scoped observation with no session.
     Workspace(WorkspaceId),
 }
 
 impl ScopeKey {
-    /// The rendered scope component, `S#{session_id}` or `W#{workspace_id}`.
+    /// The rendered scope component, `S#{workspace_id}#{session_id}` or
+    /// `W#{workspace_id}`.
+    ///
+    /// The workspace leads in both, so the rendering of any scope inside one
+    /// workspace can never be the rendering of a scope inside another.
     #[must_use]
     pub fn to_key(self) -> String {
         match self {
-            Self::Session(id) => format!("S#{id}"),
+            Self::Session { workspace, session } => format!("S#{workspace}#{session}"),
             Self::Workspace(id) => format!("W#{id}"),
         }
     }
@@ -269,17 +293,24 @@ impl ScopeKey {
     ///
     /// # Errors
     ///
-    /// Returns [`KeyError::Malformed`] when the discriminator is absent or the
-    /// identifier does not parse as the kind the discriminator names.
+    /// Returns [`KeyError::Malformed`] when the discriminator is absent, a field
+    /// is missing or extra, or an identifier does not parse as the kind its
+    /// position names.
     pub fn parse(text: &str) -> Result<Self, KeyError> {
-        const TEMPLATE: &str = "S#{session_id} | W#{workspace_id}";
+        const TEMPLATE: &str = "S#{workspace_id}#{session_id} | W#{workspace_id}";
         let malformed = KeyError::Malformed { template: TEMPLATE };
-        let (discriminator, id) = text.split_once('#').ok_or_else(|| malformed.clone())?;
+        let (discriminator, rest) = text.split_once('#').ok_or_else(|| malformed.clone())?;
         match discriminator {
-            "S" => SessionId::parse(id)
-                .map(Self::Session)
-                .map_err(|_| malformed),
-            "W" => WorkspaceId::parse(id)
+            "S" => {
+                let (workspace, session) = rest.split_once('#').ok_or_else(|| malformed.clone())?;
+                // Neither identifier may contain the separator, so a fourth
+                // field lands inside `session` and is refused here rather than
+                // being silently truncated away.
+                let workspace = WorkspaceId::parse(workspace).map_err(|_| malformed.clone())?;
+                let session = SessionId::parse(session).map_err(|_| malformed)?;
+                Ok(Self::Session { workspace, session })
+            }
+            "W" => WorkspaceId::parse(rest)
                 .map(Self::Workspace)
                 .map_err(|_| malformed),
             _ => Err(malformed),
@@ -290,8 +321,20 @@ impl ScopeKey {
     #[must_use]
     pub const fn session(self) -> Option<SessionId> {
         match self {
-            Self::Session(id) => Some(id),
+            Self::Session { session, .. } => Some(session),
             Self::Workspace(_) => None,
+        }
+    }
+
+    /// The workspace this scope belongs to.
+    ///
+    /// Total on purpose. Every scope names exactly one workspace, so no caller
+    /// has to reach past the key for the owner and no code path can hold a scope
+    /// whose tenant is unknown.
+    #[must_use]
+    pub const fn workspace(self) -> WorkspaceId {
+        match self {
+            Self::Session { workspace, .. } | Self::Workspace(workspace) => workspace,
         }
     }
 
@@ -353,19 +396,18 @@ pub fn observation_pk(scope: &ScopeKey, signal: Signal, abucket: BucketHour, sha
 /// Returns `Some` for exactly the observation revision family and `None` for
 /// every other item family, including a well-formed key naming the `events`
 /// signal, which can never legitimately exist in this table.
+///
+/// The three trailing fields are peeled from the right because the scope
+/// component's own field count depends on its discriminator; splitting from the
+/// left would hard-code one arity and misclassify the other.
 #[must_use]
 pub fn parse_observation_pk(pk: &str) -> Option<ObservationWakeKey> {
     let rest = pk.strip_prefix("OBS#")?;
-    let mut fields = rest.split('#');
-    let discriminator = fields.next()?;
-    let scope_id = fields.next()?;
-    let signal = fields.next()?;
-    let abucket = fields.next()?;
+    let mut fields = rest.rsplitn(4, '#');
     let shard = fields.next()?;
-    if fields.next().is_some() {
-        return None;
-    }
-    let scope = ScopeKey::parse(&format!("{discriminator}#{scope_id}")).ok()?;
+    let abucket = fields.next()?;
+    let signal = fields.next()?;
+    let scope = ScopeKey::parse(fields.next()?).ok()?;
     let signal = Signal::parse(signal)?;
     if !signal.in_observation_authority() {
         return None;

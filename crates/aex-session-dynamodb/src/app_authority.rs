@@ -109,7 +109,6 @@ impl SessionAuthorityExternal {
     }
 
     fn operation_write(
-        &self,
         tables: &RegionalTables,
         binding: SessionBinding,
         action: &LogicalAction<'_>,
@@ -203,7 +202,6 @@ impl SessionAuthorityExternal {
     }
 
     fn agent_cancel(
-        &self,
         tables: &RegionalTables,
         binding: SessionBinding,
         action: &LogicalAction<'_>,
@@ -472,7 +470,7 @@ impl ExternalActionCompiler for SessionAuthorityExternal {
         match action.write {
             None => Self::read_only(tables, action, output),
             Some(Write::PutOperation(operation)) => {
-                self.operation_write(tables, binding, action, operation, output)
+                Self::operation_write(tables, binding, action, operation, output)
             }
             Some(Write::CancelAgent {
                 session,
@@ -480,7 +478,7 @@ impl ExternalActionCompiler for SessionAuthorityExternal {
                 from_revision,
                 to_revision,
                 at,
-            }) => self.agent_cancel(
+            }) => Self::agent_cancel(
                 tables,
                 binding,
                 action,

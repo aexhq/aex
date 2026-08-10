@@ -28,10 +28,10 @@ use aex_wire::types::Timestamp;
 /// The control domain this launcher scans.
 pub const DOMAIN: ControlDomain = ControlDomain::ExportLaunch;
 
-/// The sort key of the export state row.
-// An export state row is keyed `EXPORT#{workspace}` / `{export_id}`, so there
-// is no constant sort key any more; `DueItem::state_sk` derives it. The former
-// `EXPORT_STATE_SK` put every workspace's exports in their own partition.
+// There is no constant sort key for the export state row any more. A row is
+// keyed `EXPORT#{workspace}` / `{export_id}` and `DueItem::state_sk` derives
+// it; the former `EXPORT_STATE_SK` put every workspace's exports in their own
+// partition.
 
 /// The state an admitted, not yet launched export carries.
 pub const STATE_ADMITTED: &str = "admitted";

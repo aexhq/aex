@@ -513,6 +513,8 @@ fn context() -> RequestContext {
     RequestContext {
         request_id: RequestId::parse("req-accept").expect("a request id"),
         route: RouteId::InvitationAccept,
+        // An account token, not a browser session: the acceptance ceremony
+        // needs only *who* the caller is, so there is no session to name.
         actor_session_id: None,
         principal: PrincipalScope::Account {
             user: UserId::from_uuid7(uuid7(USER)),

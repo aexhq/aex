@@ -1932,6 +1932,7 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
+          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -1941,7 +1942,8 @@
             "invalid_range",
             "content_missing",
             "account_paused",
-            "wrong_workspace_region"
+            "wrong_workspace_region",
+            "not_implemented"
           ],
           "etag": "none",
           "fragment": "registry",
@@ -2710,6 +2712,7 @@
         {
           "altPrincipal": null,
           "bodyClass": "none",
+          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -2717,7 +2720,8 @@
             "session_deleted",
             "approval_not_found",
             "account_paused",
-            "wrong_workspace_region"
+            "wrong_workspace_region",
+            "not_implemented"
           ],
           "etag": "none",
           "fragment": "approvals",
@@ -2743,6 +2747,7 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
+          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -2754,7 +2759,8 @@
             "approval_already_resolved",
             "approval_binding_changed",
             "account_paused",
-            "wrong_workspace_region"
+            "wrong_workspace_region",
+            "not_implemented"
           ],
           "etag": "none",
           "fragment": "approvals",
@@ -2780,6 +2786,7 @@
         {
           "altPrincipal": null,
           "bodyClass": "none",
+          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -2787,7 +2794,8 @@
             "invalid_cursor",
             "session_deleted",
             "account_paused",
-            "wrong_workspace_region"
+            "wrong_workspace_region",
+            "not_implemented"
           ],
           "etag": "none",
           "fragment": "approvals",
@@ -2815,43 +2823,7 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
-          "errors": [
-            "unauthenticated",
-            "insufficient_scope",
-            "not_found",
-            "operation_idempotency_conflict",
-            "invalid_request",
-            "limit_exceeded",
-            "session_not_idle",
-            "session_deleting",
-            "session_deleted",
-            "account_paused",
-            "precondition_failed",
-            "wrong_workspace_region"
-          ],
-          "etag": "optional_if_match",
-          "fragment": "sessions",
-          "idempotency": "operation_id",
-          "method": "POST",
-          "operationId": "session_clone",
-          "path": "/api/sessions/{sessionId}/clones",
-          "pathParams": [
-            "sessionId"
-          ],
-          "pauseExempt": false,
-          "plane": "regional",
-          "queryParams": [],
-          "requestSchema": "SessionCloneRequest",
-          "requiredScope": "sessions:write",
-          "responseSchema": "Operation",
-          "safeRetry": false,
-          "successStatus": 202,
-          "summary": "Admit the durable clone operation.",
-          "transport": "unary"
-        },
-        {
-          "altPrincipal": null,
-          "bodyClass": "aex_json",
+          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -2867,7 +2839,8 @@
             "provider_credential_not_found",
             "provider_credential_revoked",
             "account_paused",
-            "wrong_workspace_region"
+            "wrong_workspace_region",
+            "not_implemented"
           ],
           "etag": "none",
           "fragment": "sessions",
@@ -2890,6 +2863,7 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
+          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -2899,7 +2873,8 @@
             "session_deleting",
             "session_deleted",
             "account_paused",
-            "wrong_workspace_region"
+            "wrong_workspace_region",
+            "not_implemented"
           ],
           "etag": "none",
           "fragment": "sessions",
@@ -2924,6 +2899,7 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
+          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -2938,7 +2914,8 @@
             "content_missing",
             "account_paused",
             "precondition_failed",
-            "wrong_workspace_region"
+            "wrong_workspace_region",
+            "not_implemented"
           ],
           "etag": "none",
           "fragment": "files",
@@ -2963,6 +2940,7 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
+          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -2974,7 +2952,8 @@
             "session_deleted",
             "account_paused",
             "precondition_failed",
-            "wrong_workspace_region"
+            "wrong_workspace_region",
+            "not_implemented"
           ],
           "etag": "none",
           "fragment": "files",
@@ -2999,6 +2978,7 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
+          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -3010,7 +2990,8 @@
             "file_not_found",
             "account_paused",
             "precondition_failed",
-            "wrong_workspace_region"
+            "wrong_workspace_region",
+            "not_implemented"
           ],
           "etag": "none",
           "fragment": "files",
@@ -3035,6 +3016,7 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
+          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -3046,7 +3028,8 @@
             "file_not_found",
             "content_missing",
             "account_paused",
-            "wrong_workspace_region"
+            "wrong_workspace_region",
+            "not_implemented"
           ],
           "etag": "none",
           "fragment": "files",
@@ -3071,6 +3054,7 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
+          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -3079,7 +3063,8 @@
             "invalid_cursor",
             "session_deleted",
             "account_paused",
-            "wrong_workspace_region"
+            "wrong_workspace_region",
+            "not_implemented"
           ],
           "etag": "none",
           "fragment": "files",
@@ -3104,6 +3089,7 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
+          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -3112,7 +3098,8 @@
             "session_deleted",
             "file_not_found",
             "account_paused",
-            "wrong_workspace_region"
+            "wrong_workspace_region",
+            "not_implemented"
           ],
           "etag": "none",
           "fragment": "files",
@@ -3137,13 +3124,15 @@
         {
           "altPrincipal": null,
           "bodyClass": "none",
+          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
             "not_found",
             "session_deleted",
             "account_paused",
-            "wrong_workspace_region"
+            "wrong_workspace_region",
+            "not_implemented"
           ],
           "etag": "returns",
           "fragment": "sessions",
@@ -3168,6 +3157,7 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
+          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -3180,7 +3170,8 @@
             "unqualified_provider_model",
             "provider_credential_revoked",
             "account_paused",
-            "wrong_workspace_region"
+            "wrong_workspace_region",
+            "not_implemented"
           ],
           "etag": "none",
           "fragment": "sessions",
@@ -3205,6 +3196,7 @@
         {
           "altPrincipal": null,
           "bodyClass": "none",
+          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -3212,7 +3204,8 @@
             "invalid_cursor",
             "session_deleted",
             "account_paused",
-            "wrong_workspace_region"
+            "wrong_workspace_region",
+            "not_implemented"
           ],
           "etag": "none",
           "fragment": "sessions",
@@ -3934,6 +3927,7 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
+          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -3946,7 +3940,8 @@
             "session_deleted",
             "account_paused",
             "precondition_failed",
-            "wrong_workspace_region"
+            "wrong_workspace_region",
+            "not_implemented"
           ],
           "etag": "optional_if_match",
           "fragment": "sessions",
@@ -3971,6 +3966,7 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
+          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -3979,7 +3975,8 @@
             "invalid_request",
             "session_deleted",
             "deletion_in_progress",
-            "wrong_workspace_region"
+            "wrong_workspace_region",
+            "not_implemented"
           ],
           "etag": "none",
           "fragment": "sessions",
@@ -4138,6 +4135,7 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
+          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -4150,7 +4148,8 @@
             "unsupported_export_signal",
             "invalid_query",
             "account_paused",
-            "wrong_workspace_region"
+            "wrong_workspace_region",
+            "not_implemented"
           ],
           "etag": "none",
           "fragment": "telemetry-lifecycle",
@@ -4378,6 +4377,7 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
+          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -4387,7 +4387,8 @@
             "session_deleting",
             "session_deleted",
             "precondition_failed",
-            "wrong_workspace_region"
+            "wrong_workspace_region",
+            "not_implemented"
           ],
           "etag": "none",
           "fragment": "sessions",
@@ -4412,12 +4413,14 @@
         {
           "altPrincipal": null,
           "bodyClass": "none",
+          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
             "invalid_cursor",
             "account_paused",
-            "wrong_workspace_region"
+            "wrong_workspace_region",
+            "not_implemented"
           ],
           "etag": "none",
           "fragment": "sessions",
@@ -4444,6 +4447,7 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
+          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -4454,7 +4458,8 @@
             "unsupported_export_signal",
             "invalid_query",
             "account_paused",
-            "wrong_workspace_region"
+            "wrong_workspace_region",
+            "not_implemented"
           ],
           "etag": "none",
           "fragment": "telemetry-lifecycle",
@@ -5550,6 +5555,15 @@
           "status": 503
         },
         {
+          "class": "state",
+          "code": "not_implemented",
+          "message": "the operation is published in the contract but is not served yet",
+          "precedenceStage": "transport_envelope",
+          "remedy": "do not retry; the published specification marks this operation not yet available",
+          "retryable": false,
+          "status": 501
+        },
+        {
           "class": "internal",
           "code": "internal_error",
           "message": "an unexpected condition occurred",
@@ -6614,21 +6628,6 @@
         "start"
       ],
       "type": "object"
-    },
-    "CloneCredentials": {
-      "enum": [
-        "copy",
-        "none"
-      ],
-      "type": "string"
-    },
-    "CloneFiles": {
-      "enum": [
-        "current",
-        "initial",
-        "none"
-      ],
-      "type": "string"
     },
     "ComputeShape": {
       "additionalProperties": false,
@@ -9250,7 +9249,6 @@
       "enum": [
         "session_stop",
         "session_persist",
-        "session_clone",
         "workspace_discard",
         "session_trash",
         "session_restore",
@@ -9318,10 +9316,6 @@
         {
           "$ref": "aex:schema:SessionPersistResult",
           "x-aex-discriminator-value": "session_persist"
-        },
-        {
-          "$ref": "aex:schema:SessionCloneResult",
-          "x-aex-discriminator-value": "session_clone"
         },
         {
           "$ref": "aex:schema:WorkspaceDiscardResult",
@@ -11117,37 +11111,6 @@
       ],
       "type": "object"
     },
-    "SessionCloneRequest": {
-      "additionalProperties": false,
-      "properties": {
-        "credentials": {
-          "$ref": "aex:schema:CloneCredentials",
-          "description": "Whether to inherit custody."
-        },
-        "files": {
-          "$ref": "aex:schema:CloneFiles",
-          "description": "Which tree to start from."
-        }
-      },
-      "required": [
-        "credentials",
-        "files"
-      ],
-      "type": "object"
-    },
-    "SessionCloneResult": {
-      "additionalProperties": false,
-      "properties": {
-        "session": {
-          "$ref": "aex:schema:Session",
-          "description": "The new, independent session."
-        }
-      },
-      "required": [
-        "session"
-      ],
-      "type": "object"
-    },
     "SessionComputeRequest": {
       "additionalProperties": false,
       "properties": {
@@ -11484,7 +11447,7 @@
       "properties": {
         "cascade": {
           "$ref": "aex:schema:PurgeCascade",
-          "description": "How clone descendants are treated."
+          "description": "How lineage descendants are treated."
         }
       },
       "required": [

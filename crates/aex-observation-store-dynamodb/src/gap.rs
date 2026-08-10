@@ -507,12 +507,13 @@ fn validate(record: &GapRecord) -> Result<(), GapCodecError> {
             ));
         }
     }
-    if let ScopeKey::Workspace(scope_workspace) = record.scope
-        && scope_workspace != record.workspace
-    {
+    // Both scope variants carry their workspace, so a row whose `workspaceId`
+    // attribute and whose partition key disagree about the tenant is refused
+    // here rather than being indexed under one owner and read under the other.
+    if record.scope.workspace() != record.workspace {
         return Err(GapCodecError::inconsistent(
             "workspaceId",
-            "does not match workspace scope",
+            "does not match the workspace the scope names",
         ));
     }
     Ok(())
@@ -777,7 +778,10 @@ mod tests {
         .with_ordinals(OrdinalRange::new(4, 8).expect("range"));
         GapRecord::try_new(
             workspace(),
-            ScopeKey::Session(session()),
+            ScopeKey::Session {
+                workspace: workspace(),
+                session: session(),
+            },
             revision,
             Some(5),
             Some(512),
@@ -795,6 +799,39 @@ mod tests {
             Some(&format!("GAPW#{}", workspace()))
         );
         assert_eq!(decode(&item).expect("decodes"), expected);
+    }
+
+    #[test]
+    fn a_gap_whose_scope_names_another_workspace_is_refused() {
+        // The scope carries the tenant, so the owning attribute and the
+        // partition key can be compared. Before the re-key a session scope
+        // named no workspace at all and this pair was uncheckable: a revision
+        // could be indexed under `GAPW#{one}` while its partition belonged to
+        // another tenant's session, and nothing in the codec could tell.
+        let other = WorkspaceId::parse("wsp_0000000002e81840g2081040g2").expect("workspace");
+        let mine = record();
+        assert!(
+            GapRecord::try_new(
+                other,
+                mine.scope,
+                mine.revision.clone(),
+                mine.attempted_records,
+                mine.attempted_bytes,
+                mine.recoverable,
+            )
+            .is_err(),
+            "a session scope inside one workspace may not be filed under another"
+        );
+
+        let mut item = encode(&mine).expect("encodes");
+        item.insert(
+            "workspaceId".to_owned(),
+            aws_sdk_dynamodb::types::AttributeValue::S(other.to_string()),
+        );
+        assert!(
+            decode(&item).is_err(),
+            "a stored row whose owner contradicts its partition is not decodable"
+        );
     }
 
     #[test]

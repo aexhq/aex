@@ -1,5 +1,5 @@
-export { Aex, SessionsClient, WorkspacesClient } from "./client/aex.js";
-export type { AexOptions, SessionCreateRequest } from "./client/aex.js";
+export { Aex } from "./client/aex.js";
+export type { AexOptions } from "./client/aex.js";
 export {
   AccountToken,
   WorkspaceApiKey,
@@ -39,3 +39,7 @@ export { ERROR_METADATA } from "./generated/errors.js";
 export type { ErrorClass } from "./generated/errors.js";
 export { ROUTES } from "./generated/routes.js";
 export type { RouteDescriptor, RouteId } from "./generated/routes.js";
+// The resource classes themselves are reached through `Aex`, not named at the
+// root: their set is derived from the deferral ledger, and a root export list
+// that moves whenever a route lands is a list nobody can review.
+export type { ExecuteOptions, ResourceExecutor } from "./generated/resources.js";

@@ -24,9 +24,12 @@ const MAX_RECORDS: usize = limits::OTLP_MAX_RECORDS;
 const MAX_DECODED_BYTES: usize = limits::OTLP_DECODED_MAX;
 
 fn scope() -> ScopeKey {
-    ScopeKey::Session(
-        aex_wire::ids::SessionId::parse("ses_0000000003ec1r60r30c1g60r3").expect("fixture parses"),
-    )
+    ScopeKey::Session {
+        workspace: aex_wire::ids::WorkspaceId::parse("wsp_0000000001e40r2081040g2081")
+            .expect("fixture parses"),
+        session: aex_wire::ids::SessionId::parse("ses_0000000003ec1r60r30c1g60r3")
+            .expect("fixture parses"),
+    }
 }
 
 fn bucket() -> BucketHour {

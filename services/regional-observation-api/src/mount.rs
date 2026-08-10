@@ -88,19 +88,16 @@ pub fn owned_routes() -> Vec<RouteId> {
 
 /// Whether this deployable can answer an owned route completely.
 ///
-/// Export admission is deliberately absent. Its current handler writes only
-/// the observation export row while returning a generic operation that the
-/// session operation authority cannot read, list or cancel. Mounting it would
-/// publish a durable identity with no total lifecycle API, and retrying the
-/// caller-minted operation id can currently create a second export. The read,
-/// download and revoke routes remain served for export rows produced after the
+/// Read from the deferral ledger through the generated table, never listed
+/// here. Export admission is what the ledger defers today: the handler writes
+/// only the observation export row while returning a generic operation that
+/// the session operation authority cannot read, list or cancel, and retrying
+/// the caller-minted operation id can create a second export. The read,
+/// download and revoke routes stay served for export rows produced once the
 /// authorities are reconciled.
 #[must_use]
-pub const fn is_served(id: RouteId) -> bool {
-    !matches!(
-        id,
-        RouteId::TelemetryExportCreate | RouteId::SessionTelemetryExportCreate
-    )
+pub fn is_served(id: RouteId) -> bool {
+    !route(id).deferred
 }
 
 /// Every owned route this deployable can answer completely today.
@@ -109,6 +106,15 @@ pub fn served_routes() -> Vec<RouteId> {
     owned_routes()
         .into_iter()
         .filter(|id| is_served(*id))
+        .collect()
+}
+
+/// Every owned route the published contract declares and nothing serves yet.
+#[must_use]
+pub fn deferred_routes() -> Vec<RouteId> {
+    owned_routes()
+        .into_iter()
+        .filter(|id| !is_served(*id))
         .collect()
 }
 
@@ -121,12 +127,17 @@ pub fn mounted_templates() -> BTreeSet<&'static str> {
         .collect()
 }
 
-/// Builds the router: every completely served route of both groups, plus the
+/// Builds the router: every completely served route of both groups, the
+/// generated refusal arm for every owned route the contract defers, and the
 /// health endpoints.
 pub fn router(state: Arc<AppState>) -> axum::Router {
     let mut router = axum::Router::new();
     let declared = mounted_templates();
     let mut mounted: BTreeSet<&'static str> = BTreeSet::new();
+    let filter = MethodFilter::GET
+        .or(MethodFilter::POST)
+        .or(MethodFilter::PUT)
+        .or(MethodFilter::DELETE);
     for id in served_routes() {
         let descriptor = route(id);
         debug_assert!(declared.contains(descriptor.template));
@@ -134,16 +145,33 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             // Two methods can share one template; the matcher resolves which.
             continue;
         }
-        let filter = MethodFilter::GET
-            .or(MethodFilter::POST)
-            .or(MethodFilter::PUT)
-            .or(MethodFilter::DELETE);
         router = router.route(descriptor.template, on(filter, handle));
     }
     debug_assert_eq!(mounted.len(), declared.len());
+    for id in deferred_routes() {
+        let descriptor = route(id);
+        if mounted.insert(descriptor.template) {
+            router = router.route(descriptor.template, on(filter, refuse));
+        }
+    }
     router
         .with_state(Arc::clone(&state))
         .merge(health_router(state))
+}
+
+/// The generated refusal arm: `501 not_implemented`, before admission.
+///
+/// No credential parse, no store read, no clock, no network — it has nothing to
+/// read them with. A caller who reaches a published-but-unbuilt operation gets
+/// the envelope and a code that says which of the two it hit, instead of a bare
+/// `404` indistinguishable from a typo.
+async fn refuse(headers: HeaderMap) -> Response {
+    let request_id = diagnostic_id(&headers);
+    aex_regional_http::mount::render_error(
+        &request_id,
+        None,
+        WireError::new(aex_wire::error::ErrorCode::NotImplemented),
+    )
 }
 
 /// The two internal health endpoints every Rust deployable mounts.
@@ -512,8 +540,11 @@ mod tests {
         }
     }
 
+    /// Export admission is mounted as the generated refusal arm and nothing
+    /// else: it answers `501 not_implemented`, mints no `Location`, and reaches
+    /// no handler. The previous bare `404` was indistinguishable from a typo.
     #[tokio::test]
-    async fn telemetry_export_admission_is_absent_from_the_real_router() {
+    async fn telemetry_export_admission_answers_the_published_refusal() {
         for path in [
             "/api/observations/telemetry/exports",
             "/api/observations/ses_0000000001e40r2081040g2081/telemetry/exports",
@@ -527,15 +558,21 @@ mod tests {
                 )
                 .await
                 .expect("the router answers");
-            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+            assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED, "{path}");
             assert!(
                 response.headers().get(header::LOCATION).is_none(),
                 "{path} must not advertise an unreadable operation"
             );
             let body = to_bytes(response.into_body(), usize::MAX)
                 .await
-                .expect("the fallback body is readable");
-            assert!(body.is_empty(), "{path} must publish no partial body");
+                .expect("the refusal body is readable");
+            let envelope: serde_json::Value =
+                serde_json::from_slice(&body).expect("the published envelope");
+            assert_eq!(
+                envelope["error"]["code"],
+                aex_wire::error::ErrorCode::NotImplemented.as_str(),
+                "{path}"
+            );
         }
     }
 }

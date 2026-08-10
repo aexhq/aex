@@ -1,7 +1,7 @@
 {
   "$id": "https://schemas.aex.dev/v1/PurgeCascade.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "How a purge treats the session's clone descendants.",
+  "description": "How a purge treats the session's lineage descendants.",
   "enum": [
     "detach_descendants",
     "purge_closure"

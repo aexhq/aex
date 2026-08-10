@@ -41,8 +41,8 @@ pub use error::EdgeError;
 pub use headers::DeclaredHeaders;
 pub use health::{Dependency, Readiness};
 pub use router::{
-    Admitted, EdgeStack, mount_api_keys_api, mount_auth_api, mount_billing_api,
-    mount_bootstrap_api, mount_central_operations_api, mount_identity_api, mount_organizations_api,
-    mount_workspaces_api, mounted_routes,
+    Admitted, EdgeStack, deferred_routes, mount_api_keys_api, mount_auth_api, mount_billing_api,
+    mount_bootstrap_api, mount_central_operations_api, mount_deferred, mount_identity_api,
+    mount_organizations_api, mount_workspaces_api, mounted_routes,
 };
 pub use target::{ControlStoreTargets, TargetPath, TargetResolver, admit_request};

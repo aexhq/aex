@@ -12,9 +12,11 @@
 //! Only the operation's addressing and retry vocabulary is projected. Request and
 //! response bodies stay in `@aexhq/wire`, which is where the validators live.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
+use crate::emit_models::camel_case;
 use crate::ir::{ContractIr, OperationIr};
+use crate::load::pascal_case;
 
 /// Renders `packages/sdk/src/generated/routes.ts`.
 #[must_use]
@@ -82,6 +84,10 @@ pub fn typescript_sdk_routes(ir: &ContractIr, digest: &str) -> String {
     out.push_str("  readonly queryParams: readonly string[];\n");
     out.push_str("  /** Whether the operation still answers while the account is paused. */\n");
     out.push_str("  readonly pauseExempt: boolean;\n");
+    out.push_str(
+        "  /**\n   * Whether the contract declares the operation and nothing serves it yet.\n   *\n   * Informational only. The server is the sole authority on what it serves:\n   * an installed SDK pins one contract digest forever, so refusing locally on\n   * this flag would hard-fail a call to an operation that started working.\n   */\n",
+    );
+    out.push_str("  readonly deferred: boolean;\n");
     out.push_str("}\n\n");
 
     out.push_str(
@@ -127,10 +133,215 @@ pub fn typescript_sdk_routes(ir: &ContractIr, digest: &str) -> String {
             )
         ));
         out.push_str(&format!("    pauseExempt: {},\n", operation.pause_exempt));
+        out.push_str(&format!(
+            "    deferred: {},\n",
+            operation.deferred_reason.is_some()
+        ));
         out.push_str("  },\n");
     }
     out.push_str("});\n");
     out
+}
+
+/// Renders `packages/sdk/src/generated/resources.ts`.
+///
+/// One method per **served unary** operation, and nothing else. A method the
+/// contract declares and no deployable serves would be a method that can only
+/// fail, and publishing one puts the platform's answer in the client, where it
+/// goes stale the day the route lands. The long-lived NDJSON reads are absent
+/// for the same reason from the other side: the SDK transport decodes one JSON
+/// body, so a generated method over a frame stream could not return one.
+/// `Aex.execute` stays total over `RouteId`, so every operation — deferred or
+/// streaming — is still callable by anyone who wants the real answer.
+#[must_use]
+pub fn typescript_sdk_resources(ir: &ContractIr, digest: &str) -> String {
+    let operations = ir.operations();
+    let mut groups: BTreeMap<&str, Vec<&OperationIr>> = BTreeMap::new();
+    for operation in operations
+        .iter()
+        .filter(|operation| operation.deferred_reason.is_none() && operation.transport != "ndjson")
+    {
+        groups
+            .entry(operation.fragment.as_str())
+            .or_default()
+            .push(operation);
+    }
+
+    let mut out = preamble(
+        digest,
+        &[
+            "The typed resource surface, one method per served operation.",
+            "",
+            "Nothing here is hand-maintained. A route that leaves the deferral ledger",
+            "gains its method in the same regeneration that publishes it, and a route",
+            "that enters the ledger loses it, so the published client surface is exactly",
+            "what the platform answers.",
+        ],
+    );
+    out.push_str("import type { RouteId } from \"./routes.js\";\n\n");
+
+    out.push_str("/** The one client capability every generated resource method needs. */\n");
+    out.push_str("export interface ResourceExecutor {\n");
+    out.push_str("  execute<T>(\n");
+    out.push_str("    routeId: RouteId,\n");
+    out.push_str("    bindings?: Readonly<Record<string, string>>,\n");
+    out.push_str("    options?: ExecuteOptions,\n");
+    out.push_str("  ): Promise<T>;\n");
+    out.push_str("}\n\n");
+
+    out.push_str("/** Everything beyond the path a single call can carry. */\n");
+    out.push_str("export interface ExecuteOptions {\n");
+    out.push_str("  /** Query parameters, already rendered as wire strings. */\n");
+    out.push_str("  readonly query?: Readonly<Record<string, string>>;\n");
+    out.push_str("  /** The request body, encoded as canonical JSON by the client. */\n");
+    out.push_str("  readonly body?: unknown;\n");
+    out.push_str("  /** `Idempotency-Key`, for a route that requires one. */\n");
+    out.push_str("  readonly idempotencyKey?: string;\n");
+    out.push_str("  /** `Aex-Operation-Id`, for a route that admits a durable operation. */\n");
+    out.push_str("  readonly operationId?: string;\n");
+    out.push_str("}\n\n");
+
+    for (fragment, members) in &groups {
+        out.push_str(&format!("/** The `{fragment}` operations. */\n"));
+        out.push_str(&format!("export class {} {{\n", client_name(fragment)));
+        out.push_str("  readonly #executor: ResourceExecutor;\n\n");
+        out.push_str("  constructor(executor: ResourceExecutor) {\n");
+        out.push_str("    this.#executor = executor;\n");
+        out.push_str("  }\n");
+        for operation in members {
+            out.push('\n');
+            resource_method(&mut out, operation);
+        }
+        out.push_str("}\n\n");
+    }
+
+    out.push_str("/**\n");
+    out.push_str(" * The resource namespaces the client exposes.\n");
+    out.push_str(" *\n");
+    out.push_str(" * The client extends this rather than listing the namespaces itself, so a\n");
+    out.push_str(" * fragment whose last served operation lands or leaves cannot be forgotten\n");
+    out.push_str(" * in the hand-written half.\n");
+    out.push_str(" */\n");
+    out.push_str("export abstract class GeneratedResources implements ResourceExecutor {\n");
+    out.push_str("  abstract execute<T>(\n");
+    out.push_str("    routeId: RouteId,\n");
+    out.push_str("    bindings?: Readonly<Record<string, string>>,\n");
+    out.push_str("    options?: ExecuteOptions,\n");
+    out.push_str("  ): Promise<T>;\n");
+    for fragment in groups.keys() {
+        out.push_str(&format!(
+            "\n  /** The `{fragment}` operations. */\n  readonly {}: {} = new {}(this);\n",
+            camel_case(&fragment.replace('-', "_")),
+            client_name(fragment),
+            client_name(fragment)
+        ));
+    }
+    out.push_str("}\n");
+    out
+}
+
+/// The class name one authoring fragment's served operations land in.
+fn client_name(fragment: &str) -> String {
+    format!("{}Client", pascal_case(fragment))
+}
+
+/// One generated resource method.
+fn resource_method(out: &mut String, operation: &OperationIr) {
+    let name = camel_case(&operation.id);
+    let query_required = operation.query_params.iter().any(|param| !param.optional);
+    let body = operation.request.is_some() || operation.body_class == "otlp";
+    let idempotency_key = operation.idempotency == "idempotency_key";
+    let operation_id = operation.idempotency == "operation_id";
+    let required_field = !operation.path_params.is_empty()
+        || query_required
+        || body
+        || idempotency_key
+        || operation_id;
+    let has_field = required_field || !operation.query_params.is_empty();
+
+    out.push_str(&format!(
+        "  /** `{} {}` — {} */\n",
+        operation.method,
+        operation.path,
+        comment_safe(&operation.summary)
+    ));
+    if has_field {
+        out.push_str(&format!("  async {name}<T = unknown>(params: {{\n"));
+        for param in &operation.path_params {
+            out.push_str(&format!("    readonly {}: string;\n", param.name));
+        }
+        if !operation.query_params.is_empty() {
+            out.push_str(&format!(
+                "    readonly query{}: {{\n",
+                if query_required { "" } else { "?" }
+            ));
+            for param in &operation.query_params {
+                out.push_str(&format!(
+                    "      readonly {}{}: string;\n",
+                    param.name,
+                    if param.optional { "?" } else { "" }
+                ));
+            }
+            out.push_str("    };\n");
+        }
+        if body {
+            out.push_str("    readonly body: unknown;\n");
+        }
+        if idempotency_key {
+            out.push_str("    readonly idempotencyKey: string;\n");
+        }
+        if operation_id {
+            out.push_str("    readonly operationId: string;\n");
+        }
+        out.push_str(&format!(
+            "  }}{}): Promise<T> {{\n",
+            if required_field { "" } else { " = {}" }
+        ));
+    } else {
+        out.push_str(&format!("  async {name}<T = unknown>(): Promise<T> {{\n"));
+    }
+
+    let bindings = operation
+        .path_params
+        .iter()
+        .map(|param| format!("{}: params.{}", param.name, param.name))
+        .collect::<Vec<_>>();
+    let mut options: Vec<String> = Vec::new();
+    if !operation.query_params.is_empty() {
+        options.push(if query_required {
+            "query: params.query".to_owned()
+        } else {
+            // `exactOptionalPropertyTypes` refuses an explicit `undefined` where
+            // the member is merely optional, so an absent value is an absent key.
+            "...(params.query === undefined ? {} : { query: params.query })".to_owned()
+        });
+    }
+    if body {
+        options.push("body: params.body".to_owned());
+    }
+    if idempotency_key {
+        options.push("idempotencyKey: params.idempotencyKey".to_owned());
+    }
+    if operation_id {
+        options.push("operationId: params.operationId".to_owned());
+    }
+    let mut call = format!(
+        "    return this.#executor.execute<T>({}",
+        quoted(&operation.id)
+    );
+    if !bindings.is_empty() || !options.is_empty() {
+        call.push_str(&if bindings.is_empty() {
+            ", {}".to_owned()
+        } else {
+            format!(", {{ {} }}", bindings.join(", "))
+        });
+    }
+    if !options.is_empty() {
+        call.push_str(&format!(", {{ {} }}", options.join(", ")));
+    }
+    call.push_str(");\n");
+    out.push_str(&call);
+    out.push_str("  }\n");
 }
 
 /// Renders `packages/sdk/src/generated/errors.ts`.

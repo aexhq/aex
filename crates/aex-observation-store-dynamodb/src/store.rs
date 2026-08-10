@@ -405,10 +405,12 @@ mod tests {
 
     fn scope() -> ScopeKey {
         use aex_wire::ids::PrefixedId as _;
-        ScopeKey::Session(
-            aex_wire::ids::SessionId::parse("ses_0000000003ec1r60r30c1g60r3")
+        ScopeKey::Session {
+            workspace: aex_wire::ids::WorkspaceId::parse("wsp_0000000001e40r2081040g2081")
                 .expect("fixture parses"),
-        )
+            session: aex_wire::ids::SessionId::parse("ses_0000000003ec1r60r30c1g60r3")
+                .expect("fixture parses"),
+        }
     }
 
     fn bucket() -> BucketHour {
@@ -511,9 +513,14 @@ mod tests {
         let accepted_at = Timestamp::parse("2026-08-01T09:02:03.004Z").expect("timestamp");
         let observation_id = ObservationId::from_uuid7(Uuid7::compose(1, [7; 10]));
         let key = plan.observation_key(Signal::Logs, 3, accepted_at, observation_id, 1);
+        // Workspace first, session second. Every partition an admitted batch
+        // writes is therefore prefixed by the tenant that owns it.
+        let expected_pk = "OBS#S#wsp_0000000001e40r2081040g2081\
+                           #ses_0000000003ec1r60r30c1g60r3#logs#2026-08-01T09#03"
+            .to_owned();
         assert_eq!(
             key.get("pk").and_then(|value| value.as_s().ok()),
-            Some(&"OBS#S#ses_0000000003ec1r60r30c1g60r3#logs#2026-08-01T09#03".to_owned())
+            Some(&expected_pk)
         );
         assert_eq!(
             key.get("sk").and_then(|value| value.as_s().ok()),

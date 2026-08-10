@@ -164,7 +164,7 @@ impl BundleRequest {
         session_table: &str,
     ) -> Self {
         let fence = match scope {
-            ScopeKey::Session(session) => {
+            ScopeKey::Session { session, .. } => {
                 let (pk, sk) = aex_session_dynamodb::stream_keys::head(*session);
                 RowKey {
                     table: session_table.to_owned(),
@@ -295,7 +295,7 @@ impl Bundle {
     ) -> Result<FrontierBundle, ReadError> {
         let fence = self.rows.get(&BundleRow::DeletionFence);
         let (deletion_epoch, deletion_state) = match scope {
-            ScopeKey::Session(_) => decode_session_fence(fence, workspace)?,
+            ScopeKey::Session { .. } => decode_session_fence(fence, workspace)?,
             ScopeKey::Workspace(_) => decode_workspace_fence(fence)?,
         };
         let signals = self
@@ -474,6 +474,14 @@ mod tests {
         SessionId::from_uuid7(aex_wire::Uuid7::compose(1, [4; 10]))
     }
 
+    /// The session scope inside the workspace every fixture is authorized for.
+    fn session_scope() -> ScopeKey {
+        ScopeKey::Session {
+            workspace: workspace(),
+            session: session(),
+        }
+    }
+
     fn query(signals: SignalSet) -> NormalizedQuery {
         NormalizedQuery {
             axis: ScopeAxis::Workspace,
@@ -534,7 +542,7 @@ mod tests {
 
     #[test]
     fn a_session_bundle_spans_both_authorities_and_reads_both_strongly() {
-        let scope = ScopeKey::Session(session());
+        let scope = session_scope();
         let selection = SignalSet::from_signal(Signal::Logs)
             .with(Signal::Spans)
             .with(Signal::Metrics)
@@ -567,7 +575,7 @@ mod tests {
 
     #[test]
     fn a_selection_with_no_authority_signal_still_reads_its_fence_and_hint() {
-        let scope = ScopeKey::Session(session());
+        let scope = session_scope();
 
         let request = BundleRequest::plan(
             &scope,
@@ -729,7 +737,7 @@ mod tests {
 
     #[test]
     fn the_hint_row_of_the_bundle_is_the_row_the_gap_writers_publish() {
-        let scope = ScopeKey::Session(session());
+        let scope = session_scope();
 
         let request = BundleRequest::plan(
             &scope,

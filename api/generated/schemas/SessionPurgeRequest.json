@@ -6,7 +6,7 @@
   "properties": {
     "cascade": {
       "$ref": "aex:schema:PurgeCascade",
-      "description": "How clone descendants are treated."
+      "description": "How lineage descendants are treated."
     }
   },
   "required": [

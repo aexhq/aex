@@ -209,9 +209,10 @@ pub struct GapRevision {
 
 /// One scoped durable gap revision and its accounting evidence.
 ///
-/// Scope and workspace are deliberately carried together: a session identifier
-/// does not encode its owning workspace, while the workspace gap index needs
-/// that owner on every revision.
+/// Scope and workspace are carried together because the workspace gap index
+/// needs the owner on every revision as its own attribute. The two can no longer
+/// disagree: [`crate::keys::ScopeKey`] encodes its workspace in both variants
+/// and [`GapRecord::try_new`] refuses a record whose scope names another one.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GapRecord {
     /// Owning workspace used by the sparse workspace index.
@@ -233,9 +234,10 @@ impl GapRecord {
     ///
     /// # Errors
     ///
-    /// Returns [`GapError::WorkspaceMismatch`] when a direct workspace scope is
-    /// paired with another workspace, or [`GapError::EmptySignals`] when the
-    /// revision could never intersect a query.
+    /// Returns [`GapError::WorkspaceMismatch`] when the scope names a workspace
+    /// other than the owning one — session-scoped and workspace-scoped alike —
+    /// or [`GapError::EmptySignals`] when the revision could never intersect a
+    /// query.
     pub fn try_new(
         workspace: WorkspaceId,
         scope: crate::keys::ScopeKey,
@@ -247,9 +249,11 @@ impl GapRecord {
         if revision.signals.is_empty() {
             return Err(GapError::EmptySignals);
         }
-        if let crate::keys::ScopeKey::Workspace(scope_workspace) = scope
-            && scope_workspace != workspace
-        {
+        // Both variants carry a workspace, so this covers a session scope as
+        // well: a gap filed against another tenant's scope is refused before it
+        // can reach the index that trusts the owning attribute.
+        let scope_workspace = scope.workspace();
+        if scope_workspace != workspace {
             return Err(GapError::WorkspaceMismatch {
                 scope: scope_workspace,
                 workspace,

@@ -169,6 +169,82 @@ fn every_route_registry_row_has_a_scenario_owner_without_polluting_the_wire_bund
     }
 }
 
+/// Every operation `session-stream-api` mounts, written independently of the
+/// registry that this file then compares it against.
+///
+/// Deliberately hand-maintained: derive it from the same registry it guards and
+/// the check compares the registry with itself. Every transport is covered,
+/// streaming included — a filter that excused the ndjson half would leave
+/// twenty-four routes unguarded, which is how the retired `regional-session-api`
+/// name silently emptied this check once already.
+const SESSION_STREAM_MOUNTS: &[&str] = &[
+    "observations_events_listen",
+    "observations_events_stream",
+    "observations_logs_listen",
+    "observations_logs_stream",
+    "observations_metrics_listen",
+    "observations_metrics_stream",
+    "observations_spans_listen",
+    "observations_spans_stream",
+    "observations_telemetry_listen",
+    "observations_telemetry_stream",
+    "observations_traces_listen",
+    "observations_traces_stream",
+    "provider_credential_get",
+    "provider_credential_revoke",
+    "provider_credentials_list",
+    "regional_operation_cancel",
+    "regional_operation_get",
+    "regional_operations_list",
+    "registry_files_delete",
+    "registry_files_get",
+    "registry_files_list",
+    "registry_files_put",
+    "registry_instructions_delete",
+    "registry_instructions_get",
+    "registry_instructions_list",
+    "registry_instructions_put",
+    "registry_mcp_servers_delete",
+    "registry_mcp_servers_get",
+    "registry_mcp_servers_list",
+    "registry_mcp_servers_put",
+    "registry_skills_delete",
+    "registry_skills_get",
+    "registry_skills_list",
+    "registry_skills_put",
+    "registry_tools_delete",
+    "registry_tools_get",
+    "registry_tools_list",
+    "registry_tools_put",
+    "secret_get",
+    "secrets_list",
+    "session_observations_events_listen",
+    "session_observations_events_stream",
+    "session_observations_logs_listen",
+    "session_observations_logs_stream",
+    "session_observations_metrics_listen",
+    "session_observations_metrics_stream",
+    "session_observations_spans_listen",
+    "session_observations_spans_stream",
+    "session_observations_telemetry_listen",
+    "session_observations_telemetry_stream",
+    "session_observations_traces_listen",
+    "session_observations_traces_stream",
+    "session_restore",
+    "session_run_get",
+    "session_runs_list",
+    "session_stop",
+    "session_trash",
+    "upload_abort",
+    "upload_complete",
+    "upload_create",
+    "upload_parts_grant",
+    "usage_query",
+    "workspace_current_get",
+    "workspace_limit_get",
+    "workspace_limits_list",
+];
+
 #[test]
 fn actual_mounts_are_explicit_and_do_not_pollute_the_wire_bundle() {
     let root = repo_root();
@@ -196,13 +272,6 @@ fn actual_mounts_are_explicit_and_do_not_pollute_the_wire_bundle() {
             .is_some_and(|reason| !reason.is_empty()),
         "an unmounted admission must carry its explicit architecture debt"
     );
-    // The drift check is pinned to the deployable the registry actually names.
-    // It was pinned to `regional-session-api`, a name the registry stopped using
-    // when `session-stream-api` merged the two regional edges; the filter then
-    // selected nothing, so the largest deployable's mount set was unguarded.
-    // Pinning it here rather than deriving it is the point: the expected set and
-    // the registry must be written independently or the check compares the
-    // registry with itself.
     let stream_api: BTreeSet<_> = rows
         .iter()
         .filter(|route| route["servedArtifact"] == "session-stream-api")
@@ -210,75 +279,10 @@ fn actual_mounts_are_explicit_and_do_not_pollute_the_wire_bundle() {
         .collect();
     assert_eq!(
         stream_api,
-        BTreeSet::from([
-            "observations_events_listen",
-            "observations_events_stream",
-            "observations_logs_listen",
-            "observations_logs_stream",
-            "observations_metrics_listen",
-            "observations_metrics_stream",
-            "observations_spans_listen",
-            "observations_spans_stream",
-            "observations_telemetry_listen",
-            "observations_telemetry_stream",
-            "observations_traces_listen",
-            "observations_traces_stream",
-            "provider_credential_get",
-            "provider_credential_revoke",
-            "provider_credentials_list",
-            "regional_operation_cancel",
-            "regional_operation_get",
-            "regional_operations_list",
-            "registry_files_delete",
-            "registry_files_get",
-            "registry_files_list",
-            "registry_files_put",
-            "registry_instructions_delete",
-            "registry_instructions_get",
-            "registry_instructions_list",
-            "registry_instructions_put",
-            "registry_mcp_servers_delete",
-            "registry_mcp_servers_get",
-            "registry_mcp_servers_list",
-            "registry_mcp_servers_put",
-            "registry_skills_delete",
-            "registry_skills_get",
-            "registry_skills_list",
-            "registry_skills_put",
-            "registry_tools_delete",
-            "registry_tools_get",
-            "registry_tools_list",
-            "registry_tools_put",
-            "secret_get",
-            "secrets_list",
-            "session_approval_get",
-            "session_approvals_list",
-            "session_observations_events_listen",
-            "session_observations_events_stream",
-            "session_observations_logs_listen",
-            "session_observations_logs_stream",
-            "session_observations_metrics_listen",
-            "session_observations_metrics_stream",
-            "session_observations_spans_listen",
-            "session_observations_spans_stream",
-            "session_observations_telemetry_listen",
-            "session_observations_telemetry_stream",
-            "session_observations_traces_listen",
-            "session_observations_traces_stream",
-            "session_restore",
-            "session_run_get",
-            "session_runs_list",
-            "session_stop",
-            "session_trash",
-            "upload_abort",
-            "upload_complete",
-            "upload_create",
-            "upload_parts_grant",
-            "usage_query",
-            "workspace_current_get",
-            "workspace_limit_get",
-            "workspace_limits_list",
-        ]),
+        SESSION_STREAM_MOUNTS
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>(),
     );
     assert!(
         !rows
@@ -301,6 +305,98 @@ fn actual_mounts_are_explicit_and_do_not_pollute_the_wire_bundle() {
             assert!(route.get("servedArtifact").is_none());
         }
     }
+}
+
+/// The five projections of one deferral agree, or the suite fails.
+///
+/// Derivation comes first — every marker below is computed from the same
+/// `deferred_reason` in one IR, in one pass — and this is the assertion that a
+/// future emitter change cannot quietly drop one of them. Note what is *not*
+/// asserted: no published artifact carries the ledger's prose. The reasons are
+/// engineering notes written for engineers, and a stale one published to a
+/// customer is worse than no sentence at all.
+#[test]
+fn deferred_operations_are_marked_in_every_published_artifact() {
+    let root = repo_root();
+    let tree = generate_to_memory(&root).expect("generation");
+    let bundle: serde_json::Value =
+        serde_json::from_slice(tree.bytes("api/generated/bundle.json").expect("bundle"))
+            .expect("bundle json");
+    let registry: serde_json::Value = serde_json::from_slice(
+        tree.bytes("api/generated/registries/routes.json")
+            .expect("route registry"),
+    )
+    .expect("route registry json");
+    let deferred_in_registry: BTreeSet<&str> = registry["routes"]
+        .as_array()
+        .expect("route rows")
+        .iter()
+        .filter(|route| route.get("deferredReason").is_some())
+        .map(|route| route["operationId"].as_str().expect("operation id"))
+        .collect();
+    assert!(
+        !deferred_in_registry.is_empty(),
+        "the ledger is empty; this test would prove nothing"
+    );
+
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    for plane in ["central", "regional"] {
+        let document: serde_json::Value = serde_json::from_slice(
+            tree.bytes(&format!("api/generated/openapi/aex-{plane}.json"))
+                .expect("plane document"),
+        )
+        .expect("plane json");
+        let bundle_rows: BTreeMap<&str, &serde_json::Value> = bundle["planes"][plane]["operations"]
+            .as_array()
+            .expect("bundle route rows")
+            .iter()
+            .map(|route| (route["operationId"].as_str().expect("operation id"), route))
+            .collect();
+        for (_, item) in document["paths"].as_object().expect("paths") {
+            for (_, operation) in item.as_object().expect("path item") {
+                let id = operation["operationId"].as_str().expect("operation id");
+                let marked = operation.get("x-aex-deferred").is_some();
+                let refuses = operation["responses"].get("501").is_some();
+                let row = bundle_rows[id];
+                let in_bundle = row.get("deferred").is_some();
+                let in_registry = deferred_in_registry.contains(id);
+                let declares = row["errors"]
+                    .as_array()
+                    .expect("declared errors")
+                    .iter()
+                    .any(|code| code == "not_implemented");
+                assert_eq!(
+                    [marked, refuses, in_bundle, in_registry, declares]
+                        .iter()
+                        .filter(|flag| **flag)
+                        .count(),
+                    if marked { 5 } else { 0 },
+                    "`{id}` is marked in some published artifacts and not others: \
+                     x-aex-deferred={marked} 501={refuses} bundle={in_bundle} \
+                     registry={in_registry} declares={declares}"
+                );
+                assert_eq!(
+                    operation.get("x-aex-deferred"),
+                    if marked {
+                        Some(&serde_json::Value::Bool(true))
+                    } else {
+                        None
+                    },
+                    "`{id}` publishes something other than a bare marker"
+                );
+                if marked {
+                    seen.insert(id.to_owned());
+                }
+            }
+        }
+    }
+    assert_eq!(
+        seen,
+        deferred_in_registry
+            .iter()
+            .map(|id| (*id).to_owned())
+            .collect::<BTreeSet<String>>()
+    );
 }
 
 #[test]
@@ -507,6 +603,63 @@ fn the_classifier_reports_each_row_of_the_evolution_table() {
             .any(|change| change.classification == Classification::Breaking),
         "removing an error code was not classified breaking"
     );
+
+    // A route landing is good news, and the paired disappearance of
+    // `not_implemented` is its expected consequence, not a second finding.
+    let (deferred_base, deferred_head) = deferral_pair(&base);
+    let changes = classify(&deferred_base, &deferred_head);
+    assert_eq!(
+        changes
+            .iter()
+            .map(|change| (change.classification, change.detail.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(
+            Classification::MateriallyCompatible,
+            "deferred operation is now served"
+        )],
+        "{changes:#?}"
+    );
+
+    // Withdrawing a served route into the ledger genuinely breaks callers.
+    let changes = classify(&deferred_head, &deferred_base);
+    assert_eq!(
+        changes
+            .iter()
+            .map(|change| (change.classification, change.detail.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(Classification::Breaking, "served operation is now deferred")],
+        "{changes:#?}"
+    );
+}
+
+/// One bundle whose first regional operation is deferred, and the same bundle
+/// with that operation landed.
+fn deferral_pair(base: &serde_json::Value) -> (serde_json::Value, serde_json::Value) {
+    let mut deferred = base.clone();
+    let mut served = base.clone();
+    for (document, mark) in [(&mut deferred, true), (&mut served, false)] {
+        let operation = document["planes"]["regional"]["operations"]
+            .as_array_mut()
+            .expect("operations")
+            .first_mut()
+            .expect("at least one regional operation");
+        let row = operation.as_object_mut().expect("an operation object");
+        let mut errors: Vec<serde_json::Value> = row["errors"]
+            .as_array()
+            .expect("declared errors")
+            .iter()
+            .filter(|code| *code != "not_implemented")
+            .cloned()
+            .collect();
+        if mark {
+            row.insert("deferred".to_owned(), serde_json::Value::Bool(true));
+            errors.push(serde_json::Value::from("not_implemented"));
+        } else {
+            row.remove("deferred");
+        }
+        row.insert("errors".to_owned(), serde_json::Value::Array(errors));
+    }
+    (deferred, served)
 }
 
 #[test]

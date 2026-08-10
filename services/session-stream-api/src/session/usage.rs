@@ -209,7 +209,7 @@ const fn wire_bucket(bucket: models::UsageBucket) -> Bucket {
 /// question, so they are `invalid_query` carrying the reason rather than a
 /// generic 400 the caller has to guess at.
 fn plan_refusal(error: &UsagePlanError) -> WireError {
-    WireError::new(ErrorCode::InvalidQuery).with_message(&error.to_string())
+    WireError::new(ErrorCode::InvalidQuery).with_message(error.to_string())
 }
 
 /// A projection failure, as the route's own declared vocabulary.
@@ -224,7 +224,7 @@ fn read_refusal(error: &QueryError) -> WireError {
             WireError::new(ErrorCode::InvalidRequest).with_message("page limit")
         }
         QueryError::InvertedRange => {
-            WireError::new(ErrorCode::InvalidQuery).with_message(&error.to_string())
+            WireError::new(ErrorCode::InvalidQuery).with_message(error.to_string())
         }
         QueryError::Denied
         | QueryError::Misconfigured { .. }
@@ -464,6 +464,11 @@ impl Routes {
 
     /// Walks the plan from `start` until the item budget is spent.
     #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one partition walk, read straight through; splitting it would \
+                  hide the budget and continuation bookkeeping from each other"
+    )]
     async fn read_plan(
         &self,
         plan: &QueryPlan,

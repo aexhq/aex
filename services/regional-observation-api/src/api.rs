@@ -248,8 +248,18 @@ impl ObservationRequest {
     }
 
     /// The scope one route reads, which is a session when the route names one.
+    ///
+    /// The session comes from the path, the workspace from the credential the
+    /// edge verified. Pairing them here is the authorization: a path session is
+    /// only ever resolved inside the caller's own workspace, so naming another
+    /// tenant's session addresses no partition of theirs at all.
     fn scope(&self, session: Option<SessionId>) -> ScopeKey {
-        session.map_or(ScopeKey::Workspace(self.workspace()), ScopeKey::Session)
+        session.map_or(ScopeKey::Workspace(self.workspace()), |session| {
+            ScopeKey::Session {
+                workspace: self.workspace(),
+                session,
+            }
+        })
     }
 
     /// Strongly reads and applies the deletion fence for a non-paged route.
@@ -576,7 +586,7 @@ impl ObservationRequest {
         reason = "assembling a trace keeps its bounded hydration and wire projection in one request path"
     )]
     async fn trace(&self, session: SessionId, trace_id: TraceId) -> WireResult<TraceDetail> {
-        let scope = ScopeKey::Session(session);
+        let scope = self.scope(Some(session));
         self.deletion_epoch(&scope).await?;
         let items = self
             .service
@@ -993,7 +1003,7 @@ fn bind_metric_selection(
         // The workspace metric index has no session component. Session
         // aggregation stays on the session-bound scope-time partitions and
         // applies the exact projected metric-name predicate there.
-        ScopeKey::Session(_) => None,
+        ScopeKey::Session { .. } => None,
     };
 }
 
@@ -1473,10 +1483,10 @@ fn unreachable_timestamp() -> Timestamp {
 fn ensure_queryable(scope: &ScopeKey, state: ScopeDeletionState) -> WireResult<()> {
     match (scope, state) {
         (_, ScopeDeletionState::Open) => Ok(()),
-        (ScopeKey::Session(_), ScopeDeletionState::Deleting) => {
+        (ScopeKey::Session { .. }, ScopeDeletionState::Deleting) => {
             Err(WireError::new(ErrorCode::SessionDeleting))
         }
-        (ScopeKey::Session(_), ScopeDeletionState::Deleted) => {
+        (ScopeKey::Session { .. }, ScopeDeletionState::Deleted) => {
             Err(WireError::new(ErrorCode::SessionDeleted))
         }
         (ScopeKey::Workspace(_), ScopeDeletionState::Deleting | ScopeDeletionState::Deleted) => {
@@ -2154,8 +2164,14 @@ mod tests {
     #[test]
     fn two_session_metric_queries_use_isolated_scope_partitions_and_exact_names() {
         let workspace = WorkspaceId::from_uuid7(Uuid7::compose(1, [1; 10]));
-        let first = ScopeKey::Session(SessionId::from_uuid7(Uuid7::compose(2, [2; 10])));
-        let second = ScopeKey::Session(SessionId::from_uuid7(Uuid7::compose(2, [3; 10])));
+        let first = ScopeKey::Session {
+            workspace,
+            session: SessionId::from_uuid7(Uuid7::compose(2, [2; 10])),
+        };
+        let second = ScopeKey::Session {
+            workspace,
+            session: SessionId::from_uuid7(Uuid7::compose(2, [3; 10])),
+        };
         let from = Timestamp::parse("2026-08-01T09:00:00.000Z").expect("time");
         let mut query = NormalizedQuery {
             axis: ScopeAxis::Scope,

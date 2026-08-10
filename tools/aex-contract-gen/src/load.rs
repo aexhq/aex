@@ -283,6 +283,9 @@ const ERROR_CLASSES: [&str; 9] = [
     "internal",
 ];
 
+/// The refusal every deferred operation declares, injected rather than authored.
+pub const NOT_IMPLEMENTED: &str = "not_implemented";
+
 /// The closed set of precedence stages, in evaluation order.
 pub const PRECEDENCE_STAGES: [&str; 13] = [
     "transport_envelope",
@@ -1337,6 +1340,19 @@ fn build_operation(
         if !error_codes.contains(&code.as_str()) {
             return Err(bad(format!("unknown error code `{code}`")));
         }
+    }
+    // Derived, never authored: a deferred operation answers the refusal the
+    // ledger implies, and `dispatch::declared` requires every code an endpoint
+    // may emit to be in the route table. Authoring it into the fragments
+    // instead would mean one hand edit per deferral and one more per landing,
+    // each an opportunity to forget.
+    if errors.iter().any(|code| code == NOT_IMPLEMENTED) {
+        return Err(bad(format!(
+            "`{NOT_IMPLEMENTED}` is derived from the deferral ledger and must not be authored"
+        )));
+    }
+    if deferred_reason.is_some() {
+        errors.push(NOT_IMPLEMENTED.to_owned());
     }
     // Registry order, not alphabetical: the generated `ErrorCode` discriminant
     // follows the registry, and a route's slice has to be sorted the same way or

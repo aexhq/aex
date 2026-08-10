@@ -349,6 +349,9 @@ mod tests {
             name: "Production".to_owned(),
             slug: "production".to_owned(),
             created_at: now,
+            account_revision: 1,
+            account_changed_at: now,
+            account_pause_reason: None,
         };
         let decoded = decode_profile(&profile_item(&profile), workspace).expect("profile reader");
         assert_eq!(decoded.name, "Production");
