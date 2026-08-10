@@ -14,4 +14,6 @@ pub mod output;
 pub mod registry;
 
 pub use cli::{Cli, Command, CompletionShell};
-pub use registry::{CommandRegistryEntry, command_registry, render_completions};
+pub use registry::{
+    CommandRegistryEntry, DEFERRED_MARKER, command_registry, marked_command, render_completions,
+};

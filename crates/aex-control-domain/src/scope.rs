@@ -1,6 +1,6 @@
 //! The one scope vocabulary.
 //!
-//! [`Scope`] is `aex_wire::scopes::ScopeId` — the generated 29-entry registry —
+//! [`Scope`] is `aex_wire::scopes::ScopeId` — the generated 30-entry registry —
 //! re-exported rather than redefined. This module adds the *set* algebra the
 //! authorization decision needs: a `u64` bitset whose bit `n` is
 //! `ScopeId::ALL[n]`, which makes an intersection one instruction and makes the

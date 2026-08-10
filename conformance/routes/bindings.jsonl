@@ -83,7 +83,6 @@
 {"bindings":{"approvalId":"apr_01kyw2qa4ne00r40r40m30e209","sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"GET","operationId":"session_approval_get","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/approvals/apr_01kyw2qa4ne00r40r40m30e209","plane":"regional"}
 {"bindings":{"approvalId":"apr_01kyw2qa4ne00r40r40m30e209","sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"POST","operationId":"session_approval_respond","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/approvals/apr_01kyw2qa4ne00r40r40m30e209/responses","plane":"regional"}
 {"bindings":{"sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"GET","operationId":"session_approvals_list","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/approvals","plane":"regional"}
-{"bindings":{"sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"POST","operationId":"session_clone","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/clones","plane":"regional"}
 {"bindings":{},"method":"POST","operationId":"session_create","path":"/api/sessions","plane":"regional"}
 {"bindings":{"sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"POST","operationId":"session_credential_rebind","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/credential-rebinds","plane":"regional"}
 {"bindings":{"sessionId":"ses_01kyw2qa4ne00r40r40m30e209"},"method":"POST","operationId":"session_files_live_download_create","path":"/api/sessions/ses_01kyw2qa4ne00r40r40m30e209/files/live/downloads","plane":"regional"}

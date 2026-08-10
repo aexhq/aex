@@ -72,9 +72,11 @@ pub trait UnaryDispatch: Send + Sync + 'static {
     ///
     /// It defaults to the whole owned set and is a subset of it. A deployable
     /// narrows it only while a named application capability is still owed by a
-    /// peer: RS-18 forbids mounting a route that cannot be fully served, so the
-    /// route is *absent* from the router rather than mounted and answering a
-    /// permanent failure.
+    /// peer, and the narrowing is derived from the deferral ledger rather than
+    /// written out. RS-18 still forbids mounting a *handler* that cannot be
+    /// fully served; what the route gets instead is the generated refusal arm,
+    /// which has no handler, no port and no adapter and so cannot produce a
+    /// partial answer.
     fn served(&self) -> Vec<RouteId> {
         self.owner().routes()
     }
@@ -133,17 +135,33 @@ pub enum MountError {
         /// The deployable.
         deployable: &'static str,
     },
+    /// An owned route is neither served here nor deferred by the ledger.
+    ///
+    /// This is the totality check the previous design did not have: without it
+    /// a route could silently leave a deployable's served set and answer
+    /// nothing at all, which is exactly the bare `404` the refusal arm exists
+    /// to remove.
+    #[error("route `{route}` is owned by `{deployable}` but is neither served nor deferred")]
+    Unaccounted {
+        /// The offending route.
+        route: &'static str,
+        /// The deployable that failed to account for it.
+        deployable: &'static str,
+    },
 }
 
 /// A built router plus the exact route set it answers.
 ///
 /// A composition test asserts `routes` equals [`RouteOwner::routes`], which is
-/// what makes an unmounted route a build failure.
+/// what makes an unmounted route a build failure. `refused` is the rest of the
+/// owned set: templates that answer `501 not_implemented` and reach no handler.
 pub struct Mounted {
     /// The `axum` router, ready for `axum::serve` on a bound listener.
     pub router: Router,
-    /// Every mounted route, in `RouteId` order.
+    /// Every route with a handler behind it, in `RouteId` order.
     pub routes: Vec<RouteId>,
+    /// Every owned route the ledger defers, in `RouteId` order.
+    pub refused: Vec<RouteId>,
 }
 
 impl std::fmt::Debug for Mounted {
@@ -151,6 +169,7 @@ impl std::fmt::Debug for Mounted {
         formatter
             .debug_struct("Mounted")
             .field("routes", &self.routes.len())
+            .field("refused", &self.refused.len())
             .finish_non_exhaustive()
     }
 }
@@ -171,17 +190,26 @@ impl<D, A> Clone for MountState<D, A> {
     }
 }
 
-/// Mounts every route the dispatcher declares it serves.
+/// Mounts every route this deployable owns: a handler for the ones it serves,
+/// the generated refusal arm for the ones the contract defers.
 ///
 /// The loop iterates the owned projection of the generated table. Two routes
 /// sharing a template are mounted as two method filters on that one template, so
 /// `PUT` on a path this deployable only reads is a `405` from the router rather
-/// than a handler running against the wrong request.
+/// than a handler running against the wrong request — and so a wrong method on a
+/// deferred template is a `405` rather than the `404` it used to be.
+///
+/// The refusal set is keyed on `RouteDescriptor::deferred`, never on
+/// `owned − served()`. `session-stream-api` is one artifact split across two
+/// deployables by transport, so its unary half's `served()` legitimately
+/// excludes 24 NDJSON routes that *work*; refusing "everything owned and not
+/// served" would take them down.
 ///
 /// # Errors
 ///
-/// Returns [`MountError`] when the served set is empty, contains a duplicate, or
-/// contains a route this deployable does not own.
+/// Returns [`MountError`] when the served set is empty, contains a duplicate,
+/// contains a route this deployable does not own, or when an owned route is
+/// neither served nor deferred.
 pub fn mount_unary<D, A>(
     api: Arc<D>,
     admission: Arc<A>,
@@ -197,6 +225,19 @@ where
         return Err(MountError::Empty {
             deployable: owner.deployable(),
         });
+    }
+    let deferred: Vec<RouteId> = owner
+        .routes()
+        .into_iter()
+        .filter(|id| route(*id).deferred)
+        .collect();
+    for id in owner.routes() {
+        if !routes.contains(&id) && !deferred.contains(&id) {
+            return Err(MountError::Unaccounted {
+                route: id.as_str(),
+                deployable: owner.half(),
+            });
+        }
     }
     let state = MountState {
         api,
@@ -223,13 +264,18 @@ where
                 return Err(MountError::NotRegional { route: id.as_str() });
             }
         }
-        if mounted.contains(&id) {
+        if mounted.contains(&id) || deferred.contains(&id) {
             return Err(MountError::Duplicate { route: id.as_str() });
         }
         let filter = method_filter(descriptor.method);
         // `descriptor.template` is already axum 0.8 path syntax (`{sessionId}`).
         tree = tree.route(descriptor.template, on(filter, handle::<D, A>));
         mounted.push(id);
+    }
+    for id in &deferred {
+        let descriptor = route(*id);
+        let filter = method_filter(descriptor.method);
+        tree = tree.route(descriptor.template, on(filter, refuse));
     }
     // The transport ceiling is the declared provider envelope. axum's own
     // extractor default (2 MiB) is smaller than [`ENVELOPE_BYTES`], so leaving
@@ -240,6 +286,7 @@ where
             .layer(DefaultBodyLimit::max(ENVELOPE_BYTES))
             .with_state(state),
         routes: mounted,
+        refused: deferred,
     })
 }
 
@@ -307,6 +354,19 @@ where
     }
 }
 
+/// The generated refusal arm: `501 not_implemented`, and nothing else.
+///
+/// It has no handler, no port, no adapter and no application dependency, so it
+/// cannot produce a partial answer — which is what lets it be mounted where
+/// RS-18 forbids mounting a handler. It returns before [`EdgeAdmission::admit`]
+/// runs: no credential parse, no store read, no clock, no network. The body is
+/// the published envelope with the vocabulary's own message; the ledger's
+/// reason is an engineering note and is not published.
+async fn refuse(headers: HeaderMap) -> Response {
+    let request_id = request_id(&headers);
+    render_error(&request_id, None, WireError::new(ErrorCode::NotImplemented))
+}
+
 /// Renders one successful generated response.
 ///
 /// The status is the one the route declares: a handler never names one.
@@ -349,13 +409,24 @@ pub fn render_error(
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
-/// The refusal a deployable answers for a route it does not serve.
+/// The refusal a dispatcher answers for a route it cannot handle.
 ///
-/// This exists for the two authoring fragments that are split across two
-/// deployables. It is unreachable through the router, which mounts only owned
-/// templates, and `dispatcher_refuses_a_route_it_does_not_own` proves it.
+/// Two different facts reach this one function, and the code is derived from
+/// the route rather than chosen by the caller. A route the *contract* defers
+/// answers `not_implemented`, the same code the mounted refusal arm answers, so
+/// the stub and the arm can never disagree. A route another deployable owns —
+/// the two authoring fragments split across two deployables — keeps
+/// `not_found`, because "declared but not built" is false of it. Choosing the
+/// wrong one is not cosmetic: `dispatch::declared` replaces any code the route
+/// does not declare with `internal_error`.
+///
+/// Both are unreachable through the router, and
+/// `dispatcher_refuses_a_route_it_does_not_own` proves the second.
 #[must_use]
 pub fn not_served(id: RouteId) -> WireError {
+    if route(id).deferred {
+        return WireError::new(ErrorCode::NotImplemented);
+    }
     WireError::new(ErrorCode::NotFound)
         .with_message(format!("`{id}` is not served by this deployable"))
 }

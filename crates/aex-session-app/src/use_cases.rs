@@ -558,8 +558,7 @@ pub async fn continue_operation(
         // An inline kind has no step at all. Reaching here means a work item
         // was written for an operation that completes in its own admission
         // transaction, which is a producer bug, not a runtime condition.
-        OperationKind::SessionClone
-        | OperationKind::CredentialRebind
+        OperationKind::CredentialRebind
         | OperationKind::SessionTrash
         | OperationKind::SessionRestore => Err(AppError::Port(crate::ports::PortError::Corrupt {
             kind: "operation step",
@@ -583,7 +582,6 @@ const fn step_seam(kind: OperationKind) -> &'static str {
         OperationKind::TelemetryExport => "telemetry export is the observation stream's",
         OperationKind::ContentGc => "content collection is the content stream's",
         OperationKind::SessionStop
-        | OperationKind::SessionClone
         | OperationKind::CredentialRebind
         | OperationKind::SessionTrash
         | OperationKind::SessionRestore => "this kind has a step and never reaches this function",

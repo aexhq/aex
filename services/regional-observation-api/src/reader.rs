@@ -2546,11 +2546,19 @@ mod tests {
     }
 
     /// Drives the revoke write against a reader that refuses it.
+    ///
+    /// The key is the re-keyed shape — `EXPORT#{workspace}` / `{export_id}` —
+    /// because `is_export_control_key` is a parse. Under the former
+    /// `EXPORT#{workspace}#export` / `STATE` shape these two cases never
+    /// reached the provider at all: the guard refused the target first, and
+    /// both assertions below would have been proving `InvalidWriteTarget`
+    /// rather than the error classification they name.
     async fn revoke_write(reader: &ObservationReader) -> ReadError {
+        let export = aex_wire::ids::ExportId::from_uuid7(aex_wire::Uuid7::compose(9, [9; 10]));
         reader
             .update_export_control(
-                "EXPORT#workspace#export",
-                "STATE",
+                &aex_observation_domain::keys::export_pk(other_workspace()),
+                &aex_observation_domain::keys::export_sk(export),
                 "SET #n0 = :v0",
                 "attribute_exists(#n1)",
                 HashMap::from([

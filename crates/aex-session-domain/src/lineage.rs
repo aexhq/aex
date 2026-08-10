@@ -130,12 +130,18 @@ pub fn plan_clone(
     }
 }
 
-/// How a purge treats a session's clone descendants.
+/// How a purge treats a session's lineage descendants.
+///
+/// No public route mints a descendant today: `session_clone` was withdrawn from
+/// the launch contract, and this domain machinery is what a later clone route
+/// would be built on. The distinction survives because a purge over a lineage
+/// that *does* exist has two genuinely different meanings, and a boolean cannot
+/// carry which one was asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum PurgeCascade {
     /// Clear each descendant's origin link and leave the descendant alive.
     DetachDescendants,
-    /// Purge the whole clone-descendant closure.
+    /// Purge the whole lineage-descendant closure.
     PurgeClosure,
 }
 

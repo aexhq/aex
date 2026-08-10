@@ -253,43 +253,6 @@
         ],
         "type": "object"
       },
-      "ApprovalPolicy": {
-        "oneOf": [
-          {
-            "$ref": "aex:schema:ApprovalPolicyAllowAll",
-            "x-aex-discriminator-value": "allow_all"
-          },
-          {
-            "$ref": "aex:schema:ApprovalPolicyRequireForTools",
-            "x-aex-discriminator-value": "require_for_tools"
-          }
-        ],
-        "x-aex-discriminator": "mode"
-      },
-      "ApprovalPolicyAllowAll": {
-        "additionalProperties": false,
-        "properties": {},
-        "required": [],
-        "type": "object"
-      },
-      "ApprovalPolicyRequireForTools": {
-        "additionalProperties": false,
-        "properties": {
-          "tools": {
-            "description": "Tools that need approval.",
-            "items": {
-              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
-              "type": "string"
-            },
-            "maxItems": 256,
-            "type": "array"
-          }
-        },
-        "required": [
-          "tools"
-        ],
-        "type": "object"
-      },
       "AutoTopupPolicy": {
         "additionalProperties": false,
         "properties": {
@@ -442,27 +405,6 @@
         "required": [
           "endInclusive",
           "start"
-        ],
-        "type": "object"
-      },
-      "ComputeShape": {
-        "additionalProperties": false,
-        "properties": {
-          "memoryMiB": {
-            "description": "Memory in mebibytes.",
-            "maximum": 262144,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "vcpus": {
-            "description": "Virtual CPUs; fractional at the smaller shapes.",
-            "type": "number",
-            "x-aex-float": true
-          }
-        },
-        "required": [
-          "memoryMiB",
-          "vcpus"
         ],
         "type": "object"
       },
@@ -1089,19 +1031,6 @@
         ],
         "type": "string"
       },
-      "HandsNetworkRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "mode": {
-            "$ref": "aex:schema:NetworkMode",
-            "description": "What the guest may reach."
-          }
-        },
-        "required": [
-          "mode"
-        ],
-        "type": "object"
-      },
       "HostedSession": {
         "additionalProperties": false,
         "properties": {
@@ -1325,13 +1254,6 @@
         ],
         "type": "string"
       },
-      "NetworkMode": {
-        "enum": [
-          "none",
-          "public_internet"
-        ],
-        "type": "string"
-      },
       "NewApiKey": {
         "additionalProperties": false,
         "properties": {
@@ -1499,7 +1421,6 @@
         "enum": [
           "session_stop",
           "session_persist",
-          "session_clone",
           "workspace_discard",
           "session_trash",
           "session_restore",
@@ -1567,10 +1488,6 @@
           {
             "$ref": "aex:schema:SessionPersistResult",
             "x-aex-discriminator-value": "session_persist"
-          },
-          {
-            "$ref": "aex:schema:SessionCloneResult",
-            "x-aex-discriminator-value": "session_clone"
           },
           {
             "$ref": "aex:schema:WorkspaceDiscardResult",
@@ -1727,41 +1644,6 @@
         ],
         "type": "string"
       },
-      "PackageEcosystem": {
-        "enum": [
-          "apt",
-          "pip",
-          "npm"
-        ],
-        "type": "string"
-      },
-      "PackageRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "ecosystem": {
-            "$ref": "aex:schema:PackageEcosystem",
-            "description": "Which ecosystem."
-          },
-          "name": {
-            "description": "The package name.",
-            "maxLength": 214,
-            "minLength": 1,
-            "type": "string"
-          },
-          "version": {
-            "description": "The exact version; ranges are rejected.",
-            "maxLength": 64,
-            "minLength": 1,
-            "type": "string"
-          }
-        },
-        "required": [
-          "ecosystem",
-          "name",
-          "version"
-        ],
-        "type": "object"
-      },
       "PortalSessionRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1773,138 +1655,6 @@
           }
         },
         "required": [],
-        "type": "object"
-      },
-      "ProviderId": {
-        "enum": [
-          "openai",
-          "anthropic",
-          "deepseek",
-          "zai",
-          "moonshotai",
-          "google",
-          "openrouter",
-          "vercel_ai_gateway"
-        ],
-        "type": "string"
-      },
-      "ResolvedCompute": {
-        "additionalProperties": false,
-        "properties": {
-          "baseline": {
-            "$ref": "aex:schema:ComputeShape",
-            "description": "Guaranteed capacity."
-          },
-          "endpointBandwidthMBps": {
-            "description": "Endpoint bandwidth.",
-            "maximum": 1024,
-            "minimum": 1,
-            "type": "integer"
-          },
-          "maxConcurrentConnections": {
-            "description": "Concurrent connection ceiling.",
-            "maximum": 4096,
-            "minimum": 1,
-            "type": "integer"
-          },
-          "maxDiskGiB": {
-            "description": "Maximum guest disk.",
-            "maximum": 1024,
-            "minimum": 1,
-            "type": "integer"
-          },
-          "peak": {
-            "$ref": "aex:schema:ComputeShape",
-            "description": "Burst ceiling."
-          },
-          "size": {
-            "description": "The selected baseline token.",
-            "enum": [
-              "512mb",
-              "1gb",
-              "2gb",
-              "4gb",
-              "8gb"
-            ],
-            "type": "string"
-          }
-        },
-        "required": [
-          "baseline",
-          "endpointBandwidthMBps",
-          "maxConcurrentConnections",
-          "maxDiskGiB",
-          "peak",
-          "size"
-        ],
-        "type": "object"
-      },
-      "ResolvedConfig": {
-        "additionalProperties": false,
-        "properties": {
-          "approvalPolicy": {
-            "$ref": "aex:schema:ApprovalPolicy",
-            "description": "Resolved approval policy."
-          },
-          "compute": {
-            "$ref": "aex:schema:ResolvedCompute",
-            "description": "Resolved capacity."
-          },
-          "model": {
-            "description": "The exact provider-native model id.",
-            "maxLength": 256,
-            "minLength": 1,
-            "type": "string"
-          },
-          "network": {
-            "$ref": "aex:schema:ResolvedNetwork",
-            "description": "Resolved network policy."
-          },
-          "packages": {
-            "description": "Resolved packages.",
-            "items": {
-              "$ref": "aex:schema:PackageRequest"
-            },
-            "maxItems": 64,
-            "type": "array"
-          },
-          "provider": {
-            "$ref": "aex:schema:ProviderId",
-            "description": "The provider."
-          },
-          "providerCredentialId": {
-            "description": "The BYOK binding in use.",
-            "pattern": "^pcr_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "provider_credential"
-          },
-          "registered": {
-            "$ref": "aex:schema:SessionRegisteredSelection",
-            "description": "Resolved registered selection."
-          }
-        },
-        "required": [
-          "approvalPolicy",
-          "compute",
-          "model",
-          "network",
-          "packages",
-          "provider",
-          "registered"
-        ],
-        "type": "object"
-      },
-      "ResolvedNetwork": {
-        "additionalProperties": false,
-        "properties": {
-          "hands": {
-            "$ref": "aex:schema:HandsNetworkRequest",
-            "description": "What the guest may reach."
-          }
-        },
-        "required": [
-          "hands"
-        ],
         "type": "object"
       },
       "SecretRef": {
@@ -1919,120 +1669,6 @@
         "required": [
           "name"
         ],
-        "type": "object"
-      },
-      "Session": {
-        "additionalProperties": false,
-        "properties": {
-          "continuity": {
-            "$ref": "aex:schema:WorkspaceContinuity",
-            "description": "What survives between runs."
-          },
-          "createdAt": {
-            "description": "When it was created.",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-            "type": "string",
-            "x-aex-time": "rfc3339-ms"
-          },
-          "id": {
-            "description": "Identity.",
-            "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "session"
-          },
-          "lineage": {
-            "$ref": "aex:schema:SessionLineage",
-            "description": "Immutable provenance."
-          },
-          "metadata": {
-            "additionalProperties": {
-              "type": [
-                "string",
-                "number",
-                "boolean",
-                "null"
-              ],
-              "x-aex-float": true
-            },
-            "description": "Caller-defined labels.",
-            "type": "object"
-          },
-          "resolvedConfig": {
-            "$ref": "aex:schema:ResolvedConfig",
-            "description": "Everything the platform resolved."
-          },
-          "revision": {
-            "description": "Monotonic concurrency token.",
-            "maximum": 9007199254740991,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "status": {
-            "$ref": "aex:schema:SessionStatus",
-            "description": "What the session is doing."
-          },
-          "updatedAt": {
-            "description": "When it last changed.",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-            "type": "string",
-            "x-aex-time": "rfc3339-ms"
-          },
-          "workspaceId": {
-            "description": "The owning workspace.",
-            "pattern": "^wsp_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "workspace"
-          }
-        },
-        "required": [
-          "continuity",
-          "createdAt",
-          "id",
-          "lineage",
-          "resolvedConfig",
-          "revision",
-          "status",
-          "updatedAt",
-          "workspaceId"
-        ],
-        "type": "object"
-      },
-      "SessionCloneResult": {
-        "additionalProperties": false,
-        "properties": {
-          "session": {
-            "$ref": "aex:schema:Session",
-            "description": "The new, independent session."
-          }
-        },
-        "required": [
-          "session"
-        ],
-        "type": "object"
-      },
-      "SessionLineage": {
-        "additionalProperties": false,
-        "properties": {
-          "cloneOperationId": {
-            "description": "The operation that cloned it.",
-            "pattern": "^op_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "operation"
-          },
-          "clonedAtPersistRevision": {
-            "description": "The source revision cloned from.",
-            "maximum": 9007199254740991,
-            "minimum": 0,
-            "type": "integer"
-          },
-          "originSessionId": {
-            "description": "The session this was cloned from.",
-            "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
-            "type": "string",
-            "x-aex-id": "session"
-          }
-        },
-        "required": [],
         "type": "object"
       },
       "SessionPersistResult": {
@@ -2097,58 +1733,6 @@
           "sessionId",
           "updated"
         ],
-        "type": "object"
-      },
-      "SessionRegisteredSelection": {
-        "additionalProperties": false,
-        "properties": {
-          "files": {
-            "description": "Registered files.",
-            "items": {
-              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
-              "type": "string"
-            },
-            "maxItems": 256,
-            "type": "array"
-          },
-          "instructions": {
-            "description": "Registered instructions.",
-            "items": {
-              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
-              "type": "string"
-            },
-            "maxItems": 256,
-            "type": "array"
-          },
-          "mcpServers": {
-            "description": "Registered MCP servers.",
-            "items": {
-              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
-              "type": "string"
-            },
-            "maxItems": 64,
-            "type": "array"
-          },
-          "skills": {
-            "description": "Registered skills.",
-            "items": {
-              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
-              "type": "string"
-            },
-            "maxItems": 256,
-            "type": "array"
-          },
-          "tools": {
-            "description": "Registered tools.",
-            "items": {
-              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
-              "type": "string"
-            },
-            "maxItems": 256,
-            "type": "array"
-          }
-        },
-        "required": [],
         "type": "object"
       },
       "SessionRestoreResult": {

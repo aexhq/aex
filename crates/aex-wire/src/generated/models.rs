@@ -3,7 +3,7 @@
 //! The public request, response and query models.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:d4b58a49f8f7cb8353df845d30d5f0373f7f3032ecd1ca0f38c779ceb05f3920`.
+//! `sha256:0cdb0802fd5fc620c4216d8793f21981b2821c05f24d3390cf0ecb37da739dbf`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -1132,8 +1132,6 @@ pub enum OperationKind {
     SessionStop,
     /// Persist the live workspace.
     SessionPersist,
-    /// Clone the session into an independent one.
-    SessionClone,
     /// Discard the live workspace.
     WorkspaceDiscard,
     /// Move the session into the recovery window.
@@ -1155,7 +1153,6 @@ impl OperationKind {
     pub const ALL: &'static [OperationKind] = &[
         OperationKind::SessionStop,
         OperationKind::SessionPersist,
-        OperationKind::SessionClone,
         OperationKind::WorkspaceDiscard,
         OperationKind::SessionTrash,
         OperationKind::SessionRestore,
@@ -1171,7 +1168,6 @@ impl OperationKind {
         match self {
             Self::SessionStop => "session_stop",
             Self::SessionPersist => "session_persist",
-            Self::SessionClone => "session_clone",
             Self::WorkspaceDiscard => "workspace_discard",
             Self::SessionTrash => "session_trash",
             Self::SessionRestore => "session_restore",
@@ -1216,8 +1212,6 @@ pub enum OperationResult {
     SessionStop(SessionStopResult),
     /// Persist result.
     SessionPersist(SessionPersistResult),
-    /// Clone result.
-    SessionClone(SessionCloneResult),
     /// Discard result.
     WorkspaceDiscard(WorkspaceDiscardResult),
     /// Trash result.
@@ -2494,58 +2488,6 @@ impl BundleFormat {
     }
 }
 
-/// Whether a clone inherits credential custody.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CloneCredentials {
-    /// Copy the source's custody bindings under a distinct key edge.
-    Copy,
-    /// Start with no custody.
-    None,
-}
-
-impl CloneCredentials {
-    /// Every value, in declared order.
-    pub const ALL: &'static [CloneCredentials] = &[CloneCredentials::Copy, CloneCredentials::None];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Copy => "copy",
-            Self::None => "none",
-        }
-    }
-}
-
-/// Which file tree a clone starts from.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CloneFiles {
-    /// The source's current live tree, captured without advancing the source.
-    Current,
-    /// The source's tree as first persisted.
-    Initial,
-    /// An empty tree.
-    None,
-}
-
-impl CloneFiles {
-    /// Every value, in declared order.
-    pub const ALL: &'static [CloneFiles] =
-        &[CloneFiles::Current, CloneFiles::Initial, CloneFiles::None];
-
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Current => "current",
-            Self::Initial => "initial",
-            Self::None => "none",
-        }
-    }
-}
-
 /// One resolved compute dimension.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -3253,13 +3195,13 @@ impl ProviderCredentialState {
     }
 }
 
-/// How a purge treats the session's clone descendants.
+/// How a purge treats the session's lineage descendants.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PurgeCascade {
     /// Clear each descendant's origin link and leave it alive.
     DetachDescendants,
-    /// Purge the whole clone-descendant closure.
+    /// Purge the whole lineage-descendant closure.
     PurgeClosure,
 }
 
@@ -3997,24 +3939,6 @@ pub struct Session {
     pub workspace_id: WorkspaceId,
 }
 
-/// Admit the durable clone operation.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct SessionCloneRequest {
-    /// Whether to inherit custody.
-    pub credentials: CloneCredentials,
-    /// Which tree to start from.
-    pub files: CloneFiles,
-}
-
-/// The result of a clone operation.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct SessionCloneResult {
-    /// The new, independent session.
-    pub session: Session,
-}
-
 /// The only customer compute selector.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -4170,7 +4094,7 @@ pub struct SessionPersistResult {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SessionPurgeRequest {
-    /// How clone descendants are treated.
+    /// How lineage descendants are treated.
     pub cascade: PurgeCascade,
 }
 

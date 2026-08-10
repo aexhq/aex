@@ -12,7 +12,7 @@
 //! **The export identity is derived, never minted.** It is a function of
 //! `(workspace, operationId)` and nothing else, so a replayed `Aex-Operation-Id`
 //! addresses the row it already created. The handler this replaces minted a
-//! fresh UUIDv7 per call, which meant its `attribute_not_exists(pk)` guard could
+//! fresh `UUIDv7` per call, which meant its `attribute_not_exists(pk)` guard could
 //! never fail: a retried request created a second export and a second Fargate
 //! task, silently, and the caller was told nothing. Deriving it from the request
 //! body instead would collide two deliberate exports of the same window, which
@@ -376,7 +376,7 @@ mod tests {
             "an export with no partitions walks nothing and publishes an empty \
              artifact that looks exactly like a complete one"
         );
-        assert_eq!(row.flags["cancelRequested"], false);
+        assert!(!row.flags["cancelRequested"]);
         assert_eq!(row.text["state"], "admitted");
         assert_eq!(
             row.text["intentDigest"].len(),

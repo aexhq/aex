@@ -415,6 +415,18 @@ than a silent tail read. The guest-side paging already existed on
 
 ### 7.4 R-DELETE: `clone` / `trash` / `restore` / `purge`
 
+> **Superseded in part.** `session_clone` was withdrawn from the launch contract
+> along with `SessionCloneRequest`, `SessionCloneResult`, `CloneFiles`,
+> `CloneCredentials` and the `session_clone` arms of `OperationKind` and
+> `OperationResult`. The capability was deferred, not merely the route, so the
+> route and the vocabulary went together rather than leaving a durable operation
+> kind nobody can admit. The domain's clone machinery — `CloneFiles`,
+> `CloneCredentials`, `plan_clone`, `PurgeCascade` and retroactive secret
+> revocation across a lineage — is untouched; it has no wire conversion and is
+> what a later clone route would be built on. `SessionLineage` also stays,
+> published and now unfillable through the API. The rest of this section is the
+> record of the increment it describes.
+
 **Was:** `RouteId::SessionFork` and `RouteId::SessionDelete`.
 
 **Now**, renamed rather than aliased — the old `operationId`s resolve to nothing

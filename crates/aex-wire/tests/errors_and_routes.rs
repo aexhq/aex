@@ -173,12 +173,13 @@ fn the_route_table_is_indexed_by_route_id() {
 }
 
 #[test]
-fn the_session_lifecycle_vocabulary_is_clone_trash_restore_purge() {
-    // R-DELETE supersedes `fork` and `delete`. Prelaunch clean cut means the old
-    // names are gone rather than aliased, so their absence is asserted here: an
-    // alias would let a generated client keep calling a verb whose semantics no
-    // longer exist.
-    for retired in ["session_fork", "session_delete"] {
+fn the_session_lifecycle_vocabulary_is_trash_restore_purge() {
+    // R-DELETE supersedes `fork` and `delete`, and `clone` was withdrawn from
+    // the launch contract rather than left declared and unbuilt. Prelaunch clean
+    // cut means the old names are gone rather than aliased, so their absence is
+    // asserted here: an alias would let a generated client keep calling a verb
+    // whose semantics no longer exist.
+    for retired in ["session_fork", "session_delete", "session_clone"] {
         assert_eq!(RouteId::parse(retired), None, "`{retired}` must be gone");
         assert!(
             !ROUTES.iter().any(|r| r.operation_id == retired),
@@ -186,7 +187,6 @@ fn the_session_lifecycle_vocabulary_is_clone_trash_restore_purge() {
         );
     }
     for (operation, template) in [
-        ("session_clone", "/api/sessions/{sessionId}/clones"),
         ("session_trash", "/api/sessions/{sessionId}/trashes"),
         ("session_restore", "/api/sessions/{sessionId}/restores"),
         ("session_purge", "/api/sessions/{sessionId}/purges"),
@@ -203,7 +203,6 @@ fn the_session_lifecycle_vocabulary_is_clone_trash_restore_purge() {
     assert!(route(RouteId::SessionTrash).pause_exempt);
     assert!(route(RouteId::SessionPurge).pause_exempt);
     assert!(!route(RouteId::SessionRestore).pause_exempt);
-    assert!(!route(RouteId::SessionClone).pause_exempt);
 }
 
 #[test]

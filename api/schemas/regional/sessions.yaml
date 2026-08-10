@@ -356,28 +356,6 @@ schemas:
       include: { type: array, max: 256, optional: true, items: { type: string, max: 1024 }, doc: "Selection globs to include." }
       exclude: { type: array, max: 256, optional: true, items: { type: string, max: 1024 }, doc: "Selection globs to exclude." }
 
-  CloneFiles:
-    doc: Which file tree a clone starts from.
-    type: enum
-    values:
-      - { value: current, doc: "The source's current live tree, captured without advancing the source." }
-      - { value: initial, doc: "The source's tree as first persisted." }
-      - { value: none, doc: "An empty tree." }
-
-  CloneCredentials:
-    doc: Whether a clone inherits credential custody.
-    type: enum
-    values:
-      - { value: copy, doc: "Copy the source's custody bindings under a distinct key edge." }
-      - { value: none, doc: "Start with no custody." }
-
-  SessionCloneRequest:
-    doc: Admit the durable clone operation.
-    type: object
-    fields:
-      files: { type: ref, to: CloneFiles, doc: "Which tree to start from." }
-      credentials: { type: ref, to: CloneCredentials, doc: "Whether to inherit custody." }
-
   SessionWorkspaceDiscardRequest:
     doc: Admit the durable workspace-discard operation.
     type: object
@@ -391,17 +369,17 @@ schemas:
       secrets: { type: array, max: 64, items: { type: ref, to: SecretRef }, doc: "The new custody set." }
 
   PurgeCascade:
-    doc: How a purge treats the session's clone descendants.
+    doc: How a purge treats the session's lineage descendants.
     type: enum
     values:
       - { value: detach_descendants, doc: "Clear each descendant's origin link and leave it alive." }
-      - { value: purge_closure, doc: "Purge the whole clone-descendant closure." }
+      - { value: purge_closure, doc: "Purge the whole lineage-descendant closure." }
 
   SessionPurgeRequest:
     doc: Admit the durable purge operation. Purge is irreversible.
     type: object
     fields:
-      cascade: { type: ref, to: PurgeCascade, doc: "How clone descendants are treated." }
+      cascade: { type: ref, to: PurgeCascade, doc: "How lineage descendants are treated." }
 
   SessionStopResult:
     doc: The result of a stop operation.
@@ -424,12 +402,6 @@ schemas:
       updated: { type: decimal, doc: "Entries replaced." }
       deleted: { type: decimal, doc: "Entries removed." }
       bytesMoved: { type: decimal, doc: "Bytes written to durable content." }
-
-  SessionCloneResult:
-    doc: The result of a clone operation.
-    type: object
-    fields:
-      session: { type: ref, to: Session, doc: "The new, independent session." }
 
   SessionTrashResult:
     doc: The result of a trash operation. Trash starts the recovery window.

@@ -23,8 +23,6 @@ pub enum OperationKind {
     SessionStop,
     /// Persist the live workspace into the durable tree.
     SessionPersist,
-    /// Clone the session.
-    SessionClone,
     /// Discard the live workspace.
     WorkspaceDiscard,
     /// Rebind session credential custody.
@@ -54,10 +52,9 @@ pub enum Execution {
 
 impl OperationKind {
     /// Every kind, in canonical order.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 10] = [
         Self::SessionStop,
         Self::SessionPersist,
-        Self::SessionClone,
         Self::WorkspaceDiscard,
         Self::CredentialRebind,
         Self::SessionTrash,
@@ -74,7 +71,6 @@ impl OperationKind {
         match self {
             Self::SessionStop => "session_stop",
             Self::SessionPersist => "session_persist",
-            Self::SessionClone => "session_clone",
             Self::WorkspaceDiscard => "workspace_discard",
             Self::CredentialRebind => "credential_rebind",
             Self::SessionTrash => "session_trash",
@@ -99,7 +95,6 @@ impl OperationKind {
         match self {
             Self::SessionStop
             | Self::SessionPersist
-            | Self::SessionClone
             | Self::CredentialRebind
             | Self::SessionTrash
             | Self::SessionRestore => Execution::Inline,
@@ -171,7 +166,6 @@ impl OperationKind {
         Some(match self {
             Self::SessionStop => models::OperationKind::SessionStop,
             Self::SessionPersist => models::OperationKind::SessionPersist,
-            Self::SessionClone => models::OperationKind::SessionClone,
             Self::WorkspaceDiscard => models::OperationKind::WorkspaceDiscard,
             Self::CredentialRebind => models::OperationKind::CredentialRebind,
             Self::SessionTrash => models::OperationKind::SessionTrash,
@@ -192,7 +186,6 @@ impl OperationKind {
         match kind {
             models::OperationKind::SessionStop => Self::SessionStop,
             models::OperationKind::SessionPersist => Self::SessionPersist,
-            models::OperationKind::SessionClone => Self::SessionClone,
             models::OperationKind::WorkspaceDiscard => Self::WorkspaceDiscard,
             models::OperationKind::CredentialRebind => Self::CredentialRebind,
             models::OperationKind::SessionTrash => Self::SessionTrash,
@@ -528,7 +521,6 @@ impl OperationResult {
             OperationKind::SessionPersist => {
                 payload!(models::SessionPersistResult, SessionPersist)
             }
-            OperationKind::SessionClone => payload!(models::SessionCloneResult, SessionClone),
             OperationKind::WorkspaceDiscard => {
                 payload!(models::WorkspaceDiscardResult, WorkspaceDiscard)
             }

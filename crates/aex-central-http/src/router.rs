@@ -38,7 +38,7 @@ use uuid::Uuid;
 
 use crate::admission::CentralAuthenticator;
 use crate::authorizer::{CentralAuthorizerContext, ContextError, ContextPrincipalKind};
-use crate::config::HttpConfig;
+use crate::config::{CentralServiceId, HttpConfig};
 use crate::error::EdgeError;
 use crate::headers;
 use crate::target::{TargetPath, TargetResolver, admit_request};
@@ -182,6 +182,79 @@ impl<A> Clone for GroupState<A> {
             edge: self.edge.clone(),
         }
     }
+}
+
+/// Every central route this deployable is planned to own and the ledger defers.
+///
+/// The central plane defers by leaving a whole group out of
+/// [`CentralServiceId::groups`], so a deferred route has no mount at all and
+/// answers a bare `404`. The refusal arm keys on the ledger instead, which is
+/// the rule the regional edge uses and the only one that stays correct when a
+/// group is partly served.
+#[must_use]
+pub fn deferred_routes(service: CentralServiceId) -> Vec<RouteId> {
+    let mut owners: Vec<&'static str> = service
+        .supersedes()
+        .iter()
+        .map(|part| part.as_str())
+        .collect();
+    if owners.is_empty() {
+        owners.push(service.as_str());
+    }
+    aex_wire::routes::ROUTES
+        .iter()
+        .filter(|descriptor| {
+            descriptor.plane == Plane::Central
+                && descriptor.deferred
+                && owners.contains(&descriptor.serving_artifact)
+        })
+        .map(|descriptor| descriptor.id)
+        .collect()
+}
+
+/// Mounts the generated refusal arm for every route [`deferred_routes`] names.
+///
+/// The arm has no handler, no port and no application dependency, and returns
+/// before any admission stage runs: no credential parse, no store read, no
+/// network. A wrong method on one of these templates is a router `405`.
+pub fn mount_deferred(service: CentralServiceId) -> axum::Router {
+    let mut by_template: BTreeMap<&'static str, MethodRouter> = BTreeMap::new();
+    for id in deferred_routes(service) {
+        let descriptor = route(id);
+        let filter = match descriptor.method {
+            HttpMethod::Get => MethodFilter::GET,
+            HttpMethod::Put => MethodFilter::PUT,
+            HttpMethod::Post => MethodFilter::POST,
+            HttpMethod::Delete => MethodFilter::DELETE,
+        };
+        let installed = on(filter, refuse);
+        match by_template.remove(descriptor.template) {
+            Some(existing) => {
+                by_template.insert(descriptor.template, existing.merge(installed));
+            }
+            None => {
+                by_template.insert(descriptor.template, installed);
+            }
+        }
+    }
+    let mut router = axum::Router::new();
+    for (template, method_router) in by_template {
+        router = router.route(template, method_router);
+    }
+    router
+}
+
+/// The refusal itself: `501 not_implemented` with the published envelope.
+async fn refuse(headers: HeaderMap) -> Response {
+    let request_id = headers
+        .get("x-request-id")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| RequestId::parse(value).ok())
+        .unwrap_or_else(fallback_request_id);
+    let (status, envelope, retry_after) =
+        WireError::new(aex_wire::error::ErrorCode::NotImplemented)
+            .into_response_parts(&request_id, None);
+    render_envelope(status, &envelope, retry_after)
 }
 
 /// Every template and method one group mounts, for the composition test.

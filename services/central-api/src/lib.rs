@@ -274,6 +274,7 @@ where
         .merge(mount_auth_api(auth, edge.clone()))
         .merge(mount_identity_api(account, edge.clone()))
         .merge(mount_billing_api(billing, edge))
+        .merge(aex_central_http::mount_deferred(DEPLOYABLE))
 }
 
 #[cfg(test)]

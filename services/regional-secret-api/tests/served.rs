@@ -541,11 +541,16 @@ fn the_metadata_half_of_each_split_fragment_is_unreachable_here() {
     }
 }
 
-/// Every owned route is now served, so this holds vacuously — which is the
-/// point, and is why it is kept rather than deleted: if a fifth plaintext-bearing
-/// route is ever authored under this owner, it starts life failing here.
+/// An owned route the contract defers is mounted and refuses honestly, rather
+/// than being absent and leaving a caller unable to tell a published-but-unbuilt
+/// operation from a mistyped path.
+///
+/// P3.3a and P3.3b mounted the last two, so this now holds vacuously — which is
+/// the point, and is why it is kept rather than deleted: if a fifth
+/// plaintext-bearing route is ever authored under this owner, it starts life
+/// failing here.
 #[tokio::test]
-async fn an_owned_but_unserved_route_is_absent_from_the_router() {
+async fn an_owned_but_unserved_route_answers_the_published_refusal() {
     let custody = Arc::new(FakeCustody::default());
     let router = router(custody, None);
     let unserved: Vec<_> = RouteOwner::SecretApi
@@ -559,20 +564,16 @@ async fn an_owned_but_unserved_route_is_absent_from_the_router() {
     );
     for id in unserved {
         let descriptor = route(id);
-        let (status, _) = send(
+        assert!(descriptor.deferred, "`{id}` is unserved and not deferred");
+        let (status, body) = send(
             &router,
             descriptor.method.as_str(),
             &descriptor.template.replace("{name}", "fixture"),
             "{}",
         )
         .await;
-        assert!(
-            matches!(
-                status,
-                StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED
-            ),
-            "`{id}` answered {status} instead of being absent"
-        );
+        assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "`{id}`");
+        assert_eq!(body["error"]["code"], ErrorCode::NotImplemented.as_str());
     }
 }
 

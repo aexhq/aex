@@ -158,7 +158,6 @@ pub const fn operation_cancel_owned(kind: aex_operation_domain::OperationKind) -
 
     match kind {
         OperationKind::SessionPersist
-        | OperationKind::SessionClone
         | OperationKind::WorkspaceDiscard
         | OperationKind::CredentialRebind
         | OperationKind::SessionRestore => true,
@@ -250,7 +249,6 @@ pub fn operation_cancel_requested(
     // on the closed vocabulary visible to the compiler.
     match request.kind {
         OperationKind::SessionPersist
-        | OperationKind::SessionClone
         | OperationKind::WorkspaceDiscard
         | OperationKind::CredentialRebind
         | OperationKind::SessionRestore => Ok(builder),
