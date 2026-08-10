@@ -262,7 +262,7 @@ async fn run(
     // ambient context map would be one whose verification a caller skips by
     // asserting the principal it wants.
     let authenticator = Arc::new(CredentialAdmission::new(
-        aex_control_aurora::AuroraAuthorizationReader::new(aurora),
+        aex_control_aurora::AuroraAuthorizationReader::new(aurora.clone()),
         PurposedPeppers::new(
             Arc::clone(&identity_peppers) as Arc<dyn PepperKeystore>,
             Arc::clone(&api_peppers) as Arc<dyn PepperKeystore>,
@@ -285,7 +285,14 @@ async fn run(
     // accepted finish.
     let draining = Arc::new(AtomicBool::new(false));
     let readiness = readiness(Probes::READY).with_drain_signal(Arc::clone(&draining));
-    let router = app(control, auth, billing, edge, readiness);
+    // The account read shares the identity cluster client this process already
+    // opened, and the same one mapping the region uses. Two producers of one
+    // account state is how a dashboard came to call an account active while the
+    // billing page called it paused, in the same second.
+    let account = Arc::new(central_identity_api::account::AccountService::new(Arc::new(
+        central_identity_api::account::AuroraAccountReader::new(aurora.clone()),
+    )));
+    let router = app(control, auth, billing, account, edge, readiness);
 
     let address = SocketAddr::from((Ipv6Addr::UNSPECIFIED, config.port));
     let listener = tokio::net::TcpListener::bind(address)

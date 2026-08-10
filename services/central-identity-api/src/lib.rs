@@ -17,6 +17,7 @@
 //! configuration reader, the capability manifest and the readiness projection
 //! are library items and `src/main.rs` is the Lambda composition root over them.
 
+pub mod account;
 pub mod api;
 mod startup;
 pub mod targets;
@@ -30,7 +31,7 @@ use aex_central_http::capability::{
 };
 use aex_central_http::config::{CentralServiceId, HttpConfig};
 use aex_central_http::health::{Dependency, Readiness};
-use aex_central_http::router::{EdgeStack, mount_auth_api};
+use aex_central_http::router::{EdgeStack, mount_auth_api, mount_identity_api};
 use aex_wire::server::AuthApi;
 
 /// The deployable this crate is.
@@ -325,8 +326,15 @@ pub enum CentralIdentityApiRunError {
 ///
 /// The public surface is exactly `CentralServiceId::IdentityApi.groups()`, each
 /// mounted by iterating its generated route slice, plus the two internal probes.
-pub fn app<A: AuthApi>(api: Arc<A>, edge: EdgeStack, readiness: Readiness) -> axum::Router {
-    aex_central_http::health::router(readiness).merge(mount_auth_api(api, edge))
+pub fn app<A: AuthApi, I: aex_wire::server::IdentityApi>(
+    api: Arc<A>,
+    account: Arc<I>,
+    edge: EdgeStack,
+    readiness: Readiness,
+) -> axum::Router {
+    aex_central_http::health::router(readiness)
+        .merge(mount_auth_api(api, edge.clone()))
+        .merge(mount_identity_api(account, edge))
 }
 
 /// Runs `central-identity-api` until it stops.
@@ -335,9 +343,10 @@ pub fn app<A: AuthApi>(api: Arc<A>, edge: EdgeStack, readiness: Readiness) -> ax
 ///
 /// Returns [`CentralIdentityApiRunError`] when configuration or composition is refused, or when
 /// the listener stops.
-pub async fn run<A: AuthApi>(
+pub async fn run<A: AuthApi, I: aex_wire::server::IdentityApi>(
     config: &Config,
     api: Arc<A>,
+    account: Arc<I>,
     edge: EdgeStack,
     probes: Probes,
     telemetry: &aex_platform_telemetry::Handle,
@@ -356,7 +365,7 @@ pub async fn run<A: AuthApi>(
             config.http.region.as_str().to_owned(),
         ),
     );
-    lambda_http::run(app(api, edge, readiness(probes)))
+    lambda_http::run(app(api, account, edge, readiness(probes)))
         .await
         .map_err(|error| CentralIdentityApiRunError::Listener(error.to_string()))
 }
@@ -463,6 +472,21 @@ mod tests {
     #[derive(Debug)]
     struct Api;
 
+    /// The account read, refusing rather than answering. The router cases here
+    /// prove the route is *mounted*; what it answers is `account.rs`'s suite.
+    #[derive(Debug)]
+    struct Account;
+
+    impl aex_wire::server::IdentityApi for Account {
+        async fn account_get(
+            &self,
+            _cx: &RequestContext,
+            _query: aex_wire::models::AccountGetQuery,
+        ) -> WireResult<aex_wire::models::AccountOperationalState> {
+            Err(WireError::new(ErrorCode::AccountStateUnavailable))
+        }
+    }
+
     impl AuthApi for Api {
         async fn device_authorization_create(
             &self,
@@ -489,7 +513,7 @@ mod tests {
             Arc::new(FixedClock),
             Arc::new(CursorSecret::new([1_u8; 32])),
         );
-        app(Arc::new(Api), edge, readiness(Probes::NONE))
+        app(Arc::new(Api), Arc::new(Account), edge, readiness(Probes::NONE))
     }
 
     #[test]
@@ -561,9 +585,34 @@ mod tests {
 
     #[tokio::test]
     async fn the_mounted_set_is_exactly_the_declared_one() {
-        assert_eq!(DEPLOYABLE.routes().len(), 2);
+        assert_eq!(DEPLOYABLE.routes().len(), 3);
         for id in DEPLOYABLE.routes() {
             let descriptor = route(id);
+            // `account_get` is the one credentialed route here, so an
+            // anonymous request is refused by the edge before any handler
+            // runs. `401` is therefore its mount evidence: an unmounted route
+            // answers `404`, and the difference is the whole assertion.
+            if id == RouteId::AccountGet {
+                let response = router()
+                    .oneshot(
+                        Request::builder()
+                            .uri(format!(
+                                "{}?organizationId=org_01k1jt1p4new3re1r70w3ge1r7",
+                                descriptor.template
+                            ))
+                            .body(Body::empty())
+                            .expect("a valid request"),
+                    )
+                    .await
+                    .expect("the router answers");
+                assert_eq!(
+                    response.status(),
+                    StatusCode::UNAUTHORIZED,
+                    "`{}` is not mounted",
+                    descriptor.operation_id
+                );
+                continue;
+            }
             let body = match id {
                 RouteId::DeviceAuthorizationCreate => "{\"clientId\":\"aex-cli\",\"scopes\":[]}",
                 _ => "{\"clientId\":\"aex-cli\",\"deviceCode\":\"dvc_fixture\"}",

@@ -74,6 +74,7 @@ async fn compose(
         })?;
 
     let clock: Arc<dyn aex_identity_app::ports::Clock> = Arc::new(aex_central_aws::SystemClock);
+    let account_client = client.clone();
     let store = Arc::new(aex_identity_aurora::AuroraIdentityStore::new(
         client,
         Arc::clone(&peppers) as Arc<dyn aex_identity_app::ports::PepperKeystore>,
@@ -104,7 +105,14 @@ async fn compose(
         Arc::new(aex_control_domain::CursorSecret::new(cursor_bytes)),
     );
 
-    run(config, api, edge, Probes::READY, telemetry).await
+    // The account read, over the two statements this login role is granted.
+    // It shares the cluster client the device flow already opened, so mounting
+    // it costs one more port and no additional connection.
+    let account = Arc::new(central_identity_api::account::AccountService::new(Arc::new(
+        central_identity_api::account::AuroraAccountReader::new(account_client),
+    )));
+
+    run(config, api, account, edge, Probes::READY, telemetry).await
 }
 
 /// The one-column `SELECT 1` the readiness probe issues.

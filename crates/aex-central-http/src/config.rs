@@ -129,7 +129,7 @@ impl CentralServiceId {
     #[must_use]
     pub const fn groups(self) -> &'static [RouteGroup] {
         match self {
-            Self::IdentityApi => &[RouteGroup::Auth],
+            Self::IdentityApi => &[RouteGroup::Auth, RouteGroup::Identity],
             Self::Authz | Self::FinanceIngest | Self::ControlWorker => &[],
             Self::ControlApi => &[
                 RouteGroup::ApiKeys,
@@ -149,6 +149,7 @@ impl CentralServiceId {
                 RouteGroup::Billing,
                 RouteGroup::Bootstrap,
                 RouteGroup::CentralOperations,
+                RouteGroup::Identity,
                 RouteGroup::Organizations,
                 RouteGroup::Workspaces,
             ],
@@ -284,7 +285,6 @@ mod tests {
         CentralHttpConfigError, CentralServiceId, DeploymentPlane, HttpConfig, central_groups,
     };
     use aex_wire::routes::{Plane, ROUTES, RouteId};
-    use aex_wire::server::RouteGroup;
     use std::collections::BTreeSet;
 
     /// Every deployable that is a merge of others, and so is an *alternative*
@@ -392,30 +392,30 @@ mod tests {
             "runtime ownership must exactly equal generated actual mounts"
         );
         assert_eq!(central.len(), 27);
-        assert_eq!(actually_served.len(), 26);
+        assert_eq!(actually_served.len(), 27);
         assert!(central.contains(&RouteId::AccountGet));
-        assert!(!actually_served.contains(&RouteId::AccountGet));
+        assert!(
+            actually_served.contains(&RouteId::AccountGet),
+            "the account read is mounted; the plane no longer owes a central route"
+        );
         assert_eq!(
             aex_wire::routes::route(RouteId::AccountGet).serving_artifact,
-            "central-identity-api",
-            "account retains its planned owner without being mounted"
+            "central-identity-api"
         );
     }
 
     #[test]
-    fn the_mounted_group_list_excludes_the_unserved_identity_fragment() {
+    fn every_central_group_has_a_runtime_owner() {
+        // The identity fragment was the one group nothing mounted, so
+        // `account_get` was a published route with no process behind it. The
+        // filter that used to except it is gone, which is what stops a second
+        // fragment from quietly acquiring the same status.
         let assigned: BTreeSet<_> = primaries()
             .iter()
             .flat_map(|service| service.groups().iter().copied())
             .collect();
-        assert_eq!(
-            assigned,
-            central_groups()
-                .into_iter()
-                .filter(|group| *group != RouteGroup::Identity)
-                .collect::<BTreeSet<_>>()
-        );
-        assert_eq!(assigned.len(), 7);
+        assert_eq!(assigned, central_groups().into_iter().collect::<BTreeSet<_>>());
+        assert_eq!(assigned.len(), 8);
     }
 
     #[test]
@@ -435,12 +435,9 @@ mod tests {
                 .iter()
                 .copied()
                 .collect::<BTreeSet<_>>(),
-            central_groups()
-                .into_iter()
-                .filter(|group| *group != RouteGroup::Identity)
-                .collect::<BTreeSet<_>>()
+            central_groups().into_iter().collect::<BTreeSet<_>>()
         );
-        assert_eq!(CentralServiceId::CentralApi.routes().len(), 26);
+        assert_eq!(CentralServiceId::CentralApi.routes().len(), 27);
     }
 
     #[test]

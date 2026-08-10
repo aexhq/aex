@@ -116,13 +116,22 @@ name = "finance.billing_contact_email(uuid)"
 revoke_public = true
 
 # central-identity-api ---------------------------------------------------------
-# Exactly one control privilege: advancing the `user` epoch when a person is
+# One control write privilege: advancing the `user` epoch when a person is
 # disabled or loses their last live token.
+#
+# Two reads beyond that, both for `account_get`, and both the narrowest thing
+# that answers it. `finance.account_state_v1` is the one projection every
+# published account operational state derives from; `control.membership` is what
+# separates "not your organization" from "we cannot establish that account's
+# state", which one joined query could not tell apart. No balance and no epoch:
+# this role reads the published state and derives nothing.
 [[role]]
 name = "aex_identity_api"
 connect = true
-schemas = ["identity", "control"]
+schemas = ["identity", "control", "finance"]
 tables = [
+  "control.membership:SELECT",
+  "finance.account_state_v1:SELECT",
   "identity.user:SELECT,INSERT,UPDATE",
   "identity.external_identity:SELECT,INSERT,UPDATE,DELETE",
   "identity.dashboard_session:SELECT,INSERT,UPDATE,DELETE",

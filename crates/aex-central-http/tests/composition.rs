@@ -700,10 +700,15 @@ fn each_deployable_mounts_a_disjoint_slice_of_the_actually_served_plane() {
             assert!(seen.insert(id), "{id:?} is served twice");
         }
     }
+    // The partition is now total. `account_get` was the one published central
+    // route no deployable mounted, so a caller reached a `404` from a route the
+    // specification listed; the identity fragment has an owner and the
+    // difference is empty.
     let all = central_routes().into_iter().collect::<BTreeSet<_>>();
     assert_eq!(
         all.difference(&seen).copied().collect::<Vec<_>>(),
-        vec![RouteId::AccountGet]
+        Vec::<RouteId>::new(),
+        "a published central route has no process behind it"
     );
 
     // And every composition covers exactly the slice its parts held, so the

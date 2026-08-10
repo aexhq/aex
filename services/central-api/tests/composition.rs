@@ -330,6 +330,19 @@ impl WorkspacesApi for Api {
     }
 }
 
+/// The one fake also answers the account read, for the same reason it answers
+/// every other route: this suite proves what the merged process *mounts*, and a
+/// handler that produced a value would let a case pass on an invented row.
+impl aex_wire::server::IdentityApi for Api {
+    async fn account_get(
+        &self,
+        _cx: &RequestContext,
+        _query: aex_wire::models::AccountGetQuery,
+    ) -> WireResult<aex_wire::models::AccountOperationalState> {
+        Err(WireError::new(ErrorCode::RateLimited))
+    }
+}
+
 impl AuthApi for Api {
     async fn device_authorization_create(
         &self,
@@ -456,6 +469,7 @@ fn router() -> axum::Router {
     app(
         Arc::clone(&api),
         Arc::clone(&api),
+        Arc::clone(&api),
         api,
         edge(false),
         readiness(Probes::READY),
@@ -495,7 +509,7 @@ fn with_query(id: RouteId, path: String) -> String {
             "{path}?workspaceId={}",
             WorkspaceId::from_uuid7(uuid7(WORKSPACE)).encode()
         ),
-        RouteId::BillingBalanceGet => format!(
+        RouteId::AccountGet | RouteId::BillingBalanceGet => format!(
             "{path}?organizationId={}",
             OrganizationId::from_uuid7(uuid7(ORGANIZATION)).encode()
         ),
@@ -558,7 +572,7 @@ async fn status_of(router: axum::Router, request: Request<Body>) -> StatusCode {
 #[tokio::test]
 async fn the_mounted_set_is_exactly_the_declared_one() {
     let declared = CentralServiceId::CentralApi.routes();
-    assert_eq!(declared.len(), 26, "the merged deployable serves 26 routes");
+    assert_eq!(declared.len(), 27, "the merged deployable serves 27 routes");
     for id in declared {
         let descriptor = route(id);
         let credential = if descriptor.plane == aex_wire::routes::Plane::Central {
@@ -615,9 +629,12 @@ async fn one_listener_answers_control_auth_and_billing() {
 }
 
 #[tokio::test]
-async fn a_route_no_central_deployable_owns_is_not_mounted() {
-    // `account_get` is authored and deliberately unserved. A merge is the
-    // easiest place for it to be mounted by accident.
+async fn the_account_read_requires_the_organization_it_is_asked_about() {
+    // `account_get` used to be the one authored central route nothing mounted.
+    // It is mounted now, and the interesting property moved: `organizationId`
+    // is required rather than derived from the credential, because a user can
+    // belong to many organizations and a rule that derived it would silently
+    // change meaning the day one of them joined a second.
     assert_eq!(
         status_of(
             router(),
@@ -628,7 +645,8 @@ async fn a_route_no_central_deployable_owns_is_not_mounted() {
                 .expect("a valid request"),
         )
         .await,
-        StatusCode::NOT_FOUND
+        StatusCode::BAD_REQUEST,
+        "an account read with no organization must be refused, never guessed at"
     );
 }
 
@@ -702,6 +720,7 @@ async fn an_unreachable_authority_is_retryable_and_never_an_invalid_credential()
     let router = app(
         Arc::clone(&api),
         Arc::clone(&api),
+        Arc::clone(&api),
         api,
         edge(true),
         readiness(Probes::READY),
@@ -724,6 +743,7 @@ async fn an_unreachable_authority_is_retryable_and_never_an_invalid_credential()
 async fn liveness_answers_and_readiness_is_fail_closed_until_every_probe_lands() {
     let api = Arc::new(Api);
     let not_ready = app(
+        Arc::clone(&api),
         Arc::clone(&api),
         Arc::clone(&api),
         Arc::clone(&api),
@@ -763,6 +783,7 @@ async fn a_raised_drain_flag_deregisters_the_target_while_routes_still_answer() 
     let api = Arc::new(Api);
     let build = || {
         app(
+            Arc::clone(&api),
             Arc::clone(&api),
             Arc::clone(&api),
             Arc::clone(&api),
@@ -864,6 +885,7 @@ async fn the_shared_stack_enforces_the_scope_finance_enforced_itself() {
 
     let api = Arc::new(Api);
     let router = app(
+        Arc::clone(&api),
         Arc::clone(&api),
         Arc::clone(&api),
         api,
