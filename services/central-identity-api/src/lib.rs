@@ -20,6 +20,7 @@
 
 pub mod account;
 pub mod api;
+pub mod oauth;
 mod startup;
 pub mod targets;
 
@@ -28,7 +29,7 @@ use std::sync::Arc;
 
 use aex_central_http::capability::{
     Capability as _, CapabilityBinding, CompositionError, CompositionManifest, Declares,
-    IdentityWrite,
+    IdentityWrite, SignInHandshake,
 };
 use aex_central_http::config::{CentralServiceId, HttpConfig};
 use aex_central_http::health::{Dependency, Readiness};
@@ -65,18 +66,26 @@ pub mod keys {
     pub const REQUEST_DEADLINE_MS: &str = "AEX_CENTRAL_IDENTITY_REQUEST_DEADLINE_MS";
     /// The login role. Must be `aex_identity_api`.
     pub const ROLE: &str = "AEX_CENTRAL_IDENTITY_ROLE";
-    /// The first-party sign-in exchange secret.
+    /// The secret holding GitHub's registered OAuth client.
     ///
-    /// This replaces `AEX_CENTRAL_IDENTITY_VERCEL_ISSUER` and
-    /// `..._VERCEL_EXPECTED_SUBJECT`, which were required at start-up and read
-    /// by nothing. They gated an `OIDC` verifier that was never written, and
-    /// writing one would mean fetching a `JWKS` over the public internet from a
-    /// plane whose Rust services reach AWS endpoints and nothing else — the same
-    /// reason `finance-api` hands Stripe commands to an edge rather than dialling
-    /// `api.stripe.com`. This is that trust boundary expressed as one shared
-    /// secret the plane already knows how to hold, and it is read on every
-    /// `dashboard_session_create`.
-    pub const SIGN_IN_EXCHANGE_SECRET_ID: &str = "AEX_CENTRAL_IDENTITY_SIGN_IN_EXCHANGE_SECRET_ID";
+    /// A JSON object with `clientId` and `clientSecret`. Bound to
+    /// [`SignInHandshake`], so a deployable that did not declare that capability
+    /// cannot be handed it.
+    pub const GITHUB_OAUTH_SECRET_ID: &str = "AEX_CENTRAL_IDENTITY_GITHUB_OAUTH_SECRET_ID";
+    /// The secret holding Google's registered OAuth client, in the same shape.
+    ///
+    /// One secret per provider rather than one holding both: rotating GitHub's
+    /// client must not require touching Google's, and the manifest names each
+    /// credential this deployable may hold on its own line.
+    pub const GOOGLE_OAUTH_SECRET_ID: &str = "AEX_CENTRAL_IDENTITY_GOOGLE_OAUTH_SECRET_ID";
+    /// Where a provider sends the browser back after a person authorizes.
+    ///
+    /// Configured rather than accepted from the request body, and sent verbatim
+    /// to the token endpoint. A caller that could choose it could aim a redeemed
+    /// code at any URI the provider happens to have registered; a plane that
+    /// names exactly one has nothing to choose. Not a manifest binding: it is a
+    /// public URL, not a credential.
+    pub const SIGN_IN_REDIRECT_URI: &str = "AEX_CENTRAL_IDENTITY_SIGN_IN_REDIRECT_URI";
 
     /// Every key this binary reads, for the totality test.
     pub const ALL: &[&str] = &[
@@ -85,13 +94,15 @@ pub mod keys {
         AURORA_SECRET_ARN,
         DATABASE,
         DEVICE_VERIFICATION_URI,
+        GITHUB_OAUTH_SECRET_ID,
+        GOOGLE_OAUTH_SECRET_ID,
         MAX_BODY_BYTES,
         PEPPER_SECRET_ID,
         PLANE,
         REGION,
         REQUEST_DEADLINE_MS,
         ROLE,
-        SIGN_IN_EXCHANGE_SECRET_ID,
+        SIGN_IN_REDIRECT_URI,
     ];
 }
 
@@ -130,8 +141,12 @@ pub struct Config {
     pub role: String,
     /// Where a person approves a device authorization.
     pub device_verification_uri: String,
-    /// The secret holding the first-party sign-in exchange credential.
-    pub sign_in_exchange_secret_id: String,
+    /// The secret holding GitHub's registered OAuth client.
+    pub github_oauth_secret_id: String,
+    /// The secret holding Google's registered OAuth client.
+    pub google_oauth_secret_id: String,
+    /// Where a provider sends the browser back after a person authorizes.
+    pub sign_in_redirect_uri: String,
 }
 
 impl Config {
@@ -183,7 +198,9 @@ impl Config {
             database: required(&lookup, keys::DATABASE)?,
             role,
             device_verification_uri: required(&lookup, keys::DEVICE_VERIFICATION_URI)?,
-            sign_in_exchange_secret_id: required(&lookup, keys::SIGN_IN_EXCHANGE_SECRET_ID)?,
+            github_oauth_secret_id: required(&lookup, keys::GITHUB_OAUTH_SECRET_ID)?,
+            google_oauth_secret_id: required(&lookup, keys::GOOGLE_OAUTH_SECRET_ID)?,
+            sign_in_redirect_uri: https_url(&lookup, keys::SIGN_IN_REDIRECT_URI)?,
         })
     }
 
@@ -205,8 +222,12 @@ impl Config {
                     self.pepper_secret_id.clone(),
                 ),
                 (
-                    keys::SIGN_IN_EXCHANGE_SECRET_ID.to_owned(),
-                    self.sign_in_exchange_secret_id.clone(),
+                    keys::GITHUB_OAUTH_SECRET_ID.to_owned(),
+                    self.github_oauth_secret_id.clone(),
+                ),
+                (
+                    keys::GOOGLE_OAUTH_SECRET_ID.to_owned(),
+                    self.google_oauth_secret_id.clone(),
                 ),
             ]),
         }
@@ -235,11 +256,37 @@ where
         })
 }
 
+/// Reads a value that must be an `https` URL.
+///
+/// Validated here rather than at the first sign-in: a redirect URI that does not
+/// parse is a start-up fact, and discovering it when a person clicks a provider
+/// button costs an outage nobody can attribute.
+fn https_url<F>(lookup: &F, name: &'static str) -> Result<String, CentralIdentityApiConfigError>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    let raw = required(lookup, name)?;
+    aex_wire::types::HttpsUrl::parse(&raw)
+        .map(|url| url.as_str().to_owned())
+        .map_err(|error| CentralIdentityApiConfigError::Invalid {
+            name,
+            reason: error.to_string(),
+        })
+}
+
 /// This binary's capability declaration.
 ///
-/// Identity DML and one pepper. No control write, no queue, no object store, no
-/// payment provider and no regional invoke: a binding for any of them is refused
-/// at start-up.
+/// Identity DML, one pepper, and the two sign-in providers' OAuth clients. No
+/// control write, no queue, no object store, no payment provider and no regional
+/// invoke: a binding for any of them is refused at start-up.
+///
+/// [`SignInHandshake`] is declared separately from [`IdentityWrite`] rather than
+/// folded into it, because they are genuinely two rights over two authorities:
+/// one writes rows in this platform's own schema, the other holds a credential
+/// that authenticates this platform *to somebody else*. A deployable that needs
+/// to create a user does not thereby need to be able to speak as AEX at GitHub,
+/// and the manifest is where that distinction is enforceable rather than
+/// merely stated.
 #[allow(
     dead_code,
     reason = "the declaration is the capability list; its only use is the type-level `Declares` bound"
@@ -247,17 +294,19 @@ where
 struct Composition;
 
 impl Declares<IdentityWrite> for Composition {}
+impl Declares<SignInHandshake> for Composition {}
 
 /// The manifest the start-up check runs against.
 #[must_use]
 pub fn manifest() -> CompositionManifest {
     CompositionManifest {
         deployable: DEPLOYABLE,
-        capabilities: BTreeSet::from([IdentityWrite::ID]),
+        capabilities: BTreeSet::from([IdentityWrite::ID, SignInHandshake::ID]),
         bindings: vec![
             CapabilityBinding::arn(keys::AURORA_CLUSTER_ARN, IdentityWrite::ID),
             CapabilityBinding::resource(keys::PEPPER_SECRET_ID, IdentityWrite::ID),
-            CapabilityBinding::resource(keys::SIGN_IN_EXCHANGE_SECRET_ID, IdentityWrite::ID),
+            CapabilityBinding::resource(keys::GITHUB_OAUTH_SECRET_ID, SignInHandshake::ID),
+            CapabilityBinding::resource(keys::GOOGLE_OAUTH_SECRET_ID, SignInHandshake::ID),
         ],
     }
 }
@@ -278,13 +327,13 @@ pub struct Probes {
     pub aurora: bool,
     /// The active identity pepper loaded.
     pub pepper: bool,
-    /// The first-party sign-in exchange secret loaded.
+    /// Both providers' OAuth clients loaded and parsed.
     ///
-    /// A process that cannot load it can never mint a browser session, and a
+    /// A process that cannot load them can never complete a sign-in, and a
     /// browser session is the only thing that can approve a device
-    /// authorization — so serving without it means the whole credential
+    /// authorization — so serving without them means the whole credential
     /// ceremony fails at its second step rather than at start-up.
-    pub sign_in_exchange: bool,
+    pub oauth_clients: bool,
 }
 
 impl Probes {
@@ -292,14 +341,14 @@ impl Probes {
     pub const NONE: Self = Self {
         aurora: false,
         pepper: false,
-        sign_in_exchange: false,
+        oauth_clients: false,
     };
 
     /// Every probe answered.
     pub const READY: Self = Self {
         aurora: true,
         pepper: true,
-        sign_in_exchange: true,
+        oauth_clients: true,
     };
 }
 
@@ -318,8 +367,8 @@ pub fn readiness(probes: Probes) -> Readiness {
                 resolved: probes.pepper,
             },
             Dependency {
-                name: "sign-in-exchange-secret",
-                resolved: probes.sign_in_exchange,
+                name: "oauth-client-credentials",
+                resolved: probes.oauth_clients,
             },
         ],
     )
@@ -404,6 +453,7 @@ mod tests {
     };
     use aex_central_http::capability::{
         AssertionSign, Capability as _, CapabilityBinding, CompositionError, ControlWrite,
+        SignInHandshake,
     };
     use aex_central_http::config::CentralServiceId;
     use aex_central_http::health::{HEALTH_PATH, READY_PATH};
@@ -447,8 +497,16 @@ mod tests {
                 "https://aex.dev/device".to_owned(),
             ),
             (
-                keys::SIGN_IN_EXCHANGE_SECRET_ID,
-                "aex/dev/sign-in-exchange/current".to_owned(),
+                keys::GITHUB_OAUTH_SECRET_ID,
+                "aex/dev/sign-in/github/current".to_owned(),
+            ),
+            (
+                keys::GOOGLE_OAUTH_SECRET_ID,
+                "aex/dev/sign-in/google/current".to_owned(),
+            ),
+            (
+                keys::SIGN_IN_REDIRECT_URI,
+                "https://dash.aex.dev/auth/callback".to_owned(),
             ),
             (keys::MAX_BODY_BYTES, "65536".to_owned()),
             (keys::REQUEST_DEADLINE_MS, "5000".to_owned()),
@@ -605,6 +663,57 @@ mod tests {
         );
     }
 
+    /// The shared sign-in exchange secret is gone, not renamed.
+    ///
+    /// With the authorization-code exchange happening in this process there is
+    /// no untrusted caller asserting an identity, so there is nothing left for a
+    /// shared secret to prove. This asserts the variable cannot come back by
+    /// accident under either deployable's namespace.
+    #[test]
+    fn no_shared_sign_in_exchange_secret_survives_anywhere_in_the_configuration() {
+        for name in keys::ALL {
+            assert!(
+                !name.contains("SIGN_IN_EXCHANGE"),
+                "`{name}` is the deleted shared secret"
+            );
+        }
+        for binding in manifest().bindings {
+            assert!(
+                !binding.key.contains("SIGN_IN_EXCHANGE"),
+                "`{}` binds the deleted shared secret",
+                binding.key
+            );
+        }
+    }
+
+    /// Each provider's client is its own binding under its own capability, so
+    /// the review list names every credential this deployable may hold.
+    #[test]
+    fn each_provider_oauth_client_is_bound_to_the_handshake_capability() {
+        let bindings = manifest().bindings;
+        for key in [keys::GITHUB_OAUTH_SECRET_ID, keys::GOOGLE_OAUTH_SECRET_ID] {
+            let binding = bindings
+                .iter()
+                .find(|it| it.key == key)
+                .unwrap_or_else(|| panic!("`{key}` is not bound"));
+            assert_eq!(binding.capability, SignInHandshake::ID, "{key}");
+            assert!(!binding.arn, "`{key}` names a secret, not an ARN");
+        }
+    }
+
+    #[test]
+    fn a_redirect_uri_that_is_not_https_is_refused_at_start_up() {
+        for forged in [
+            "http://dash.aex.dev/auth/callback",
+            "not-a-url",
+            "/callback",
+        ] {
+            let mut vars = complete();
+            vars.insert(keys::SIGN_IN_REDIRECT_URI, forged.to_owned());
+            assert!(read(&vars).is_err(), "{forged}");
+        }
+    }
+
     #[test]
     fn this_binary_cannot_link_a_control_write_or_signing_capability() {
         let config = read(&complete()).expect("a complete environment");
@@ -696,7 +805,7 @@ mod tests {
                     "{\"userCode\":\"BCDFG-HJKLM\",\"decision\":\"approve\"}"
                 }
                 RouteId::DashboardSessionCreate => {
-                    "{\"exchangeSecret\":\"0000000000000000000000000000000000\",\"provider\":\"github\",\"providerAccountId\":\"gh-1\",\"email\":\"a@b.dev\",\"emailVerified\":true}"
+                    "{\"provider\":\"github\",\"code\":\"gh-code\",\"state\":\"E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM\",\"codeVerifier\":\"dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk\"}"
                 }
                 _ => "",
             };

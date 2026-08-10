@@ -3,7 +3,7 @@
 //! The public request, response and query models.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:0cdb0802fd5fc620c4216d8793f21981b2821c05f24d3390cf0ecb37da739dbf`.
+//! `sha256:1f778bdb0c16820c3ab2228484dcaff60fbc9870c1f636942bd6e589a8d46f0f`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -287,27 +287,26 @@ pub struct DashboardSessionCredential {
     pub user_id: UserId,
 }
 
-/// Exchange a completed first-party provider sign-in for a browser session. The front end performs
-/// the provider handshake and asserts its result; this plane never dials a provider.
+/// Complete a browser sign-in by handing this plane the authorization code a provider redirect
+/// returned. `central-identity-api` performs the token exchange with the provider itself, so
+/// nothing the caller asserts about who they are is believed: the person is whoever the provider
+/// answers with.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct DashboardSessionRequest {
-    /// The address the provider asserts.
-    pub email: String,
-    /// Whether the provider asserts the address is verified.
-    pub email_verified: bool,
-    /// The first-party exchange secret; proves the caller is an AEX front end.
-    pub exchange_secret: String,
-    /// An avatar, when the provider supplied one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub image_url: Option<HttpsUrl>,
-    /// A display name, when the provider supplied one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    /// Which provider completed the sign-in.
+    /// The single-use authorization code the redirect returned. It is redeemed exactly once and
+    /// never retried: a code the provider may already have consumed cannot be re-presented.
+    pub code: String,
+    /// The RFC 7636 PKCE verifier the browser held in its own cookie for this plane's origin.
+    /// Possessing it is what proves the redirect belongs to the browser that started this sign-in:
+    /// a cross-site forgery carries somebody else's `state` and cannot present a verifier that
+    /// hashes to it.
+    pub code_verifier: String,
+    /// Which provider issued the code.
     pub provider: IdentityProvider,
-    /// The provider's own stable identifier for the person.
-    pub provider_account_id: String,
+    /// The `state` the provider echoed back. It is the RFC 7636 S256 challenge of `codeVerifier`,
+    /// and the exchange refuses any request where it is not.
+    pub state: String,
 }
 
 /// A pending device authorization the user must approve in a browser.

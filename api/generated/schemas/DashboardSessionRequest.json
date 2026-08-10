@@ -2,53 +2,36 @@
   "$id": "https://schemas.aex.dev/v1/DashboardSessionRequest.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Exchange a completed first-party provider sign-in for a browser session. The front end performs the provider handshake and asserts its result; this plane never dials a provider.",
+  "description": "Complete a browser sign-in by handing this plane the authorization code a provider redirect returned. `central-identity-api` performs the token exchange with the provider itself, so nothing the caller asserts about who they are is believed: the person is whoever the provider answers with.",
   "properties": {
-    "email": {
-      "description": "The address the provider asserts.",
-      "maxLength": 254,
-      "minLength": 3,
-      "type": "string"
-    },
-    "emailVerified": {
-      "description": "Whether the provider asserts the address is verified.",
-      "type": "boolean"
-    },
-    "exchangeSecret": {
-      "description": "The first-party exchange secret; proves the caller is an AEX front end.",
-      "maxLength": 256,
-      "minLength": 32,
-      "type": "string"
-    },
-    "imageUrl": {
-      "description": "An avatar, when the provider supplied one.",
-      "format": "uri",
+    "code": {
+      "description": "The single-use authorization code the redirect returned. It is redeemed exactly once and never retried: a code the provider may already have consumed cannot be re-presented.",
       "maxLength": 2048,
+      "minLength": 1,
       "type": "string"
     },
-    "name": {
-      "description": "A display name, when the provider supplied one.",
+    "codeVerifier": {
+      "description": "The RFC 7636 PKCE verifier the browser held in its own cookie for this plane's origin. Possessing it is what proves the redirect belongs to the browser that started this sign-in: a cross-site forgery carries somebody else's `state` and cannot present a verifier that hashes to it.",
       "maxLength": 128,
-      "minLength": 1,
+      "minLength": 43,
       "type": "string"
     },
     "provider": {
       "$ref": "aex:schema:IdentityProvider",
-      "description": "Which provider completed the sign-in."
+      "description": "Which provider issued the code."
     },
-    "providerAccountId": {
-      "description": "The provider's own stable identifier for the person.",
-      "maxLength": 255,
-      "minLength": 1,
+    "state": {
+      "description": "The `state` the provider echoed back. It is the RFC 7636 S256 challenge of `codeVerifier`, and the exchange refuses any request where it is not.",
+      "maxLength": 128,
+      "minLength": 43,
       "type": "string"
     }
   },
   "required": [
-    "email",
-    "emailVerified",
-    "exchangeSecret",
+    "code",
+    "codeVerifier",
     "provider",
-    "providerAccountId"
+    "state"
   ],
   "title": "DashboardSessionRequest",
   "type": "object"

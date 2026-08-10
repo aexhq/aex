@@ -30,31 +30,38 @@
 //! polling device must do differently, and collapsing any of them into
 //! `invalid_request` would leave a CLI either spinning or giving up early.
 //!
-//! # Why the sign-in exchange takes an assertion rather than an authorization code
+//! # Why the sign-in exchange takes an authorization code
 //!
-//! `dashboard_session_create` is handed a provider profile that a first-party
-//! front end has already established, and proves the caller is first-party with
-//! a shared secret. It does not perform an OAuth handshake. That is the same
-//! boundary `finance-api` draws against Stripe: Rust never dials a vendor, it
-//! receives an already-admitted command from the edge that did. A plane whose
-//! services reach AWS endpoints and nothing else cannot complete a provider
-//! handshake, and pretending otherwise would produce a route that compiles and
-//! fails in the region.
+//! `dashboard_session_create` is handed what a browser redirect actually
+//! returns — a provider, a single-use authorization code, and the `state` that
+//! came back with it — and redeems the code itself. See [`crate::oauth`] for the
+//! handshake and for the rule this replaced.
+//!
+//! The short version: this route used to accept an *already-established*
+//! provider profile and prove the caller was a first-party front end with a
+//! shared secret, on the theory that Rust never dials a vendor. The tree
+//! contradicts that theory — `aex-brain-provider-gateway` dials four model
+//! vendors directly, holding each customer's credential — and a language is not
+//! a security boundary in any case. The control that does the work is the
+//! capability manifest: this deployable declares
+//! [`aex_central_http::capability::SignInHandshake`], binds it to a named
+//! secret per provider, and refuses to start unbound.
+//!
+//! With the code redeemed here, no caller asserts an identity any more, so
+//! there is nothing left for a shared secret to prove and it is gone rather
+//! than reduced.
 
 use std::sync::Arc;
 
 use aex_control_domain::ScopeSet;
 use aex_identity_app::ports::{Clock, IdFactory, IdentityStore, PepperKeystore, RequestContext};
 use aex_identity_app::use_cases::{
-    ApproveDevice, CloseDashboardSession, DenyDevice, IdentityDeps, OauthProfile,
-    OpenDashboardSession, PollDevice, ResolveOauthSignIn, StartDeviceAuthorization,
+    ApproveDevice, CloseDashboardSession, DenyDevice, IdentityDeps, OpenDashboardSession,
+    PollDevice, ResolveOauthSignIn, StartDeviceAuthorization,
 };
 use aex_identity_app::{IdentityError, RequestId};
 use aex_identity_domain::credential::parse as parse_credential;
-use aex_identity_domain::{
-    CredentialKind, NormalizedEmail, ParsedCredential, PresentedDigest, Provider,
-    ProviderAccountId, SecretRng, UserCode,
-};
+use aex_identity_domain::{CredentialKind, ParsedCredential, Provider, SecretRng, UserCode};
 use aex_wire::error::{ErrorCode, WireError, WireResult};
 use aex_wire::ids::{PrefixedId as _, UserId, Uuid7};
 use aex_wire::models::{
@@ -66,91 +73,14 @@ use aex_wire::server::{AuthApi, Created, NoContent};
 use aex_wire::types::{HttpsUrl, Timestamp};
 use uuid::Uuid;
 
+use crate::oauth::ProviderHandshake;
+
 /// The client identifier the device flow admits.
 ///
 /// One public client, named rather than accepted from the body. A device flow
 /// that echoed whatever `clientId` arrived would record an attacker-chosen
 /// string against every grant, and there is exactly one first-party CLI.
 pub const ALLOWED_CLIENT_ID: &str = "aex-cli";
-
-/// The shortest first-party exchange secret this binary will accept.
-///
-/// A shared secret shorter than this is not a secret, and refusing it at
-/// start-up is the only place the refusal costs nothing.
-pub const MIN_EXCHANGE_SECRET_LEN: usize = 32;
-
-/// Why the configured exchange secret was refused.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum ExchangeSecretError {
-    /// Shorter than [`MIN_EXCHANGE_SECRET_LEN`].
-    #[error("the sign-in exchange secret is at least {MIN_EXCHANGE_SECRET_LEN} bytes")]
-    TooShort,
-}
-
-/// The first-party sign-in exchange credential, held as its digest.
-///
-/// The plaintext is hashed once at start-up and dropped, so a heap dump of a
-/// long-lived process does not carry it and a `Debug` of the service cannot
-/// print it. Comparison is over two fixed 32-byte digests rather than over
-/// strings of different lengths.
-#[derive(Clone, PartialEq, Eq)]
-pub struct ExchangeSecret(PresentedDigest);
-
-impl std::fmt::Debug for ExchangeSecret {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("ExchangeSecret(<redacted>)")
-    }
-}
-
-impl ExchangeSecret {
-    /// Digests a configured secret.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`ExchangeSecretError::TooShort`] for a value under
-    /// [`MIN_EXCHANGE_SECRET_LEN`] bytes.
-    pub fn new(plaintext: &str) -> Result<Self, ExchangeSecretError> {
-        if plaintext.len() < MIN_EXCHANGE_SECRET_LEN {
-            return Err(ExchangeSecretError::TooShort);
-        }
-        Ok(Self(PresentedDigest::of(plaintext)))
-    }
-
-    /// Whether a presented value is the configured one.
-    #[must_use]
-    pub fn admits(&self, presented: &str) -> bool {
-        self.0 == PresentedDigest::of(presented)
-    }
-}
-
-/// Reads and validates the first-party sign-in exchange secret.
-///
-/// The secret's whole value is the credential — no JSON envelope and no key
-/// name — because a wrapper would be one more thing a rotation could get wrong
-/// for no reader. A binary secret is refused rather than lossily decoded.
-///
-/// Shared by both composition roots that mount `central:auth`: this crate's own
-/// Lambda and the merged `central-api` process. One reader means one format.
-///
-/// # Errors
-///
-/// Returns the reason as a string, for the caller to name its own dependency
-/// with.
-pub async fn load_exchange_secret(
-    secrets: &aws_sdk_secretsmanager::Client,
-    secret_id: &str,
-) -> Result<ExchangeSecret, String> {
-    let value = secrets
-        .get_secret_value()
-        .secret_id(secret_id)
-        .send()
-        .await
-        .map_err(|error| error.to_string())?;
-    let plaintext = value
-        .secret_string()
-        .ok_or_else(|| "the secret holds no string value".to_owned())?;
-    ExchangeSecret::new(plaintext.trim()).map_err(|error| error.to_string())
-}
 
 /// Everything the five routes need, resolved once at start-up.
 pub struct AuthService {
@@ -160,7 +90,7 @@ pub struct AuthService {
     ids: Arc<dyn IdFactory>,
     rng: Arc<dyn SecretRng>,
     verification_uri: HttpsUrl,
-    exchange_secret: ExchangeSecret,
+    handshake: Arc<dyn ProviderHandshake>,
 }
 
 impl std::fmt::Debug for AuthService {
@@ -182,7 +112,7 @@ impl AuthService {
         ids: Arc<dyn IdFactory>,
         rng: Arc<dyn SecretRng>,
         verification_uri: HttpsUrl,
-        exchange_secret: ExchangeSecret,
+        handshake: Arc<dyn ProviderHandshake>,
     ) -> Self {
         Self {
             store,
@@ -191,7 +121,7 @@ impl AuthService {
             ids,
             rng,
             verification_uri,
-            exchange_secret,
+            handshake,
         }
     }
 
@@ -328,9 +258,41 @@ fn sign_in_failure(error: &IdentityError) -> WireError {
         }
         IdentityError::Conflict { .. } | IdentityError::NotFound => {
             WireError::new(ErrorCode::InvalidRequest)
-                .with_message("the asserted provider identity could not be resolved to a person")
+                .with_message("the provider identity could not be resolved to a person")
         }
         _ => internal(),
+    }
+}
+
+/// Maps a provider handshake failure onto `dashboard_session_create`'s declared
+/// codes.
+///
+/// The route declares `invalid_request`, `unauthenticated`, `forbidden`,
+/// `rate_limited` and `internal_error`, and `dispatch_auth` refuses anything
+/// else, so each arm has to land inside that set:
+///
+/// * a code the provider refused is `unauthenticated` — the caller presented
+///   something that does not authenticate them, which is exactly what that code
+///   means, and it reads the same whether the code was forged, replayed or
+///   simply stale;
+/// * an answer this platform cannot make a person from is `invalid_request`,
+///   carrying the reason: "GitHub asserts no verified primary address" is
+///   actionable and "internal error" is not;
+/// * a provider rate limit is `rate_limited`, so a dashboard backs off against
+///   the provider's pressure rather than retrying into it;
+/// * a provider that did not answer is `internal_error`. The route declares no
+///   `service_unavailable`, and this genuinely is this plane failing to complete
+///   a ceremony it owns.
+fn handshake_failure(error: &crate::oauth::HandshakeError) -> WireError {
+    use crate::oauth::HandshakeError;
+    match error {
+        HandshakeError::Refused(_) => WireError::new(ErrorCode::Unauthenticated)
+            .with_message("the provider refused the authorization code"),
+        HandshakeError::Unusable(reason) => {
+            WireError::new(ErrorCode::InvalidRequest).with_message(reason)
+        }
+        HandshakeError::RateLimited => WireError::new(ErrorCode::RateLimited),
+        HandshakeError::Unreachable(_) => internal(),
     }
 }
 
@@ -398,37 +360,30 @@ impl AuthApi for AuthService {
         cx: &aex_wire::server::RequestContext,
         body: DashboardSessionRequest,
     ) -> WireResult<Created<DashboardSessionCredential>> {
-        if !self.exchange_secret.admits(&body.exchange_secret) {
-            return Err(WireError::new(ErrorCode::Unauthenticated)
-                .with_message("the sign-in exchange secret did not match"));
-        }
-        // An unverified address is refused rather than linked. The store
-        // resolves an existing person by normalized email when no provider link
-        // matches, so accepting `emailVerified: false` would let one provider
-        // account adopt another person's records — a cross-tenant read, which is
-        // a correctness defect and not a matter of degree.
-        if !body.email_verified {
-            return Err(WireError::new(ErrorCode::InvalidRequest).with_message(
-                "the provider must assert a verified address; an unverified one links to nobody",
+        // The `state` check comes first, before any provider is dialled and
+        // before the single-use code is spent. A redirect that cannot present
+        // the verifier its `state` hashes from did not come from the browser
+        // that started this sign-in, and completing it would authenticate the
+        // wrong person — see `oauth::state_matches` for the forgery this
+        // refuses.
+        if !crate::oauth::state_matches(&body.code_verifier, &body.state) {
+            return Err(WireError::new(ErrorCode::Unauthenticated).with_message(
+                "`state` is not the S256 challenge of `codeVerifier`; this redirect did not begin here",
             ));
         }
-        let email = NormalizedEmail::parse(&body.email).map_err(|_| {
-            WireError::new(ErrorCode::InvalidRequest)
-                .with_message("`email` is not an address this platform can normalize")
-        })?;
-        let provider_account_id =
-            ProviderAccountId::parse(&body.provider_account_id).map_err(|_| {
-                WireError::new(ErrorCode::InvalidRequest)
-                    .with_message("`providerAccountId` is not a value the directory can store")
-            })?;
-        let profile = OauthProfile {
-            provider: provider_of(body.provider),
-            provider_account_id,
-            email,
-            email_verified: true,
-            name: body.name,
-            image_url: body.image_url.map(|url| url.as_str().to_owned()),
-        };
+        let provider = provider_of(body.provider);
+        // The identity comes back from the provider, not from the caller. An
+        // unverified address never reaches the store: every path in
+        // `crate::oauth` refuses one, because `resolve_or_create_by_external_identity`
+        // falls back to resolving by normalized email when no provider link
+        // matches, and an unverified assertion would let one provider account
+        // adopt another person's records — a cross-tenant read, which is a
+        // correctness defect and not a matter of degree.
+        let profile = self
+            .handshake
+            .identify(provider, &body.code, &body.code_verifier)
+            .await
+            .map_err(|error| handshake_failure(&error))?;
         let context = self.context(cx);
         let resolved = ResolveOauthSignIn::run(&self.deps(), &context, profile)
             .await

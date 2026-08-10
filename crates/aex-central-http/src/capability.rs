@@ -48,6 +48,11 @@ capability!(
     "Full `rds-data` transaction set against the identity schema."
 );
 capability!(
+    SignInHandshake,
+    "identity.sign_in_handshake",
+    "Holding a sign-in provider's registered OAuth client credentials, and completing an authorization-code exchange against that provider's token endpoint."
+);
+capability!(
     AuthorizationRead,
     "authorization.read",
     "Read-only `rds-data` statements as `aex_authz`; no transaction API at all."

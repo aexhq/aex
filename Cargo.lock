@@ -3231,12 +3231,18 @@ dependencies = [
  "aws-sdk-rdsdata",
  "aws-sdk-secretsmanager",
  "axum",
+ "base64 0.23.0",
  "lambda_http",
+ "reqwest",
+ "serde",
  "serde_json",
+ "sha2 0.11.0",
+ "subtle",
  "thiserror",
  "time",
  "tokio",
  "tower",
+ "url",
  "uuid",
 ]
 

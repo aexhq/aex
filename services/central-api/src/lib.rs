@@ -51,7 +51,7 @@ use std::sync::Arc;
 use aex_central_http::capability::{
     AuthorizationRead, Capability as _, CapabilityBinding, CompositionError, CompositionManifest,
     ControlWrite, Declares, FinanceRead, IdentityWrite, PaymentCommandInvoke,
-    RegionalControlInvoke, StatementRead,
+    RegionalControlInvoke, SignInHandshake, StatementRead,
 };
 use aex_central_http::health::{Dependency, Readiness};
 use aex_central_http::router::{
@@ -87,6 +87,7 @@ impl Declares<FinanceRead> for Composition {}
 impl Declares<IdentityWrite> for Composition {}
 impl Declares<PaymentCommandInvoke> for Composition {}
 impl Declares<RegionalControlInvoke> for Composition {}
+impl Declares<SignInHandshake> for Composition {}
 impl Declares<StatementRead> for Composition {}
 
 /// The manifest the start-up check runs against.
@@ -101,6 +102,7 @@ pub fn manifest() -> CompositionManifest {
             IdentityWrite::ID,
             PaymentCommandInvoke::ID,
             RegionalControlInvoke::ID,
+            SignInHandshake::ID,
             StatementRead::ID,
         ]),
         bindings: vec![
@@ -117,7 +119,12 @@ pub fn manifest() -> CompositionManifest {
             CapabilityBinding::arn(config::AURORA_SECRET_ARN, FinanceRead::ID),
             CapabilityBinding::resource(config::API_KEY_PEPPER_SECRET_ID, ControlWrite::ID),
             CapabilityBinding::resource(config::IDENTITY_PEPPER_SECRET_ID, IdentityWrite::ID),
-            CapabilityBinding::resource(config::SIGN_IN_EXCHANGE_SECRET_ID, IdentityWrite::ID),
+            // The two sign-in providers' registered OAuth clients. Bound to
+            // `SignInHandshake` rather than to `IdentityWrite`, because holding a
+            // credential that speaks as AEX at somebody else's authority is a
+            // different right from writing this platform's own identity rows.
+            CapabilityBinding::resource(config::GITHUB_OAUTH_SECRET_ID, SignInHandshake::ID),
+            CapabilityBinding::resource(config::GOOGLE_OAUTH_SECRET_ID, SignInHandshake::ID),
             CapabilityBinding::resource(config::REGIONAL_FUNCTION_ARNS, RegionalControlInvoke::ID),
             CapabilityBinding::arn(config::STRIPE_COMMAND_EDGE_ARN, PaymentCommandInvoke::ID),
             CapabilityBinding::resource(config::STATEMENT_BUCKET, StatementRead::ID),
