@@ -17,7 +17,7 @@ use aws_sdk_dynamodb::operation::transact_write_items::TransactWriteItemsError;
 use aws_sdk_dynamodb::types::CancellationReason;
 use aws_sdk_dynamodb::types::error::TransactionCanceledException;
 
-use support::{TABLE, descriptor, digest, now, organization, sealed, workspace};
+use support::{TABLE, descriptor, digest, now, organization, workspace};
 
 fn cancelled(codes: &[&str]) -> TransactWriteItemsError {
     TransactWriteItemsError::TransactionCanceledException(
@@ -139,7 +139,7 @@ fn an_over_large_tree_page_is_refused_with_its_measurement_and_never_as_a_provid
         page: Blake3Digest::of(b"oversized"),
         level: 0,
         entry_count: 1,
-        sealed: sealed(measure::PAGE_TARGET_BYTES + 64),
+        body: vec![7u8; measure::PAGE_TARGET_BYTES + 64],
         created_at: now(),
     };
     let error = encode_tree_page(&page).expect_err("over the page target");

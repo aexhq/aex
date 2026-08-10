@@ -115,25 +115,35 @@ pub fn body_hex(digest: &ContentHash) -> String {
 // pure and never holds ciphertext. What it publishes is the identity of the
 // ciphertext, `aex_content_domain::descriptor::CiphertextIdentity`, carried on a
 // `descriptor::ContentDescriptor`.
-/// AEAD ciphertext plus the digest of the encryption context it is bound to.
+/// One inline content body: AEAD ciphertext plus the digest of the encryption
+/// context it is bound to.
 ///
-/// The crate never sees a plaintext body: the content crypto adapter seals
-/// before this crate is called and opens after it returns. `encContextDigest`
-/// travels beside the ciphertext so a context mismatch is detected before a KMS
-/// call is spent.
+/// The crate never sees a plaintext body: the content crypto adapter seals before
+/// this crate is called and opens after it returns. `encContextDigest` travels
+/// beside the ciphertext so a context mismatch is detected before a KMS call is
+/// spent.
+///
+/// This is the **only** sealed shape here. The general `SealedBytes` it replaces
+/// also covered Merkle tree pages, and those are now stored **unsealed** (E D-13,
+/// owner decision D5=A): a page carries file *metadata* — paths, sizes, modes,
+/// mtimes and body digests — never file content, the table is already encrypted at
+/// rest under a per-authority CMK, and the seal put an AEAD unwrap on the path of
+/// every persisted list and stat, which are the two highest-frequency reads over
+/// this table. A customer *body* is a different thing and stays sealed, so the
+/// type that carries one is named for it.
 #[derive(Clone, PartialEq, Eq)]
-pub struct SealedBytes {
+pub struct InlineBody {
     /// The sealed bytes.
     pub ciphertext: Vec<u8>,
     /// SHA-256 of the canonical encryption context, lowercase hex.
     pub enc_context_digest: String,
 }
 
-impl std::fmt::Debug for SealedBytes {
+impl std::fmt::Debug for InlineBody {
     /// Prints the length and the context digest, never the ciphertext.
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("SealedBytes")
+            .debug_struct("InlineBody")
             .field(
                 "ciphertext",
                 &format_args!("<{} bytes>", self.ciphertext.len()),

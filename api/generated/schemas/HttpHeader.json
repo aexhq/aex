@@ -1,0 +1,26 @@
+{
+  "$id": "https://schemas.aex.dev/v1/HttpHeader.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One request header a signed grant requires the caller to send verbatim.",
+  "properties": {
+    "name": {
+      "description": "The header name.",
+      "maxLength": 128,
+      "minLength": 1,
+      "type": "string"
+    },
+    "value": {
+      "description": "The exact value to send.",
+      "maxLength": 8192,
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "value"
+  ],
+  "title": "HttpHeader",
+  "type": "object"
+}

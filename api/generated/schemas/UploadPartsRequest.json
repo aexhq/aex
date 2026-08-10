@@ -2,21 +2,19 @@
   "$id": "https://schemas.aex.dev/v1/UploadPartsRequest.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Mint presigned PUT grants for the named parts.",
+  "description": "Mint presigned PUT grants for the named parts. At most 1000 parts per call against the 10000-part ceiling, so a maximal upload needs at least ten calls.",
   "properties": {
-    "partNumbers": {
+    "parts": {
       "description": "The parts to grant.",
       "items": {
-        "maximum": 10000,
-        "minimum": 1,
-        "type": "integer"
+        "$ref": "aex:schema:UploadPartRequest"
       },
       "maxItems": 1000,
       "type": "array"
     }
   },
   "required": [
-    "partNumbers"
+    "parts"
   ],
   "title": "UploadPartsRequest",
   "type": "object"

@@ -1,9 +1,17 @@
 //! Validated start-up configuration for `content-lifecycle-worker`.
 //!
-//! One binary, four deployed roles (RS-10). `AEX_MODE` selects the role, and the
-//! required variable set is a function of it: `delete` is the only mode that may
-//! hold the object-delete capability, and `reconcile` is the only mode that reads
-//! the inventory bucket. A mode whose variables are absent refuses to start.
+//! One binary, five deployed roles (RS-10, extended by E D-8). `AEX_MODE` selects
+//! the role, and the required variable set is a function of it: `delete` is the
+//! only mode that may hold the object-delete capability, and `reconcile` is the
+//! only mode that reads the inventory bucket. A mode whose variables are absent
+//! refuses to start.
+//!
+//! `uploadexpiry` is the fifth role. It is separate from `expiry` rather than
+//! folded into it because it is the only role that touches `regional-registry` and
+//! the only non-`delete` role that calls S3 at all — it issues
+//! `AbortMultipartUpload`. Splitting it is what lets the two IAM policies differ:
+//! the grant-expiry role holds no registry access and no S3 access whatsoever, and
+//! **neither** ever holds `s3:DeleteObject` (E D-4).
 
 use aex_regional_http::capability::Capability as _;
 use aex_regional_http::config::{
@@ -92,11 +100,13 @@ pub const FORBIDDEN: [(&str, &str); 2] = [
     ),
 ];
 
-/// The four deployed roles of the one binary.
+/// The five deployed roles of the one binary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
-    /// Expires pending uploads and lapsed download grants.
+    /// Expires lapsed download grants.
     Expiry,
+    /// Expires pending uploads and aborts the multipart uploads they name.
+    UploadExpiry,
     /// Confirms staged orphans after the grace window.
     Reconcile,
     /// Walks reachability and stages what nothing points at.
@@ -107,13 +117,20 @@ pub enum Mode {
 
 impl Mode {
     /// The wire spelling of every mode.
-    pub const ALL: [&'static str; 4] = ["expiry", "reconcile", "marksweep", "delete"];
+    pub const ALL: [&'static str; 5] = [
+        "expiry",
+        "uploadexpiry",
+        "reconcile",
+        "marksweep",
+        "delete",
+    ];
 
     /// Resolves a mode name.
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "expiry" => Some(Self::Expiry),
+            "uploadexpiry" => Some(Self::UploadExpiry),
             "reconcile" => Some(Self::Reconcile),
             "marksweep" => Some(Self::MarkSweep),
             "delete" => Some(Self::Delete),
@@ -126,6 +143,7 @@ impl Mode {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Expiry => "expiry",
+            Self::UploadExpiry => "uploadexpiry",
             Self::Reconcile => "reconcile",
             Self::MarkSweep => "marksweep",
             Self::Delete => "delete",
@@ -136,6 +154,16 @@ impl Mode {
     #[must_use]
     pub const fn deletes_objects(self) -> bool {
         matches!(self, Self::Delete)
+    }
+
+    /// Whether this role constructs an S3 client at all.
+    ///
+    /// `uploadexpiry` needs one for `AbortMultipartUpload` and `HeadObject`; it
+    /// still cannot delete an object, because [`Mode::deletes_objects`] is false
+    /// and the capability check refuses the pairing at start-up.
+    #[must_use]
+    pub const fn reaches_objects(self) -> bool {
+        matches!(self, Self::Delete | Self::UploadExpiry)
     }
 }
 
@@ -166,9 +194,9 @@ pub struct Config {
     pub gc_stage_grace_hours: u64,
     /// Pending-upload grace in hours.
     pub upload_grace_hours: u64,
-    /// Due partitions read per scheduled invocation, in `expiry` mode.
+    /// Due partitions read per scheduled invocation, in the two expiry modes.
     pub expiry_scan_shards: Option<u16>,
-    /// Maximum grants read from each due partition, in `expiry` mode.
+    /// Maximum rows read from each due partition, in the two expiry modes.
     pub expiry_page_items: Option<u32>,
     /// Mark-phase page size, in `marksweep` mode.
     pub mark_page_items: Option<u64>,
@@ -271,7 +299,10 @@ impl Config {
         } else {
             None
         };
-        let (expiry_scan_shards, expiry_page_items) = if mode == Mode::Expiry {
+        let (expiry_scan_shards, expiry_page_items) = if matches!(
+            mode,
+            Mode::Expiry | Mode::UploadExpiry
+        ) {
             (
                 Some(
                     u16::try_from(bounded_u64(lookup, EXPIRY_SCAN_SHARDS, 1, 64)?)

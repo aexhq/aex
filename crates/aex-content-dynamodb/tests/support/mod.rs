@@ -4,7 +4,7 @@
 #![allow(missing_docs, reason = "the module doc states what these fixtures are")]
 
 use aex_content_dynamodb::codec::{ContentDescriptor, DownloadGrant, GcEpoch, ObjectLocation};
-use aex_content_dynamodb::wire_pending::SealedBytes;
+use aex_content_dynamodb::wire_pending::InlineBody;
 use aex_session_dynamodb::measure;
 use aex_wire::ids::{
     ContentHash, MeasurementId, OrganizationId, PrefixedId, SessionId, Uuid7, WorkspaceId,
@@ -141,8 +141,8 @@ pub fn digest(byte: u8) -> ContentHash {
 }
 
 #[must_use]
-pub fn sealed(bytes: usize) -> SealedBytes {
-    SealedBytes {
+pub fn sealed(bytes: usize) -> InlineBody {
+    InlineBody {
         ciphertext: vec![0x5a; bytes],
         enc_context_digest: "c".repeat(64),
     }

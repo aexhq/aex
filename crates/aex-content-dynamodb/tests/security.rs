@@ -8,7 +8,7 @@ use aex_content_dynamodb::codec::{
 };
 use aex_content_dynamodb::expressions;
 use aex_content_dynamodb::keys;
-use aex_content_dynamodb::wire_pending::{Blake3Digest, PinOwner, SealedBytes};
+use aex_content_dynamodb::wire_pending::{Blake3Digest, InlineBody, PinOwner};
 use aex_session_dynamodb::attr::CodecError;
 
 use support::{
@@ -132,23 +132,28 @@ fn a_candidate_and_a_page_carry_the_index_but_never_a_readable_body() {
         page: Blake3Digest::of(b"page"),
         level: 1,
         entry_count: 4,
-        sealed: SealedBytes {
-            ciphertext: vec![1, 2, 3],
-            enc_context_digest: "d".repeat(64),
-        },
+        body: vec![1, 2, 3],
         created_at: now(),
     };
     let encoded = encode_tree_page(&page).expect("encodes");
-    assert!(encoded.contains_key("ciphertext"));
+    // A tree page is stored unsealed (E D-13, owner decision D5=A). It carries
+    // file metadata — paths, sizes, modes, mtimes and body digests — and never
+    // file content, and the AEAD unwrap it used to require sat on the path of
+    // every persisted list and stat.
+    assert!(encoded.contains_key("pageBody"));
     assert!(
-        !keys::GC_PROJECTION.contains(&"ciphertext"),
+        !encoded.contains_key("ciphertext"),
+        "an unsealed page must not claim to carry ciphertext"
+    );
+    assert!(
+        !keys::GC_PROJECTION.contains(&"pageBody") && !keys::GC_PROJECTION.contains(&"ciphertext"),
         "the page is indexed, but the projection is what a scan can read"
     );
 }
 
 #[test]
-fn a_sealed_body_never_prints_its_ciphertext() {
-    let sealed = SealedBytes {
+fn an_inline_content_body_never_prints_its_ciphertext() {
+    let sealed = InlineBody {
         ciphertext: b"super secret plaintext-shaped bytes".to_vec(),
         enc_context_digest: "e".repeat(64),
     };

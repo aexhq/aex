@@ -27,7 +27,7 @@ use crate::codec::{
 };
 use crate::expressions;
 use crate::keys;
-use crate::wire_pending::{Blake3Digest, GcSweepPlan, SealedBytes, body_hex};
+use crate::wire_pending::{Blake3Digest, GcSweepPlan, InlineBody, body_hex};
 
 /// One row of the slim garbage-collection scan projection.
 ///
@@ -117,7 +117,7 @@ pub struct RedeemedGrant {
     /// What the grant authorises.
     pub grant: DownloadGrant,
     /// The sealed body, when the placement is inline.
-    pub inline: Option<SealedBytes>,
+    pub inline: Option<InlineBody>,
     /// The descriptor, so the caller can presign an object read.
     pub descriptor: ContentDescriptor,
 }
@@ -148,7 +148,7 @@ pub trait ContentMetadataStore: Send + Sync + 'static {
         &self,
         workspace: WorkspaceId,
         digest: &ContentHash,
-    ) -> Result<Option<SealedBytes>, StoreError>;
+    ) -> Result<Option<InlineBody>, StoreError>;
 
     /// Reads one Merkle tree page.
     ///
@@ -399,7 +399,7 @@ impl ContentMetadataStore for ContentStore {
         &self,
         workspace: WorkspaceId,
         digest: &ContentHash,
-    ) -> Result<Option<SealedBytes>, StoreError> {
+    ) -> Result<Option<InlineBody>, StoreError> {
         let target = keys::inline_body(workspace, digest);
         match self
             .get(&target.pk, &target.sk, Consistency::Eventual)

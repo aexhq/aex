@@ -14,7 +14,7 @@ use aex_session_dynamodb::paging::PageBudget;
 
 use support::{
     Answer, DEFINITION, TABLE, captured_body, capturing_client, digest, gc_epoch, grant, later,
-    now, organization, scripted_client, sealed, workspace,
+    now, organization, scripted_client, workspace,
 };
 
 fn definition() -> serde_json::Value {
@@ -407,7 +407,7 @@ async fn a_tree_page_wave_treats_a_lost_condition_as_replay_and_a_hard_failure_a
         page: aex_content_dynamodb::Blake3Digest::of(&[byte]),
         level: 0,
         entry_count: 1,
-        sealed: sealed(16),
+        body: vec![7u8; 16],
         created_at: now(),
     };
     let conditional = serde_json::json!({

@@ -1,19 +1,31 @@
 //! Download grants.
 //!
-//! A grant is a five-minute capability over an exact byte range. It stores a
-//! token **hash**, never the token, and mints a `Pin::Grant` in the same
-//! transaction so garbage collection cannot delete a pinned body before the
-//! grant expires. A small body gets an inline redemption that references the
-//! content and pins it — never a second copy of the bytes (D-15).
+//! A grant is a five-minute capability over an exact byte range of one **object**,
+//! delivered as a presigned S3 `GET`. It mints a `Pin::Grant` in the same
+//! transaction so garbage collection cannot delete a pinned body before the grant
+//! expires.
 //!
-//! Neither the token nor a URL appears in any `Debug`, `Display` or serialized
-//! form: the type carries a hash and the hash is all it can render.
+//! # There is no redemption
+//!
+//! The wire `DownloadGrant` carries `url: https_url`, three download-grant routes
+//! already ship exactly that, and there is **no redeem route among the 146**
+//! (E D-11). The bearer-token model this type used to carry — a stored
+//! `token_hash`, a `redeem()` and a `GrantPlacement::InlineRedemption` arm — is
+//! deleted rather than left as a second, unreachable grant vocabulary.
+//!
+//! An inline body (≤ 32 KiB, held in `regional-content` and sealed by the
+//! `aex-secret-aws` envelope) has no object to sign, so it is **promoted on first
+//! grant**: unsealed, `put_immutable`'d to its content-addressed key, and the
+//! resulting [`ContentObjectLocation`] passed here. `put_immutable` is
+//! content-addressed and conditional, so promotion is idempotent and a repeat is
+//! a cheap no-op.
+//!
+//! No URL appears in any `Debug`, `Display` or serialized form.
 
 use core::fmt;
 
 use aex_content_domain::{
-    ContentDescriptor, ContentDigest, ContentMissing, ContentObjectKey, Crc32c, GrantId, Pin,
-    PlacementClass,
+    ContentDescriptor, ContentDigest, ContentObjectKey, Crc32c, GrantId, Pin,
 };
 use aex_wire::ids::{MeasurementId, SessionId, WorkspaceId};
 use aex_wire::types::Timestamp;
@@ -57,14 +69,21 @@ pub struct GrantSubject {
     pub session: Option<SessionId>,
 }
 
-/// Where a redemption reads from.
+/// The exact object a grant is signed over.
+///
+/// A grant is always over an object: an inline body is promoted to one before a
+/// grant is minted (E D-11), so there is no second placement arm to get wrong.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContentObjectLocation {
+    /// The exact unversioned key.
+    pub key: ContentObjectKey,
+    /// The checksum the object store recorded.
+    pub checksum: Crc32c,
+}
+
+/// Where a grant reads from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GrantPlacement {
-    /// The body is small enough to serve from content storage directly.
-    InlineRedemption {
-        /// The pinned body.
-        content: ContentDigest,
-    },
     /// The body is an object and the reader is given a range of it.
     ObjectRange {
         /// The exact unversioned key.
@@ -76,14 +95,12 @@ pub enum GrantPlacement {
 
 /// One minted grant.
 ///
-/// `Debug` is written by hand so a leaked log line cannot contain the token
-/// hash; the derived form would print it.
+/// `Debug` is written by hand so a leaked log line cannot contain the placement;
+/// the derived form would print the exact object key.
 #[derive(Clone, PartialEq, Eq)]
 pub struct DownloadGrant {
     /// Its identity.
     pub id: GrantId,
-    /// The hash of the bearer token. The token itself is never stored.
-    token_hash: [u8; 32],
     /// Who it is for.
     pub subject: GrantSubject,
     /// What it covers.
@@ -113,21 +130,6 @@ impl fmt::Debug for DownloadGrant {
     }
 }
 
-/// What a successful redemption authorizes.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Redemption {
-    /// Which grant.
-    pub grant: GrantId,
-    /// What to read.
-    pub placement: GrantPlacement,
-    /// Which range.
-    pub range: ByteRange,
-    /// How many bytes are charged.
-    pub charged_bytes: u64,
-    /// The measurement the download is recorded under.
-    pub measurement: MeasurementId,
-}
-
 /// Why a grant was refused.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum GrantRejection {
@@ -153,19 +155,20 @@ pub enum GrantRejection {
         /// When it lapsed.
         at: Timestamp,
     },
-    /// The presented token does not hash to the stored value.
-    #[error("token does not match")]
-    TokenMismatch,
-    /// The body is not usable.
-    #[error("content is missing")]
-    ContentMissing(Box<ContentMissing>),
 }
 
 /// Mints a grant and the pin that keeps its body alive.
 ///
 /// The pin is returned rather than applied, so the caller writes both in one
 /// transaction; a grant without its pin would be a capability over a body
-/// garbage collection is free to delete.
+/// garbage collection is free to delete. This is the one place E's
+/// eventual-consistency default yields, because an unpinned grant lets GC delete
+/// a body mid-download (E D-17).
+///
+/// The object location is an **explicit input** rather than something read off
+/// the descriptor's placement: an inline body has to be promoted to an object
+/// first, and making the caller name the location is what stops a grant being
+/// minted over a body that has no object to sign.
 ///
 /// # Errors
 ///
@@ -174,9 +177,9 @@ pub enum GrantRejection {
 pub fn mint_grant(
     subject: GrantSubject,
     descriptor: &ContentDescriptor,
+    location: &ContentObjectLocation,
     requested: Option<ByteRange>,
     id: GrantId,
-    token_hash: [u8; 32],
     measurement: MeasurementId,
     now: Timestamp,
 ) -> Result<(DownloadGrant, Pin), GrantRejection> {
@@ -198,32 +201,14 @@ pub fn mint_grant(
         });
     }
 
-    let placement = match (&descriptor.placement, descriptor.placement.class()) {
-        (_, PlacementClass::Inline) => GrantPlacement::InlineRedemption {
-            content: descriptor.digest,
-        },
-        (aex_content_domain::Placement::Object { key, checksum }, PlacementClass::Object) => {
-            GrantPlacement::ObjectRange {
-                key: key.clone(),
-                checksum: *checksum,
-            }
-        }
-        (aex_content_domain::Placement::Inline, PlacementClass::Object) => {
-            // A descriptor whose class and placement disagree was assembled
-            // incorrectly; serving it would hand out bytes nobody can locate.
-            return Err(GrantRejection::ContentMissing(Box::new(ContentMissing {
-                workspace: descriptor.workspace,
-                digest: descriptor.digest,
-                placement: PlacementClass::Object,
-                reason: aex_content_domain::MissingReason::ObjectAbsent,
-            })));
-        }
+    let placement = GrantPlacement::ObjectRange {
+        key: location.key.clone(),
+        checksum: location.checksum,
     };
 
     let expires_at = advance(now, GRANT_TTL);
     let grant = DownloadGrant {
         id,
-        token_hash,
         subject,
         range,
         authorized_bytes: range.len(),
@@ -238,37 +223,6 @@ pub fn mint_grant(
         expires_at,
     };
     Ok((grant, pin))
-}
-
-/// Redeems a grant.
-///
-/// Validates the token hash and the expiry, and nothing else: replay until
-/// expiry is legal, and a transfer that has already started may finish after it.
-/// Charging is for the **authorized** bytes, not the delivered ones.
-///
-/// # Errors
-///
-/// Returns [`GrantRejection::TokenMismatch`] or [`GrantRejection::Expired`].
-pub fn redeem(
-    grant: &DownloadGrant,
-    presented: &[u8; 32],
-    now: Timestamp,
-) -> Result<Redemption, GrantRejection> {
-    if grant.token_hash != *presented {
-        return Err(GrantRejection::TokenMismatch);
-    }
-    if now.unix_millis() >= grant.expires_at.unix_millis() {
-        return Err(GrantRejection::Expired {
-            at: grant.expires_at,
-        });
-    }
-    Ok(Redemption {
-        grant: grant.id,
-        placement: grant.placement.clone(),
-        range: grant.range,
-        charged_bytes: grant.authorized_bytes,
-        measurement: grant.measurement,
-    })
 }
 
 fn advance(now: Timestamp, ttl: Duration) -> Timestamp {
@@ -289,8 +243,8 @@ mod tests {
     use aex_wire::types::Timestamp;
 
     use super::{
-        ByteRange, GrantPlacement, GrantRejection, GrantSubject, MAX_SIGNED_RANGE_BYTES,
-        mint_grant, redeem,
+        ByteRange, ContentObjectLocation, GrantPlacement, GrantRejection, GrantSubject,
+        MAX_SIGNED_RANGE_BYTES, mint_grant,
     };
 
     fn moment(millis: i64) -> Timestamp {
@@ -327,6 +281,13 @@ mod tests {
         }
     }
 
+    fn location() -> ContentObjectLocation {
+        ContentObjectLocation {
+            key: ContentObjectKey::parse("wks/abc").expect("valid"),
+            checksum: Crc32c(7),
+        }
+    }
+
     fn mint(
         size: u64,
         object: bool,
@@ -335,24 +296,21 @@ mod tests {
         mint_grant(
             subject(),
             &descriptor(size, object),
+            &location(),
             range,
             GrantId(Uuid7::compose(1, [2; 10])),
-            [9; 32],
             MeasurementId::from_uuid7(Uuid7::compose(1, [3; 10])),
             moment(0),
         )
     }
 
     #[test]
-    fn a_small_body_gets_a_content_reference_and_a_pin_not_a_copy() {
+    fn every_grant_is_an_object_range_and_arrives_with_its_pin() {
+        // A promoted inline body is signed exactly like any other object: there
+        // is no second placement arm and no redemption route to reach one.
         let (grant, pin) = mint(1_024, false, None).expect("mints");
-        assert!(matches!(
-            grant.placement,
-            GrantPlacement::InlineRedemption { .. }
-        ));
+        assert!(matches!(grant.placement, GrantPlacement::ObjectRange { .. }));
         assert!(matches!(pin, Pin::Grant { .. }));
-        // The grant carries a digest and a pin; there is no byte payload anywhere
-        // in its type.
         assert_eq!(grant.whole_sha256, ContentDigest::of(b"body"));
     }
 
@@ -383,21 +341,11 @@ mod tests {
     }
 
     #[test]
-    fn redemption_checks_the_token_and_the_expiry_only() {
+    fn a_grant_charges_the_authorized_bytes_and_its_pin_shares_its_instant() {
         let (grant, pin) = mint(1_024, true, None).expect("mints");
-        assert!(matches!(
-            redeem(&grant, &[0; 32], moment(1)),
-            Err(GrantRejection::TokenMismatch)
-        ));
-
-        let redemption = redeem(&grant, &[9; 32], moment(1)).expect("redeems");
-        assert_eq!(redemption.charged_bytes, 1_024);
-        // Replay until expiry is legal.
-        assert!(redeem(&grant, &[9; 32], moment(299_999)).is_ok());
-        assert!(matches!(
-            redeem(&grant, &[9; 32], moment(300_000)),
-            Err(GrantRejection::Expired { .. })
-        ));
+        // Charging is for the authorized bytes, not the delivered ones: the bytes
+        // leave through a presigned S3 URL and aex never observes the transfer.
+        assert_eq!(grant.authorized_bytes, 1_024);
 
         // The pin outlives the grant by construction: both carry the same instant.
         let Pin::Grant { expires_at, .. } = pin else {
@@ -407,10 +355,10 @@ mod tests {
     }
 
     #[test]
-    fn neither_debug_nor_display_can_render_the_token() {
+    fn debug_can_render_neither_a_token_nor_an_object_key() {
         let (grant, _) = mint(1_024, true, None).expect("mints");
         let rendered = format!("{grant:?}");
         assert!(!rendered.contains("token"));
-        assert!(!rendered.contains("999999999"));
+        assert!(!rendered.contains("wks/abc"));
     }
 }

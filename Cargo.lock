@@ -1086,6 +1086,7 @@ dependencies = [
  "aws-sdk-dynamodb",
  "aws-smithy-http-client",
  "aws-smithy-types",
+ "hex",
  "proptest",
  "serde_json",
  "thiserror",
@@ -3425,14 +3426,17 @@ checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 name = "content-lifecycle-worker"
 version = "0.1.0"
 dependencies = [
+ "aex-content-aws",
  "aex-content-dynamodb",
  "aex-identity-domain",
  "aex-platform-telemetry",
  "aex-regional-http",
+ "aex-registry-dynamodb",
  "aex-session-dynamodb",
  "aex-telemetry-schema",
  "aex-wire",
  "aex-work-dynamodb",
+ "aex-workspace-domain",
  "async-trait",
  "aws-config",
  "aws-sdk-dynamodb",
@@ -7230,6 +7234,7 @@ dependencies = [
 name = "session-stream-api"
 version = "0.1.0"
 dependencies = [
+ "aex-content-aws",
  "aex-content-domain",
  "aex-content-dynamodb",
  "aex-identity-domain",

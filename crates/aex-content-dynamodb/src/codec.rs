@@ -17,7 +17,7 @@ use aex_wire::types::Timestamp;
 use aws_sdk_dynamodb::types::AttributeValue;
 
 use crate::keys;
-use crate::wire_pending::{Blake3Digest, DigestError, PinOwner, SealedBytes, body_hex};
+use crate::wire_pending::{Blake3Digest, DigestError, InlineBody, PinOwner, body_hex};
 
 /// The `itemType` of a body descriptor.
 pub const CONTENT_DESCRIPTOR: &str = "content_descriptor";
@@ -390,7 +390,7 @@ pub fn decode_descriptor(
 pub fn encode_inline_body(
     workspace: WorkspaceId,
     digest: &ContentHash,
-    sealed: &SealedBytes,
+    sealed: &InlineBody,
 ) -> Result<Item, EncodeError> {
     let key = keys::inline_body(workspace, digest);
     let item = ItemBuilder::new(CONTENT_BODY)
@@ -408,10 +408,10 @@ pub fn encode_inline_body(
 /// # Errors
 ///
 /// [`CodecError`] as for every decode here.
-pub fn decode_inline_body(item: &Item, asserted: WorkspaceId) -> Result<SealedBytes, CodecError> {
+pub fn decode_inline_body(item: &Item, asserted: WorkspaceId) -> Result<InlineBody, CodecError> {
     let row = Row::bind(item, CONTENT_BODY)?;
     row.owned_by("workspaceId", &asserted.to_string())?;
-    Ok(SealedBytes {
+    Ok(InlineBody {
         ciphertext: row.bytes("ciphertext")?.to_vec(),
         enc_context_digest: row.string("encContextDigest")?.to_owned(),
     })
@@ -620,6 +620,15 @@ pub fn decode_root(item: &Item, asserted: WorkspaceId) -> Result<RootDescriptor,
 }
 
 /// One Merkle tree page.
+///
+/// The page body is stored **unsealed** (E D-13, owner decision D5=A). A page
+/// carries file metadata — paths, sizes, modes, mtimes and body digests — and
+/// never file content, and the table is already encrypted at rest under its own
+/// customer-managed key. Unsealing turns a persisted list or stat into a bounded
+/// `Query` plus a decode with no key material on the path, which is what removed
+/// the "plaintext content projection" blocker on four file routes rather than
+/// working around it. Tenant isolation is untouched: the workspace is in the
+/// partition key and `owned_by` is checked on every decode.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TreePage {
     /// The workspace.
@@ -630,8 +639,8 @@ pub struct TreePage {
     pub level: u64,
     /// How many entries it carries.
     pub entry_count: u64,
-    /// The sealed page.
-    pub sealed: SealedBytes,
+    /// The encoded page body.
+    pub body: Vec<u8>,
     /// When the page was written.
     pub created_at: Timestamp,
 }
@@ -653,11 +662,7 @@ pub fn encode_tree_page(page: &TreePage) -> Result<Item, EncodeError> {
         .set("pageDigest", s(page.page.to_wire()))
         .set("level", n(page.level))
         .set("entryCount", n(page.entry_count))
-        .set("ciphertext", b(page.sealed.ciphertext.clone()))
-        .set(
-            "encContextDigest",
-            s(page.sealed.enc_context_digest.clone()),
-        )
+        .set("pageBody", b(page.body.clone()))
         .set("createdAt", stamp(page.created_at))
         .set(
             keys::GC_PK,
@@ -684,10 +689,7 @@ pub fn decode_tree_page(item: &Item, asserted: WorkspaceId) -> Result<TreePage, 
         page: blake3(&row, "pageDigest")?,
         level: row.u64("level")?,
         entry_count: row.u64("entryCount")?,
-        sealed: SealedBytes {
-            ciphertext: row.bytes("ciphertext")?.to_vec(),
-            enc_context_digest: row.string("encContextDigest")?.to_owned(),
-        },
+        body: row.bytes("pageBody")?.to_vec(),
         created_at: row.timestamp("createdAt")?,
     })
 }
@@ -904,7 +906,7 @@ mod tests {
         encode_grant, encode_grant_expiry_cursor, encode_inline_body, encode_tree_page,
     };
     use crate::keys;
-    use crate::wire_pending::{Blake3Digest, SealedBytes};
+    use crate::wire_pending::{Blake3Digest, InlineBody};
 
     fn workspace(byte: u8) -> WorkspaceId {
         WorkspaceId::from_uuid7(Uuid7::compose(1_754_051_696_789, [byte; 10]))
@@ -914,8 +916,8 @@ mod tests {
         Timestamp::parse("2026-08-01T12:34:56.789Z").expect("the pinned spelling")
     }
 
-    fn sealed(bytes: usize) -> SealedBytes {
-        SealedBytes {
+    fn sealed(bytes: usize) -> InlineBody {
+        InlineBody {
             ciphertext: vec![7u8; bytes],
             enc_context_digest: "a".repeat(64),
         }
@@ -1029,7 +1031,7 @@ mod tests {
             page: Blake3Digest::of(b"page"),
             level: 0,
             entry_count: 2,
-            sealed: sealed(16),
+            body: vec![7u8; 16],
             created_at: now(),
         };
         let encoded = encode_tree_page(&page).expect("encodes");
@@ -1121,7 +1123,7 @@ mod tests {
             page: Blake3Digest::of(b"big"),
             level: 0,
             entry_count: 1,
-            sealed: sealed(measure::PAGE_TARGET_BYTES + 1),
+            body: vec![7u8; measure::PAGE_TARGET_BYTES + 1],
             created_at: now(),
         };
         let error = encode_tree_page(&page).expect_err("over the page target");
