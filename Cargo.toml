@@ -149,6 +149,7 @@ members = [
     "tests/live/aex-live-usage-receipt-dispatcher",
     "tests/live/aex-live-usage-storage-worker",
     "tests/live/aex-live-usage-transfer-worker",
+    "tests/support/aex-scenarios",
     "tests/support/aex-test-harness",
     "tests/load/aex-load-harness",
 ]

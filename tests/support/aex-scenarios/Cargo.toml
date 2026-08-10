@@ -1,0 +1,92 @@
+[package]
+name = "aex-scenarios"
+version = "0.1.0"
+description = "The cross-service scenario bodies, written against the engine-backed integration lane rather than against a plane that does not exist yet."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+# Every test target is declared explicitly: a scenario body is named by
+# `release/scenario-ownership.toml`, so it can never be an autodiscovered file.
+autotests = false
+
+[lints]
+workspace = true
+
+[package.metadata.aex]
+owner = "test-architecture"
+role = "test_support"
+artifact = "none"
+layers = ["unit", "integration"]
+concerns = ["property"]
+seams = []
+security_tier = "diagnostic"
+risk = ["sql"]
+scenarios = []
+
+[package.metadata.aex.targets]
+properties = "unit"
+control_workspace = "integration"
+identity_account = "integration"
+
+[package.metadata.aex.not_applicable]
+live_suite = "test-only crate; must be absent from every production link graph"
+
+[features]
+# Engine-backed targets. With the feature off this crate is the two pure
+# translation halves and nothing else, so the ordinary unit lane neither links
+# `sqlx` nor reaches for a container runtime.
+integration-engines = [
+  "dep:sqlx",
+  "dep:tokio",
+  "dep:uuid",
+  "dep:async-trait",
+  "aex-test-harness/containers",
+]
+
+[dependencies]
+aws-sdk-rdsdata.workspace = true
+aws-smithy-types.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+aex-rds-data = { path = "../../../crates/aex-rds-data" }
+
+async-trait = { workspace = true, optional = true }
+sqlx = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
+
+[dev-dependencies]
+async-trait.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+time.workspace = true
+uuid.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+aex-control-app = { path = "../../../crates/aex-control-app" }
+aex-control-aurora = { path = "../../../crates/aex-control-aurora" }
+aex-control-domain = { path = "../../../crates/aex-control-domain" }
+aex-identity-app = { path = "../../../crates/aex-identity-app" }
+aex-identity-aurora = { path = "../../../crates/aex-identity-aurora" }
+aex-identity-domain = { path = "../../../crates/aex-identity-domain" }
+aex-test-harness = { path = "../aex-test-harness" }
+aex-wire = { path = "../../../crates/aex-wire" }
+# The migration bundle and the privilege renderer a plane applies, so the schema
+# a scenario runs against is the schema a plane receives.
+central-schema-admin = { path = "../../../workers/central-schema-admin" }
+
+[[test]]
+name = "properties"
+path = "tests/properties.rs"
+
+[[test]]
+name = "control_workspace"
+path = "tests/control_workspace.rs"
+required-features = ["integration-engines"]
+
+[[test]]
+name = "identity_account"
+path = "tests/identity_account.rs"
+required-features = ["integration-engines"]
