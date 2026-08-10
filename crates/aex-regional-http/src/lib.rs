@@ -33,7 +33,7 @@ pub mod release_health;
 pub mod router;
 pub mod stream;
 
-pub use authz::{ParameterStore, RegionalProjection, TrustError, parse_pepper_ring};
+pub use authz::{ParameterStore, RegionalProjection, SecretStore, TrustError, parse_pepper_ring};
 pub use capability::{CompositionManifest, admit};
 pub use config::{Environment, Lookup, RegionalHttpConfigError};
 pub use context::{EffectiveLimits, RegionalAuthorization, RequestContext};

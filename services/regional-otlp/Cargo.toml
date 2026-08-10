@@ -50,9 +50,10 @@ aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
 aex-wire = { path = "../../crates/aex-wire" }
 async-trait.workspace = true
 aws-config.workspace = true
-# `central-authz` is IAM-invoked, so the assertion exchange is a direct invoke.
-# Parameter Store holds the assertion trust anchors, read once at cold start.
-aws-sdk-ssm.workspace = true
+# Secrets Manager holds the credential pepper ring, read once at cold start from
+# the same id the issuing authority reads. This deployable serves no listing, so
+# it resolves no cursor signing ring and links no Parameter Store client at all.
+aws-sdk-secretsmanager.workspace = true
 aws-sdk-dynamodb.workspace = true
 aws-sdk-s3.workspace = true
 axum.workspace = true

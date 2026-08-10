@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering as AtomicOrdering;
 
 use aex_identity_domain::credential::{Pepper, PresentedDigest, verifier};
-use aex_regional_http::authz::{MAX_PARAMETER_BYTES, TrustError, parse_pepper_ring};
+use aex_regional_http::authz::{MAX_DOCUMENT_BYTES, TrustError, parse_pepper_ring};
 use aex_regional_http::capability::{
     CapabilityBinding, CompositionManifest, DeployableId, ResolvedConfig, admit,
 };
@@ -134,7 +134,7 @@ fn fixture_credential(index: u32) -> PresentedCredential {
 }
 
 /// The parameter name every pepper-ring case reports against.
-const PEPPER_PARAM: &str = "/aex/dev/credential-pepper/ring";
+const PEPPER_SECRET: &str = "aex/dev/central/token-pepper";
 
 /// A pepper ring document holding exactly these versions.
 fn pepper_document(entries: &[(u16, [u8; 32])]) -> String {
@@ -569,7 +569,7 @@ fn every_generated_regional_route_has_exactly_one_planned_owner() {
 #[test]
 fn a_presented_credential_verifies_only_against_its_own_stored_verifier() {
     let ring =
-        parse_pepper_ring(PEPPER_PARAM, &pepper_document(&[(1, [11; 32])])).expect("a usable ring");
+        parse_pepper_ring(PEPPER_SECRET, &pepper_document(&[(1, [11; 32])])).expect("a usable ring");
     let credential = fixture_credential(5);
     assert_eq!(
         ring.admits(&credential, &stored(&credential, 1, [11; 32])),
@@ -605,7 +605,7 @@ fn a_rotation_does_not_invalidate_a_pre_rotation_credential() {
     // keeps verifying while one minted after it verifies too. An edge that
     // assumed "the newest pepper" would refuse every pre-rotation credential.
     let ring = parse_pepper_ring(
-        PEPPER_PARAM,
+        PEPPER_SECRET,
         &pepper_document(&[(1, [11; 32]), (2, [22; 32])]),
     )
     .expect("a usable ring");
@@ -638,7 +638,7 @@ fn a_pepper_version_the_region_does_not_hold_is_a_fault_and_never_a_refusal() {
     // would tell a customer to rotate a key that was never wrong, so this arm is
     // the one that survives as a `503`.
     let ring =
-        parse_pepper_ring(PEPPER_PARAM, &pepper_document(&[(1, [11; 32])])).expect("a usable ring");
+        parse_pepper_ring(PEPPER_SECRET, &pepper_document(&[(1, [11; 32])])).expect("a usable ring");
     let credential = fixture_credential(5);
     assert_eq!(
         ring.admits(&credential, &stored(&credential, 7, [11; 32])),
@@ -659,7 +659,7 @@ fn the_stored_verifier_is_exactly_the_one_the_control_plane_computes() {
         ),
     );
     let ring =
-        parse_pepper_ring(PEPPER_PARAM, &pepper_document(&[(1, [11; 32])])).expect("a usable ring");
+        parse_pepper_ring(PEPPER_SECRET, &pepper_document(&[(1, [11; 32])])).expect("a usable ring");
     assert_eq!(
         ring.admits(&credential, &StoredVerifier::new(*central.as_bytes(), 1)),
         Ok(())
@@ -681,7 +681,7 @@ fn no_credential_type_renders_its_secret() {
     assert!(rendered.contains("<redacted:32 bytes>"), "{rendered}");
 
     let ring = parse_pepper_ring(
-        PEPPER_PARAM,
+        PEPPER_SECRET,
         &pepper_document(&[(1, [11; 32]), (4, [12; 32])]),
     )
     .expect("a usable ring");
@@ -718,7 +718,7 @@ fn the_pepper_ring_refuses_every_unusable_document() {
         ),
     ] {
         assert!(
-            parse_pepper_ring(PEPPER_PARAM, &document).is_err(),
+            parse_pepper_ring(PEPPER_SECRET, &document).is_err(),
             "a {name} document must stop the process"
         );
     }
@@ -727,12 +727,12 @@ fn the_pepper_ring_refuses_every_unusable_document() {
         .map(|version| (version, [u8::try_from(version % 251).expect("small"); 32]))
         .collect();
     assert!(matches!(
-        parse_pepper_ring(PEPPER_PARAM, &pepper_document(&too_many)),
+        parse_pepper_ring(PEPPER_SECRET, &pepper_document(&too_many)),
         Err(TrustError::PepperRing { .. })
     ));
 
     assert!(matches!(
-        parse_pepper_ring(PEPPER_PARAM, &" ".repeat(MAX_PARAMETER_BYTES + 1)),
+        parse_pepper_ring(PEPPER_SECRET, &" ".repeat(MAX_DOCUMENT_BYTES + 1)),
         Err(TrustError::TooLarge { .. })
     ));
 }

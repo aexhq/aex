@@ -29,7 +29,7 @@ use std::time::Duration;
 
 use aex_internal_contracts::assertion::AssertionAudience;
 use aex_observation_domain::keys::ScopeKey;
-use aex_regional_http::authz::{ParameterStore, RegionalProjection, TrustError};
+use aex_regional_http::authz::{ParameterStore, RegionalProjection, SecretStore, TrustError};
 use aex_regional_http::capability::{CompositionError, Declares, StreamSocket, WorkClaim};
 use aex_regional_http::config::RegionalHttpConfigError;
 use aex_regional_http::edge::{EdgeBinding, RegionalEdge, SystemClock};
@@ -226,6 +226,7 @@ async fn run(
     let dynamodb = aws_sdk_dynamodb::Client::new(&aws);
     let objects = aws_sdk_s3::Client::new(&aws);
     let parameters = ParameterStore::new(aws_sdk_ssm::Client::new(&aws));
+    let secrets = SecretStore::new(aws_sdk_secretsmanager::Client::new(&aws));
 
     // One flag for the whole process, read by readiness and by both halves. It
     // is raised before the listener is asked to stop, so `/internal/readyz`
@@ -251,10 +252,8 @@ async fn run(
     // this process can check no credential, and an unreadable signing ring means
     // it can issue no continuation a later request could redeem. One pepper ring
     // and one cursor ring serve both halves — they were always the same two
-    // parameters read twice by two tasks.
-    let peppers = parameters
-        .pepper_ring(&config.credential_pepper_ref)
-        .await?;
+    // references read twice by two tasks.
+    let peppers = secrets.pepper_ring(&config.credential_pepper_ref).await?;
     // One ring, shared by both halves. The unary side signs continuations with
     // it and the stream side resumes them, so reading the parameter twice would
     // duplicate the secret material and, mid-rotation, could give one half a ring

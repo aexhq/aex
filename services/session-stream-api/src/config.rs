@@ -50,7 +50,16 @@ pub const PORT: &str = "AEX_PORT";
 /// `AEX_SESSION_DRAIN_DEADLINE_MS` and `AEX_STREAM_DRAIN_DEADLINE_MS`, which
 /// drained one process each and now drain one.
 pub const DRAIN_DEADLINE_MS: &str = "AEX_DRAIN_DEADLINE_MS";
-/// The parameter holding the credential pepper ring both edges verify against.
+/// The Secrets Manager id holding the credential pepper ring both edges verify
+/// against.
+///
+/// It names the id the issuing authority also reads —
+/// `aex/<plane>/central/token-pepper` — and not a regional copy of it. One
+/// stored document with two readers cannot drift; two copies can, and a
+/// rotation that reached only one of them would leave keys minted under the new
+/// version verifying centrally and failing here, silently and only for some
+/// keys. Read once at cold start and held, so a version added afterwards is
+/// invisible here until this process restarts.
 ///
 /// This replaced `AEX_AUTHZ_FUNCTION_ARN` and `AEX_AUTHZ_VERIFY_KEYS_PARAM`
 /// together: there is no `central-authz` invoke to address and no assertion
@@ -247,7 +256,7 @@ pub struct Config {
     pub port: u16,
     /// How long a drain may run before the listener is abandoned.
     pub drain_deadline_ms: u64,
-    /// Credential pepper ring parameter name.
+    /// Credential pepper ring Secrets Manager id.
     pub credential_pepper_ref: String,
     /// Regional authorization projection table.
     pub authz_projection_table: String,

@@ -139,13 +139,15 @@ pub async fn run(config: Config) -> Result<(), RegionalObservationApiRunError> {
     );
 
     let parameters = aex_regional_http::authz::ParameterStore::new(aws_sdk_ssm::Client::new(&aws));
+    let secrets =
+        aex_regional_http::authz::SecretStore::new(aws_sdk_secretsmanager::Client::new(&aws));
     // All five independent provider proofs share one cold-start window. Key
     // material is still resolved exactly once and never enters the environment
     // or Terraform state.
     let (probe, ring, peppers) = tokio::join!(
         reader.probe(),
         parameters.cursor_key_ring(&config.cursor_key_ref),
-        parameters.pepper_ring(&config.credential_pepper_ref),
+        secrets.pepper_ring(&config.credential_pepper_ref),
     );
     probe.map_err(|error| RegionalObservationApiRunError::Probe {
         reason: error.to_string(),

@@ -44,10 +44,14 @@ integration-engines = ["aex-test-harness/containers"]
 [dependencies]
 axum.workspace = true
 async-trait.workspace = true
-# Parameter Store holds the credential pepper ring and the cursor signing ring.
-# Both are read once at cold start, before the listener binds. There is no
+# The two cold-start reads, one store each. The credential pepper ring is read
+# from Secrets Manager because that is where the issuing authority reads it: one
+# stored document with two readers, rather than two copies a rotation can leave
+# out of step. The cursor signing ring has a single reader and stays in
+# Parameter Store. Both are resolved once, before the listener binds. There is no
 # `aws-sdk-lambda` here any more: nothing on a regional request path invokes a
 # function, because the credential check is in-process.
+aws-sdk-secretsmanager.workspace = true
 aws-sdk-ssm.workspace = true
 base64.workspace = true
 bytes.workspace = true

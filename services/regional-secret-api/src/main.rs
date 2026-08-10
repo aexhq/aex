@@ -13,7 +13,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use aex_internal_contracts::assertion::AssertionAudience;
-use aex_regional_http::authz::{ParameterStore, RegionalProjection, TrustError};
+use aex_regional_http::authz::{RegionalProjection, SecretStore, TrustError};
 use aex_regional_http::config::RegionalHttpConfigError;
 use aex_regional_http::edge::{EdgeBinding, RegionalEdge, SystemClock};
 use aex_regional_http::health::Readiness;
@@ -106,7 +106,7 @@ async fn run(
     let aws = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
     let dynamodb = aws_sdk_dynamodb::Client::new(&aws);
     let kms = aws_sdk_kms::Client::new(&aws);
-    let parameters = ParameterStore::new(aws_sdk_ssm::Client::new(&aws));
+    let secrets = SecretStore::new(aws_sdk_secretsmanager::Client::new(&aws));
 
     // The two adapters this deployable is allowed to hold, and nothing else: the
     // custody authority and the envelope crypto over the *secret* KMS key.
@@ -132,9 +132,7 @@ async fn run(
             .map_err(|error| RegionalSecretApiRunError::Runtime(error.to_string()))?,
     };
 
-    let peppers = parameters
-        .pepper_ring(&config.credential_pepper_ref)
-        .await?;
+    let peppers = secrets.pepper_ring(&config.credential_pepper_ref).await?;
     // This deployable serves no listing, so it resolves no cursor signing ring
     // and its configuration declares none. A key it cannot use is a key it
     // cannot leak.

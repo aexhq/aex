@@ -32,12 +32,21 @@ pub const QUERY_READ_BYTES_VAR: &str = "AEX_OBS_QUERY_READ_BYTES";
 pub const METRIC_AGGREGATE_SCAN_VAR: &str = "AEX_OBS_METRIC_AGGREGATE_SCAN";
 /// Environment variable naming the Parameter Store cursor signing key ring.
 pub const CURSOR_KEY_REF_VAR: &str = "AEX_CURSOR_SIGNING_KEY_REF";
-/// Environment variable naming the Parameter Store credential pepper ring.
+/// Environment variable naming the Secrets Manager credential pepper ring.
 ///
-/// The peppers are a `SecureString` document read once at cold start, not an
-/// inline environment value: a pepper rotation must not require a redeploy of
-/// every regional service, and a verifier names the version it was computed
-/// under so both halves of a rotation have to be resolvable at once.
+/// It names the id the issuing authority also reads —
+/// `aex/<plane>/central/token-pepper` — and not a regional copy of it. One
+/// stored document with two readers cannot drift; two copies can, and a
+/// rotation that reached only one of them would leave keys minted under the new
+/// version verifying centrally and failing here, silently and only for some
+/// keys.
+///
+/// The peppers are a document read once at cold start, not an inline
+/// environment value: the material never enters the environment, the task
+/// definition or Terraform state, and a verifier names the version it was
+/// computed under so a whole ring has to be resolvable at once. Held for the
+/// process lifetime and never re-read, so a version added afterwards is
+/// invisible here until this process restarts.
 ///
 /// This replaced `AEX_AUTHZ_FUNCTION_ARN` and `AEX_AUTHZ_VERIFY_KEYS_PARAM`
 /// together: there is no `central-authz` invoke to address and no assertion
@@ -112,7 +121,7 @@ pub struct Config {
     pub metric_aggregate_scan: u64,
     /// The Parameter Store reference for the cursor signing key ring.
     pub cursor_key_ref: String,
-    /// The Parameter Store name holding the credential pepper ring.
+    /// The Secrets Manager id holding the credential pepper ring.
     pub credential_pepper_ref: String,
     /// The read-only regional authorization projection table.
     pub authz_projection_table: String,
@@ -324,7 +333,7 @@ mod tests {
             ),
             (
                 CREDENTIAL_PEPPER_REF_VAR,
-                "/aex/dev/credential-pepper/ring".to_owned(),
+                "aex/dev/central/token-pepper".to_owned(),
             ),
             (
                 AUTHZ_PROJECTION_TABLE_VAR,

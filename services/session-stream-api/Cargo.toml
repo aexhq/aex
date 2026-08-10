@@ -48,10 +48,11 @@ path = "src/main.rs"
 aws-config.workspace = true
 aws-sdk-dynamodb.workspace = true
 aws-sdk-dynamodbstreams.workspace = true
-# The client that invokes `central-authz`, not a hosting dependency: the
-# assertion exchange stays a direct Lambda invoke after this service moved off
-# Lambda hosting.
 aws-sdk-s3.workspace = true
+# The two cold-start reads, one store each: Secrets Manager holds the credential
+# pepper ring at the id the issuing authority also reads, and Parameter Store
+# holds the cursor signing ring both halves of this deployable share.
+aws-sdk-secretsmanager.workspace = true
 aws-sdk-ssm.workspace = true
 axum.workspace = true
 async-trait.workspace = true
