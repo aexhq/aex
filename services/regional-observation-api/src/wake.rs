@@ -127,7 +127,10 @@ mod tests {
     use super::WakeHub;
 
     fn session(seed: u8) -> ScopeKey {
-        ScopeKey::Session(SessionId::from_uuid7(Uuid7::compose(1, [seed; 10])))
+        ScopeKey::Session {
+            workspace: WorkspaceId::from_uuid7(Uuid7::compose(1, [200; 10])),
+            session: SessionId::from_uuid7(Uuid7::compose(1, [seed; 10])),
+        }
     }
 
     fn workspace(seed: u8) -> ScopeKey {

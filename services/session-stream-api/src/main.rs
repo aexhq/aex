@@ -90,7 +90,7 @@ impl StreamRevalidator for EdgeRevalidator {
         scope: &ScopeKey,
     ) -> Result<(), aex_wire::error::WireError> {
         self.edge.revalidate(authorization).await?;
-        let ScopeKey::Session(session) = scope else {
+        let ScopeKey::Session { session, .. } = scope else {
             return Ok(());
         };
         let (pk, sk) = aex_session_dynamodb::stream_keys::head(*session);

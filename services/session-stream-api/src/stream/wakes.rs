@@ -306,20 +306,28 @@ async fn read_shard(
                 break;
             };
             retry.success();
-            // Scope hints fire immediately and synchronously; only the
-            // session-to-workspace resolutions wait on the table, and those are
-            // deduplicated per batch and driven concurrently rather than one
+            // An observation record's key carries its workspace, so both its
+            // own scope and the workspace scope above it fire immediately and
+            // with no table read at all. Only a session-authority `EVT#` row
+            // still needs the session-to-workspace binding resolved, and those
+            // are deduplicated per batch and driven concurrently rather than one
             // record at a time.
             let mut sessions = BTreeSet::new();
             for record in output.records() {
-                if let Some(scope) = classify(record, spec.authority) {
-                    hub.notify(scope);
-                    if let ScopeKey::Session(session) = scope {
+                match classify(record, spec.authority) {
+                    Some(WakeTarget::Scope(scope)) => {
+                        hub.notify(scope);
+                        if let ScopeKey::Session { workspace, .. } = scope {
+                            hub.notify(ScopeKey::Workspace(workspace));
+                        }
+                    }
+                    Some(WakeTarget::Session(session)) => {
                         sessions.insert(session);
                     }
+                    None => {}
                 }
             }
-            resolver.notify_workspaces(&hub, sessions).await;
+            resolver.notify_sessions(&hub, sessions).await;
             let count = output.records().len();
             let Some(next) = output.next_shard_iterator().map(str::to_owned) else {
                 return;
@@ -333,7 +341,22 @@ async fn read_shard(
     }
 }
 
-fn classify(record: &Record, authority: AuthorityStream) -> Option<ScopeKey> {
+/// What one classified record identifies.
+///
+/// The two authorities key differently. An `observation-authority` partition key
+/// carries its workspace, so it yields a whole [`ScopeKey`] and needs nothing
+/// else. A `session-authority` `EVT#` key carries only the session, so its
+/// workspace has to be resolved from the immutable session head before any scope
+/// can be named — the one place a wake still pays for a read.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WakeTarget {
+    /// A scope the record's own key fully determines.
+    Scope(ScopeKey),
+    /// A session whose owning workspace is not in the record.
+    Session(SessionId),
+}
+
+fn classify(record: &Record, authority: AuthorityStream) -> Option<WakeTarget> {
     let stream = record.dynamodb()?;
     if stream.stream_view_type() != Some(&StreamViewType::KeysOnly) {
         return None;
@@ -343,10 +366,11 @@ fn classify(record: &Record, authority: AuthorityStream) -> Option<ScopeKey> {
     let sk = string(keys.get("sk")?)?;
     match authority {
         AuthorityStream::Observation => {
-            aex_observation_store_dynamodb::keys::parse_observation_pk(pk).map(|wake| wake.scope)
+            aex_observation_store_dynamodb::keys::parse_observation_pk(pk)
+                .map(|wake| WakeTarget::Scope(wake.scope))
         }
         AuthorityStream::Session => {
-            aex_session_dynamodb::stream_keys::parse_event(pk, sk).map(ScopeKey::Session)
+            aex_session_dynamodb::stream_keys::parse_event(pk, sk).map(WakeTarget::Session)
         }
     }
 }
@@ -374,19 +398,30 @@ impl WorkspaceResolver {
         }
     }
 
-    /// Wakes the workspace scope of each distinct session in one batch.
+    /// Wakes both scopes of each distinct session in one batch.
+    ///
+    /// The session scope needs the resolution too: a scope names its workspace,
+    /// so a session event cannot be turned into a hint until the binding is
+    /// known. An unresolvable session is skipped rather than hinted under a
+    /// guessed owner — a lost hint costs one poll interval, a hint under the
+    /// wrong key would wake a stranger's socket.
     ///
     /// The resolutions are driven at a bounded width and in no particular
-    /// order: a wake is a keyed latency hint, never truth, so which workspace
-    /// is notified first cannot matter.
-    async fn notify_workspaces(&self, hub: &WakeHub, sessions: BTreeSet<SessionId>) {
+    /// order: a wake is a keyed latency hint, never truth, so which session is
+    /// notified first cannot matter.
+    async fn notify_sessions(&self, hub: &WakeHub, sessions: BTreeSet<SessionId>) {
         use futures::StreamExt as _;
 
-        let resolutions = sessions.into_iter().map(|session| self.workspace(session));
+        let resolutions = sessions.into_iter().map(|session| async move {
+            self.workspace(session)
+                .await
+                .map(|workspace| (workspace, session))
+        });
         let mut open =
             futures::stream::iter(resolutions).buffer_unordered(WORKSPACE_RESOLUTION_CONCURRENCY);
-        while let Some(workspace) = open.next().await {
-            if let Some(workspace) = workspace {
+        while let Some(resolved) = open.next().await {
+            if let Some((workspace, session)) = resolved {
+                hub.notify(ScopeKey::Session { workspace, session });
                 hub.notify(ScopeKey::Workspace(workspace));
             }
         }
@@ -448,7 +483,8 @@ mod tests {
     use regional_observation_api::wake::WakeHub;
 
     use super::{
-        AuthorityStream, Backoff, RETRY_MIN, StreamSpec, WorkspaceResolver, classify, read_shard,
+        AuthorityStream, Backoff, RETRY_MIN, StreamSpec, WakeTarget, WorkspaceResolver, classify,
+        read_shard,
     };
 
     #[test]
@@ -616,7 +652,10 @@ mod tests {
         );
 
         let hub = WakeHub::default();
-        let mut session_wake = hub.subscribe(ScopeKey::Session(session_id));
+        let mut session_wake = hub.subscribe(ScopeKey::Session {
+            workspace: workspace_id,
+            session: session_id,
+        });
         let mut workspace_wake = hub.subscribe(ScopeKey::Workspace(workspace_id));
 
         read_shard(
@@ -632,7 +671,11 @@ mod tests {
         )
         .await;
 
-        assert!(session_wake.wait(Duration::from_millis(1)).await);
+        assert!(
+            session_wake.wait(Duration::from_millis(1)).await,
+            "the session scope is woken from the resolved binding: a scope names \
+             its workspace, so an `EVT#` key alone cannot address one"
+        );
         assert!(
             workspace_wake.wait(Duration::from_millis(1)).await,
             "the workspace scope is woken from the resolved binding"
@@ -671,25 +714,32 @@ mod tests {
 
     #[test]
     fn observation_and_event_filters_consume_keys_only() {
-        let scope = ScopeKey::Session(session(1));
+        let scope = ScopeKey::Session {
+            workspace: WorkspaceId::from_uuid7(Uuid7::compose(1, [7; 10])),
+            session: session(1),
+        };
         let bucket = BucketHour::parse("2026-08-02T12").expect("bucket");
         let observation = record(
             observation_pk(&scope, Signal::Logs, bucket, 0),
             "00000000000000000001",
             StreamViewType::KeysOnly,
         );
+        // An observation key names its own workspace, so the classifier returns
+        // a complete scope and the reader needs no binding read for it.
         assert_eq!(
             classify(&observation, AuthorityStream::Observation),
-            Some(scope)
+            Some(WakeTarget::Scope(scope))
         );
         let event = record(
             format!("SESSION#{}", session(2)),
             "EVT#00000000000000000001",
             StreamViewType::KeysOnly,
         );
+        // A session event names no workspace, so it can only be reported as a
+        // session to resolve.
         assert_eq!(
             classify(&event, AuthorityStream::Session),
-            Some(ScopeKey::Session(session(2)))
+            Some(WakeTarget::Session(session(2)))
         );
         assert_eq!(
             classify(

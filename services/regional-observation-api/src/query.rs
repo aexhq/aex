@@ -107,7 +107,7 @@ pub fn normalize(
 #[must_use]
 pub fn with_scope(mut query: NormalizedQuery, scope: &ScopeKey) -> NormalizedQuery {
     query.axis = match scope {
-        ScopeKey::Session(_) => aex_observation_query::plan::ScopeAxis::Scope,
+        ScopeKey::Session { .. } => aex_observation_query::plan::ScopeAxis::Scope,
         ScopeKey::Workspace(_) => aex_observation_query::plan::ScopeAxis::Workspace,
     };
     query
@@ -1006,7 +1006,11 @@ mod tests {
                     signal: *signal,
                     shard,
                     state: SegmentState::After(ResumeKey {
-                        scope: format!("S#{session}"),
+                        // Rendered by `ScopeKey`, so this ceiling is measured
+                        // against the key the reader actually mints — which now
+                        // carries the workspace as well as the session, and is
+                        // ~31 bytes longer per segment.
+                        scope: ScopeKey::Session { workspace, session }.to_key(),
                         primary_ms: 900,
                         accepted_ms: 950,
                         observation_id: ObservationId::from_uuid7(aex_wire::Uuid7::compose(
