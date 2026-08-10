@@ -123,6 +123,35 @@ impl ExchangeSecret {
     }
 }
 
+/// Reads and validates the first-party sign-in exchange secret.
+///
+/// The secret's whole value is the credential — no JSON envelope and no key
+/// name — because a wrapper would be one more thing a rotation could get wrong
+/// for no reader. A binary secret is refused rather than lossily decoded.
+///
+/// Shared by both composition roots that mount `central:auth`: this crate's own
+/// Lambda and the merged `central-api` process. One reader means one format.
+///
+/// # Errors
+///
+/// Returns the reason as a string, for the caller to name its own dependency
+/// with.
+pub async fn load_exchange_secret(
+    secrets: &aws_sdk_secretsmanager::Client,
+    secret_id: &str,
+) -> Result<ExchangeSecret, String> {
+    let value = secrets
+        .get_secret_value()
+        .secret_id(secret_id)
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    let plaintext = value
+        .secret_string()
+        .ok_or_else(|| "the secret holds no string value".to_owned())?;
+    ExchangeSecret::new(plaintext.trim()).map_err(|error| error.to_string())
+}
+
 /// Everything the five routes need, resolved once at start-up.
 pub struct AuthService {
     store: Arc<dyn IdentityStore>,

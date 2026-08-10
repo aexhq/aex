@@ -80,7 +80,10 @@ async fn compose(
     // authorization — so a process that serves without this secret answers the
     // whole credential ceremony's second step with a `500` for its entire life.
     // Refusing here turns that into one start-up line naming the dependency.
-    let exchange_secret = load_exchange_secret(&secrets, &config.sign_in_exchange_secret_id).await?;
+    let exchange_secret =
+        api::load_exchange_secret(&secrets, &config.sign_in_exchange_secret_id)
+            .await
+            .map_err(|reason| CentralIdentityApiRunError::Dependency("sign-in-exchange", reason))?;
 
     let clock: Arc<dyn aex_identity_app::ports::Clock> = Arc::new(aex_central_aws::SystemClock);
     let store = Arc::new(aex_identity_aurora::AuroraIdentityStore::new(
@@ -115,28 +118,6 @@ async fn compose(
     );
 
     run(config, api, edge, Probes::READY, telemetry).await
-}
-
-/// Reads and validates the first-party sign-in exchange secret.
-///
-/// The secret's whole value is the credential — no JSON envelope and no key
-/// name — because a wrapper would be one more thing a rotation could get wrong
-/// for no reader. A binary secret is refused rather than lossily decoded.
-async fn load_exchange_secret(
-    secrets: &aws_sdk_secretsmanager::Client,
-    secret_id: &str,
-) -> Result<api::ExchangeSecret, CentralIdentityApiRunError> {
-    let named = |reason: String| CentralIdentityApiRunError::Dependency("sign-in-exchange", reason);
-    let value = secrets
-        .get_secret_value()
-        .secret_id(secret_id)
-        .send()
-        .await
-        .map_err(|error| named(error.to_string()))?;
-    let plaintext = value
-        .secret_string()
-        .ok_or_else(|| named("the secret holds no string value".to_owned()))?;
-    api::ExchangeSecret::new(plaintext.trim()).map_err(|error| named(error.to_string()))
 }
 
 /// The one-column `SELECT 1` the readiness probe issues.

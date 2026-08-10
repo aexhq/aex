@@ -176,6 +176,17 @@ async fn run(
         .await
         .map_err(|error| CentralApiRunError::Dependency("identity-pepper", error.to_string()))?;
 
+    // The first-party sign-in exchange secret. Without it `dashboard_session_create`
+    // can mint nothing, and a browser session is the only thing that can approve
+    // a device authorization — so serving without this secret means the whole
+    // credential ceremony fails at its second step for the life of the process.
+    let exchange_secret = central_identity_api::api::load_exchange_secret(
+        &secrets,
+        &config.sign_in_exchange_secret_id,
+    )
+    .await
+    .map_err(|reason| CentralApiRunError::Dependency("sign-in-exchange", reason))?;
+
     let cursor_peppers = Arc::new(aex_central_aws::SecretsManagerPepperKeystore::new(
         secrets,
         config.cursor_secret_id.clone(),
@@ -224,6 +235,7 @@ async fn run(
         aex_wire::types::HttpsUrl::parse(&config.device_verification_uri).map_err(|error| {
             CentralApiRunError::Dependency("device-verification-uri", error.to_string())
         })?,
+        exchange_secret,
     ));
 
     let billing_authority = Arc::new(finance_api::aurora::AuroraBillingAuthority::new(
