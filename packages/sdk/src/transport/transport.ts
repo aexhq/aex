@@ -33,11 +33,18 @@ export class FetchTransport implements AexTransport {
     const response = await this.#fetch(`${this.#baseUrls[plane]}${request.path}`, {
       method: request.method,
       headers: request.headers,
-      ...(request.body ? { body: request.body } : {}),
+      ...(request.body ? { body: toFetchBody(request.body) } : {}),
       ...(request.signal ? { signal: request.signal } : {}),
       redirect: "error",
     });
     const body = response.status === 204 ? undefined : await response.json();
     return { status: response.status, headers: response.headers, body: body as T };
   }
+}
+
+function toFetchBody(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
+  const buffer = bytes.buffer;
+  return buffer instanceof ArrayBuffer
+    ? new Uint8Array(buffer, bytes.byteOffset, bytes.byteLength)
+    : Uint8Array.from(bytes);
 }
