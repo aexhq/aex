@@ -140,7 +140,8 @@ pub const INSERT_DEVICE_AUTHORIZATION: &str = "\
 INSERT INTO identity.device_authorization \
   (id, device_verifier, user_code_hash, pepper_version, status, requested_scopes, \
    issued_at, expires_at, poll_interval_ms) \
-VALUES (:id, :device_verifier, :user_code_hash, :pepper_version, 'pending', :requested_scopes, \
+VALUES (:id, :device_verifier, :user_code_hash, :pepper_version, 'pending', \
+        ARRAY(SELECT jsonb_array_elements_text(CAST(:requested_scopes AS jsonb))), \
         TIMESTAMPTZ 'epoch' + :issued_at_ms * INTERVAL '1 millisecond', \
         TIMESTAMPTZ 'epoch' + :expires_at_ms * INTERVAL '1 millisecond', :poll_interval_ms)";
 

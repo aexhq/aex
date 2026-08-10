@@ -227,3 +227,12 @@ fn account_token_scopes_expand_from_a_data_api_json_scalar() {
         "account-token creation passes an unsupported Data API array parameter"
     );
 }
+
+#[test]
+fn device_authorization_scopes_expand_from_a_data_api_json_scalar() {
+    assert!(
+        sql::INSERT_DEVICE_AUTHORIZATION
+            .contains("ARRAY(SELECT jsonb_array_elements_text(CAST(:requested_scopes AS jsonb)))"),
+        "device-authorization creation passes an unsupported Data API array parameter"
+    );
+}
