@@ -12,15 +12,27 @@
 # production floor of two tasks, `session-stream-api` stop timeout 30 s); the rest
 # are derived from the shape a peer doing the same kind of work already carries,
 # and each says which peer and why in the comment above it. The reserved
-# concurrencies sum to 473 in the central plane
-# (50 + 200 + 50 + 40 + 20 + 20 + 40 + 10 + 30 + 2 + 10 + 1)
+# concurrencies sum to 488 in the central plane
+# (50 + 200 + 50 + 40 + 40 + 20 + 40 + 10 + 30 + 2 + 5 + 1)
 # and 242 in the regional plane
 # (40 + 40 + 20 + 5 + 5 + 50 + 20 + 20 + 8 + 4 + 10 + 10 + 10),
-# both inside the 900 an account with the default 1000-concurrency limit may
-# reserve. Every addend is a row below; no row reserves concurrency that is not
-# counted here, and the standing policy is to add none. The regional total is
-# lower than it once was because `regional-session-api` moved off Lambda onto
-# Fargate and gave its 200 back to the unreserved pool.
+# so one plane reserves 730. Every addend is a row below; no row reserves
+# concurrency that is not counted here, and the standing policy is to add none.
+# The regional total is lower than it once was because `regional-session-api`
+# moved off Lambda onto Fargate and gave its 200 back to the unreserved pool.
+#
+# BOTH PLANES SHARE ONE ACCOUNT, so the figure that has to fit is 1,460, not
+# 730. An account on the default 1,000 limit may reserve only 900, which two
+# planes exceed; the pending increase to ~3,000 (2,900 reservable, because AWS
+# holds 100 back unreserved) is therefore a deploy precondition, not a
+# nice-to-have. 1,460 is 50% of 2,900.
+#
+# One caveat on 730: it counts *rows*. `lambda_units` in Terraform is keyed by
+# function instance, and a mode-fanned row produces several functions that each
+# take this row's `reserved_concurrency`. The deployed per-plane sum is
+# therefore >= 730 and nobody has computed it — `content-lifecycle-worker`
+# alone fans to four modes today. Compute the function-level sum before filing
+# the limit increase.
 #
 # WHAT IS DELIBERATELY MISSING
 #
@@ -266,13 +278,28 @@ required_receipts = ["unit", "contract", "property", "lint", "package-integrity"
 alarm_spec = "finance-ingest"
 live_suite = "aex-live-finance-ingest"
 
-# Its own reservation, deliberately. A settlement backlog must never make Stripe
-# redelivery the customer's problem (F-29). 10 s is one serializable inbox
-# transaction; the edge returns 2xx only after it commits.
+# Derived from `stripe-webhook-edge`, its only caller, because the pairing is
+# strictly 1:1: every admitted webhook makes exactly one synchronous
+# `RequestResponse` invoke here. Its own reservation, deliberately — a settlement
+# backlog must never make Stripe redelivery the customer's problem (F-29).
+#
+# The reservation MATCHES the caller's 40 and must not drift below it. At 20
+# behind a caller at 40, invocations 21-40 are throttled; a throttle on a
+# `RequestResponse` invoke is an immediate error, the edge returns 500, and
+# Stripe redelivers — the reservation that exists to prevent redelivery was
+# causing it. Matching exactly makes the pair saturate together.
+#
+# 512 MiB is the family floor, bought for the vCPU share the serializable
+# transaction's retry window wants and not for payload headroom: the resident
+# set is one ~2 KiB normalized envelope and at most three postings. 10 s is one
+# 6 s inbox transaction plus runtime and flush margin, well inside the caller's
+# 30 s deadline. A wrong `provider_api_version` takes an early return into
+# quarantine, so at most one 6 s transaction runs per invocation — the
+# quarantine-then-apply path that would need 12 s does not exist.
 [unit.lambda]
 memory_mb = 512
 timeout_s = 10
-reserved_concurrency = 20
+reserved_concurrency = 40
 
 # --- central plane: the two TypeScript edges ---------------------------------
 #
@@ -302,8 +329,13 @@ live_suite = "aex-live-stripe-command-edge"
 # `finance-api` prepared, so the work is one outbound Stripe call. 512 MiB is
 # the family floor and the 30 s timeout is `finance-api`'s own request deadline:
 # an edge that outlived its caller would turn a resolved outcome into an unknown
-# one for `finance-reconcile` to chase. The reservation matches `finance-ingest`
-# because the two ends of the same money path should saturate together.
+# one for `finance-reconcile` to chase.
+#
+# The reservation stays 20 even though its caller `finance-api` reserves 40, and
+# the asymmetry is deliberate rather than an oversight. Unlike the
+# `stripe-webhook-edge` -> `finance-ingest` pair, this one is not 1:1: only the
+# top-up and portal routes reach the command edge, so the caller's reservation is
+# not a lower bound on the callee's.
 [unit.lambda]
 memory_mb = 512
 timeout_s = 30
@@ -378,12 +410,32 @@ required_receipts = ["unit", "property", "lint", "package-integrity"]
 alarm_spec = "finance-settlement-worker"
 live_suite = "aex-live-finance-settlement-worker"
 
-# FIFO backlog-scaled, one message group per organization. 60 s covers one
-# group's serializable transaction plus its bounded serialization retries; the
-# reservation bounds concurrent Aurora writers rather than the queue.
+# FIFO backlog-scaled, one message group per organization, so SQS serializes one
+# account and parallelises across accounts.
+#
+# 90 s is derived from the retry budget rather than from a peer, and the previous
+# 60 s was a correctness defect: one initial attempt plus three serialization
+# retries, each with the deployed 20 s transaction deadline, is 80 s of statement
+# budget. Against a 60 s function timeout a group that used its full retry budget
+# was killed by Lambda before the last retry could commit, and because failures
+# are reported per group the whole group was redelivered — the retry budget that
+# exists to absorb serialization conflicts instead guaranteed a redelivery under
+# exactly the contention it was built for. 90 s covers 4 x 20 s plus 10 s of
+# runtime margin, and the 1800 s queue visibility timeout stays 20x the function
+# timeout, so nothing is redelivered while it is still executing.
+#
+# 1024 MiB is not a payload bound — the worst-case batch is 10 records and the
+# Data API caps a decoded result at 768 KiB — it buys roughly a full vCPU share
+# for cold-start init and JSON decode. A later cost pass could take this row to
+# 512 and lose nothing measurable on a round-trip-bound workload; recorded so
+# that trade is visible rather than discovered.
+#
+# The reservation bounds concurrent Aurora writers rather than the queue, and it
+# is also the event-source mapping's `maximum_concurrency` by construction, so
+# the two cannot be set independently.
 [unit.lambda]
 memory_mb = 1024
-timeout_s = 60
+timeout_s = 90
 reserved_concurrency = 30
 
 [[unit]]
@@ -402,9 +454,30 @@ required_receipts = ["unit", "property", "lint", "package-integrity"]
 alarm_spec = "finance-reconcile"
 live_suite = "aex-live-finance-reconcile"
 
-# Five-minute sweep plus an hourly deep sweep. Reserved concurrency 2 by plan:
-# the sweeps report and fence, and a reconciler that can outscale the authority
-# it repairs is a second incident.
+# One five-minute EventBridge sweep. There is no hourly deep sweep: this comment
+# claimed one until 2026-08-10, and a grep of both composition roots' schedules
+# finds exactly one `finance-reconcile` entry.
+#
+# Reserved concurrency 2 by plan: the sweeps report and fence, and a reconciler
+# that can outscale the authority it repairs is a second incident. 2 is not
+# slack — the timeout equals the schedule interval on purpose, so a sweep that
+# runs to its deadline is still running when its successor fires, and 2 is
+# exactly that overlap. It must not be raised: the keyset cursor is a single
+# global row with no lease, owner or expiry, so a third concurrent sweep re-reads
+# the identical page and loses every revision fence. Concurrency here is
+# duplicate work, not throughput. `tests/resource_envelope.rs` also pins it
+# strictly below `finance-api`, `finance-ingest` and `finance-settlement-worker`.
+#
+# 1024 MiB is not sized to payload and should not be: the Data API budget caps a
+# page at ~768 KiB and two 500-row pages at ~1.5 MiB whatever the ledger grows
+# to. It buys the vCPU share for up to a thousand sequential round-trips.
+#
+# KNOWN DEFECT, not fixable by any number here: the sweep loop awaits up to 500
+# serial `RequestResponse` invokes of an edge whose own timeout is 30 s, with no
+# per-call budget derived from the remaining Lambda deadline. `page_limit` bounds
+# the result set, not the work, so the sweep blows this timeout at a few hundred
+# unresolved effects. The fix is the `DEADLINE_SAFETY_MARGIN` pattern
+# `usage-receipt-dispatcher` already uses. Owned by central-finance.
 [unit.lambda]
 memory_mb = 1024
 timeout_s = 300
@@ -426,13 +499,36 @@ required_receipts = ["unit", "lint", "package-integrity"]
 alarm_spec = "usage-receipt-dispatcher"
 live_suite = "aex-live-usage-receipt-dispatcher"
 
-# Outbox-backlog-scaled and scale-to-zero. 60 s covers one keyset page per
-# region and category; the reservation keeps replay away from the settlement
-# lane it depends on.
+# Outbox-backlog-scaled and scale-to-zero. Derived from the outbox read itself
+# rather than from a peer, because the read decides what concurrency can buy.
+#
+# The reservation is 5, down from 10, and this is a correctness argument rather
+# than a cost one. The outbox `SELECT` takes no lease and no
+# `FOR UPDATE SKIP LOCKED`; only the follow-up `UPDATE` is conditional. So N
+# concurrent invocations read the same page and publish the same receipts, one
+# wins the update, and the rest are duplicate SQS traffic and duplicate Aurora
+# write contention. Concurrency above one buys ZERO additional drain throughput
+# and multiplies duplicates linearly, and the one-minute schedule already
+# guarantees a fresh drain every tick.
+#
+# The floor is 2, not 1. This unit consumes a queue, the event-source mapping's
+# `maximum_concurrency` is set from this field, and AWS's minimum for that field
+# is 2 — anything below 2 fails `terraform plan` rather than merely throttling.
+# 5 leaves the mapping room to deliver a burst without becoming the throttle
+# itself while halving the duplicate fan-out. `tests/resource_envelope.rs` pins
+# it strictly below `finance-settlement-worker`, the lane that produces the
+# receipts this one replays.
+#
+# 512 MiB is the family floor for a Data-API-bound worker: the resident set is at
+# most 30 `PendingReceipt` rows (3 categories x a page of 10), page-capped at
+# 768 KiB by the transport. 60 s must stay at or below the 60 s schedule tick so
+# a slow drain never overlaps its successor, and the in-process
+# `DEADLINE_SAFETY_MARGIN` already converts a long drain into an honest truncated
+# report instead of a kill.
 [unit.lambda]
 memory_mb = 512
 timeout_s = 60
-reserved_concurrency = 10
+reserved_concurrency = 5
 
 [[unit]]
 id = "provider-cost-reconciler"
@@ -450,9 +546,38 @@ required_receipts = ["unit", "lint", "package-integrity"]
 alarm_spec = "provider-cost-reconciler"
 live_suite = "aex-live-provider-cost-reconciler"
 
-# Daily schedule, one task at a time. 900 s and 2 GiB cover one bounded CUR
-# export scan; reserved concurrency 1 makes a duplicate schedule a no-op rather
-# than a second scan.
+# Daily schedule, one task at a time. Derived from the CUR export scan's own
+# arithmetic, not from a peer.
+#
+# THIS SHAPE IS ONLY CORRECT AGAINST A 16 MiB SCAN BUDGET.
+# `AEX_PROVIDER_COST_MAX_SCAN_BYTES` is bound to 16,777,216 in both plane
+# bindings and the two numbers move together. The reason is the insert loop: the
+# parsed rows are written one Data API round-trip at a time, serially, each its
+# own implicit transaction, so at ~10 ms per round-trip a 900 s timeout buys
+# ~90,000 rows — about 11.7 MiB of export at the fixture's ~130-byte lines.
+# 16 MiB is the first round number safely above that, and it is the same quantum
+# `regional-otlp` uses as its decode bound, so this adds no new magic number.
+#
+# The budget was 512 MiB until 2026-08-10, which was wrong by 32x in the
+# dangerous direction: the object is read wholesale into memory twice (the raw
+# body is still live when the `String` copy exists), so a maximum-budget export
+# peaked at ~1 GiB of raw body plus parsed rows against this 2048 MiB allocation
+# and would have OOMed — while the timeout could never have reached more than
+# ~2% of it. At 16 MiB peak resident is ~58 MiB inside 2048 MiB, a 35x margin,
+# which is what makes the OOM impossible rather than merely unlikely.
+#
+# Memory stays 2048 (~1.2 vCPU) for the parse and the JSON rendering of the
+# insert statements; it was never the payload bound. Raising it to cover 512 MiB
+# instead would provision for rows the timeout can never insert, which is exactly
+# how the mismatch arose. Timeout 900 s is the Lambda ceiling, so there is
+# nowhere left to grow: if the export outgrows 16 MiB the answer is batching the
+# insert loop and re-deriving this row, not a bigger timeout.
+#
+# Reserved concurrency 1 makes a duplicate schedule a no-op rather than a second
+# scan, and `tests/resource_envelope.rs` pins it to exactly 1. Legal only because
+# this unit consumes no queue: AWS's minimum event-source `maximum_concurrency`
+# is 2 and that field is set from this one, so giving this unit a queue would
+# fail `terraform plan` rather than merely throttle it.
 [unit.lambda]
 memory_mb = 2048
 timeout_s = 900
@@ -477,11 +602,31 @@ live_suite = "aex-live-central-schema-admin"
 
 # A one-shot task the release engine runs once per release, so `desired_count`
 # is 0: nothing is long-lived, and `infra/modules/ecs-task-oneshot` registers a
-# task definition with no service behind it. `regional-secret-key-admin`'s
-# 512/1024 is the right size for the same reason — the work is one statement at
-# a time against the Data API, not a computation. The stop timeout is the
-# family's longest, because the one thing that must never be killed mid-flight
-# is a migration inside its transaction.
+# task definition with no service behind it. `desired_count = 0` and `port = 0`
+# are not choices — `graph verify` rejects anything else for `rust-oci-task`.
+#
+# `regional-secret-key-admin`'s 512/1024 is the right size, and re-deriving from
+# this unit's own work agrees. Unlike every other central unit this one opens a
+# direct PostgreSQL wire connection rather than using the Data API, and the whole
+# working set is the migration bundle EMBEDDED IN THE BINARY at compile time
+# (measured: 14 files, 70,006 bytes; largest single file 15,888 bytes), one
+# connection with its TLS stack, and one statement's result — the expensive
+# subcommand returns single scalars, roughly a thousand sequential trivially
+# cheap round-trips with no parallelism anywhere. 1024 MiB is ~14,000x the
+# bundle. 512 cpu is 0.5 vCPU and buys the TLS handshake and statement rendering;
+# nothing on the critical path is CPU-bound, so raising it would shorten nothing.
+#
+# The stop timeout is the family's longest, because the one thing that must never
+# be killed mid-flight is a migration inside its transaction. 120 is also the
+# module's hard ceiling and is externally pinned: the release launcher fails the
+# run if the registered task definition's container stop timeout is not 120.
+#
+# KNOWN BOUND MISMATCH: the launcher runs `migrate` with a 900,000 ms statement
+# timeout against this 120 s stop timeout, which cannot be raised. A statement
+# running at its full declared budget is SIGKILLed ~13 minutes before it could
+# finish. Either the statement timeout comes down to something a 120 s drain can
+# protect, or the launcher is honest that a long migration is not drain-protected.
+# Owned by the central-finance / schema stream.
 [unit.fargate]
 cpu = 512
 memory_mb = 1024
@@ -890,6 +1035,33 @@ required_receipts = ["unit", "property", "lint", "package-integrity"]
 alarm_spec = "usage-storage-worker"
 live_suite = "aex-live-usage-storage-worker"
 
+# Shared with `usage-compute-worker` and `usage-transfer-worker`: the three carry
+# one shape because they run one code path over three meters. The shape is not
+# read off a peer, because the load profile is bimodal and one number has to
+# serve both halves.
+#
+#   Ingress / Receipt / Stream — at most 10 records held, per-record work.
+#   Sweep                      — up to 3,200 rows: 16 outbox shards x a 200-row
+#                                page, then 3,200 sequential `SendMessage`.
+#
+# 1024 MiB is paid for by the sweep, which is the only mode that holds a large
+# resident set; the three small modes would be happy at 512, and one function
+# serves all four, so the larger mode sets the number. 300 s is the right order
+# for 3,200 sequential sends (~48 s at 15 ms each, ~288 s at 90 ms).
+#
+# Reserved concurrency 10 is correct FOR THE INGRESS MODE, where admission is a
+# per-record conditional write and parallelism is real, and it is also the
+# ingress mapping's `maximum_concurrency`. It is wrong for the sweep, which wants
+# exactly one runner — two concurrent sweeps read the same 16 partitions and
+# republish the same rows. Since one function serves both, the sweep's
+# singleton-ness comes from its schedule firing once, NOT from this number. Do
+# not "fix" the 10 to protect the sweep; it would starve ingress and still not
+# make the sweep a singleton.
+#
+# KNOWN DEFECT: the sweep never consults the Lambda deadline, unlike
+# `usage-receipt-dispatcher` and its `DEADLINE_SAFETY_MARGIN`. A long sweep is
+# killed mid-shard and the later shards are silently never swept. Port the
+# margin pattern into the shared worker. Owned by observations-usage.
 [unit.lambda]
 memory_mb = 1024
 timeout_s = 300
@@ -911,6 +1083,9 @@ required_receipts = ["unit", "property", "lint", "package-integrity"]
 alarm_spec = "usage-compute-worker"
 live_suite = "aex-live-usage-compute-worker"
 
+# Same shape and same derivation as `usage-storage-worker` above: one code path
+# over three meters, sized by the sweep mode's 3,200-row working set rather than
+# by the three small modes, with the reservation set for the ingress mode.
 [unit.lambda]
 memory_mb = 1024
 timeout_s = 300
@@ -932,12 +1107,23 @@ required_receipts = ["unit", "property", "lint", "package-integrity"]
 alarm_spec = "usage-transfer-worker"
 live_suite = "aex-live-usage-transfer-worker"
 
-# --- runtime plane -------------------------------------------------------------
-
+# Same shape and same derivation as `usage-storage-worker` above.
+#
+# (This block used to sit after the `runtime plane` banner below. TOML still
+# attached it to this row, so it was correct, but it read as though it belonged
+# to `brain-mux`. Keep the shape above the banner.)
+#
+# KNOWN CONTRADICTION specific to this one: it has an ingress queue and a
+# consumer binding but NO `Ingress` code path — its event classifier maps any
+# SQS batch straight to `Receipt`, so an ingress message would classify as a
+# receipt and fail to decode. Either the queue goes or the mode gets written.
+# Owned by observations-usage.
 [unit.lambda]
 memory_mb = 1024
 timeout_s = 300
 reserved_concurrency = 10
+
+# --- runtime plane -------------------------------------------------------------
 
 [[unit]]
 id = "brain-mux"
