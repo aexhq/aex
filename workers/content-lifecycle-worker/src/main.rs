@@ -103,6 +103,10 @@ async fn run(
     let role = Role {
         mode: config.mode,
         content,
+        work: aex_work_dynamodb::store::WorkStore::new(
+            dynamodb.clone(),
+            config.work_table.clone(),
+        ),
         registry,
         work_table: config.work_table.clone(),
         content_bucket: config.content_bucket.clone(),
@@ -127,6 +131,7 @@ async fn run(
 struct Role {
     mode: Mode,
     content: ContentStore,
+    work: aex_work_dynamodb::store::WorkStore,
     registry: aex_registry_dynamodb::store::RegistryDynamoStore,
     work_table: String,
     content_bucket: String,
@@ -160,7 +165,7 @@ impl Role {
         }
         match self.mode {
             Mode::Expiry => self.expire_grants().await,
-            Mode::UploadExpiry => self.expire_uploads(payload).await,
+            Mode::UploadExpiry => self.expire_uploads().await,
             Mode::Reconcile => self.reconcile(payload).await,
             Mode::MarkSweep => self.mark_sweep(payload).await,
             Mode::Delete => unreachable!("the queue arm above answers every delete invocation"),
@@ -213,24 +218,23 @@ impl Role {
         }))
     }
 
-    /// Sweeps every due pending upload named by the invocation.
-    async fn expire_uploads(
-        &self,
-        payload: serde_json::Value,
-    ) -> Result<serde_json::Value, LambdaError> {
-        let due: Vec<DueUpload> = serde_json::from_value(
-            payload
-                .get("due")
-                .cloned()
-                .unwrap_or(serde_json::Value::Null),
-        )
-        .map_err(|error| {
-            LambdaError::from(format!(
-                "an upload-expiry invocation carries the due items read from the \
-                 `registry.upload_expiry` index: {error}"
-            ))
-        })?;
+    /// Sweeps every due pending upload off the sharded `registry.upload_expiry`
+    /// index.
+    ///
+    /// The index kind and its payload keys were declared and unused; this role is
+    /// their first consumer (E D-8). The shape is the grant-expiry shape: a
+    /// per-shard durable cursor, a bounded page, and every write settled before
+    /// the cursor advances.
+    async fn expire_uploads(&self) -> Result<serde_json::Value, LambdaError> {
         let now = now().map_err(|error| LambdaError::from(error.to_string()))?;
+        let shards = self
+            .expiry_scan_shards
+            .ok_or_else(|| LambdaError::from("upload expiry has no admitted shard bound"))?;
+        let page_items = self
+            .expiry_page_items
+            .ok_or_else(|| LambdaError::from("upload expiry has no admitted page bound"))?;
+        let budget =
+            PageBudget::new(page_items).map_err(|error| LambdaError::from(error.to_string()))?;
         let objects = ObjectAdapter {
             client: self
                 .objects
@@ -242,29 +246,24 @@ impl Role {
         let rows = RowAdapter {
             registry: self.registry.clone(),
         };
-
-        let mut settled = serde_json::Map::new();
-        let mut re_armed = Vec::new();
-        for item in due {
-            let workspace = aex_wire::ids::WorkspaceId::parse(&item.workspace_id)
-                .map_err(|error| LambdaError::from(error.to_string()))?;
-            let upload = aex_wire::ids::UploadId::parse(&item.upload_id)
-                .map_err(|error| LambdaError::from(error.to_string()))?;
-            let outcome = upload_expiry::sweep_one(&rows, &objects, workspace, upload, now)
-                .await
-                .map_err(|error| LambdaError::from(error.to_string()))?;
-            if outcome.re_arms() {
-                re_armed.push(item.upload_id.clone());
-            }
-            settled.insert(item.upload_id, serde_json::json!(format!("{outcome:?}")));
-        }
+        let report = upload_expiry::expire_due_uploads(
+            &self.work,
+            &rows,
+            &objects,
+            LEASE_OWNER,
+            shards,
+            now,
+            budget,
+        )
+        .await
+        .map_err(|error| LambdaError::from(error.to_string()))?;
         Ok(serde_json::json!({
             "mode": self.mode.as_str(),
-            "settled": settled,
-            "reArmed": re_armed,
+            "report": report,
         }))
     }
 
+    /// Expires lapsed download grants and their pins.
     async fn expire_grants(&self) -> Result<serde_json::Value, LambdaError> {
         let now = now().map_err(|error| LambdaError::from(error.to_string()))?;
         let shards = self
@@ -343,13 +342,12 @@ impl Role {
     }
 }
 
-/// One due pending upload, as the `registry.upload_expiry` index projects it.
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-struct DueUpload {
-    upload_id: String,
-    workspace_id: String,
-}
+/// Who this process claims a due item as.
+///
+/// One name per role rather than per invocation: a lease taken by a process that
+/// then died has to be recognisable as this role's, and a random owner would make
+/// every expired lease anonymous.
+const LEASE_OWNER: &str = "content-lifecycle-uploadexpiry";
 
 /// The S3 half of both object-reaching roles.
 ///

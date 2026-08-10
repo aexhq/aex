@@ -19564,6 +19564,16 @@
               }
             },
             "description": "Error."
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "aex:schema:ApiError"
+                }
+              }
+            },
+            "description": "Error."
           }
         },
         "summary": "Abort a staged upload.",
@@ -19576,6 +19586,7 @@
           "unauthenticated",
           "insufficient_scope",
           "not_found",
+          "gone",
           "wrong_workspace_region"
         ],
         "x-aex-etag": "none",

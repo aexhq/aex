@@ -139,6 +139,19 @@ pub trait ContentMetadataStore: Send + Sync + 'static {
         digest: &ContentHash,
     ) -> Result<Option<ContentDescriptor>, StoreError>;
 
+    /// Writes one committed body descriptor.
+    ///
+    /// A descriptor is immutable and content-addressed, so an already-present row
+    /// is an **idempotent success**: it can only hold the same bytes. This is what
+    /// makes E's D-18 ordering safe — `upload_complete` writes the descriptor
+    /// first and the upload row second, and a client retry after a partial
+    /// failure re-resolves rather than conflicting.
+    ///
+    /// # Errors
+    ///
+    /// As [`ContentMetadataStore::load_descriptor`].
+    async fn put_descriptor(&self, descriptor: &ContentDescriptor) -> Result<(), StoreError>;
+
     /// Reads one inline ciphertext body.
     ///
     /// # Errors
@@ -392,6 +405,38 @@ impl ContentMetadataStore for ContentStore {
         {
             None => Ok(None),
             Some(item) => Ok(Some(decode_descriptor(&item, workspace)?)),
+        }
+    }
+
+    async fn put_descriptor(&self, descriptor: &ContentDescriptor) -> Result<(), StoreError> {
+        let builder = crate::expressions::stage_descriptor(&self.table, descriptor)?;
+        let built = builder.build().map_err(|error| StoreError::Invalid {
+            detail: error.to_string(),
+        })?;
+        let outcome = self
+            .client
+            .put_item()
+            .table_name(&self.table)
+            .set_item(Some(built.item().clone()))
+            .set_condition_expression(built.condition_expression().map(str::to_owned))
+            .send()
+            .await;
+        match outcome {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                if let Some(
+                    aws_sdk_dynamodb::operation::put_item::PutItemError::ConditionalCheckFailedException(_),
+                ) = error.as_service_error()
+                {
+                    // The row already exists. A descriptor is content-addressed
+                    // and immutable, so it names the same bytes by construction.
+                    return Ok(());
+                }
+                Err(classify(
+                    &error,
+                    Idempotence::Write(Resolution::TargetItem),
+                ))
+            }
         }
     }
 

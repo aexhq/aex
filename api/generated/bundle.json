@@ -4606,6 +4606,7 @@
             "unauthenticated",
             "insufficient_scope",
             "not_found",
+            "gone",
             "wrong_workspace_region"
           ],
           "etag": "none",

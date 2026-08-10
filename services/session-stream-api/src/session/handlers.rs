@@ -77,6 +77,21 @@ pub struct Shared {
     pub custody_table: String,
     /// The named-registry authority.
     pub registry: Arc<dyn RegistryStore>,
+    /// The content-descriptor authority.
+    pub content: Arc<dyn aex_content_dynamodb::store::ContentMetadataStore>,
+    /// The one content object adapter, and therefore the one presigner.
+    ///
+    /// The upload routes and the registry download route reach S3 through this
+    /// and nothing else builds a second one.
+    pub content_objects: Arc<dyn aex_content_aws::object_store::ContentObjectStore>,
+    /// The `regional-registry` receipt reader the replay combinator uses.
+    pub receipts: Arc<dyn aex_session_dynamodb::replay::ReceiptStore>,
+    /// The physical `regional-registry` table name.
+    pub registry_table: String,
+    /// The physical `regional-work` table name.
+    pub work_table: String,
+    /// The content CMK every object is sealed under, recorded on a descriptor.
+    pub content_kms_key_id: String,
     /// The strongly consistent, read-only session-authority surface.
     pub sessions: Arc<dyn SessionQueries>,
     /// The durable-operation point, list and conditional cancellation authority.
@@ -116,6 +131,18 @@ impl Routes {
     #[must_use]
     pub const fn new(shared: Arc<Shared>, cx: RequestContext) -> Self {
         Self { shared, cx }
+    }
+
+    /// The adapters this request may reach.
+    #[must_use]
+    pub fn shared(&self) -> &Shared {
+        &self.shared
+    }
+
+    /// The verified request this handler is answering.
+    #[must_use]
+    pub const fn context(&self) -> &RequestContext {
+        &self.cx
     }
 
     /// Every route whose handler is complete, in `RouteId` order.
@@ -158,6 +185,10 @@ const SERVED: &[RouteId] = &[
     RouteId::SessionRunsList,
     RouteId::SessionStop,
     RouteId::SessionTrash,
+    RouteId::UploadAbort,
+    RouteId::UploadComplete,
+    RouteId::UploadCreate,
+    RouteId::UploadPartsGrant,
 ];
 
 impl std::fmt::Debug for Routes {
@@ -1487,6 +1518,7 @@ impl UnaryDispatch for Routes {
             "registry" => dispatch_registry(self, &wire, raw, limits).await?,
             "approvals" => dispatch_approvals(self, &wire, raw, limits).await?,
             "sessions" => dispatch_sessions(self, &wire, raw, limits).await?,
+            "uploads" => aex_wire::server::dispatch_uploads(self, &wire, raw, limits).await?,
             _ => return Err(not_served(raw.route)),
         };
         match outcome {

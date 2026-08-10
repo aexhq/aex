@@ -363,6 +363,16 @@ async fn run(
         custody: Arc::new(stores.custody.clone()),
         custody_table: stores.custody.table().to_owned(),
         registry: Arc::new(stores.registry.clone()),
+        content: Arc::new(stores.content.clone()),
+        // One presigner for the whole deployable (E D-10). Both the upload
+        // routes and the registry download route sign through this adapter, so
+        // the expiry, the encryption context and the bucket-owner assertion have
+        // exactly one place to be stated.
+        content_objects: Arc::new(stores.content_objects.clone()),
+        receipts: Arc::new(stores.registry.clone()),
+        registry_table: stores.registry.table().to_owned(),
+        work_table: stores.work.table().to_owned(),
+        content_kms_key_id: stores.content_objects.binding().kms_key_id.clone(),
         sessions: Arc::new(aex_session_dynamodb::store::SessionReads::new(
             dynamodb.clone(),
             stores.session_table.clone(),

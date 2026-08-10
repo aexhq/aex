@@ -87,6 +87,10 @@ impl ContentMetadataStore for Store {
         Ok(None)
     }
 
+    async fn put_descriptor(&self, _descriptor: &ContentDescriptor) -> Result<(), StoreError> {
+        Ok(())
+    }
+
     async fn read_inline_body(
         &self,
         _workspace: WorkspaceId,
