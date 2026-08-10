@@ -59,6 +59,11 @@
       "description": "Per-tool byte, traversal and listing safety bounds.",
       "id": "tools.io_safety",
       "shape": "map"
+    },
+    {
+      "description": "Concurrent non-terminal telemetry exports per workspace, and the widest observation-time window one export may cover. A cost guard rather than a correctness guard: the active count is read eventually consistently, so a race may admit one or two over the cap, which is a better failure than the transactional counter that leaks and blocks a workspace permanently.",
+      "id": "telemetry.export",
+      "shape": "map"
     }
   ]
 }

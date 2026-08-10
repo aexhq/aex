@@ -3,7 +3,7 @@
 //! The effective-limit registry.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:634f3f0f9665ccf300c478c9e8fa9245f4326e739dfe5a1ae4167ae7ec27e70b`.
+//! `sha256:62cac886618e33654c683ee52d4799a20fdf9f594c84b712710e0fe9e9406cee`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -64,6 +64,13 @@ pub enum LimitId {
     /// `tools.io_safety` — Per-tool byte, traversal and listing safety bounds.
     #[serde(rename = "tools.io_safety")]
     ToolsIoSafety,
+    /// `telemetry.export` — Concurrent non-terminal telemetry exports per workspace, and the widest
+    /// observation-time window one export may cover. A cost guard rather than a correctness guard:
+    /// the active count is read eventually consistently, so a race may admit one or two over the
+    /// cap, which is a better failure than the transactional counter that leaks and blocks a
+    /// workspace permanently.
+    #[serde(rename = "telemetry.export")]
+    TelemetryExport,
 }
 
 impl LimitId {
@@ -81,6 +88,7 @@ impl LimitId {
         LimitId::MetricAggregate,
         LimitId::ContentBundleExpand,
         LimitId::ToolsIoSafety,
+        LimitId::TelemetryExport,
     ];
 
     /// The wire spelling.
@@ -99,6 +107,7 @@ impl LimitId {
             Self::MetricAggregate => "metric.aggregate",
             Self::ContentBundleExpand => "content.bundle_expand",
             Self::ToolsIoSafety => "tools.io_safety",
+            Self::TelemetryExport => "telemetry.export",
         }
     }
 
@@ -118,6 +127,7 @@ impl LimitId {
             Self::MetricAggregate => LimitShape::Map,
             Self::ContentBundleExpand => LimitShape::Map,
             Self::ToolsIoSafety => LimitShape::Map,
+            Self::TelemetryExport => LimitShape::Map,
         }
     }
 
@@ -172,6 +182,7 @@ impl LimitId {
                 "list_entries",
                 "list_depth",
             ],
+            Self::TelemetryExport => &["active", "window_days"],
         }
     }
 
