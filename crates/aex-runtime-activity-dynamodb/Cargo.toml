@@ -40,6 +40,7 @@ integration = "integration"
 integration-engines = ["dep:tokio", "aex-test-harness/containers"]
 
 [dependencies]
+async-trait.workspace = true
 aws-sdk-dynamodb.workspace = true
 aws-smithy-types.workspace = true
 blake3.workspace = true
@@ -47,6 +48,11 @@ thiserror.workspace = true
 aex-hands-protocol = { path = "../aex-hands-protocol" }
 aex-internal-contracts = { path = "../aex-internal-contracts" }
 aex-runtime-control = { path = "../aex-runtime-control" }
+aex-secret-domain = { path = "../aex-secret-domain" }
+# The port traits only. This crate is the production `ContinuityReader`: the
+# runtime-activity rows are the authority for both continuity and true idle, so
+# implementing it anywhere else would mean two authorities computing it.
+aex-session-app = { path = "../aex-session-app" }
 aex-usage-domain = { path = "../aex-usage-domain" }
 aex-wire = { path = "../aex-wire" }
 # The shared regional store machinery only. `default-features = false` keeps the

@@ -1,9 +1,14 @@
 //! The application context this deployable can honestly supply.
 //!
-//! `aex_session_app::AppContext` names eleven ports. This deployable owns four
-//! of them — the clock, the identifier source, the session authority and the
-//! account projection — and the remaining seven belong to streams that have not
-//! produced an adapter.
+//! `aex_session_app::AppContext` names eleven ports. This deployable owns five
+//! of them — the clock, the identifier source, the session authority, the
+//! account projection and runtime continuity — and the remaining six belong to
+//! streams that have not produced an adapter.
+//!
+//! Continuity left this file rather than gaining a local implementation: the
+//! `runtime-activity` rows already answer it and `aex-runtime-control` already
+//! owns the idle predicate, so `aex_runtime_activity_dynamodb::RuntimeContinuity`
+//! is the adapter and there is no second reading of "is this session idle".
 //!
 //! [`UnownedPorts`] is **not** a fake adapter. Every method returns
 //! [`PortError::Unowned`] naming the seam that owes the implementation. Writing
@@ -20,11 +25,10 @@
 use aex_content_domain::{
     ContentDigest, ContentOutcome, ContentRoot, PageDigest, TreeNode, TreeView,
 };
-use aex_secret_domain::{SecretName, SessionCustody, TrueIdle, WorkspaceSecret};
+use aex_secret_domain::{SecretName, SessionCustody, WorkspaceSecret};
 use aex_session_app::ports::{
-    ContentReader, ContinuityReader, IdFactory, LimitsReader, LiveWorkspaceReader, PortError,
-    RegistryReader, ReservationAuthority, ReservationGrant, ReservationRequest,
-    SecretCustodyReader, WorkspaceContinuity,
+    ContentReader, IdFactory, LimitsReader, LiveWorkspaceReader, PortError, RegistryReader,
+    ReservationAuthority, ReservationGrant, ReservationRequest, SecretCustodyReader,
 };
 use aex_session_domain::EffectiveLimits;
 use aex_wire::ids::{GenerationId, SessionId, UploadId, Uuid7, WorkspaceId};
@@ -64,10 +68,9 @@ const LIMITS_SEAM: &str = "no authoritative regional capacity default and overri
                            exists yet";
 const RESERVATION_SEAM: &str = "`ReservationAuthority` is deliberately unowned: the grant and \
                                 release protocol belongs to the finance and usage streams";
-const CONTINUITY_SEAM: &str = "`aex-runtime-control` owns `TrueIdle` and workspace continuity; \
-                               computing them here would give two authorities two answers";
-const LIVE_SEAM: &str = "the persist survey manifest and the live workspace scan are Hands' \
-                         (cluster B4)";
+const LIVE_SEAM: &str = "the persist survey manifest and the live workspace scan are Hands': \
+                         nothing in the tree produces a live `TreeView`, and the guest refuses \
+                         `PersistPhase::Survey` for want of a TLS client";
 
 #[async_trait::async_trait]
 impl RegistryReader for UnownedPorts {
@@ -160,23 +163,6 @@ impl ReservationAuthority for UnownedPorts {
         Err(PortError::Unowned {
             kind: "spend reservation",
             seam: RESERVATION_SEAM,
-        })
-    }
-}
-
-#[async_trait::async_trait]
-impl ContinuityReader for UnownedPorts {
-    async fn continuity(&self, _session: SessionId) -> Result<WorkspaceContinuity, PortError> {
-        Err(PortError::Unowned {
-            kind: "workspace continuity",
-            seam: CONTINUITY_SEAM,
-        })
-    }
-
-    async fn true_idle(&self, _session: SessionId) -> Result<TrueIdle, PortError> {
-        Err(PortError::Unowned {
-            kind: "true idle",
-            seam: CONTINUITY_SEAM,
         })
     }
 }

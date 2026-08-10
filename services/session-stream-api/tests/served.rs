@@ -842,6 +842,8 @@ fn build_with_operations(
 /// The physical `session-authority` name the mount fixture binds.
 const SESSION_TABLE: &str = "dev-eu-west-1-session-authority";
 
+const RUNTIME_ACTIVITY_TABLE: &str = "dev-eu-west-1-runtime-activity";
+
 /// A `DynamoDB` client whose transport refuses every request.
 ///
 /// The mount assertions here exercise routing and the absence sweep, never a
@@ -885,6 +887,10 @@ fn build_with_authorities(
         tables: aex_session_dynamodb::plan::RegionalTables::composed("dev", "eu-west-1"),
         authority: offline_dynamodb(),
         cursor_keys: Arc::new(cursor_keys()),
+        runtime_activity: aex_runtime_activity_dynamodb::store::RuntimeActivityDynamoStore::new(
+            offline_dynamodb(),
+            RUNTIME_ACTIVITY_TABLE,
+        ),
     });
     let mounted = mount_unary(
         Arc::new(Dispatcher::new(shared)),

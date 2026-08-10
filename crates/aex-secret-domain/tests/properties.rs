@@ -289,6 +289,7 @@ proptest! {
         TrueIdleViolation::WorkQueued,
         TrueIdleViolation::ConnectionOpen,
         TrueIdleViolation::KeepaliveHeld,
+        TrueIdleViolation::RecentlyBusy,
     ]))) {
         let secret = created("alpha");
         let row = admit_custody(

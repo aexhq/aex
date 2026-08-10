@@ -138,6 +138,15 @@ pub enum TrueIdleViolation {
     ConnectionOpen,
     /// A keepalive lease holds the generation warm.
     KeepaliveHeld,
+    /// Nothing is outstanding, but the generation has not been quiet for the
+    /// whole idle window yet.
+    ///
+    /// Distinct from the other four because nothing is *holding* the
+    /// generation: it is cooling down. Without this arm the runtime adapter
+    /// would have to report a quiescent generation as having queued or admitted
+    /// work, which is a false statement about the customer's session in the one
+    /// place a customer is told why their rebind was refused.
+    RecentlyBusy,
 }
 
 /// The idle evidence a rebind consumes.

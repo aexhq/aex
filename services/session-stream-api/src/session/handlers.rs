@@ -56,6 +56,8 @@ use aex_wire::server::{
     SessionsApi, WithETag, dispatch_approvals, dispatch_provider_credentials,
     dispatch_regional_operations, dispatch_registry, dispatch_secrets, dispatch_sessions,
 };
+use aex_runtime_activity_dynamodb::RuntimeContinuity;
+use aex_runtime_activity_dynamodb::store::RuntimeActivityDynamoStore;
 use aex_wire::types::Timestamp;
 
 /// The adapters and start-up bindings every request shares.
@@ -93,6 +95,14 @@ pub struct Shared {
     pub authority: aws_sdk_dynamodb::Client,
     /// The signing ring every continuation is minted and verified under.
     pub cursor_keys: Arc<CursorKeyRing>,
+    /// The runtime-activity authority, which owns workspace continuity and the
+    /// true-idle verdict.
+    ///
+    /// Read through `RuntimeContinuity` rather than interpreted here: the idle
+    /// window and the lifecycle states belong to `aex-runtime-control`, and a
+    /// second reading of them would let two authorities disagree about whether
+    /// a session is idle.
+    pub runtime_activity: RuntimeActivityDynamoStore,
 }
 
 impl std::fmt::Debug for Shared {
@@ -322,7 +332,7 @@ impl Routes {
         })
     }
 
-    /// The four ports this deployable supplies, plus the seven it refuses.
+    /// The five ports this deployable supplies, plus the six it refuses.
     fn bindings(&self) -> WireResult<CommandBindings> {
         let now = self.now()?;
         Ok(CommandBindings {
@@ -330,6 +340,7 @@ impl Routes {
             ids: crate::session::app_ports::RequestIds,
             unowned: crate::session::app_ports::UnownedPorts,
             reads: self.shared.commands.clone(),
+            continuity: RuntimeContinuity::new(self.shared.runtime_activity.clone(), now),
             accounts: AuthorizedAccount {
                 organization: self.cx.auth.organization_id,
                 revision: self.cx.auth.epochs.account,
@@ -449,6 +460,7 @@ struct CommandBindings {
     unowned: crate::session::app_ports::UnownedPorts,
     reads: SessionCommandReads,
     accounts: AuthorizedAccount,
+    continuity: RuntimeContinuity,
 }
 
 impl CommandBindings {
@@ -458,15 +470,17 @@ impl CommandBindings {
             ids: &self.ids,
             sessions: &self.reads,
             accounts: &self.accounts,
-            // Seven ports another stream owns. Every one refuses rather than
+            // Six ports another stream owns. Every one refuses rather than
             // inventing an answer; see `crate::session::app_ports`.
             registry: &self.unowned,
             content: &self.unowned,
             secrets: &self.unowned,
             limits: &self.unowned,
             reservations: &self.unowned,
-            continuity: &self.unowned,
             live: &self.unowned,
+            // Owned, not refused: `aex-runtime-activity-dynamodb` is the
+            // authority for both continuity and true idle.
+            continuity: &self.continuity,
         }
     }
 }
