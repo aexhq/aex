@@ -419,7 +419,26 @@ impl DialectState {
 
 #[cfg(test)]
 mod tests {
-    use super::{BoundedBody, DialectState, FrameOutcome, HeaderView};
+    use aex_brain_app::ports::ToolAdvertisement;
+    use aex_model_catalog::canonical::{
+        CanonicalBlock, CanonicalMessage, CanonicalModelRequest, CanonicalToolDef, CorrelationId,
+        ReasoningRequest, Role, ToolChoice,
+    };
+    use aex_model_catalog::document::{
+        Capability, CapabilitySet, ModelEntry, NamePattern, ToolArgumentEncoding, ToolEncoding,
+        ToolPolicy,
+    };
+    use aex_model_catalog::primitives::{BoundedString, ToolName};
+    use aex_model_catalog::fixture;
+    use aex_wire::provider::ProviderId;
+    use aex_wire::{CanonicalJson, ContentHash};
+
+    use super::{BoundedBody, DialectState, FrameOutcome, HeaderView, ProviderAdapter};
+    use crate::adapter::RequestBuildError;
+    use crate::deepseek::DeepSeekAdapter;
+    use crate::google::GoogleAdapter;
+    use crate::moonshotai::MoonshotAdapter;
+    use crate::zai::ZaiAdapter;
 
     #[test]
     fn the_first_frame_starts_the_response_exactly_once() {
@@ -463,5 +482,158 @@ mod tests {
         assert_eq!(view.get("x-request-id"), Some("req_abc"));
         assert_eq!(view.get("absent"), None);
         assert_eq!(view.get_u64("x-request-id"), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // the four dialects that cannot say "one tool at a time"
+    //
+    // Each module already pins its own refusal. What no test held was the class
+    // — that these four are exactly the dialects with no such field, and that
+    // the advertised surface a deployed task carries does not ask them for it.
+    // The production composition advertises `web_fetch`, which is neither pure,
+    // deterministic nor zero-weight, so while one flag answered both questions
+    // every tool-bearing turn on four of the six providers failed at request
+    // build. `ToolAdvertisement::allows_parallel_emission` is the value that
+    // reaches `parallel_tools`, and it consults the model and nothing else.
+    // -----------------------------------------------------------------------
+
+    /// One capability set wide enough that only the parallel-tool gate can fire.
+    fn tool_capable() -> CapabilitySet {
+        CapabilitySet::from_slice(&[
+            Capability::TextIn,
+            Capability::TextOut,
+            Capability::Streaming,
+            Capability::Tools,
+            Capability::ParallelTools,
+            Capability::SystemInstruction,
+        ])
+    }
+
+    /// The `web_fetch` row as the router advertises it: a real name, an object
+    /// schema, nothing exotic.
+    fn web_fetch() -> CanonicalToolDef {
+        CanonicalToolDef {
+            name: ToolName::parse("web_fetch").expect("a catalog tool name"),
+            description: BoundedString::truncating("Fetch one URL."),
+            input_schema: CanonicalJson::parse(
+                r#"{"type":"object","properties":{"url":{"type":"string"}}}"#,
+            )
+            .expect("an object schema"),
+            strict: false,
+        }
+    }
+
+    /// The four entries, each shaped the way its own dialect requires.
+    fn entries_that_cannot_forbid_parallel_calls() -> Vec<(&'static dyn ProviderAdapter, ModelEntry)>
+    {
+        let mut google = fixture::entry(ProviderId::Google, "gemini-3-pro", tool_capable());
+        google.tool_policy = ToolPolicy {
+            encoding: ToolEncoding::GeminiFunctionDeclarations,
+            arguments: ToolArgumentEncoding::JsonObject,
+            requires_stream_opt_in: false,
+            max_name_bytes: 64,
+            name_pattern: NamePattern::GeminiFunctionName,
+        };
+        vec![
+            (
+                &DeepSeekAdapter,
+                fixture::entry(ProviderId::Deepseek, "deepseek-chat", tool_capable()),
+            ),
+            (&GoogleAdapter, google),
+            (
+                &ZaiAdapter,
+                fixture::entry(ProviderId::Zai, "glm-5.2", tool_capable()),
+            ),
+            (
+                &MoonshotAdapter,
+                fixture::entry(ProviderId::Moonshotai, "kimi-k2", tool_capable()),
+            ),
+        ]
+    }
+
+    fn tool_bearing_request(entry: ModelEntry, parallel_tools: bool) -> CanonicalModelRequest {
+        CanonicalModelRequest {
+            selection: fixture::qualified(entry),
+            system: Vec::new(),
+            messages: vec![CanonicalMessage {
+                role: Role::User,
+                blocks: vec![CanonicalBlock::Text {
+                    text: BoundedString::truncating("read this page"),
+                    annotations: Vec::new(),
+                }],
+            }],
+            tools: vec![web_fetch()],
+            tool_choice: ToolChoice::Auto,
+            parallel_tools,
+            max_output_tokens: 1_024,
+            temperature_milli: None,
+            top_p_milli: None,
+            stop_sequences: Vec::new(),
+            // Leave reasoning to the provider: asking a pair to disable something
+            // it never declared is its own refusal, and this case is about the
+            // tool gate.
+            reasoning: ReasoningRequest::ProviderDefault,
+            structured_output: None,
+            cache_breakpoints: Vec::new(),
+            correlation: CorrelationId::from_effect([0u8; 16]),
+            request_hash: ContentHash::of(b""),
+        }
+    }
+
+    /// The advertised surface a deployed task carries builds on all four.
+    #[test]
+    fn a_non_pure_advertised_tool_no_longer_takes_four_dialects_out_of_service() {
+        let advertised = ToolAdvertisement {
+            definitions: vec![web_fetch()],
+            // The deployed value. It bounds our own concurrency and must not
+            // reach the wire.
+            parallel_safe: false,
+        };
+        let parallel = advertised.allows_parallel_emission(tool_capable());
+        assert!(
+            parallel,
+            "a model that declares parallel tools is told it may use them"
+        );
+
+        for (adapter, entry) in entries_that_cannot_forbid_parallel_calls() {
+            let provider = entry.provider;
+            let request = tool_bearing_request(entry, parallel);
+            assert!(
+                adapter
+                    .build_request(&request.selection, &request)
+                    .is_ok(),
+                "{provider} must build a tool-bearing request from the advertised surface"
+            );
+        }
+    }
+
+    /// And the refusal that made the split necessary is still exact.
+    #[test]
+    fn each_of_the_four_refuses_a_request_it_cannot_encode_rather_than_altering_it() {
+        let expected = |provider: ProviderId| match provider {
+            ProviderId::Deepseek => RequestBuildError::SamplingUnsupported {
+                field: "parallel_tool_calls",
+            },
+            ProviderId::Google => RequestBuildError::Encoding {
+                reason: "google has no field that forbids parallel function calls",
+            },
+            ProviderId::Zai => RequestBuildError::Encoding {
+                reason: "Z.AI has no switch that disables parallel tool calls",
+            },
+            ProviderId::Moonshotai => RequestBuildError::Encoding {
+                reason: "this dialect has no parallel-tool-calls switch",
+            },
+            other => panic!("`{other}` is not one of the four inexpressive dialects"),
+        };
+
+        for (adapter, entry) in entries_that_cannot_forbid_parallel_calls() {
+            let provider = entry.provider;
+            let request = tool_bearing_request(entry, false);
+            assert_eq!(
+                adapter.build_request(&request.selection, &request),
+                Err(expected(provider)),
+                "{provider} must refuse rather than send something it was not asked for"
+            );
+        }
     }
 }

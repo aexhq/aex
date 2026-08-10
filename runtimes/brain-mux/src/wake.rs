@@ -1204,7 +1204,7 @@ mod tests {
         SessionId, Timestamp, ToolName,
     };
     use aex_brain_domain::wire_pending::{DurableOperationSupport, ProviderId};
-    use aex_model_catalog::document::CapabilitySet;
+    use aex_model_catalog::document::{Capability, CapabilitySet};
     use aex_model_catalog::fixture;
     use std::collections::BTreeMap;
     use std::sync::Arc;
@@ -1419,7 +1419,19 @@ mod tests {
         assert!(!names.contains(&"read_file"), "Hands claims no typed tool");
         assert!(
             !advertised.parallel_safe,
-            "managed network work is not parallel-safe"
+            "managed network work is not safe for us to run concurrently"
+        );
+        // The production shape composes the managed-web executor, so `web_fetch`
+        // is advertised on every deployed task. While the two questions shared
+        // one flag, that alone made four of the six dialects refuse to build a
+        // tool-bearing request at all — the deployed surface taking the deployed
+        // providers out of service. What the model may emit follows the model.
+        assert!(
+            advertised.allows_parallel_emission(CapabilitySet::from_slice(&[
+                Capability::Tools,
+                Capability::ParallelTools,
+            ])),
+            "a non-pure advertised row must not suppress the model's own emission"
         );
     }
 

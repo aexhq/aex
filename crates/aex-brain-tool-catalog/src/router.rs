@@ -183,6 +183,12 @@ impl CompositeToolRouter {
             })
             .collect::<Result<Vec<_>, RouterBuildError>>()?;
         definitions.sort_by(|left, right| left.name.cmp(&right.name));
+        // Answers one question only: may *we* run two of these calls at once?
+        // What the model is told it may emit is derived from its own declared
+        // capability instead — `ToolAdvertisement::allows_parallel_emission` —
+        // because a dialect that cannot encode "one tool at a time" refuses the
+        // whole request, and one non-pure row in the advertised surface must not
+        // be able to cause that.
         let parallel_safe = advertised.entries.iter().all(|entry| {
             entry.descriptor.effect == aex_brain_domain::effect::EffectClass::Pure
                 && entry.descriptor.determinism == Determinism::Deterministic
