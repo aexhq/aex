@@ -521,6 +521,75 @@ pub enum Resume {
     },
 }
 
+/// Advances any continued operation by exactly one bounded step.
+///
+/// The one entry point a continuation worker calls. It exists so the worker
+/// never switches on `OperationKind` itself: a kind the worker believed it
+/// could step but this crate has no step for would otherwise be a silent
+/// no-progress loop, and here it is a typed refusal that names the kind.
+///
+/// # Errors
+///
+/// Returns [`AppError`] when a port read fails, the operation is absent or
+/// terminal, or its kind has no step in this crate.
+pub async fn continue_operation(
+    context: &AppContext<'_>,
+    command: &SessionCommand,
+) -> Result<Planned<aex_operation_domain::Operation>, AppError> {
+    let stored = context
+        .sessions
+        .load_operation(command.workspace, command.operation)
+        .await?
+        .ok_or(crate::ports::PortError::NotFound { kind: "operation" })?;
+    match stored.operation.kind {
+        OperationKind::SessionStop => continue_stop(context, command).await,
+        // Every other continued kind is named rather than collected into a
+        // wildcard, so adding one to `OperationKind` fails to compile here
+        // instead of falling into a refusal nobody notices.
+        kind @ (OperationKind::SessionPurge
+        | OperationKind::WorkspaceDiscard
+        | OperationKind::SessionPersist
+        | OperationKind::WorkspaceDelete
+        | OperationKind::TelemetryExport
+        | OperationKind::ContentGc) => Err(AppError::Port(crate::ports::PortError::Unowned {
+            kind: "operation step",
+            seam: step_seam(kind),
+        })),
+        // An inline kind has no step at all. Reaching here means a work item
+        // was written for an operation that completes in its own admission
+        // transaction, which is a producer bug, not a runtime condition.
+        OperationKind::SessionClone
+        | OperationKind::CredentialRebind
+        | OperationKind::SessionTrash
+        | OperationKind::SessionRestore => Err(AppError::Port(crate::ports::PortError::Corrupt {
+            kind: "operation step",
+            reason: "an inline operation has no continuation step; its admission was its whole                      effect",
+        })),
+    }
+}
+
+/// Which seam owes each unimplemented step.
+const fn step_seam(kind: OperationKind) -> &'static str {
+    match kind {
+        OperationKind::SessionPurge | OperationKind::WorkspaceDelete => {
+            "the purge cascade needs the content, edge and descendant authorities plus a bounded              non-terminal-operation query (D-12); admission is complete and the cascade is not"
+        }
+        OperationKind::WorkspaceDiscard => {
+            "the discard step needs `aex-runtime-control` to accept termination of an exact              generation, and no seam dispatches that from a continuation yet"
+        }
+        OperationKind::SessionPersist => {
+            "persist needs `LiveWorkspaceReader`, which nothing in the tree implements: no              producer of a live `TreeView` exists and the guest refuses `PersistPhase::Survey`"
+        }
+        OperationKind::TelemetryExport => "telemetry export is the observation stream's",
+        OperationKind::ContentGc => "content collection is the content stream's",
+        OperationKind::SessionStop
+        | OperationKind::SessionClone
+        | OperationKind::CredentialRebind
+        | OperationKind::SessionTrash
+        | OperationKind::SessionRestore => "this kind has a step and never reaches this function",
+    }
+}
+
 /// Advances a continued stop by exactly one bounded batch.
 ///
 /// The step is idempotent by construction: its plan names the cursor it
@@ -858,7 +927,15 @@ impl StopBatch {
         };
 
         let plan = SessionTransaction {
-            intent: TransactionIntent::StopSession,
+            // A step is attributed to the continuation, not to the command that
+            // started it. The two write the same rows under different
+            // preconditions, and the client token is derived from the whole
+            // plan, so sharing an intent would leave a provider failure
+            // ambiguous between an admission and a resumption.
+            intent: match resume {
+                Resume::Admission => TransactionIntent::StopSession,
+                Resume::Step { .. } => TransactionIntent::ContinueOperation,
+            },
             conditions,
             writes,
             after_commit,

@@ -17,7 +17,9 @@ use aex_operation_domain::cursor::CursorPosition;
 use aex_operation_domain::operation::{OperationStatus, OperationVersion};
 use aex_session_app::plan::{Condition, SessionTransaction, TransactionIntent, Write};
 use aex_session_app::testing::{CountingIds, FixedClock, ScriptedPorts};
-use aex_session_app::use_cases::{STOP_BATCH_AGENTS, SessionCommand, continue_stop, stop_session};
+use aex_session_app::use_cases::{
+    STOP_BATCH_AGENTS, SessionCommand, continue_operation, continue_stop, stop_session,
+};
 use aex_wire::idempotency::IntentDigest;
 
 fn clock() -> FixedClock {
@@ -311,5 +313,54 @@ async fn no_continuation_step_calls_a_port_that_writes() {
     assert!(
         !next.recorded_a_write(),
         "a step decides; the deployable commits. There is no committer in the context at all"
+    );
+}
+
+#[tokio::test]
+async fn the_dispatcher_routes_a_stop_to_its_step_and_attributes_the_plan_to_the_continuation() {
+    let overflow = STOP_BATCH_AGENTS + 2;
+    let (first, clock, ids) = first_step(47, overflow).await;
+    let next = ScriptedPorts::idle()
+        .with_active_agents(overflow)
+        .with_settled_prefix(usize::from(STOP_BATCH_AGENTS))
+        .with_session(written_head(&first.plan))
+        .with_operation_at(first.projected.clone(), OperationVersion(2));
+    let context = next.context(&clock, &ids);
+
+    let step = continue_operation(&context, &command(47))
+        .await
+        .expect("the dispatcher finds the stop step");
+
+    assert_eq!(
+        step.plan.intent,
+        TransactionIntent::ContinueOperation,
+        "a step and the admission that started it write the same rows under different          preconditions, so they must not share an intent"
+    );
+    assert_ne!(
+        first.plan.intent, step.plan.intent,
+        "the client token is derived from the whole plan; a shared intent would leave a provider          failure ambiguous between the two"
+    );
+}
+
+#[tokio::test]
+async fn the_dispatcher_refuses_a_kind_it_has_no_step_for_and_names_the_seam() {
+    let overflow = STOP_BATCH_AGENTS + 2;
+    let (first, clock, ids) = first_step(48, overflow).await;
+    let mut purge = first.projected.clone();
+    purge.kind = aex_operation_domain::OperationKind::SessionPurge;
+
+    let next = ScriptedPorts::idle()
+        .with_active_agents(overflow)
+        .with_session(written_head(&first.plan))
+        .with_operation_at(purge, OperationVersion(2));
+    let context = next.context(&clock, &ids);
+
+    let error = continue_operation(&context, &command(48))
+        .await
+        .expect_err("a kind with no step must refuse rather than loop making no progress");
+    let text = format!("{error}");
+    assert!(
+        text.contains("cascade"),
+        "the refusal names what is missing, not just that something is: {text}"
     );
 }

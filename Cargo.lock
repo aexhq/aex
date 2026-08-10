@@ -7221,12 +7221,12 @@ dependencies = [
  "aws-config",
  "aws-sdk-dynamodb",
  "aws_lambda_events",
- "blake3",
  "futures",
  "lambda_runtime",
  "serde",
  "serde_json",
  "thiserror",
+ "time",
  "tokio",
  "xxhash-rust",
 ]

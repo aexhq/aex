@@ -26,6 +26,7 @@ scenarios = []
 [package.metadata.aex.targets]
 properties = "unit"
 faults = "unit"
+continuations = "unit"
 
 [package.metadata.aex.not_applicable]
 live_suite = "application crate; its ports are exercised through its deployable's companion"
