@@ -51,7 +51,7 @@ fn a_part_plan_that_is_not_the_declared_grammar_is_refused() {
 
 #[test]
 fn a_completion_can_never_reopen_a_consumed_upload() {
-    let expression = expressions::begin_completion(TABLE_NAME, upload_id(), &"a".repeat(64))
+    let expression = expressions::begin_completion(TABLE_NAME, &upload(), &"a".repeat(64))
         .build()
         .expect("a complete update")
         .condition_expression()

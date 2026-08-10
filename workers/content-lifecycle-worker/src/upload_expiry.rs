@@ -23,8 +23,12 @@
 //! cost — not a destroyed committed body.
 
 use aex_session_dynamodb::error::StoreError;
-use aex_wire::ids::{UploadId, WorkspaceId};
+use aex_session_dynamodb::paging::PageBudget;
+use aex_wire::ids::{PrefixedId as _, UploadId, WorkspaceId};
 use aex_wire::types::Timestamp;
+use aex_work_dynamodb::codec::{ReconciliationCursor, WorkRecord};
+use aex_work_dynamodb::claim::WorkClaim;
+use aex_work_dynamodb::store::{DueEntry, DuePage, WorkAuthority, WorkStore};
 use aex_workspace_domain::upload::{
     AmbiguityResolution, ExpiryOutcome, HeadOracle, Upload, UploadState, expire, resolve_completing,
 };
@@ -167,6 +171,307 @@ pub async fn sweep_one<R: UploadRows + ?Sized, O: UploadObjects + ?Sized>(
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// The shard fan-out
+// ---------------------------------------------------------------------------
+
+/// The due kind this role consumes.
+///
+/// Declared in `aex-work-dynamodb` and unused until now; this is its first
+/// consumer (E D-8).
+pub const DUE_KIND: &str = "registry.upload_expiry";
+
+/// How long a sweep holds a due item while it resolves one upload.
+///
+/// One `HeadObject`, at most one `AbortMultipartUpload` and one conditional
+/// write. A minute is generous and still far under the invocation budget.
+pub const CLAIM_LEASE_MILLIS: i64 = 60_000;
+
+/// The narrow `regional-work` operations this role owns.
+#[async_trait]
+pub trait DueUploads: Send + Sync {
+    /// Strongly reads one shard's durable scan cursor.
+    async fn load_cursor(&self, shard: u16) -> Result<Option<ReconciliationCursor>, StoreError>;
+
+    /// Queries one bounded due page after the exact durable position.
+    async fn scan_due_after(
+        &self,
+        shard: u16,
+        now: Timestamp,
+        budget: PageBudget,
+        after: Option<&ReconciliationCursor>,
+    ) -> Result<DuePage, StoreError>;
+
+    /// Reads one due record, for the payload the slim index does not project.
+    async fn load(
+        &self,
+        workspace: WorkspaceId,
+        work_id: &str,
+    ) -> Result<Option<WorkRecord>, StoreError>;
+
+    /// Takes one record's lease.
+    async fn claim(
+        &self,
+        work_id: &str,
+        owner: &str,
+        now: Timestamp,
+        lease_until: Timestamp,
+    ) -> Result<WorkClaim, StoreError>;
+
+    /// Retires one record under its fence.
+    async fn complete(&self, hold: &WorkClaim, now: Timestamp) -> Result<(), StoreError>;
+
+    /// Advances or wraps one shard's cursor under its optimistic revision.
+    async fn advance_cursor(&self, cursor: &ReconciliationCursor) -> Result<(), StoreError>;
+}
+
+#[async_trait]
+impl DueUploads for WorkStore {
+    async fn load_cursor(&self, shard: u16) -> Result<Option<ReconciliationCursor>, StoreError> {
+        WorkAuthority::load_cursor(self, shard).await
+    }
+
+    async fn scan_due_after(
+        &self,
+        shard: u16,
+        now: Timestamp,
+        budget: PageBudget,
+        after: Option<&ReconciliationCursor>,
+    ) -> Result<DuePage, StoreError> {
+        WorkAuthority::scan_due_after(self, shard, now, budget, after).await
+    }
+
+    async fn load(
+        &self,
+        workspace: WorkspaceId,
+        work_id: &str,
+    ) -> Result<Option<WorkRecord>, StoreError> {
+        WorkAuthority::load(self, workspace, work_id).await
+    }
+
+    async fn claim(
+        &self,
+        work_id: &str,
+        owner: &str,
+        now: Timestamp,
+        lease_until: Timestamp,
+    ) -> Result<WorkClaim, StoreError> {
+        WorkAuthority::claim_work(self, work_id, owner, now, lease_until).await
+    }
+
+    async fn complete(&self, hold: &WorkClaim, now: Timestamp) -> Result<(), StoreError> {
+        WorkAuthority::complete_work(self, hold, now).await
+    }
+
+    async fn advance_cursor(&self, cursor: &ReconciliationCursor) -> Result<(), StoreError> {
+        WorkAuthority::advance_cursor(self, cursor).await
+    }
+}
+
+/// Exact settled counts for one scheduled upload-expiry invocation.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadExpiryReport {
+    /// Shard pipelines the invocation scheduled.
+    pub shards_attempted: u16,
+    /// Shard queries that returned a valid page.
+    pub shards_scanned: u16,
+    /// Due rows of this kind the pages named.
+    pub selected: u64,
+    /// Uploads settled `Ready` because the object turned out to exist.
+    pub committed: u64,
+    /// Uploads whose provider upload was aborted and whose row lapsed.
+    pub expired: u64,
+    /// Rows removed because nothing was left to consume them.
+    pub deleted: u64,
+    /// Rows left alone: not due, already settled, or held by another worker.
+    pub unchanged: u64,
+    /// Rows left visible and unswept because the object disagrees.
+    pub stalled: u64,
+    /// Rows re-armed because nothing could be established.
+    pub re_armed: u64,
+    /// Cursor advances that committed.
+    pub cursors_advanced: u64,
+}
+
+/// A scheduled invocation that settled one or more failures.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error(
+    "upload expiry settled with {failures} failure(s); committed {committed}, expired {expired}, \
+     deleted {deleted}, stalled {stalled}, re-armed {rearmed} of {selected} selected row(s) \
+     across {scanned}/{attempted} shard(s); first failure: {first_failure}",
+    committed = .report.committed,
+    expired = .report.expired,
+    deleted = .report.deleted,
+    stalled = .report.stalled,
+    rearmed = .report.re_armed,
+    selected = .report.selected,
+    scanned = .report.shards_scanned,
+    attempted = .report.shards_attempted,
+)]
+pub struct UploadExpiryFailure {
+    /// Counts that succeeded before the invocation failed loud.
+    pub report: UploadExpiryReport,
+    /// How many operations failed.
+    pub failures: u64,
+    /// The deterministic first failure.
+    pub first_failure: String,
+}
+
+/// Walks every admitted shard of the `registry.upload_expiry` due index.
+///
+/// This copies the grant-expiry shape: a per-shard durable cursor, a bounded
+/// page, every write settled before the cursor advances, and a query failure that
+/// never advances that shard. A row this pass could not resolve stays due and is
+/// seen again, which is what makes "re-arm with backoff" a real outcome rather
+/// than a comment.
+///
+/// # Errors
+///
+/// [`UploadExpiryFailure`] after every operation has settled.
+pub async fn expire_due_uploads<D, R, O>(
+    due: &D,
+    rows: &R,
+    objects: &O,
+    owner: &str,
+    shards: u16,
+    now: Timestamp,
+    budget: PageBudget,
+) -> Result<UploadExpiryReport, UploadExpiryFailure>
+where
+    D: DueUploads + ?Sized,
+    R: UploadRows + ?Sized,
+    O: UploadObjects + ?Sized,
+{
+    let mut report = UploadExpiryReport {
+        shards_attempted: shards,
+        ..UploadExpiryReport::default()
+    };
+    let mut failures: Vec<String> = Vec::new();
+    let lease_until = Timestamp::from_unix_millis(now.unix_millis() + CLAIM_LEASE_MILLIS)
+        .unwrap_or(now);
+
+    for shard in 0..shards {
+        let cursor = match due.load_cursor(shard).await {
+            Ok(cursor) => cursor,
+            Err(error) => {
+                failures.push(error.to_string());
+                continue;
+            }
+        };
+        let page = match due.scan_due_after(shard, now, budget, cursor.as_ref()).await {
+            Ok(page) => page,
+            // A query failure never advances that shard, so nothing is skipped.
+            Err(error) => {
+                failures.push(error.to_string());
+                continue;
+            }
+        };
+        report.shards_scanned += 1;
+
+        let mut last_work_id = None;
+        for entry in &page.items {
+            if entry.kind != DUE_KIND {
+                continue;
+            }
+            report.selected += 1;
+            last_work_id = Some(entry.work_id.clone());
+            match sweep_due_row(due, rows, objects, entry, owner, now, lease_until).await {
+                Ok(outcome) => match outcome {
+                    SweepOutcome::Committed => report.committed += 1,
+                    SweepOutcome::Expired => report.expired += 1,
+                    SweepOutcome::Deleted => report.deleted += 1,
+                    SweepOutcome::Absent | SweepOutcome::Unchanged => report.unchanged += 1,
+                    SweepOutcome::Integrity { .. } => report.stalled += 1,
+                    SweepOutcome::Retry { .. } => report.re_armed += 1,
+                },
+                Err(error) => failures.push(error),
+            }
+        }
+
+        // Every write of this page has settled. Only now does the cursor move,
+        // and a page with nothing after it wraps to the shard start so rows this
+        // pass left behind become visible again.
+        let advanced = ReconciliationCursor {
+            shard,
+            scanned_through_effective_due_at: page.scanned_through.unwrap_or(now),
+            last_work_id: if page.has_more { last_work_id } else { None },
+            revision: cursor.as_ref().map_or(0, |cursor| cursor.revision) + 1,
+            updated_at: now,
+        };
+        match due.advance_cursor(&advanced).await {
+            Ok(()) => report.cursors_advanced += 1,
+            Err(error) => failures.push(error.to_string()),
+        }
+    }
+
+    if failures.is_empty() {
+        return Ok(report);
+    }
+    let first_failure = failures
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "upload expiry failed without a recorded cause".to_owned());
+    Err(UploadExpiryFailure {
+        report,
+        failures: failures.len() as u64,
+        first_failure,
+    })
+}
+
+async fn sweep_due_row<D, R, O>(
+    due: &D,
+    rows: &R,
+    objects: &O,
+    entry: &DueEntry,
+    owner: &str,
+    now: Timestamp,
+    lease_until: Timestamp,
+) -> Result<SweepOutcome, String>
+where
+    D: DueUploads + ?Sized,
+    R: UploadRows + ?Sized,
+    O: UploadObjects + ?Sized,
+{
+    let record = due
+        .load(entry.workspace, &entry.work_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    let Some(record) = record else {
+        return Ok(SweepOutcome::Absent);
+    };
+    // The upload identity comes from the typed payload, never parsed back out of
+    // the work id: a parsed identifier would be one naming change away from
+    // sweeping the wrong row.
+    let upload_id = record
+        .payload
+        .members()
+        .get("uploadId")
+        .ok_or_else(|| format!("`{DUE_KIND}` payload carries no uploadId"))?;
+    let upload_id = UploadId::parse(upload_id).map_err(|error| error.to_string())?;
+
+    let hold = match due.claim(&entry.work_id, owner, now, lease_until).await {
+        Ok(hold) => hold,
+        // Another worker holds the lease, or the attempt budget is spent. Both
+        // are acked without work rather than raced.
+        Err(StoreError::PreconditionFailed { .. }) => return Ok(SweepOutcome::Unchanged),
+        Err(error) => return Err(error.to_string()),
+    };
+
+    let outcome = sweep_one(rows, objects, entry.workspace, upload_id, now)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    // A row that re-arms keeps its due item: the sweep established nothing, and
+    // retiring the item would leave that upload unswept forever.
+    if !outcome.re_arms() {
+        due.complete(&hold, now)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(outcome)
 }
 
 #[cfg(test)]

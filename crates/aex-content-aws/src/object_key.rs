@@ -53,6 +53,51 @@ impl ObjectKey {
         Self(format!("{workspace}/{}/{}/{hex}", &hex[0..2], &hex[2..4]))
     }
 
+    /// Adopts a key that was persisted verbatim.
+    ///
+    /// Cleanup and reconciliation read the exact key off the durable row rather
+    /// than re-deriving it from `(workspace, digest)`. Deriving is correct today
+    /// and silently welds every sweep to [`ObjectKey::new`]'s format forever; the
+    /// cost of carrying a seventy-byte string is nil.
+    ///
+    /// The shape is still checked, so a corrupted row cannot become a request
+    /// against some other object.
+    ///
+    /// # Errors
+    ///
+    /// [`ContentObjectError::Invalid`] when the text is not
+    /// `{workspace}/{2}/{2}/{sha256}`.
+    pub fn parse(text: &str) -> Result<Self, crate::errors::ContentObjectError> {
+        let invalid = || crate::errors::ContentObjectError::Invalid {
+            detail: "a content object key is `{workspace}/{2}/{2}/{sha256}`".to_owned(),
+        };
+        let mut fields = text.split('/');
+        let workspace = fields.next().ok_or_else(invalid)?;
+        let first = fields.next().ok_or_else(invalid)?;
+        let second = fields.next().ok_or_else(invalid)?;
+        let digest = fields.next().ok_or_else(invalid)?;
+        if fields.next().is_some() || workspace.is_empty() {
+            return Err(invalid());
+        }
+        let lower_hex = |value: &str| {
+            value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        };
+        if first.len() != 2
+            || second.len() != 2
+            || digest.len() != 64
+            || !lower_hex(first)
+            || !lower_hex(second)
+            || !lower_hex(digest)
+            || !digest.starts_with(first)
+            || !digest[2..].starts_with(second)
+        {
+            return Err(invalid());
+        }
+        Ok(Self(text.to_owned()))
+    }
+
     /// The key as S3 sees it.
     #[must_use]
     pub fn as_str(&self) -> &str {

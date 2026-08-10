@@ -5179,11 +5179,11 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "The staged-upload authority and durable abort transaction are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
         "not_found",
+        "gone",
         "wrong_workspace_region"
       ],
       "etag": "none",
@@ -5205,6 +5205,7 @@
       "scenarios": [
         "SC-CONTENT-LIFECYCLE"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 204,
       "summary": "Abort a staged upload.",
@@ -5213,7 +5214,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The staged-upload authority and durable completion transaction are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -5244,6 +5244,7 @@
       "scenarios": [
         "SC-CONTENT-LIFECYCLE"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Complete a staged upload.",
@@ -5252,7 +5253,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The staged-upload authority and multipart presigning composition are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -5279,6 +5279,7 @@
       "scenarios": [
         "SC-CONTENT-LIFECYCLE"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 201,
       "summary": "Stage a large registered-resource value.",
@@ -5287,7 +5288,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "The multipart grant and presigning composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -5317,6 +5317,7 @@
       "scenarios": [
         "SC-CONTENT-LIFECYCLE"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Mint presigned PUT grants for the named parts.",

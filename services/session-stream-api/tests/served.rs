@@ -798,8 +798,19 @@ impl RegistryStore for FakeRegistry {
 
     async fn begin_completion(
         &self,
-        _upload: UploadId,
+        _upload: &StoredUpload,
         _completion_intent_hash: &str,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Contended)
+    }
+
+    async fn stage_part_blocks(&self, _upload: &StoredUpload) -> Result<(), StoreError> {
+        Err(StoreError::Contended)
+    }
+
+    async fn commit_admission(
+        &self,
+        _plan: &aex_session_dynamodb::plan::TransactionPlan,
     ) -> Result<(), StoreError> {
         Err(StoreError::Contended)
     }
@@ -892,6 +903,31 @@ fn offline_dynamodb() -> aws_sdk_dynamodb::Client {
     )
 }
 
+/// An S3 client bound to a capturing transport.
+///
+/// The mount test proves which routes the router offers and which it refuses; it
+/// never drives a handler to the provider. Pointing the real adapters at an
+/// offline transport keeps the composition identical to production, which is the
+/// point of the test — a second, hand-written set of fakes could drift from the
+/// adapters the process actually builds.
+fn offline_s3() -> aws_sdk_s3::Client {
+    let (http_client, _receiver) = aws_smithy_http_client::test_util::capture_request(None);
+    aws_sdk_s3::Client::from_conf(
+        aws_sdk_s3::Config::builder()
+            .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+            .region(aws_sdk_s3::config::Region::new("eu-west-1"))
+            .credentials_provider(aws_sdk_s3::config::Credentials::new(
+                "AKIDTESTTESTTESTTEST",
+                "test-secret",
+                None,
+                None,
+                "aex-tests",
+            ))
+            .http_client(http_client)
+            .build(),
+    )
+}
+
 fn build_with_authorities(
     custody: Arc<FakeCustody>,
     registry: Arc<FakeRegistry>,
@@ -902,6 +938,25 @@ fn build_with_authorities(
         custody: Arc::clone(&custody) as Arc<dyn SecretCustodyStore>,
         custody_table: CUSTODY_TABLE.to_owned(),
         registry: registry as Arc<dyn RegistryStore>,
+        content: Arc::new(aex_content_dynamodb::store::ContentStore::new(
+            offline_dynamodb(),
+            "aex-dev-regional-content",
+        )),
+        content_objects: Arc::new(aex_content_aws::object_store::S3ContentObjects::new(
+            offline_s3(),
+            aex_content_aws::object_store::BucketBinding {
+                bucket: "aex-dev-eu-west-1-content".to_owned(),
+                expected_owner: "000000000000".to_owned(),
+                kms_key_id: "arn:aws:kms:eu-west-1:000000000000:key/content".to_owned(),
+            },
+        )),
+        receipts: Arc::new(aex_registry_dynamodb::store::RegistryDynamoStore::new(
+            offline_dynamodb(),
+            "aex-dev-regional-registry",
+        )),
+        registry_table: "aex-dev-regional-registry".to_owned(),
+        work_table: "aex-dev-regional-work".to_owned(),
+        content_kms_key_id: "arn:aws:kms:eu-west-1:000000000000:key/content".to_owned(),
         sessions: sessions as Arc<dyn SessionQueries>,
         operations: operations as Arc<dyn OperationApiStore>,
         commands: aex_session_dynamodb::app_authority::SessionCommandReads::new(

@@ -10,7 +10,7 @@ use aex_content_domain::identity::{RegistryKind, Revision};
 use aex_session_dynamodb::attr::{Item, s};
 use aex_session_dynamodb::error::{Idempotence, Resolution, StoreError, classify};
 use aex_session_dynamodb::paging::{PageBudget, PagePosition};
-use aex_session_dynamodb::plan::{Participant, key};
+use aex_session_dynamodb::plan::{Participant, TransactionPlan, key};
 use aex_session_dynamodb::replay::{IdempotencyScope, Receipt, ReceiptStore, key_digest};
 use aex_wire::idempotency::IdempotencyKey;
 use aex_wire::ids::{UploadId, WorkspaceId};
@@ -126,6 +126,17 @@ pub trait RegistryStore: Send + Sync + 'static {
         provider_upload_id: &str,
     ) -> Result<(), StoreError>;
 
+    /// Writes every spilled part block of an upload before its head row exists.
+    ///
+    /// Blocks first, head second: a head row that named blocks nobody had written
+    /// would decode as a short part plan that looks complete, which is exactly
+    /// how a completion silently drops parts.
+    ///
+    /// # Errors
+    ///
+    /// As [`RegistryStore::create_upload`].
+    async fn stage_part_blocks(&self, upload: &Upload) -> Result<(), StoreError>;
+
     /// Settles the per-part digests one grant call declared.
     ///
     /// # Errors
@@ -154,7 +165,7 @@ pub trait RegistryStore: Send + Sync + 'static {
     /// moved on since the sweep decided.
     async fn delete_upload(&self, upload: &Upload) -> Result<(), StoreError>;
 
-    /// Begins a completion under a manifest identity.
+    /// Begins a completion under a manifest identity, persisting the manifest.
     ///
     /// # Errors
     ///
@@ -162,9 +173,23 @@ pub trait RegistryStore: Send + Sync + 'static {
     /// manifest loses the `completionIntentHash` condition.
     async fn begin_completion(
         &self,
-        upload: UploadId,
+        upload: &Upload,
         completion_intent_hash: &str,
     ) -> Result<(), StoreError>;
+
+    /// Commits one compiled cross-table transaction.
+    ///
+    /// The staged-upload admission is three items across two tables — the upload
+    /// row, the `registry.upload_expiry` due item and the idempotency receipt —
+    /// and it has to be one transaction so a replay is answered from the receipt
+    /// **before** any provider call (E D-2, E D-19).
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::PreconditionFailed`] naming the participant that lost, and
+    /// [`StoreError::CommitAmbiguous`] for a transport failure, which is never a
+    /// silent retry.
+    async fn commit_admission(&self, plan: &TransactionPlan) -> Result<(), StoreError>;
 
     /// Finishes a completion under the manifest it began with.
     ///
@@ -458,13 +483,10 @@ impl RegistryStore for RegistryDynamoStore {
     }
 
     async fn create_upload(&self, upload: &Upload) -> Result<(), StoreError> {
-        for block in expressions::create_upload_part_blocks(&self.table, upload) {
-            // Part blocks are written before the head, so a head row is never
-            // visible without the parts it names. The head write is the
-            // conditional one, and it is what makes the upload exist.
-            self.conditional_put(block, Participant::REGISTRY_UPLOAD)
-                .await?;
-        }
+        // Part blocks are written before the head, so a head row is never
+        // visible without the parts it names. The head write is the conditional
+        // one, and it is what makes the upload exist.
+        RegistryStore::stage_part_blocks(self, upload).await?;
         self.conditional_put(
             expressions::create_upload(&self.table, upload),
             Participant::REGISTRY_UPLOAD,
@@ -503,6 +525,14 @@ impl RegistryStore for RegistryDynamoStore {
             Participant::REGISTRY_UPLOAD,
         )
         .await
+    }
+
+    async fn stage_part_blocks(&self, upload: &Upload) -> Result<(), StoreError> {
+        for block in expressions::create_upload_part_blocks(&self.table, upload) {
+            self.conditional_put(block, Participant::REGISTRY_UPLOAD)
+                .await?;
+        }
+        Ok(())
     }
 
     async fn record_part_declarations(&self, upload: &Upload) -> Result<(), StoreError> {
@@ -560,14 +590,46 @@ impl RegistryStore for RegistryDynamoStore {
 
     async fn begin_completion(
         &self,
-        upload: UploadId,
+        upload: &Upload,
         completion_intent_hash: &str,
     ) -> Result<(), StoreError> {
+        // A spilled upload keeps its manifest in the blocks. They are written
+        // first, so the head row's intent is never visible without the manifest
+        // it names.
+        if upload.parts.parts.len() > codec::PARTS_PER_BLOCK {
+            let blocks = upload.parts.parts.len().div_ceil(codec::PARTS_PER_BLOCK);
+            for block in 0..blocks {
+                self.conditional_update(
+                    expressions::record_completion_manifest(&self.table, upload, block),
+                    Participant::REGISTRY_UPLOAD,
+                )
+                .await?;
+            }
+        }
         self.conditional_update(
             expressions::begin_completion(&self.table, upload, completion_intent_hash),
             Participant::REGISTRY_UPLOAD,
         )
         .await
+    }
+
+    async fn commit_admission(&self, plan: &TransactionPlan) -> Result<(), StoreError> {
+        let request = plan.compile(&self.client)?;
+        match request.send().await {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                if let Some(service) = error.as_service_error() {
+                    return Err(aex_session_dynamodb::error::decode_cancellation(
+                        service,
+                        plan.participants(),
+                    ));
+                }
+                Err(classify(
+                    &error,
+                    Idempotence::Write(Resolution::IdempotencyReceipt),
+                ))
+            }
+        }
     }
 
     async fn finish_completion(

@@ -269,24 +269,56 @@ pub fn delete_upload_part_block(table: &str, upload: UploadId, block: usize) -> 
 #[must_use]
 pub fn begin_completion(
     table: &str,
-    upload: UploadId,
+    upload: &Upload,
     completion_intent_hash: &str,
 ) -> UpdateBuilder {
-    let target = keys::upload(upload);
+    let target = keys::upload(upload.id);
+    // The submitted manifest is persisted with the intent, so a retried
+    // completion is deterministic rather than dependent on the client resending
+    // identical input. A spilled upload keeps its manifest in the blocks, which
+    // `record_completion_manifest` writes first.
+    let manifest = codec::encode_upload(upload)
+        .head
+        .get("completionManifest")
+        .cloned()
+        .unwrap_or_else(|| aex_session_dynamodb::attr::string_list(Vec::new()));
     Update::builder()
         .table_name(table)
         .set_key(Some(key(&target.pk, &target.sk)))
         .condition_expression(
             "attribute_exists(pk) AND #state IN (:created, :granted, :completing) \
              AND attribute_not_exists(consumedByName) \
+             AND providerUploadId = :handle \
              AND (attribute_not_exists(completionIntentHash) OR completionIntentHash = :hash)",
         )
-        .update_expression("SET #state = :completing, completionIntentHash = :hash")
+        .update_expression(
+            "SET #state = :completing, completionIntentHash = :hash, \
+             completionManifest = :manifest",
+        )
         .expression_attribute_names("#state", "state")
         .expression_attribute_values(":created", s(upload_state_str(UploadState::Created)))
         .expression_attribute_values(":granted", s(upload_state_str(UploadState::PartsGranted)))
         .expression_attribute_values(":completing", s(upload_state_str(UploadState::Completing)))
+        .expression_attribute_values(":handle", s(upload.provider_upload_id.clone()))
+        .expression_attribute_values(":manifest", manifest)
         .expression_attribute_values(":hash", s(completion_intent_hash.to_owned()))
+}
+
+/// Writes one spilled block's share of the submitted completion manifest.
+#[must_use]
+pub fn record_completion_manifest(table: &str, upload: &Upload, block: usize) -> UpdateBuilder {
+    let target = keys::upload_parts(upload.id, block);
+    let manifest = codec::encode_upload(upload)
+        .part_blocks
+        .get(block)
+        .and_then(|item| item.get("completionManifest").cloned())
+        .unwrap_or_else(|| aex_session_dynamodb::attr::string_list(Vec::new()));
+    Update::builder()
+        .table_name(table)
+        .set_key(Some(key(&target.pk, &target.sk)))
+        .condition_expression("attribute_exists(pk)")
+        .update_expression("SET completionManifest = :manifest")
+        .expression_attribute_values(":manifest", manifest)
 }
 
 /// Finishes a completion under the manifest it began with.
@@ -360,6 +392,31 @@ mod tests {
         UploadId::from_uuid7(Uuid7::compose(1_754_051_696_789, [4; 10]))
     }
 
+    fn upload_row() -> aex_workspace_domain::upload::Upload {
+        aex_workspace_domain::upload::Upload {
+            id: upload(),
+            workspace: workspace(),
+            state: UploadState::PartsGranted,
+            provider_upload_id: "provider-mpu-1".to_owned(),
+            object_key: "wks/ab/cd/abcd".to_owned(),
+            declared_size: 1_024,
+            declared_sha256: aex_wire::ids::ContentHash::from_bytes([2; 32]),
+            content_type: None,
+            parts: aex_workspace_domain::upload::PartPlan {
+                parts: vec![aex_workspace_domain::upload::PlannedPart {
+                    number: 1,
+                    bytes: 1_024,
+                    sha256: None,
+                }],
+            },
+            completion_manifest: Vec::new(),
+            completion: None,
+            consumed_by: None,
+            created_at: aex_wire::types::Timestamp::from_unix_millis(0).expect("in range"),
+            expires_at: aex_wire::types::Timestamp::from_unix_millis(1).expect("in range"),
+        }
+    }
+
     fn condition(builder: aws_sdk_dynamodb::types::builders::UpdateBuilder) -> String {
         builder
             .build()
@@ -412,7 +469,7 @@ mod tests {
 
     #[test]
     fn a_completion_pins_its_manifest_and_refuses_a_consumed_upload() {
-        let expression = condition(begin_completion(TABLE, upload(), &"a".repeat(64)));
+        let expression = condition(begin_completion(TABLE, &upload_row(), &"a".repeat(64)));
         assert!(expression.contains("attribute_not_exists(consumedByName)"));
         assert!(expression.contains("completionIntentHash = :hash"));
         assert!(
