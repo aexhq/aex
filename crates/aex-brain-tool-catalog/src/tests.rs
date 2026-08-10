@@ -606,20 +606,34 @@ fn advertisement_is_exactly_one_ready_executor_and_optional_authority() {
         assert!(advertised.contains(entry.descriptor.name.as_str()));
     }
 
-    let no_search = ResolvedSecretNames::default();
+    // No built-in is withheld for want of a customer key. Platform tools are
+    // platform-paid, so an empty resolved-secret set changes nothing: the whole
+    // compiled surface is still advertised, `web_search` included.
+    let no_secrets = ResolvedSecretNames::default();
     let advertised = advertise(ReadinessInput {
         entries: &entries,
         executors: &executors,
         capabilities: &capabilities,
-        secrets: &no_search,
+        secrets: &no_secrets,
         selection: &BuiltinSelection::Default,
         approval_required: &[],
     })
-    .expect("absent optional search authority excludes the tool");
+    .expect("no built-in depends on a workspace secret");
     for entry in &entries {
         let name = entry.descriptor.name.as_str();
-        assert_eq!(advertised.contains(name), name != "web_search", "{name}");
+        assert!(advertised.contains(name), "{name}");
     }
+    assert!(
+        advertised.contains("web_search"),
+        "web_search is platform-paid and survives an empty workspace-secret set"
+    );
+    assert!(
+        entries.iter().all(|entry| !matches!(
+            entry.descriptor.credential,
+            CredentialClass::WorkspaceSecret { .. }
+        )),
+        "BYOK is an LLM-provider arrangement; no compiled tool may require a tenant secret"
+    );
 
     let no_browser = CapabilitySet::default();
     let advertised = advertise(ReadinessInput {

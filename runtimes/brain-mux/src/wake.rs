@@ -1452,7 +1452,12 @@ mod tests {
             .map(|tool| tool.name.as_str())
             .collect::<Vec<_>>();
         assert!(names.contains(&"web_fetch"));
-        assert!(!names.contains(&"web_search"), "no resolved tenant secret");
+        // `web_search` is platform-paid. `compose` resolves no workspace secret
+        // — `ResolvedSecretNames::default()` is the production input — so while
+        // the entry demanded one it was dropped from every deployed surface, and
+        // the one tool the managed-web executor exists to run was advertised to
+        // nobody. Platform tools carry no customer credential, so it survives.
+        assert!(names.contains(&"web_search"), "platform-paid, not BYOK");
         assert!(!names.iter().any(|name| name.starts_with("mcp__")));
         assert!(!names.contains(&"read_file"), "Hands claims no typed tool");
         assert!(

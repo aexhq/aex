@@ -1,7 +1,7 @@
 //! The compiled-in launch catalog.
 
 use aex_wire::CanonicalJson;
-use aex_wire::ids::{ContentHash, ResourceName};
+use aex_wire::ids::ContentHash;
 use serde_json::{Map, Value, json};
 
 use crate::manifest::{
@@ -14,7 +14,7 @@ use crate::wire_pending::{EffectClass, ExecutorRoute};
 
 /// Snapshot-bound SHA-256 identity of [`builtin_catalog_bytes`].
 pub const BUILTIN_CATALOG_DIGEST: &str =
-    "sha256:b3cae3e3b5cb64b3ca274f22f67c3ba1e305ac4ca14084967348f06d0ba0fdec";
+    "sha256:6d54069dd0c66c7ec2dc7b5f80399b19bb1514bcb4673589bad2631e578c3dd2";
 
 /// Builds and validates the immutable built-in rows in canonical name order.
 ///
@@ -108,12 +108,14 @@ pub fn select_effect(
 }
 
 fn build_entry(spec: &Spec) -> Result<ToolManifestEntry, CatalogBuildError> {
-    let credential = if spec.name == "web_search" {
-        CredentialClass::WorkspaceSecret {
-            name: ResourceName::parse("aex_web_search")
-                .map_err(|error| CatalogBuildError::Resource(error.to_string()))?,
-        }
-    } else if is_hands(spec.boundary) {
+    // Platform tools are platform-paid: BYOK is an LLM-provider arrangement and
+    // never a tool one, so no built-in requires a customer credential. Managed
+    // web keeps `CredentialClass::None`, the same class `web_fetch` carries, and
+    // the platform supplies the search key out of band. Requiring a workspace
+    // secret here made `web_search` unadvertisable to every tenant, because
+    // readiness drops an entry whose named secret did not resolve and nothing in
+    // the workspace resolves one.
+    let credential = if is_hands(spec.boundary) {
         CredentialClass::HandsEndpointToken
     } else {
         CredentialClass::None
@@ -1705,9 +1707,6 @@ pub enum CatalogBuildError {
     /// A schema could not be canonicalized.
     #[error("compiled schema is invalid: {0}")]
     Schema(String),
-    /// A resource name could not be parsed.
-    #[error("compiled resource name is invalid: {0}")]
-    Resource(String),
     /// A descriptor violated the structural rules.
     #[error(transparent)]
     Violation(#[from] CatalogViolation),
