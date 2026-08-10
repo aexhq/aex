@@ -234,13 +234,19 @@ tables = [
 ]
 functions = []
 
+# finance-settlement-worker ----------------------------------------------------
+# `finance.reservation` carries `INSERT` because the settlement worker is the
+# only role that can open the escrow its own `CLAIM_FACT` joins. Without it the
+# claim selects zero rows for every fact ever admitted, which is not a starved
+# worker but a silent one — and `billing_balance_get.pending_cents`, which sums
+# `settled_microusd` over open and closing reservations, is structurally zero.
 [[role]]
 name = "aex_finance_settlement"
 connect = true
 schemas = ["finance"]
 tables = [
   "finance.usage_inbox:SELECT,INSERT,UPDATE",
-  "finance.reservation:SELECT,UPDATE",
+  "finance.reservation:SELECT,INSERT,UPDATE",
   "finance.reservation_closure:SELECT,INSERT,UPDATE",
   "finance.pricing_context:SELECT",
   "finance.account:SELECT",
