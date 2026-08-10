@@ -82,6 +82,55 @@ run "bucket_key_is_on_with_the_customer_managed_key" {
   }
 }
 
+run "browser_read_cors_is_off_by_default" {
+  command = plan
+
+  assert {
+    condition     = length(aws_s3_bucket_cors_configuration.browser_read) == 0
+    error_message = "A store must not accept browser cross-origin reads unless its owning composition opts in."
+  }
+}
+
+run "browser_read_cors_is_exact_and_range_aware" {
+  command = plan
+
+  variables {
+    browser_read_cors_origins = ["https://dev.aex.dev"]
+  }
+
+  assert {
+    condition     = one(aws_s3_bucket_cors_configuration.browser_read).cors_rule[0].allowed_origins == toset(["https://dev.aex.dev"])
+    error_message = "Browser reads must be limited to the exact configured dashboard origin."
+  }
+
+  assert {
+    condition     = one(aws_s3_bucket_cors_configuration.browser_read).cors_rule[0].allowed_methods == toset(["GET", "HEAD"])
+    error_message = "Browser reads may use only GET and HEAD."
+  }
+
+  assert {
+    condition     = one(aws_s3_bucket_cors_configuration.browser_read).cors_rule[0].allowed_headers == toset(["Range"])
+    error_message = "Browser download preflights must allow the Range request header and no wildcard header."
+  }
+
+  assert {
+    condition = one(aws_s3_bucket_cors_configuration.browser_read).cors_rule[0].expose_headers == toset([
+      "Accept-Ranges", "Content-Length", "Content-Range", "ETag"
+    ])
+    error_message = "Browser clients must be able to observe immutable-object and byte-range response metadata."
+  }
+}
+
+run "rejects_a_browser_read_origin_with_a_path" {
+  command = plan
+
+  variables {
+    browser_read_cors_origins = ["https://dev.aex.dev/downloads"]
+  }
+
+  expect_failures = [var.browser_read_cors_origins]
+}
+
 run "incomplete_multipart_uploads_are_aborted_after_twenty_four_hours" {
   command = plan
 

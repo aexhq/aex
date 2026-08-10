@@ -70,6 +70,20 @@ variable "signature_age_ms" {
   }
 }
 
+variable "browser_read_cors_origins" {
+  type        = set(string)
+  default     = []
+  description = "Exact HTTPS browser origins allowed to read presigned objects. An empty set keeps CORS disabled for non-browser stores."
+
+  validation {
+    condition = alltrue([
+      for origin in var.browser_read_cors_origins :
+      can(regex("^https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$", origin))
+    ])
+    error_message = "Every browser read CORS origin must be a bare HTTPS origin without a path or trailing slash."
+  }
+}
+
 variable "abort_incomplete_multipart_days" {
   type        = number
   default     = 1
