@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use central_identity_api::{
-    CentralIdentityApiRunError, Config, DEPLOYABLE, Probes, api, keys, run, targets,
+    CentralIdentityApiRunError, Config, DEPLOYABLE, Probes, api, keys, oauth, run, targets,
 };
 
 use aex_central_http::router::EdgeStack;
@@ -74,15 +74,30 @@ async fn compose(
             CentralIdentityApiRunError::Dependency("identity-pepper", error.to_string())
         })?;
 
-    // Probe three: the first-party sign-in exchange secret loads and is long
-    // enough to be one. Without it `dashboard_session_create` can mint nothing,
-    // and a browser session is the only thing that can approve a device
-    // authorization — so a process that serves without this secret answers the
-    // whole credential ceremony's second step with a `500` for its entire life.
-    // Refusing here turns that into one start-up line naming the dependency.
-    let exchange_secret = api::load_exchange_secret(&secrets, &config.sign_in_exchange_secret_id)
+    // Probe three: both sign-in providers' OAuth clients load and parse. Without
+    // them `dashboard_session_create` can complete no handshake, and a browser
+    // session is the only thing that can approve a device authorization — so a
+    // process that serves without them answers the whole credential ceremony's
+    // second step with a `500` for its entire life. Refusing here turns that
+    // into one start-up line naming the dependency.
+    let github = oauth::load_oauth_client(&secrets, &config.github_oauth_secret_id)
         .await
-        .map_err(|reason| CentralIdentityApiRunError::Dependency("sign-in-exchange", reason))?;
+        .map_err(|reason| CentralIdentityApiRunError::Dependency("github-oauth-client", reason))?;
+    let google = oauth::load_oauth_client(&secrets, &config.google_oauth_secret_id)
+        .await
+        .map_err(|reason| CentralIdentityApiRunError::Dependency("google-oauth-client", reason))?;
+    // The handshake is bounded by the same deadline the request it serves is,
+    // so a provider that stops answering can never outlive its own request.
+    let handshake = Arc::new(
+        oauth::HttpProviderHandshake::new(
+            oauth::OauthClients::new(github, google),
+            config.sign_in_redirect_uri.clone(),
+            config.http.request_deadline,
+        )
+        .map_err(|error| {
+            CentralIdentityApiRunError::Dependency("provider-handshake", error.to_string())
+        })?,
+    );
 
     let clock: Arc<dyn aex_identity_app::ports::Clock> = Arc::new(aex_central_aws::SystemClock);
     let account_client = client.clone();
@@ -101,7 +116,7 @@ async fn compose(
         Arc::new(aex_central_aws::Uuid7Factory),
         Arc::new(aex_central_aws::OsSecretRng),
         verification_uri,
-        exchange_secret,
+        handshake,
     ));
 
     // The cursor secret is per-process and never leaves it: this deployable

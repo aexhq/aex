@@ -30,10 +30,11 @@
 //!   probe, so it is a functional input rather than a tautology.
 //!   Two `VERCEL_*` values used to be excluded here on the grounds that the
 //!   browser ceremony exchange was not a route this process mounts. It is one
-//!   now, and the exchange proves its caller with
-//!   [`SIGN_IN_EXCHANGE_SECRET_ID`] rather than an `OIDC` verifier that never
-//!   existed — so this composition requires that secret and no longer excludes
-//!   anything on that ground.
+//!   now: this composition performs the provider authorization-code exchange
+//!   itself, so it requires each provider's registered OAuth client
+//!   ([`GITHUB_OAUTH_SECRET_ID`], [`GOOGLE_OAUTH_SECRET_ID`]) and the one
+//!   [`SIGN_IN_REDIRECT_URI`] they are registered against, and excludes nothing
+//!   on that ground.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -89,12 +90,18 @@ pub const REGION: &str = "AEX_CENTRAL_API_REGION";
 pub const REGIONAL_FUNCTION_ARNS: &str = "AEX_CENTRAL_API_REGIONAL_FUNCTION_ARNS";
 /// How long one request may take before the edge gives up.
 pub const REQUEST_DEADLINE_MS: &str = "AEX_CENTRAL_API_REQUEST_DEADLINE_MS";
-/// The first-party sign-in exchange secret.
+/// The secret holding GitHub's registered OAuth client.
 ///
-/// Read on every `dashboard_session_create`: it is what proves the caller is an
-/// AEX front end that has already completed a provider handshake, which this
-/// plane cannot do itself.
-pub const SIGN_IN_EXCHANGE_SECRET_ID: &str = "AEX_CENTRAL_API_SIGN_IN_EXCHANGE_SECRET_ID";
+/// A JSON object with `clientId` and `clientSecret`, bound to
+/// [`aex_central_http::capability::SignInHandshake`].
+pub const GITHUB_OAUTH_SECRET_ID: &str = "AEX_CENTRAL_API_GITHUB_OAUTH_SECRET_ID";
+/// The secret holding Google's registered OAuth client, in the same shape.
+pub const GOOGLE_OAUTH_SECRET_ID: &str = "AEX_CENTRAL_API_GOOGLE_OAUTH_SECRET_ID";
+/// Where a provider sends the browser back after a person authorizes.
+///
+/// Configured rather than accepted from the request body: a caller that could
+/// choose it could aim a redeemed code at any URI the provider has registered.
+pub const SIGN_IN_REDIRECT_URI: &str = "AEX_CENTRAL_API_SIGN_IN_REDIRECT_URI";
 /// The bucket issued statement artifacts live in.
 pub const STATEMENT_BUCKET: &str = "AEX_CENTRAL_API_STATEMENT_BUCKET";
 /// The `stripe-command-edge` function this deployable may invoke.
@@ -115,6 +122,8 @@ pub const ALL: &[&str] = &[
     DOWNLOAD_GRANT_TTL_MS,
     DRAIN_DEADLINE_MS,
     FINANCE_ROLE,
+    GITHUB_OAUTH_SECRET_ID,
+    GOOGLE_OAUTH_SECRET_ID,
     IDENTITY_PEPPER_SECRET_ID,
     MAX_BODY_BYTES,
     PAGE_LIMIT,
@@ -123,7 +132,7 @@ pub const ALL: &[&str] = &[
     REGION,
     REGIONAL_FUNCTION_ARNS,
     REQUEST_DEADLINE_MS,
-    SIGN_IN_EXCHANGE_SECRET_ID,
+    SIGN_IN_REDIRECT_URI,
     STATEMENT_BUCKET,
     STRIPE_COMMAND_EDGE_ARN,
 ];
@@ -166,8 +175,12 @@ pub struct Config {
     pub api_key_pepper_secret_id: String,
     /// The identity pepper secret.
     pub identity_pepper_secret_id: String,
-    /// The secret holding the first-party sign-in exchange credential.
-    pub sign_in_exchange_secret_id: String,
+    /// The secret holding GitHub's registered OAuth client.
+    pub github_oauth_secret_id: String,
+    /// The secret holding Google's registered OAuth client.
+    pub google_oauth_secret_id: String,
+    /// Where a provider sends the browser back after a person authorizes.
+    pub sign_in_redirect_uri: String,
     /// The cursor signing secret.
     pub cursor_secret_id: String,
     /// Every configured region a workspace may be placed in.
@@ -283,7 +296,9 @@ impl Config {
             finance_role: required(&lookup, FINANCE_ROLE)?,
             api_key_pepper_secret_id: required(&lookup, API_KEY_PEPPER_SECRET_ID)?,
             identity_pepper_secret_id: required(&lookup, IDENTITY_PEPPER_SECRET_ID)?,
-            sign_in_exchange_secret_id: required(&lookup, SIGN_IN_EXCHANGE_SECRET_ID)?,
+            github_oauth_secret_id: required(&lookup, GITHUB_OAUTH_SECRET_ID)?,
+            google_oauth_secret_id: required(&lookup, GOOGLE_OAUTH_SECRET_ID)?,
+            sign_in_redirect_uri: https_url(&lookup, SIGN_IN_REDIRECT_URI)?,
             cursor_secret_id: required(&lookup, CURSOR_SECRET_ID)?,
             regional_functions,
             api_urls,
@@ -323,8 +338,12 @@ impl Config {
                     self.api_key_pepper_secret_id.clone(),
                 ),
                 (
-                    SIGN_IN_EXCHANGE_SECRET_ID.to_owned(),
-                    self.sign_in_exchange_secret_id.clone(),
+                    GITHUB_OAUTH_SECRET_ID.to_owned(),
+                    self.github_oauth_secret_id.clone(),
+                ),
+                (
+                    GOOGLE_OAUTH_SECRET_ID.to_owned(),
+                    self.google_oauth_secret_id.clone(),
                 ),
                 (
                     IDENTITY_PEPPER_SECRET_ID.to_owned(),
@@ -374,6 +393,24 @@ where
         .map_err(|_| CentralApiConfigError::Invalid {
             name,
             reason: format!("expected an integer, got `{raw}`"),
+        })
+}
+
+/// Reads a value that must be an `https` URL.
+///
+/// Validated at start-up rather than at the first sign-in: a redirect URI that
+/// does not parse is a configuration fact, and discovering it when a person
+/// clicks a provider button costs an outage nobody can attribute.
+fn https_url<F>(lookup: &F, name: &'static str) -> Result<String, CentralApiConfigError>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    let raw = required(lookup, name)?;
+    HttpsUrl::parse(&raw)
+        .map(|url| url.as_str().to_owned())
+        .map_err(|error| CentralApiConfigError::Invalid {
+            name,
+            reason: error.to_string(),
         })
 }
 

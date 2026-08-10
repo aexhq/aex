@@ -616,7 +616,7 @@
       "servedArtifact": "central-identity-api",
       "servingArtifact": "central-identity-api",
       "successStatus": 201,
-      "summary": "Exchange a completed first-party provider sign-in for a browser session.",
+      "summary": "Exchange a provider authorization code for a browser session.",
       "transport": "unary"
     },
     {

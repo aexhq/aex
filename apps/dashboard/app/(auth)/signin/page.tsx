@@ -3,14 +3,34 @@ import { Notice } from "../../../src/ui/components";
 export const metadata = { title: "Sign in — AEX" };
 
 /**
- * TODO(cross-stream): the browser sign-in ceremony is owned by central identity.
+ * TODO(dashboard): wire the two provider buttons to the published exchange.
  *
- * The exchange this page needs — `POST /internal/v1/identity/users/resolutions`,
- * which turns a validated provider callback into an `aex_ds_` browser session — is
- * not published in this branch, and neither is the email-challenge pair. The
- * provider buttons are therefore rendered disabled with the reason stated. They are
- * not wired to a handler that would 404, and no local credential path is invented
- * to stand in for the missing one.
+ * The server half now exists and its shape has changed. `POST /api/auth/sessions`
+ * performs the OAuth authorization-code exchange itself, in `central-identity-api`,
+ * and takes `{ provider, code, state, codeVerifier }`. It no longer accepts a
+ * provider profile this page established, and the shared `exchangeSecret` that used
+ * to prove the caller was first-party is deleted — with the code redeemed
+ * server-side there is no caller asserting an identity for a secret to prove.
+ *
+ * What is still missing is entirely on this side, which is why the buttons stay
+ * disabled rather than being wired to something half-built:
+ *
+ *  1. a handler per button that mints a PKCE `code_verifier`, stores it in a
+ *     `__Host-` cookie (`HttpOnly`, `Secure`, `SameSite=Lax` — the redirect is a
+ *     top-level GET), and redirects to the provider's authorize endpoint with
+ *     `state` and `code_challenge` both set to its S256 challenge;
+ *  2. a `/auth/callback` route that reads the cookie back, posts the four fields,
+ *     and sets the returned `aex_ds_` credential with `dashboardSessionCookie`;
+ *  3. `dashboard_session_create` added to `DASHBOARD_ROUTES` in
+ *     `src/server/routes.ts`, which currently does not list it;
+ *  4. the two public client ids and the one registered redirect URI as build
+ *     configuration. The client *secrets* stay in `central-identity-api`'s bound
+ *     secrets and must never reach this app.
+ *
+ * The verifier cookie is the whole CSRF story: the server refuses any callback
+ * whose `state` is not the S256 challenge of the verifier presented with it, so a
+ * cross-site forgery carrying an attacker's code and state cannot produce the
+ * matching verifier from a victim's browser.
  */
 export default function SignIn() {
   return (

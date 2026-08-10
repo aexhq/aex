@@ -176,16 +176,29 @@ async fn run(
         .await
         .map_err(|error| CentralApiRunError::Dependency("identity-pepper", error.to_string()))?;
 
-    // The first-party sign-in exchange secret. Without it `dashboard_session_create`
-    // can mint nothing, and a browser session is the only thing that can approve
-    // a device authorization — so serving without this secret means the whole
-    // credential ceremony fails at its second step for the life of the process.
-    let exchange_secret = central_identity_api::api::load_exchange_secret(
-        &secrets,
-        &config.sign_in_exchange_secret_id,
-    )
-    .await
-    .map_err(|reason| CentralApiRunError::Dependency("sign-in-exchange", reason))?;
+    // Both sign-in providers' registered OAuth clients. Without them
+    // `dashboard_session_create` can complete no handshake, and a browser session
+    // is the only thing that can approve a device authorization — so serving
+    // without them means the whole credential ceremony fails at its second step
+    // for the life of the process.
+    let github =
+        central_identity_api::oauth::load_oauth_client(&secrets, &config.github_oauth_secret_id)
+            .await
+            .map_err(|reason| CentralApiRunError::Dependency("github-oauth-client", reason))?;
+    let google =
+        central_identity_api::oauth::load_oauth_client(&secrets, &config.google_oauth_secret_id)
+            .await
+            .map_err(|reason| CentralApiRunError::Dependency("google-oauth-client", reason))?;
+    // The handshake is bounded by the same deadline the request it serves is, so
+    // a provider that stops answering can never outlive its own request.
+    let handshake = Arc::new(
+        central_identity_api::oauth::HttpProviderHandshake::new(
+            central_identity_api::oauth::OauthClients::new(github, google),
+            config.sign_in_redirect_uri.clone(),
+            config.http.request_deadline,
+        )
+        .map_err(|error| CentralApiRunError::Dependency("provider-handshake", error.to_string()))?,
+    );
 
     let cursor_peppers = Arc::new(aex_central_aws::SecretsManagerPepperKeystore::new(
         secrets,
@@ -235,7 +248,7 @@ async fn run(
         aex_wire::types::HttpsUrl::parse(&config.device_verification_uri).map_err(|error| {
             CentralApiRunError::Dependency("device-verification-uri", error.to_string())
         })?,
-        exchange_secret,
+        handshake,
     ));
 
     let billing_authority = Arc::new(finance_api::aurora::AuroraBillingAuthority::new(

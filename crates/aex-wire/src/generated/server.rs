@@ -3,7 +3,7 @@
 //! The server traits and the total dispatch surface, one group per authoring fragment.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:0cdb0802fd5fc620c4216d8793f21981b2821c05f24d3390cf0ecb37da739dbf`.
+//! `sha256:1f778bdb0c16820c3ab2228484dcaff60fbc9870c1f636942bd6e589a8d46f0f`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -987,7 +987,7 @@ pub async fn dispatch_approvals<A: ApprovalsApi + ?Sized>(
 /// declares.
 pub trait AuthApi: Send + Sync + 'static {
     /// `POST /api/auth/sessions`
-    /// Exchange a completed first-party provider sign-in for a browser session.
+    /// Exchange a provider authorization code for a browser session.
     fn dashboard_session_create(
         &self,
         cx: &RequestContext,

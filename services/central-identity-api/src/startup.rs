@@ -52,7 +52,7 @@ use aex_identity_domain::credential::parse as parse_credential;
 use aex_identity_domain::{
     ACCOUNT_TOKEN_TTL, AccountToken, CredentialKind, DashboardSession, DeviceAuthorization,
     DeviceState, EmailChallenge, ExternalIdentity, Pepper, PepperVersion, PresentedDigest,
-    SessionState, TokenOrigin, User, UserStatus, Verifier, verify,
+    Provider, SessionState, TokenOrigin, User, UserStatus, Verifier, verify,
 };
 use aex_wire::ids::{PrefixedId as _, UserId};
 use async_trait::async_trait;
@@ -62,15 +62,20 @@ use time::{Duration, OffsetDateTime};
 use tower::ServiceExt as _;
 use uuid::Uuid;
 
-use crate::api::{ALLOWED_CLIENT_ID, AuthService, ExchangeSecret};
+use crate::api::{ALLOWED_CLIENT_ID, AuthService};
 use crate::targets::NoOrganizationTargets;
 use crate::{Probes, app, readiness};
 
 /// The one pepper version this fixture mints and verifies under.
 const VERSION: u16 = 1;
 
-/// The configured first-party sign-in exchange secret.
-const EXCHANGE_SECRET: &str = "fixture-sign-in-exchange-secret-000000000";
+/// The PKCE verifier the fixture browser holds in its own cookie.
+///
+/// RFC 7636's own appendix B vector, so the `state` below is checkable by hand.
+const VERIFIER: &str = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+
+/// The `state` a provider echoes back: the S256 challenge of [`VERIFIER`].
+const STATE: &str = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
 
 /// A pepper keystore holding one fixed version.
 #[derive(Debug)]
@@ -462,6 +467,64 @@ impl IdentityStore for MemoryIdentity {
     }
 }
 
+/// The sign-in provider, in memory.
+///
+/// It stands in for a token endpoint and nothing more: it records every code
+/// presented to it and answers with a person, or refuses. What matters is that
+/// the handler reaches it **only** when the `state` check has already passed —
+/// `redeemed` is what the forgery test asserts against, because a request that
+/// never reached here never spent a code.
+#[derive(Debug, Default)]
+struct MemoryProvider {
+    redeemed: Mutex<Vec<String>>,
+}
+
+impl MemoryProvider {
+    /// A code this fixture provider will redeem, for one person.
+    fn code_for(account: &str) -> String {
+        format!("code-for-{account}")
+    }
+}
+
+#[async_trait]
+impl crate::oauth::ProviderHandshake for MemoryProvider {
+    async fn identify(
+        &self,
+        provider: Provider,
+        code: &str,
+        verifier: &str,
+    ) -> Result<aex_identity_app::use_cases::OauthProfile, crate::oauth::HandshakeError> {
+        assert_eq!(
+            verifier, VERIFIER,
+            "the handler forwarded a verifier it had not checked `state` against"
+        );
+        self.redeemed
+            .lock()
+            .expect("not poisoned")
+            .push(code.to_owned());
+        // The one code shape this fixture knows. A real provider refusing a code
+        // and this refusing an unknown one are the same answer to the handler.
+        let account = code.strip_prefix("code-for-").ok_or_else(|| {
+            crate::oauth::HandshakeError::Refused("no such authorization code".to_owned())
+        })?;
+        if account == "unverified" {
+            return Err(crate::oauth::HandshakeError::Unusable(
+                "the provider asserts no verified primary address".to_owned(),
+            ));
+        }
+        Ok(aex_identity_app::use_cases::OauthProfile {
+            provider,
+            provider_account_id: aex_identity_domain::ProviderAccountId::parse(account)
+                .expect("a storable account id"),
+            email: aex_identity_domain::NormalizedEmail::parse(&format!("{account}@example.com"))
+                .expect("a normalizable address"),
+            email_verified: true,
+            name: Some("A Person".to_owned()),
+            image_url: None,
+        })
+    }
+}
+
 /// The account authority, which this suite never reaches.
 struct UnreachableAccounts;
 
@@ -483,9 +546,10 @@ impl crate::account::AccountReader for UnreachableAccounts {
     }
 }
 
-/// The composed router, over the real service and the two in-memory ports.
-fn composed(probes: Probes) -> (axum::Router, Arc<MemoryIdentity>) {
+/// The composed router, over the real service and the three in-memory ports.
+fn composed(probes: Probes) -> (axum::Router, Arc<MemoryIdentity>, Arc<MemoryProvider>) {
     let store = Arc::new(MemoryIdentity::default());
+    let provider = Arc::new(MemoryProvider::default());
     let clock: Arc<dyn aex_identity_app::ports::Clock> = Arc::new(aex_central_aws::SystemClock);
     let service = AuthService::new(
         Arc::clone(&store) as Arc<dyn IdentityStore>,
@@ -494,7 +558,7 @@ fn composed(probes: Probes) -> (axum::Router, Arc<MemoryIdentity>) {
         Arc::new(aex_central_aws::Uuid7Factory),
         Arc::new(aex_central_aws::OsSecretRng),
         aex_wire::types::HttpsUrl::parse("https://aex.dev/device").expect("a valid URL"),
-        ExchangeSecret::new(EXCHANGE_SECRET).expect("a long enough fixture secret"),
+        Arc::clone(&provider) as Arc<dyn crate::oauth::ProviderHandshake>,
     );
     let config = crate::Config::from_lookup(|name| environment(name).map(str::to_owned))
         .expect("a complete environment");
@@ -513,6 +577,7 @@ fn composed(probes: Probes) -> (axum::Router, Arc<MemoryIdentity>) {
     (
         app(Arc::new(service), account, edge, readiness(probes)),
         store,
+        provider,
     )
 }
 
@@ -529,7 +594,9 @@ fn environment(name: &str) -> Option<&'static str> {
             "arn:aws:secretsmanager:eu-west-1:000000000000:secret:aex-identity"
         }
         "AEX_CENTRAL_IDENTITY_PEPPER_SECRET_ID" => "aex/dev/identity-pepper",
-        "AEX_CENTRAL_IDENTITY_SIGN_IN_EXCHANGE_SECRET_ID" => "aex/dev/sign-in-exchange",
+        "AEX_CENTRAL_IDENTITY_GITHUB_OAUTH_SECRET_ID" => "aex/dev/sign-in/github",
+        "AEX_CENTRAL_IDENTITY_GOOGLE_OAUTH_SECRET_ID" => "aex/dev/sign-in/google",
+        "AEX_CENTRAL_IDENTITY_SIGN_IN_REDIRECT_URI" => "https://dash.aex.dev/auth/callback",
         "AEX_CENTRAL_IDENTITY_DATABASE" => "aex",
         "AEX_CENTRAL_IDENTITY_ROLE" => "aex_identity_api",
         "AEX_CENTRAL_IDENTITY_DEVICE_VERIFICATION_URI" => "https://aex.dev/device",
@@ -579,13 +646,13 @@ fn token_request(device_code: &str) -> Request<Body> {
         .expect("a valid request")
 }
 
-/// A sign-in exchange body, with one field overridable per test.
-fn sign_in_request(secret: &str, provider_account_id: &str, email_verified: bool) -> Request<Body> {
+/// A callback body: what a browser redirect actually carries.
+fn sign_in_request(state: &str, code: &str) -> Request<Body> {
     Request::builder()
         .method("POST")
         .uri("/api/auth/sessions")
         .body(Body::from(format!(
-            r#"{{"exchangeSecret":"{secret}","provider":"github","providerAccountId":"{provider_account_id}","email":"person@example.com","emailVerified":{email_verified},"name":"A Person"}}"#
+            r#"{{"provider":"github","code":"{code}","state":"{state}","codeVerifier":"{VERIFIER}"}}"#
         )))
         .expect("a valid request")
 }
@@ -642,7 +709,11 @@ fn decision_request(
 /// Signs a person in through the real route and returns their credential, id
 /// and authorizer context.
 async fn sign_in(router: &axum::Router) -> (String, Uuid, CentralAuthorizerContext) {
-    let (status, body) = call(router, sign_in_request(EXCHANGE_SECRET, "gh-1", true)).await;
+    let (status, body) = call(
+        router,
+        sign_in_request(STATE, &MemoryProvider::code_for("gh-1")),
+    )
+    .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
     let credential = body["session"].as_str().expect("a session").to_owned();
     let user_id = Uuid::from_bytes(
@@ -660,7 +731,7 @@ async fn sign_in(router: &axum::Router) -> (String, Uuid, CentralAuthorizerConte
 
 #[tokio::test]
 async fn the_composed_binary_mints_a_device_code_a_person_can_approve() {
-    let (router, _store) = composed(Probes::READY);
+    let (router, _store, _provider) = composed(Probes::READY);
     let (status, body) = call(&router, start_request()).await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
     let device_code = body["deviceCode"].as_str().expect("a device code");
@@ -691,7 +762,7 @@ async fn the_composed_binary_mints_a_device_code_a_person_can_approve() {
 
 #[tokio::test]
 async fn a_device_polling_an_unapproved_grant_is_told_to_keep_waiting() {
-    let (router, _store) = composed(Probes::READY);
+    let (router, _store, _provider) = composed(Probes::READY);
     let (_, started) = call(&router, start_request()).await;
     let device_code = started["deviceCode"].as_str().expect("a device code");
 
@@ -711,7 +782,7 @@ async fn a_device_polling_an_unapproved_grant_is_told_to_keep_waiting() {
 /// touches the store except through the router.
 #[tokio::test]
 async fn a_person_signs_in_approves_a_device_and_the_device_redeems_a_token() {
-    let (router, store) = composed(Probes::READY);
+    let (router, store, _provider) = composed(Probes::READY);
 
     let (_, started) = call(&router, start_request()).await;
     let device_code = started["deviceCode"]
@@ -769,7 +840,7 @@ async fn a_person_signs_in_approves_a_device_and_the_device_redeems_a_token() {
 
 #[tokio::test]
 async fn a_denied_grant_can_never_be_redeemed() {
-    let (router, _store) = composed(Probes::READY);
+    let (router, _store, _provider) = composed(Probes::READY);
     let (_, started) = call(&router, start_request()).await;
     let device_code = started["deviceCode"]
         .as_str()
@@ -795,7 +866,7 @@ async fn a_denied_grant_can_never_be_redeemed() {
 
 #[tokio::test]
 async fn a_decision_without_a_browser_session_is_refused() {
-    let (router, store) = composed(Probes::READY);
+    let (router, store, _provider) = composed(Probes::READY);
     let (_, started) = call(&router, start_request()).await;
     let user_code = started["userCode"]
         .as_str()
@@ -825,7 +896,7 @@ async fn a_decision_without_a_browser_session_is_refused() {
 /// proved the approver was current and an account token proves no such thing.
 #[tokio::test]
 async fn an_account_token_may_not_stand_in_for_the_session_that_proves_currency() {
-    let (router, store) = composed(Probes::READY);
+    let (router, store, _provider) = composed(Probes::READY);
     let (_, started) = call(&router, start_request()).await;
     let user_code = started["userCode"]
         .as_str()
@@ -856,7 +927,7 @@ async fn an_account_token_may_not_stand_in_for_the_session_that_proves_currency(
 
 #[tokio::test]
 async fn a_user_code_no_grant_is_waiting_on_is_not_found() {
-    let (router, _store) = composed(Probes::READY);
+    let (router, _store, _provider) = composed(Probes::READY);
     let (_credential, _user, context) = sign_in(&router).await;
     let (status, body) = call(
         &router,
@@ -869,7 +940,7 @@ async fn a_user_code_no_grant_is_waiting_on_is_not_found() {
 
 #[tokio::test]
 async fn a_user_code_outside_the_alphabet_never_reaches_the_store() {
-    let (router, store) = composed(Probes::READY);
+    let (router, store, _provider) = composed(Probes::READY);
     let (_credential, _user, context) = sign_in(&router).await;
     for forged in ["", "AEIOU-BCDFG", "BCDFG", "not-a-code"] {
         let (status, body) = call(&router, decision_request(&context, forged, "approve")).await;
@@ -881,24 +952,62 @@ async fn a_user_code_outside_the_alphabet_never_reaches_the_store() {
     );
 }
 
+/// The login-CSRF forgery, refused before a single code is spent.
+///
+/// An attacker who starts their own sign-in holds a valid code and a valid
+/// `state`, and can make a victim's browser hit the callback with both. What
+/// they cannot do is write a cookie on this platform's origin, so the verifier
+/// the victim's browser presents is the victim's, and it does not hash to the
+/// attacker's `state`.
+///
+/// The assertion that matters is the last one: the provider is never dialled.
+/// A refusal that happened *after* the exchange would still have spent a code
+/// and would still have told an attacker their code was good.
 #[tokio::test]
-async fn the_sign_in_exchange_refuses_a_caller_that_is_not_first_party() {
-    let (router, store) = composed(Probes::READY);
-    for wrong in ["", "short", "fixture-sign-in-exchange-secret-000000001"] {
-        let (status, body) = call(&router, sign_in_request(wrong, "gh-1", true)).await;
+async fn a_redirect_whose_state_does_not_match_its_verifier_never_reaches_the_provider() {
+    let (router, store, provider) = composed(Probes::READY);
+    let attackers_state =
+        crate::oauth::challenge_of("an-attackers-own-verifier-000000000000000000");
+    for forged in [
+        "",
+        &attackers_state,
+        // The right challenge with one character changed.
+        "e9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+        STATE.trim_end_matches('M'),
+    ] {
+        let (status, body) = call(
+            &router,
+            sign_in_request(forged, &MemoryProvider::code_for("gh-1")),
+        )
+        .await;
         assert!(
             status == StatusCode::UNAUTHORIZED || status == StatusCode::BAD_REQUEST,
-            "{wrong}: {status} {body}"
+            "{forged}: {status} {body}"
         );
     }
     assert!(
+        provider.redeemed.lock().expect("not poisoned").is_empty(),
+        "a forged redirect reached the provider and spent an authorization code"
+    );
+    assert!(
         store.users.lock().expect("not poisoned").is_empty(),
-        "an unproven caller created a person"
+        "a forged redirect created a person"
     );
     assert!(
         store.sessions.lock().expect("not poisoned").is_empty(),
-        "an unproven caller minted a session"
+        "a forged redirect minted a session"
     );
+}
+
+/// A code the provider refuses mints nothing.
+#[tokio::test]
+async fn a_code_the_provider_refuses_authenticates_nobody() {
+    let (router, store, _provider) = composed(Probes::READY);
+    let (status, body) = call(&router, sign_in_request(STATE, "not-a-real-code")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert_eq!(body["error"]["code"], "unauthenticated", "{body}");
+    assert!(store.users.lock().expect("not poisoned").is_empty());
+    assert!(store.sessions.lock().expect("not poisoned").is_empty());
 }
 
 /// An unverified address must not resolve to an existing person.
@@ -906,19 +1015,27 @@ async fn the_sign_in_exchange_refuses_a_caller_that_is_not_first_party() {
 /// The store resolves by normalized email when no provider link matches, so
 /// accepting an unverified assertion would let one provider account adopt
 /// another person's records. That is a cross-tenant read, which is a
-/// correctness defect rather than a matter of degree.
+/// correctness defect rather than a matter of degree. The rule is now enforced
+/// inside the handshake — `crate::oauth` refuses to build a profile without a
+/// verified address — and this asserts the refusal reaches the wire as a
+/// caller-actionable answer rather than a `500`, and writes nobody.
 #[tokio::test]
 async fn an_unverified_address_links_to_nobody() {
-    let (router, store) = composed(Probes::READY);
-    let (status, body) = call(&router, sign_in_request(EXCHANGE_SECRET, "gh-2", false)).await;
+    let (router, store, _provider) = composed(Probes::READY);
+    let (status, body) = call(
+        &router,
+        sign_in_request(STATE, &MemoryProvider::code_for("unverified")),
+    )
+    .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(body["error"]["code"], "invalid_request", "{body}");
     assert!(store.users.lock().expect("not poisoned").is_empty());
+    assert!(store.sessions.lock().expect("not poisoned").is_empty());
 }
 
 #[tokio::test]
 async fn signing_in_twice_resolves_one_person_and_two_sessions() {
-    let (router, store) = composed(Probes::READY);
+    let (router, store, _provider) = composed(Probes::READY);
     let (first, _, _) = sign_in(&router).await;
     let (second, _, _) = sign_in(&router).await;
     assert_ne!(first, second, "the second sign-in replayed a credential");
@@ -932,7 +1049,7 @@ async fn signing_in_twice_resolves_one_person_and_two_sessions() {
 
 #[tokio::test]
 async fn closing_a_session_stops_it_approving_anything() {
-    let (router, store) = composed(Probes::READY);
+    let (router, store, _provider) = composed(Probes::READY);
     let (_, started) = call(&router, start_request()).await;
     let user_code = started["userCode"]
         .as_str()
@@ -968,7 +1085,7 @@ async fn closing_a_session_stops_it_approving_anything() {
 
 #[tokio::test]
 async fn a_device_code_that_is_not_this_platform_s_grammar_never_reaches_the_store() {
-    let (router, store) = composed(Probes::READY);
+    let (router, store, _provider) = composed(Probes::READY);
     for forged in [
         "",
         "aex_dvc_",
@@ -986,7 +1103,7 @@ async fn a_device_code_that_is_not_this_platform_s_grammar_never_reaches_the_sto
 
 #[tokio::test]
 async fn a_body_naming_another_client_is_refused_before_any_credential_is_minted() {
-    let (router, store) = composed(Probes::READY);
+    let (router, store, _provider) = composed(Probes::READY);
     let request = Request::builder()
         .method("POST")
         .uri("/api/auth/device/authorizations")
@@ -1003,7 +1120,7 @@ async fn a_body_naming_another_client_is_refused_before_any_credential_is_minted
 
 #[tokio::test]
 async fn readiness_answers_from_the_probes_the_process_actually_ran() {
-    let (unready, _) = composed(Probes::NONE);
+    let (unready, _, _) = composed(Probes::NONE);
     let (status, body) = call(
         &unready,
         Request::builder()
@@ -1014,7 +1131,7 @@ async fn readiness_answers_from_the_probes_the_process_actually_ran() {
     .await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
 
-    let (ready, _) = composed(Probes::READY);
+    let (ready, _, _) = composed(Probes::READY);
     let (status, body) = call(
         &ready,
         Request::builder()
@@ -1041,7 +1158,7 @@ async fn readiness_answers_from_the_probes_the_process_actually_ran() {
 
 #[tokio::test]
 async fn no_route_outside_this_deployable_s_declared_set_is_served() {
-    let (router, _) = composed(Probes::READY);
+    let (router, _, _) = composed(Probes::READY);
     for path in [
         "/api/organizations",
         "/api/workspaces",
