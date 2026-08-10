@@ -78,9 +78,10 @@ owner = "central-identity"
 # `control_workspace` target runs the organization, workspace and API-key
 # ceremonies through `aex-control-app`'s use cases and `AuroraControlStore`
 # against the committed schema and privileges, then resolves the minted key
-# through `AuroraAuthorizationReader` as `aex_authz` and verifies it. What it
-# cannot reach is the regional half, which is where the remaining defect lives.
-deferred = "The engine-backed body runs on the integration lane but has no `e2e` target, which needs a plane. Two of the five observed artifacts are regional and unreached: `capacity-limit-projection-write`, the only writer of `workspace_edge_limits`, still has no production caller, so a provisioned workspace has no edge-limits row and every regional request against it answers 401 unauthenticated."
+# through `AuroraAuthorizationReader` as `aex_authz` and verifies it. The
+# production worker now bootstraps regional capacity before publishing a
+# placement, but this body still cannot observe that deployed cross-plane path.
+deferred = "The production worker path now invokes `regional-capacity-controller` before it publishes a workspace placement and fails closed when capacity bootstrap does not apply. That closes the source-level caller gap, not the evidence gap: this engine-backed body has no real plane `e2e` target. Keep the scenario deferred until a deployed plane proves organization, workspace and API-key creation followed by an authenticated regional request through the exact five observed artifacts."
 observes = [
   "artifact:central-api",
   "artifact:central-control-api",

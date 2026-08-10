@@ -22,13 +22,13 @@
 //!   endpoint's own behaviour.
 //! - **The regional half is a recording double.** `CreateWorkspace` performs one
 //!   effect against `RegionalControlPort`, and this body asserts exactly what
-//!   the central plane asks the region for. It cannot assert what the region
-//!   then does, and that is the gap the scenario's other four observed artifacts
-//!   cover: a workspace with no `workspace_edge_limits` row answers `401
-//!   unauthenticated` on every regional request, and the writer for that row
-//!   (`aex-session-dynamodb`'s `capacity-limit-projection-write`) has **no
-//!   production caller**. The last case below pins the shape of the central
-//!   request so that gap is visible from here rather than only from the region.
+//!   the central plane asks the region for. The production
+//!   `central-control-worker` now invokes `regional-capacity-controller` before
+//!   it publishes the placement, and refuses to publish when bootstrap fails.
+//!   This body still cannot assert that the deployed aliases, permissions and
+//!   regional write all work together. The last case below pins the central
+//!   request shape; only a real-plane E2E target can earn the cross-plane
+//!   evidence for all five observed artifacts.
 
 mod support;
 

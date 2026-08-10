@@ -971,6 +971,33 @@ fn the_shipped_prd_set_is_the_reduced_one() {
     }
 }
 
+/// The public production path owns the capacity bootstrap now, but source
+/// composition is not a substitute for observing that path on a deployed plane.
+#[test]
+fn control_workspace_metadata_separates_the_production_caller_from_live_evidence() {
+    let text = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../release/scenario-ownership.toml"),
+    )
+    .expect("the shipped scenario registry");
+    let registry: aex_release_tool::graph::inputs::ScenarioOwnership =
+        toml::from_str(&text).expect("it parses");
+    let scenario = registry
+        .scenarios
+        .iter()
+        .find(|scenario| scenario.id == "SC-CONTROL-WORKSPACE")
+        .expect("the control-workspace scenario is registered");
+    let deferred = scenario
+        .deferred
+        .as_deref()
+        .expect("the scenario remains deferred until real-plane evidence exists");
+
+    assert!(scenario.package.is_none() && scenario.target.is_none());
+    assert!(deferred.contains("production worker path"), "{deferred}");
+    assert!(deferred.contains("real plane `e2e`"), "{deferred}");
+    assert!(!deferred.contains("no production caller"), "{deferred}");
+}
+
 // --- published packages --------------------------------------------------------
 //
 // A registry unit trades three deployment bindings for three stronger claims.
