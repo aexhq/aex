@@ -84,6 +84,14 @@
       }
     },
     {
+      "id": "registry.entries",
+      "value": 1000
+    },
+    {
+      "id": "registry.value_bytes",
+      "value": 65536
+    },
+    {
       "id": "tools.io_safety",
       "value": {
         "web_fetch_bytes": 500000,
@@ -101,14 +109,6 @@
         "active": 5,
         "window_days": 90
       }
-    },
-    {
-      "id": "registry.entries",
-      "value": 1000
-    },
-    {
-      "id": "registry.value_bytes",
-      "value": 65536
     }
   ]
 }
