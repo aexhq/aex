@@ -533,7 +533,11 @@ impl Write {
             | Self::AppendJournalPage { .. }
             | Self::PutApproval(_)
             | Self::CancelAgent { .. }
-            | Self::PutTombstone(_) => TableFamily::SessionAuthority,
+            | Self::PutTombstone(_)
+            // A persist receipt is a session-scoped fact about the durable
+            // root, so it lives beside the head rather than with the content it
+            // describes.
+            | Self::PutPersistReceipt(_) => TableFamily::SessionAuthority,
             Self::PutIdempotencyReceipt(_) => TableFamily::Idempotency,
             Self::PutOperation(_) | Self::RedactOperationResult(_) | Self::PutWorkItem(_) => {
                 TableFamily::WorkAuthority
@@ -544,7 +548,6 @@ impl Write {
             | Self::DeletePin(_)
             | Self::PutGrant(_)
             | Self::PutTreePage { .. } => TableFamily::ContentAuthority,
-            Self::PutPersistReceipt(_) => TableFamily::SessionAuthority,
             Self::PutRegistryPointer(_) | Self::PutUpload(_) => TableFamily::Registry,
             Self::PutCustody(_) | Self::PutSecret(_) => TableFamily::SecretCustody,
             Self::DeleteItem(key) => key.family,

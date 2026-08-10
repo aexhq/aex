@@ -495,7 +495,7 @@ pub async fn stop_session(
     let operation = step.shape_operation(&admitted_operation, now)?;
 
     Ok(Planned {
-        plan: step.plan(command.session, &operation, Resume::Admission)?,
+        plan: step.plan(command.session, &operation, &Resume::Admission)?,
         projected: operation,
     })
 }
@@ -653,7 +653,7 @@ pub async fn continue_stop(
         plan: step.plan(
             command.session,
             &operation,
-            Resume::Step {
+            &Resume::Step {
                 from,
                 version: versioned.version,
             },
@@ -852,7 +852,7 @@ impl StopBatch {
         &self,
         session: SessionId,
         operation: &aex_operation_domain::Operation,
-        resume: Resume,
+        resume: &Resume,
     ) -> Result<SessionTransaction, AppError> {
         let mut conditions = vec![
             Condition::SessionRevision {
@@ -872,7 +872,7 @@ impl StopBatch {
                 epoch: self.observed.deletion_epoch,
             },
         ];
-        match &resume {
+        match resume {
             // An admission is an insert, and `OperationCursorAt { expected:
             // None }` is how the plan says so: the row must not exist yet.
             Resume::Admission => {
@@ -932,7 +932,7 @@ impl StopBatch {
             // preconditions, and the client token is derived from the whole
             // plan, so sharing an intent would leave a provider failure
             // ambiguous between an admission and a resumption.
-            intent: match resume {
+            intent: match *resume {
                 Resume::Admission => TransactionIntent::StopSession,
                 Resume::Step { .. } => TransactionIntent::ContinueOperation,
             },

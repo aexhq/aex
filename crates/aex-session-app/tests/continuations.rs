@@ -56,13 +56,33 @@ fn version_guard(plan: &SessionTransaction) -> Option<OperationVersion> {
     })
 }
 
-fn cursor_guard(plan: &SessionTransaction) -> Option<Option<CursorPosition>> {
-    plan.conditions.iter().find_map(|condition| match condition {
-        Condition::OperationCursorAt { expected, .. } => {
-            Some(expected.as_ref().map(|cursor| cursor.position.clone()))
-        }
-        _ => None,
-    })
+/// What a plan's cursor guard says, as three distinguishable cases.
+///
+/// Deliberately an enum rather than `Option<Option<_>>`: "the plan carries no
+/// cursor guard at all" and "the plan guards the row as absent" are opposite
+/// claims about the same write, and a nested option makes them one character
+/// apart at every call site.
+#[derive(Debug, PartialEq, Eq)]
+enum CursorGuard {
+    /// The plan does not guard the cursor.
+    Absent,
+    /// The plan asserts the operation row does not exist yet.
+    RowAbsent,
+    /// The plan asserts the row still carries this position.
+    At(CursorPosition),
+}
+
+fn cursor_guard(plan: &SessionTransaction) -> CursorGuard {
+    plan.conditions
+        .iter()
+        .find_map(|condition| match condition {
+            Condition::OperationCursorAt { expected, .. } => Some(expected.as_ref().map_or(
+                CursorGuard::RowAbsent,
+                |cursor| CursorGuard::At(cursor.position.clone()),
+            )),
+            _ => None,
+        })
+        .unwrap_or(CursorGuard::Absent)
 }
 
 /// Drives one paged stop to its first step and returns the admission.
@@ -102,7 +122,7 @@ async fn an_admission_never_names_a_version_it_could_not_have_observed() {
     );
     assert_eq!(
         cursor_guard(&first.plan),
-        Some(None),
+        CursorGuard::RowAbsent,
         "an admission guards the operation item as absent"
     );
     assert_eq!(first.plan.intent, TransactionIntent::StopSession);
@@ -132,12 +152,14 @@ async fn a_resumed_step_names_the_exact_version_it_read() {
     );
     assert_eq!(
         cursor_guard(&step.plan),
-        Some(
+        CursorGuard::At(
             first
                 .projected
                 .cursor
                 .as_ref()
-                .map(|cursor| cursor.position.clone())
+                .expect("a continued admission parks at a cursor")
+                .position
+                .clone()
         ),
         "the same step also names the cursor it advances from"
     );
