@@ -401,9 +401,18 @@ impl ExternalActionCompiler for SessionAuthorityExternal {
     fn compile_action(
         &self,
         tables: &RegionalTables,
+        binding: SessionBinding,
         action: &LogicalAction<'_>,
         output: &mut TransactionPlan,
     ) -> Result<(), StoreError> {
+        // This compiler was constructed with the tenant the regional edge
+        // authenticated, and the root compiler hands the same binding down with
+        // every action. They can disagree only if one transaction were compiled
+        // against two tenants, so the disagreement is refused rather than
+        // resolved: choosing either would be choosing whose row to write.
+        if binding != self.binding {
+            return Err(cross_tenant());
+        }
         match action.write {
             None => Self::read_only(tables, action, output),
             Some(Write::PutOperation(operation)) => {

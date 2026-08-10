@@ -438,10 +438,20 @@ impl WorkspaceProjection for ProjectionReader {
         workspace: WorkspaceId,
     ) -> Result<ProjectedLimitBundle, StoreError> {
         let (pk, sk) = limit_bundle_key(workspace);
-        // Strong like the head that selects it: an eventual payload read could
-        // serve bytes older than the revision the head just proved complete.
+        // Eventual, alone, and safe to be both.
+        //
+        // The bundle is one item written in the same transaction as the members
+        // and the head, so it can never be internally torn: a reader sees a
+        // complete revision or the previous complete revision, never a mixture.
+        // Pairing it with the strong head is what an admission *fence* needs —
+        // proof of a specific revision — and the strong pair above still exists
+        // for exactly that. A customer read of the values in force is
+        // descriptive: it carries `revision` and `changedAt` so a caller can
+        // always tell which authority revision it is holding, and paying a
+        // strong read plus a second round trip to bound a fact that changes on
+        // operator-paced events buys nothing anyone can use.
         let item = self
-            .get(&pk, &sk, Consistency::Strong)
+            .get(&pk, &sk, Consistency::Eventual)
             .await?
             .ok_or_else(|| StoreError::Misconfigured {
                 table: self.table.clone(),

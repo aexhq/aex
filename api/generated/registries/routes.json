@@ -3,7 +3,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "The central identity composition does not yet mount an authoritative account operational-state read.",
       "errors": [
         "unauthenticated",
         "forbidden",
@@ -29,6 +28,7 @@
       "scenarios": [
         "SC-IDENTITY-ACCOUNT"
       ],
+      "servedArtifact": "central-identity-api",
       "servingArtifact": "central-identity-api",
       "successStatus": 200,
       "summary": "Read the account and its operational state.",
@@ -5265,7 +5265,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "The signed and projected facts do not supply the complete account operational state.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -5291,6 +5290,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Read the workspace this credential is pinned to.",
@@ -5375,7 +5375,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "No authoritative regional capacity default and override producer exists yet.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -5402,6 +5401,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Read one effective workspace safety limit.",
@@ -5410,7 +5410,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "No authoritative regional capacity default and override producer exists yet.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -5434,6 +5433,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "List the effective workspace safety limits. The registry is closed and complete, so the whole set is one page and no continuation is ever minted.",

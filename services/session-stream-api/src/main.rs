@@ -367,6 +367,19 @@ async fn run(
             dynamodb.clone(),
             stores.session_table.clone(),
         )),
+        // The cold workspace surface, over the same projection table the edge
+        // authorizes against. Two ports over one reader rather than one wide
+        // port: a limit read must not be able to reach for a placement, and the
+        // admission path must not gain a profile read it never makes.
+        workspace: Arc::new(aex_session_dynamodb::projection::ProjectionReader::new(
+            dynamodb.clone(),
+            stores.authz_projection_table.clone(),
+        )),
+        placements: Arc::new(aex_session_dynamodb::projection::ProjectionReader::new(
+            dynamodb.clone(),
+            stores.authz_projection_table.clone(),
+        )),
+        api_url: config.regional_api_url.clone(),
         operations: Arc::new(aex_session_dynamodb::store::OperationStore::new(
             dynamodb.clone(),
             stores.session_table.clone(),

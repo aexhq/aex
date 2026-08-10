@@ -37,7 +37,9 @@ use aex_session_dynamodb::app_authority::{
 };
 use aex_session_dynamodb::application_plan::SessionBinding;
 use aex_session_dynamodb::paging::{PageBudget, PagePosition};
+use aex_session_dynamodb::error::StoreError;
 use aex_session_dynamodb::plan::{Participant, RegionalTables, TransactionPlan};
+use aex_session_dynamodb::projection::{AuthorizationProjection, WorkspaceProjection};
 use aex_session_dynamodb::store::{
     OperationApiStore, OperationCancelOutcome, OperationFilter, SessionQueries, SessionScoped,
 };
@@ -50,11 +52,13 @@ use aex_wire::ids::{
 };
 use aex_wire::models;
 use aex_wire::routes::{RouteId, route};
+use aex_wire::limits::LimitId;
 use aex_wire::server::{
     AcceptKind, Accepted, ApprovalsApi, Created, NoContent, ProviderCredentialsApi,
     RegionalOperationsApi, RegistryApi, RequestContext as WireContext, RouteGroup, SecretsApi,
-    SessionsApi, WithETag, dispatch_approvals, dispatch_provider_credentials,
+    SessionsApi, WithETag, WorkspaceApi, dispatch_approvals, dispatch_provider_credentials,
     dispatch_regional_operations, dispatch_registry, dispatch_secrets, dispatch_sessions,
+    dispatch_workspace,
 };
 use aex_wire::types::Timestamp;
 
@@ -79,6 +83,22 @@ pub struct Shared {
     pub registry: Arc<dyn RegistryStore>,
     /// The strongly consistent, read-only session-authority surface.
     pub sessions: Arc<dyn SessionQueries>,
+    /// The cold workspace-description surface: profile and effective limits.
+    ///
+    /// Deliberately a separate port from the placement reader below. A display
+    /// name or a limit read must not widen the capability the admission path
+    /// uses on every request.
+    pub workspace: Arc<dyn WorkspaceProjection>,
+    /// The placement reader, for the one workspace fact the request context
+    /// does not carry: whether a deletion is running.
+    pub placements: Arc<dyn AuthorizationProjection>,
+    /// The regional host this deployable answers on.
+    ///
+    /// One value per plane and region, resolved at start-up. It is not a
+    /// per-workspace attribute: a projected one could disagree with the host
+    /// that served the request, and changing a display URL would become a
+    /// fleet-wide row rewrite.
+    pub api_url: aex_wire::types::HttpsUrl,
     /// The durable-operation point, list and conditional cancellation authority.
     pub operations: Arc<dyn OperationApiStore>,
     /// The eventually consistent command-path view of the session authority.
@@ -158,6 +178,9 @@ const SERVED: &[RouteId] = &[
     RouteId::SessionRunsList,
     RouteId::SessionStop,
     RouteId::SessionTrash,
+    RouteId::WorkspaceCurrentGet,
+    RouteId::WorkspaceLimitGet,
+    RouteId::WorkspaceLimitsList,
 ];
 
 impl std::fmt::Debug for Routes {
@@ -1458,6 +1481,201 @@ impl RegistryApi for Routes {
     }
 }
 
+/// The three regional workspace reads.
+///
+/// # One predicate, spelled once
+///
+/// All three answer `workspace_activation_required` for the same fact: a
+/// durable row this workspace needs does not exist here yet. That is the same
+/// predicate `session_create` and the three live-file routes declare, and it has
+/// to stay one predicate rather than becoming four — [`Routes::activation`] is
+/// the whole of it.
+///
+/// What it is emphatically **not** is `404`. An absent row of a registered limit
+/// is an operator fault that clears, and answering "no such limit" would be a
+/// lie about the contract that a client would rightly stop retrying.
+impl WorkspaceApi for Routes {
+    async fn workspace_current_get(&self, _cx: &WireContext) -> WireResult<models::Workspace> {
+        let workspace = self.cx.auth.workspace_id;
+        // Two eventual point reads. The placement row is read for exactly one
+        // fact the request context does not carry — whether a deletion is
+        // running — because the admission projection collapses `deleting` onto
+        // `Paused`, which is the right answer for admission and the wrong one
+        // to publish as a workspace status.
+        let (placement, profile) = futures::future::try_join(
+            async {
+                self.shared
+                    .placements
+                    .read_placement(workspace)
+                    .await
+                    .map_err(|error| Self::activation(&error))
+            },
+            async {
+                self.shared
+                    .workspace
+                    .read_profile(workspace)
+                    .await
+                    .map_err(|error| {
+                        // A profile row that is present and will not decode is
+                        // not an un-activated workspace. Since the account
+                        // fields became required, the likeliest cause is a row
+                        // written before they existed — and the honest answer to
+                        // "what is this account's state" is then that we could
+                        // not establish it, never a guessed `Active`.
+                        if matches!(error, StoreError::Invalid { .. }) {
+                            WireError::new(ErrorCode::AccountStateUnavailable)
+                        } else {
+                            Self::activation(&error)
+                        }
+                    })
+            },
+        )
+        .await?;
+        let profile = profile.ok_or_else(|| WireError::new(ErrorCode::WorkspaceActivationRequired))?;
+
+        let status = match placement.status.as_str() {
+            "deleting" => models::WorkspaceStatus::Deleting,
+            // `active` and `paused` are both live workspaces. The pause is the
+            // *account's* state and is published as such below; folding it into
+            // the workspace status would give one fact two homes.
+            "active" | "paused" => models::WorkspaceStatus::Active,
+            _ => return Err(WireError::new(ErrorCode::InternalError)),
+        };
+        Ok(models::Workspace {
+            api_url: self.shared.api_url.clone(),
+            created_at: profile.created_at,
+            // The deletion operation id is a central fact; the placement row
+            // carries whether a deletion runs, not which operation runs it.
+            deletion_operation_id: None,
+            id: workspace,
+            name: profile.name.clone(),
+            operational_state: models::WorkspaceOperationalState {
+                inherited_from: models::OperationalStateSource::Account,
+                organization_id: self.cx.auth.organization_id,
+                state: account_state(&profile)?,
+            },
+            organization_id: self.cx.auth.organization_id,
+            region: self.cx.auth.placement,
+            slug: profile.slug.clone(),
+            status,
+        })
+    }
+
+    async fn workspace_limit_get(
+        &self,
+        _cx: &WireContext,
+        limit_id: LimitId,
+    ) -> WireResult<models::EffectiveWorkspaceLimit> {
+        // `limit_id` parsed, so the identifier is registered. `not_found` was
+        // decided before this call and can no longer happen here: an absent row
+        // of a registered limit is an activation gap, not an unknown resource.
+        let stored = self
+            .shared
+            .workspace
+            .read_limit(self.cx.auth.workspace_id, limit_id)
+            .await
+            .map_err(|error| Self::activation(&error))?
+            .ok_or_else(|| WireError::new(ErrorCode::WorkspaceActivationRequired))?;
+        Ok(models::EffectiveWorkspaceLimit {
+            changed_at: stored.changed_at,
+            effective_value: stored.effective_value,
+            id: stored.id,
+            revision: stored.revision,
+            source: stored.source,
+        })
+    }
+
+    async fn workspace_limits_list(
+        &self,
+        _cx: &WireContext,
+    ) -> WireResult<models::EffectiveWorkspaceLimitPage> {
+        // The bundle item, not a query over the member rows.
+        //
+        // A paged query can interleave two authority revisions inside one page,
+        // which is the "partial answer presented as authoritative" failure this
+        // whole cluster exists to remove. The bundle is written in the same
+        // transaction as the members, so it is one complete revision or the
+        // previous one, and never a mixture of both.
+        let bundle = self
+            .shared
+            .workspace
+            .read_limit_bundle(self.cx.auth.workspace_id)
+            .await
+            .map_err(|error| Self::activation(&error))?;
+        if bundle.limits.len() != LimitId::ALL.len() {
+            // Short is not a page here. The registry is closed and every
+            // workspace's set is complete by construction, so fewer items than
+            // the registry means the set was never finished — and a `200`
+            // carrying it would be read as "these are all the limits there are".
+            return Err(WireError::new(ErrorCode::WorkspaceActivationRequired));
+        }
+        Ok(models::EffectiveWorkspaceLimitPage {
+            items: bundle.limits,
+            // Never populated. The registry is a closed, registry-sized
+            // collection and the whole of it is one item; `cursor` and `limit`
+            // were removed from this route for the same reason.
+            next_cursor: None,
+        })
+    }
+}
+
+impl Routes {
+    /// The one activation predicate, over a store failure.
+    ///
+    /// `Misconfigured` is the projection's single constructor for "this region
+    /// holds no usable record of that" — an absent row and a row contradicting
+    /// its siblings are deliberately indistinguishable, so the difference is not
+    /// probeable. On the admission path that collapses to `401`, which is right:
+    /// telling an unknown credential which of the two it hit is telling it
+    /// something. On a cold descriptive read it is wrong, because the caller's
+    /// credential was already verified and calling it unknown is a false
+    /// statement about the caller.
+    fn activation(error: &StoreError) -> WireError {
+        match error {
+            StoreError::Misconfigured { .. } => {
+                WireError::new(ErrorCode::WorkspaceActivationRequired)
+            }
+            other => authority_failure(other),
+        }
+    }
+}
+
+/// Projects the account fields the profile row carries onto the published state.
+///
+/// This calls the one mapping in `aex-control-domain`, which is also what
+/// `central-identity-api` calls. There is no second derivation and there must
+/// never be one: the same account read centrally and regionally may differ in
+/// staleness, never in vocabulary, discriminator or derivation.
+fn account_state(
+    profile: &aex_session_dynamodb::wire_pending::WorkspaceProfile,
+) -> WireResult<models::AccountOperationalState> {
+    let changed_at = profile.account_changed_at.to_datetime();
+    // Finance publishes a reason exactly when the account is paused, so the
+    // presence of one *is* the discriminator. The placement row's `deleting`
+    // collapse is not consulted: that is an admission projection of workspace
+    // status, and this is the account's state.
+    let state = if profile.account_pause_reason.is_some() {
+        aex_control_domain::AccountState::PausedTopUpRequired
+    } else {
+        aex_control_domain::AccountState::Active
+    };
+    aex_control_domain::account_operational_state(&aex_control_domain::AccountProfile {
+        state,
+        reason: profile.account_pause_reason.clone(),
+        revision: profile.account_revision,
+        changed_at,
+    })
+    .map_err(|error| match error {
+        aex_control_domain::AccountProjectionError::Unavailable => {
+            WireError::new(ErrorCode::AccountStateUnavailable)
+        }
+        // A reason outside the durable vocabulary, or an unrepresentable
+        // instant, is a corrupt projected row rather than a customer condition.
+        // It is still not an answer, so it is still not `Active`.
+        _ => WireError::new(ErrorCode::AccountStateUnavailable),
+    })
+}
+
 #[async_trait::async_trait]
 impl UnaryDispatch for Routes {
     fn owner(&self) -> RouteOwner {
@@ -1487,6 +1705,7 @@ impl UnaryDispatch for Routes {
             "registry" => dispatch_registry(self, &wire, raw, limits).await?,
             "approvals" => dispatch_approvals(self, &wire, raw, limits).await?,
             "sessions" => dispatch_sessions(self, &wire, raw, limits).await?,
+            "workspace" => dispatch_workspace(self, &wire, raw, limits).await?,
             _ => return Err(not_served(raw.route)),
         };
         match outcome {

@@ -34,13 +34,18 @@ use aex_secret_domain::secret::{SecretName, SecretRevision, SecretState, SourceG
 use aex_session_domain::{Message, Run, Session};
 use aex_session_dynamodb::error::StoreError;
 use aex_session_dynamodb::paging::{PageBudget, PagePosition};
+use aex_session_dynamodb::projection::{
+    AuthorizationProjection, ProjectionPage, WorkspaceProjection,
+};
 use aex_session_dynamodb::plan::{Participant, TransactionPlan};
 use aex_session_dynamodb::replay::Receipt;
 use aex_session_dynamodb::store::{OperationApiStore, OperationCancelOutcome, OperationFilter};
 use aex_session_dynamodb::store::{PositionPage, SessionPage, SessionQueries, SessionScoped};
 use aex_session_dynamodb::transactions::operation_cancel_owned;
 use aex_session_dynamodb::wire_pending::{
-    Approval, ApprovalBinding, ApprovalStatus, StoredOperation,
+    Approval, ApprovalBinding, ApprovalStatus, ProjectedLimitBundle as StoredBundle,
+    ProjectedLimitBundleHead as StoredBundleHead, ProjectedWorkspaceLimit as StoredLimit,
+    StoredOperation, WorkspacePlacement as StoredPlacement, WorkspaceProfile as StoredProfile,
 };
 use aex_wire::CanonicalJson;
 use aex_wire::error::{ErrorCode, WireError};
@@ -619,6 +624,171 @@ impl SecretCustodyStore for FakeCustody {
     }
 }
 
+// --- the workspace projection doubles ---------------------------------------------
+
+/// The cold workspace surface, holding exactly the rows a case gives it.
+///
+/// Absence is `Misconfigured`, which is the projection's single constructor for
+/// "this region holds no usable record of that" — the same value the real reader
+/// produces, so a handler that mapped it differently from production would fail
+/// here rather than in a region.
+#[derive(Debug, Default)]
+struct FakeWorkspaceProjection {
+    profile: Option<StoredProfile>,
+    limits: BTreeMap<aex_wire::limits::LimitId, StoredLimit>,
+    bundle: Option<StoredBundle>,
+}
+
+fn absent() -> StoreError {
+    StoreError::Misconfigured {
+        table: "dev-eu-west-1-regional-authz-projection".to_owned(),
+    }
+}
+
+#[async_trait::async_trait]
+impl WorkspaceProjection for FakeWorkspaceProjection {
+    async fn read_profile(
+        &self,
+        _workspace: WorkspaceId,
+    ) -> Result<Option<StoredProfile>, StoreError> {
+        Ok(self.profile.clone())
+    }
+
+    async fn read_limit(
+        &self,
+        _workspace: WorkspaceId,
+        limit: aex_wire::limits::LimitId,
+    ) -> Result<Option<StoredLimit>, StoreError> {
+        Ok(self.limits.get(&limit).cloned())
+    }
+
+    async fn page_limits(
+        &self,
+        _workspace: WorkspaceId,
+        _budget: PageBudget,
+        _after: Option<&PagePosition>,
+    ) -> Result<ProjectionPage<StoredLimit>, StoreError> {
+        unreachable!("the public list is served from the bundle item, never a paged member query")
+    }
+
+    async fn read_limit_bundle_head(
+        &self,
+        _workspace: WorkspaceId,
+    ) -> Result<StoredBundleHead, StoreError> {
+        unreachable!("the strong head is an admission fence, not a customer read")
+    }
+
+    async fn read_limit_bundle(
+        &self,
+        _workspace: WorkspaceId,
+    ) -> Result<StoredBundle, StoreError> {
+        self.bundle.clone().ok_or_else(absent)
+    }
+}
+
+/// The placement reader, for the one workspace fact the context does not carry.
+#[derive(Debug, Default)]
+struct FakePlacements {
+    placement: Option<StoredPlacement>,
+}
+
+#[async_trait::async_trait]
+impl AuthorizationProjection for FakePlacements {
+    async fn read_placement(
+        &self,
+        _workspace: WorkspaceId,
+    ) -> Result<StoredPlacement, StoreError> {
+        self.placement.clone().ok_or_else(absent)
+    }
+
+    async fn read_key_authorization(
+        &self,
+        _api_key: ApiKeyId,
+    ) -> Result<aex_session_dynamodb::wire_pending::KeyAuthorization, StoreError> {
+        unreachable!("the edge admitted this request; a handler never re-reads the key")
+    }
+
+    async fn read_admission_snapshot(
+        &self,
+        _api_key: ApiKeyId,
+        _workspace: WorkspaceId,
+    ) -> Result<aex_session_dynamodb::wire_pending::AdmissionSnapshot, StoreError> {
+        unreachable!("admission ran before dispatch")
+    }
+
+    async fn read_frontier(
+        &self,
+    ) -> Result<aex_session_dynamodb::wire_pending::FeedFrontier, StoreError> {
+        unreachable!("the frontier is the readiness probe's, not a request's")
+    }
+}
+
+fn stored_profile(pause_reason: Option<&str>) -> StoredProfile {
+    StoredProfile {
+        workspace: workspace(),
+        name: "Fixture".to_owned(),
+        slug: "fixture".to_owned(),
+        created_at: moment("2026-08-01T12:34:56.789Z"),
+        account_revision: 7,
+        account_changed_at: moment("2026-08-02T00:00:00.000Z"),
+        account_pause_reason: pause_reason.map(str::to_owned),
+    }
+}
+
+fn stored_placement(status: &str) -> StoredPlacement {
+    StoredPlacement {
+        workspace: workspace(),
+        organization: sample(3),
+        plane: "regional".to_owned(),
+        region: Region::EuWest1.as_str().to_owned(),
+        status: status.to_owned(),
+        key_epoch: 0,
+        account_epoch: 0,
+        revocation_epoch: 0,
+        feed_sequence: 1,
+        updated_at: moment("2026-08-02T00:00:00.000Z"),
+    }
+}
+
+/// One effective limit, as the capacity authority projects it.
+fn effective_limit(id: aex_wire::limits::LimitId) -> models::EffectiveWorkspaceLimit {
+    models::EffectiveWorkspaceLimit {
+        changed_at: moment("2026-08-02T00:00:00.000Z"),
+        effective_value: models::LimitValue::Scalar(models::LimitScalarValue {
+            value: aex_wire::types::DecimalU128::new(65_536),
+        }),
+        id,
+        revision: 3,
+        source: models::LimitSource::Default,
+    }
+}
+
+fn stored_limit(id: aex_wire::limits::LimitId) -> StoredLimit {
+    let wire = effective_limit(id);
+    StoredLimit {
+        workspace: workspace(),
+        id: wire.id,
+        effective_value: wire.effective_value,
+        source: wire.source,
+        revision: wire.revision,
+        changed_at: wire.changed_at,
+    }
+}
+
+/// A bundle carrying exactly `count` of the registry's limits, in order.
+fn stored_bundle(count: usize) -> StoredBundle {
+    StoredBundle {
+        workspace: workspace(),
+        revision: 3,
+        limits: aex_wire::limits::LimitId::ALL
+            .iter()
+            .copied()
+            .take(count)
+            .map(effective_limit)
+            .collect(),
+    }
+}
+
 fn context(request_id: RequestId, route_id: RouteId) -> RequestContext {
     RequestContext {
         request_id,
@@ -872,7 +1042,34 @@ fn build_with_authorities(
     sessions: Arc<FakeSessions>,
     operations: Arc<FakeOperations>,
 ) -> ((axum::Router, Vec<RouteId>), Arc<FakeCustody>) {
+    build_with_workspace(
+        custody,
+        registry,
+        sessions,
+        operations,
+        Arc::new(FakeWorkspaceProjection::default()),
+        Arc::new(FakePlacements::default()),
+    )
+}
+
+/// The workspace router, over an explicit projection.
+///
+/// Separate from the default builder because the workspace cases are about what
+/// the projection holds: an absent row, a short set and a complete one are three
+/// different answers, and each has to be constructible on its own.
+fn build_with_workspace(
+    custody: Arc<FakeCustody>,
+    registry: Arc<FakeRegistry>,
+    sessions: Arc<FakeSessions>,
+    operations: Arc<FakeOperations>,
+    projection: Arc<FakeWorkspaceProjection>,
+    placements: Arc<FakePlacements>,
+) -> ((axum::Router, Vec<RouteId>), Arc<FakeCustody>) {
     let shared = Arc::new(Shared {
+        workspace: projection as Arc<dyn WorkspaceProjection>,
+        placements: placements as Arc<dyn AuthorizationProjection>,
+        api_url: aex_wire::types::HttpsUrl::parse("https://eu-west-1.aex.dev")
+            .expect("a regional host"),
         custody: Arc::clone(&custody) as Arc<dyn SecretCustodyStore>,
         custody_table: CUSTODY_TABLE.to_owned(),
         registry: registry as Arc<dyn RegistryStore>,
@@ -1009,13 +1206,17 @@ fn the_served_set_is_a_subset_of_the_owned_set_and_never_a_second_list() {
 }
 
 #[test]
-fn workspace_limit_reads_are_owned_but_remain_explicitly_unmounted() {
+fn the_three_workspace_reads_are_owned_and_served() {
     let served = Routes::served();
-    for id in [RouteId::WorkspaceLimitGet, RouteId::WorkspaceLimitsList] {
+    for id in [
+        RouteId::WorkspaceCurrentGet,
+        RouteId::WorkspaceLimitGet,
+        RouteId::WorkspaceLimitsList,
+    ] {
         assert_eq!(route_owner(id), Some(RouteOwner::SessionApi), "`{id}`");
         assert!(
-            !served.contains(&id),
-            "`{id}` must wait for the capacity authority"
+            served.contains(&id),
+            "`{id}` has a complete handler and an authority behind it"
         );
     }
 }
@@ -2290,4 +2491,278 @@ async fn an_unreadable_registry_fails_the_listing_rather_than_publishing_a_short
             .all(|code| !code.retryable()),
         "the listing declares no transient code, which is why the refusal is internal"
     );
+}
+
+// --- the three workspace reads ---------------------------------------------------
+
+/// The router, over a workspace projection holding exactly what a case needs.
+fn workspace_router(
+    projection: FakeWorkspaceProjection,
+    placements: FakePlacements,
+) -> axum::Router {
+    build_with_workspace(
+        Arc::new(FakeCustody::default()),
+        Arc::new(FakeRegistry::default()),
+        Arc::new(FakeSessions::default()),
+        Arc::new(FakeOperations::default()),
+        Arc::new(projection),
+        Arc::new(placements),
+    )
+    .0
+     .0
+}
+
+/// A projection holding the complete registry, as every bootstrapped workspace
+/// does by construction.
+fn complete_projection() -> FakeWorkspaceProjection {
+    FakeWorkspaceProjection {
+        profile: Some(stored_profile(None)),
+        limits: aex_wire::limits::LimitId::ALL
+            .iter()
+            .copied()
+            .map(|id| (id, stored_limit(id)))
+            .collect(),
+        bundle: Some(stored_bundle(aex_wire::limits::LimitId::ALL.len())),
+    }
+}
+
+/// A short set is never a page.
+///
+/// This is the failure the cluster exists to remove. The registry is closed and
+/// every workspace set is complete by construction, so eleven of twelve limits
+/// is not "the first page" and not "the limits this workspace has" — it is a
+/// workspace whose materialisation did not finish. A `200` carrying it would be
+/// read by every client as the complete answer, and whatever enforces the
+/// missing limit would then be deciding what an absent row means, which is the
+/// decision eager materialisation exists to make unnecessary.
+#[tokio::test]
+async fn a_partial_limit_set_is_an_activation_refusal_and_never_a_short_page() {
+    let full = aex_wire::limits::LimitId::ALL.len();
+    for short in [0, 1, full - 1] {
+        let router = workspace_router(
+            FakeWorkspaceProjection {
+                bundle: Some(stored_bundle(short)),
+                ..FakeWorkspaceProjection::default()
+            },
+            FakePlacements::default(),
+        );
+        let (status, _, body) = get(&router, "/api/workspace/limits").await;
+        assert_eq!(
+            status,
+            StatusCode::CONFLICT,
+            "a {short}-of-{full} set answered {status}: {body}"
+        );
+        assert_eq!(body["error"]["code"], "workspace_activation_required", "{body}");
+        assert_eq!(
+            body["error"]["retryable"], true,
+            "activation clears, so a client must not give up on it: {body}"
+        );
+    }
+
+    // The complete set is a `200` carrying every registered limit, in registry
+    // order, with no continuation.
+    let router = workspace_router(complete_projection(), FakePlacements::default());
+    let (status, _, body) = get(&router, "/api/workspace/limits").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["items"].as_array().map(Vec::len),
+        Some(full),
+        "the published page is the whole registry: {body}"
+    );
+    assert!(
+        body.get("nextCursor").is_none(),
+        "a closed registry-sized collection never mints a continuation: {body}"
+    );
+    let ids: Vec<&str> = body["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|item| item["id"].as_str().expect("a limit id"))
+        .collect();
+    let expected: Vec<&str> = aex_wire::limits::LimitId::ALL
+        .iter()
+        .map(|id| id.as_str())
+        .collect();
+    assert_eq!(ids, expected, "the page is not in registry order");
+}
+
+/// An absent bundle is the same activation refusal, not an empty page.
+#[tokio::test]
+async fn an_unmaterialised_workspace_is_told_so_rather_than_shown_no_limits() {
+    let router = workspace_router(
+        FakeWorkspaceProjection::default(),
+        FakePlacements::default(),
+    );
+    let (status, _, body) = get(&router, "/api/workspace/limits").await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], "workspace_activation_required", "{body}");
+}
+
+/// `not_found` on the point read has exactly one meaning, decided before any
+/// read: the path segment names no registered limit.
+///
+/// The other case — a registered limit whose row is absent — must never be a
+/// `404`. The two are indistinguishable to a client, and one of them claims the
+/// limit does not exist, which is a lie about a published contract.
+#[tokio::test]
+async fn an_unregistered_limit_id_is_not_found_and_an_absent_row_never_is() {
+    let router = workspace_router(complete_projection(), FakePlacements::default());
+    let (status, _, body) = get(&router, "/api/workspace/limits/session.subagent_depth").await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(body["error"]["code"], "not_found", "{body}");
+
+    let registered = aex_wire::limits::LimitId::ALL[0];
+    let (status, _, body) = get(
+        &router,
+        &format!("/api/workspace/limits/{}", registered.as_str()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["id"], registered.as_str(), "{body}");
+    assert_eq!(body["source"], "default", "{body}");
+
+    // The same registered id, against a workspace whose set was never
+    // materialised. Retryable activation, never `404`.
+    let empty = workspace_router(
+        FakeWorkspaceProjection::default(),
+        FakePlacements::default(),
+    );
+    let (status, _, body) = get(
+        &empty,
+        &format!("/api/workspace/limits/{}", registered.as_str()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], "workspace_activation_required", "{body}");
+}
+
+/// The workspace read publishes the account state from the profile row, and
+/// reports a running deletion separately from it.
+#[tokio::test]
+async fn the_current_workspace_carries_the_account_state_and_its_own_status() {
+    let router = workspace_router(
+        complete_projection(),
+        FakePlacements {
+            placement: Some(stored_placement("active")),
+        },
+    );
+    let (status, _, body) = get(&router, "/api/workspace").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "active", "{body}");
+    assert_eq!(body["apiUrl"], "https://eu-west-1.aex.dev", "{body}");
+    assert_eq!(body["slug"], "fixture", "{body}");
+    assert_eq!(
+        body["operationalState"]["inheritedFrom"], "account",
+        "{body}"
+    );
+    assert_eq!(
+        body["operationalState"]["state"]["status"], "active",
+        "{body}"
+    );
+    assert_eq!(body["operationalState"]["state"]["revision"], 7, "{body}");
+
+    // A paused account under a dispute hold: the reason is its own, and no
+    // restoring amount is named, because paying restores nothing here.
+    let router = workspace_router(
+        FakeWorkspaceProjection {
+            profile: Some(stored_profile(Some("dispute_hold"))),
+            ..complete_projection()
+        },
+        FakePlacements {
+            placement: Some(stored_placement("paused")),
+        },
+    );
+    let (status, _, body) = get(&router, "/api/workspace").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["status"], "active",
+        "a paused account is not a deleting workspace: {body}"
+    );
+    let state = &body["operationalState"]["state"];
+    assert_eq!(state["status"], "paused", "{body}");
+    assert_eq!(state["reason"], "dispute_hold", "{body}");
+    assert!(
+        state.get("minimumRestoreCents").is_none(),
+        "a dispute hold has no paying remedy, so naming an amount would be a false one: {body}"
+    );
+
+    // The one hold a top-up clears names the flat $20.
+    let router = workspace_router(
+        FakeWorkspaceProjection {
+            profile: Some(stored_profile(Some("top_up_required"))),
+            ..complete_projection()
+        },
+        FakePlacements {
+            placement: Some(stored_placement("paused")),
+        },
+    );
+    let (_, _, body) = get(&router, "/api/workspace").await;
+    assert_eq!(
+        body["operationalState"]["state"]["minimumRestoreCents"], "2000",
+        "{body}"
+    );
+
+    // A running deletion is the workspace status, published beside the account
+    // state rather than folded into it. The admission path collapses `deleting`
+    // onto paused because that is the right answer for admission; publishing
+    // that collapse would lose the distinction entirely.
+    let router = workspace_router(
+        complete_projection(),
+        FakePlacements {
+            placement: Some(stored_placement("deleting")),
+        },
+    );
+    let (status, _, body) = get(&router, "/api/workspace").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "deleting", "{body}");
+    assert_eq!(
+        body["operationalState"]["state"]["status"], "active",
+        "{body}"
+    );
+}
+
+/// A workspace whose descriptive rows are not there yet says so, and never
+/// answers `401` at a caller whose credential the edge just verified.
+#[tokio::test]
+async fn a_cold_read_of_an_unactivated_workspace_is_not_an_unknown_credential() {
+    for (projection, placements) in [
+        // No placement row.
+        (complete_projection(), FakePlacements::default()),
+        // A placement, no profile.
+        (
+            FakeWorkspaceProjection {
+                profile: None,
+                ..complete_projection()
+            },
+            FakePlacements {
+                placement: Some(stored_placement("active")),
+            },
+        ),
+    ] {
+        let router = workspace_router(projection, placements);
+        let (status, _, body) = get(&router, "/api/workspace").await;
+        assert_eq!(
+            status,
+            StatusCode::CONFLICT,
+            "a verified credential was told it was unknown: {body}"
+        );
+        assert_eq!(body["error"]["code"], "workspace_activation_required", "{body}");
+    }
+
+    // A reason outside the durable vocabulary is a corrupt projected row. It is
+    // still not an answer, so it is still not `Active` — the region says it
+    // could not establish the state, which is the code this route is the first
+    // regional one to declare.
+    let router = workspace_router(
+        FakeWorkspaceProjection {
+            profile: Some(stored_profile(Some("credit_exhausted"))),
+            ..complete_projection()
+        },
+        FakePlacements {
+            placement: Some(stored_placement("paused")),
+        },
+    );
+    let (status, _, body) = get(&router, "/api/workspace").await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["error"]["code"], "account_state_unavailable", "{body}");
 }
