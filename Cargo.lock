@@ -7247,6 +7247,8 @@ dependencies = [
  "aex-session-domain",
  "aex-session-dynamodb",
  "aex-telemetry-schema",
+ "aex-usage-domain",
+ "aex-usage-query-dynamodb",
  "aex-wire",
  "aex-work-dynamodb",
  "aex-workspace-domain",

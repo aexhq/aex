@@ -150,7 +150,6 @@ deferredOperations:
   upload_complete: "The staged-upload authority and durable completion transaction are incomplete."
   upload_create: "The staged-upload authority and multipart presigning composition are incomplete."
   upload_parts_grant: "The multipart grant and presigning composition is incomplete."
-  usage_query: "The store lacks the exact multi-category, arbitrary-range query planner and continuation contract."
   workspace_current_get: "The signed and projected facts do not supply the complete account operational state."
   workspace_limit_get: "No authoritative regional capacity default and override producer exists yet."
   workspace_limits_list: "No authoritative regional capacity default and override producer exists yet."
@@ -266,3 +265,4 @@ servedOperations:
     - session_observations_traces_stream
     - session_run_get
     - session_runs_list
+    - usage_query
