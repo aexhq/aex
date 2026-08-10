@@ -26,10 +26,13 @@ use aex_secret_domain::context::Plane;
 use aex_secret_domain::{
     CustodyEntry, CustodyRevision, EncryptionContext, SecretName, SessionCustody, WorkspaceSecret,
 };
-use aex_session_app::ports::{PortError, SecretCustodyReader};
+use aex_session_app::ports::{
+    CredentialState as AppCredentialState, PortError, ProviderCredentialBinding,
+    SecretCustodyReader,
+};
 use aex_session_dynamodb::error::StoreError;
 use aex_session_dynamodb::paging::PageBudget;
-use aex_wire::ids::{OrganizationId, SessionId, WorkspaceId};
+use aex_wire::ids::{OrganizationId, ProviderCredentialId, SessionId, WorkspaceId};
 use aex_wire::types::Region;
 
 use crate::codec::{CustodyHead, SecretMetadata, StoredGeneration};
@@ -187,6 +190,19 @@ impl SecretCustodyReader for SessionCustodyReads {
         let entries = self.entries(session, head.revision).await?;
         Ok(Some(custody_of(&head, entries)))
     }
+
+    async fn read_provider_credential(
+        &self,
+        workspace: WorkspaceId,
+        credential: ProviderCredentialId,
+    ) -> Result<Option<ProviderCredentialBinding>, PortError> {
+        self.assert_tenant(workspace)?;
+        self.store
+            .load_provider_credential(workspace, credential)
+            .await
+            .map(|binding| binding.map(provider_binding_of))
+            .map_err(|error| port_error(&error, "provider credential"))
+    }
 }
 
 impl SessionCustodyReads {
@@ -220,6 +236,24 @@ fn custody_of(head: &CustodyHead, entries: Vec<CustodyEntry>) -> SessionCustody 
     }
 }
 
+fn provider_binding_of(binding: crate::codec::ProviderCredential) -> ProviderCredentialBinding {
+    ProviderCredentialBinding {
+        credential: binding.credential,
+        provider: binding.provider,
+        secret_name: binding.secret_name,
+        source_generation: binding.source_generation.0,
+        revision: binding.revision,
+        state: provider_state_of(binding.state),
+    }
+}
+
+const fn provider_state_of(state: crate::codec::CredentialState) -> AppCredentialState {
+    match state {
+        crate::codec::CredentialState::Ready => AppCredentialState::Ready,
+        crate::codec::CredentialState::Revoked => AppCredentialState::Revoked,
+    }
+}
+
 /// Maps a store failure onto the port vocabulary.
 ///
 /// A decode failure and an over-budget listing are both `Corrupt`: the second
@@ -243,6 +277,20 @@ mod tests {
     use aex_secret_domain::{EncryptionContext, SourceGeneration};
     use aex_wire::ids::{PrefixedId as _, Uuid7};
     use aex_wire::types::Region;
+
+    use super::{AppCredentialState, provider_state_of};
+
+    #[test]
+    fn every_stored_provider_state_keeps_its_admission_meaning() {
+        assert_eq!(
+            provider_state_of(crate::codec::CredentialState::Ready),
+            AppCredentialState::Ready
+        );
+        assert_eq!(
+            provider_state_of(crate::codec::CredentialState::Revoked),
+            AppCredentialState::Revoked
+        );
+    }
 
     #[test]
     fn a_context_rebuilt_from_the_identifiers_digests_to_the_stored_value() {
