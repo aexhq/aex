@@ -142,9 +142,13 @@ impl AdvertisedCatalog {
 /// ready.
 ///
 /// Optional authorities are honest capability discovery: under
-/// [`BuiltinSelection::Default`], an absent `aex_web_search` credential or
-/// browser qualification excludes those entries. An exact selection turns the
-/// same absence into a typed error.
+/// [`BuiltinSelection::Default`], an unqualified browser capability or an
+/// unresolved [`CredentialClass::WorkspaceSecret`] excludes those entries. An
+/// exact selection turns the same absence into a typed error.
+///
+/// No built-in carries a workspace secret. Platform tools are platform-paid, so
+/// the credential arm applies only to entries registered with one; a built-in
+/// may not be withheld from a tenant for want of a customer key.
 ///
 /// # Errors
 ///

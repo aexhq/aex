@@ -969,6 +969,23 @@ mod tests {
                 ]),
                 strings(&["table", "index/*"]),
             ),
+            (
+                "session-authority",
+                // The export control record is an operation row, so it is written
+                // where operations live. The grant is confined to the `OP#*`
+                // partition by a leading-key condition and carries no authority
+                // over the session rows that share the table.
+                strings(&["dynamodb:PutItem"]),
+                strings(&["table"]),
+            ),
+            (
+                "session-authority",
+                // `ConditionCheckItem` is read-shaped: it asserts the session is
+                // in the state the export was admitted against, inside the same
+                // transaction that writes the `OP#*` row. It mutates nothing.
+                strings(&["dynamodb:ConditionCheckItem"]),
+                strings(&["table"]),
+            ),
         ];
         let mut expected = expected;
         expected

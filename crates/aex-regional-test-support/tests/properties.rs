@@ -36,7 +36,16 @@ fn every_table_declares_at_least_one_role_and_no_role_holds_a_delete_it_does_not
                         grant.role == "session-operation-worker"
                     }
                     "regional-content" => grant.role == "content-lifecycle-worker",
-                    "regional-registry" => grant.role == "regional-session-api",
+                    // The registry API deletes registered names outright. The
+                    // upload-expiry collector is the second, far narrower
+                    // deleter: it reclaims abandoned multipart uploads and is
+                    // confined by a leading-key condition to `UPLOAD#*` and to
+                    // the two upload row shapes, so it cannot reach a
+                    // registered name.
+                    "regional-registry" => matches!(
+                        grant.role.as_str(),
+                        "regional-session-api" | "content-lifecycle-worker-uploadexpiry"
+                    ),
                     // Each usage worker deletes exactly one row shape: its own
                     // OUTBOX# marker, once SendMessage is confirmed.
                     "usage-storage-authority" => grant.role == "usage-storage-worker",

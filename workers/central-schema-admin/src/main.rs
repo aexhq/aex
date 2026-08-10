@@ -591,6 +591,31 @@ mod tests {
         assert!(!ddl.contains("::float8"));
     }
 
+    /// The credit floor stops at zero **or below**, never only at zero.
+    ///
+    /// The distinction is invisible to the engine-backed suite: the fence above,
+    /// `customer_balance_never_overdrawn`, refuses a debit-positive customer
+    /// balance, so the only input that separates `<= 0` from `= 0` cannot be
+    /// written through any production path, and narrowing the comparison would
+    /// leave every behavioural case green while an overdrawn account ran on. The
+    /// condition is therefore pinned as text, in the same shape as the
+    /// conservation defences above.
+    #[test]
+    fn the_credit_floor_pauses_at_or_below_zero_and_never_only_at_zero() {
+        let ddl =
+            include_str!("../../../migrations/central/20260801001200_finance_credit_exhaustion.sql");
+        assert!(
+            ddl.contains("IF -NEW.balance_microusd <= 0 THEN"),
+            "the pause arm compares the spendable amount with `<=`, not `=`"
+        );
+        assert!(!ddl.contains("-NEW.balance_microusd = 0"));
+        assert!(!ddl.contains("-NEW.balance_microusd <> 0"));
+        assert!(ddl.contains("SET state = 'payment_hold', state_reason = 'top_up_required'"));
+        // The resume arm is the `WHERE`, not a convention: a chargeback and a
+        // closed account are not shortages and a top-up must not clear them.
+        assert!(ddl.contains("AND state = 'payment_hold' AND state_reason = 'top_up_required'"));
+    }
+
     #[test]
     fn bundle_is_linear_and_every_header_parses() {
         let path = bundle_path();
