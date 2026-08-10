@@ -66,10 +66,19 @@ fn a_rewrap_moves_a_value_between_contexts_without_the_caller_ever_holding_it() 
     assert_eq!(
         keys.rewrap_contexts(),
         vec![(
-            aex_secret_aws::context::kms_pairs(&source),
-            aex_secret_aws::context::kms_pairs(&target)
+            aex_secret_aws::context::branch_key_pairs(&source),
+            aex_secret_aws::context::branch_key_pairs(&target)
         )],
-        "the full source and destination maps are part of the provider contract"
+        "`ReEncrypt` moves the wrapped **branch key**, so the maps it carries are \
+         the branch key's own context and not the value's"
+    );
+    assert_eq!(
+        keys.rewrap_contexts()[0].0,
+        keys.rewrap_contexts()[0].1,
+        "a custody rebind stays inside one workspace, so the branch key's context \
+         is unchanged; what moves is the value's authenticated additional data, \
+         which is why the frame and the digest above both changed and the \
+         wrapped key is re-emitted rather than re-bound"
     );
     crypto.cache().clear();
     let revealed = run(crypto.reveal(&rewrapped, &target, now())).expect("reveals");

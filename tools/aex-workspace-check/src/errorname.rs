@@ -36,7 +36,6 @@ pub const GRANDFATHERED: &[(&str, &[&str])] = &[
         &[
             "crates/aex-observation-app/src/use_cases.rs",
             "crates/aex-usage-domain/src/fact.rs",
-            "services/regional-secret-api/src/lib.rs",
             // Moved, not added: `regional-session-api` merged into
             // `session-stream-api` and its admission module became the session
             // half's. The grandfathered list still shrinks, it does not grow.
@@ -72,19 +71,12 @@ pub const GRANDFATHERED: &[(&str, &[&str])] = &[
             "crates/aex-runtime-control/src/catalog.rs",
         ],
     ),
-    (
-        "ClaimError",
-        &[
-            "crates/aex-brain-app/src/ports/store.rs",
-            "workers/session-operation-worker/src/lib.rs",
-        ],
-    ),
+    ("ClaimError", &["crates/aex-brain-app/src/ports/store.rs"]),
     (
         "CommitError",
         &[
             "crates/aex-brain-app/src/ports/store.rs",
             "crates/aex-session-app/src/ports.rs",
-            "workers/session-operation-worker/src/lib.rs",
         ],
     ),
     (

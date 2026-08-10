@@ -118,7 +118,8 @@ fn the_sdk_publishes_a_resource_method_for_every_served_operation_and_no_other()
         // frame stream could not return one.
         let expected = operation.deferred_reason.is_none() && operation.transport != "ndjson";
         assert_eq!(
-            published, expected,
+            published,
+            expected,
             "`{}` is deferred={} transport={} but published={published}",
             operation.id,
             operation.deferred_reason.is_some(),

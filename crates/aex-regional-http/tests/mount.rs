@@ -496,9 +496,16 @@ fn a_stub_for_a_deferred_route_answers_the_same_code_as_the_refusal_arm() {
     // The handler stub and the mounted arm must not disagree: a code the route
     // does not declare is rewritten to `internal_error` by `dispatch::declared`,
     // and only a deferred route declares `not_implemented`.
-    assert!(route(RouteId::SecretPut).deferred);
-    assert_eq!(not_served(RouteId::SecretPut).code, ErrorCode::NotImplemented);
-    assert!(route(RouteId::SecretPut).declares(ErrorCode::NotImplemented));
+    //
+    // The route is derived rather than named. This test named `secret_put` until
+    // P3.3a landed it, at which point the first assertion was the only thing
+    // standing between a served route and a silently vacuous check.
+    let deferred = aex_wire::routes::ROUTES
+        .iter()
+        .find(|descriptor| descriptor.deferred)
+        .expect("the contract still defers something");
+    assert_eq!(not_served(deferred.id).code, ErrorCode::NotImplemented);
+    assert!(route(deferred.id).declares(ErrorCode::NotImplemented));
 }
 
 /// An owned route the ledger defers is **mounted**, and it refuses honestly.
@@ -529,7 +536,11 @@ async fn a_deferred_route_answers_the_published_refusal() {
         )
         .await
         .expect("response");
-    assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED, "`{deferred}`");
+    assert_eq!(
+        response.status(),
+        StatusCode::NOT_IMPLEMENTED,
+        "`{deferred}`"
+    );
     let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
         .await
         .expect("body");
@@ -542,19 +553,35 @@ async fn a_deferred_route_answers_the_published_refusal() {
     assert!(!envelope.error.retryable);
     // No reason text: the ledger's prose is an engineering note, and one that
     // has drifted is worse than none.
-    assert_eq!(envelope.error.message, ErrorCode::NotImplemented.default_message());
+    assert_eq!(
+        envelope.error.message,
+        ErrorCode::NotImplemented.default_message()
+    );
 
-    // A wrong method on a deferred template is the router's `405`, not a `404`.
-    let wrong = if descriptor.method == aex_wire::types::HttpMethod::Get {
-        "DELETE"
-    } else {
-        "GET"
-    };
+    // A method the template does not publish at all is the router's `405`, not
+    // a `404`. It has to be derived: several deferred templates publish three of
+    // the four verbs — `/api/workspace/files/{name}` defers GET, PUT *and*
+    // DELETE — so simply flipping to "the other method" picks another published
+    // deferred operation, whose honest answer is the `501` arm and not a `405`.
+    let published: Vec<_> = aex_wire::routes::ROUTES
+        .iter()
+        .filter(|other| other.template == descriptor.template)
+        .map(|other| other.method)
+        .collect();
+    let wrong = [
+        aex_wire::types::HttpMethod::Get,
+        aex_wire::types::HttpMethod::Put,
+        aex_wire::types::HttpMethod::Post,
+        aex_wire::types::HttpMethod::Delete,
+    ]
+    .into_iter()
+    .find(|method| !published.contains(method))
+    .expect("a template that publishes every verb has no method to refuse");
     let response = mounted
         .router
         .oneshot(
             Request::builder()
-                .method(wrong)
+                .method(wrong.as_str())
                 .uri(concrete_path(deferred))
                 .body(Body::empty())
                 .expect("request"),

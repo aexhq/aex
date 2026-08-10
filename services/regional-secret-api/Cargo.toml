@@ -60,14 +60,20 @@ aex-identity-domain = { path = "../../crates/aex-identity-domain" }
 aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
-sha2.workspace = true
 thiserror.workspace = true
-zeroize.workspace = true
+# The receipt stores the canonical response body inline and decodes it back on a
+# replay. The canonical bytes themselves come from `aex_wire::canonical`, which
+# is also what the entity tag is derived through, so a receipt and a tag can
+# never disagree about what the response was.
+serde = { workspace = true }
+serde_json.workspace = true
+# Minting one `pcr_` identity per registration. `aex-wire` reads no clock and no
+# random source by construction, so the payload is composed here.
+uuid.workspace = true
 
 [dev-dependencies]
 axum.workspace = true
 http-body-util.workspace = true
-serde_json.workspace = true
 time.workspace = true
 tower.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

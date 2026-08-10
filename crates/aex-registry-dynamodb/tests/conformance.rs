@@ -131,15 +131,21 @@ async fn a_listing_walks_one_partition_with_native_pagination_and_no_filter() {
 async fn a_completion_begins_under_a_manifest_identity() {
     let (client, receiver) = capturing_client();
     let store = RegistryDynamoStore::new(client, TABLE);
-    let _ignored = store.begin_completion(upload_id(), &"a".repeat(64)).await;
+    let _ignored = store.begin_completion(&upload(), &"a".repeat(64)).await;
 
     let body = captured_body(receiver);
     let condition = body["ConditionExpression"].as_str().expect("conditional");
     assert!(condition.contains("attribute_not_exists(consumedByName)"));
     assert!(condition.contains("completionIntentHash = :hash"));
+    assert!(
+        condition.contains("providerUploadId = :handle"),
+        "a completion is fenced on the handle it was decided against: {condition}"
+    );
+    // The submitted manifest lands with the intent, so a retried completion is
+    // deterministic rather than dependent on the client resending identical input.
     assert_eq!(
         body["UpdateExpression"].as_str(),
-        Some("SET #state = :completing, completionIntentHash = :hash")
+        Some("SET #state = :completing, completionIntentHash = :hash, completionManifest = :manifest")
     );
 }
 

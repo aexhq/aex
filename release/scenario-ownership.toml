@@ -44,7 +44,13 @@ schema = "aex.scenario-ownership.v1"
 [[scenario]]
 id = "SC-IDENTITY-ACCOUNT"
 owner = "central-identity"
-deferred = "No executable live target yet proves the complete account identity and operational-state flow."
+# An engine-backed body exists and executes: `aex-scenarios`'s `identity_account`
+# target drives the real ceremony — sign in, open a dashboard session, start a
+# device authorization, approve it, redeem it — through `aex-identity-app`'s use
+# cases and `AuroraIdentityStore` against the committed schema and privileges.
+# Two things keep it deferred, and the second is a product defect rather than a
+# missing plane.
+deferred = "The engine-backed body runs on the integration lane but has no `e2e` target, which needs a plane. Redemption additionally cannot succeed against the committed schema: `CONSUME_DEVICE_AUTHORIZATION` sets `account_token_id` before `INSERT_ACCOUNT_TOKEN` inserts the row it references, and `identity.device_authorization.account_token_id` is a non-deferrable foreign key, so the only path to an account token raises SQLSTATE 23503."
 # `central-api` is the merged composition that serves the device-flow routes
 # once a plane runs it, so it observes the same scenario as the deployable it
 # replaces. Naming both is not double ownership: exactly one of them is
@@ -68,7 +74,13 @@ observes = ["artifact:central-authz"]
 [[scenario]]
 id = "SC-CONTROL-WORKSPACE"
 owner = "central-identity"
-deferred = "The multi-deployable workspace provisioning scenario has no executable live target yet."
+# An engine-backed body exists and executes: `aex-scenarios`'s
+# `control_workspace` target runs the organization, workspace and API-key
+# ceremonies through `aex-control-app`'s use cases and `AuroraControlStore`
+# against the committed schema and privileges, then resolves the minted key
+# through `AuroraAuthorizationReader` as `aex_authz` and verifies it. What it
+# cannot reach is the regional half, which is where the remaining defect lives.
+deferred = "The engine-backed body runs on the integration lane but has no `e2e` target, which needs a plane. Two of the five observed artifacts are regional and unreached: `capacity-limit-projection-write`, the only writer of `workspace_edge_limits`, still has no production caller, so a provisioned workspace has no edge-limits row and every regional request against it answers 401 unauthenticated."
 observes = [
   "artifact:central-api",
   "artifact:central-control-api",
@@ -96,7 +108,11 @@ observes = ["artifact:central-schema-admin"]
 [[scenario]]
 id = "SC-FINANCE-INVOICE"
 owner = "central-finance"
-deferred = "The invoice and settlement composition has no executable live target yet."
+# Reclassified 2026-08-10 while writing the P7.1 bodies. This scenario was
+# recorded as blocked by deployment alone — "zero route work, all 8 finance
+# routes already served". It is not: nothing anywhere writes the table the
+# scenario is about, so no plane would make it pass.
+deferred = "No code writes `finance.statement`. The whole worktree issues two SELECTs against it, both in `services/finance-api/src/aurora.rs`; `finance-reconcile` holds the `SELECT,INSERT,UPDATE` grant and never uses it. `billing_statements_list` and `billing_statement_get` therefore cannot answer with an invoice that exists. Settlement is unfinished for a second reason: `finance-settlement-worker` returns `pending` because the rating authorities it needs are unimplemented."
 observes = [
   "artifact:central-api",
   "artifact:finance-api",
@@ -189,7 +205,7 @@ observes = ["artifact:session-stream-api"]
 [[scenario]]
 id = "SC-SECRET-CUSTODY"
 owner = "regional-stores"
-deferred = "The first-seal, key-administration, and custody lifecycle has no executable live target yet."
+deferred = "The custody lifecycle is now reachable end to end — every route of it is served — but no executable live target exists yet: aex-live-regional-secret-api claims no scenario and needs a deployed plane and a customer-supplied test key to run against."
 observes = [
   "artifact:regional-secret-api",
   "artifact:regional-secret-key-admin",
@@ -234,7 +250,10 @@ observes = ["artifact:runtime-control-worker"]
 [[scenario]]
 id = "SC-OBSERVATION-ADMIT"
 owner = "observations-usage"
-deferred = "The production OTLP admission path has no executable live target yet."
+# Reclassified 2026-08-10 while writing the P7.1 bodies. This scenario was
+# recorded as blocked by deployment alone. It is also blocked by a composition
+# fact that no plane fixes.
+deferred = "`services/regional-otlp` declares only a `[[bin]]` and has no library target, so `AdmissionAuthority`, `OtlpService` and `mount::router` — the production admission path from HTTP request to store write — are unreachable from any test outside that binary. An engine-backed body must first give the deployable a library target. Separately, `observation-authority` has no DynamoDB Local suite anywhere in the workspace, so its seven-index table has never been created by a test."
 observes = ["artifact:regional-otlp"]
 
 [scenario.prd]

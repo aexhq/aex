@@ -106,8 +106,6 @@ operationOwners:
 # Deferral is not mount evidence and is emitted only into the delivery registry.
 deferredOperations:
   account_get: "The central identity composition does not yet mount an authoritative account operational-state read."
-  provider_credential_register: "First-seal custody and the atomic credential-binding replay transaction are incomplete."
-  provider_credential_revoke: "No composed producer ever registers a provider-credential binding, so the revoke transaction has nothing it could revoke."
   registry_files_delete: "Registry mutation and content-lifecycle composition is incomplete."
   registry_files_download_create: "No composed content grant and presigning authority exists yet."
   registry_files_get: "The registry pointer composition has no plaintext content hydration path."
@@ -124,7 +122,6 @@ deferredOperations:
   registry_tools_delete: "Registry mutation and content-lifecycle composition is incomplete."
   registry_tools_get: "The registry pointer composition has no plaintext content hydration path."
   registry_tools_put: "Registry mutation and sealed-content composition is incomplete."
-  secret_put: "First-seal custody and durable idempotent replay are incomplete."
   session_approval_get: "Nothing composed into the platform raises an approval, so the point read can only report that no approval exists."
   session_approval_respond: "The atomic bound-call approval writer is not composed into the regional service."
   session_approvals_list: "Nothing composed into the platform raises an approval, so the collection can only report an empty page."
@@ -145,10 +142,6 @@ deferredOperations:
   session_workspace_discard: "The workspace-discard operation and commit latch are incomplete."
   sessions_list: "The sparse session head cannot yet produce the complete public collection item."
   telemetry_export_create: "The durable workspace export-admission composition is incomplete."
-  upload_abort: "The staged-upload authority and durable abort transaction are incomplete."
-  upload_complete: "The staged-upload authority and durable completion transaction are incomplete."
-  upload_create: "The staged-upload authority and multipart presigning composition are incomplete."
-  upload_parts_grant: "The multipart grant and presigning composition is incomplete."
   workspace_current_get: "The signed and projected facts do not supply the complete account operational state."
   workspace_limit_get: "No authoritative regional capacity default and override producer exists yet."
   workspace_limits_list: "No authoritative regional capacity default and override producer exists yet."
@@ -224,7 +217,9 @@ servedOperations:
     - otlp_metrics_ingest
     - otlp_traces_ingest
   regional-secret-api:
+    - provider_credential_register
     - secret_delete
+    - secret_put
     - secret_revoke
   session-stream-api:
     - observations_events_listen
@@ -240,6 +235,7 @@ servedOperations:
     - observations_traces_listen
     - observations_traces_stream
     - provider_credential_get
+    - provider_credential_revoke
     - provider_credentials_list
     - regional_operation_cancel
     - regional_operation_get
@@ -268,4 +264,8 @@ servedOperations:
     - session_runs_list
     - session_stop
     - session_trash
+    - upload_abort
+    - upload_complete
+    - upload_create
+    - upload_parts_grant
     - usage_query

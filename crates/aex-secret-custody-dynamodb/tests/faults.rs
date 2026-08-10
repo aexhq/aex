@@ -111,13 +111,13 @@ fn a_name_that_could_forge_a_key_stops_every_builder() {
 fn a_set_plan_refuses_a_revision_jump_and_mismatched_generation_identity() {
     let mut jumped = metadata();
     jumped.revision = SecretRevision(9);
-    let error = expressions::set(TABLE, &support::generation(), &jumped, None)
+    let error = expressions::set(TABLE, &support::generation(), &jumped, None, None, None)
         .expect_err("the first set writes revision one");
     assert!(matches!(error, StoreError::Invalid { .. }), "{error}");
 
     let mut wrong_generation = support::generation();
     wrong_generation.generation = SourceGeneration(2);
-    let error = expressions::set(TABLE, &wrong_generation, &metadata(), None)
+    let error = expressions::set(TABLE, &wrong_generation, &metadata(), None, None, None)
         .expect_err("metadata cannot point at a different generation identity");
     assert!(matches!(error, StoreError::Invalid { .. }), "{error}");
 }

@@ -31,7 +31,7 @@ use crate::ports::{
     AccountStateReader, AgentCancelPage, AgentCancelTarget, AgentPage, AppContext, Clock,
     ContentReader, ContinuityReader, IdFactory, LimitsReader, LiveWorkspaceReader, PageBudget,
     PortError, RegistryReader, ReservationAuthority, ReservationGrant, ReservationRequest,
-    SecretCustodyReader, SessionReader, SessionSnapshot, WorkspaceContinuity,
+    SecretCustodyReader, SessionReader, SessionSnapshot, VersionedOperation, WorkspaceContinuity,
 };
 
 /// One recorded port interaction.
@@ -130,7 +130,7 @@ impl IdFactory for CountingIds {
 pub struct ScriptedPorts {
     log: SyncLog,
     snapshot: SessionSnapshot,
-    operation: Option<Operation>,
+    operation: Option<VersionedOperation>,
     run: Option<Run>,
     receipt: Option<IdempotencyReceipt>,
     custody: Option<SessionCustody>,
@@ -229,10 +229,29 @@ impl ScriptedPorts {
         self
     }
 
-    /// Scripts an already admitted operation.
+    /// Scripts an already admitted operation at the version a fresh admission
+    /// leaves it at.
     #[must_use]
     pub fn with_operation(mut self, operation: Operation) -> Self {
-        self.operation = Some(operation);
+        self.operation = Some(VersionedOperation {
+            operation,
+            version: aex_operation_domain::operation::OperationVersion::FIRST,
+        });
+        self
+    }
+
+    /// Scripts an already admitted operation at an exact stored version.
+    ///
+    /// Present because a resumed step conditions on the version it read, so a
+    /// property that never varied the version could not tell a step that names
+    /// its version from one that hard-codes the first.
+    #[must_use]
+    pub fn with_operation_at(
+        mut self,
+        operation: Operation,
+        version: aex_operation_domain::operation::OperationVersion,
+    ) -> Self {
+        self.operation = Some(VersionedOperation { operation, version });
         self
     }
 
@@ -414,7 +433,7 @@ impl SessionReader for ScriptedPorts {
         &self,
         _workspace: WorkspaceId,
         _operation: OperationId,
-    ) -> Result<Option<Operation>, PortError> {
+    ) -> Result<Option<VersionedOperation>, PortError> {
         self.log.record(PortCall::Read("load_operation"));
         Ok(self.operation.clone())
     }

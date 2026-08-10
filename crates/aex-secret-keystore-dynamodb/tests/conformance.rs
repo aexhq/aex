@@ -44,8 +44,21 @@ fn nothing_about_this_table_can_expire_or_stream() {
     assert_eq!(definition["deletionProtection"].as_bool(), Some(true));
 }
 
+/// The write boundary, restated after D-2 narrowed it.
+///
+/// Two roles may write and only two, and each only through
+/// `TransactWriteItems`: every write here is the atomic version-plus-pointer
+/// pair, so a bare `PutItem` or `UpdateItem` — which could move the active
+/// pointer without the version row behind it — is granted to nobody at all.
+/// `regional-secret-api` holds the transaction because it creates a workspace's
+/// **first** branch key lazily on that workspace's first secret write, which is
+/// one conditional transaction per workspace ever. Rotation stays exclusively
+/// `regional-secret-key-admin`'s, enforced by the code path rather than by the
+/// grant, because create and rotate are the same provider action.
 #[test]
-fn the_administrator_holds_the_writes_and_the_application_roles_do_not() {
+fn only_the_two_creating_roles_may_write_and_only_ever_atomically() {
+    const MAY_WRITE: [&str; 2] = ["regional-secret-key-admin", "regional-secret-api"];
+
     let definition = definition();
     let grants = definition["iam"].as_array().expect("an array");
     for grant in grants {
@@ -56,14 +69,15 @@ fn the_administrator_holds_the_writes_and_the_application_roles_do_not() {
             .iter()
             .map(|action| action.as_str().expect("a string"))
             .collect();
-        let writes = actions.iter().any(|action| {
-            action.contains("PutItem")
-                || action.contains("UpdateItem")
-                || action.contains("TransactWriteItems")
-        });
+        assert!(
+            !actions
+                .iter()
+                .any(|action| action.contains("PutItem") || action.contains("UpdateItem")),
+            "`{role}` could move the active pointer without its version row: {actions:?}"
+        );
         assert_eq!(
-            writes,
-            role == "regional-secret-key-admin",
+            actions.contains(&"dynamodb:TransactWriteItems"),
+            MAY_WRITE.contains(&role),
             "`{role}` holds the wrong side of the write boundary: {actions:?}"
         );
     }

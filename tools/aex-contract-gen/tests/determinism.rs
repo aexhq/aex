@@ -169,6 +169,64 @@ fn every_route_registry_row_has_a_scenario_owner_without_polluting_the_wire_bund
     }
 }
 
+/// Every operation `session-stream-api` mounts, written independently of the
+/// registry that this file then compares it against.
+///
+/// Deliberately hand-maintained: derive it from the same registry it guards and
+/// the check compares the registry with itself. Every transport is covered,
+/// streaming included — a filter that excused the ndjson half would leave
+/// twenty-four routes unguarded, which is how the retired `regional-session-api`
+/// name silently emptied this check once already.
+const SESSION_STREAM_MOUNTS: &[&str] = &[
+    "observations_events_listen",
+    "observations_events_stream",
+    "observations_logs_listen",
+    "observations_logs_stream",
+    "observations_metrics_listen",
+    "observations_metrics_stream",
+    "observations_spans_listen",
+    "observations_spans_stream",
+    "observations_telemetry_listen",
+    "observations_telemetry_stream",
+    "observations_traces_listen",
+    "observations_traces_stream",
+    "provider_credential_get",
+    "provider_credential_revoke",
+    "provider_credentials_list",
+    "regional_operation_cancel",
+    "regional_operation_get",
+    "regional_operations_list",
+    "registry_files_list",
+    "registry_instructions_list",
+    "registry_mcp_servers_list",
+    "registry_skills_list",
+    "registry_tools_list",
+    "secret_get",
+    "secrets_list",
+    "session_observations_events_listen",
+    "session_observations_events_stream",
+    "session_observations_logs_listen",
+    "session_observations_logs_stream",
+    "session_observations_metrics_listen",
+    "session_observations_metrics_stream",
+    "session_observations_spans_listen",
+    "session_observations_spans_stream",
+    "session_observations_telemetry_listen",
+    "session_observations_telemetry_stream",
+    "session_observations_traces_listen",
+    "session_observations_traces_stream",
+    "session_restore",
+    "session_run_get",
+    "session_runs_list",
+    "session_stop",
+    "session_trash",
+    "upload_abort",
+    "upload_complete",
+    "upload_create",
+    "upload_parts_grant",
+    "usage_query",
+];
+
 #[test]
 fn actual_mounts_are_explicit_and_do_not_pollute_the_wire_bundle() {
     let root = repo_root();
@@ -196,15 +254,6 @@ fn actual_mounts_are_explicit_and_do_not_pollute_the_wire_bundle() {
             .is_some_and(|reason| !reason.is_empty()),
         "an unmounted admission must carry its explicit architecture debt"
     );
-    // The drift check is pinned to the deployable the registry actually names.
-    // It was pinned to `regional-session-api`, a name the registry stopped using
-    // when `session-stream-api` merged the two regional edges; the filter then
-    // selected nothing, so the largest deployable's mount set was unguarded.
-    // Pinning it here rather than deriving it is the point: the expected set and
-    // the registry must be written independently or the check compares the
-    // registry with itself. Every transport is covered, streaming included: a
-    // filter that excused the ndjson half would leave twenty-four routes
-    // unguarded for the same reason the retired name did.
     let stream_api: BTreeSet<_> = rows
         .iter()
         .filter(|route| route["servedArtifact"] == "session-stream-api")
@@ -212,50 +261,10 @@ fn actual_mounts_are_explicit_and_do_not_pollute_the_wire_bundle() {
         .collect();
     assert_eq!(
         stream_api,
-        BTreeSet::from([
-            "observations_events_listen",
-            "observations_events_stream",
-            "observations_logs_listen",
-            "observations_logs_stream",
-            "observations_metrics_listen",
-            "observations_metrics_stream",
-            "observations_spans_listen",
-            "observations_spans_stream",
-            "observations_telemetry_listen",
-            "observations_telemetry_stream",
-            "observations_traces_listen",
-            "observations_traces_stream",
-            "provider_credential_get",
-            "provider_credentials_list",
-            "regional_operation_cancel",
-            "regional_operation_get",
-            "regional_operations_list",
-            "registry_files_list",
-            "registry_instructions_list",
-            "registry_mcp_servers_list",
-            "registry_skills_list",
-            "registry_tools_list",
-            "secret_get",
-            "secrets_list",
-            "session_observations_events_listen",
-            "session_observations_events_stream",
-            "session_observations_logs_listen",
-            "session_observations_logs_stream",
-            "session_observations_metrics_listen",
-            "session_observations_metrics_stream",
-            "session_observations_spans_listen",
-            "session_observations_spans_stream",
-            "session_observations_telemetry_listen",
-            "session_observations_telemetry_stream",
-            "session_observations_traces_listen",
-            "session_observations_traces_stream",
-            "session_restore",
-            "session_run_get",
-            "session_runs_list",
-            "session_stop",
-            "session_trash",
-            "usage_query",
-        ]),
+        SESSION_STREAM_MOUNTS
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>(),
     );
     assert!(
         !rows
@@ -600,10 +609,7 @@ fn the_classifier_reports_each_row_of_the_evolution_table() {
             .iter()
             .map(|change| (change.classification, change.detail.as_str()))
             .collect::<Vec<_>>(),
-        vec![(
-            Classification::Breaking,
-            "served operation is now deferred"
-        )],
+        vec![(Classification::Breaking, "served operation is now deferred")],
         "{changes:#?}"
     );
 }

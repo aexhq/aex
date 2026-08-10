@@ -11,7 +11,7 @@
     "awaiting_owner": 33,
     "capacity_gates": 19,
     "live_targets": 36,
-    "packages": 147,
+    "packages": 148,
     "seams_claimed": 33,
     "seams_declared": 35,
     "workloads": 11
@@ -1917,6 +1917,7 @@
         ],
         "scenarios": [],
         "targets": {
+          "continuations": "unit",
           "faults": "unit",
           "properties": "unit"
         },
@@ -4386,6 +4387,38 @@
         },
         "not_applicable": {
           "live_suite": "test-only crate; the load executors it drives live in the owning live companion's `load` target (D-11)"
+        }
+      },
+      "unmapped_targets": [],
+      "awaiting_owner": false
+    },
+    "tests/support/aex-scenarios": {
+      "name": "aex-scenarios",
+      "kind": "cargo",
+      "meta": {
+        "owner": "test-architecture",
+        "role": "test_support",
+        "artifact": "none",
+        "layers": [
+          "unit",
+          "integration"
+        ],
+        "concerns": [
+          "property"
+        ],
+        "seams": [],
+        "security_tier": "diagnostic",
+        "risk": [
+          "sql"
+        ],
+        "scenarios": [],
+        "targets": {
+          "control_workspace": "integration",
+          "identity_account": "integration",
+          "properties": "unit"
+        },
+        "not_applicable": {
+          "live_suite": "test-only crate; must be absent from every production link graph"
         }
       },
       "unmapped_targets": [],

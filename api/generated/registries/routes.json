@@ -1800,8 +1800,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferred": true,
-      "deferredReason": "First-seal custody and the atomic credential-binding replay transaction are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -1810,8 +1808,7 @@
         "limit_exceeded",
         "unknown_provider",
         "account_paused",
-        "wrong_workspace_region",
-        "not_implemented"
+        "wrong_workspace_region"
       ],
       "etag": "none",
       "fragment": "provider-credentials",
@@ -1830,6 +1827,7 @@
       "scenarios": [
         "SC-SECRET-CUSTODY"
       ],
+      "servedArtifact": "regional-secret-api",
       "servingArtifact": "regional-secret-api",
       "successStatus": 201,
       "summary": "Register a BYOK provider credential; carries plaintext.",
@@ -1838,15 +1836,12 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferred": true,
-      "deferredReason": "No composed producer ever registers a provider-credential binding, so the revoke transaction has nothing it could revoke.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
         "idempotency_conflict",
         "provider_credential_not_found",
-        "wrong_workspace_region",
-        "not_implemented"
+        "wrong_workspace_region"
       ],
       "etag": "none",
       "fragment": "provider-credentials",
@@ -1867,6 +1862,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Revoke a provider-credential binding.",
@@ -2880,8 +2876,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferred": true,
-      "deferredReason": "First-seal custody and durable idempotent replay are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2890,8 +2884,7 @@
         "limit_exceeded",
         "account_paused",
         "precondition_failed",
-        "wrong_workspace_region",
-        "not_implemented"
+        "wrong_workspace_region"
       ],
       "etag": "optional_if_match",
       "fragment": "secrets",
@@ -2912,6 +2905,7 @@
       "scenarios": [
         "SC-SECRET-CUSTODY"
       ],
+      "servedArtifact": "regional-secret-api",
       "servingArtifact": "regional-secret-api",
       "successStatus": 200,
       "summary": "Set a secret value for future admission.",
@@ -5216,14 +5210,12 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferred": true,
-      "deferredReason": "The staged-upload authority and durable abort transaction are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
         "not_found",
-        "wrong_workspace_region",
-        "not_implemented"
+        "gone",
+        "wrong_workspace_region"
       ],
       "etag": "none",
       "fragment": "uploads",
@@ -5244,6 +5236,7 @@
       "scenarios": [
         "SC-CONTENT-LIFECYCLE"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 204,
       "summary": "Abort a staged upload.",
@@ -5252,8 +5245,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferred": true,
-      "deferredReason": "The staged-upload authority and durable completion transaction are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -5263,8 +5254,7 @@
         "invalid_request",
         "content_missing",
         "account_paused",
-        "wrong_workspace_region",
-        "not_implemented"
+        "wrong_workspace_region"
       ],
       "etag": "none",
       "fragment": "uploads",
@@ -5285,6 +5275,7 @@
       "scenarios": [
         "SC-CONTENT-LIFECYCLE"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Complete a staged upload.",
@@ -5293,8 +5284,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferred": true,
-      "deferredReason": "The staged-upload authority and multipart presigning composition are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -5302,8 +5291,7 @@
         "invalid_request",
         "limit_exceeded",
         "account_paused",
-        "wrong_workspace_region",
-        "not_implemented"
+        "wrong_workspace_region"
       ],
       "etag": "none",
       "fragment": "uploads",
@@ -5322,6 +5310,7 @@
       "scenarios": [
         "SC-CONTENT-LIFECYCLE"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 201,
       "summary": "Stage a large registered-resource value.",
@@ -5330,8 +5319,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferred": true,
-      "deferredReason": "The multipart grant and presigning composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -5340,8 +5327,7 @@
         "invalid_request",
         "limit_exceeded",
         "account_paused",
-        "wrong_workspace_region",
-        "not_implemented"
+        "wrong_workspace_region"
       ],
       "etag": "none",
       "fragment": "uploads",
@@ -5362,6 +5348,7 @@
       "scenarios": [
         "SC-CONTENT-LIFECYCLE"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Mint presigned PUT grants for the named parts.",

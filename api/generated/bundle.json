@@ -1719,7 +1719,6 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
-          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -1728,8 +1727,7 @@
             "limit_exceeded",
             "unknown_provider",
             "account_paused",
-            "wrong_workspace_region",
-            "not_implemented"
+            "wrong_workspace_region"
           ],
           "etag": "none",
           "fragment": "provider-credentials",
@@ -1752,14 +1750,12 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
-          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
             "idempotency_conflict",
             "provider_credential_not_found",
-            "wrong_workspace_region",
-            "not_implemented"
+            "wrong_workspace_region"
           ],
           "etag": "none",
           "fragment": "provider-credentials",
@@ -2654,7 +2650,6 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
-          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -2663,8 +2658,7 @@
             "limit_exceeded",
             "account_paused",
             "precondition_failed",
-            "wrong_workspace_region",
-            "not_implemented"
+            "wrong_workspace_region"
           ],
           "etag": "optional_if_match",
           "fragment": "secrets",
@@ -4674,13 +4668,12 @@
         {
           "altPrincipal": null,
           "bodyClass": "none",
-          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
             "not_found",
-            "wrong_workspace_region",
-            "not_implemented"
+            "gone",
+            "wrong_workspace_region"
           ],
           "etag": "none",
           "fragment": "uploads",
@@ -4705,7 +4698,6 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
-          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -4715,8 +4707,7 @@
             "invalid_request",
             "content_missing",
             "account_paused",
-            "wrong_workspace_region",
-            "not_implemented"
+            "wrong_workspace_region"
           ],
           "etag": "none",
           "fragment": "uploads",
@@ -4741,7 +4732,6 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
-          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -4749,8 +4739,7 @@
             "invalid_request",
             "limit_exceeded",
             "account_paused",
-            "wrong_workspace_region",
-            "not_implemented"
+            "wrong_workspace_region"
           ],
           "etag": "none",
           "fragment": "uploads",
@@ -4773,7 +4762,6 @@
         {
           "altPrincipal": null,
           "bodyClass": "aex_json",
-          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -4782,8 +4770,7 @@
             "invalid_request",
             "limit_exceeded",
             "account_paused",
-            "wrong_workspace_region",
-            "not_implemented"
+            "wrong_workspace_region"
           ],
           "etag": "none",
           "fragment": "uploads",

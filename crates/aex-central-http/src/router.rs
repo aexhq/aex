@@ -251,8 +251,9 @@ async fn refuse(headers: HeaderMap) -> Response {
         .and_then(|value| value.to_str().ok())
         .and_then(|value| RequestId::parse(value).ok())
         .unwrap_or_else(fallback_request_id);
-    let (status, envelope, retry_after) = WireError::new(aex_wire::error::ErrorCode::NotImplemented)
-        .into_response_parts(&request_id, None);
+    let (status, envelope, retry_after) =
+        WireError::new(aex_wire::error::ErrorCode::NotImplemented)
+            .into_response_parts(&request_id, None);
     render_envelope(status, &envelope, retry_after)
 }
 

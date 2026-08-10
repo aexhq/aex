@@ -23,6 +23,12 @@ pub struct Key {
 
 /// Every `itemType` this table may hold, as declared in
 /// `migrations/regional/tables/regional-secret-custody.json`.
+///
+/// The list is closed and is pinned **element-for-element and in order** to the
+/// migration by `conformance::the_item_type_vocabulary_equals_the_generation_definition`,
+/// so a new member lands as one atomic change across `keys.rs`, the table
+/// definition, and the regenerated `migrations/regional/generated/regional-tables.json`
+/// — or it does not compile.
 pub const ITEM_TYPES: &[&str] = &[
     "workspace_secret",
     "secret_lineage",
@@ -34,7 +40,24 @@ pub const ITEM_TYPES: &[&str] = &[
     "rebind_intent",
     "provider_credential",
     "idempotency_receipt",
+    "custody_counter",
 ];
+
+/// The `itemType` of a per-workspace quota counter (D-13).
+///
+/// One type covers both counters. The row shape is identical — a bounded
+/// `count` under a `COUNT` sort key — and the partition already says which
+/// collection is being counted, so a second discriminator would carry no
+/// information. Reusing an *existing* type would have been the wrong economy:
+/// that makes the discriminator lie about what the row is.
+pub const CUSTODY_COUNTER: &str = "custody_counter";
+
+/// The sort key every quota counter shares.
+///
+/// It is deliberately outside both listing prefixes — `NAME#` for secrets,
+/// `CRED#` for credentials — so a counter can never appear in a customer's page
+/// and the listings need no filter to exclude it.
+pub const COUNTER_SORT_KEY: &str = "COUNT";
 
 /// Every workspace-secret state, as the domain spells them.
 pub const SECRET_STATES: &[&str] = &["ready", "revoked", "deleted"];
@@ -220,6 +243,34 @@ pub const fn provider_credential_prefix() -> &'static str {
     "CRED#"
 }
 
+/// The partition every provider-credential binding of one workspace shares.
+#[must_use]
+pub fn provider_credential_partition(workspace: WorkspaceId) -> String {
+    format!("PCR#{workspace}")
+}
+
+/// One workspace's secret-count quota row (D-13).
+///
+/// It shares the metadata partition, so the guard is a participant of the same
+/// transaction as the write it bounds rather than a second round trip, and it
+/// sorts outside `NAME#` so no listing reads it.
+#[must_use]
+pub fn secret_counter(workspace: WorkspaceId) -> Key {
+    Key {
+        pk: secret_partition(workspace),
+        sk: COUNTER_SORT_KEY.to_owned(),
+    }
+}
+
+/// One workspace's provider-credential-count quota row (D-13).
+#[must_use]
+pub fn provider_credential_counter(workspace: WorkspaceId) -> Key {
+    Key {
+        pk: provider_credential_partition(workspace),
+        sk: COUNTER_SORT_KEY.to_owned(),
+    }
+}
+
 /// One idempotency receipt.
 ///
 /// Delegates to [`aex_session_dynamodb::replay::receipt_key`]: the receipt row
@@ -287,5 +338,34 @@ mod tests {
         assert!(secret(workspace(), "a#b").is_err());
         assert!(generation(workspace(), "a#b", SourceGeneration::FIRST).is_err());
         assert!(binding(session(), CustodyRevision(1), "a#b").is_err());
+    }
+
+    /// D-13's counters live in the collections they bound, so the guard is one
+    /// participant of the same transaction — but they must sort outside the
+    /// prefix a listing walks, or a customer's page would carry a counter row
+    /// that decodes as neither a secret nor a credential.
+    #[test]
+    fn a_quota_counter_shares_its_collection_partition_and_no_listing_prefix() {
+        let secrets = super::secret_counter(workspace());
+        assert_eq!(secrets.pk, secret_partition(workspace()));
+        assert!(!secrets.sk.starts_with(super::secret_prefix()));
+
+        let credentials = super::provider_credential_counter(workspace());
+        assert_eq!(
+            credentials.pk,
+            super::provider_credential_partition(workspace())
+        );
+        assert!(
+            !credentials
+                .sk
+                .starts_with(super::provider_credential_prefix())
+        );
+        assert_eq!(secrets.sk, credentials.sk);
+        assert_ne!(secrets.pk, credentials.pk);
+    }
+
+    #[test]
+    fn the_counter_item_type_is_a_declared_member_of_the_closed_vocabulary() {
+        assert!(super::ITEM_TYPES.contains(&super::CUSTODY_COUNTER));
     }
 }

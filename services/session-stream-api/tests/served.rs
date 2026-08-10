@@ -60,7 +60,7 @@ use aex_wire::ids::{ContentHash, UploadId};
 use aex_wire::models;
 use aex_wire::routes::{RouteId, route};
 use aex_wire::scopes::ScopeSet;
-use aex_wire::server::{ApprovalsApi as _, ProviderCredentialsApi as _, RouteGroup};
+use aex_wire::server::{ApprovalsApi as _, RouteGroup};
 use aex_wire::types::ETag;
 use aex_wire::types::{Region, RequestId, Timestamp};
 use aex_workspace_domain::registry::{RegisteredValueRef, RegistryPointer};
@@ -799,8 +799,19 @@ impl RegistryStore for FakeRegistry {
 
     async fn begin_completion(
         &self,
-        _upload: UploadId,
+        _upload: &StoredUpload,
         _completion_intent_hash: &str,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Contended)
+    }
+
+    async fn stage_part_blocks(&self, _upload: &StoredUpload) -> Result<(), StoreError> {
+        Err(StoreError::Contended)
+    }
+
+    async fn commit_admission(
+        &self,
+        _plan: &aex_session_dynamodb::plan::TransactionPlan,
     ) -> Result<(), StoreError> {
         Err(StoreError::Contended)
     }
@@ -869,6 +880,8 @@ fn build_with_operations(
 /// The physical `session-authority` name the mount fixture binds.
 const SESSION_TABLE: &str = "dev-eu-west-1-session-authority";
 
+const RUNTIME_ACTIVITY_TABLE: &str = "dev-eu-west-1-runtime-activity";
+
 /// A `DynamoDB` client whose transport refuses every request.
 ///
 /// The mount assertions here exercise routing and the absence sweep, never a
@@ -882,6 +895,31 @@ fn offline_dynamodb() -> aws_sdk_dynamodb::Client {
             .behavior_version(aws_sdk_dynamodb::config::BehaviorVersion::latest())
             .region(aws_sdk_dynamodb::config::Region::new("eu-west-1"))
             .credentials_provider(aws_sdk_dynamodb::config::Credentials::new(
+                "AKIDTESTTESTTESTTEST",
+                "test-secret",
+                None,
+                None,
+                "aex-tests",
+            ))
+            .http_client(http_client)
+            .build(),
+    )
+}
+
+/// An S3 client bound to a capturing transport.
+///
+/// The mount test proves which routes the router offers and which it refuses; it
+/// never drives a handler to the provider. Pointing the real adapters at an
+/// offline transport keeps the composition identical to production, which is the
+/// point of the test — a second, hand-written set of fakes could drift from the
+/// adapters the process actually builds.
+fn offline_s3() -> aws_sdk_s3::Client {
+    let (http_client, _receiver) = aws_smithy_http_client::test_util::capture_request(None);
+    aws_sdk_s3::Client::from_conf(
+        aws_sdk_s3::Config::builder()
+            .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+            .region(aws_sdk_s3::config::Region::new("eu-west-1"))
+            .credentials_provider(aws_sdk_s3::config::Credentials::new(
                 "AKIDTESTTESTTESTTEST",
                 "test-secret",
                 None,
@@ -917,8 +955,33 @@ fn shared_with(
 ) -> Arc<Shared> {
     Arc::new(Shared {
         custody: custody as Arc<dyn SecretCustodyStore>,
+        custody_reads: aex_secret_custody_dynamodb::store::CustodyStore::new(
+            offline_dynamodb(),
+            CUSTODY_TABLE,
+        ),
         custody_table: CUSTODY_TABLE.to_owned(),
+        plane: aex_secret_domain::context::Plane::Dev,
+        region: aex_wire::types::Region::EuWest1,
         registry: registry as Arc<dyn RegistryStore>,
+        content: Arc::new(aex_content_dynamodb::store::ContentStore::new(
+            offline_dynamodb(),
+            "aex-dev-regional-content",
+        )),
+        content_objects: Arc::new(aex_content_aws::object_store::S3ContentObjects::new(
+            offline_s3(),
+            aex_content_aws::object_store::BucketBinding {
+                bucket: "aex-dev-eu-west-1-content".to_owned(),
+                expected_owner: "000000000000".to_owned(),
+                kms_key_id: "arn:aws:kms:eu-west-1:000000000000:key/content".to_owned(),
+            },
+        )),
+        receipts: Arc::new(aex_registry_dynamodb::store::RegistryDynamoStore::new(
+            offline_dynamodb(),
+            "aex-dev-regional-registry",
+        )),
+        registry_table: "aex-dev-regional-registry".to_owned(),
+        work_table: "aex-dev-regional-work".to_owned(),
+        content_kms_key_id: "arn:aws:kms:eu-west-1:000000000000:key/content".to_owned(),
         sessions: sessions as Arc<dyn SessionQueries>,
         operations: operations as Arc<dyn OperationApiStore>,
         commands: aex_session_dynamodb::app_authority::SessionCommandReads::new(
@@ -929,17 +992,20 @@ fn shared_with(
         authority: offline_dynamodb(),
         usage: Arc::new(FakeUsage::default()) as Arc<dyn UsageProjectionReads>,
         cursor_keys: Arc::new(cursor_keys()),
+        runtime_activity: aex_runtime_activity_dynamodb::store::RuntimeActivityDynamoStore::new(
+            offline_dynamodb(),
+            RUNTIME_ACTIVITY_TABLE,
+        ),
     })
 }
 
 /// One handler bound to one request, for a route the router no longer mounts.
 ///
-/// The three approval and provider-credential routes below moved from served to
-/// deferred: nothing composed into the platform raises an approval or registers
-/// a credential, so mounting a handler over them would turn missing authority
-/// into a confident customer answer. The handlers are complete and stay under
-/// test here rather than through the router, because the router now answers the
-/// published refusal for those templates and nothing else.
+/// The two approval reads below moved from served to deferred: nothing composed
+/// into the platform raises an approval, so mounting a handler over them would
+/// turn missing authority into a confident customer answer. The handlers are
+/// complete and stay under test here rather than through the router, because the
+/// router now answers the published refusal for those templates and nothing else.
 fn handler(shared: Arc<Shared>, id: RouteId) -> Routes {
     Routes::new(shared, context(handler_request_id(), id))
 }
@@ -1813,6 +1879,49 @@ async fn an_absent_secret_is_not_found() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
+/// D-10. A provider credential's backing secret is reserved and invisible in
+/// this fragment, on the point read and on the listing alike.
+///
+/// Leaving it visible would let a customer `secret_delete` it and leave a
+/// `ready` binding pointing at a tombstone, so `provider_credential_get` would
+/// publish `ready` for something that cannot work — a read path telling a lie.
+/// A credential's lifecycle runs through `provider_credential_revoke` alone.
+#[tokio::test]
+async fn a_credential_backing_secret_is_not_reachable_through_the_secrets_fragment() {
+    let backing = aex_wire::ids::ProviderCredentialId::from_uuid7(aex_wire::ids::Uuid7::compose(
+        1_754_051_696_789,
+        [6; 10],
+    ))
+    .to_string();
+    let custody = FakeCustody {
+        secrets: BTreeMap::from([
+            ("openai-key".to_owned(), stored_secret("openai-key")),
+            (backing.clone(), stored_secret(&backing)),
+        ]),
+        ..FakeCustody::default()
+    };
+    let (router, _) = router(custody);
+
+    let (status, _, _) = get(&router, &format!("/api/workspace/secrets/{backing}")).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "a reserved name is absent here whether or not it exists"
+    );
+
+    let (status, _, body) = get(&router, "/api/workspace/secrets").await;
+    assert_eq!(status, StatusCode::OK);
+    let page: models::SecretMetadataPage =
+        serde_json::from_value(body).expect("the published schema");
+    let names: Vec<&str> = page.items.iter().map(|row| row.name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["openai-key"],
+        "the listing skips reserved names, which is why a page may come back \
+         under-full while still naming a correct continuation"
+    );
+}
+
 #[tokio::test]
 async fn a_secret_listing_pages_and_its_continuation_resumes_the_next_page() {
     let custody = FakeCustody {
@@ -1966,49 +2075,21 @@ fn revocations_path(credential: ProviderCredentialId) -> String {
     format!("/api/workspace/provider-credentials/{credential}/revocations")
 }
 
-/// Revocation is owned, complete, and deferred: no composed producer ever
-/// registers a provider-credential binding, so there is nothing a caller could
-/// revoke and a `404 provider_credential_not_found` for every input would be a
-/// statement about a resource rather than about the platform.
 #[tokio::test]
-async fn revocation_is_deferred_and_the_router_answers_the_refusal() {
+async fn a_revocation_fences_the_binding_and_publishes_the_committed_row() {
     let stored = stored_credential();
-    let ((router, mounted), _) = build(
+    let ((router, _), custody) = build(
         Arc::new(FakeCustody {
             credentials: vec![stored.clone()],
             ..FakeCustody::default()
         }),
         Arc::new(FakeRegistry::default()),
     );
-    assert!(!mounted.contains(&RouteId::ProviderCredentialRevoke));
-    assert!(route(RouteId::ProviderCredentialRevoke).deferred);
+
     let (status, body) = post(&router, &revocations_path(stored.credential), "{}").await;
-    assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "{body}");
-    assert_eq!(body["error"]["code"], ErrorCode::NotImplemented.as_str());
-}
-
-#[tokio::test]
-async fn a_revocation_fences_the_binding_and_publishes_the_committed_row() {
-    let stored = stored_credential();
-    let custody = Arc::new(FakeCustody {
-        credentials: vec![stored.clone()],
-        ..FakeCustody::default()
-    });
-    let routes = handler(
-        shared_with(
-            Arc::clone(&custody),
-            Arc::new(FakeRegistry::default()),
-            Arc::new(FakeSessions::default()),
-            Arc::new(FakeOperations::default()),
-        ),
-        RouteId::ProviderCredentialRevoke,
-    );
-    let wire = wire_context(RouteId::ProviderCredentialRevoke);
-
-    let decoded = routes
-        .provider_credential_revoke(&wire, stored.credential, models::EmptyRequest {})
-        .await
-        .expect("the binding revokes");
+    assert_eq!(status, StatusCode::OK);
+    let decoded: models::ProviderCredential =
+        serde_json::from_value(body).expect("the published schema");
     assert_eq!(decoded.state, models::ProviderCredentialState::Revoked);
     assert_eq!(
         decoded.revision,
@@ -2049,25 +2130,18 @@ async fn a_replayed_revocation_answers_the_stored_row_and_writes_nothing() {
     let mut already = stored_credential();
     already.state = CredentialState::Revoked;
     already.revoked_at = Some(moment("2026-08-01T13:00:00.000Z"));
-    let custody = Arc::new(FakeCustody {
-        credentials: vec![already.clone()],
-        ..FakeCustody::default()
-    });
-    let routes = handler(
-        shared_with(
-            Arc::clone(&custody),
-            Arc::new(FakeRegistry::default()),
-            Arc::new(FakeSessions::default()),
-            Arc::new(FakeOperations::default()),
-        ),
-        RouteId::ProviderCredentialRevoke,
+    let ((router, _), custody) = build(
+        Arc::new(FakeCustody {
+            credentials: vec![already.clone()],
+            ..FakeCustody::default()
+        }),
+        Arc::new(FakeRegistry::default()),
     );
-    let wire = wire_context(RouteId::ProviderCredentialRevoke);
 
-    let decoded = routes
-        .provider_credential_revoke(&wire, already.credential, models::EmptyRequest {})
-        .await
-        .expect("a replay answers the stored row");
+    let (status, body) = post(&router, &revocations_path(already.credential), "{}").await;
+    assert_eq!(status, StatusCode::OK);
+    let decoded: models::ProviderCredential =
+        serde_json::from_value(body).expect("the published schema");
     assert_eq!(decoded.state, models::ProviderCredentialState::Revoked);
     assert_eq!(
         decoded.revision, already.revision,
@@ -2085,22 +2159,14 @@ async fn a_replayed_revocation_answers_the_stored_row_and_writes_nothing() {
 
 #[tokio::test]
 async fn revoking_an_absent_binding_answers_the_declared_code() {
-    let routes = handler(
-        shared_with(
-            Arc::new(FakeCustody::default()),
-            Arc::new(FakeRegistry::default()),
-            Arc::new(FakeSessions::default()),
-            Arc::new(FakeOperations::default()),
-        ),
-        RouteId::ProviderCredentialRevoke,
-    );
-    let wire = wire_context(RouteId::ProviderCredentialRevoke);
+    let (router, _) = router(FakeCustody::default());
     let absent: ProviderCredentialId = sample(9);
-    let failure = routes
-        .provider_credential_revoke(&wire, absent, models::EmptyRequest {})
-        .await
-        .expect_err("an absent binding is refused");
-    assert_eq!(failure.code, ErrorCode::ProviderCredentialNotFound);
+    let (status, body) = post(&router, &revocations_path(absent), "{}").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        body["error"]["code"].as_str(),
+        Some(ErrorCode::ProviderCredentialNotFound.as_str())
+    );
 }
 
 /// The deployable holds `TransactWriteItems` on `regional-secret-custody` and is
@@ -2110,24 +2176,15 @@ async fn revoking_an_absent_binding_answers_the_declared_code() {
 #[tokio::test]
 async fn the_revocation_reaches_the_authority_as_a_transaction() {
     let stored = stored_credential();
-    let custody = Arc::new(FakeCustody {
-        credentials: vec![stored.clone()],
-        ..FakeCustody::default()
-    });
-    let routes = handler(
-        shared_with(
-            Arc::clone(&custody),
-            Arc::new(FakeRegistry::default()),
-            Arc::new(FakeSessions::default()),
-            Arc::new(FakeOperations::default()),
-        ),
-        RouteId::ProviderCredentialRevoke,
+    let ((router, _), custody) = build(
+        Arc::new(FakeCustody {
+            credentials: vec![stored.clone()],
+            ..FakeCustody::default()
+        }),
+        Arc::new(FakeRegistry::default()),
     );
-    let wire = wire_context(RouteId::ProviderCredentialRevoke);
-    routes
-        .provider_credential_revoke(&wire, stored.credential, models::EmptyRequest {})
-        .await
-        .expect("the binding revokes");
+    let (status, _) = post(&router, &revocations_path(stored.credential), "{}").await;
+    assert_eq!(status, StatusCode::OK);
     assert_eq!(
         custody
             .committed
@@ -2568,8 +2625,33 @@ impl UsageProjectionReads for FakeUsage {
 fn usage_router(usage: Arc<FakeUsage>) -> axum::Router {
     let shared = Arc::new(Shared {
         custody: Arc::new(FakeCustody::default()) as Arc<dyn SecretCustodyStore>,
+        custody_reads: aex_secret_custody_dynamodb::store::CustodyStore::new(
+            offline_dynamodb(),
+            CUSTODY_TABLE,
+        ),
         custody_table: CUSTODY_TABLE.to_owned(),
+        plane: aex_secret_domain::context::Plane::Dev,
+        region: aex_wire::types::Region::EuWest1,
         registry: Arc::new(FakeRegistry::default()) as Arc<dyn RegistryStore>,
+        content: Arc::new(aex_content_dynamodb::store::ContentStore::new(
+            offline_dynamodb(),
+            "aex-dev-regional-content",
+        )),
+        content_objects: Arc::new(aex_content_aws::object_store::S3ContentObjects::new(
+            offline_s3(),
+            aex_content_aws::object_store::BucketBinding {
+                bucket: "aex-dev-eu-west-1-content".to_owned(),
+                expected_owner: "000000000000".to_owned(),
+                kms_key_id: "arn:aws:kms:eu-west-1:000000000000:key/content".to_owned(),
+            },
+        )),
+        receipts: Arc::new(aex_registry_dynamodb::store::RegistryDynamoStore::new(
+            offline_dynamodb(),
+            "aex-dev-regional-registry",
+        )),
+        registry_table: "aex-dev-regional-registry".to_owned(),
+        work_table: "aex-dev-regional-work".to_owned(),
+        content_kms_key_id: "arn:aws:kms:eu-west-1:000000000000:key/content".to_owned(),
         sessions: Arc::new(FakeSessions::default()) as Arc<dyn SessionQueries>,
         operations: Arc::new(FakeOperations::default()) as Arc<dyn OperationApiStore>,
         commands: aex_session_dynamodb::app_authority::SessionCommandReads::new(
@@ -2580,6 +2662,10 @@ fn usage_router(usage: Arc<FakeUsage>) -> axum::Router {
         authority: offline_dynamodb(),
         usage: usage as Arc<dyn UsageProjectionReads>,
         cursor_keys: Arc::new(cursor_keys()),
+        runtime_activity: aex_runtime_activity_dynamodb::store::RuntimeActivityDynamoStore::new(
+            offline_dynamodb(),
+            RUNTIME_ACTIVITY_TABLE,
+        ),
     });
     mount_unary(
         Arc::new(Dispatcher::new(shared)),

@@ -1,9 +1,17 @@
 //! The application context this deployable can honestly supply.
 //!
-//! `aex_session_app::AppContext` names eleven ports. This deployable owns four
-//! of them — the clock, the identifier source, the session authority and the
-//! account projection — and the remaining seven belong to streams that have not
-//! produced an adapter.
+//! `aex_session_app::AppContext` names eleven ports. This deployable owns six
+//! of them — the clock, the identifier source, the session authority, the
+//! account projection, runtime continuity and secret custody — and the
+//! remaining five belong to streams that have not produced an adapter.
+//!
+//! Two ports left this file rather than gaining a local implementation, and
+//! both for the same reason: the authority already existed elsewhere.
+//! `aex_runtime_activity_dynamodb::RuntimeContinuity` reads the rows
+//! `aex-runtime-control` owns the idle predicate over, so there is no second
+//! reading of "is this session idle";
+//! `aex_secret_custody_dynamodb::SessionCustodyReads` holds both rows a custody
+//! read has to join, so the sealed row keeps exactly one reader.
 //!
 //! [`UnownedPorts`] is **not** a fake adapter. Every method returns
 //! [`PortError::Unowned`] naming the seam that owes the implementation. Writing
@@ -14,17 +22,24 @@
 //! invention is silent and wrong.
 //!
 //! The three routes this deployable mounts — `session_stop`, `session_trash`
-//! and `session_restore` — touch none of the seven, which is what makes
-//! mounting them compatible with RS-18.
+//! and `session_restore` — touch none of the five, which is what makes mounting
+//! them compatible with RS-18.
+//!
+//! `session_credential_rebind` can now **read** everything it needs and still
+//! cannot be mounted, for a reason on the write side: its plan's
+//! `Write::PutCustody` names one item, while the stored shape is a head row
+//! plus one immutable row per bound name. The binding rows are not expressible
+//! in the closed write vocabulary at all, and the compiler's "one logical item,
+//! one provider action" rule means they cannot be smuggled into the head write.
+//! That is a custody-write question and it belongs to whoever owns the custody
+//! transaction, not to the session command path.
 
 use aex_content_domain::{
     ContentDigest, ContentOutcome, ContentRoot, PageDigest, TreeNode, TreeView,
 };
-use aex_secret_domain::{SecretName, SessionCustody, TrueIdle, WorkspaceSecret};
 use aex_session_app::ports::{
-    ContentReader, ContinuityReader, IdFactory, LimitsReader, LiveWorkspaceReader, PortError,
-    RegistryReader, ReservationAuthority, ReservationGrant, ReservationRequest,
-    SecretCustodyReader, WorkspaceContinuity,
+    ContentReader, IdFactory, LimitsReader, LiveWorkspaceReader, PortError, RegistryReader,
+    ReservationAuthority, ReservationGrant, ReservationRequest,
 };
 use aex_session_domain::EffectiveLimits;
 use aex_wire::ids::{GenerationId, SessionId, UploadId, Uuid7, WorkspaceId};
@@ -58,16 +73,13 @@ pub struct UnownedPorts;
 const REGISTRY_SEAM: &str = "the named-registry adapter publishes `RegistryStore`, not \
                              `aex_session_app::ports::RegistryReader`";
 const CONTENT_SEAM: &str = "content descriptors and Merkle pages are `aex-content-dynamodb`'s";
-const CUSTODY_SEAM: &str = "`aex-secret-custody-dynamodb` exists and is bound here, but no type \
-                            implements `SecretCustodyReader` (cluster B2)";
 const LIMITS_SEAM: &str = "no authoritative regional capacity default and override producer \
                            exists yet";
 const RESERVATION_SEAM: &str = "`ReservationAuthority` is deliberately unowned: the grant and \
                                 release protocol belongs to the finance and usage streams";
-const CONTINUITY_SEAM: &str = "`aex-runtime-control` owns `TrueIdle` and workspace continuity; \
-                               computing them here would give two authorities two answers";
-const LIVE_SEAM: &str = "the persist survey manifest and the live workspace scan are Hands' \
-                         (cluster B4)";
+const LIVE_SEAM: &str = "the persist survey manifest and the live workspace scan are Hands': \
+                         nothing in the tree produces a live `TreeView`, and the guest refuses \
+                         `PersistPhase::Survey` for want of a TLS client";
 
 #[async_trait::async_trait]
 impl RegistryReader for UnownedPorts {
@@ -120,27 +132,6 @@ impl ContentReader for UnownedPorts {
 }
 
 #[async_trait::async_trait]
-impl SecretCustodyReader for UnownedPorts {
-    async fn read_secrets(
-        &self,
-        _workspace: WorkspaceId,
-        _names: &[SecretName],
-    ) -> Result<Vec<WorkspaceSecret>, PortError> {
-        Err(PortError::Unowned {
-            kind: "workspace secrets",
-            seam: CUSTODY_SEAM,
-        })
-    }
-
-    async fn read_custody(&self, _session: SessionId) -> Result<Option<SessionCustody>, PortError> {
-        Err(PortError::Unowned {
-            kind: "session custody",
-            seam: CUSTODY_SEAM,
-        })
-    }
-}
-
-#[async_trait::async_trait]
 impl LimitsReader for UnownedPorts {
     async fn effective(
         &self,
@@ -160,23 +151,6 @@ impl ReservationAuthority for UnownedPorts {
         Err(PortError::Unowned {
             kind: "spend reservation",
             seam: RESERVATION_SEAM,
-        })
-    }
-}
-
-#[async_trait::async_trait]
-impl ContinuityReader for UnownedPorts {
-    async fn continuity(&self, _session: SessionId) -> Result<WorkspaceContinuity, PortError> {
-        Err(PortError::Unowned {
-            kind: "workspace continuity",
-            seam: CONTINUITY_SEAM,
-        })
-    }
-
-    async fn true_idle(&self, _session: SessionId) -> Result<TrueIdle, PortError> {
-        Err(PortError::Unowned {
-            kind: "true idle",
-            seam: CONTINUITY_SEAM,
         })
     }
 }

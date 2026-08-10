@@ -9807,7 +9807,6 @@
     },
     "/api/secrets/provider-credentials": {
       "post": {
-        "description": "Not yet available. This operation is published in the contract and is not served yet; calls answer 501 not_implemented.",
         "operationId": "provider_credential_register",
         "parameters": [],
         "requestBody": {
@@ -9890,16 +9889,6 @@
               }
             },
             "description": "Error."
-          },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
           }
         },
         "summary": "Register a BYOK provider credential; carries plaintext.",
@@ -9908,7 +9897,6 @@
         ],
         "x-aex-alt-principal": null,
         "x-aex-body-class": "aex_json",
-        "x-aex-deferred": true,
         "x-aex-errors": [
           "unauthenticated",
           "insufficient_scope",
@@ -9917,8 +9905,7 @@
           "limit_exceeded",
           "unknown_provider",
           "account_paused",
-          "wrong_workspace_region",
-          "not_implemented"
+          "wrong_workspace_region"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "idempotency_key",
@@ -10009,7 +9996,6 @@
         "x-aex-transport": "unary"
       },
       "put": {
-        "description": "Not yet available. This operation is published in the contract and is not served yet; calls answer 501 not_implemented.",
         "operationId": "secret_put",
         "parameters": [
           {
@@ -10113,16 +10099,6 @@
               }
             },
             "description": "Error."
-          },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
           }
         },
         "summary": "Set a secret value for future admission.",
@@ -10131,7 +10107,6 @@
         ],
         "x-aex-alt-principal": null,
         "x-aex-body-class": "aex_json",
-        "x-aex-deferred": true,
         "x-aex-errors": [
           "unauthenticated",
           "insufficient_scope",
@@ -10140,8 +10115,7 @@
           "limit_exceeded",
           "account_paused",
           "precondition_failed",
-          "wrong_workspace_region",
-          "not_implemented"
+          "wrong_workspace_region"
         ],
         "x-aex-etag": "optional_if_match",
         "x-aex-idempotency": "idempotency_key",
@@ -18614,7 +18588,6 @@
     },
     "/api/workspace/provider-credentials/{providerCredentialId}/revocations": {
       "post": {
-        "description": "Not yet available. This operation is published in the contract and is not served yet; calls answer 501 not_implemented.",
         "operationId": "provider_credential_revoke",
         "parameters": [
           {
@@ -18689,16 +18662,6 @@
               }
             },
             "description": "Error."
-          },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
           }
         },
         "summary": "Revoke a provider-credential binding.",
@@ -18707,14 +18670,12 @@
         ],
         "x-aex-alt-principal": null,
         "x-aex-body-class": "aex_json",
-        "x-aex-deferred": true,
         "x-aex-errors": [
           "unauthenticated",
           "insufficient_scope",
           "idempotency_conflict",
           "provider_credential_not_found",
-          "wrong_workspace_region",
-          "not_implemented"
+          "wrong_workspace_region"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "idempotency_key",
@@ -19852,7 +19813,6 @@
     },
     "/api/workspace/uploads": {
       "post": {
-        "description": "Not yet available. This operation is published in the contract and is not served yet; calls answer 501 not_implemented.",
         "operationId": "upload_create",
         "parameters": [],
         "requestBody": {
@@ -19935,16 +19895,6 @@
               }
             },
             "description": "Error."
-          },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
           }
         },
         "summary": "Stage a large registered-resource value.",
@@ -19953,7 +19903,6 @@
         ],
         "x-aex-alt-principal": null,
         "x-aex-body-class": "aex_json",
-        "x-aex-deferred": true,
         "x-aex-errors": [
           "unauthenticated",
           "insufficient_scope",
@@ -19961,8 +19910,7 @@
           "invalid_request",
           "limit_exceeded",
           "account_paused",
-          "wrong_workspace_region",
-          "not_implemented"
+          "wrong_workspace_region"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "idempotency_key",
@@ -19974,7 +19922,6 @@
     },
     "/api/workspace/uploads/{uploadId}": {
       "delete": {
-        "description": "Not yet available. This operation is published in the contract and is not served yet; calls answer 501 not_implemented.",
         "operationId": "upload_abort",
         "parameters": [
           {
@@ -20034,7 +19981,7 @@
             },
             "description": "Error."
           },
-          "501": {
+          "410": {
             "content": {
               "application/json": {
                 "schema": {
@@ -20051,13 +19998,12 @@
         ],
         "x-aex-alt-principal": null,
         "x-aex-body-class": "none",
-        "x-aex-deferred": true,
         "x-aex-errors": [
           "unauthenticated",
           "insufficient_scope",
           "not_found",
-          "wrong_workspace_region",
-          "not_implemented"
+          "gone",
+          "wrong_workspace_region"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "none",
@@ -20069,7 +20015,6 @@
     },
     "/api/workspace/uploads/{uploadId}/completion": {
       "post": {
-        "description": "Not yet available. This operation is published in the contract and is not served yet; calls answer 501 not_implemented.",
         "operationId": "upload_complete",
         "parameters": [
           {
@@ -20174,16 +20119,6 @@
               }
             },
             "description": "Error."
-          },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
           }
         },
         "summary": "Complete a staged upload.",
@@ -20192,7 +20127,6 @@
         ],
         "x-aex-alt-principal": null,
         "x-aex-body-class": "aex_json",
-        "x-aex-deferred": true,
         "x-aex-errors": [
           "unauthenticated",
           "insufficient_scope",
@@ -20202,8 +20136,7 @@
           "invalid_request",
           "content_missing",
           "account_paused",
-          "wrong_workspace_region",
-          "not_implemented"
+          "wrong_workspace_region"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "idempotency_key",
@@ -20215,7 +20148,6 @@
     },
     "/api/workspace/uploads/{uploadId}/parts": {
       "post": {
-        "description": "Not yet available. This operation is published in the contract and is not served yet; calls answer 501 not_implemented.",
         "operationId": "upload_parts_grant",
         "parameters": [
           {
@@ -20330,16 +20262,6 @@
               }
             },
             "description": "Error."
-          },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
           }
         },
         "summary": "Mint presigned PUT grants for the named parts.",
@@ -20348,7 +20270,6 @@
         ],
         "x-aex-alt-principal": null,
         "x-aex-body-class": "aex_json",
-        "x-aex-deferred": true,
         "x-aex-errors": [
           "unauthenticated",
           "insufficient_scope",
@@ -20357,8 +20278,7 @@
           "invalid_request",
           "limit_exceeded",
           "account_paused",
-          "wrong_workspace_region",
-          "not_implemented"
+          "wrong_workspace_region"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "none",

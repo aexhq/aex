@@ -95,11 +95,18 @@ impl OperationKind {
         match self {
             Self::SessionStop
             | Self::SessionPersist
-            | Self::WorkspaceDiscard
             | Self::CredentialRebind
             | Self::SessionTrash
             | Self::SessionRestore => Execution::Inline,
-            Self::SessionPurge
+            // A discard is continued (D-6). Acknowledging it inline would mean
+            // clearing `Session.generation` before the runtime authority has
+            // accepted the termination, which makes `WorkspaceDiscardResult`
+            // unfalsifiable; calling the runtime synchronously inside the
+            // command path is the other half of the same trade. It is born
+            // terminal in its admission transaction only when there is no
+            // generation to terminate.
+            Self::WorkspaceDiscard
+            | Self::SessionPurge
             | Self::WorkspaceDelete
             | Self::TelemetryExport
             | Self::ContentGc => Execution::Continued,
@@ -580,6 +587,46 @@ pub enum PublicProjectionError {
         /// The bounded serde diagnostic.
         reason: String,
     },
+}
+
+/// The optimistic version of one stored operation row.
+///
+/// It lives in the domain rather than in an adapter because a **step commit**
+/// has to name the version it observed. The public cancellation command runs
+/// its own optimistic loop against the same row
+/// (`aex-session-dynamodb`'s `operation_cancel_requested`), so a step that
+/// guessed the version — or reset it to [`OperationVersion::FIRST`] — would let
+/// two writers believe they held the row. A resumed step therefore conditions
+/// on the exact version it read and advances it by one inside the same
+/// transaction that advances the cursor.
+///
+/// This is the operation-row analogue of [`crate::lease::Fence`] and behaves the
+/// same way: monotone, never reused, and overflow is a corrupted authority
+/// rather than a customer condition.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct OperationVersion(pub u64);
+
+impl OperationVersion {
+    /// The version a freshly admitted operation row is born at.
+    ///
+    /// One rather than zero, so that a stored version is never confused with
+    /// the absence of the attribute.
+    pub const FIRST: Self = Self(1);
+
+    /// The version a write that observed this one advances to.
+    ///
+    /// # Panics
+    ///
+    /// Panics on `u64` overflow. Reaching it needs more writes to a single
+    /// operation row than the row can physically have received, so it is a
+    /// corrupted authority and not a condition a caller can provoke.
+    #[must_use]
+    pub const fn next(self) -> Self {
+        match self.0.checked_add(1) {
+            Some(value) => Self(value),
+            None => panic!("operation version overflowed"),
+        }
+    }
 }
 
 /// The scope an operation acts in.

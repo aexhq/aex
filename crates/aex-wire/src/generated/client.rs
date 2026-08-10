@@ -3,7 +3,7 @@
 //! The low-level client: one request builder and one method per public operation.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:5fe8da4b34a8c8a1bfbeafe3e2a8a2c456983a62f85fea9a66f579ef905b6f14`.
+//! `sha256:0382d948d262316bfac7e45bafe9563ccb981a87eb9e1baa6404edfea3b3e81f`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]

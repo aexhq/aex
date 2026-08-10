@@ -58,6 +58,10 @@ use aex_wire::server::{
     dispatch_regional_operations, dispatch_registry, dispatch_secrets, dispatch_sessions,
     dispatch_usage,
 };
+use aex_runtime_activity_dynamodb::RuntimeContinuity;
+use aex_secret_custody_dynamodb::SessionCustodyReads;
+use aex_secret_custody_dynamodb::store::CustodyStore;
+use aex_runtime_activity_dynamodb::store::RuntimeActivityDynamoStore;
 use aex_wire::types::Timestamp;
 
 /// The adapters and start-up bindings every request shares.
@@ -71,6 +75,12 @@ pub struct Shared {
     /// Metadata only: this deployable holds no decrypt key, so the one thing it
     /// writes here is a revocation fence.
     pub custody: Arc<dyn SecretCustodyStore>,
+    /// The concrete custody store, for the two rows a custody read joins.
+    ///
+    /// Separate from `custody` above, which is the `dyn` metadata authority the
+    /// served secret routes use: reconstructing a `SessionCustody` needs the
+    /// binding listing, and that is an inherent method on the concrete store.
+    pub custody_reads: CustodyStore,
     /// The physical `regional-secret-custody` table name.
     ///
     /// Carried because a conditional expression names its own table, and the
@@ -79,6 +89,21 @@ pub struct Shared {
     pub custody_table: String,
     /// The named-registry authority.
     pub registry: Arc<dyn RegistryStore>,
+    /// The content-descriptor authority.
+    pub content: Arc<dyn aex_content_dynamodb::store::ContentMetadataStore>,
+    /// The one content object adapter, and therefore the one presigner.
+    ///
+    /// The upload routes and the registry download route reach S3 through this
+    /// and nothing else builds a second one.
+    pub content_objects: Arc<dyn aex_content_aws::object_store::ContentObjectStore>,
+    /// The `regional-registry` receipt reader the replay combinator uses.
+    pub receipts: Arc<dyn aex_session_dynamodb::replay::ReceiptStore>,
+    /// The physical `regional-registry` table name.
+    pub registry_table: String,
+    /// The physical `regional-work` table name.
+    pub work_table: String,
+    /// The content CMK every object is sealed under, recorded on a descriptor.
+    pub content_kms_key_id: String,
     /// The strongly consistent, read-only session-authority surface.
     pub sessions: Arc<dyn SessionQueries>,
     /// The durable-operation point, list and conditional cancellation authority.
@@ -100,6 +125,22 @@ pub struct Shared {
     pub usage: Arc<dyn UsageProjectionReads>,
     /// The signing ring every continuation is minted and verified under.
     pub cursor_keys: Arc<CursorKeyRing>,
+    /// The plane and region every encryption context is bound to.
+    ///
+    /// Carried rather than re-derived from a table name: the context digest a
+    /// custody read verifies against is a total function of these two plus the
+    /// tenant, and guessing either would make every verification fail.
+    pub plane: aex_secret_domain::context::Plane,
+    /// The region half of the same binding.
+    pub region: aex_wire::types::Region,
+    /// The runtime-activity authority, which owns workspace continuity and the
+    /// true-idle verdict.
+    ///
+    /// Read through `RuntimeContinuity` rather than interpreted here: the idle
+    /// window and the lifecycle states belong to `aex-runtime-control`, and a
+    /// second reading of them would let two authorities disagree about whether
+    /// a session is idle.
+    pub runtime_activity: RuntimeActivityDynamoStore,
 }
 
 impl std::fmt::Debug for Shared {
@@ -123,6 +164,18 @@ impl Routes {
     #[must_use]
     pub const fn new(shared: Arc<Shared>, cx: RequestContext) -> Self {
         Self { shared, cx }
+    }
+
+    /// The adapters this request may reach.
+    #[must_use]
+    pub fn shared(&self) -> &Shared {
+        &self.shared
+    }
+
+    /// The verified request this handler is answering.
+    #[must_use]
+    pub const fn context(&self) -> &RequestContext {
+        &self.cx
     }
 
     /// Every route whose handler is complete, in `RouteId` order.
@@ -305,7 +358,7 @@ impl Routes {
         })
     }
 
-    /// The four ports this deployable supplies, plus the seven it refuses.
+    /// The six ports this deployable supplies, plus the five it refuses.
     fn bindings(&self) -> WireResult<CommandBindings> {
         let now = self.now()?;
         Ok(CommandBindings {
@@ -313,6 +366,14 @@ impl Routes {
             ids: crate::session::app_ports::RequestIds,
             unowned: crate::session::app_ports::UnownedPorts,
             reads: self.shared.commands.clone(),
+            continuity: RuntimeContinuity::new(self.shared.runtime_activity.clone(), now),
+            secrets: SessionCustodyReads::new(
+                self.shared.custody_reads.clone(),
+                self.shared.plane,
+                self.shared.region,
+                self.cx.auth.organization_id,
+                self.cx.auth.workspace_id,
+            ),
             accounts: AuthorizedAccount {
                 organization: self.cx.auth.organization_id,
                 revision: self.cx.auth.epochs.account,
@@ -432,6 +493,8 @@ struct CommandBindings {
     unowned: crate::session::app_ports::UnownedPorts,
     reads: SessionCommandReads,
     accounts: AuthorizedAccount,
+    continuity: RuntimeContinuity,
+    secrets: SessionCustodyReads,
 }
 
 impl CommandBindings {
@@ -441,15 +504,19 @@ impl CommandBindings {
             ids: &self.ids,
             sessions: &self.reads,
             accounts: &self.accounts,
-            // Seven ports another stream owns. Every one refuses rather than
+            // Five ports another stream owns. Every one refuses rather than
             // inventing an answer; see `crate::session::app_ports`.
             registry: &self.unowned,
             content: &self.unowned,
-            secrets: &self.unowned,
             limits: &self.unowned,
             reservations: &self.unowned,
-            continuity: &self.unowned,
             live: &self.unowned,
+            // Owned, not refused: `aex-runtime-activity-dynamodb` is the
+            // authority for both continuity and true idle, and
+            // `aex-secret-custody-dynamodb` holds both rows a custody read has
+            // to join.
+            continuity: &self.continuity,
+            secrets: &self.secrets,
         }
     }
 }
@@ -947,11 +1014,23 @@ impl SecretsApi for Routes {
         Err(not_served(RouteId::SecretDelete))
     }
 
+    /// `GET /api/workspace/secrets/{name}` — one secret's metadata.
+    ///
+    /// A **reserved** name answers `404` before any read (D-10). A provider
+    /// credential's backing secret is invisible in this fragment: leaving it
+    /// visible would let a customer `secret_delete` it and leave a `ready`
+    /// binding pointing at a tombstone, so `provider_credential_get` would
+    /// publish `ready` for something that cannot work — a read path telling a
+    /// lie. Its lifecycle runs through `provider_credential_revoke`, which is
+    /// the only route that may fence it.
     async fn secret_get(
         &self,
         _cx: &WireContext,
         name: ResourceName,
     ) -> WireResult<WithETag<models::SecretMetadata>> {
+        if is_reserved_secret_name(&name) {
+            return Err(WireError::new(ErrorCode::NotFound));
+        }
         let stored = self
             .shared
             .custody
@@ -984,6 +1063,15 @@ impl SecretsApi for Routes {
         Err(not_served(RouteId::SecretRevoke))
     }
 
+    /// `GET /api/workspace/secrets` — the workspace's secrets.
+    ///
+    /// Reserved names are **skipped** (D-10), which is why a page can come back
+    /// under-full while still reporting a correct `nextCursor`: the cursor is
+    /// minted from the authority's own position and never from the filtered item
+    /// count, and the wire already permits a short page. Filtering after the
+    /// read is what keeps the key template `authorize_managed_call` conditions
+    /// on unchanged — a hot-path change to solve a cold-path problem was the
+    /// alternative, and it was rejected.
     async fn secrets_list(
         &self,
         _cx: &WireContext,
@@ -1002,8 +1090,24 @@ impl SecretsApi for Routes {
             .await
             .map_err(|error| authority_failure(&error))?;
         let next = self.continuation(page.next.as_ref(), &binding)?;
-        projection::secret_metadata_page(&page.items, next).map_err(WireError::from)
+        let visible: Vec<_> = page
+            .items
+            .into_iter()
+            .filter(|row| !is_reserved_secret_name(&row.name))
+            .collect();
+        projection::secret_metadata_page(&visible, next).map_err(WireError::from)
     }
+}
+
+/// Whether a stored secret name belongs to the reserved credential namespace.
+///
+/// The reservation is **typed**, not a string-prefix convention: a name is
+/// reserved exactly when it parses as a `ProviderCredentialId`, which is the
+/// same rule `regional-secret-api` refuses a `secret_put` under. One rule, two
+/// deployables, and neither can drift into admitting what the other hides.
+fn is_reserved_secret_name(name: &ResourceName) -> bool {
+    use aex_wire::ids::PrefixedId as _;
+    ProviderCredentialId::parse(name.as_str()).is_ok()
 }
 
 impl ProviderCredentialsApi for Routes {
@@ -1461,6 +1565,7 @@ impl UnaryDispatch for Routes {
             "registry" => dispatch_registry(self, &wire, raw, limits).await?,
             "approvals" => dispatch_approvals(self, &wire, raw, limits).await?,
             "sessions" => dispatch_sessions(self, &wire, raw, limits).await?,
+            "uploads" => aex_wire::server::dispatch_uploads(self, &wire, raw, limits).await?,
             "usage" => dispatch_usage(self, &wire, raw, limits).await?,
             _ => return Err(not_served(raw.route)),
         };

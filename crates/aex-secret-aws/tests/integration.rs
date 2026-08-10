@@ -41,8 +41,14 @@ fn client(engine: &MotoContainer) -> Client {
     Client::from_conf(config)
 }
 
-/// Creates a root key and wraps one branch key under it, which is what
-/// `regional-secret-key-admin` does in production.
+/// Creates a root key and wraps one branch key under it, exactly as
+/// `aex_secret_keystore_dynamodb::provision` does in production.
+///
+/// The wrap context is the **branch key's** — plane, region, workspace — and not
+/// the secret's. One branch key serves every name and every generation in a
+/// workspace, so the context that wraps it has to be reproducible from the
+/// workspace alone; the secret's full identity binds the value one layer down,
+/// as AEAD additional data, which is what the cases below exercise.
 async fn branch_key(
     client: &Client,
     context: &aex_secret_domain::context::EncryptionContext,
@@ -60,7 +66,7 @@ async fn branch_key(
         .generate_data_key_without_plaintext()
         .key_id(&key)
         .key_spec(DataKeySpec::Aes256);
-    for (name, value) in aex_secret_aws::context::kms_pairs(context) {
+    for (name, value) in aex_secret_aws::context::branch_key_pairs(context) {
         request = request.encryption_context(name, value);
     }
     let wrapped = request
@@ -106,6 +112,8 @@ async fn a_value_seals_and_reveals_against_a_real_key_service() {
     );
 }
 
+/// Tenant isolation at the **key** layer: `KMS` itself refuses to open one
+/// workspace's branch key while another workspace is claimed.
 #[tokio::test]
 async fn the_service_refuses_a_wrapped_key_presented_under_another_context() {
     let engine = MotoContainer::start().await.expect("moto starts");
@@ -114,13 +122,17 @@ async fn the_service_refuses_a_wrapped_key_presented_under_another_context() {
     let (key, wrapped) = branch_key(&client, &bound).await;
 
     let keys = KmsBranchKeys::new(client, key);
-    let other = context("openai-key", 2);
+    let mut foreign = aex_secret_aws::context::branch_key_pairs(&bound);
+    foreign.insert(
+        aex_secret_aws::context::WORKSPACE_KEY.to_owned(),
+        "wsp_0000000000000000000000000".to_owned(),
+    );
     let error = keys
         .material(
-            &other.workspace.to_string(),
+            &bound.workspace.to_string(),
             key_version(&wrapped),
             &wrapped,
-            &aex_secret_aws::context::kms_pairs(&other),
+            &foreign,
         )
         .await
         .expect_err("another workspace's context");
@@ -128,6 +140,57 @@ async fn the_service_refuses_a_wrapped_key_presented_under_another_context() {
         error,
         KeyMaterialError::ContextMismatch,
         "the encryption context is authenticated by the service, not only by us"
+    );
+}
+
+/// Tenant and identity isolation at the **value** layer, which is where the
+/// secret's own context is enforced.
+///
+/// This is the assertion the branch-key hierarchy makes load bearing: the
+/// wrapped key opens for the whole workspace, so nothing but the AEAD additional
+/// data distinguishes one name or one generation from another. `moto` seals with
+/// AES-256-GCM over the serialised context, so a frame presented under a context
+/// differing in exactly one field fails tag verification — real cryptography,
+/// not bookkeeping. The digest comparison catches it **before** any `KMS` call is
+/// spent, which is why the error is `ContextMismatch` rather than a key failure.
+#[tokio::test]
+async fn a_frame_moved_to_another_generation_or_name_never_opens() {
+    let engine = MotoContainer::start().await.expect("moto starts");
+    let client = client(&engine);
+    let bound = context("openai-key", 1);
+    let (key, wrapped) = branch_key(&client, &bound).await;
+
+    let crypto = EnvelopeCrypto::new(
+        Box::new(KmsBranchKeys::new(client, key)),
+        "aex-integration-role",
+    );
+    let sealed = crypto
+        .seal(&bound, &wrapped, &plaintext("hunter2"), now())
+        .await
+        .expect("seals");
+
+    for foreign in [
+        // The same name, the next generation.
+        context("openai-key", 2),
+        // The same generation, another name.
+        context("anthropic-key", 1),
+    ] {
+        assert_eq!(
+            crypto
+                .reveal(&sealed, &foreign, now())
+                .await
+                .expect_err("a frame from another identity"),
+            SecretCryptoError::ContextMismatch,
+            "the value's own identity is authenticated one layer below the key"
+        );
+    }
+    assert_eq!(
+        crypto
+            .reveal(&sealed, &bound, now())
+            .await
+            .expect("its own context")
+            .expose_for_encryption(),
+        b"hunter2"
     );
 }
 

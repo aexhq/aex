@@ -173,6 +173,27 @@
       "resources": ["table", "index/*"]
     },
     {
+      "role": "regional-observation-api",
+      "actions": ["dynamodb:PutItem"],
+      "resources": ["table"],
+      "itemTypes": ["operation"],
+      "condition": {
+        "operator": "ForAllValues:StringLike",
+        "key": "dynamodb:LeadingKeys",
+        "values": ["OP#*"]
+      }
+    },
+    {
+      "role": "regional-observation-api",
+      "actions": ["dynamodb:ConditionCheckItem"],
+      "resources": ["table"],
+      "condition": {
+        "operator": "ForAllValues:StringLike",
+        "key": "dynamodb:LeadingKeys",
+        "values": ["SESSION#*"]
+      }
+    },
+    {
       "role": "regional-stream",
       "actions": [
         "dynamodb:DescribeTable",

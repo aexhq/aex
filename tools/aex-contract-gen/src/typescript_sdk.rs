@@ -325,7 +325,10 @@ fn resource_method(out: &mut String, operation: &OperationIr) {
     if operation_id {
         options.push("operationId: params.operationId".to_owned());
     }
-    let mut call = format!("    return this.#executor.execute<T>({}", quoted(&operation.id));
+    let mut call = format!(
+        "    return this.#executor.execute<T>({}",
+        quoted(&operation.id)
+    );
     if !bindings.is_empty() || !options.is_empty() {
         call.push_str(&if bindings.is_empty() {
             ", {}".to_owned()
