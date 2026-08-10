@@ -208,13 +208,37 @@ UPDATE identity.device_authorization d \
                  AND s.expires_at > (TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond') \
                  AND u.status = 'active')";
 
-/// Refuse a device authorization, conditionally.
+/// Refuse a device authorization, conditionally, by its keyed user-code digest.
+///
+/// Carries the same actor `EXISTS` as [`APPROVE_DEVICE_AUTHORIZATION`], for the
+/// same reason. `decide_device` binds `:actor_user_id` and `:actor_session_id`
+/// for both paths; this statement referenced neither, so a caller who learned a
+/// user code could refuse a sign-in they had no relationship to, and could do
+/// it without holding any session at all. Refusal is a cross-principal effect —
+/// it ends somebody else's sign-in — which the priority order counts as
+/// correctness, not preference.
+///
+/// It admits **only** `pending`. Retracting an approved grant is not a
+/// capability this platform offers, and it never was one: `dev_approved_ck`
+/// asserts `(status IN ('approved','consumed')) = (approved_by_user_id IS NOT
+/// NULL)`, so writing `denied` over an approved row while leaving
+/// `approved_by_user_id` set raises 23514. The old `IN ('pending','approved')`
+/// could therefore only ever produce a check violation, never a retraction.
+/// The way to undo a grant that was already redeemed is
+/// [`REVOKE_ACCOUNT_TOKEN`], which names the token and matches `user_id`.
 pub const DENY_DEVICE_AUTHORIZATION: &str = "\
 UPDATE identity.device_authorization d \
    SET status = 'denied' \
  WHERE d.user_code_hash = :user_code_hash \
-   AND d.status IN ('pending','approved') \
-   AND d.expires_at > (TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond')";
+   AND d.status = 'pending' \
+   AND d.expires_at > (TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond') \
+   AND EXISTS (SELECT 1 FROM identity.dashboard_session s \
+                JOIN identity.user u ON u.id = s.user_id \
+               WHERE s.id = :actor_session_id \
+                 AND s.user_id = :actor_user_id \
+                 AND s.revoked_at IS NULL \
+                 AND s.expires_at > (TIMESTAMPTZ 'epoch' + :now_ms * INTERVAL '1 millisecond') \
+                 AND u.status = 'active')";
 
 /// Redeem an approved device grant, conditionally.
 ///

@@ -139,12 +139,60 @@ fn every_time_bounded_consumption_checks_expiry_in_the_predicate() {
     }
 }
 
+/// Both halves of the device decision, for the scans that cover the pair.
+const DECISIONS: [(&str, &str); 2] = [
+    (
+        "APPROVE_DEVICE_AUTHORIZATION",
+        sql::APPROVE_DEVICE_AUTHORIZATION,
+    ),
+    ("DENY_DEVICE_AUTHORIZATION", sql::DENY_DEVICE_AUTHORIZATION),
+];
+
+/// Deciding a grant is a cross-principal effect, so the actor is part of the
+/// write rather than a prior read.
+///
+/// Approve carried this from the start and deny did not, which meant anyone who
+/// learned a user code could refuse a stranger's sign-in without holding a
+/// session at all. The scan runs over the pair so the next decision added
+/// cannot repeat it.
 #[test]
-fn approval_requires_a_current_dashboard_actor_in_the_predicate() {
-    let statement = sql::APPROVE_DEVICE_AUTHORIZATION;
-    assert!(statement.contains("EXISTS (SELECT 1 FROM identity.dashboard_session"));
-    assert!(statement.contains("s.revoked_at IS NULL"));
-    assert!(statement.contains("u.status = 'active'"));
+fn every_device_decision_requires_a_current_dashboard_actor_in_the_predicate() {
+    for (name, statement) in DECISIONS {
+        for clause in [
+            "EXISTS (SELECT 1 FROM identity.dashboard_session",
+            "s.id = :actor_session_id",
+            "s.user_id = :actor_user_id",
+            "s.revoked_at IS NULL",
+            "u.status = 'active'",
+        ] {
+            assert!(
+                statement.contains(clause),
+                "`{name}` decides a grant without `{clause}`; \
+                 `decide_device` binds the actor for both paths and a statement \
+                 that ignores it lets a stranger decide"
+            );
+        }
+    }
+}
+
+/// A decision lands on a pending grant and on nothing else.
+///
+/// Retraction is not a capability this platform offers, and `dev_approved_ck`
+/// means it never was: writing `denied` over an approved row without clearing
+/// `approved_by_user_id` raises 23514, so the wider status set could only ever
+/// have produced a check violation.
+#[test]
+fn a_device_decision_only_ever_lands_on_a_pending_grant() {
+    for (name, statement) in DECISIONS {
+        assert!(
+            statement.contains("d.status = 'pending'"),
+            "`{name}` decides a grant that is not pending"
+        );
+        assert!(
+            !statement.contains("d.status IN "),
+            "`{name}` admits a status set rather than the one state a decision applies to"
+        );
+    }
 }
 
 #[test]
