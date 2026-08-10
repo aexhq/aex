@@ -156,6 +156,13 @@ target = "e2e"
 observes = ["artifact:session-stream-api"]
 
 [[scenario]]
+id = "SC-REGISTRY-RESOURCES"
+owner = "regional-services"
+package = "cargo:aex-live-session-stream-api"
+target = "e2e"
+observes = ["artifact:session-stream-api", "artifact:content-lifecycle-worker"]
+
+[[scenario]]
 id = "SC-SESSION-ADMIT"
 owner = "regional-services"
 deferred = "Session admission is not mounted by the production composition and has no executable live target yet."

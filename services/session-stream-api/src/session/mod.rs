@@ -8,6 +8,7 @@
 pub mod admission;
 pub mod app_ports;
 pub mod handlers;
+pub mod registry;
 pub mod routes;
 pub mod stores;
 pub mod wire_pending;

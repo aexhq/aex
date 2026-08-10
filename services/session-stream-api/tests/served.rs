@@ -22,7 +22,11 @@ use aex_regional_http::cursor::{CursorKey, CursorKeyRing};
 use aex_regional_http::mount::{AdmissionRequest, EdgeAdmission, mount_unary};
 use aex_regional_http::projection::entity_tag;
 use aex_regional_http::router::{RouteOwner, route_owner};
-use aex_registry_dynamodb::store::{PointerPage, RegistryStore};
+use aex_content_aws::object_store::ContentObjectStore;
+use aex_content_dynamodb::store::ContentMetadataStore;
+use aex_registry_dynamodb::store::{
+    DeleteCommitted, PointerPage, RegistryStore, SetCommit, SetCommitted,
+};
 use aex_secret_custody_dynamodb::codec::{
     CredentialState, ProviderCredential as StoredCredential, SecretMetadata as StoredSecret,
 };
@@ -58,7 +62,9 @@ use aex_wire::scopes::ScopeSet;
 use aex_wire::server::RouteGroup;
 use aex_wire::types::ETag;
 use aex_wire::types::{Region, RequestId, Timestamp};
-use aex_workspace_domain::registry::{RegisteredValueRef, RegistryPointer};
+use aex_workspace_domain::registry::{
+    RegistryPointer, RegistryRow as StoredRegistryRow, ValueDocument,
+};
 use aex_workspace_domain::upload::{Upload as StoredUpload, UploadState};
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -684,16 +690,42 @@ fn kind_key(kind: RegistryKind) -> &'static str {
     }
 }
 
-fn pointer(kind: RegistryKind, name: &str) -> RegistryPointer {
-    RegistryPointer {
+/// The canonical value document each kind stores.
+///
+/// Written out per kind rather than shared, because the point projection decodes
+/// it as that kind's read model and one shared shape would prove nothing.
+fn value_document(kind: RegistryKind) -> ValueDocument {
+    let payload = ContentHash::of(b"body").to_wire();
+    let text = match kind {
+        RegistryKind::File => format!(
+            r#"{{"mountPath":"/etc/notes.md","mediaType":"text/markdown","mode":"0644",
+                "content":{{"sha256":"{payload}","sizeBytes":"4"}}}}"#
+        ),
+        RegistryKind::Skill => format!(
+            r#"{{"description":"review","bundleFormat":"tar.gz",
+                "bundle":{{"sha256":"{payload}","sizeBytes":"4"}}}}"#
+        ),
+        RegistryKind::Tool => format!(
+            r#"{{"description":"search","inputSchema":{{"type":"object"}},"entry":"main.js",
+                "bundleFormat":"tar.gz",
+                "bundle":{{"sha256":"{payload}","sizeBytes":"4"}}}}"#
+        ),
+        RegistryKind::Instruction => r#"{"text":"be concise"}"#.to_owned(),
+        RegistryKind::McpServer => {
+            r#"{"url":"https://example.test/mcp","transport":"streamable_http","headers":[]}"#
+                .to_owned()
+        }
+    };
+    ValueDocument::new(aex_wire::CanonicalJson::parse(&text).expect("valid JSON"))
+}
+
+fn registry_row(kind: RegistryKind, name: &str) -> StoredRegistryRow {
+    StoredRegistryRow {
         workspace: workspace(),
         kind,
         name: ResourceName::parse(name).expect("a resource name"),
         revision: Revision(4),
         etag: ETag::parse("\"registry-4\"").expect("a strong validator"),
-        value: RegisteredValueRef::Content {
-            digest: ContentHash::of(b"body"),
-        },
         sha256: ContentHash::of(b"body"),
         size_bytes: 128,
         created_at: moment("2026-08-01T12:34:56.789Z"),
@@ -701,15 +733,30 @@ fn pointer(kind: RegistryKind, name: &str) -> RegistryPointer {
     }
 }
 
+fn pointer(kind: RegistryKind, name: &str) -> RegistryPointer {
+    RegistryPointer {
+        row: registry_row(kind, name),
+        value_doc: value_document(kind),
+    }
+}
+
 #[async_trait::async_trait]
 impl RegistryStore for FakeRegistry {
     async fn load_pointer(
         &self,
-        _workspace: WorkspaceId,
-        _kind: RegistryKind,
-        _name: &str,
+        workspace: WorkspaceId,
+        kind: RegistryKind,
+        name: &str,
     ) -> Result<Option<RegistryPointer>, StoreError> {
-        Err(StoreError::Contended)
+        assert_eq!(workspace, crate::workspace(), "a point read is scoped");
+        if self.fails {
+            return Err(StoreError::Contended);
+        }
+        Ok(self
+            .pointers
+            .get(kind_key(kind))
+            .and_then(|rows| rows.iter().find(|pointer| pointer.row.name.as_str() == name))
+            .cloned())
     }
 
     async fn list_pointers(
@@ -732,21 +779,39 @@ impl RegistryStore for FakeRegistry {
             return Err(StoreError::Contended);
         }
         Ok(PointerPage {
-            pointers: self
+            rows: self
                 .pointers
                 .get(kind_key(kind))
-                .cloned()
+                .map(|rows| rows.iter().map(|pointer| pointer.row.clone()).collect())
                 .unwrap_or_default(),
             next: self.next.clone(),
         })
     }
 
-    async fn put_pointer(
+    async fn commit_set(
         &self,
-        _pointer: &RegistryPointer,
-        _from_revision: Option<Revision>,
-    ) -> Result<(), StoreError> {
-        Err(StoreError::Contended)
+        _workspace: WorkspaceId,
+        _commit: SetCommit<'_>,
+    ) -> Result<SetCommitted, StoreError> {
+        Ok(SetCommitted::Committed)
+    }
+
+    async fn commit_delete(
+        &self,
+        _workspace: WorkspaceId,
+        _kind: RegistryKind,
+        _name: &str,
+        _if_match: Option<&ETag>,
+    ) -> Result<DeleteCommitted, StoreError> {
+        Ok(DeleteCommitted::Removed)
+    }
+
+    async fn load_count(
+        &self,
+        _workspace: WorkspaceId,
+        _kind: RegistryKind,
+    ) -> Result<u64, StoreError> {
+        Ok(0)
     }
 
     async fn load_upload(
@@ -866,6 +931,27 @@ fn offline_dynamodb() -> aws_sdk_dynamodb::Client {
     )
 }
 
+/// The physical `regional-content` table name this suite binds.
+const CONTENT_TABLE: &str = "dev-eu-west-1-regional-content";
+
+fn offline_s3() -> aws_sdk_s3::Client {
+    let (http_client, _receiver) = aws_smithy_http_client::test_util::capture_request(None);
+    aws_sdk_s3::Client::from_conf(
+        aws_sdk_s3::Config::builder()
+            .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+            .region(aws_sdk_s3::config::Region::new("eu-west-1"))
+            .credentials_provider(aws_sdk_s3::config::Credentials::new(
+                "AKIDTESTTESTTESTTEST",
+                "test-secret",
+                None,
+                None,
+                "aex-tests",
+            ))
+            .http_client(http_client)
+            .build(),
+    )
+}
+
 fn build_with_authorities(
     custody: Arc<FakeCustody>,
     registry: Arc<FakeRegistry>,
@@ -876,6 +962,26 @@ fn build_with_authorities(
         custody: Arc::clone(&custody) as Arc<dyn SecretCustodyStore>,
         custody_table: CUSTODY_TABLE.to_owned(),
         registry: registry as Arc<dyn RegistryStore>,
+        // Both content authorities are bound to an offline transport. Every
+        // route this suite drives — the five point reads and the five listings —
+        // reads the registry only, so a handler that reached content would fail
+        // at the wire rather than pass on an invented answer.
+        content: Arc::new(aex_content_dynamodb::store::ContentStore::new(
+            offline_dynamodb(),
+            CONTENT_TABLE,
+        )) as Arc<dyn ContentMetadataStore>,
+        objects: Arc::new(aex_content_aws::S3ContentObjects::new(
+            offline_s3(),
+            aex_content_aws::BucketBinding {
+                bucket: "aex-dev-eu-west-1-content".to_owned(),
+                expected_owner: "000000000000".to_owned(),
+                kms_key_id: "arn:aws:kms:eu-west-1:000000000000:key/content".to_owned(),
+            },
+        )) as Arc<dyn ContentObjectStore>,
+        content_encryption_context: Vec::new(),
+        content_kms_key: "arn:aws:kms:eu-west-1:000000000000:key/content".to_owned(),
+        registry_entries: 1_000,
+        registry_value_bytes: 65_536,
         sessions: sessions as Arc<dyn SessionQueries>,
         operations: operations as Arc<dyn OperationApiStore>,
         commands: aex_session_dynamodb::app_authority::SessionCommandReads::new(
@@ -2139,30 +2245,49 @@ async fn canonical_run_point_and_list_reads_are_complete_and_reachable() {
     }
 }
 
-/// A point read must not be mounted until it can publish the complete value.
+/// Every point read is mounted, returns its stored tag, and publishes a value.
 ///
-/// The shared registry projection is intentionally a collection-row
-/// projection: it sets `value` to `None` because a pointer carries only the
-/// digest and size of a sealed body. Driving all five paths through the real
-/// router makes an accidental `SERVED` addition fail as a wire-visible response
-/// rather than only as a list mismatch.
+/// This test was its own inverse until the value moved onto the pointer row: it
+/// asserted that all five point reads answered a bare `404`, because the shared
+/// projection could only produce a collection row. It is inverted rather than
+/// deleted, so the thing it protected — a point response publishing a collection
+/// projection as if it were the complete resource — is still under test, from
+/// the other side. After the D-6 model split that response is not representable:
+/// the point model has no `None` to publish and the row model has no field to
+/// fill.
 #[tokio::test]
-async fn every_registry_point_read_stays_absent_until_plaintext_hydration_exists() {
+async fn every_registry_point_read_publishes_its_complete_value() {
     for (id, path) in REGISTRY_POINTS {
-        let (router, mounted) = router(FakeCustody::default());
-        assert!(
-            !mounted.contains(id),
-            "{id} has no complete point projection"
-        );
+        let (router, mounted) = composed(FakeCustody::default(), populated_registry());
+        assert!(mounted.contains(id), "{id} is mounted");
 
         let (status, etag, body) = get(&router, path).await;
-        assert_eq!(status, StatusCode::NOT_FOUND, "{id}");
+        assert_eq!(status, StatusCode::OK, "{id}: {body}");
         assert!(
-            etag.is_none(),
-            "{id} must not mint a tag over a partial row"
+            etag.as_deref()
+                .is_some_and(|tag| tag.contains("registry-4")),
+            "{id} returns the tag the row stores, not one re-derived on the way out: {etag:?}"
         );
-        assert_eq!(body, serde_json::Value::Null, "{id}");
+        let value = body
+            .get("value")
+            .and_then(serde_json::Value::as_object)
+            .unwrap_or_else(|| panic!("{id} publishes a value that is present and typed: {body}"));
+        assert!(!value.is_empty(), "{id} publishes a non-empty value");
     }
+}
+
+/// A point read of a name that is not there is a typed refusal, not a bare one.
+#[tokio::test]
+async fn a_registry_point_read_of_an_absent_name_is_a_typed_refusal() {
+    let (router, _) = composed(FakeCustody::default(), populated_registry());
+    let (status, etag, body) = get(&router, "/api/workspace/files/nothing-here").await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert!(etag.is_none(), "an absent resource has no tag");
+    assert_eq!(
+        body["error"]["code"].as_str(),
+        Some("not_found"),
+        "the mounted route answers the envelope, never a bare 404: {body}"
+    );
 }
 
 #[tokio::test]

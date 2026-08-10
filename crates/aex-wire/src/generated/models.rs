@@ -3,7 +3,7 @@
 //! The public request, response and query models.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:bd7052cb0fe98ca6622d42d82e3a3adfec7f8a2ef4d890f7f2c31fcc1e0df4a6`.
+//! `sha256:0ba692333158bc06daa7e9d9eb09a27761dc3ddaafad2b25dced249f4f13ee6c`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -2279,7 +2279,7 @@ impl BlobEncoding {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct BlobInline {
-    /// The encoded bytes.
+    /// The encoded bytes. A larger payload goes through the upload surface.
     pub data: String,
     /// How the data is encoded.
     pub encoding: BlobEncoding,
@@ -2391,6 +2391,17 @@ pub struct ComputeShape {
     pub memory_mi_b: u32,
     /// Virtual CPUs; fractional at the smaller shapes.
     pub vcpus: f64,
+}
+
+/// A reference to a stored payload. The bytes are never published in a registry response; they are
+/// reached through a download grant.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ContentRef {
+    /// Hash of the stored payload bytes.
+    pub sha256: ContentHash,
+    /// Size of the stored payload in bytes.
+    pub size_bytes: DecimalU128,
 }
 
 /// The result of a credential-rebind operation.
@@ -3104,7 +3115,7 @@ impl PurgeCascade {
     }
 }
 
-/// A registered file entry.
+/// A registered file entry, complete.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct RegisteredFile {
@@ -3114,17 +3125,17 @@ pub struct RegisteredFile {
     pub name: ResourceName,
     /// Monotonic concurrency token.
     pub revision: u64,
-    /// Hash of the stored value.
+    /// Hash of the canonical value document, not of the payload. The payload's own hash is
+    /// `value.content.sha256`.
     pub sha256: ContentHash,
-    /// Size of the stored value.
+    /// Size of the canonical value document in bytes, not of the payload.
     pub size_bytes: DecimalU128,
     /// Always current.
     pub state: RegisteredState,
     /// When last replaced.
     pub updated_at: Timestamp,
-    /// Omitted in collection rows.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub value: Option<RegisteredFileValue>,
+    /// The complete value.
+    pub value: RegisteredFileRead,
 }
 
 /// The two permitted registered-file modes.
@@ -3159,10 +3170,46 @@ impl RegisteredFileMode {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct RegisteredFilePage {
     /// The page.
-    pub items: Vec<RegisteredFile>,
+    pub items: Vec<RegisteredFileRow>,
     /// Continuation token.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<Cursor>,
+}
+
+/// What a registered file is, as published. The payload bytes are referenced, never inlined; fetch
+/// them with a download grant.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct RegisteredFileRead {
+    /// The stored bytes.
+    pub content: ContentRef,
+    /// Declared media type.
+    pub media_type: String,
+    /// POSIX mode.
+    pub mode: RegisteredFileMode,
+    /// Where it is mounted in the guest.
+    pub mount_path: FilePath,
+}
+
+/// One registered file as a collection row. A listing carries no value document; read the entry
+/// itself to get one.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct RegisteredFileRow {
+    /// When first written.
+    pub created_at: Timestamp,
+    /// The public identity.
+    pub name: ResourceName,
+    /// Monotonic concurrency token.
+    pub revision: u64,
+    /// Hash of the canonical value document.
+    pub sha256: ContentHash,
+    /// Size of the canonical value document in bytes.
+    pub size_bytes: DecimalU128,
+    /// Always current.
+    pub state: RegisteredState,
+    /// When last replaced.
+    pub updated_at: Timestamp,
 }
 
 /// A registered file.
@@ -3179,7 +3226,7 @@ pub struct RegisteredFileValue {
     pub mount_path: FilePath,
 }
 
-/// A registered instruction entry.
+/// A registered instruction entry, complete.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct RegisteredInstruction {
@@ -3189,17 +3236,16 @@ pub struct RegisteredInstruction {
     pub name: ResourceName,
     /// Monotonic concurrency token.
     pub revision: u64,
-    /// Hash of the stored value.
+    /// Hash of the canonical value document.
     pub sha256: ContentHash,
-    /// Size of the stored value.
+    /// Size of the canonical value document in bytes.
     pub size_bytes: DecimalU128,
     /// Always current.
     pub state: RegisteredState,
     /// When last replaced.
     pub updated_at: Timestamp,
-    /// Omitted in collection rows.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub value: Option<RegisteredInstructionValue>,
+    /// The complete value.
+    pub value: RegisteredInstructionRead,
 }
 
 /// One page of registered instructions.
@@ -3207,10 +3253,38 @@ pub struct RegisteredInstruction {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct RegisteredInstructionPage {
     /// The page.
-    pub items: Vec<RegisteredInstruction>,
+    pub items: Vec<RegisteredInstructionRow>,
     /// Continuation token.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<Cursor>,
+}
+
+/// What a registered instruction is, as published. It has no payload.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct RegisteredInstructionRead {
+    /// The instruction text.
+    pub text: String,
+}
+
+/// One registered instruction as a collection row.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct RegisteredInstructionRow {
+    /// When first written.
+    pub created_at: Timestamp,
+    /// The public identity.
+    pub name: ResourceName,
+    /// Monotonic concurrency token.
+    pub revision: u64,
+    /// Hash of the canonical value document.
+    pub sha256: ContentHash,
+    /// Size of the canonical value document in bytes.
+    pub size_bytes: DecimalU128,
+    /// Always current.
+    pub state: RegisteredState,
+    /// When last replaced.
+    pub updated_at: Timestamp,
 }
 
 /// A registered instruction.
@@ -3221,7 +3295,7 @@ pub struct RegisteredInstructionValue {
     pub text: String,
 }
 
-/// A registered MCP server entry.
+/// A registered MCP server entry, complete.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct RegisteredMcpServer {
@@ -3231,17 +3305,16 @@ pub struct RegisteredMcpServer {
     pub name: ResourceName,
     /// Monotonic concurrency token.
     pub revision: u64,
-    /// Hash of the stored value.
+    /// Hash of the canonical value document.
     pub sha256: ContentHash,
-    /// Size of the stored value.
+    /// Size of the canonical value document in bytes.
     pub size_bytes: DecimalU128,
     /// Always current.
     pub state: RegisteredState,
     /// When last replaced.
     pub updated_at: Timestamp,
-    /// Omitted in collection rows.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub value: Option<RegisteredMcpServerValue>,
+    /// The complete value.
+    pub value: RegisteredMcpServerRead,
 }
 
 /// One page of registered MCP servers.
@@ -3249,10 +3322,43 @@ pub struct RegisteredMcpServer {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct RegisteredMcpServerPage {
     /// The page.
-    pub items: Vec<RegisteredMcpServer>,
+    pub items: Vec<RegisteredMcpServerRow>,
     /// Continuation token.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<Cursor>,
+}
+
+/// What a registered MCP server is, as published. It has no payload, and configuration never
+/// contains a secret value.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct RegisteredMcpServerRead {
+    /// Secret-backed headers.
+    pub headers: Vec<McpHeader>,
+    /// The transport.
+    pub transport: McpTransport,
+    /// The server endpoint.
+    pub url: HttpsUrl,
+}
+
+/// One registered MCP server as a collection row.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct RegisteredMcpServerRow {
+    /// When first written.
+    pub created_at: Timestamp,
+    /// The public identity.
+    pub name: ResourceName,
+    /// Monotonic concurrency token.
+    pub revision: u64,
+    /// Hash of the canonical value document.
+    pub sha256: ContentHash,
+    /// Size of the canonical value document in bytes.
+    pub size_bytes: DecimalU128,
+    /// Always current.
+    pub state: RegisteredState,
+    /// When last replaced.
+    pub updated_at: Timestamp,
 }
 
 /// A registered MCP server. Configuration never contains a secret value.
@@ -3267,7 +3373,7 @@ pub struct RegisteredMcpServerValue {
     pub url: HttpsUrl,
 }
 
-/// A registered skill entry.
+/// A registered skill entry, complete.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct RegisteredSkill {
@@ -3277,17 +3383,17 @@ pub struct RegisteredSkill {
     pub name: ResourceName,
     /// Monotonic concurrency token.
     pub revision: u64,
-    /// Hash of the stored value.
+    /// Hash of the canonical value document, not of the bundle. The bundle's own hash is
+    /// `value.bundle.sha256`.
     pub sha256: ContentHash,
-    /// Size of the stored value.
+    /// Size of the canonical value document in bytes, not of the bundle.
     pub size_bytes: DecimalU128,
     /// Always current.
     pub state: RegisteredState,
     /// When last replaced.
     pub updated_at: Timestamp,
-    /// Omitted in collection rows.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub value: Option<RegisteredSkillValue>,
+    /// The complete value.
+    pub value: RegisteredSkillRead,
 }
 
 /// One page of registered skills.
@@ -3295,10 +3401,42 @@ pub struct RegisteredSkill {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct RegisteredSkillPage {
     /// The page.
-    pub items: Vec<RegisteredSkill>,
+    pub items: Vec<RegisteredSkillRow>,
     /// Continuation token.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<Cursor>,
+}
+
+/// What a registered skill is, as published.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct RegisteredSkillRead {
+    /// The stored bundle.
+    pub bundle: ContentRef,
+    /// The bundle format.
+    pub bundle_format: BundleFormat,
+    /// What the skill is for.
+    pub description: String,
+}
+
+/// One registered skill as a collection row.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct RegisteredSkillRow {
+    /// When first written.
+    pub created_at: Timestamp,
+    /// The public identity.
+    pub name: ResourceName,
+    /// Monotonic concurrency token.
+    pub revision: u64,
+    /// Hash of the canonical value document.
+    pub sha256: ContentHash,
+    /// Size of the canonical value document in bytes.
+    pub size_bytes: DecimalU128,
+    /// Always current.
+    pub state: RegisteredState,
+    /// When last replaced.
+    pub updated_at: Timestamp,
 }
 
 /// A registered skill bundle containing `SKILL.md`.
@@ -3334,7 +3472,7 @@ impl RegisteredState {
     }
 }
 
-/// A registered tool entry.
+/// A registered tool entry, complete.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct RegisteredTool {
@@ -3344,17 +3482,17 @@ pub struct RegisteredTool {
     pub name: ResourceName,
     /// Monotonic concurrency token.
     pub revision: u64,
-    /// Hash of the stored value.
+    /// Hash of the canonical value document, not of the bundle. The bundle's own hash is
+    /// `value.bundle.sha256`.
     pub sha256: ContentHash,
-    /// Size of the stored value.
+    /// Size of the canonical value document in bytes, not of the bundle.
     pub size_bytes: DecimalU128,
     /// Always current.
     pub state: RegisteredState,
     /// When last replaced.
     pub updated_at: Timestamp,
-    /// Omitted in collection rows.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub value: Option<RegisteredToolValue>,
+    /// The complete value.
+    pub value: RegisteredToolRead,
 }
 
 /// One page of registered tools.
@@ -3362,10 +3500,46 @@ pub struct RegisteredTool {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct RegisteredToolPage {
     /// The page.
-    pub items: Vec<RegisteredTool>,
+    pub items: Vec<RegisteredToolRow>,
     /// Continuation token.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<Cursor>,
+}
+
+/// What a registered tool is, as published.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct RegisteredToolRead {
+    /// The stored bundle.
+    pub bundle: ContentRef,
+    /// The bundle format.
+    pub bundle_format: BundleFormat,
+    /// What the tool does.
+    pub description: String,
+    /// Relative entry path inside the bundle.
+    pub entry: String,
+    /// JSON Schema 2020-12 for the arguments.
+    pub input_schema: CanonicalJson,
+}
+
+/// One registered tool as a collection row.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct RegisteredToolRow {
+    /// When first written.
+    pub created_at: Timestamp,
+    /// The public identity.
+    pub name: ResourceName,
+    /// Monotonic concurrency token.
+    pub revision: u64,
+    /// Hash of the canonical value document.
+    pub sha256: ContentHash,
+    /// Size of the canonical value document in bytes.
+    pub size_bytes: DecimalU128,
+    /// Always current.
+    pub state: RegisteredState,
+    /// When last replaced.
+    pub updated_at: Timestamp,
 }
 
 /// A registered custom tool.

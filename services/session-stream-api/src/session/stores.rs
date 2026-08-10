@@ -10,6 +10,7 @@
 //! built by a caller holding a `Grant<WorkClaim>`, and the stream half's
 //! [`crate::stream::mount::AppState`] has no field that can name it.
 
+use aex_content_aws::{BucketBinding, S3ContentObjects};
 use aex_content_dynamodb::store::ContentStore;
 use aex_regional_http::capability::{Grant, WorkClaim};
 use aex_registry_dynamodb::store::RegistryDynamoStore;
@@ -36,6 +37,9 @@ pub struct Stores {
     pub runtime_activity: RuntimeActivityDynamoStore,
     /// The content bucket and the account that must own it.
     pub objects: ObjectBinding,
+    /// The content object authority: the sole presigner in the content path and
+    /// the only writer of a content-addressed body.
+    pub content_objects: S3ContentObjects,
     /// The physical `session-authority` table name.
     pub session_table: String,
     /// The physical `usage-query-projection` table name.
@@ -87,6 +91,14 @@ impl Stores {
                 bucket: config.content_bucket.clone(),
                 expected_owner: config.content_bucket_owner.clone(),
             },
+            content_objects: S3ContentObjects::new(
+                objects.clone(),
+                BucketBinding {
+                    bucket: config.content_bucket.clone(),
+                    expected_owner: config.content_bucket_owner.clone(),
+                    kms_key_id: config.content_kms_key.value.clone(),
+                },
+            ),
             session_table: config.session_table.clone(),
             usage_query_table: config.usage_query_table.clone(),
             authz_projection_table: config.authz_projection_table.clone(),

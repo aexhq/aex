@@ -41,21 +41,24 @@ const OWNER: &str = "regional-services";
 
 /// Reclaims a registered workspace file through the public contract.
 ///
-/// # Why `404` is a failure here and not "already gone"
+/// # Why `404` is still a failure, now that the route is mounted
 ///
 /// The trait asks implementations to be idempotent, because a sweep by tag and
 /// this ledger can race, and the usual way to honour that is to read `404` as
-/// success. That reading is unsafe *today*: the delivery graph defers
-/// `registry_files_delete` ("Registry mutation and content-lifecycle composition
-/// is incomplete"), so an unmounted route answers `404` for exactly the same
-/// bytes an already-deleted resource does. Treating them alike would stamp
-/// `released_at` on a resource that is still there and publish a receipt saying
-/// the run was clean — the silent success this whole module exists to stop.
+/// success. That reading was unsafe while `registry_files_delete` was deferred:
+/// an unmounted route answered `404` for exactly the same bytes an
+/// already-deleted resource did, so treating them alike would have stamped
+/// `released_at` on a resource that was still there and published a receipt
+/// saying the run was clean — the silent success this module exists to stop.
 ///
-/// So `404` fails, loudly and by name. The cost is a false residue report if the
-/// janitor genuinely won a race, which is loud and recoverable; the cost the
-/// other way is a false clean, which is neither. When the route is mounted this
-/// can be relaxed with evidence, and [`is_reclaimed`] is the one place to change.
+/// The route is mounted now, and `404` did not become safe; it became
+/// **impossible**. `registry_files_delete` declares no `not_found` at all: it
+/// answers `204` both for a name that is gone and for a name that never existed
+/// (D-9), and refuses a stale `If-Match` with `412`. A `404` from this path
+/// therefore still means the request never reached the handler, which is exactly
+/// the ambiguity this rule refuses. The rule is now *narrower* rather than
+/// relaxed: only the route's own declared success status releases an entry, and
+/// [`is_reclaimed`] remains the one place it is stated.
 struct RegistryFileReclaimer {
     base: String,
     token: String,
@@ -65,8 +68,12 @@ struct RegistryFileReclaimer {
 
 /// Whether an answer to `DELETE /api/workspace/files/{name}` proves the resource
 /// is gone. Split out so the rule is testable without a plane.
+///
+/// Exactly the status the route declares — `204` — and nothing else. Any other
+/// `2xx` on this path would mean the router answered something that is not
+/// `registry_files_delete`, which is not evidence that the file is gone.
 fn is_reclaimed(status: StatusCode) -> bool {
-    status.is_success()
+    status == StatusCode::NO_CONTENT
 }
 
 impl Reclaimer for RegistryFileReclaimer {
@@ -84,10 +91,10 @@ impl Reclaimer for RegistryFileReclaimer {
             Err(ReclaimError::new(
                 entry,
                 format!(
-                    "DELETE {url} answered 404, which is ambiguous while `registry_files_delete` \
-                     is a deferred route: the resource may be gone, or the route may not be \
-                     mounted. Refusing to mark it released on evidence that cannot tell those \
-                     apart."
+                    "DELETE {url} answered 404, which `registry_files_delete` cannot produce: it \
+                     declares no `not_found` and answers 204 for an absent name. A 404 here means \
+                     the request never reached the handler, so it is not evidence that the \
+                     resource is gone."
                 ),
             ))
         } else {
@@ -501,10 +508,11 @@ mod tests {
     /// Only an answer that proves the resource is gone may release an entry.
     #[test]
     fn only_a_successful_delete_counts_as_reclaimed() {
+        // `registry_files_delete` declares `204`, and nothing else.
         assert!(is_reclaimed(StatusCode::NO_CONTENT));
-        assert!(is_reclaimed(StatusCode::OK));
-        // 404 is the answer an unmounted deferred route gives as well as a
-        // deleted resource, so it may not release anything.
+        assert!(!is_reclaimed(StatusCode::OK));
+        // 404 is not a status this route can produce, so it can only mean the
+        // request never reached the handler. It may not release anything.
         assert!(!is_reclaimed(StatusCode::NOT_FOUND));
         assert!(!is_reclaimed(StatusCode::CONFLICT));
         assert!(!is_reclaimed(StatusCode::FORBIDDEN));

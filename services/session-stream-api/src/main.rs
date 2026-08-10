@@ -359,10 +359,31 @@ async fn run(
     let stream_edge = Arc::new(build_edge(config, &dynamodb, peppers, STREAM_AUDIENCE));
 
     // --- the session half's router -------------------------------------------
+    // Compiled capacity defaults. When the effective-limits authority lands they
+    // override here, at the one check point, rather than growing a second one.
+    let defaults = aex_capacity_dynamodb::defaults::canonical_defaults()
+        .map_err(|error| SessionStreamApiRunError::Probe(error.to_string()))?;
+    let scalar = |id: aex_wire::limits::LimitId| -> Result<u64, SessionStreamApiRunError> {
+        defaults
+            .value(id)
+            .scalar()
+            .and_then(|value| u64::try_from(value.get()).ok())
+            .ok_or_else(|| {
+                SessionStreamApiRunError::Probe(format!("`{}` has no scalar default", id.as_str()))
+            })
+    };
+    let registry_entries = scalar(aex_wire::limits::LimitId::RegistryEntries)?;
+    let registry_value_bytes = scalar(aex_wire::limits::LimitId::RegistryValueBytes)?;
     let dispatcher = Dispatcher::new(Arc::new(Shared {
         custody: Arc::new(stores.custody.clone()),
         custody_table: stores.custody.table().to_owned(),
         registry: Arc::new(stores.registry.clone()),
+        content: Arc::new(stores.content.clone()),
+        objects: Arc::new(stores.content_objects.clone()),
+        content_encryption_context: content_encryption_context(config)?,
+        content_kms_key: config.content_kms_key.value.clone(),
+        registry_entries,
+        registry_value_bytes,
         sessions: Arc::new(aex_session_dynamodb::store::SessionReads::new(
             dynamodb.clone(),
             stores.session_table.clone(),
@@ -517,6 +538,26 @@ fn regional_tables(
         runtime_activity: stores.runtime_activity.table().to_owned(),
         regional_authz_projection: stores.authz_projection_table.clone(),
     }
+}
+
+/// The canonical encryption context every content object this deployable writes
+/// is bound to.
+///
+/// S3 binds it to the SSE-KMS operation and `CloudTrail` records it, so a body
+/// written under one plane, region or key domain cannot be read back under
+/// another. It is composed once at start-up because it is constant for the
+/// process.
+fn content_encryption_context(config: &Config) -> Result<Vec<u8>, SessionStreamApiRunError> {
+    let pairs = std::collections::BTreeMap::from([
+        ("aex:domain", "regional-content".to_owned()),
+        ("aex:plane", config.plane.as_str().to_owned()),
+        ("aex:region", config.region.as_str().to_owned()),
+    ]);
+    aex_wire::to_jcs_bytes(&pairs).map_err(|error| {
+        SessionStreamApiRunError::Probe(format!(
+            "the content encryption context could not be encoded: {error}"
+        ))
+    })
 }
 
 fn quota(value: u64) -> Result<u32, SessionStreamApiRunError> {
