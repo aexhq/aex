@@ -534,7 +534,8 @@ fn approval_single_unresolved() {
     // Once resolved, the next one is admitted.
     let resolved = respond(&first, &binding, ApprovalDecision::Approve, moment(2))
         .expect("decides")
-        .approval;
+        .approval()
+        .clone();
     assert!(
         request_approval(
             id::<ApprovalId>(46),
@@ -593,7 +594,11 @@ fn approval_deny_does_not_cancel_the_run() {
     )
     .expect("raises")
     .approval;
-    let denied = respond(&pending, &binding, ApprovalDecision::Deny, moment(1)).expect("decides");
+    let denied = respond(&pending, &binding, ApprovalDecision::Deny, moment(1))
+        .expect("decides")
+        .commit()
+        .expect("a first decision commits")
+        .clone();
     assert_eq!(denied.approval.status, ApprovalStatus::Denied);
     assert!(!denied.dispatch);
     assert_eq!(denied.denial_result, Some(ErrorCode::PreconditionFailed));
