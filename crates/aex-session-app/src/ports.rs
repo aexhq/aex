@@ -7,6 +7,7 @@
 
 use aex_content_domain::{ContentOutcome, ContentRoot, PageDigest, TreeNode, TreeView};
 use aex_operation_domain::Operation;
+use aex_operation_domain::operation::OperationVersion;
 use aex_secret_domain::{SecretName, SessionCustody, TrueIdle, WorkspaceSecret};
 use aex_session_domain::{
     AccountProjection, AgentControl, EffectiveLimits, IdempotencyIdentity, IdempotencyReceipt,
@@ -78,6 +79,21 @@ pub struct AgentCancelPage {
     /// to advance the cursor, and deriving "next" from the last *cancelled*
     /// agent would loop forever on a page of already-terminal agents.
     pub next: Option<AgentId>,
+}
+
+/// One stored operation together with the store's optimistic version.
+///
+/// The version travels with the record because a **step commit** has to name
+/// the version it observed: the already-served public cancellation writes the
+/// same row under its own optimistic loop, so a step that could not name a
+/// version would have to guess one. Returning them separately would let a
+/// caller pair a record with a version it did not read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VersionedOperation {
+    /// The durable record.
+    pub operation: Operation,
+    /// The version the read observed.
+    pub version: OperationVersion,
 }
 
 /// Everything a command needs to know about a session in one read.
@@ -202,12 +218,12 @@ pub trait SessionReader: Send + Sync {
         identity: &IdempotencyIdentity,
     ) -> Result<Option<IdempotencyReceipt>, PortError>;
 
-    /// One durable operation, when it exists.
+    /// One durable operation and the version it is stored at, when it exists.
     async fn load_operation(
         &self,
         workspace: WorkspaceId,
         operation: OperationId,
-    ) -> Result<Option<Operation>, PortError>;
+    ) -> Result<Option<VersionedOperation>, PortError>;
 }
 
 /// Reads the named registry and uploads.

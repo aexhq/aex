@@ -461,7 +461,7 @@ pub async fn stop_session(
         // must not re-read agents, re-bump the epoch or re-latch: the first
         // admission already closed the fence.
         let operation = admitted(
-            Some(stored),
+            Some(&stored.operation),
             Some(&snapshot.deletion),
             &stop_request(command, None, None),
             now,
@@ -495,9 +495,30 @@ pub async fn stop_session(
     let operation = step.shape_operation(&admitted_operation, now)?;
 
     Ok(Planned {
-        plan: step.plan(command.session, &operation, None)?,
+        plan: step.plan(command.session, &operation, Resume::Admission)?,
         projected: operation,
     })
+}
+
+/// Whether a step commit writes a new operation row or advances an existing one.
+///
+/// Modelled as one value rather than two independent `Option`s because the two
+/// facts a resumed step needs — the cursor it advances **from** and the row
+/// version it observed — are only ever known together, and a plan that carried
+/// one without the other could not be compiled: the adapter refuses a resumed
+/// operation write that cannot name its version, and refuses an admission that
+/// does name one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Resume {
+    /// The row does not exist yet; the write is an insert.
+    Admission,
+    /// The row exists and this step advances it.
+    Step {
+        /// The cursor the row must still carry.
+        from: Option<ContinuationCursor>,
+        /// The version the step read.
+        version: aex_operation_domain::operation::OperationVersion,
+    },
 }
 
 /// Advances a continued stop by exactly one bounded batch.
@@ -520,11 +541,12 @@ pub async fn continue_stop(
         .sessions
         .load_session(command.workspace, command.session)
         .await?;
-    let stored = context
+    let versioned = context
         .sessions
         .load_operation(command.workspace, command.operation)
         .await?
         .ok_or(crate::ports::PortError::NotFound { kind: "operation" })?;
+    let stored = versioned.operation;
     if stored.kind != OperationKind::SessionStop || stored.status.is_terminal() {
         return Err(AppError::Transition(
             aex_operation_domain::TransitionError::WrongStatus {
@@ -559,7 +581,14 @@ pub async fn continue_stop(
     let operation = step.advance(&stored, command.session, now)?;
 
     Ok(Planned {
-        plan: step.plan(command.session, &operation, from)?,
+        plan: step.plan(
+            command.session,
+            &operation,
+            Resume::Step {
+                from,
+                version: versioned.version,
+            },
+        )?,
         projected: operation,
     })
 }
@@ -754,7 +783,7 @@ impl StopBatch {
         &self,
         session: SessionId,
         operation: &aex_operation_domain::Operation,
-        from_cursor: Option<ContinuationCursor>,
+        resume: Resume,
     ) -> Result<SessionTransaction, AppError> {
         let mut conditions = vec![
             Condition::SessionRevision {
@@ -774,11 +803,32 @@ impl StopBatch {
                 epoch: self.observed.deletion_epoch,
             },
         ];
-        if operation.cursor.is_some() || from_cursor.is_some() {
-            conditions.push(Condition::OperationCursorAt {
-                operation: operation.id,
-                expected: from_cursor.map(Box::new),
-            });
+        match &resume {
+            // An admission is an insert, and `OperationCursorAt { expected:
+            // None }` is how the plan says so: the row must not exist yet.
+            Resume::Admission => {
+                if operation.cursor.is_some() {
+                    conditions.push(Condition::OperationCursorAt {
+                        operation: operation.id,
+                        expected: None,
+                    });
+                }
+            }
+            // A resumed step names both facts it observed. The cursor makes the
+            // step idempotent against a duplicate delivery; the version keeps
+            // the public cancellation's optimistic loop over the same row
+            // intact. Both guards target the operation item, so together with
+            // the operation write they merge into one physical action.
+            Resume::Step { from, version } => {
+                conditions.push(Condition::OperationCursorAt {
+                    operation: operation.id,
+                    expected: from.clone().map(Box::new),
+                });
+                conditions.push(Condition::OperationVersion {
+                    operation: operation.id,
+                    expected: *version,
+                });
+            }
         }
         conditions.extend(self.settling.iter().map(|target| Condition::AgentRevision {
             session,
@@ -871,7 +921,7 @@ pub async fn rebind_credentials(
         .await?;
     if existing.is_some() {
         let operation = admitted(
-            existing.as_ref(),
+            existing.as_ref().map(|stored| &stored.operation),
             Some(&snapshot.deletion),
             &rebind_request(command, None),
             now,
@@ -1080,7 +1130,7 @@ pub async fn trash_session(
         .load_operation(command.workspace, command.operation)
         .await?;
     let operation = admitted(
-        existing.as_ref(),
+        existing.as_ref().map(|stored| &stored.operation),
         Some(&snapshot.deletion),
         &AdmitRequest {
             id: command.operation,
@@ -1150,7 +1200,7 @@ pub async fn restore_session(
         .load_operation(command.workspace, command.operation)
         .await?;
     let operation = admitted(
-        existing.as_ref(),
+        existing.as_ref().map(|stored| &stored.operation),
         None,
         &AdmitRequest {
             id: command.operation,
@@ -1227,7 +1277,7 @@ pub async fn purge_session(
         .load_operation(command.command.workspace, command.command.operation)
         .await?;
     let operation = admitted(
-        existing.as_ref(),
+        existing.as_ref().map(|stored| &stored.operation),
         Some(&snapshot.deletion),
         &AdmitRequest {
             id: command.command.operation,
