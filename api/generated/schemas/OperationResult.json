@@ -12,10 +12,6 @@
       "x-aex-discriminator-value": "session_persist"
     },
     {
-      "$ref": "aex:schema:SessionCloneResult",
-      "x-aex-discriminator-value": "session_clone"
-    },
-    {
       "$ref": "aex:schema:WorkspaceDiscardResult",
       "x-aex-discriminator-value": "workspace_discard"
     },

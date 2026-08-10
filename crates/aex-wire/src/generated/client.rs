@@ -3,7 +3,7 @@
 //! The low-level client: one request builder and one method per public operation.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:0e33b66699919088ff22081253c8d83e05e4708a091d80c1ab2f24093573b8ab`.
+//! `sha256:faf31c134a0c550e88a72f530773003414bb2ef103878329da871af144e66617`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -144,7 +144,6 @@ use crate::models::SecretRevocation;
 use crate::models::SecretsListQuery;
 use crate::models::Session;
 use crate::models::SessionApprovalsListQuery;
-use crate::models::SessionCloneRequest;
 use crate::models::SessionCreateRequest;
 use crate::models::SessionCredentialRebindRequest;
 use crate::models::SessionListPage;
@@ -2232,33 +2231,6 @@ pub fn session_approvals_list_request(
         query: writer.finish(),
         headers: request_headers(route, None, None, None),
         body: None,
-    })
-}
-
-/// `POST /api/sessions/{sessionId}/clones`
-/// Admit the durable clone operation.
-///
-/// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
-/// a recorded fixture — can take the request and run it.
-///
-/// # Errors
-/// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn session_clone_request(
-    session_id: SessionId,
-    body: &SessionCloneRequest,
-    operation_id: OperationId,
-    if_match: Option<&ETag>,
-) -> Result<WireRequest, ClientError> {
-    let route = RouteId::SessionClone;
-    let mut path = PathWriter::new(route);
-    path.bind(&session_id);
-    Ok(WireRequest {
-        route,
-        method: HttpMethod::Post,
-        path: path.finish()?,
-        query: String::new(),
-        headers: request_headers(route, None, Some(operation_id), if_match),
-        body: Some(encode_body(route, body)?),
     })
 }
 
@@ -5230,25 +5202,6 @@ impl<T: Transport> WireClient<T> {
         let request = session_approvals_list_request(session_id, query)?;
         let response = self.send(request).await?;
         decode_response(RouteId::SessionApprovalsList, &response)
-    }
-
-    /// `POST /api/sessions/{sessionId}/clones`
-    /// Admit the durable clone operation.
-    ///
-    /// # Errors
-    /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
-    /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
-    /// not match the contract.
-    pub async fn session_clone(
-        &self,
-        session_id: SessionId,
-        body: &SessionCloneRequest,
-        operation_id: OperationId,
-        if_match: Option<&ETag>,
-    ) -> Result<Operation, ClientError> {
-        let request = session_clone_request(session_id, body, operation_id, if_match)?;
-        let response = self.send(request).await?;
-        decode_response(RouteId::SessionClone, &response)
     }
 
     /// `POST /api/sessions`

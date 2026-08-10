@@ -54,7 +54,6 @@ pub fn command_registry() -> Vec<CommandRegistryEntry> {
         ("session get", "session_get"),
         ("session stop", "session_stop"),
         ("session persist", "session_persist"),
-        ("session clone", "session_clone"),
         ("session trash", "session_trash"),
         ("session restore", "session_restore"),
         ("session purge", "session_purge"),

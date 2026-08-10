@@ -3,7 +3,7 @@
 //! The route registry: one row per public operation.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:0e33b66699919088ff22081253c8d83e05e4708a091d80c1ab2f24093573b8ab`.
+//! `sha256:faf31c134a0c550e88a72f530773003414bb2ef103878329da871af144e66617`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -204,8 +204,6 @@ pub enum RouteId {
     SessionApprovalRespond,
     /// `GET /api/sessions/{sessionId}/approvals` — List the approvals of a session.
     SessionApprovalsList,
-    /// `POST /api/sessions/{sessionId}/clones` — Admit the durable clone operation.
-    SessionClone,
     /// `POST /api/sessions` — Create a session.
     SessionCreate,
     /// `POST /api/sessions/{sessionId}/credential-rebinds` — Admit the durable credential-rebind
@@ -450,7 +448,6 @@ impl RouteId {
         RouteId::SessionApprovalGet,
         RouteId::SessionApprovalRespond,
         RouteId::SessionApprovalsList,
-        RouteId::SessionClone,
         RouteId::SessionCreate,
         RouteId::SessionCredentialRebind,
         RouteId::SessionFilesLiveDownloadCreate,
@@ -602,7 +599,6 @@ impl RouteId {
             Self::SessionApprovalGet => "session_approval_get",
             Self::SessionApprovalRespond => "session_approval_respond",
             Self::SessionApprovalsList => "session_approvals_list",
-            Self::SessionClone => "session_clone",
             Self::SessionCreate => "session_create",
             Self::SessionCredentialRebind => "session_credential_rebind",
             Self::SessionFilesLiveDownloadCreate => "session_files_live_download_create",
@@ -3253,44 +3249,6 @@ pub static ROUTES: &[RouteDescriptor] = &[
         request_schema: None,
         response_schema: Some("ApprovalPage"),
         safe_retry: true,
-        pause_exempt: false,
-    },
-    RouteDescriptor {
-        id: RouteId::SessionClone,
-        operation_id: "session_clone",
-        plane: Plane::Regional,
-        fragment: "sessions",
-        serving_artifact: "session-stream-api",
-        deferred: true,
-        method: HttpMethod::Post,
-        template: "/api/sessions/{sessionId}/clones",
-        path_params: &["sessionId"],
-        query_params: &[],
-        required_scope: Some(ScopeId::SessionsWrite),
-        alt_principal: None,
-        idempotency: IdempotencyKind::OperationId,
-        body_class: BodyClass::AexJson,
-        transport: TransportKind::Unary,
-        success_status: 202,
-        etag: EtagPolicy::OptionalIfMatch,
-        errors: &[
-            ErrorCode::Unauthenticated,
-            ErrorCode::InsufficientScope,
-            ErrorCode::NotFound,
-            ErrorCode::OperationIdempotencyConflict,
-            ErrorCode::InvalidRequest,
-            ErrorCode::LimitExceeded,
-            ErrorCode::SessionNotIdle,
-            ErrorCode::SessionDeleting,
-            ErrorCode::SessionDeleted,
-            ErrorCode::AccountPaused,
-            ErrorCode::PreconditionFailed,
-            ErrorCode::WrongWorkspaceRegion,
-            ErrorCode::NotImplemented,
-        ],
-        request_schema: Some("SessionCloneRequest"),
-        response_schema: Some("Operation"),
-        safe_retry: false,
         pause_exempt: false,
     },
     RouteDescriptor {

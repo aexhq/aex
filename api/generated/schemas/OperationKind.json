@@ -5,7 +5,6 @@
   "enum": [
     "session_stop",
     "session_persist",
-    "session_clone",
     "workspace_discard",
     "session_trash",
     "session_restore",

@@ -10,7 +10,7 @@
 contractVersion: v1
 expected:
   central: 27
-  regional: 119
+  regional: 118
 pathParams:
   organizationId: { type: id, of: organization, doc: "The organization the request is scoped to." }
   workspaceId: { type: id, of: workspace, doc: "The workspace the request is scoped to." }
@@ -128,7 +128,6 @@ deferredOperations:
   session_approval_get: "Nothing composed into the platform raises an approval, so the point read can only report that no approval exists."
   session_approval_respond: "The atomic bound-call approval writer is not composed into the regional service."
   session_approvals_list: "Nothing composed into the platform raises an approval, so the collection can only report an empty page."
-  session_clone: "The complete session authority and command transaction are not implemented."
   session_create: "The complete session authority and create use case are not implemented."
   session_credential_rebind: "The credential-rebind authority and durable command transaction are not implemented."
   session_files_live_download_create: "The session root, content decryption, and presigning composition is incomplete."

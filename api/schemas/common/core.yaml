@@ -138,7 +138,6 @@ schemas:
     values:
       - { value: session_stop, doc: "Stop the running turn." }
       - { value: session_persist, doc: "Persist the live workspace." }
-      - { value: session_clone, doc: "Clone the session into an independent one." }
       - { value: workspace_discard, doc: "Discard the live workspace." }
       - { value: session_trash, doc: "Move the session into the recovery window." }
       - { value: session_restore, doc: "Bring the session back out of the recovery window." }
@@ -206,7 +205,6 @@ schemas:
     variants:
       - { value: session_stop, payload: SessionStopResult, doc: "Stop result." }
       - { value: session_persist, payload: SessionPersistResult, doc: "Persist result." }
-      - { value: session_clone, payload: SessionCloneResult, doc: "Clone result." }
       - { value: workspace_discard, payload: WorkspaceDiscardResult, doc: "Discard result." }
       - { value: session_trash, payload: SessionTrashResult, doc: "Trash result." }
       - { value: session_restore, payload: SessionRestoreResult, doc: "Restore result." }

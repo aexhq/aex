@@ -2982,51 +2982,6 @@
       "altPrincipal": null,
       "bodyClass": "aex_json",
       "deferred": true,
-      "deferredReason": "The complete session authority and command transaction are not implemented.",
-      "errors": [
-        "unauthenticated",
-        "insufficient_scope",
-        "not_found",
-        "operation_idempotency_conflict",
-        "invalid_request",
-        "limit_exceeded",
-        "session_not_idle",
-        "session_deleting",
-        "session_deleted",
-        "account_paused",
-        "precondition_failed",
-        "wrong_workspace_region",
-        "not_implemented"
-      ],
-      "etag": "optional_if_match",
-      "fragment": "sessions",
-      "idempotency": "operation_id",
-      "method": "POST",
-      "operationId": "session_clone",
-      "path": "/api/sessions/{sessionId}/clones",
-      "pathParams": [
-        "sessionId"
-      ],
-      "pauseExempt": false,
-      "plane": "regional",
-      "queryParams": [],
-      "requestSchema": "SessionCloneRequest",
-      "requiredScope": "sessions:write",
-      "responseSchema": "Operation",
-      "safeRetry": false,
-      "scenarios": [
-        "SC-SESSION-ADMIT",
-        "SC-SESSION-TERMINAL"
-      ],
-      "servingArtifact": "session-stream-api",
-      "successStatus": 202,
-      "summary": "Admit the durable clone operation.",
-      "transport": "unary"
-    },
-    {
-      "altPrincipal": null,
-      "bodyClass": "aex_json",
-      "deferred": true,
       "deferredReason": "The complete session authority and create use case are not implemented.",
       "errors": [
         "unauthenticated",

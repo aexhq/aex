@@ -506,15 +506,6 @@ impl ApprovalsApi for Routes {
 }
 
 impl SessionsApi for Routes {
-    async fn session_clone(
-        &self,
-        _cx: &WireContext,
-        _session_id: SessionId,
-        _body: models::SessionCloneRequest,
-    ) -> WireResult<Accepted> {
-        Err(not_served(RouteId::SessionClone))
-    }
-
     async fn session_create(
         &self,
         _cx: &WireContext,

@@ -478,7 +478,7 @@ mod tests {
             acquire_mutation_guard(
                 &session,
                 operation(2),
-                OperationKind::SessionClone,
+                OperationKind::SessionTrash,
                 moment(2)
             ),
             Err(SessionError::MutationGuardHeld {

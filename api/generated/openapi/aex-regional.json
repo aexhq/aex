@@ -461,21 +461,6 @@
         ],
         "type": "object"
       },
-      "CloneCredentials": {
-        "enum": [
-          "copy",
-          "none"
-        ],
-        "type": "string"
-      },
-      "CloneFiles": {
-        "enum": [
-          "current",
-          "initial",
-          "none"
-        ],
-        "type": "string"
-      },
       "ComputeShape": {
         "additionalProperties": false,
         "properties": {
@@ -2363,7 +2348,6 @@
         "enum": [
           "session_stop",
           "session_persist",
-          "session_clone",
           "workspace_discard",
           "session_trash",
           "session_restore",
@@ -2431,10 +2415,6 @@
           {
             "$ref": "aex:schema:SessionPersistResult",
             "x-aex-discriminator-value": "session_persist"
-          },
-          {
-            "$ref": "aex:schema:SessionCloneResult",
-            "x-aex-discriminator-value": "session_clone"
           },
           {
             "$ref": "aex:schema:WorkspaceDiscardResult",
@@ -3706,37 +3686,6 @@
         ],
         "type": "object"
       },
-      "SessionCloneRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "credentials": {
-            "$ref": "aex:schema:CloneCredentials",
-            "description": "Whether to inherit custody."
-          },
-          "files": {
-            "$ref": "aex:schema:CloneFiles",
-            "description": "Which tree to start from."
-          }
-        },
-        "required": [
-          "credentials",
-          "files"
-        ],
-        "type": "object"
-      },
-      "SessionCloneResult": {
-        "additionalProperties": false,
-        "properties": {
-          "session": {
-            "$ref": "aex:schema:Session",
-            "description": "The new, independent session."
-          }
-        },
-        "required": [
-          "session"
-        ],
-        "type": "object"
-      },
       "SessionComputeRequest": {
         "additionalProperties": false,
         "properties": {
@@ -4073,7 +4022,7 @@
         "properties": {
           "cascade": {
             "$ref": "aex:schema:PurgeCascade",
-            "description": "How clone descendants are treated."
+            "description": "How lineage descendants are treated."
           }
         },
         "required": [
@@ -10982,175 +10931,6 @@
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "none",
-        "x-aex-pause-exempt": false,
-        "x-aex-safe-retry": false,
-        "x-aex-scope": "sessions:write",
-        "x-aex-transport": "unary"
-      }
-    },
-    "/api/sessions/{sessionId}/clones": {
-      "post": {
-        "description": "Not yet available. This operation is published in the contract and is not served yet; calls answer 501 not_implemented.",
-        "operationId": "session_clone",
-        "parameters": [
-          {
-            "description": "The session the request is scoped to.",
-            "in": "path",
-            "name": "sessionId",
-            "required": true,
-            "schema": {
-              "pattern": "^ses_[0-9a-hjkmnp-tv-z]{26}$",
-              "type": "string",
-              "x-aex-id": "session"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "aex:schema:SessionCloneRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:Operation"
-                }
-              }
-            },
-            "description": "Success."
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "402": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "410": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "412": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "429": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
-          }
-        },
-        "summary": "Admit the durable clone operation.",
-        "tags": [
-          "sessions"
-        ],
-        "x-aex-alt-principal": null,
-        "x-aex-body-class": "aex_json",
-        "x-aex-deferred": true,
-        "x-aex-errors": [
-          "unauthenticated",
-          "insufficient_scope",
-          "not_found",
-          "operation_idempotency_conflict",
-          "invalid_request",
-          "limit_exceeded",
-          "session_not_idle",
-          "session_deleting",
-          "session_deleted",
-          "account_paused",
-          "precondition_failed",
-          "wrong_workspace_region",
-          "not_implemented"
-        ],
-        "x-aex-etag": "optional_if_match",
-        "x-aex-idempotency": "operation_id",
         "x-aex-pause-exempt": false,
         "x-aex-safe-retry": false,
         "x-aex-scope": "sessions:write",

@@ -3,7 +3,7 @@
 //! The server traits and the total dispatch surface, one group per authoring fragment.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:0e33b66699919088ff22081253c8d83e05e4708a091d80c1ab2f24093573b8ab`.
+//! `sha256:faf31c134a0c550e88a72f530773003414bb2ef103878329da871af144e66617`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -144,7 +144,6 @@ use crate::models::SecretRevocation;
 use crate::models::SecretsListQuery;
 use crate::models::Session;
 use crate::models::SessionApprovalsListQuery;
-use crate::models::SessionCloneRequest;
 use crate::models::SessionCreateRequest;
 use crate::models::SessionCredentialRebindRequest;
 use crate::models::SessionListPage;
@@ -542,7 +541,6 @@ pub const SECRETS_ROUTES: &[RouteId] = &[
 
 /// Every route of `regional:sessions`, in `RouteId` order.
 pub const SESSIONS_ROUTES: &[RouteId] = &[
-    RouteId::SessionClone,
     RouteId::SessionCreate,
     RouteId::SessionCredentialRebind,
     RouteId::SessionGet,
@@ -713,7 +711,6 @@ impl RouteId {
             Self::SecretPut => RouteGroup::Secrets,
             Self::SecretRevoke => RouteGroup::Secrets,
             Self::SecretsList => RouteGroup::Secrets,
-            Self::SessionClone => RouteGroup::Sessions,
             Self::SessionCreate => RouteGroup::Sessions,
             Self::SessionCredentialRebind => RouteGroup::Sessions,
             Self::SessionGet => RouteGroup::Sessions,
@@ -2932,20 +2929,11 @@ pub async fn dispatch_secrets<A: SecretsApi + ?Sized>(
 
 // --- regional:sessions ---------------------------------------------------------------
 
-/// The `sessions` fragment of the regional plane: 15 operations.
+/// The `sessions` fragment of the regional plane: 14 operations.
 /// Every method returns a future that is `Send`, so the composition crate can spawn it without
 /// wrapping. A method never names a status: the response type it returns is the status the route
 /// declares.
 pub trait SessionsApi: Send + Sync + 'static {
-    /// `POST /api/sessions/{sessionId}/clones`
-    /// Admit the durable clone operation.
-    fn session_clone(
-        &self,
-        cx: &RequestContext,
-        session_id: SessionId,
-        body: SessionCloneRequest,
-    ) -> impl Future<Output = WireResult<Accepted>> + Send;
-
     /// `POST /api/sessions`
     /// Create a session.
     fn session_create(
@@ -3084,13 +3072,6 @@ pub async fn dispatch_sessions<A: SessionsApi + ?Sized>(
 ) -> WireResult<DispatchOutcome<crate::dispatch::NoStream>> {
     let reader = QueryReader::parse(raw.route, raw.query)?;
     match raw.route {
-        RouteId::SessionClone => {
-            let session_id = path_param::<SessionId>(&raw, "sessionId")?;
-            let body = decode_body::<SessionCloneRequest>(&raw, limits)?;
-            let handled = api.session_clone(cx, session_id, body);
-            let answer = declared(raw.route, handled.await)?;
-            Ok(DispatchOutcome::Unary(RawResponse::accepted(&answer)?))
-        }
         RouteId::SessionCreate => {
             let body = decode_body::<SessionCreateRequest>(&raw, limits)?;
             let handled = api.session_create(cx, body);

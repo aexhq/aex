@@ -271,9 +271,6 @@ pub enum SessionCommand {
     Persist {
         session: String,
     },
-    Clone {
-        session: String,
-    },
     Trash {
         session: String,
     },
