@@ -1751,6 +1751,49 @@ async fn an_absent_secret_is_not_found() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
+/// D-10. A provider credential's backing secret is reserved and invisible in
+/// this fragment, on the point read and on the listing alike.
+///
+/// Leaving it visible would let a customer `secret_delete` it and leave a
+/// `ready` binding pointing at a tombstone, so `provider_credential_get` would
+/// publish `ready` for something that cannot work — a read path telling a lie.
+/// A credential's lifecycle runs through `provider_credential_revoke` alone.
+#[tokio::test]
+async fn a_credential_backing_secret_is_not_reachable_through_the_secrets_fragment() {
+    let backing = aex_wire::ids::ProviderCredentialId::from_uuid7(aex_wire::ids::Uuid7::compose(
+        1_754_051_696_789,
+        [6; 10],
+    ))
+    .to_string();
+    let custody = FakeCustody {
+        secrets: BTreeMap::from([
+            ("openai-key".to_owned(), stored_secret("openai-key")),
+            (backing.clone(), stored_secret(&backing)),
+        ]),
+        ..FakeCustody::default()
+    };
+    let (router, _) = router(custody);
+
+    let (status, _, _) = get(&router, &format!("/api/workspace/secrets/{backing}")).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "a reserved name is absent here whether or not it exists"
+    );
+
+    let (status, _, body) = get(&router, "/api/workspace/secrets").await;
+    assert_eq!(status, StatusCode::OK);
+    let page: models::SecretMetadataPage =
+        serde_json::from_value(body).expect("the published schema");
+    let names: Vec<&str> = page.items.iter().map(|row| row.name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["openai-key"],
+        "the listing skips reserved names, which is why a page may come back \
+         under-full while still naming a correct continuation"
+    );
+}
+
 #[tokio::test]
 async fn a_secret_listing_pages_and_its_continuation_resumes_the_next_page() {
     let custody = FakeCustody {

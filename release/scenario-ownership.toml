@@ -205,7 +205,7 @@ observes = ["artifact:session-stream-api"]
 [[scenario]]
 id = "SC-SECRET-CUSTODY"
 owner = "regional-stores"
-deferred = "The first-seal, key-administration, and custody lifecycle has no executable live target yet."
+deferred = "The custody lifecycle is now reachable end to end — every route of it is served — but no executable live target exists yet: aex-live-regional-secret-api claims no scenario and needs a deployed plane and a customer-supplied test key to run against."
 observes = [
   "artifact:regional-secret-api",
   "artifact:regional-secret-key-admin",

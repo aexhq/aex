@@ -1,7 +1,7 @@
 {
   "schema": "aex.regional-tables.v1",
   "generation": 1,
-  "digest": "blake3:3477847969b34799f8687e840ed75b184699a558802e19f65d2e18122c18d926",
+  "digest": "blake3:be8c91368cda351c775906c5d9d9a5179871f4024545b627d924e12f10b4cdb5",
   "tables": [
     {
       "schema": "aex.regional-table.v1",
@@ -948,7 +948,7 @@
       "schema": "aex.regional-table.v1",
       "table": "regional-secret-custody",
       "owner": "regional-stores",
-      "purpose": "Workspace secret metadata, hidden source generations carrying ciphertext, session custody heads and bindings, the revocation epoch, managed-call authorizations, and the provider-credential binding directory for BYOK.",
+      "purpose": "Workspace secret metadata, hidden source generations carrying ciphertext, session custody heads and bindings, the revocation epoch, managed-call authorizations, the provider-credential binding directory for BYOK, and the per-workspace quota counters that bound both collections.",
       "billingMode": "PAY_PER_REQUEST",
       "deletionProtection": true,
       "pointInTimeRecovery": {
@@ -997,7 +997,8 @@
         "call_authorization",
         "rebind_intent",
         "provider_credential",
-        "idempotency_receipt"
+        "idempotency_receipt",
+        "custody_counter"
       ],
       "iam": [
         {
@@ -1047,7 +1048,7 @@
       "schema": "aex.regional-table.v1",
       "table": "regional-secret-keystore",
       "owner": "regional-stores",
-      "purpose": "The provider-mandated hierarchical branch-key store. Key attribute names are branch-key-id and type because the AWS Encryption SDK hierarchical keyring defines them; this is the one table that does not use the pk and sk convention, and the deviation is deliberate. The logical key store name equals the physical table name and is cryptographically bound to every record, so it can never be changed after first use.",
+      "purpose": "The provider-mandated hierarchical branch-key store. Key attribute names are branch-key-id and type because the AWS Encryption SDK hierarchical keyring defines them; this is the one table that does not use the pk and sk convention, and the deviation is deliberate. The logical key store name equals the physical table name and is cryptographically bound to every record, so it can never be changed after first use. regional-secret-api holds TransactWriteItems and deliberately not PutItem: it creates a workspace's first branch key lazily on that workspace's first secret write (D-2), which is exactly one atomic version-plus-pointer pair per workspace ever, and a bare PutItem could move the active pointer without the version row behind it. Rotation stays exclusively regional-secret-key-admin's.",
       "billingMode": "PAY_PER_REQUEST",
       "deletionProtection": true,
       "physicalNamePinned": true,
@@ -1105,10 +1106,14 @@
           "role": "regional-secret-api",
           "actions": [
             "dynamodb:GetItem",
-            "dynamodb:Query"
+            "dynamodb:Query",
+            "dynamodb:TransactWriteItems"
           ],
           "resources": [
             "table"
+          ],
+          "itemTypes": [
+            "branch_key_record"
           ]
         },
         {

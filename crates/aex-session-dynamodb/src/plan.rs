@@ -136,6 +136,23 @@ impl Participant {
     pub const SECRET_GENERATION: Self = Self::new("secret.generation");
     /// A workspace secret's lineage index entry.
     pub const SECRET_LINEAGE: Self = Self::new("secret.lineage");
+    /// The durable idempotency receipt of a custody write.
+    ///
+    /// Distinct from [`Participant::SESSION_IDEMPOTENCY`] even though the two
+    /// name the same row shape on different tables: `commit_or_replay` matches
+    /// on the participant name to decide whether a lost precondition is *its*
+    /// receipt losing a race or a domain guard failing, so two tables sharing
+    /// one name would let a custody conflict be resolved by a session receipt.
+    /// Any other cluster adding a receipt to a regional table adds its own name
+    /// rather than reusing this one.
+    pub const SECRET_IDEMPOTENCY: Self = Self::new("secret.idempotency");
+    /// A workspace's secret-count quota row.
+    ///
+    /// Named separately from the credential counter so a `limit_exceeded` says
+    /// **which** collection is full: the two never appear in one transaction,
+    /// but they carry different maxima and a shared name would make the answer
+    /// ambiguous exactly when a customer needs it to be exact.
+    pub const SECRET_COUNT: Self = Self::new("secret.count");
     /// A session's custody head.
     pub const CUSTODY_HEAD: Self = Self::new("custody.head");
     /// One custody binding.
@@ -146,6 +163,8 @@ impl Participant {
     pub const CUSTODY_AUTHORIZATION: Self = Self::new("custody.authorization");
     /// A provider-credential binding directory entry.
     pub const CUSTODY_PROVIDER_CREDENTIAL: Self = Self::new("custody.provider_credential");
+    /// A workspace's provider-credential-count quota row.
+    pub const CUSTODY_CREDENTIAL_COUNT: Self = Self::new("custody.credential_count");
     /// A Hands generation head.
     pub const RUNTIME_GENERATION: Self = Self::new("runtime.generation");
     /// The session's current-generation pointer.

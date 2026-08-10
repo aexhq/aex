@@ -1798,7 +1798,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "First-seal custody and the atomic credential-binding replay transaction are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -1826,6 +1825,7 @@
       "scenarios": [
         "SC-SECRET-CUSTODY"
       ],
+      "servedArtifact": "regional-secret-api",
       "servingArtifact": "regional-secret-api",
       "successStatus": 201,
       "summary": "Register a BYOK provider credential; carries plaintext.",
@@ -2842,7 +2842,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "First-seal custody and durable idempotent replay are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2872,6 +2871,7 @@
       "scenarios": [
         "SC-SECRET-CUSTODY"
       ],
+      "servedArtifact": "regional-secret-api",
       "servingArtifact": "regional-secret-api",
       "successStatus": 200,
       "summary": "Set a secret value for future admission.",

@@ -3,30 +3,34 @@
 //! A KMS ciphertext is generated before the `DynamoDB` transaction. A crash in
 //! that interval leaks no plaintext and creates no authority row. The two row
 //! mutations (immutable version plus active pointer) then commit atomically.
+//!
+//! **The row shape, the encryption context and the create path are not written
+//! here** (D-2). They live in `aex_secret_keystore_dynamodb::provision`, because
+//! `regional-secret-api` creates a workspace's first branch key lazily on its
+//! first write and two implementations of the same two rows is how a version row
+//! and an active pointer eventually disagree about their authenticated context.
+//! This adapter supplies the attestation, owns **rotation**, and delegates
+//! everything else.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use aex_secret_keystore_dynamodb::branch_key::{
-    self, ACTIVE, BRANCH_KEY_ID, BranchKeyId, CREATE_TIME, CUSTOM_CONTEXT_PREFIX, ENC,
-    HIERARCHY_VERSION, KMS_ARN, RecordKind, TYPE, VERSION,
+    self, ACTIVE, BRANCH_KEY_ID, BranchKeyId, RecordKind, TYPE,
 };
+use aex_secret_keystore_dynamodb::provision::{
+    self, BranchKeyGeneration, EnsureOutcome, ExpectedActive, ProvisionError,
+};
+use aex_secret_keystore_dynamodb::store::KeyStoreBinding;
 use aex_wire::types::Timestamp;
 use async_trait::async_trait;
 use aws_sdk_dynamodb::Client as DynamoClient;
-use aws_sdk_dynamodb::types::{AttributeValue, Put, TransactWriteItem};
+use aws_sdk_dynamodb::types::{AttributeValue, TransactWriteItem};
 use aws_sdk_kms::Client as KmsClient;
 use aws_sdk_kms::primitives::Blob;
-use aws_sdk_kms::types::DataKeySpec;
 use aws_smithy_types::error::metadata::ProvideErrorMetadata;
 use zeroize::Zeroizing;
 
 use crate::admin::{ActiveGeneration, AdminRunError, ApplyOutcome, GenerationSpec, KeyAdminPort};
-
-const CONTEXT_PLANE: &str = "aex:plane";
-const CONTEXT_REGION: &str = "aex:region";
-const CONTEXT_WORKSPACE: &str = "aex:workspace";
-const CONTEXT_ATTESTATION: &str = "aex:attestation";
-const CONTEXT_REASON_DIGEST: &str = "aex:rotation-reason-sha256";
 
 /// Exact production adapter over the isolated keystore table and root KMS key.
 #[derive(Debug, Clone)]
@@ -103,176 +107,104 @@ impl AwsKeyAdmin {
         })
     }
 
+    fn binding(&self) -> KeyStoreBinding {
+        KeyStoreBinding::new(self.table.clone(), self.kms_arn.clone())
+    }
+
     fn context(&self, generation: &GenerationSpec) -> BTreeMap<String, String> {
-        let mut context = BTreeMap::from([
-            (CONTEXT_PLANE.to_owned(), self.plane.clone()),
-            (CONTEXT_REGION.to_owned(), self.region.clone()),
-            (
-                CONTEXT_WORKSPACE.to_owned(),
-                generation.branch_key_id.as_str().to_owned(),
-            ),
-            (
-                CONTEXT_ATTESTATION.to_owned(),
-                generation.attestation.to_string(),
-            ),
-        ]);
+        provision::creation_context(&self.plane, &self.region, &generation.branch_key_id)
+    }
+
+    /// The audit annotations one generation records outside its encryption
+    /// context.
+    ///
+    /// The attestation and the rotation reason used to be encryption-context
+    /// pairs. They cannot be: the request path opens this key knowing only which
+    /// workspace it serves, so a context carrying an operation id would be a key
+    /// nobody could open. The values are kept, as row attributes.
+    fn annotations(generation: &GenerationSpec) -> BTreeMap<String, String> {
+        let mut annotations = BTreeMap::from([(
+            provision::ATTESTATION_ATTRIBUTE.to_owned(),
+            generation.attestation.to_string(),
+        )]);
         if let Some(digest) = &generation.reason_digest {
-            context.insert(CONTEXT_REASON_DIGEST.to_owned(), digest.clone());
-        }
-        context
-    }
-
-    async fn wrapped_generation(
-        &self,
-        generation: &GenerationSpec,
-    ) -> Result<(Vec<u8>, BTreeMap<String, String>), AdminRunError> {
-        let context = self.context(generation);
-        let mut request = self
-            .kms
-            .generate_data_key_without_plaintext()
-            .key_id(&self.kms_arn)
-            .key_spec(DataKeySpec::Aes256);
-        for (name, value) in &context {
-            request = request.encryption_context(name, value);
-        }
-        let output = request
-            .send()
-            .await
-            .map_err(|error| provider("KMS.GenerateDataKeyWithoutPlaintext", &error))?;
-        let wrapped = output
-            .ciphertext_blob
-            .ok_or(AdminRunError::InvalidStored {
-                reason: "KMS returned no wrapped branch key",
-            })?
-            .into_inner();
-        if wrapped.is_empty() {
-            return Err(AdminRunError::InvalidStored {
-                reason: "KMS returned an empty wrapped branch key",
-            });
-        }
-        Ok((wrapped, context))
-    }
-
-    fn item(
-        &self,
-        generation: &GenerationSpec,
-        kind: &str,
-        wrapped: &[u8],
-        context: &BTreeMap<String, String>,
-        created_at: &str,
-    ) -> HashMap<String, AttributeValue> {
-        let mut item = HashMap::from([
-            (
-                BRANCH_KEY_ID.to_owned(),
-                AttributeValue::S(generation.branch_key_id.as_str().to_owned()),
-            ),
-            (TYPE.to_owned(), AttributeValue::S(kind.to_owned())),
-            (
-                ENC.to_owned(),
-                AttributeValue::B(Blob::new(wrapped.to_vec())),
-            ),
-            (KMS_ARN.to_owned(), AttributeValue::S(self.kms_arn.clone())),
-            (
-                CREATE_TIME.to_owned(),
-                AttributeValue::S(created_at.to_owned()),
-            ),
-            (
-                HIERARCHY_VERSION.to_owned(),
-                AttributeValue::N(generation.hierarchy_version.to_string()),
-            ),
-            (
-                VERSION.to_owned(),
-                AttributeValue::S(generation.version.clone()),
-            ),
-        ]);
-        for (name, value) in context {
-            item.insert(
-                format!("{CUSTOM_CONTEXT_PREFIX}{name}"),
-                AttributeValue::S(value.clone()),
+            annotations.insert(
+                provision::REASON_DIGEST_ATTRIBUTE.to_owned(),
+                digest.clone(),
             );
         }
-        item
+        annotations
     }
 
-    fn writes(
-        &self,
-        generation: &GenerationSpec,
-        expected: Option<&ActiveGeneration>,
-        wrapped: &[u8],
-        context: &BTreeMap<String, String>,
-        created_at: &str,
-    ) -> Result<(Put, Put), AdminRunError> {
-        let version = Put::builder()
-            .table_name(&self.table)
-            .set_item(Some(self.item(
-                generation,
-                &generation.version,
-                wrapped,
-                context,
-                created_at,
-            )))
-            .condition_expression("attribute_not_exists(#branch) AND attribute_not_exists(#type)")
-            .expression_attribute_names("#branch", BRANCH_KEY_ID)
-            .expression_attribute_names("#type", TYPE)
-            .build()
-            .map_err(|_| AdminRunError::InvalidStored {
-                reason: "the immutable generation write could not be built",
-            })?;
-
-        let mut active = Put::builder()
-            .table_name(&self.table)
-            .set_item(Some(
-                self.item(generation, ACTIVE, wrapped, context, created_at),
-            ))
-            .expression_attribute_names("#version", VERSION);
-        active = match expected {
-            None => active.condition_expression("attribute_not_exists(#version)"),
-            Some(expected) => active
-                .condition_expression(
-                    "#version = :expected_version AND #hierarchy = :expected_hierarchy",
-                )
-                .expression_attribute_names("#hierarchy", HIERARCHY_VERSION)
-                .expression_attribute_values(
-                    ":expected_version",
-                    AttributeValue::S(expected.version.clone()),
-                )
-                .expression_attribute_values(
-                    ":expected_hierarchy",
-                    AttributeValue::N(expected.hierarchy_version.to_string()),
-                ),
-        };
-        let active = active.build().map_err(|_| AdminRunError::InvalidStored {
-            reason: "the active generation write could not be built",
-        })?;
-        Ok((version, active))
-    }
-
-    async fn commit(
-        &self,
-        generation: &GenerationSpec,
-        expected: Option<&ActiveGeneration>,
-    ) -> Result<ApplyOutcome, AdminRunError> {
-        let (wrapped, context) = self.wrapped_generation(generation).await?;
+    /// Projects the worker's attested spec onto the shared generation record.
+    ///
+    /// # Errors
+    ///
+    /// [`AdminRunError::InvalidStored`] when the system clock cannot produce a
+    /// canonical instant, which is a broken host rather than a conflict.
+    fn generation_of(&self, spec: &GenerationSpec) -> Result<BranchKeyGeneration, AdminRunError> {
         let created_at = Timestamp::from_datetime_trunc_ms(time::OffsetDateTime::now_utc())
             .map_err(|_| AdminRunError::InvalidStored {
                 reason: "the system clock is outside the canonical timestamp range",
             })?
             .to_string();
-        let (version, active) =
-            self.writes(generation, expected, &wrapped, &context, &created_at)?;
+        Ok(BranchKeyGeneration {
+            branch_key_id: spec.branch_key_id.clone(),
+            version: spec.version.clone(),
+            hierarchy_version: spec.hierarchy_version,
+            context: self.context(spec),
+            annotations: Self::annotations(spec),
+            created_at,
+            transport_token: spec.attestation.to_string(),
+        })
+    }
+
+    /// Commits one **rotation**, which is this worker's alone.
+    ///
+    /// Creation is not here: it is
+    /// [`provision::ensure_active_branch_key`], shared with
+    /// `regional-secret-api`.
+    async fn rotate_onto(
+        &self,
+        spec: &GenerationSpec,
+        expected: &ActiveGeneration,
+    ) -> Result<ApplyOutcome, AdminRunError> {
+        let binding = self.binding();
+        let generation = self.generation_of(spec)?;
+        let wrapped = provision::wrap_material(&self.kms, &binding, &generation.context).await?;
+        let (version, active) = provision::writes(
+            &binding,
+            &generation,
+            Some(&ExpectedActive {
+                version: expected.version.clone(),
+                hierarchy_version: expected.hierarchy_version,
+            }),
+            &wrapped,
+        )?;
 
         let result = self
             .dynamodb
             .transact_write_items()
-            .client_request_token(generation.attestation.to_string())
+            .client_request_token(generation.transport_token.clone())
             .transact_items(TransactWriteItem::builder().put(version).build())
             .transact_items(TransactWriteItem::builder().put(active).build())
             .send()
             .await;
         match result {
             Ok(_) => Ok(ApplyOutcome::Applied),
-            Err(error) if conditional_conflict(&error) => Ok(ApplyOutcome::Conflict),
+            Err(error) if provision::conditional_conflict(&error) => Ok(ApplyOutcome::Conflict),
             Err(error) => Err(provider("DynamoDB.TransactWriteItems", &error)),
+        }
+    }
+}
+
+impl From<ProvisionError> for AdminRunError {
+    fn from(error: ProvisionError) -> Self {
+        match error {
+            ProvisionError::Provider { operation, code } => Self::Provider { operation, code },
+            ProvisionError::Unusable { reason } | ProvisionError::Malformed { reason } => {
+                Self::InvalidStored { reason }
+            }
         }
     }
 }
@@ -289,13 +221,30 @@ impl KeyAdminPort for AwsKeyAdmin {
             .transpose()
     }
 
+    /// Creates a workspace's first branch key through the **one** create path.
+    ///
+    /// `regional-secret-api` calls the same function on a first write (D-2), so
+    /// an operator-driven create and a lazy create produce byte-identical rows
+    /// under a byte-identical encryption context. An already-active key is a
+    /// conflict here, which the one-shot reports as the exit code for an
+    /// idempotent no-op.
     async fn create(&self, generation: &GenerationSpec) -> Result<ApplyOutcome, AdminRunError> {
         if generation.hierarchy_version != 1 {
             return Err(AdminRunError::InvalidStored {
                 reason: "creation did not target hierarchy generation one",
             });
         }
-        self.commit(generation, None).await
+        let outcome = aex_secret_keystore_dynamodb::ensure_active_branch_key(
+            &self.dynamodb,
+            &self.kms,
+            &self.binding(),
+            &self.generation_of(generation)?,
+        )
+        .await?;
+        Ok(match outcome {
+            EnsureOutcome::Created(_) => ApplyOutcome::Applied,
+            EnsureOutcome::AlreadyActive(_) => ApplyOutcome::Conflict,
+        })
     }
 
     async fn rotate(
@@ -311,7 +260,7 @@ impl KeyAdminPort for AwsKeyAdmin {
                 reason: "rotation did not extend the bound root-key lineage exactly once",
             });
         }
-        self.commit(generation, Some(expected)).await
+        self.rotate_onto(generation, expected).await
     }
 
     async fn verify(
@@ -359,29 +308,25 @@ fn provider<E: ProvideErrorMetadata>(operation: &'static str, error: &E) -> Admi
     }
 }
 
-fn conditional_conflict(
-    error: &aws_sdk_dynamodb::error::SdkError<
-        aws_sdk_dynamodb::operation::transact_write_items::TransactWriteItemsError,
-    >,
-) -> bool {
-    match error.as_service_error() {
-        Some(
-            aws_sdk_dynamodb::operation::transact_write_items::TransactWriteItemsError::TransactionCanceledException(cancelled),
-        ) => {
-            cancelled
-                .cancellation_reasons()
-                .iter()
-                .any(|reason| reason.code() == Some("ConditionalCheckFailed"))
-        }
-        _ => false,
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use aex_secret_keystore_dynamodb::branch_key::{ENC, HIERARCHY_VERSION, VERSION};
+    use aex_secret_keystore_dynamodb::provision::{CONTEXT_WORKSPACE, ExpectedActive, writes};
     use aex_wire::ids::{OperationId, PrefixedId as _, Uuid7};
 
     use super::*;
+
+    fn admin() -> AwsKeyAdmin {
+        let config = aws_config::SdkConfig::builder().build();
+        AwsKeyAdmin::new(
+            DynamoClient::new(&config),
+            KmsClient::new(&config),
+            "keystore",
+            "arn:aws:kms:eu-west-1:000000000000:key/root",
+            "prd",
+            "eu-west-1",
+        )
+    }
 
     fn generation() -> GenerationSpec {
         GenerationSpec {
@@ -394,45 +339,56 @@ mod tests {
     }
 
     #[test]
-    fn persisted_context_contains_only_bounded_identity_and_reason_digest() {
-        let config = aws_config::SdkConfig::builder().build();
-        let admin = AwsKeyAdmin::new(
-            DynamoClient::new(&config),
-            KmsClient::new(&config),
-            "keystore",
-            "arn:aws:kms:eu-west-1:000000000000:key/root",
-            "prd",
-            "eu-west-1",
-        );
-        let generation = generation();
-        let context = admin.context(&generation);
+    fn persisted_context_contains_only_the_identity_an_opener_can_reproduce() {
+        let context = admin().context(&generation());
         assert_eq!(context[CONTEXT_WORKSPACE], "wsp_test");
-        assert_eq!(context[CONTEXT_REASON_DIGEST].len(), 64);
-        assert_eq!(context.len(), 5);
+        assert_eq!(context.len(), 3);
         assert!(context.values().all(|value| !value.contains("incident")));
+    }
+
+    /// The attestation and the reason digest survive as annotations. They left
+    /// the encryption context because the request path opens this key knowing
+    /// only its workspace, and a context it cannot rebuild is a key it cannot
+    /// use — but a rotation with no recorded reason would be worse.
+    #[test]
+    fn the_attestation_and_reason_digest_are_recorded_as_annotations() {
+        let annotations = AwsKeyAdmin::annotations(&generation());
+        assert_eq!(
+            annotations[provision::ATTESTATION_ATTRIBUTE],
+            generation().attestation.to_string()
+        );
+        assert_eq!(annotations[provision::REASON_DIGEST_ATTRIBUTE].len(), 64);
+        assert!(
+            annotations
+                .values()
+                .all(|value| !value.contains("incident")),
+            "a reason digest, never the reason"
+        );
+    }
+
+    /// The worker's attested spec and the shared generation record must name the
+    /// same rows: the attestation is the transport token, and the version sort
+    /// key and hierarchy travel unchanged.
+    #[test]
+    fn the_attested_spec_projects_onto_the_shared_generation_without_reinterpretation() {
+        let admin = admin();
+        let spec = generation();
+        let shared = admin.generation_of(&spec).expect("a canonical instant");
+        assert_eq!(shared.branch_key_id, spec.branch_key_id);
+        assert_eq!(shared.version, spec.version);
+        assert_eq!(shared.hierarchy_version, spec.hierarchy_version);
+        assert_eq!(shared.transport_token, spec.attestation.to_string());
+        assert_eq!(shared.context, admin.context(&spec));
     }
 
     #[test]
     fn active_and_version_rows_carry_identical_wrapped_material() {
-        let config = aws_config::SdkConfig::builder().build();
-        let admin = AwsKeyAdmin::new(
-            DynamoClient::new(&config),
-            KmsClient::new(&config),
-            "keystore",
-            "arn:aws:kms:eu-west-1:000000000000:key/root",
-            "prd",
-            "eu-west-1",
-        );
-        let generation = generation();
-        let context = admin.context(&generation);
-        let active = admin.item(&generation, ACTIVE, b"wrapped", &context, "now");
-        let version = admin.item(
-            &generation,
-            &generation.version,
-            b"wrapped",
-            &context,
-            "now",
-        );
+        let admin = admin();
+        let shared = admin.generation_of(&generation()).expect("an instant");
+        let (version, active) =
+            writes(&admin.binding(), &shared, None, b"wrapped").expect("create writes");
+        let active = active.item();
+        let version = version.item();
         assert_eq!(active[ENC], version[ENC]);
         assert_eq!(active[VERSION], version[VERSION]);
         assert_eq!(active[HIERARCHY_VERSION], version[HIERARCHY_VERSION]);
@@ -441,20 +397,10 @@ mod tests {
 
     #[test]
     fn creation_and_rotation_compile_exact_atomic_fences() {
-        let config = aws_config::SdkConfig::builder().build();
-        let admin = AwsKeyAdmin::new(
-            DynamoClient::new(&config),
-            KmsClient::new(&config),
-            "keystore",
-            "arn:aws:kms:eu-west-1:000000000000:key/root",
-            "prd",
-            "eu-west-1",
-        );
-        let generation = generation();
-        let context = admin.context(&generation);
-        let (immutable, create_active) = admin
-            .writes(&generation, None, b"wrapped", &context, "now")
-            .expect("create writes");
+        let admin = admin();
+        let shared = admin.generation_of(&generation()).expect("an instant");
+        let (immutable, create_active) =
+            writes(&admin.binding(), &shared, None, b"wrapped").expect("create writes");
         assert_eq!(
             immutable.condition_expression(),
             Some("attribute_not_exists(#branch) AND attribute_not_exists(#type)")
@@ -464,13 +410,11 @@ mod tests {
             Some("attribute_not_exists(#version)")
         );
 
-        let expected = ActiveGeneration {
+        let expected = ExpectedActive {
             version: "branch:version:previous".to_owned(),
             hierarchy_version: 6,
-            kms_arn: admin.kms_arn.clone(),
         };
-        let (_, rotate_active) = admin
-            .writes(&generation, Some(&expected), b"wrapped", &context, "now")
+        let (_, rotate_active) = writes(&admin.binding(), &shared, Some(&expected), b"wrapped")
             .expect("rotation writes");
         assert_eq!(
             rotate_active.condition_expression(),

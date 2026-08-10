@@ -27,6 +27,32 @@ use crate::codec::{
 };
 use crate::keys;
 
+/// Which replica a read may be answered from (D-7).
+///
+/// Custody reads take eventual consistency by default; the exception is a read
+/// that immediately precedes a conditional write, where the speed default would
+/// cost a `precondition_failed` that *claims the caller's precondition was
+/// violated* when nothing conflicted. That is a wrong answer on the wire rather
+/// than a slow one, and correctness outranks the speed default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Consistency {
+    /// The authority itself. Every point read that a conditional write is
+    /// compiled from.
+    Strong,
+    /// A replica. Listings, and the idempotency receipt — where a stale miss is
+    /// self-healing, because the receipt `Put` is conditional and
+    /// `commit_or_replay` resolves the loss by one re-read.
+    Eventual,
+}
+
+impl Consistency {
+    /// Whether the read must be answered by the authority.
+    #[must_use]
+    pub const fn is_strong(self) -> bool {
+        matches!(self, Self::Strong)
+    }
+}
+
 /// One bounded page and the position a continuation resumes from.
 ///
 /// `next` is `Some` exactly when the authority reported more rows behind this
@@ -229,7 +255,13 @@ impl CustodyStore {
         credential: ProviderCredentialId,
     ) -> Result<Option<ProviderCredential>, StoreError> {
         let target = keys::provider_credential(workspace, provider.as_str(), credential)?;
-        match self.get(&target.pk, &target.sk).await? {
+        // A point read, not a listing: D-7 relaxes the *listings* and leaves
+        // this fan strong. It is the read a session's credential selection is
+        // compiled from, and a stale hit here binds a session to a revoked key.
+        match self
+            .get(&target.pk, &target.sk, Consistency::Strong)
+            .await?
+        {
             None => Ok(None),
             Some(item) => Ok(Some(codec::decode_provider_credential(&item, workspace)?)),
         }
@@ -248,7 +280,10 @@ impl CustodyStore {
         name: &SecretName,
     ) -> Result<Option<CustodyBinding>, StoreError> {
         let target = keys::binding(session, revision, name.as_str())?;
-        match self.get(&target.pk, &target.sk).await? {
+        match self
+            .get(&target.pk, &target.sk, Consistency::Strong)
+            .await?
+        {
             None => Ok(None),
             Some(item) => Ok(Some(codec::decode_binding(&item, workspace)?)),
         }
@@ -320,13 +355,18 @@ impl CustodyStore {
         SecretCustodyStore::commit(self, &plan).await
     }
 
-    async fn get(&self, pk: &str, sk: &str) -> Result<Option<Item>, StoreError> {
+    async fn get(
+        &self,
+        pk: &str,
+        sk: &str,
+        consistency: Consistency,
+    ) -> Result<Option<Item>, StoreError> {
         let output = self
             .client
             .get_item()
             .table_name(&self.table)
             .set_key(Some(key(pk, sk)))
-            .consistent_read(true)
+            .consistent_read(consistency.is_strong())
             .send()
             .await
             .map_err(|error| classify(&error, Idempotence::Read))?;
@@ -391,7 +431,14 @@ impl CustodyStore {
             .expression_attribute_names("#sk", aex_session_dynamodb::attr::SK)
             .expression_attribute_values(":pk", s(partition.to_owned()))
             .expression_attribute_values(":prefix", s(prefix.to_owned()))
-            .consistent_read(true)
+            // D-7. Every custody listing is answered from a replica, and this is
+            // the single place that decides it: `query_prefix` sets no
+            // consistency of its own and walks its service pages through here,
+            // so `list_secrets` and `list_provider_credentials` flip with
+            // `page_secrets` and `page_provider_credentials` rather than
+            // separately. Listings are projections; a sub-second stale page is
+            // acceptable, and this is the highest-volume custody read.
+            .consistent_read(Consistency::Eventual.is_strong())
             .limit(budget.limit())
             .set_exclusive_start_key(after.map(|position| position.to_exclusive_start(None, None)))
             .send()
@@ -425,7 +472,14 @@ impl SecretCustodyStore for CustodyStore {
         name: &SecretName,
     ) -> Result<Option<SecretMetadata>, StoreError> {
         let target = keys::secret(workspace, name.as_str())?;
-        match self.get(&target.pk, &target.sk).await? {
+        // Strong, and this is where D-7's speed default yields: `secret_put`
+        // compiles its compare-and-swap from exactly this revision, so a stale
+        // read would answer `precondition_failed` — an error claiming the
+        // caller's precondition was violated when nothing conflicted.
+        match self
+            .get(&target.pk, &target.sk, Consistency::Strong)
+            .await?
+        {
             None => Ok(None),
             Some(item) => Ok(Some(codec::decode_secret(&item, workspace)?)),
         }
@@ -456,7 +510,10 @@ impl SecretCustodyStore for CustodyStore {
         generation: SourceGeneration,
     ) -> Result<Option<StoredGeneration>, StoreError> {
         let target = keys::generation(workspace, name.as_str(), generation)?;
-        match self.get(&target.pk, &target.sk).await? {
+        match self
+            .get(&target.pk, &target.sk, Consistency::Strong)
+            .await?
+        {
             None => Ok(None),
             Some(item) => Ok(Some(codec::decode_generation(&item, workspace)?)),
         }
@@ -468,7 +525,10 @@ impl SecretCustodyStore for CustodyStore {
         session: SessionId,
     ) -> Result<Option<CustodyHead>, StoreError> {
         let target = keys::custody_head(session);
-        match self.get(&target.pk, &target.sk).await? {
+        match self
+            .get(&target.pk, &target.sk, Consistency::Strong)
+            .await?
+        {
             None => Ok(None),
             Some(item) => Ok(Some(codec::decode_custody_head(&item, workspace)?)),
         }
@@ -481,7 +541,7 @@ impl SecretCustodyStore for CustodyStore {
     ) -> Result<Vec<ProviderCredential>, StoreError> {
         let items = self
             .query_prefix(
-                &format!("PCR#{workspace}"),
+                &keys::provider_credential_partition(workspace),
                 keys::provider_credential_prefix(),
                 budget,
             )
@@ -544,7 +604,7 @@ impl SecretCustodyStore for CustodyStore {
     ) -> Result<Page<ProviderCredential>, StoreError> {
         let (items, next) = self
             .query_page(
-                &format!("PCR#{workspace}"),
+                &keys::provider_credential_partition(workspace),
                 keys::provider_credential_prefix(),
                 budget,
                 after,
@@ -569,7 +629,16 @@ impl SecretCustodyStore for CustodyStore {
         now: Timestamp,
     ) -> Result<Option<Receipt>, StoreError> {
         let target = keys::receipt(workspace, scope, key_sha256_hex)?;
-        let Some(item) = self.get(&target.pk, &target.sk).await? else {
+        // Eventual, and it is the one point read on this table that is (D-7).
+        // A stale *miss* is self-healing: the commit's receipt `Put` is
+        // conditional on `attribute_not_exists`, so a duplicate attempt loses on
+        // the receipt participant and `commit_or_replay` resolves it by exactly
+        // one re-read. The whole cost of a stale miss is one wasted transaction
+        // attempt on a fast retry, and this read is on both write paths.
+        let Some(item) = self
+            .get(&target.pk, &target.sk, Consistency::Eventual)
+            .await?
+        else {
             return Ok(None);
         };
         let receipt = decode_receipt_row(&item)?;

@@ -1258,11 +1258,13 @@ dependencies = [
  "async-trait",
  "aws-config",
  "aws-sdk-dynamodb",
+ "aws-sdk-kms",
  "aws-smithy-http-client",
  "aws-smithy-types",
  "proptest",
  "serde_json",
  "thiserror",
+ "time",
  "tokio",
 ]
 
@@ -6644,13 +6646,13 @@ dependencies = [
  "axum",
  "http-body-util",
  "lambda_http",
+ "serde",
  "serde_json",
- "sha2 0.11.0",
  "thiserror",
  "time",
  "tokio",
  "tower",
- "zeroize",
+ "uuid",
 ]
 
 [[package]]

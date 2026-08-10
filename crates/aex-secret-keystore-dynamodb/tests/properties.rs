@@ -45,6 +45,31 @@ fn an_active_record_projects_into_exactly_what_an_administrator_needs() {
     assert_eq!(active.create_time, "2026-08-01T12:34:56.789Z");
 }
 
+/// D-4. The projection used to drop `enc`, which is why nothing on a request
+/// path could seal: the one field a first seal needs was the one field the
+/// administrator's view discarded.
+#[test]
+fn the_projection_carries_the_wrapped_material_a_first_seal_needs() {
+    let item = active_record(1);
+    let stored = item[branch_key::ENC].as_b().expect("wrapped bytes").clone();
+    let active: ActiveBranchKey = decode(&item).expect("decodes").into();
+    assert_eq!(active.wrapped_material, stored.into_inner());
+    assert!(!active.wrapped_material.is_empty());
+}
+
+/// Wrapped material is not openable outside `KMS`, but a wrapped key in a log
+/// is still key material in a log.
+#[test]
+fn the_debug_rendering_names_the_length_and_never_the_material() {
+    let active: ActiveBranchKey = decode(&active_record(1)).expect("decodes").into();
+    let rendered = format!("{active:?}");
+    assert!(rendered.contains("<wrapped, 64 bytes>"), "{rendered}");
+    assert!(
+        !rendered.contains("170, 170"),
+        "the material must never reach a rendering: {rendered}"
+    );
+}
+
 #[test]
 fn custom_context_pairs_are_read_back_without_their_storage_prefix() {
     let mut item = active_record(1);
