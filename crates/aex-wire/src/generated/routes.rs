@@ -3,7 +3,7 @@
 //! The route registry: one row per public operation.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:bd7052cb0fe98ca6622d42d82e3a3adfec7f8a2ef4d890f7f2c31fcc1e0df4a6`.
+//! `sha256:c0a8fdb195dbe8c2ad05b5500ef3a8cedcb0351f66d5eddc005c5f7c6e5a21be`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -360,7 +360,8 @@ pub enum RouteId {
     WorkspaceGet,
     /// `GET /api/workspace/limits/{limitId}` — Read one effective workspace safety limit.
     WorkspaceLimitGet,
-    /// `GET /api/workspace/limits` — List the effective workspace safety limits.
+    /// `GET /api/workspace/limits` — List the effective workspace safety limits. The registry is
+    /// closed and complete, so the whole set is one page and no continuation is ever minted.
     WorkspaceLimitsList,
     /// `GET /api/workspaces` — List workspaces the caller can reach.
     WorkspacesList,
@@ -692,7 +693,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         path_params: &[],
         query_params: &["organizationId"],
         required_scope: Some(ScopeId::AccountRead),
-        alt_principal: Some(PrincipalKind::WorkspaceKey),
+        alt_principal: None,
         idempotency: IdempotencyKind::None,
         body_class: BodyClass::None,
         transport: TransportKind::Unary,
@@ -5116,7 +5117,9 @@ pub static ROUTES: &[RouteDescriptor] = &[
         errors: &[
             ErrorCode::Unauthenticated,
             ErrorCode::InsufficientScope,
+            ErrorCode::WorkspaceActivationRequired,
             ErrorCode::WorkspaceNotLive,
+            ErrorCode::AccountStateUnavailable,
             ErrorCode::WrongWorkspaceRegion,
         ],
         request_schema: None,
@@ -5209,6 +5212,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
             ErrorCode::Unauthenticated,
             ErrorCode::InsufficientScope,
             ErrorCode::NotFound,
+            ErrorCode::WorkspaceActivationRequired,
             ErrorCode::WrongWorkspaceRegion,
         ],
         request_schema: None,
@@ -5225,7 +5229,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         method: HttpMethod::Get,
         template: "/api/workspace/limits",
         path_params: &[],
-        query_params: &["cursor", "limit"],
+        query_params: &[],
         required_scope: Some(ScopeId::WorkspaceRead),
         alt_principal: None,
         idempotency: IdempotencyKind::None,
@@ -5236,7 +5240,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         errors: &[
             ErrorCode::Unauthenticated,
             ErrorCode::InsufficientScope,
-            ErrorCode::InvalidCursor,
+            ErrorCode::WorkspaceActivationRequired,
             ErrorCode::WrongWorkspaceRegion,
         ],
         request_schema: None,

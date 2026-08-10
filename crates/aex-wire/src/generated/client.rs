@@ -3,7 +3,7 @@
 //! The low-level client: one request builder and one method per public operation.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:bd7052cb0fe98ca6622d42d82e3a3adfec7f8a2ef4d890f7f2c31fcc1e0df4a6`.
+//! `sha256:c0a8fdb195dbe8c2ad05b5500ef3a8cedcb0351f66d5eddc005c5f7c6e5a21be`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -176,7 +176,6 @@ use crate::models::UsageQueryQuery;
 use crate::models::Workspace;
 use crate::models::WorkspaceCreateRequest;
 use crate::models::WorkspaceDeleteRequest;
-use crate::models::WorkspaceLimitsListQuery;
 use crate::models::WorkspacePage;
 use crate::models::WorkspacesListQuery;
 use crate::routes::RouteId;
@@ -249,7 +248,7 @@ pub fn account_get_request(query: &AccountGetQuery) -> Result<WireRequest, Clien
     let route = RouteId::AccountGet;
     let path = PathWriter::new(route);
     let mut writer = QueryWriter::new();
-    writer.put_option("organizationId", query.organization_id.as_ref());
+    writer.put("organizationId", &query.organization_id);
     Ok(WireRequest {
         route,
         method: HttpMethod::Get,
@@ -3816,26 +3815,22 @@ pub fn workspace_limit_get_request(limit_id: LimitId) -> Result<WireRequest, Cli
 }
 
 /// `GET /api/workspace/limits`
-/// List the effective workspace safety limits.
+/// List the effective workspace safety limits. The registry is closed and complete, so the whole
+/// set is one page and no continuation is ever minted.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
 /// a recorded fixture — can take the request and run it.
 ///
 /// # Errors
 /// Returns [`ClientError::Encode`] when the request cannot be rendered.
-pub fn workspace_limits_list_request(
-    query: &WorkspaceLimitsListQuery,
-) -> Result<WireRequest, ClientError> {
+pub fn workspace_limits_list_request() -> Result<WireRequest, ClientError> {
     let route = RouteId::WorkspaceLimitsList;
     let path = PathWriter::new(route);
-    let mut writer = QueryWriter::new();
-    writer.put_option("cursor", query.cursor.as_ref());
-    writer.put_option("limit", query.limit.as_ref());
     Ok(WireRequest {
         route,
         method: HttpMethod::Get,
         path: path.finish()?,
-        query: writer.finish(),
+        query: String::new(),
         headers: request_headers(route, None, None, None),
         body: None,
     })
@@ -6316,17 +6311,15 @@ impl<T: Transport> WireClient<T> {
     }
 
     /// `GET /api/workspace/limits`
-    /// List the effective workspace safety limits.
+    /// List the effective workspace safety limits. The registry is closed and complete, so the
+    /// whole set is one page and no continuation is ever minted.
     ///
     /// # Errors
     /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]
     /// when the request never reached a status, and [`ClientError::Decode`] when the answer does
     /// not match the contract.
-    pub async fn workspace_limits_list(
-        &self,
-        query: &WorkspaceLimitsListQuery,
-    ) -> Result<EffectiveWorkspaceLimitPage, ClientError> {
-        let request = workspace_limits_list_request(query)?;
+    pub async fn workspace_limits_list(&self) -> Result<EffectiveWorkspaceLimitPage, ClientError> {
+        let request = workspace_limits_list_request()?;
         let response = self.send(request).await?;
         decode_response(RouteId::WorkspaceLimitsList, &response)
     }

@@ -3,7 +3,7 @@
 //! The public request, response and query models.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:bd7052cb0fe98ca6622d42d82e3a3adfec7f8a2ef4d890f7f2c31fcc1e0df4a6`.
+//! `sha256:c0a8fdb195dbe8c2ad05b5500ef3a8cedcb0351f66d5eddc005c5f7c6e5a21be`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -78,23 +78,39 @@ pub enum AccountOperationalState {
     Paused(AccountPausedState),
 }
 
-/// Why an account is paused.
+/// Why an account is paused, and therefore which remedy exists. One value per durable
+/// `finance.billing_account.state` hold: collapsing all four onto `top_up_required` told a customer
+/// under a dispute hold to make a payment that would not restore service.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AccountPauseReason {
-    /// The prepaid balance is exhausted.
+    /// The prepaid balance is exhausted; a top-up restores service.
     TopUpRequired,
+    /// A charge is held pending payment; a top-up does not clear it.
+    PaymentHold,
+    /// A chargeback is open; nothing the customer pays restores service.
+    DisputeHold,
+    /// The account is closed. There is no remedy.
+    AccountClosed,
 }
 
 impl AccountPauseReason {
     /// Every value, in declared order.
-    pub const ALL: &'static [AccountPauseReason] = &[AccountPauseReason::TopUpRequired];
+    pub const ALL: &'static [AccountPauseReason] = &[
+        AccountPauseReason::TopUpRequired,
+        AccountPauseReason::PaymentHold,
+        AccountPauseReason::DisputeHold,
+        AccountPauseReason::AccountClosed,
+    ];
 
     /// The wire spelling.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::TopUpRequired => "top_up_required",
+            Self::PaymentHold => "payment_hold",
+            Self::DisputeHold => "dispute_hold",
+            Self::AccountClosed => "account_closed",
         }
     }
 }
@@ -105,15 +121,20 @@ impl AccountPauseReason {
 pub struct AccountPausedState {
     /// When the state last changed.
     pub changed_at: Timestamp,
-    /// When unfunded content is scheduled for deletion.
+    /// When unfunded content is scheduled for deletion. Published and permanently absent: this is
+    /// the regional content lifecycle's fact and that authority does not exist yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deletion_scheduled_at: Option<Timestamp>,
-    /// Smallest top-up that restores service.
+    /// Smallest top-up that restores service. Present exactly when `reason` is `top_up_required`;
+    /// the other three holds have no paying remedy, and naming an amount for them would be a false
+    /// one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub minimum_restore_cents: Option<Cents>,
     /// Why the account is paused.
     pub reason: AccountPauseReason,
-    /// How long retained content stays funded.
+    /// How long retained content stays funded. Published and permanently absent: storage is billed
+    /// monthly and unfunded storage is enforced through the account pause, so no authority owns
+    /// this instant yet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retention_funded_until: Option<Timestamp>,
     /// Monotonic state revision.
@@ -4315,9 +4336,10 @@ pub struct UsageStorageAggregate {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct AccountGetQuery {
-    /// Required unless the credential derives one organization.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub organization_id: Option<OrganizationId>,
+    /// Which organization's account to read. Required: a user can belong to many organizations, so
+    /// a rule that derived it from the credential would silently change meaning the day a user
+    /// joins a second one.
+    pub organization_id: OrganizationId,
 }
 
 /// Query parameters of `api_keys_list`.
@@ -4565,18 +4587,6 @@ pub struct UsageQueryQuery {
     /// Required when an account token selects the workspace.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<WorkspaceId>,
-}
-
-/// Query parameters of `workspace_limits_list`.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-pub struct WorkspaceLimitsListQuery {
-    /// Opaque continuation token.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cursor: Option<Cursor>,
-    /// Page size.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub limit: Option<u32>,
 }
 
 /// Query parameters of `workspaces_list`.

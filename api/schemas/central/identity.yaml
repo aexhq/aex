@@ -2,10 +2,17 @@
 module: central
 schemas:
   AccountPauseReason:
-    doc: Why an account is paused.
+    doc: >-
+      Why an account is paused, and therefore which remedy exists. One value per
+      durable `finance.billing_account.state` hold: collapsing all four onto
+      `top_up_required` told a customer under a dispute hold to make a payment
+      that would not restore service.
     type: enum
     values:
-      - { value: top_up_required, doc: "The prepaid balance is exhausted." }
+      - { value: top_up_required, doc: "The prepaid balance is exhausted; a top-up restores service." }
+      - { value: payment_hold, doc: "A charge is held pending payment; a top-up does not clear it." }
+      - { value: dispute_hold, doc: "A chargeback is open; nothing the customer pays restores service." }
+      - { value: account_closed, doc: "The account is closed. There is no remedy." }
 
   AccountActiveState:
     doc: An account in good standing.
@@ -21,9 +28,9 @@ schemas:
       reason: { type: ref, to: AccountPauseReason, doc: "Why the account is paused." }
       revision: { type: integer, min: 0, max: 9007199254740991, doc: "Monotonic state revision." }
       changedAt: { type: timestamp, doc: "When the state last changed." }
-      minimumRestoreCents: { type: cents, optional: true, doc: "Smallest top-up that restores service." }
-      retentionFundedUntil: { type: timestamp, optional: true, doc: "How long retained content stays funded." }
-      deletionScheduledAt: { type: timestamp, optional: true, doc: "When unfunded content is scheduled for deletion." }
+      minimumRestoreCents: { type: cents, optional: true, doc: "Smallest top-up that restores service. Present exactly when `reason` is `top_up_required`; the other three holds have no paying remedy, and naming an amount for them would be a false one." }
+      retentionFundedUntil: { type: timestamp, optional: true, doc: "How long retained content stays funded. Published and permanently absent: storage is billed monthly and unfunded storage is enforced through the account pause, so no authority owns this instant yet." }
+      deletionScheduledAt: { type: timestamp, optional: true, doc: "When unfunded content is scheduled for deletion. Published and permanently absent: this is the regional content lifecycle's fact and that authority does not exist yet." }
 
   AccountOperationalState:
     doc: Whether the account may consume paid capacity.

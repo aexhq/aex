@@ -300,19 +300,46 @@ fn a_workspace_key_is_refused_on_every_organization_route() {
 fn a_workspace_key_can_never_be_redirected_at_another_organization() {
     let granted = decide(
         &key(ScopeSet::ALL),
-        action(RouteId::AccountGet),
+        action(RouteId::BillingBalanceGet),
         &Resource::None,
     )
-    .expect("a key may read its own account");
+    .expect("a key may read its own balance");
     assert_eq!(granted.organization_id, Some(Uuid::from_u128(ORG)));
     assert_eq!(
         decide(
             &key(ScopeSet::ALL),
-            action(RouteId::AccountGet),
+            action(RouteId::BillingBalanceGet),
             &Resource::Organization(Uuid::from_u128(OTHER_ORG))
         ),
         Err(Denial::WrongResourceClass),
         "a key cannot smuggle an organization into an actor-scoped route"
+    );
+}
+
+/// `account_get` is a dashboard and CLI route, and only that.
+///
+/// A workspace API key asking "is my account paused?" must ask its own region.
+/// `workspace_current_get` answers exactly that, from the projection the edge
+/// already read, through the same mapping — so admitting the key here would give
+/// the SDK's most frequent check a cross-plane round trip and a second answer to
+/// one question.
+#[test]
+fn a_workspace_key_asks_its_own_region_whether_its_account_is_paused() {
+    assert_eq!(
+        decide(
+            &key(ScopeSet::ALL),
+            action(RouteId::AccountGet),
+            &Resource::None
+        ),
+        Err(Denial::WrongPrincipalKind {
+            kind: PrincipalKindTag::WorkspaceKey
+        }),
+    );
+    assert!(
+        !requirement(action(RouteId::AccountGet))
+            .principal_kinds
+            .admits(PrincipalKindTag::WorkspaceKey),
+        "the route table still offers the key an answer this plane should not give"
     );
 }
 
@@ -347,10 +374,10 @@ fn a_key_presenting_a_foreign_organization_or_workspace_is_refused() {
 fn a_key_is_capped_at_the_mintable_ceiling_even_if_its_row_says_otherwise() {
     let granted = decide(
         &key(ScopeSet::ALL),
-        action(RouteId::AccountGet),
+        action(RouteId::BillingBalanceGet),
         &Resource::None,
     )
-    .expect("a key may read its own account");
+    .expect("a key may read its own balance");
     assert_eq!(
         granted.effective_scopes,
         ScopeSet::ALL.intersect(ScopeSet::WORKSPACE_KEY_MINTABLE)
