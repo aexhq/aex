@@ -40,6 +40,9 @@ pub enum RunnerError {
     /// A conservation law does not hold.
     #[error("the journal does not conserve: {0}")]
     Conservation(String),
+    /// The pepper row a seed named exists and says something else.
+    #[error("the pepper row cannot be seeded: {0}")]
+    PepperConflict(String),
     /// The database refused a statement.
     #[error("the database refused the operation: {0}")]
     Database(String),
@@ -445,9 +448,160 @@ pub async fn backfill_cursor(
     .map_err(|error| RunnerError::Database(error.to_string()))
 }
 
+/// The four credential-pepper rows that can exist, and nothing else.
+///
+/// Both planes hold a `credential_pepper` table and `cursor` appears in both,
+/// so a `--schema`/`--purpose` pair would admit combinations no `CHECK`
+/// constraint allows. Enumerating the legal rows instead makes an illegal one
+/// unrepresentable rather than validated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PepperRow {
+    /// `identity.credential_pepper`, purpose `identity` — account credentials.
+    Identity,
+    /// `identity.credential_pepper`, purpose `cursor` — identity page cursors.
+    IdentityCursor,
+    /// `control.credential_pepper`, purpose `api_key` — workspace API keys.
+    ApiKey,
+    /// `control.credential_pepper`, purpose `cursor` — control page cursors.
+    ControlCursor,
+}
+
+impl PepperRow {
+    /// Every row, for the totality test.
+    pub const ALL: [Self; 4] = [
+        Self::Identity,
+        Self::IdentityCursor,
+        Self::ApiKey,
+        Self::ControlCursor,
+    ];
+
+    /// The qualified relation the row lives in.
+    #[must_use]
+    pub const fn table(self) -> &'static str {
+        match self {
+            Self::Identity | Self::IdentityCursor => "identity.credential_pepper",
+            Self::ApiKey | Self::ControlCursor => "control.credential_pepper",
+        }
+    }
+
+    /// The `purpose` value, exactly as the table's `CHECK` spells it.
+    #[must_use]
+    pub const fn purpose(self) -> &'static str {
+        match self {
+            Self::Identity => "identity",
+            Self::IdentityCursor | Self::ControlCursor => "cursor",
+            Self::ApiKey => "api_key",
+        }
+    }
+}
+
+/// What a seed found or did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PepperSeeded {
+    /// The row did not exist and now does.
+    Inserted,
+    /// The row already existed and already says exactly this.
+    AlreadyExact,
+}
+
+/// Seeds one active credential-pepper lifecycle row.
+///
+/// # Why this is not a migration
+///
+/// `secret_ref` is a Secrets Manager **version id**, minted when the plane
+/// created the secret version. No file in this repository can know it, and a
+/// baseline `INSERT` carrying a literal would bake one plane's identifier into
+/// an immutable migration every plane applies. The row is therefore deployment
+/// data seeded by the release path — the same one-shot that applies the schema
+/// and reconciles the grants — rather than schema.
+///
+/// Without it `central-api` refuses to start: it probes the active pepper for
+/// each purpose before it binds a listener, and `api_key_create` reads the
+/// active `api_key` row to mint at all.
+///
+/// # Idempotence and its limit
+///
+/// Re-running with identical arguments answers [`PepperSeeded::AlreadyExact`].
+/// Anything else — a different `secret_ref` under the same version, a retired
+/// row, or another version already active for the purpose — is refused. A
+/// rotation is a ceremony with two live versions, not a seed, and quietly
+/// re-pointing a version at other material would make every credential
+/// fingerprinted under it unverifiable while reporting success.
+///
+/// # Errors
+///
+/// Returns [`RunnerError::PepperConflict`] when a row exists and disagrees, and
+/// [`RunnerError::Database`] when a statement is refused.
+pub async fn seed_pepper(
+    connection: &mut PgConnection,
+    row: PepperRow,
+    version: i16,
+    secret_ref: &str,
+) -> Result<PepperSeeded, RunnerError> {
+    // The relation and purpose come from a closed enum in this crate, never
+    // from caller text; `version` and `secret_ref` are bound.
+    let existing: Option<(String, String, Option<String>)> =
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT purpose, secret_ref, state FROM {} WHERE version = $1",
+            row.table()
+        )))
+        .bind(version)
+        .fetch_optional(&mut *connection)
+        .await
+        .map_err(|error| RunnerError::Database(error.to_string()))?;
+
+    if let Some((purpose, stored_ref, state)) = existing {
+        return if purpose == row.purpose()
+            && stored_ref == secret_ref
+            && state.as_deref() == Some("active")
+        {
+            Ok(PepperSeeded::AlreadyExact)
+        } else {
+            Err(RunnerError::PepperConflict(format!(
+                "{} version {version} is `{purpose}`/`{}` and cannot be re-seeded as `{}`/active",
+                row.table(),
+                state.as_deref().unwrap_or("unknown"),
+                row.purpose()
+            )))
+        };
+    }
+
+    // The partial unique index admits one active row per purpose. Naming the
+    // occupant is the difference between "seed this plane" and "rotate", which
+    // is a ceremony this command deliberately cannot perform.
+    let active: Option<i16> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT version FROM {} WHERE purpose = $1 AND state = 'active'",
+        row.table()
+    )))
+    .bind(row.purpose())
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(|error| RunnerError::Database(error.to_string()))?;
+    if let Some(occupant) = active {
+        return Err(RunnerError::PepperConflict(format!(
+            "{} already has version {occupant} active for `{}`; a rotation is not a seed",
+            row.table(),
+            row.purpose()
+        )));
+    }
+
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "INSERT INTO {} (version, purpose, state, secret_ref, created_at) \
+         VALUES ($1, $2, 'active', $3, now())",
+        row.table()
+    )))
+    .bind(version)
+    .bind(row.purpose())
+    .bind(secret_ref)
+    .execute(&mut *connection)
+    .await
+    .map_err(|error| RunnerError::Database(error.to_string()))?;
+    Ok(PepperSeeded::Inserted)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{HISTORY_SCHEMA, HISTORY_TABLE, RunnerError};
+    use super::{HISTORY_SCHEMA, HISTORY_TABLE, PepperRow, RunnerError};
 
     #[test]
     fn history_lives_outside_every_application_search_path() {
@@ -471,5 +625,31 @@ mod tests {
     fn a_failed_precondition_directs_the_operator_to_the_repair_path() {
         let error = RunnerError::PreconditionFailed(20_260_801_000_700);
         assert!(error.to_string().contains("repair --migration"));
+    }
+
+    #[test]
+    fn every_pepper_row_names_a_relation_and_a_purpose_its_check_admits() {
+        // The two tables spell their allowed purposes differently and share
+        // exactly one. A row naming the wrong pair would be refused by the
+        // database at deploy time rather than here.
+        for row in PepperRow::ALL {
+            match row.table() {
+                "identity.credential_pepper" => {
+                    assert!(matches!(row.purpose(), "identity" | "cursor"), "{row:?}");
+                }
+                "control.credential_pepper" => {
+                    assert!(matches!(row.purpose(), "api_key" | "cursor"), "{row:?}");
+                }
+                other => panic!("`{other}` is not a credential-pepper relation"),
+            }
+        }
+        let mut pairs: Vec<(&str, &str)> = PepperRow::ALL
+            .iter()
+            .map(|row| (row.table(), row.purpose()))
+            .collect();
+        let count = pairs.len();
+        pairs.sort_unstable();
+        pairs.dedup();
+        assert_eq!(pairs.len(), count, "two rows describe one pepper");
     }
 }

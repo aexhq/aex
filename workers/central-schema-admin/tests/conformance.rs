@@ -126,3 +126,55 @@ fn the_committed_bundle_holds_no_checksum_exception_mechanism() {
         );
     }
 }
+
+#[test]
+fn a_pepper_seed_with_an_impossible_version_or_no_reference_never_opens_a_session() {
+    // Both are decided from argv, before a credential is resolved, so a
+    // malformed release argument costs no connection and no lock.
+    for arguments in [
+        vec![
+            "seed-pepper",
+            "--pepper",
+            "api-key",
+            "--version",
+            "0",
+            "--secret-ref",
+            "some-version-id",
+        ],
+        vec![
+            "seed-pepper",
+            "--pepper",
+            "api-key",
+            "--version",
+            "2",
+            "--secret-ref",
+            "   ",
+        ],
+    ] {
+        let output = run(&arguments);
+        assert_eq!(
+            output.status.code(),
+            Some(13),
+            "a refused precondition is exit 13: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn a_pepper_seed_can_only_name_one_of_the_four_rows_that_exist() {
+    // `--schema`/`--purpose` would admit `identity`/`api_key`, which no `CHECK`
+    // allows and which would fail at deploy time instead of at parse time.
+    let output = run(&[
+        "seed-pepper",
+        "--pepper",
+        "identity-api-key",
+        "--version",
+        "1",
+        "--secret-ref",
+        "some-version-id",
+    ]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("api-key"), "the four values are named: {stderr}");
+}

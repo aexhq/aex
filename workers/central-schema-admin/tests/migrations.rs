@@ -14,7 +14,8 @@ use central_schema_admin::connect::ADVISORY_LOCK_KEY;
 use central_schema_admin::grants::GrantSet;
 use central_schema_admin::migration::{MigrationBundle, native_migrator};
 use central_schema_admin::runner::{
-    RunnerError, applied_head, apply_grants, check_conservation, diff_grants, expect_applied_head,
+    PepperRow, PepperSeeded, RunnerError, applied_head, apply_grants, check_conservation,
+    diff_grants, expect_applied_head, seed_pepper,
 };
 use sqlx::{Connection as _, Executor as _, PgConnection};
 
@@ -455,4 +456,82 @@ async fn the_conservation_sweep_holds_on_a_freshly_migrated_database() {
     check_conservation(&mut connection)
         .await
         .expect("an empty journal conserves");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn every_pepper_row_seeds_once_and_an_exact_replay_is_a_no_op() {
+    // No migration writes these rows and nothing else in the tree does either,
+    // so a plane whose release skipped this step has a `central-api` that
+    // refuses to start and an `api_key_create` that cannot mint.
+    let fixture = Fixture::start().await;
+    let mut connection = fixture.connect().await;
+    native_migrator()
+        .run(&mut connection)
+        .await
+        .expect("the bundle applies");
+
+    for (version, row) in (1_i16..).zip(PepperRow::ALL) {
+        let reference = format!("secret-version-{version}");
+        assert_eq!(
+            seed_pepper(&mut connection, row, version, &reference)
+                .await
+                .expect("a clean table accepts the row"),
+            PepperSeeded::Inserted,
+            "{row:?}"
+        );
+        assert_eq!(
+            seed_pepper(&mut connection, row, version, &reference)
+                .await
+                .expect("the exact same arguments are a replay"),
+            PepperSeeded::AlreadyExact,
+            "{row:?}"
+        );
+    }
+
+    // Exactly what `ACTIVE_CONTROL_PEPPER` and `ACTIVE_IDENTITY_PEPPER` read.
+    for (table, purpose) in [
+        ("identity.credential_pepper", "identity"),
+        ("identity.credential_pepper", "cursor"),
+        ("control.credential_pepper", "api_key"),
+        ("control.credential_pepper", "cursor"),
+    ] {
+        let found: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT count(*) FROM {table} WHERE purpose = $1 AND state = 'active'"
+        )))
+        .bind(purpose)
+        .fetch_one(&mut connection)
+        .await
+        .expect("the active row reads");
+        assert_eq!(found, 1, "{table} has no active `{purpose}` pepper");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn re_pointing_a_seeded_version_at_other_material_is_refused()  {
+    // Silently accepting it would make every credential fingerprinted under
+    // that version unverifiable while the command reported success.
+    let fixture = Fixture::start().await;
+    let mut connection = fixture.connect().await;
+    native_migrator()
+        .run(&mut connection)
+        .await
+        .expect("the bundle applies");
+    seed_pepper(&mut connection, PepperRow::ApiKey, 2, "secret-version-a")
+        .await
+        .expect("the first seed lands");
+
+    let error = seed_pepper(&mut connection, PepperRow::ApiKey, 2, "secret-version-b")
+        .await
+        .expect_err("a version cannot be re-pointed");
+    assert!(matches!(error, RunnerError::PepperConflict(_)), "{error}");
+
+    // A rotation introduces a second live version and retires the first. That
+    // is a ceremony, and this command is deliberately not it.
+    let error = seed_pepper(&mut connection, PepperRow::ApiKey, 3, "secret-version-c")
+        .await
+        .expect_err("a second active row for one purpose is not a seed");
+    assert!(
+        format!("{error}").contains("rotation"),
+        "the refusal names what it is not: {error}"
+    );
 }
