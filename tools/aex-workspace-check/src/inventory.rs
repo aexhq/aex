@@ -114,6 +114,7 @@ pub const SERVICES: &[&str] = &[
     "regional-otlp",
     "regional-secret-api",
     "session-stream-api",
+    "tool-executor",
 ];
 
 /// Deployable workers that must own live companions.
@@ -186,6 +187,7 @@ pub const LIVE_TARGETS: &[&str] = &[
     "site",
     "stripe-command-edge",
     "stripe-webhook-edge",
+    "tool-executor",
     "usage-compute-worker",
     "usage-receipt-dispatcher",
     "usage-storage-worker",

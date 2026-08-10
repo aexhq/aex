@@ -36,7 +36,11 @@ pub const GRANDFATHERED: &[(&str, &[&str])] = &[
         &[
             "crates/aex-observation-app/src/use_cases.rs",
             "crates/aex-usage-domain/src/fact.rs",
-            "services/regional-secret-api/src/lib.rs",
+            // `services/regional-secret-api/src/lib.rs` was here until
+            // 2026-08-10. `b156e78e` deleted the duplicate `SecretPlaintext` /
+            // `Ciphertext` / `SecretRecord` kernel that binary carried, and this
+            // declaration went with it. A shrink, which is the only edit this
+            // table allows.
             // Moved, not added: `regional-session-api` merged into
             // `session-stream-api` and its admission module became the session
             // half's. The grandfathered list still shrinks, it does not grow.
