@@ -36,7 +36,9 @@
 
 use std::collections::BTreeMap;
 
-use aex_observation_domain::keys::{ControlDomain, control_pk, control_sk, export_pk, export_sk};
+use aex_observation_domain::keys::{
+    ControlDomain, ScopeKey, control_pk, control_sk, export_pk, export_sk,
+};
 use aex_wire::ids::{ExportId, OperationId, PrefixedId as _, SessionId, WorkspaceId};
 use aex_wire::types::Timestamp;
 
@@ -77,6 +79,21 @@ impl ExportScope {
         match self {
             Self::Workspace => None,
             Self::Session(session) => Some(session),
+        }
+    }
+
+    /// The storage scope key this export walks, inside its owning workspace.
+    ///
+    /// Rendered by [`ScopeKey`] itself rather than by a local `format!`. The
+    /// hand-rolled copy this replaces had already drifted from the reader:
+    /// `observation-export-task` parses `scopeKey` with `ScopeKey::parse`, so a
+    /// session export wrote a spelling the task that had to run it could not
+    /// read.
+    #[must_use]
+    pub const fn key(self, workspace: WorkspaceId) -> ScopeKey {
+        match self {
+            Self::Workspace => ScopeKey::Workspace(workspace),
+            Self::Session(session) => ScopeKey::Session { workspace, session },
         }
     }
 }
@@ -211,10 +228,7 @@ pub fn plan(request: &ExportAdmission) -> Result<ExportPlan, ExportPlanError> {
     // which two runs of it produce the same artifact.
     let snapshot = request.now.unix_millis();
 
-    let scope_key = match request.scope {
-        ExportScope::Workspace => format!("W#{}", request.workspace),
-        ExportScope::Session(session) => format!("S#{}#{session}", request.workspace),
-    };
+    let scope_key = request.scope.key(request.workspace).to_key();
 
     let mut text = BTreeMap::from([
         ("itemType".to_owned(), "export".to_owned()),
@@ -283,7 +297,7 @@ pub fn plan(request: &ExportAdmission) -> Result<ExportPlan, ExportPlanError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ExportAdmission, ExportPlanError, ExportScope, derive_export_id, plan};
+    use super::{ExportAdmission, ExportPlanError, ExportScope, ScopeKey, derive_export_id, plan};
     use aex_wire::Uuid7;
     use aex_wire::ids::{OperationId, PrefixedId as _, SessionId, WorkspaceId};
     use aex_wire::types::Timestamp;
@@ -410,12 +424,27 @@ mod tests {
         let row = &planned.export_row;
         assert_eq!(row.pk, super::export_pk(workspace()));
         assert_eq!(row.text["sessionId"], session.to_string());
-        assert!(row.text["scopeKey"].starts_with("S#"));
+        // The task reads this attribute back with `ScopeKey::parse`, so the
+        // exact rendering is the contract — not the `S#` prefix. This is what a
+        // second local `format!` broke: it wrote `S#{workspace}#{session}` while
+        // the parser of the day accepted only `S#{session}`, and a session
+        // export was undecodable by the only process that runs it.
+        assert_eq!(
+            ScopeKey::parse(&row.text["scopeKey"]).expect("the task's own parser reads it"),
+            ScopeKey::Session {
+                workspace: workspace(),
+                session
+            },
+        );
         // Same partition, same row shape, one scope parameter: the two routes
         // are one problem seen twice, not two problems.
         let workspace_scoped = plan(&admission(ExportScope::Workspace)).expect("plans");
         assert_eq!(row.pk, workspace_scoped.export_row.pk);
-        assert!(workspace_scoped.export_row.text["scopeKey"].starts_with("W#"));
+        assert_eq!(
+            ScopeKey::parse(&workspace_scoped.export_row.text["scopeKey"])
+                .expect("the task's own parser reads it"),
+            ScopeKey::Workspace(workspace()),
+        );
         assert!(!workspace_scoped.export_row.text.contains_key("sessionId"));
     }
 

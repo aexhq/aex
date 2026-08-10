@@ -219,11 +219,16 @@ mod tests {
         Timestamp::from_unix_millis(millis).expect("representable")
     }
 
+    fn workspace() -> aex_wire::ids::WorkspaceId {
+        aex_wire::ids::WorkspaceId::parse("wsp_0000000001e40r2081040g2081").expect("fixture parses")
+    }
+
     fn scope() -> ScopeKey {
-        ScopeKey::Session(
-            aex_wire::ids::SessionId::parse("ses_0000000003ec1r60r30c1g60r3")
+        ScopeKey::Session {
+            workspace: workspace(),
+            session: aex_wire::ids::SessionId::parse("ses_0000000003ec1r60r30c1g60r3")
                 .expect("fixture parses"),
-        )
+        }
     }
 
     fn gap_id() -> TelemetryGapId {

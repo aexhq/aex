@@ -10,9 +10,15 @@ use aex_wire::types::Timestamp;
 use proptest::prelude::*;
 
 fn session(suffix: &str) -> ScopeKey {
-    ScopeKey::Session(
-        PrefixedId::parse(&format!("ses_{suffix}")).expect("fixture session id parses"),
-    )
+    session_in(SUFFIX_W, suffix)
+}
+
+fn session_in(workspace_suffix: &str, suffix: &str) -> ScopeKey {
+    ScopeKey::Session {
+        workspace: PrefixedId::parse(&format!("wsp_{workspace_suffix}"))
+            .expect("fixture workspace id parses"),
+        session: PrefixedId::parse(&format!("ses_{suffix}")).expect("fixture session id parses"),
+    }
 }
 
 fn workspace(suffix: &str) -> ScopeKey {
@@ -23,6 +29,8 @@ fn workspace(suffix: &str) -> ScopeKey {
 
 const SUFFIX_A: &str = "0000000001e40r2081040g2081";
 const SUFFIX_B: &str = "0000000002e81840g2081040g2";
+/// The workspace every session fixture below belongs to.
+const SUFFIX_W: &str = "0000000003ec1r60r30c1g60r3";
 
 #[test]
 fn scope_keys_round_trip_through_their_rendering() {
@@ -34,9 +42,95 @@ fn scope_keys_round_trip_through_their_rendering() {
 }
 
 #[test]
-fn a_session_scope_renders_with_the_session_discriminator() {
-    assert_eq!(session(SUFFIX_A).to_key(), format!("S#ses_{SUFFIX_A}"));
+fn a_session_scope_renders_the_workspace_before_the_session() {
+    assert_eq!(
+        session(SUFFIX_A).to_key(),
+        format!("S#wsp_{SUFFIX_W}#ses_{SUFFIX_A}")
+    );
     assert_eq!(workspace(SUFFIX_B).to_key(), format!("W#wsp_{SUFFIX_B}"));
+}
+
+/// The property the OTLP ingest path's authorization now rests on.
+///
+/// `regional-otlp` takes the session from an untrusted `aex-session-id` header
+/// and pairs it with the workspace its credential proved — deliberately without
+/// a session→workspace lookup on the hot path. That is only sound if a session
+/// identifier is powerless to move a row out of the workspace it was paired
+/// with, so the property is asserted here, at the key, where it holds for every
+/// caller rather than for one router.
+#[test]
+fn a_session_id_can_never_address_another_workspaces_partition() {
+    // Two workspaces, and the *same* session identifier named inside each. This
+    // is exactly what a caller supplying another tenant's session id produces.
+    let mine = session_in(SUFFIX_W, SUFFIX_A);
+    let theirs = session_in(SUFFIX_B, SUFFIX_A);
+    assert_ne!(mine, theirs);
+    assert_ne!(mine.to_key(), theirs.to_key());
+    assert_eq!(mine.session(), theirs.session(), "the same session id");
+
+    let bucket = BucketHour::parse("2026-08-01T09").expect("fixture parses");
+    // Every partition family the scope keys, not just the observation rows.
+    let mut families = vec![
+        (keys::frontier_pk(&mine), keys::frontier_pk(&theirs)),
+        (keys::gap_pk(&mine), keys::gap_pk(&theirs)),
+        (
+            keys::segment_pk(&mine, Signal::Logs),
+            keys::segment_pk(&theirs, Signal::Logs),
+        ),
+        (
+            keys::time_segment_pk(&mine, Signal::Logs),
+            keys::time_segment_pk(&theirs, Signal::Logs),
+        ),
+    ];
+    for signal in Signal::AUTHORITY {
+        families.push((
+            keys::observation_pk(&mine, *signal, bucket, 0),
+            keys::observation_pk(&theirs, *signal, bucket, 0),
+        ));
+    }
+    let owner = format!("wsp_{SUFFIX_W}");
+    let stranger = format!("wsp_{SUFFIX_B}");
+    for (ours, theirs) in families {
+        assert_ne!(
+            ours, theirs,
+            "one session id addressed two workspaces' partitions"
+        );
+        assert!(
+            ours.contains(&owner) && !ours.contains(&stranger),
+            "`{ours}` must name its own workspace and no other"
+        );
+    }
+
+    // And the wake classifier reports the owner, so a stream consumer never has
+    // to resolve one.
+    let pk = keys::observation_pk(&mine, Signal::Logs, bucket, 0);
+    let classified = keys::parse_observation_pk(&pk).expect("a built key classifies");
+    assert_eq!(classified.scope, mine);
+    assert_eq!(
+        classified.scope.workspace().to_string(),
+        owner,
+        "the partition key alone proves which tenant owns the row"
+    );
+}
+
+#[test]
+fn a_scope_component_with_a_missing_or_extra_field_is_refused() {
+    for hostile in [
+        // The pre-re-key session rendering, which named no workspace at all.
+        &format!("S#ses_{SUFFIX_A}"),
+        // Workspace and session transposed.
+        &format!("S#ses_{SUFFIX_A}#wsp_{SUFFIX_W}"),
+        // A fourth field smuggled past the two the template declares.
+        &format!("S#wsp_{SUFFIX_W}#ses_{SUFFIX_A}#extra"),
+        &format!("W#wsp_{SUFFIX_W}#ses_{SUFFIX_A}"),
+        &format!("X#wsp_{SUFFIX_W}"),
+        &String::from("S"),
+    ] {
+        assert!(
+            matches!(ScopeKey::parse(hostile), Err(KeyError::Malformed { .. })),
+            "`{hostile}` must not parse as a scope"
+        );
+    }
 }
 
 #[test]
@@ -125,15 +219,15 @@ fn every_key_template_round_trips_its_components() {
     }
     assert_eq!(
         keys::segment_pk(&scope, Signal::Logs),
-        "SEG#S#ses_0000000001e40r2081040g2081#logs"
+        format!("SEG#S#wsp_{SUFFIX_W}#ses_{SUFFIX_A}#logs")
     );
     assert_eq!(
         keys::time_segment_pk(&scope, Signal::Logs),
-        "SEGT#S#ses_0000000001e40r2081040g2081#logs"
+        format!("SEGT#S#wsp_{SUFFIX_W}#ses_{SUFFIX_A}#logs")
     );
     assert_eq!(
         keys::frontier_pk(&scope),
-        "FRONT#S#ses_0000000001e40r2081040g2081"
+        format!("FRONT#S#wsp_{SUFFIX_W}#ses_{SUFFIX_A}")
     );
     assert_eq!(keys::frontier_sk(Signal::Metrics), "SIG#metrics");
     assert_eq!(keys::DELETION_SK, "DELETION");
@@ -152,14 +246,17 @@ fn parse_observation_pk_rejects_every_other_item_family() {
         "SERIES#wsp_0000000001e40r2081040g2081#00ff".to_owned(),
         "SERIESCT#wsp_0000000001e40r2081040g2081".to_owned(),
         "QUOTA#wsp_0000000001e40r2081040g2081".to_owned(),
-        "GAP#S#ses_0000000001e40r2081040g2081".to_owned(),
+        keys::gap_pk(&scope),
         "SPOOL#wsp_0000000001e40r2081040g2081#01".to_owned(),
         "EXPORT#wsp_0000000001e40r2081040g2081#exp_0000000001e40r2081040g2081".to_owned(),
         "GATE#eu-west-1".to_owned(),
         "CTRL#spool.repair#00".to_owned(),
         "IDEM#wsp_0000000001e40r2081040g2081#otlp.logs#ff".to_owned(),
         "OBS#".to_owned(),
-        "OBSX#S#ses_0000000001e40r2081040g2081#logs#2026-08-01T09#00".to_owned(),
+        format!("OBSX#S#wsp_{SUFFIX_W}#ses_{SUFFIX_A}#logs#2026-08-01T09#00"),
+        // A session key that names no workspace: the pre-re-key rendering can
+        // never be resurrected by a stream record or a stored row.
+        format!("OBS#S#ses_{SUFFIX_A}#logs#2026-08-01T09#00"),
         String::new(),
     ];
     for pk in foreign {
@@ -178,8 +275,8 @@ fn parse_observation_pk_rejects_every_other_item_family() {
 fn parse_observation_pk_rejects_the_events_signal() {
     // `events` live in `session-authority`; an `OBS#…#events#…` key can never be
     // written here, so classifying one would hide a corrupt item.
-    let pk = "OBS#S#ses_0000000001e40r2081040g2081#events#2026-08-01T09#00";
-    assert!(keys::parse_observation_pk(pk).is_none());
+    let pk = format!("OBS#S#wsp_{SUFFIX_W}#ses_{SUFFIX_A}#events#2026-08-01T09#00");
+    assert!(keys::parse_observation_pk(&pk).is_none());
 }
 
 #[test]

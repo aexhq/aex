@@ -409,16 +409,27 @@ impl AdmissionAuthority {
     ///
     /// # Errors
     ///
-    /// Returns the typed failure of the first step that refused: the gate, the
-    /// deletion fence, an intent conflict, clock skew beyond the bound the
-    /// settle window dominates, exhausted materialization, or a provider
-    /// failure.
+    /// Returns the typed failure of the first step that refused: a scope that
+    /// contradicts the owning workspace, the gate, the deletion fence, an intent
+    /// conflict, clock skew beyond the bound the settle window dominates,
+    /// exhausted materialization, or a provider failure.
     pub async fn admit(
         &self,
         request: &AdmissionRequest,
         now: Timestamp,
         gate: GateState,
     ) -> Result<AdmissionReceipt, AuthorityError> {
+        // Every row written below stamps `workspaceId` from `request.workspace`
+        // and its partition key from `request.scope`. Both are the tenancy
+        // evidence readers compare, so a batch whose two halves disagree is
+        // refused here rather than committed as a row that is addressable under
+        // one workspace and attributed to another.
+        if request.scope.workspace() != request.workspace {
+            return Err(AuthorityError::Malformed {
+                item: "admission_request",
+                attribute: "scopeKey",
+            });
+        }
         if gate.refuses_customer_admission() {
             return Err(AuthorityError::GateClosed { state: "closed" });
         }
@@ -2209,6 +2220,52 @@ mod tests {
             ),
             replay,
         )
+    }
+
+    #[tokio::test]
+    async fn an_admission_whose_scope_names_another_workspace_is_refused_before_any_read() {
+        // Every observation row this authority writes stamps `workspaceId` from
+        // one field of the request and its partition key from another. Readers
+        // compare the two, so a request whose halves disagree can never become
+        // durable: it is refused ahead of the first provider call rather than
+        // after a committed write.
+        let (authority, replay) = replay_authority(Vec::new());
+        let workspace = WorkspaceId::from_uuid7(Uuid7::compose(2, [2; 10]));
+        let stranger = WorkspaceId::from_uuid7(Uuid7::compose(2, [9; 10]));
+        let request = AdmissionRequest {
+            batch_id: TelemetryBatchId::from_uuid7(Uuid7::compose(3, [3; 10])),
+            organization: OrganizationId::from_uuid7(Uuid7::compose(1, [1; 10])),
+            workspace,
+            scope: ScopeKey::Session {
+                workspace: stranger,
+                session: aex_wire::ids::SessionId::from_uuid7(Uuid7::compose(1, [4; 10])),
+            },
+            intent_digest: "0".repeat(64),
+            observations: vec![observation(Signal::Logs, 1, 1)],
+        };
+        let error = authority
+            .admit(
+                &request,
+                Timestamp::from_unix_millis(30).expect("fixture instant"),
+                aex_observation_store_dynamodb::spool::GateState::Open,
+            )
+            .await
+            .expect_err("a scope that contradicts the owning workspace is refused");
+        assert!(
+            matches!(
+                error,
+                AuthorityError::Malformed {
+                    attribute: "scopeKey",
+                    ..
+                }
+            ),
+            "unexpected refusal: {error}"
+        );
+        assert_eq!(
+            replay.actual_requests().count(),
+            0,
+            "the refusal precedes every provider call"
+        );
     }
 
     #[tokio::test]

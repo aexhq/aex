@@ -500,7 +500,7 @@ impl ObservationReader {
         scope: &ScopeKey,
         workspace: WorkspaceId,
     ) -> Result<(u64, ScopeDeletionState), ReadError> {
-        if let ScopeKey::Session(session) = scope {
+        if let ScopeKey::Session { session, .. } = scope {
             let (pk, sk) = aex_session_dynamodb::stream_keys::head(*session);
             let item = self.get_session(&pk, sk).await?;
             return crate::frontier::decode_session_fence(item.as_ref(), workspace);
@@ -1205,7 +1205,7 @@ impl ObservationReader {
         start: Option<HashMap<String, AttributeValue>>,
     ) -> Result<SegmentBatch, ReadError> {
         let (index, partition_attribute, sort_attribute, partition) = match scope {
-            ScopeKey::Session(session) => (
+            ScopeKey::Session { session, .. } => (
                 aex_session_dynamodb::stream_keys::SESSION_EVENT_INDEX,
                 aex_session_dynamodb::stream_keys::SESSION_EVENT_PK,
                 aex_session_dynamodb::stream_keys::SESSION_EVENT_SK,
@@ -1333,7 +1333,10 @@ impl ObservationReader {
             .ok_or(ReadError::Malformed {
                 attribute: "sessionId",
             })?;
-        if let ScopeKey::Session(asserted_session) = scope
+        if let ScopeKey::Session {
+            session: asserted_session,
+            ..
+        } = scope
             && session != *asserted_session
         {
             return Err(ReadError::Malformed {
@@ -1540,7 +1543,7 @@ impl ObservationReader {
         snapshot: Snapshot,
     ) -> Result<Vec<GapRecord>, ReadError> {
         let (index, partition_attribute, partition_value) = match scope {
-            ScopeKey::Session(_) => (None, PK, keys::gap_pk(scope)),
+            ScopeKey::Session { .. } => (None, PK, keys::gap_pk(scope)),
             ScopeKey::Workspace(_) => (
                 Some(Index::Gap),
                 Index::Gap.partition_key(),
@@ -1593,7 +1596,7 @@ impl ObservationReader {
                 attribute: "telemetry_gap",
             })?;
             let belongs = match scope {
-                ScopeKey::Session(_) => record.scope == *scope,
+                ScopeKey::Session { .. } => record.scope == *scope,
                 ScopeKey::Workspace(_) => record.workspace == workspace,
             };
             if !belongs || record.revision.revised_at > snapshot.accepted_at() {
@@ -1925,7 +1928,9 @@ fn item_resume_key(
             .ok_or(ReadError::Malformed {
                 attribute: "sessionId",
             })?;
-        if let ScopeKey::Session(asserted) = asserted_scope
+        if let ScopeKey::Session {
+            session: asserted, ..
+        } = asserted_scope
             && session != *asserted
         {
             return Err(ReadError::Malformed {
@@ -1936,7 +1941,14 @@ fn item_resume_key(
             attribute: "occurredAt",
         })?;
         return Ok(ResumeKey {
-            scope: ScopeKey::Session(session).to_key(),
+            // The workspace comes from the scope the edge authorized, never
+            // from the row: a resume key naming another tenant's partition
+            // cannot be minted here even if a stored `sessionId` were wrong.
+            scope: ScopeKey::Session {
+                workspace: asserted_scope.workspace(),
+                session,
+            }
+            .to_key(),
             primary_ms: occurred.unix_millis(),
             accepted_ms: occurred.unix_millis(),
             observation_id: string(item, "eventId").ok_or(ReadError::Malformed {
@@ -1989,6 +2001,13 @@ fn resume_key_map(
 ) -> Result<HashMap<String, AttributeValue>, ReadError> {
     key.validate().map_err(|_| ReadError::InvalidResume)?;
     let row_scope = ScopeKey::parse(&key.scope).map_err(|_| ReadError::InvalidResume)?;
+    // A resume key is replayed straight back into a partition key below, so the
+    // tenant it names is checked against the one the edge authorized. The scope
+    // carries its workspace in both variants, which is what makes this
+    // checkable at all: a session-only rendering proved nothing about ownership.
+    if row_scope.workspace() != workspace {
+        return Err(ReadError::InvalidResume);
+    }
     let primary =
         Timestamp::from_unix_millis(key.primary_ms).map_err(|_| ReadError::InvalidResume)?;
     let accepted =
@@ -2005,49 +2024,7 @@ fn resume_key_map(
     ));
 
     if descriptor.access == Access::SessionAuthority {
-        let session = row_scope.session().ok_or(ReadError::InvalidResume)?;
-        if let ScopeKey::Session(asserted) = scope
-            && session != *asserted
-        {
-            return Err(ReadError::InvalidResume);
-        }
-        let event_seq = key.event_seq.ok_or(ReadError::InvalidResume)?;
-        let (resume_partition_attribute, resume_sort_attribute, partition) = match scope {
-            ScopeKey::Session(asserted) => (
-                aex_session_dynamodb::stream_keys::SESSION_EVENT_PK,
-                aex_session_dynamodb::stream_keys::SESSION_EVENT_SK,
-                aex_session_dynamodb::stream_keys::session_event_partition_hour(
-                    *asserted,
-                    descriptor.bucket.as_str(),
-                ),
-            ),
-            ScopeKey::Workspace(_) => (
-                aex_session_dynamodb::stream_keys::WORKSPACE_EVENT_PK,
-                aex_session_dynamodb::stream_keys::WORKSPACE_EVENT_SK,
-                aex_session_dynamodb::stream_keys::workspace_event_partition_hour(
-                    workspace,
-                    descriptor.bucket.as_str(),
-                ),
-            ),
-        };
-        return Ok(HashMap::from([
-            (
-                PK.to_owned(),
-                AttributeValue::S(format!("SESSION#{session}")),
-            ),
-            (
-                SK.to_owned(),
-                AttributeValue::S(format!("EVT#{}", keys::pad_seq(u128::from(event_seq)))),
-            ),
-            (
-                resume_partition_attribute.to_owned(),
-                AttributeValue::S(partition),
-            ),
-            (
-                resume_sort_attribute.to_owned(),
-                AttributeValue::S(primary_sk),
-            ),
-        ]));
+        return session_resume_key_map(scope, workspace, descriptor, key, &row_scope, primary_sk);
     }
 
     if key.event_seq.is_some() || !descriptor.signal.in_observation_authority() {
@@ -2087,6 +2064,67 @@ fn resume_key_map(
         return Err(ReadError::InvalidResume);
     }
     Ok(result)
+}
+
+/// The resume key of one native session-event segment.
+///
+/// Split out of [`resume_key_map`] so each half stays readable; the tenancy
+/// check that guards both lives in the caller, before either branch runs.
+fn session_resume_key_map(
+    scope: &ScopeKey,
+    workspace: WorkspaceId,
+    descriptor: SegmentDescriptor,
+    key: &ResumeKey,
+    row_scope: &ScopeKey,
+    primary_sk: String,
+) -> Result<HashMap<String, AttributeValue>, ReadError> {
+    let session = row_scope.session().ok_or(ReadError::InvalidResume)?;
+    if let ScopeKey::Session {
+        session: asserted, ..
+    } = scope
+        && session != *asserted
+    {
+        return Err(ReadError::InvalidResume);
+    }
+    let event_seq = key.event_seq.ok_or(ReadError::InvalidResume)?;
+    let (resume_partition_attribute, resume_sort_attribute, partition) = match scope {
+        ScopeKey::Session {
+            session: asserted, ..
+        } => (
+            aex_session_dynamodb::stream_keys::SESSION_EVENT_PK,
+            aex_session_dynamodb::stream_keys::SESSION_EVENT_SK,
+            aex_session_dynamodb::stream_keys::session_event_partition_hour(
+                *asserted,
+                descriptor.bucket.as_str(),
+            ),
+        ),
+        ScopeKey::Workspace(_) => (
+            aex_session_dynamodb::stream_keys::WORKSPACE_EVENT_PK,
+            aex_session_dynamodb::stream_keys::WORKSPACE_EVENT_SK,
+            aex_session_dynamodb::stream_keys::workspace_event_partition_hour(
+                workspace,
+                descriptor.bucket.as_str(),
+            ),
+        ),
+    };
+    Ok(HashMap::from([
+        (
+            PK.to_owned(),
+            AttributeValue::S(format!("SESSION#{session}")),
+        ),
+        (
+            SK.to_owned(),
+            AttributeValue::S(format!("EVT#{}", keys::pad_seq(u128::from(event_seq)))),
+        ),
+        (
+            resume_partition_attribute.to_owned(),
+            AttributeValue::S(partition),
+        ),
+        (
+            resume_sort_attribute.to_owned(),
+            AttributeValue::S(primary_sk),
+        ),
+    ]))
 }
 
 /// Whether one tuple is inside the query's range and after the cursor.
@@ -2318,6 +2356,14 @@ mod tests {
 
     fn session() -> SessionId {
         SessionId::from_uuid7(aex_wire::Uuid7::compose(1, [4; 10]))
+    }
+
+    /// The session scope inside the workspace every fixture is authorized for.
+    fn session_scope() -> ScopeKey {
+        ScopeKey::Session {
+            workspace: workspace(),
+            session: session(),
+        }
     }
 
     fn normalized_query() -> NormalizedQuery {
@@ -2756,7 +2802,7 @@ mod tests {
         owner: WorkspaceId,
         preserve_snapshot_tail: bool,
     ) -> Result<super::Page, ReadError> {
-        let scope = ScopeKey::Session(session());
+        let scope = session_scope();
         let accepted = Timestamp::parse("2026-08-01T09:01:00.000Z").expect("accepted");
         let id = ObservationId::from_uuid7(aex_wire::Uuid7::compose(
             u64::try_from(accepted.unix_millis()).expect("positive fixture"),
@@ -2995,7 +3041,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_session_frontier_bundle_uses_exactly_one_multi_table_provider_request() {
-        let scope = ScopeKey::Session(session());
+        let scope = session_scope();
         let mut query = normalized_query();
         query.signals = SignalSet::from_signal(Signal::Logs).with(Signal::Spans);
         let (partition, sort) = aex_session_dynamodb::stream_keys::head(session());
@@ -3312,7 +3358,7 @@ mod tests {
         query.signals = SignalSet::from_signal(Signal::Logs);
         let response = format!(
             r#"{{"Responses":{{"observation-authority":[{{"pk":{{"S":"{}"}},"sk":{{"S":"{}"}},"acceptedAt":{{"S":"2026-08-01T09:05:00.000Z"}}}}]}},"UnprocessedKeys":{{}}}}"#,
-            keys::frontier_pk(&ScopeKey::Session(session())),
+            keys::frontier_pk(&session_scope()),
             keys::frontier_sk(Signal::Logs),
         );
         let (reader, _replay) = replaying_reader(&response);
@@ -3518,7 +3564,7 @@ mod tests {
 
     #[test]
     fn a_consumed_index_row_reconstructs_the_exact_provider_resume_key() {
-        let scope = ScopeKey::Session(session());
+        let scope = session_scope();
         let signal = Signal::Logs;
         let time = Timestamp::parse("2025-08-01T09:02:03.004Z").expect("time");
         let accepted = Timestamp::parse("2025-08-01T09:02:04.005Z").expect("accepted");
@@ -3590,7 +3636,7 @@ mod tests {
 
     #[test]
     fn telemetry_segments_are_grouped_bucket_first_before_any_later_bucket() {
-        let scope = ScopeKey::Session(session());
+        let scope = session_scope();
         let mut query = normalized_query();
         query.axis = ScopeAxis::Scope;
         query.signals = SignalSet::all();
@@ -3751,7 +3797,7 @@ mod tests {
 
     #[test]
     fn mixed_trace_and_event_pagination_is_bucket_major_in_both_directions() {
-        let scope = ScopeKey::Session(session());
+        let scope = session_scope();
         for (direction, expected) in [
             (
                 Direction::Ascending,
@@ -3919,7 +3965,7 @@ mod tests {
         ]);
         let (_, observation, _) = ObservationReader::decode_event(
             &item,
-            &ScopeKey::Session(session()),
+            &session_scope(),
             workspace(),
             OrderBy::Accepted,
         )

@@ -17,7 +17,6 @@ use aex_otlp_admission::{
     decode, normalize, reservation_for,
 };
 use aex_wire::error::{ErrorCode, WireError, WireResult};
-use aex_wire::idempotency::PrincipalScope;
 use aex_wire::ids::{PrefixedId as _, SessionId, TelemetryBatchId, Uuid7};
 use aex_wire::models::TelemetryAdmissionReceipt;
 use aex_wire::routes::route;
@@ -87,6 +86,7 @@ pub struct OtlpRequest {
     authorized: EdgeContext,
     encoding: OtlpEncoding,
     coding: ContentCoding,
+    session: Option<SessionId>,
 }
 
 impl std::fmt::Debug for OtlpRequest {
@@ -102,70 +102,49 @@ impl std::fmt::Debug for OtlpRequest {
 impl OtlpRequest {
     /// Binds one request to the shared service.
     ///
-    /// There is deliberately no session parameter. Everything this request may
-    /// be attributed to arrives inside `authorized`, which the edge produced by
-    /// verifying a credential; a caller-supplied value can therefore not reach
-    /// the attribution at all rather than being checked and hopefully rejected.
+    /// `session` is the caller's own claim, already parsed as a [`SessionId`] by
+    /// [`crate::mount::session_id`] — the edge proves nothing about it and no
+    /// lookup here checks it. What makes that safe is [`Self::scope`]: the
+    /// session is only ever paired with the workspace the credential proved, and
+    /// the rendered key leads with that workspace.
     #[must_use]
     pub fn new(
         service: Arc<OtlpService>,
         authorized: EdgeContext,
         encoding: OtlpEncoding,
         coding: ContentCoding,
+        session: Option<SessionId>,
     ) -> Self {
         Self {
             service,
             authorized,
             encoding,
             coding,
-        }
-    }
-
-    /// The session the **verified credential** names, when it names one.
-    ///
-    /// This is the only session source in this deployable, and it is a pure
-    /// function of the edge's own output. Ingest is a hot path the owner has
-    /// ruled out putting a lookup on, so a session that no credential proves is
-    /// not a session this service can attribute to.
-    ///
-    /// The match is exhaustive **and fully destructured on purpose**: there is
-    /// no `_` arm and no `..` rest pattern anywhere in it. A new
-    /// [`PrincipalScope`] variant — or a new field on an existing one — that
-    /// carries a session therefore fails this build, right here, at the one
-    /// place that decides what a batch is attributed to. Whoever introduces a
-    /// session-bearing principal cannot land it without answering this
-    /// question, and the moment they answer it with `Some`, session attribution
-    /// starts working through [`Self::scope`] with no other edit anywhere.
-    fn credential_session(&self) -> Option<SessionId> {
-        match self.authorized.auth.principal {
-            // No regional principal names a session today. A person acting
-            // through an account token and a workspace API key are both scoped
-            // to a workspace and nothing narrower, so the honest answer for
-            // both is "no session" rather than a value taken from the request.
-            PrincipalScope::Account {
-                user: _,
-                organization: _,
-            }
-            | PrincipalScope::WorkspaceKey {
-                key: _,
-                workspace: _,
-                organization: _,
-            } => None,
+            session,
         }
     }
 
     /// The scope this request's observations belong to.
     ///
-    /// A session-scoped row's partition key (`OBS#S#{session}`) carries no
-    /// workspace component, so this value is the whole tenancy decision for
-    /// every row the batch writes. It is derived from the credential and from
-    /// nothing else.
+    /// Two halves, and only one of them is the caller's. The workspace is the
+    /// one the edge verified a credential for; the session is whatever the
+    /// caller wrote in `aex-session-id`. They are combined, never substituted:
+    /// a session-scoped row renders `S#{workspace}#{session}`, so the partition
+    /// a caller can reach is bounded by the workspace it proved regardless of
+    /// which session identifier it supplies. The worst a wrong id can do is file
+    /// a batch against the caller's own wrong session — a customer's own
+    /// problem, and reversible by them.
+    ///
+    /// This is why ingest needs no session→workspace lookup. Verifying a
+    /// supplied identifier would put a read on the highest-volume path in the
+    /// platform to establish a fact the key already encodes.
     #[must_use]
     pub fn scope(&self) -> ScopeKey {
-        self.credential_session().map_or(
-            ScopeKey::Workspace(self.authorized.auth.workspace_id),
-            ScopeKey::Session,
-        )
+        let workspace = self.authorized.auth.workspace_id;
+        self.session
+            .map_or(ScopeKey::Workspace(workspace), |session| {
+                ScopeKey::Session { workspace, session }
+            })
     }
 
     /// Admits one batch of one signal.
@@ -608,11 +587,13 @@ mod tests {
 
     /// One request whose providers would fail loudly if they were used.
     ///
-    /// The replay client is handed **no** events, so any provider call at all
-    /// is an error rather than a silently satisfied read. The scope derivation
+    /// The replay client is handed **no** events, so any provider call at all is
+    /// an error rather than a silently satisfied read. The scope derivation
     /// these cases assert is therefore proven to be a pure function of the
-    /// verified credential, with no read behind it.
-    fn request_with_unusable_provider() -> OtlpRequest {
+    /// verified credential and the supplied header, with **no read behind it** —
+    /// which is the whole point: the ingest path may not spend a
+    /// session→workspace lookup to decide where a batch is filed.
+    fn request_with_unusable_provider(session: Option<SessionId>) -> OtlpRequest {
         use aws_smithy_http_client::test_util::StaticReplayClient;
         let replay = StaticReplayClient::new(Vec::new());
         let dynamodb = aws_sdk_dynamodb::Client::from_conf(
@@ -661,44 +642,63 @@ mod tests {
             authorized(),
             OtlpEncoding::Protobuf,
             ContentCoding::Identity,
+            session,
         )
     }
 
     #[test]
-    fn a_batch_is_attributed_to_the_authenticated_workspace_and_to_nothing_a_caller_can_send() {
-        // `OtlpRequest` has no session input of any kind, so the only fixture a
-        // caller-controlled attribution could be built from does not exist.
-        // What remains is the derivation, and it must read the credential.
-        let request = request_with_unusable_provider();
+    fn a_batch_with_no_supplied_session_is_workspace_scoped() {
+        let request = request_with_unusable_provider(None);
         assert_eq!(
             request.scope(),
             ScopeKey::Workspace(workspace()),
-            "the batch is bound to the workspace the edge verified"
+            "an absent `aex-session-id` means workspace scope"
         );
-        assert_eq!(
-            request.scope().session(),
-            None,
-            "no regional principal names a session, so no batch may claim one"
-        );
-        assert_ne!(
-            request.scope(),
-            ScopeKey::Session(session()),
-            "a session scope is unreachable while no credential proves a session"
-        );
+        assert_eq!(request.scope().session(), None);
+        assert_eq!(request.scope().to_key(), format!("W#{}", workspace()));
     }
 
     #[test]
-    fn the_stored_partition_key_of_an_admitted_batch_carries_the_workspace() {
-        // A session-scoped row's key is `OBS#S#{session}` and holds no
-        // workspace, which is exactly why the scope may not come from the
-        // request. With the credential as the only source, every row this
-        // deployable writes today is addressable only through its tenant.
-        let request = request_with_unusable_provider();
+    fn a_supplied_session_is_attributed_inside_the_credentials_workspace_and_nowhere_else() {
+        // The session here is entirely the caller's word — nothing verified it
+        // and nothing looked it up. What bounds it is the other half of the key.
+        let request = request_with_unusable_provider(Some(session()));
+        assert_eq!(
+            request.scope(),
+            ScopeKey::Session {
+                workspace: workspace(),
+                session: session(),
+            },
+            "the supplied session is combined with the proven workspace"
+        );
+        assert_eq!(request.scope().session(), Some(session()));
+        assert_eq!(
+            request.scope().workspace(),
+            workspace(),
+            "the tenant of the written partition is the one the edge verified"
+        );
+
         let key = request.scope().to_key();
-        assert_eq!(key, format!("W#{}", workspace()));
+        assert_eq!(key, format!("S#{}#{}", workspace(), session()));
         assert!(
-            !key.starts_with("S#"),
-            "a workspace-key batch may never land in a session partition"
+            key.starts_with(&format!("S#{}#", workspace())),
+            "every partition this batch writes is prefixed by its own workspace"
+        );
+
+        // The same identifier presented against another credential lands in a
+        // different partition, so no session id is a route into another tenant.
+        let stranger = ScopeKey::Session {
+            workspace: WorkspaceId::from_uuid7(aex_wire::Uuid7::compose(1, [9; 10])),
+            session: session(),
+        };
+        assert_ne!(request.scope().to_key(), stranger.to_key());
+        let bucket = aex_observation_domain::keys::BucketHour::parse("2026-08-01T09")
+            .expect("a fixture bucket");
+        let signal = aex_observation_domain::signal::Signal::Logs;
+        assert_ne!(
+            aex_observation_domain::keys::observation_pk(&request.scope(), signal, bucket, 0),
+            aex_observation_domain::keys::observation_pk(&stranger, signal, bucket, 0),
+            "one session id must not reach two workspaces' observation partitions"
         );
     }
 

@@ -541,6 +541,7 @@ mod tests {
     };
     use crate::coverage::Snapshot;
     use crate::plan::Access;
+    use aex_observation_domain::keys::ScopeKey;
     use aex_observation_domain::order::{Direction, OrderBy, OrderTuple};
     use aex_observation_domain::signal::{Signal, SignalSet};
     use aex_wire::ids::PrefixedId as _;
@@ -705,10 +706,19 @@ mod tests {
                 signal: Signal::Logs,
                 shard: 2,
                 state: SegmentState::After(ResumeKey {
-                    scope: binding().session.map_or_else(
-                        || format!("W#{}", binding().workspace),
-                        |session| format!("S#{session}"),
-                    ),
+                    // Rendered by `ScopeKey` itself. A resume key that spelled
+                    // its own scope would drift from the parser that reads it
+                    // back, and a cursor is exactly where that goes unnoticed.
+                    scope: binding()
+                        .session
+                        .map_or_else(
+                            || ScopeKey::Workspace(binding().workspace),
+                            |session| ScopeKey::Session {
+                                workspace: binding().workspace,
+                                session,
+                            },
+                        )
+                        .to_key(),
                     primary_ms: 10,
                     accepted_ms: 20,
                     observation_id: last.observation_id.to_string(),
