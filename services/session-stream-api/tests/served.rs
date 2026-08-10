@@ -2440,8 +2440,33 @@ fn usage_router(usage: Arc<FakeUsage>) -> axum::Router {
         custody: Arc::new(FakeCustody::default()) as Arc<dyn SecretCustodyStore>,
         custody_table: CUSTODY_TABLE.to_owned(),
         registry: Arc::new(FakeRegistry::default()) as Arc<dyn RegistryStore>,
+        content: Arc::new(aex_content_dynamodb::store::ContentStore::new(
+            offline_dynamodb(),
+            "aex-dev-regional-content",
+        )),
+        content_objects: Arc::new(aex_content_aws::object_store::S3ContentObjects::new(
+            offline_s3(),
+            aex_content_aws::object_store::BucketBinding {
+                bucket: "aex-dev-eu-west-1-content".to_owned(),
+                expected_owner: "000000000000".to_owned(),
+                kms_key_id: "arn:aws:kms:eu-west-1:000000000000:key/content".to_owned(),
+            },
+        )),
+        receipts: Arc::new(aex_registry_dynamodb::store::RegistryDynamoStore::new(
+            offline_dynamodb(),
+            "aex-dev-regional-registry",
+        )),
+        registry_table: "aex-dev-regional-registry".to_owned(),
+        work_table: "aex-dev-regional-work".to_owned(),
+        content_kms_key_id: "arn:aws:kms:eu-west-1:000000000000:key/content".to_owned(),
         sessions: Arc::new(FakeSessions::default()) as Arc<dyn SessionQueries>,
         operations: Arc::new(FakeOperations::default()) as Arc<dyn OperationApiStore>,
+        commands: aex_session_dynamodb::app_authority::SessionCommandReads::new(
+            offline_dynamodb(),
+            SESSION_TABLE,
+        ),
+        tables: aex_session_dynamodb::plan::RegionalTables::composed("dev", "eu-west-1"),
+        authority: offline_dynamodb(),
         usage: usage as Arc<dyn UsageProjectionReads>,
         cursor_keys: Arc::new(cursor_keys()),
     });
