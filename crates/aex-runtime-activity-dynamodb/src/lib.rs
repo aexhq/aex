@@ -22,10 +22,12 @@
 //! - the compute provider (`aex-hands-control-aws`)
 //! - queue delivery (`aex-runtime-control-aws`)
 
+pub mod app_continuity;
 pub mod codec;
 pub mod expressions;
 pub mod keys;
 pub mod store;
 
+pub use app_continuity::RuntimeContinuity;
 pub use codec::{CurrentGeneration, GenerationRow, IdleProbe, LifecycleIntent, LifecycleReceipt};
 pub use store::{DueGeneration, RuntimeActivityDynamoStore};

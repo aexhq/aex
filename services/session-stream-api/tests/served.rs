@@ -879,6 +879,8 @@ fn build_with_operations(
 /// The physical `session-authority` name the mount fixture binds.
 const SESSION_TABLE: &str = "dev-eu-west-1-session-authority";
 
+const RUNTIME_ACTIVITY_TABLE: &str = "dev-eu-west-1-runtime-activity";
+
 /// A `DynamoDB` client whose transport refuses every request.
 ///
 /// The mount assertions here exercise routing and the absence sweep, never a
@@ -936,7 +938,13 @@ fn build_with_authorities(
 ) -> ((axum::Router, Vec<RouteId>), Arc<FakeCustody>) {
     let shared = Arc::new(Shared {
         custody: Arc::clone(&custody) as Arc<dyn SecretCustodyStore>,
+        custody_reads: aex_secret_custody_dynamodb::store::CustodyStore::new(
+            offline_dynamodb(),
+            CUSTODY_TABLE,
+        ),
         custody_table: CUSTODY_TABLE.to_owned(),
+        plane: aex_secret_domain::context::Plane::Dev,
+        region: aex_wire::types::Region::EuWest1,
         registry: registry as Arc<dyn RegistryStore>,
         content: Arc::new(aex_content_dynamodb::store::ContentStore::new(
             offline_dynamodb(),
@@ -967,6 +975,10 @@ fn build_with_authorities(
         authority: offline_dynamodb(),
         usage: Arc::new(FakeUsage::default()) as Arc<dyn UsageProjectionReads>,
         cursor_keys: Arc::new(cursor_keys()),
+        runtime_activity: aex_runtime_activity_dynamodb::store::RuntimeActivityDynamoStore::new(
+            offline_dynamodb(),
+            RUNTIME_ACTIVITY_TABLE,
+        ),
     });
     let mounted = mount_unary(
         Arc::new(Dispatcher::new(shared)),

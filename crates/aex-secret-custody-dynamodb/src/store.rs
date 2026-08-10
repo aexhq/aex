@@ -254,6 +254,51 @@ impl CustodyStore {
         }
     }
 
+    /// Lists every binding of one exact custody revision, in name order.
+    ///
+    /// The head carries the revision and nothing else; the entries live one row
+    /// per name under `BIND#{revision}#`. Without this, a `SessionCustody`
+    /// could not be reconstructed at all unless the caller already knew every
+    /// name it contained — which is the one thing reading custody is for.
+    ///
+    /// Complete or a typed refusal, like every other listing here: a silently
+    /// short binding set would read as "these are all your credentials" to a
+    /// rebind, and the rebind would then drop the ones it could not see.
+    ///
+    /// # Errors
+    ///
+    /// As [`SecretCustodyStore::load_secret`], plus a typed refusal when the
+    /// bindings do not fit `budget`.
+    pub async fn list_custody_bindings(
+        &self,
+        workspace: WorkspaceId,
+        session: SessionId,
+        revision: CustodyRevision,
+        budget: PageBudget,
+    ) -> Result<Vec<CustodyBinding>, StoreError> {
+        let items = self
+            .query_prefix(
+                &keys::custody_partition(session),
+                &keys::binding_prefix(revision),
+                budget,
+            )
+            .await?;
+        let mut bindings = Vec::with_capacity(items.len());
+        for item in &items {
+            bindings.push(codec::decode_binding(item, workspace)?);
+        }
+        // The query returns sort-key order, which is name order inside one
+        // revision. Sorting again would hide a key-shape change rather than
+        // surface it, so the order is asserted instead.
+        debug_assert!(
+            bindings
+                .windows(2)
+                .all(|pair| pair[0].entry.name.as_str() <= pair[1].entry.name.as_str()),
+            "binding sort keys are `BIND#{{revision}}#{{name}}`, so a query returns name order"
+        );
+        Ok(bindings)
+    }
+
     /// Atomically revalidates the mutable secret and custody fences and writes
     /// one immutable managed-call authorization before any decrypt occurs.
     ///

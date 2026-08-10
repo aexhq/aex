@@ -19,11 +19,13 @@
 //! - branch keys (`aex-secret-keystore-dynamodb`)
 //! - custody policy (`aex-secret-domain`)
 
+pub mod app_custody;
 pub mod codec;
 pub mod expressions;
 pub mod keys;
 pub mod store;
 
+pub use app_custody::SessionCustodyReads;
 pub use codec::{
     CallAuthorization, CredentialState, CustodyBinding, CustodyHead, ProviderCredential,
     SecretMetadata, StoredGeneration,

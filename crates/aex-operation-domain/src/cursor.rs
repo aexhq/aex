@@ -11,7 +11,7 @@
 //! must not be able to move a persisted value.
 
 use aex_content_domain::NormalizedPath;
-use aex_wire::ids::{AgentId, PrefixedId as _, Uuid7};
+use aex_wire::ids::{AgentId, GenerationId, PrefixedId as _, Uuid7};
 
 /// The one cursor envelope version.
 pub const CURSOR_VERSION: u16 = 1;
@@ -36,16 +36,20 @@ pub enum CursorKind {
     /// An escalated session stop (D-2): more agents than one bounded batch can
     /// settle, so the run/head barrier moves only on the final step.
     Stop,
+    /// A live-workspace discard (D-6), which waits on the runtime authority's
+    /// acceptance of generation termination.
+    Discard,
 }
 
 impl CursorKind {
     /// Every kind, in canonical order.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Purge,
         Self::Export,
         Self::Gc,
         Self::Persist,
         Self::Stop,
+        Self::Discard,
     ];
 
     const fn discriminant(self) -> u8 {
@@ -55,6 +59,7 @@ impl CursorKind {
             Self::Gc => 3,
             Self::Persist => 4,
             Self::Stop => 5,
+            Self::Discard => 6,
         }
     }
 
@@ -65,6 +70,44 @@ impl CursorKind {
             3 => Some(Self::Gc),
             4 => Some(Self::Persist),
             5 => Some(Self::Stop),
+            6 => Some(Self::Discard),
+            _ => None,
+        }
+    }
+}
+
+/// How far a live-workspace discard has got.
+///
+/// Two stages, and the boundary between them is the commit latch: the step that
+/// moves `Terminating` to `Clearing` is the step that observed the runtime
+/// authority accept termination of the exact generation (D-2), which is the
+/// first irreversible effect. Before it, the discard is still cancelable; after
+/// it, the operation may never become `Failed`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum DiscardStage {
+    /// Termination of the pinned generation has been requested of
+    /// `aex-runtime-control` and not yet accepted.
+    Terminating,
+    /// Termination was accepted; the session head's generation is being cleared
+    /// and the result written.
+    Clearing,
+}
+
+impl DiscardStage {
+    /// Every stage, in execution order.
+    pub const ALL: [Self; 2] = [Self::Terminating, Self::Clearing];
+
+    const fn discriminant(self) -> u8 {
+        match self {
+            Self::Terminating => 1,
+            Self::Clearing => 2,
+        }
+    }
+
+    const fn from_discriminant(value: u8) -> Option<Self> {
+        match value {
+            1 => Some(Self::Terminating),
+            2 => Some(Self::Clearing),
             _ => None,
         }
     }
@@ -215,6 +258,18 @@ pub enum CursorPosition {
         /// The next agent to settle, in canonical agent order.
         next_agent: AgentId,
     },
+    /// A workspace discard, at a stage, for one pinned generation.
+    ///
+    /// The generation travels in the cursor rather than being re-read from the
+    /// head on each step: the caller's `ifGenerationId` pinned which generation
+    /// was meant at admission, and a step that re-read the head could terminate
+    /// a generation the caller never asked about.
+    Discard {
+        /// How far the discard has got.
+        stage: DiscardStage,
+        /// The generation the admission pinned.
+        generation: GenerationId,
+    },
 }
 
 impl CursorPosition {
@@ -227,6 +282,7 @@ impl CursorPosition {
             Self::Gc { .. } => CursorKind::Gc,
             Self::Persist { .. } => CursorKind::Persist,
             Self::Stop { .. } => CursorKind::Stop,
+            Self::Discard { .. } => CursorKind::Discard,
         }
     }
 }
@@ -304,6 +360,10 @@ impl ContinuationCursor {
             CursorPosition::Stop { next_agent } => {
                 out.extend_from_slice(next_agent.uuid7().as_bytes());
             }
+            CursorPosition::Discard { stage, generation } => {
+                out.push(stage.discriminant());
+                out.extend_from_slice(generation.uuid7().as_bytes());
+            }
         }
         out.extend_from_slice(&self.processed.to_le_bytes());
         match self.total_hint {
@@ -367,6 +427,13 @@ impl ContinuationCursor {
             },
             CursorKind::Stop => CursorPosition::Stop {
                 next_agent: AgentId::from_uuid7(
+                    Uuid7::from_bytes(reader.array::<16>()?).map_err(|_| CursorError::Malformed)?,
+                ),
+            },
+            CursorKind::Discard => CursorPosition::Discard {
+                stage: DiscardStage::from_discriminant(reader.byte()?)
+                    .ok_or(CursorError::UnknownDiscriminant)?,
+                generation: GenerationId::from_uuid7(
                     Uuid7::from_bytes(reader.array::<16>()?).map_err(|_| CursorError::Malformed)?,
                 ),
             },
@@ -545,8 +612,8 @@ mod tests {
     use aex_wire::ids::PrefixedId as _;
 
     use super::{
-        CURSOR_MAX_ENCODED_BYTES, ContinuationCursor, CursorError, CursorPosition, ExportMember,
-        PAGE_DEFAULT, PageError, PageToken, PurgeStage, page_limit,
+        CURSOR_MAX_ENCODED_BYTES, ContinuationCursor, CursorError, CursorPosition, DiscardStage,
+        ExportMember, PAGE_DEFAULT, PageError, PageToken, PurgeStage, page_limit,
     };
 
     fn every_position() -> Vec<CursorPosition> {
@@ -573,6 +640,15 @@ mod tests {
                 [7; 10],
             )),
         });
+        for stage in DiscardStage::ALL {
+            out.push(CursorPosition::Discard {
+                stage,
+                generation: aex_wire::ids::GenerationId::from_uuid7(aex_wire::ids::Uuid7::compose(
+                    1_700_000_000_001,
+                    [3; 10],
+                )),
+            });
+        }
         out
     }
 

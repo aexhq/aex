@@ -72,19 +72,12 @@ pub const GRANDFATHERED: &[(&str, &[&str])] = &[
             "crates/aex-runtime-control/src/catalog.rs",
         ],
     ),
-    (
-        "ClaimError",
-        &[
-            "crates/aex-brain-app/src/ports/store.rs",
-            "workers/session-operation-worker/src/lib.rs",
-        ],
-    ),
+    ("ClaimError", &["crates/aex-brain-app/src/ports/store.rs"]),
     (
         "CommitError",
         &[
             "crates/aex-brain-app/src/ports/store.rs",
             "crates/aex-session-app/src/ports.rs",
-            "workers/session-operation-worker/src/lib.rs",
         ],
     ),
     (

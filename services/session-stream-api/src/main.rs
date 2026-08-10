@@ -361,7 +361,13 @@ async fn run(
     // --- the session half's router -------------------------------------------
     let dispatcher = Dispatcher::new(Arc::new(Shared {
         custody: Arc::new(stores.custody.clone()),
+        custody_reads: stores.custody.clone(),
         custody_table: stores.custody.table().to_owned(),
+        plane: match config.plane {
+            aex_identity_domain::assertion::Plane::Dev => aex_secret_domain::context::Plane::Dev,
+            aex_identity_domain::assertion::Plane::Prd => aex_secret_domain::context::Plane::Prd,
+        },
+        region: config.region,
         registry: Arc::new(stores.registry.clone()),
         content: Arc::new(stores.content.clone()),
         // One presigner for the whole deployable (E D-10). Both the upload
@@ -397,6 +403,7 @@ async fn run(
             stores.usage_query_table.clone(),
         )),
         cursor_keys: Arc::clone(&cursor_keys),
+        runtime_activity: stores.runtime_activity.clone(),
     }));
     let mounted = mount_unary(Arc::new(dispatcher), Arc::new(session_edge), limits(config))?;
 

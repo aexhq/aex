@@ -13,7 +13,9 @@
 
 use std::collections::BTreeSet;
 
-use aex_content_domain::{ContentDigest, ContentRoot, GrantId, Pin, RegistryKind};
+use aex_content_domain::{
+    ContentDigest, ContentRoot, GrantId, PageDigest, Pin, RegistryKind, TreeNode,
+};
 use aex_operation_domain::{DeletionEpoch, DeletionState, Fence, Operation};
 use aex_secret_domain::{
     CustodyRevision, OwnerKeyEdgeId, RevocationEpoch, SecretName, SessionCustody, WorkspaceSecret,
@@ -27,7 +29,9 @@ use aex_wire::ids::{
     AgentId, OperationId, OrganizationId, RunId, SessionId, UploadId, WorkspaceId,
 };
 use aex_wire::types::{ETag, Timestamp};
-use aex_workspace_domain::{DownloadGrant, RegistryPointer, RegistrySelector, Upload, UploadState};
+use aex_workspace_domain::{
+    DownloadGrant, PersistReceipt, RegistryPointer, RegistrySelector, Upload, UploadState,
+};
 
 /// Largest number of actions one transaction may carry.
 pub const MAX_ACTIONS: usize = 100;
@@ -282,6 +286,24 @@ pub enum Condition {
         /// is the first step of a continued operation.
         expected: Option<Box<aex_operation_domain::cursor::ContinuationCursor>>,
     },
+    /// The operation row is at exactly this optimistic version.
+    ///
+    /// A resumed step **must** carry this alongside
+    /// [`Condition::OperationCursorAt`], because the operation row has a second
+    /// writer: the already-served public cancellation runs its own optimistic
+    /// loop over `version` on the same item. Without a way to name the version
+    /// the step observed, an adapter would have to guess one, and any guess
+    /// either resets the counter or lets two writers believe they hold the row.
+    ///
+    /// It costs no extra action: it targets the same item as the cursor guard
+    /// and the operation write, so the three merge into one physical action.
+    OperationVersion {
+        /// Which operation.
+        operation: OperationId,
+        /// The version the step read. The write advances it to
+        /// [`aex_operation_domain::operation::OperationVersion::next`].
+        expected: aex_operation_domain::operation::OperationVersion,
+    },
     /// The secret's revocation epoch is exactly this.
     SecretRevocationEpoch {
         /// Which workspace.
@@ -327,7 +349,8 @@ impl Condition {
             Self::RegistryEtag { .. } | Self::UploadState { .. } => TableFamily::Registry,
             Self::ReservationOpen { .. }
             | Self::OperationFence { .. }
-            | Self::OperationCursorAt { .. } => TableFamily::WorkAuthority,
+            | Self::OperationCursorAt { .. }
+            | Self::OperationVersion { .. } => TableFamily::WorkAuthority,
             Self::ContentOwned { .. }
             | Self::RootPinPresent { .. }
             | Self::GrantUnexpired { .. } => TableFamily::ContentAuthority,
@@ -385,7 +408,9 @@ impl Condition {
             }
             Self::RootPinPresent { root } => (format!("{:x?}", root.digest), "ROOT_PIN".to_owned()),
             Self::GrantUnexpired { grant, .. } => (grant.0.to_string(), "GRANT".to_owned()),
-            Self::OperationFence { operation, .. } | Self::OperationCursorAt { operation, .. } => {
+            Self::OperationFence { operation, .. }
+            | Self::OperationCursorAt { operation, .. }
+            | Self::OperationVersion { operation, .. } => {
                 (operation.to_string(), "OPERATION".to_owned())
             }
             Self::SecretRevocationEpoch {
@@ -475,6 +500,23 @@ pub enum Write {
     PutSecret(Box<WorkspaceSecret>),
     /// Write a session tombstone.
     PutTombstone(Box<SessionTombstone>),
+    /// Record what a committed persist left behind.
+    ///
+    /// Present in the vocabulary before any adapter renders it, because the
+    /// content and registry streams reconcile their row shapes against this
+    /// enum and the alternative — a generic `PutItem(family, key, bytes)` —
+    /// would end the closed vocabulary outright (D-5). Every adapter that does
+    /// not own the family refuses it by name rather than skipping it.
+    PutPersistReceipt(Box<PersistReceipt>),
+    /// Write one immutable Merkle page of a persisted tree.
+    PutTreePage {
+        /// The root the page belongs to.
+        root: ContentRoot,
+        /// The page's own digest, which is its identity.
+        digest: PageDigest,
+        /// The page.
+        page: Box<TreeNode>,
+    },
     /// Delete an item outright.
     DeleteItem(ItemKey),
 }
@@ -491,15 +533,21 @@ impl Write {
             | Self::AppendJournalPage { .. }
             | Self::PutApproval(_)
             | Self::CancelAgent { .. }
-            | Self::PutTombstone(_) => TableFamily::SessionAuthority,
+            | Self::PutTombstone(_)
+            // A persist receipt is a session-scoped fact about the durable
+            // root, so it lives beside the head rather than with the content it
+            // describes.
+            | Self::PutPersistReceipt(_) => TableFamily::SessionAuthority,
             Self::PutIdempotencyReceipt(_) => TableFamily::Idempotency,
             Self::PutOperation(_) | Self::RedactOperationResult(_) | Self::PutWorkItem(_) => {
                 TableFamily::WorkAuthority
             }
             Self::PutOutboxEvent(_) => TableFamily::Outbox,
-            Self::PutOwnerEdge(_) | Self::PutPin(_) | Self::DeletePin(_) | Self::PutGrant(_) => {
-                TableFamily::ContentAuthority
-            }
+            Self::PutOwnerEdge(_)
+            | Self::PutPin(_)
+            | Self::DeletePin(_)
+            | Self::PutGrant(_)
+            | Self::PutTreePage { .. } => TableFamily::ContentAuthority,
             Self::PutRegistryPointer(_) | Self::PutUpload(_) => TableFamily::Registry,
             Self::PutCustody(_) | Self::PutSecret(_) => TableFamily::SecretCustody,
             Self::DeleteItem(key) => key.family,
@@ -568,6 +616,13 @@ impl Write {
             ),
             Self::PutTombstone(tombstone) => {
                 (tombstone.session.to_string(), "TOMBSTONE".to_owned())
+            }
+            Self::PutPersistReceipt(receipt) => (
+                receipt.session.to_string(),
+                format!("PERSIST#{}", receipt.persist_revision),
+            ),
+            Self::PutTreePage { root, digest, .. } => {
+                (format!("{:x?}", root.digest), format!("PAGE#{digest}"))
             }
             Self::DeleteItem(key) => return key.clone(),
         };

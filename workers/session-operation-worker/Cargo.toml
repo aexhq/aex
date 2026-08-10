@@ -53,10 +53,14 @@ aex-regional-http = { path = "../../crates/aex-regional-http" }
 aex-wire = { path = "../../crates/aex-wire" }
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
-blake3.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 xxhash-rust.workspace = true
+
+[dev-dependencies]
+# The fenced-step properties measure a lease TTL, and the lease vocabulary they
+# exercise is expressed in `time::Duration`.
+time.workspace = true
 
 [[test]]
 name = "continuations"

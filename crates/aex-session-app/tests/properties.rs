@@ -280,6 +280,7 @@ fn condition_tag(condition: &Condition) -> &'static str {
         Condition::PersistRoot { .. } => "PersistRoot",
         Condition::OperationFence { .. } => "OperationFence",
         Condition::OperationCursorAt { .. } => "OperationCursorAt",
+        Condition::OperationVersion { .. } => "OperationVersion",
         Condition::SecretRevocationEpoch { .. } => "SecretRevocationEpoch",
         Condition::CustodyRevision { .. } => "CustodyRevision",
         Condition::ItemAbsent(_) => "ItemAbsent",
