@@ -41,7 +41,7 @@ fn the_local_plan_emits_the_bound_lock_and_the_linear_head() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).expect("utf8 receipt");
-    assert!(stdout.contains("\"bundleHead\":20260801001100"));
+    assert!(stdout.contains("\"bundleHead\":20260801001200"));
     assert!(stdout.contains("\"lockKey\":4703262552200136530"));
 }
 
@@ -55,7 +55,7 @@ fn a_stale_image_is_refused_by_the_expected_bundle_head_before_anything_else() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("20260801001100"), "{stderr}");
+    assert!(stderr.contains("20260801001200"), "{stderr}");
 }
 
 #[test]
@@ -103,7 +103,7 @@ fn a_backfill_of_an_unbundled_migration_is_refused_before_a_session() {
 fn the_committed_bundle_declares_nothing_destructive() {
     // A destructive bundle needs recorded backup evidence; the baseline must not
     // silently require an operator to pass one.
-    let output = run(&["migrate", "--expect-head", "20260801001100"]);
+    let output = run(&["migrate", "--expect-head", "20260801001200"]);
     assert_ne!(
         output.status.code(),
         Some(15),

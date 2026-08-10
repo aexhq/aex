@@ -96,6 +96,14 @@ name = "finance.enqueue_billing_account_state_change()"
 revoke_public = true
 never_granted = true
 
+# The credit-exhaustion writer. A trigger on `finance.account_balance`, so the
+# rule belongs to the row rather than to whichever of the four balance-writing
+# roles remembers it. Not directly invocable by anything.
+[[function]]
+name = "finance.apply_credit_exhaustion()"
+revoke_public = true
+never_granted = true
+
 [[function]]
 name = "finance.ensure_account(uuid)"
 revoke_public = true
