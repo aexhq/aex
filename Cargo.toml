@@ -89,6 +89,7 @@ members = [
     "services/regional-otlp",
     "services/regional-secret-api",
     "services/session-stream-api",
+    "services/tool-executor",
     "workers/central-control-worker",
     "workers/central-schema-admin",
     "workers/content-lifecycle-worker",

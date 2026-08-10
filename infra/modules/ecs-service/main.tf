@@ -50,6 +50,32 @@ resource "aws_vpc_security_group_egress_rule" "load_balancer_to_task" {
   referenced_security_group_id = aws_security_group.task.id
 }
 
+# The direct-client edge, for a service reached by name rather than through a
+# load balancer. Written here for the same reason the load balancer's egress rule
+# is: this is the only place both ends are in scope, and only the service knows
+# which port to open.
+resource "aws_vpc_security_group_ingress_rule" "from_client" {
+  count = length(var.client_security_group_ids)
+
+  security_group_id            = aws_security_group.task.id
+  description                  = "Requests from a service allowed to call this one directly"
+  ip_protocol                  = "tcp"
+  from_port                    = var.container_port
+  to_port                      = var.container_port
+  referenced_security_group_id = var.client_security_group_ids[count.index]
+}
+
+resource "aws_vpc_security_group_egress_rule" "client_to_task" {
+  count = length(var.client_security_group_ids)
+
+  security_group_id            = var.client_security_group_ids[count.index]
+  description                  = "To the ${var.name} tasks on the port they listen on"
+  ip_protocol                  = "tcp"
+  from_port                    = var.container_port
+  to_port                      = var.container_port
+  referenced_security_group_id = aws_security_group.task.id
+}
+
 # Egress is these three rules and nothing else - no `0.0.0.0/0`. The VPC has no
 # NAT gateway by default, so anything not named here is unreachable rather than
 # merely unauthorised.
@@ -173,6 +199,14 @@ resource "aws_ecs_service" "autoscaled" {
     }
   }
 
+  dynamic "service_registries" {
+    for_each = var.service_discovery_arn == null ? [] : [var.service_discovery_arn]
+
+    content {
+      registry_arn = service_registries.value
+    }
+  }
+
   lifecycle {
     # The autoscaling target owns the live count; terraform re-imposing
     # `desired_count` on every apply would fight it.
@@ -220,6 +254,14 @@ resource "aws_ecs_service" "static" {
       target_group_arn = load_balancer.value
       container_name   = var.name
       container_port   = var.container_port
+    }
+  }
+
+  dynamic "service_registries" {
+    for_each = var.service_discovery_arn == null ? [] : [var.service_discovery_arn]
+
+    content {
+      registry_arn = service_registries.value
     }
   }
 

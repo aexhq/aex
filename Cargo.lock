@@ -8158,6 +8158,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "tool-executor"
+version = "0.1.0"
+dependencies = [
+ "aex-brain-managed-web",
+ "aex-control-domain",
+ "aex-identity-domain",
+ "aex-internal-contracts",
+ "aex-platform-telemetry",
+ "aex-telemetry-schema",
+ "aex-wire",
+ "async-trait",
+ "aws-config",
+ "aws-sdk-dynamodb",
+ "aws-sdk-secretsmanager",
+ "axum",
+ "blake3",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "uuid",
+ "zeroize",
+]
+
+[[package]]
 name = "tower"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
