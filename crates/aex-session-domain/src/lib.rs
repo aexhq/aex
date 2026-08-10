@@ -76,9 +76,10 @@ pub use run::{
     SessionDomainRunError, queue, start,
 };
 pub use session::{
-    MutationGuard, ResolvedConfigAuthority, ResolvedConfigDigest, ResolvedConfigError, Session,
-    SessionError, SessionMetadata, SessionMetadataError, SessionStatus, WorkAdmission,
-    acquire_mutation_guard, public_root_hash, release_mutation_guard,
+    MutationGuard, PinnedRuntime, PinnedRuntimeError, ResolvedConfigAuthority,
+    ResolvedConfigDigest, ResolvedConfigError, Session, SessionError, SessionMetadata,
+    SessionMetadataError, SessionStatus, WorkAdmission, acquire_mutation_guard, public_root_hash,
+    release_mutation_guard,
 };
 pub use terminal::{
     OutboxEvent, TerminalAttempt, TerminalCommit, TerminalRejection, claim_terminal, sealed_ids,

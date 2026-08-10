@@ -277,8 +277,13 @@ pub struct AgentControl {
     pub claim: Option<AgentClaim>,
     /// Where its result goes, when it is a child.
     pub join: Option<JoinEdge>,
-    /// Its spend grant.
-    pub budget: BudgetGrant,
+    /// Its spend grant, when it has one.
+    ///
+    /// A spend grant is per-run: it names a reservation the finance plane
+    /// opened. A session's root agent is born at rest with no run and therefore
+    /// no reservation, and inventing a placeholder reservation for it would put
+    /// an identifier that reserves nothing on the row every settlement reads.
+    pub budget: Option<BudgetGrant>,
     /// Its unsettled effects.
     pub open_effects: OpenEffectSet,
     /// The approval it is blocked on, when it is.
@@ -440,7 +445,7 @@ pub fn create_root(
             last_entry: None,
             claim: None,
             join: None,
-            budget: state.budget,
+            budget: Some(state.budget),
             open_effects: OpenEffectSet::new(),
             pending_approval: None,
             queue_reason: None,
@@ -516,7 +521,7 @@ pub fn spawn(
             last_entry: None,
             claim: None,
             join: None,
-            budget: state.budget,
+            budget: Some(state.budget),
             open_effects: OpenEffectSet::new(),
             pending_approval: None,
             queue_reason: Some(QueueReason::FanoutBudget),

@@ -29,7 +29,9 @@ use crate::journal::{AuthorityFact, JournalBody, JournalEntry};
 use crate::lineage::Lineage;
 use crate::message::{Message, MessageRole, MessageState};
 use crate::run::{Run, RunOutcome, RunStatus};
-use crate::session::{ResolvedConfigAuthority, Session, SessionStatus, WorkAdmission};
+use crate::session::{
+    PinnedRuntime, ResolvedConfigAuthority, Session, SessionStatus, WorkAdmission,
+};
 use crate::terminal::TerminalAttempt;
 
 /// A deterministic instant.
@@ -81,6 +83,47 @@ pub fn materialized_state() -> MaterializedState {
     }
 }
 
+/// A deterministic immutable generation definition for one session.
+///
+/// # Panics
+///
+/// Panics only if a fixture literal is out of range.
+#[must_use]
+pub fn pinned_runtime(
+    session: SessionId,
+    workspace: WorkspaceId,
+    organization: OrganizationId,
+) -> PinnedRuntime {
+    use aex_runtime_control::generation::{
+        HandsGeneration, ImageIdentifier, ImagePin, ImageVersion, LimitsRevision, NetworkPolicy,
+        guest_root,
+    };
+
+    PinnedRuntime::new(
+        session,
+        workspace,
+        organization,
+        HandsGeneration {
+            generation: id::<GenerationId>(7),
+            session,
+            workspace,
+            organization,
+            size: aex_wire::types::ComputeSize::Gb1,
+            image: ImagePin {
+                identifier: ImageIdentifier("aex-hands-1gb".to_owned()),
+                version: ImageVersion("1".to_owned()),
+                artifact_digest: aex_wire::ids::ContentHash::from_bytes([7; 32]),
+                capabilities: Vec::new(),
+            },
+            network: NetworkPolicy::None,
+            protocol_version: aex_internal_contracts::SchemaVersion::V1,
+            limits_revision: LimitsRevision(1),
+            root: guest_root(),
+        },
+    )
+    .expect("a fixture pin names its own session")
+}
+
 /// An idle, live session.
 ///
 /// # Panics
@@ -90,10 +133,13 @@ pub fn materialized_state() -> MaterializedState {
 #[must_use]
 pub fn session_fixture() -> Session {
     let id_value: SessionId = id(1);
+    let workspace: WorkspaceId = id(2);
+    let organization: OrganizationId = id(3);
     let resolved = ResolvedConfigAuthority::new(
         CanonicalJson::parse(
             r#"{
                 "approvalPolicy":{"mode":"allow_all"},
+                "catalogRevision":"mc1_0000000000000000000000000000000000000000000000000000000000000000",
                 "compute":{
                     "baseline":{"memoryMiB":1024,"vcpus":1.0},
                     "endpointBandwidthMBps":100,
@@ -106,6 +152,7 @@ pub fn session_fixture() -> Session {
                 "network":{"hands":{"mode":"none"}},
                 "packages":[],
                 "provider":"openai",
+                "providerCredentialId":"pcr_01h455vb4pex5vsknk084sn02q",
                 "registered":{}
             }"#,
         )
@@ -116,8 +163,8 @@ pub fn session_fixture() -> Session {
     .expect("matching fixture projections");
     Session {
         id: id_value,
-        workspace: id::<WorkspaceId>(2),
-        organization: id::<OrganizationId>(3),
+        workspace,
+        organization,
         status: SessionStatus::Idle,
         revision: SessionRevision::INITIAL,
         active_run: None,
@@ -127,6 +174,7 @@ pub fn session_fixture() -> Session {
         mutation_guard: None,
         root_agent: id::<AgentId>(4),
         generation: None,
+        pinned_runtime: pinned_runtime(id_value, workspace, organization),
         initial_root: root(1),
         persisted_root: root(1),
         persist_revision: PersistRevision::INITIAL,
@@ -155,7 +203,7 @@ pub fn child_agent() -> AgentControl {
         last_entry: None,
         claim: None,
         join: None,
-        budget: budget(),
+        budget: Some(budget()),
         open_effects: OpenEffectSet::new(),
         pending_approval: None,
         queue_reason: None,

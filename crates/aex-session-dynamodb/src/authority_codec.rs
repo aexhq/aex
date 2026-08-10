@@ -212,6 +212,13 @@ struct SessionV1 {
     mutation_guard: Option<MutationGuardV1>,
     root_agent: AgentId,
     generation: Option<GenerationId>,
+    /// The immutable generation definition the create decided (A D-2).
+    ///
+    /// The whole `HandsGeneration` tuple rather than a projection of it: the
+    /// first launch derives the two `runtime-activity` rows from this as a
+    /// total function, and a lossy projection would force that derivation to
+    /// invent whatever it could not read back.
+    pinned_runtime: aex_runtime_control::generation::HandsGeneration,
     initial_root: RootV1,
     persisted_root: RootV1,
     persist_revision: u64,
@@ -239,6 +246,7 @@ impl From<&Session> for SessionV1 {
             mutation_guard: session.mutation_guard.map(Into::into),
             root_agent: session.root_agent,
             generation: session.generation,
+            pinned_runtime: session.pinned_runtime.definition().clone(),
             initial_root: session.initial_root.into(),
             persisted_root: session.persisted_root.into(),
             persist_revision: session.persist_revision.0,
@@ -275,6 +283,17 @@ impl SessionV1 {
                 .transpose()?,
             root_agent: self.root_agent,
             generation: self.generation,
+            // Re-checked on the way in, not trusted: the pin's identity triple
+            // is re-asserted against the head's own, so a row whose pinned
+            // definition names another tenant is a decode failure rather than a
+            // generation another session could launch.
+            pinned_runtime: aex_session_domain::PinnedRuntime::new(
+                id,
+                self.workspace,
+                self.organization,
+                self.pinned_runtime,
+            )
+            .map_err(|error| malformed(AUTHORITY_DOCUMENT, error.to_string()))?,
             initial_root: self.initial_root.decode(AUTHORITY_DOCUMENT)?,
             persisted_root: self.persisted_root.decode(AUTHORITY_DOCUMENT)?,
             persist_revision: PersistRevision(self.persist_revision),

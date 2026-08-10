@@ -186,6 +186,95 @@ pub enum ResolvedConfigError {
     ModelProjection,
 }
 
+/// The immutable Hands generation a session pinned when it was created.
+///
+/// A create allocates the [`GenerationId`] and decides the whole
+/// [`HandsGeneration`] tuple — image, network policy, compute size, protocol
+/// version, limits revision and guest root — but writes **no**
+/// `runtime-activity` row (A D-2). The two rows are derived from this pinned
+/// definition by the first path that needs them, under `attribute_not_exists`.
+///
+/// That is only sound because the definition cannot drift: the session head is
+/// written under `attribute_not_exists` and never rewritten with a different
+/// pin, and a retry is replayed from the idempotency receipt rather than
+/// recomputed, so two derivations of the same head produce identical bytes.
+///
+/// Deliberately **not** part of [`ResolvedConfigAuthority`]. That value
+/// deserialises as the published `aex_wire::models::ResolvedConfig`, and the
+/// runtime pin names internal image identifiers that have no public rendering;
+/// folding it in would publish them (A OQ-1).
+///
+/// [`Session::generation`] keeps its own meaning — the generation that is
+/// *live* — and stays `None` at create. This one says which generation the
+/// session will ever have, not whether it is running.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PinnedRuntime {
+    definition: aex_runtime_control::generation::HandsGeneration,
+}
+
+impl PinnedRuntime {
+    /// Binds an immutable generation definition to the session that owns it.
+    ///
+    /// The identity triple is passed separately rather than read back out of
+    /// `definition`, so a definition minted for one tenant cannot be pinned on
+    /// another's head by construction.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PinnedRuntimeError`] when the definition names a different
+    /// session, workspace or organization, or a guest root that is not the one
+    /// and only canonical root.
+    pub fn new(
+        session: SessionId,
+        workspace: WorkspaceId,
+        organization: OrganizationId,
+        definition: aex_runtime_control::generation::HandsGeneration,
+    ) -> Result<Self, PinnedRuntimeError> {
+        if definition.session != session {
+            return Err(PinnedRuntimeError::SessionProjection);
+        }
+        if definition.workspace != workspace {
+            return Err(PinnedRuntimeError::WorkspaceProjection);
+        }
+        if definition.organization != organization {
+            return Err(PinnedRuntimeError::OrganizationProjection);
+        }
+        if !aex_runtime_control::generation::is_canonical_root(&definition.root) {
+            return Err(PinnedRuntimeError::GuestRoot);
+        }
+        Ok(Self { definition })
+    }
+
+    /// The whole immutable definition.
+    #[must_use]
+    pub const fn definition(&self) -> &aex_runtime_control::generation::HandsGeneration {
+        &self.definition
+    }
+
+    /// The generation identity the create allocated.
+    #[must_use]
+    pub const fn generation(&self) -> GenerationId {
+        self.definition.generation
+    }
+}
+
+/// Why a runtime pin was rejected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum PinnedRuntimeError {
+    /// The definition names a different session.
+    #[error("pinned generation names a different session")]
+    SessionProjection,
+    /// The definition names a different workspace.
+    #[error("pinned generation names a different workspace")]
+    WorkspaceProjection,
+    /// The definition names a different organization.
+    #[error("pinned generation names a different organization")]
+    OrganizationProjection,
+    /// The definition names a guest root that is not `/workspace`.
+    #[error("pinned generation names a guest root that is not the canonical one")]
+    GuestRoot,
+}
+
 /// Caller-defined session labels in the exact closed wire shape.
 ///
 /// Keeping canonical JSON here preserves equality without weakening the public
@@ -278,6 +367,12 @@ pub struct Session {
     pub root_agent: AgentId,
     /// The live workspace generation, when one is running.
     pub generation: Option<GenerationId>,
+    /// The immutable generation definition the create decided.
+    ///
+    /// Written once with the head and never rewritten. The `runtime-activity`
+    /// generation head and `CURRENT` pointer are **derived** from it on first
+    /// launch, not written by the create transaction (A D-2).
+    pub pinned_runtime: PinnedRuntime,
     /// The root the session was created with.
     pub initial_root: ContentRoot,
     /// The durable root it last persisted.

@@ -33,6 +33,7 @@ live_suite = "pure domain crate; Area 9's registry declares no independent live 
 aex-content-domain = { path = "../aex-content-domain" }
 aex-internal-contracts = { path = "../aex-internal-contracts" }
 aex-operation-domain = { path = "../aex-operation-domain" }
+aex-runtime-control = { path = "../aex-runtime-control" }
 aex-secret-domain = { path = "../aex-secret-domain" }
 aex-wire = { path = "../aex-wire" }
 sha2.workspace = true
