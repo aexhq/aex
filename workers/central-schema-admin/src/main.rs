@@ -15,7 +15,8 @@ use central_schema_admin::migration;
 use central_schema_admin::migration::MigrationBundle;
 use central_schema_admin::runner::{
     PepperRow, RunnerError, applied_head, apply_grants, backfill_cursor, check_conservation,
-    configure_outbox_wake, diff_grants, expect_applied_head, migrate, seed_pepper, seed_signing_key,
+    configure_outbox_wake, diff_grants, expect_applied_head, migrate, seed_pepper,
+    seed_signing_key,
 };
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
