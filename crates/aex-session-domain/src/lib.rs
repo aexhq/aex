@@ -41,8 +41,8 @@ pub use agent::{
 };
 pub use approval::{
     Approval, ApprovalBinding, ApprovalCancelCause, ApprovalCommit, ApprovalDecision,
-    ApprovalRejection, ApprovalStatus, BindingField, CancelScope, binding_drift, cancel_pending,
-    cause_in_scope, expire_pending, request_approval, respond,
+    ApprovalOutcome, ApprovalRejection, ApprovalStatus, BindingField, CancelScope, binding_drift,
+    cancel_pending, cause_in_scope, expire_pending, request_approval, respond,
 };
 pub use budget::{BudgetGrant, EffectiveLimits, LimitUnresolved};
 pub use deletion::{
@@ -50,8 +50,8 @@ pub use deletion::{
     RestoreCommit, SessionTombstone, TrashCommit, purge, purge_complete, restore, trash,
 };
 pub use idempotency::{
-    IdempotencyIdentity, IdempotencyReceipt, ReceiptOutcome, ReplayDecision, ResourceId,
-    ResourceKind, replay,
+    IdempotencyIdentity, IdempotencyReceipt, ReceiptKey, ReceiptKeyError, ReceiptOutcome,
+    ReplayDecision, ResourceId, ResourceKind, ResponseBody, replay,
 };
 pub use ids::{
     AccountRevision, AgentFence, AgentRevision, AuthorizationEpoch, CancellationEpoch, EffectId,
