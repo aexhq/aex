@@ -18,6 +18,20 @@ fn verify_fixture(root: &std::path::Path) -> aex_release_tool::error::Result<ver
     verify::verify(&inputs)
 }
 
+/// A fixture deferral floor that admits exactly one scenario id.
+fn floor_admitting_scenario(id: &str) -> String {
+    format!(
+        r#"{{
+  "schema": "aex.deferral-floor.v1",
+  "purpose": "fixture floor",
+  "regenerate": "hand-written by the fixture",
+  "routes": {{ "floor": 0, "deleting": {{}}, "deferred": [], "retired": [] }},
+  "scenarios": {{ "floor": 1, "deleting": {{}}, "deferred": ["{id}"], "retired": [] }}
+}}
+"#
+    )
+}
+
 fn classify_generated_api(root: &std::path::Path) {
     let path = root.join("release/path-map.toml");
     let mut policy = std::fs::read_to_string(&path).expect("fixture path map");
@@ -199,6 +213,10 @@ fn an_explicit_scenario_deferral_is_valid_but_not_runnable_evidence() {
         )
         .units(SOUND_UNITS)
         .scenarios(&scenarios)
+        // The floor admits it, which is what "structurally valid" now means: a
+        // deferral nobody bumped the floor for is a regression, and that case is
+        // `unratcheted_deferral_exits_10`.
+        .deferral_floor(&floor_admitting_scenario("SC-DEMO"))
         .build();
     let built = verify_fixture(&root).expect("explicit deferral is structurally valid");
     assert_eq!(built.deferred.len(), 1);
@@ -1012,6 +1030,7 @@ fn npm_unit_fixture(units: &str, meta: serde_json::Value) -> std::path::PathBuf 
         )
         .units(units)
         .scenarios(NPM_SCENARIOS)
+        .deferral_floor(&floor_admitting_scenario("SC-SDK"))
         .build()
 }
 
@@ -1137,4 +1156,57 @@ fn a_deployed_unit_that_drops_its_alarm_or_config_environment_is_refused() {
         "{:?}",
         err.rules()
     );
+}
+
+/// The shipped floor admits exactly what the shipped registry defers.
+///
+/// The fixture cases in `failing_fixtures.rs` prove the rule fires; this proves
+/// it is *pinned to reality*, which is the failure mode a rule with an
+/// over-wide authority actually has. A floor listing ids nobody defers would
+/// pass every check and ratchet nothing.
+#[test]
+fn the_shipped_deferral_floor_admits_exactly_what_the_registry_defers() {
+    let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let floor: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(repository.join("release/deferral-floor.json"))
+            .expect("the committed deferral floor"),
+    )
+    .expect("the floor is JSON");
+    let inputs = GraphInputs::load(&repository).expect("the repository loads");
+    let built = verify::build(&inputs).expect("the repository graph builds");
+
+    for (kind, key) in [("route", "routes"), ("scenario", "scenarios")] {
+        let side = &floor[key];
+        let mut admitted: std::collections::BTreeSet<String> = side["deferred"]
+            .as_array()
+            .expect("a deferred list")
+            .iter()
+            .map(|value| value.as_str().expect("an id").to_owned())
+            .collect();
+        admitted.extend(
+            side["deleting"]
+                .as_object()
+                .expect("a deleting table")
+                .keys()
+                .cloned(),
+        );
+        let observed: std::collections::BTreeSet<String> = built
+            .deferred
+            .iter()
+            .filter(|entry| entry.kind == kind)
+            .map(|entry| entry.id.clone())
+            .collect();
+        assert_eq!(
+            admitted, observed,
+            "the {kind} floor and the {kind} deferrals have drifted; a floor that \
+             names an id nobody defers ratchets nothing, and one that omits an id \
+             fails `graph verify`"
+        );
+        let ceiling = side["floor"].as_u64().expect("a ceiling");
+        let counted = observed.len() - side["deleting"].as_object().expect("a table").len();
+        assert!(
+            u64::try_from(counted).expect("a small count") <= ceiling,
+            "{counted} {kind} deferral(s) against a declared ceiling of {ceiling}"
+        );
+    }
 }

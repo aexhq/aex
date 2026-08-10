@@ -23,7 +23,10 @@ use aex_release_tool::verification::VerificationStatement;
 use common::docs::{
     BUILDER, digest, valid_envelope, valid_manifest, valid_receipt, valid_statement,
 };
-use common::{CratePlan, Fixture, SOUND_SCENARIOS, SOUND_UNITS, deployable_meta, live_meta};
+use common::{
+    CratePlan, EMPTY_DEFERRAL_FLOOR, Fixture, SOUND_SCENARIOS, SOUND_UNITS, deployable_meta,
+    live_meta,
+};
 
 const UNIT: &str = "regional-otlp";
 
@@ -445,6 +448,97 @@ fn nonmonotone_selector_is_detected_by_selftest() {
     );
 }
 
+/// A fixture whose scenario registry defers one id, over a chosen floor.
+///
+/// The route half of the ratchet reads `api/generated/registries/routes.json`,
+/// which a fixture root does not carry, so the scenario half is what a fixture
+/// can drive. Both halves are the same code over the same document, and the
+/// route half is exercised against the shipped registry by `graph.rs`.
+fn deferring_fixture(floor: &str) -> std::path::PathBuf {
+    Fixture::new()
+        .add_crate(CratePlan::new("aex-leaf", "crates/aex-leaf"))
+        .scenarios(
+            "schema = \"aex.scenario-ownership.v1\"\n\n[[scenario]]\nid = \"SC-NEW\"\n\
+             owner = \"delivery\"\nobserves = [\"cargo:aex-leaf\"]\n\
+             deferred = \"a stream added this deferral without bumping the floor\"\n",
+        )
+        .deferral_floor(floor)
+        .build()
+}
+
+/// `unratcheted-deferral/` — a deferral the committed floor does not admit.
+#[test]
+fn unratcheted_deferral_exits_10() {
+    let root = deferring_fixture(EMPTY_DEFERRAL_FLOOR);
+    let inputs = GraphInputs::load(&root).unwrap();
+    let err = verify::verify(&inputs).unwrap_err();
+    assert_eq!(err.exit.code(), 10, "{err}");
+    assert!(
+        err.rules().contains(&"scenario-deferral-regression"),
+        "{err}"
+    );
+    assert!(
+        err.to_string().contains(
+            "scenario `SC-NEW` is deferred and is not named by release/deferral-floor.json"
+        ),
+        "{err}"
+    );
+
+    // Naming it in the floor is the explicit bump, and the same tree verifies.
+    let bumped = deferring_fixture(
+        r#"{
+  "schema": "aex.deferral-floor.v1",
+  "purpose": "fixture floor",
+  "regenerate": "hand-written by the fixture",
+  "routes": { "floor": 0, "deleting": {}, "deferred": [], "retired": [] },
+  "scenarios": { "floor": 1, "deleting": {}, "deferred": ["SC-NEW"], "retired": [] }
+}
+"#,
+    );
+    let inputs = GraphInputs::load(&bumped).unwrap();
+    verify::verify(&inputs).expect("a bumped floor admits exactly the deferral it names");
+}
+
+/// `resurrected-deferral/` — an id that once left the floor, deferred again.
+#[test]
+fn resurrected_deferral_exits_10() {
+    let root = deferring_fixture(
+        r#"{
+  "schema": "aex.deferral-floor.v1",
+  "purpose": "fixture floor",
+  "regenerate": "hand-written by the fixture",
+  "routes": { "floor": 0, "deleting": {}, "deferred": [], "retired": [] },
+  "scenarios": { "floor": 1, "deleting": {}, "deferred": ["SC-NEW"], "retired": ["SC-NEW"] }
+}
+"#,
+    );
+    let inputs = GraphInputs::load(&root).unwrap();
+    let err = verify::verify(&inputs).unwrap_err();
+    assert_eq!(err.exit.code(), 10, "{err}");
+    assert!(err.rules().contains(&"deferral-irreversible"), "{err}");
+    assert!(
+        err.to_string()
+            .contains("is a regression, not architecture debt"),
+        "{err}"
+    );
+}
+
+/// `absent-deferral-floor/` — the ratchet's own authority is gone.
+///
+/// A rule whose authority is missing must fail rather than pass: an unratcheted
+/// tree and a ratcheted one must not look the same.
+#[test]
+fn absent_deferral_floor_exits_10() {
+    let root = Fixture::new()
+        .add_crate(CratePlan::new("aex-leaf", "crates/aex-leaf"))
+        .build();
+    std::fs::remove_file(root.join("release/deferral-floor.json")).unwrap();
+    let inputs = GraphInputs::load(&root).unwrap();
+    let err = verify::verify(&inputs).unwrap_err();
+    assert_eq!(err.exit.code(), 10, "{err}");
+    assert!(err.rules().contains(&"deferral-floor-missing"), "{err}");
+}
+
 /// The whole set is a table, and the table must not silently shrink.
 #[test]
 fn the_deliberate_failure_table_covers_every_declared_entry() {
@@ -466,7 +560,10 @@ fn the_deliberate_failure_table_covers_every_declared_entry() {
         "empty-matrix-silent-pass",
         "head-mismatch",
         "nonmonotone-selector",
+        "unratcheted-deferral",
+        "resurrected-deferral",
+        "absent-deferral-floor",
     ];
-    assert_eq!(entries.len(), 14);
+    assert_eq!(entries.len(), 17);
     let _ = SOUND_SCENARIOS;
 }
