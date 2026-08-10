@@ -19,7 +19,7 @@ fn a_stored_etag_that_no_longer_describes_its_row_is_refused_on_read() {
     encoded.insert(
         "etag".to_owned(),
         aex_session_dynamodb::attr::s(
-            etag_of(RegistryKind::Skill, Revision::FIRST, &pointer().sha256)
+            etag_of(RegistryKind::Skill, Revision::FIRST, &pointer().row.sha256)
                 .as_str()
                 .to_owned(),
         ),
@@ -105,7 +105,7 @@ fn a_name_that_could_forge_a_key_stops_every_builder() {
             workspace(),
             RegistryKind::File,
             "notes#evil",
-            Revision::FIRST
+            None
         )
         .is_err()
     );

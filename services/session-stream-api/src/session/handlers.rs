@@ -25,6 +25,8 @@ use aex_regional_http::projection::{
     self, ProjectionError, authority_failure, entity_tag, position_tuple, tuple_position,
 };
 use aex_regional_http::router::RouteOwner;
+use aex_content_aws::object_store::ContentObjectStore;
+use aex_content_dynamodb::store::ContentMetadataStore;
 use aex_registry_dynamodb::store::{PointerPage, RegistryStore};
 use aex_secret_custody_dynamodb::codec::{CredentialState, ProviderCredential as StoredCredential};
 use aex_secret_custody_dynamodb::expressions;
@@ -89,13 +91,15 @@ pub struct Shared {
     pub custody_table: String,
     /// The named-registry authority.
     pub registry: Arc<dyn RegistryStore>,
-    /// The content-descriptor authority.
-    pub content: Arc<dyn aex_content_dynamodb::store::ContentMetadataStore>,
+    /// The content-descriptor authority, for the payload a registered value
+    /// names.
+    pub content: Arc<dyn ContentMetadataStore>,
     /// The one content object adapter, and therefore the one presigner.
     ///
-    /// The upload routes and the registry download route reach S3 through this
-    /// and nothing else builds a second one.
-    pub content_objects: Arc<dyn aex_content_aws::object_store::ContentObjectStore>,
+    /// The upload routes, the registry mutation path and the registry download
+    /// route reach S3 through this and nothing else builds a second one.
+    /// Registry payloads are always object-placed (D-11).
+    pub content_objects: Arc<dyn ContentObjectStore>,
     /// The `regional-registry` receipt reader the replay combinator uses.
     pub receipts: Arc<dyn aex_session_dynamodb::replay::ReceiptStore>,
     /// The physical `regional-registry` table name.
@@ -104,6 +108,15 @@ pub struct Shared {
     pub work_table: String,
     /// The content CMK every object is sealed under, recorded on a descriptor.
     pub content_kms_key_id: String,
+    /// The canonical encryption context every content object is bound to.
+    pub content_encryption_context: Vec<u8>,
+    /// Effective `registry.entries` per `(workspace, kind)`.
+    ///
+    /// The compiled default until the effective-limits authority lands; it
+    /// overrides here, at the one check point.
+    pub registry_entries: u64,
+    /// Effective `registry.value_bytes`.
+    pub registry_value_bytes: u64,
     /// The strongly consistent, read-only session-authority surface.
     pub sessions: Arc<dyn SessionQueries>,
     /// The durable-operation point, list and conditional cancellation authority.
@@ -204,11 +217,26 @@ const SERVED: &[RouteId] = &[
     RouteId::RegionalOperationCancel,
     RouteId::RegionalOperationGet,
     RouteId::RegionalOperationsList,
+    RouteId::RegistryFilesDelete,
+    RouteId::RegistryFilesGet,
     RouteId::RegistryFilesList,
+    RouteId::RegistryFilesPut,
+    RouteId::RegistryInstructionsDelete,
+    RouteId::RegistryInstructionsGet,
     RouteId::RegistryInstructionsList,
+    RouteId::RegistryInstructionsPut,
+    RouteId::RegistryMcpServersDelete,
+    RouteId::RegistryMcpServersGet,
     RouteId::RegistryMcpServersList,
+    RouteId::RegistryMcpServersPut,
+    RouteId::RegistrySkillsDelete,
+    RouteId::RegistrySkillsGet,
     RouteId::RegistrySkillsList,
+    RouteId::RegistrySkillsPut,
+    RouteId::RegistryToolsDelete,
+    RouteId::RegistryToolsGet,
     RouteId::RegistryToolsList,
+    RouteId::RegistryToolsPut,
     RouteId::SecretGet,
     RouteId::SecretsList,
     RouteId::SessionApprovalGet,
@@ -1348,31 +1376,31 @@ const fn registry_snapshot(kind: RegistryKind) -> &'static str {
     }
 }
 
-/// The named registry: five listings served, sixteen routes absent.
+/// The named registry: fifteen routes served, one absent.
 ///
-/// The five `*_get` and five `*_put` routes are not servable from this
-/// deployable's adapters, and for the same reason: a registry pointer stores a
-/// `sha256` and a size, while the item form of every registry model carries the
-/// `value` itself. That value is a sealed body in content storage, so returning
-/// it needs the content data key. A listing is complete without it, because the
-/// wire model marks `value` "omitted in collection rows"; an item read is not.
-/// RS-18 is why the other sixteen are absent rather than mounted and answering
-/// half a resource.
+/// The point reads became servable when the value moved onto the pointer row:
+/// the complete non-payload value is a canonical JSON document stored beside the
+/// digest, so a point read is one `GetItem` and needs no content data key —
+/// there is nothing to decrypt because no registry response ever publishes
+/// payload bytes (D-2, D-3). `registry_files_download_create` is the one route
+/// still absent; it needs the content grant and presigning composition, and it
+/// closes with cluster D's second landing.
 impl RegistryApi for Routes {
     async fn registry_files_delete(
         &self,
         _cx: &WireContext,
-        _name: ResourceName,
+        name: ResourceName,
     ) -> WireResult<NoContent> {
-        Err(not_served(RouteId::RegistryFilesDelete))
+        self.registry_delete(RegistryKind::File, &name).await
     }
 
     async fn registry_files_get(
         &self,
         _cx: &WireContext,
-        _name: ResourceName,
+        name: ResourceName,
     ) -> WireResult<WithETag<models::RegisteredFile>> {
-        Err(not_served(RouteId::RegistryFilesGet))
+        self.registry_get(RegistryKind::File, &name, projection::registered_file)
+            .await
     }
 
     async fn registry_files_list(
@@ -1388,32 +1416,49 @@ impl RegistryApi for Routes {
                 query.limit,
             )
             .await?;
-        projection::registered_file_page(&page.pointers, next).map_err(WireError::from)
+        projection::registered_file_page(&page.rows, next).map_err(WireError::from)
     }
 
     async fn registry_files_put(
         &self,
         _cx: &WireContext,
-        _name: ResourceName,
-        _body: models::RegisteredFileValue,
+        name: ResourceName,
+        body: models::RegisteredFileValue,
     ) -> WireResult<WithETag<models::RegisteredFile>> {
-        Err(not_served(RouteId::RegistryFilesPut))
+        let payload = self
+            .admit_payload(RegistryKind::File, &name, &body.content)
+            .await?;
+        let read = models::RegisteredFileRead {
+            content: payload.reference,
+            media_type: body.media_type,
+            mode: body.mode,
+            mount_path: body.mount_path,
+        };
+        self.registry_put(
+            RegistryKind::File,
+            &name,
+            &read,
+            Some(payload.source),
+            projection::registered_file,
+        )
+        .await
     }
 
     async fn registry_instructions_delete(
         &self,
         _cx: &WireContext,
-        _name: ResourceName,
+        name: ResourceName,
     ) -> WireResult<NoContent> {
-        Err(not_served(RouteId::RegistryInstructionsDelete))
+        self.registry_delete(RegistryKind::Instruction, &name).await
     }
 
     async fn registry_instructions_get(
         &self,
         _cx: &WireContext,
-        _name: ResourceName,
+        name: ResourceName,
     ) -> WireResult<WithETag<models::RegisteredInstruction>> {
-        Err(not_served(RouteId::RegistryInstructionsGet))
+        self.registry_get(RegistryKind::Instruction, &name, projection::registered_instruction)
+            .await
     }
 
     async fn registry_instructions_list(
@@ -1429,32 +1474,43 @@ impl RegistryApi for Routes {
                 query.limit,
             )
             .await?;
-        projection::registered_instruction_page(&page.pointers, next).map_err(WireError::from)
+        projection::registered_instruction_page(&page.rows, next).map_err(WireError::from)
     }
 
     async fn registry_instructions_put(
         &self,
         _cx: &WireContext,
-        _name: ResourceName,
-        _body: models::RegisteredInstructionValue,
+        name: ResourceName,
+        body: models::RegisteredInstructionValue,
     ) -> WireResult<WithETag<models::RegisteredInstruction>> {
-        Err(not_served(RouteId::RegistryInstructionsPut))
+        // An instruction has no payload at all, so there is nothing to admit
+        // and nothing to pin: the whole value is the document.
+        let read = models::RegisteredInstructionRead { text: body.text };
+        self.registry_put(
+            RegistryKind::Instruction,
+            &name,
+            &read,
+            None,
+            projection::registered_instruction,
+        )
+        .await
     }
 
     async fn registry_mcp_servers_delete(
         &self,
         _cx: &WireContext,
-        _name: ResourceName,
+        name: ResourceName,
     ) -> WireResult<NoContent> {
-        Err(not_served(RouteId::RegistryMcpServersDelete))
+        self.registry_delete(RegistryKind::McpServer, &name).await
     }
 
     async fn registry_mcp_servers_get(
         &self,
         _cx: &WireContext,
-        _name: ResourceName,
+        name: ResourceName,
     ) -> WireResult<WithETag<models::RegisteredMcpServer>> {
-        Err(not_served(RouteId::RegistryMcpServersGet))
+        self.registry_get(RegistryKind::McpServer, &name, projection::registered_mcp_server)
+            .await
     }
 
     async fn registry_mcp_servers_list(
@@ -1470,32 +1526,47 @@ impl RegistryApi for Routes {
                 query.limit,
             )
             .await?;
-        projection::registered_mcp_server_page(&page.pointers, next).map_err(WireError::from)
+        projection::registered_mcp_server_page(&page.rows, next).map_err(WireError::from)
     }
 
     async fn registry_mcp_servers_put(
         &self,
         _cx: &WireContext,
-        _name: ResourceName,
-        _body: models::RegisteredMcpServerValue,
+        name: ResourceName,
+        body: models::RegisteredMcpServerValue,
     ) -> WireResult<WithETag<models::RegisteredMcpServer>> {
-        Err(not_served(RouteId::RegistryMcpServersPut))
+        // Configuration never contains a secret value: `McpHeader` carries a
+        // `secretName`, so this deployable needs no secret plaintext here.
+        let read = models::RegisteredMcpServerRead {
+            headers: body.headers,
+            transport: body.transport,
+            url: body.url,
+        };
+        self.registry_put(
+            RegistryKind::McpServer,
+            &name,
+            &read,
+            None,
+            projection::registered_mcp_server,
+        )
+        .await
     }
 
     async fn registry_skills_delete(
         &self,
         _cx: &WireContext,
-        _name: ResourceName,
+        name: ResourceName,
     ) -> WireResult<NoContent> {
-        Err(not_served(RouteId::RegistrySkillsDelete))
+        self.registry_delete(RegistryKind::Skill, &name).await
     }
 
     async fn registry_skills_get(
         &self,
         _cx: &WireContext,
-        _name: ResourceName,
+        name: ResourceName,
     ) -> WireResult<WithETag<models::RegisteredSkill>> {
-        Err(not_served(RouteId::RegistrySkillsGet))
+        self.registry_get(RegistryKind::Skill, &name, projection::registered_skill)
+            .await
     }
 
     async fn registry_skills_list(
@@ -1511,32 +1582,48 @@ impl RegistryApi for Routes {
                 query.limit,
             )
             .await?;
-        projection::registered_skill_page(&page.pointers, next).map_err(WireError::from)
+        projection::registered_skill_page(&page.rows, next).map_err(WireError::from)
     }
 
     async fn registry_skills_put(
         &self,
         _cx: &WireContext,
-        _name: ResourceName,
-        _body: models::RegisteredSkillValue,
+        name: ResourceName,
+        body: models::RegisteredSkillValue,
     ) -> WireResult<WithETag<models::RegisteredSkill>> {
-        Err(not_served(RouteId::RegistrySkillsPut))
+        let payload = self
+            .admit_payload(RegistryKind::Skill, &name, &body.bundle)
+            .await?;
+        let read = models::RegisteredSkillRead {
+            bundle: payload.reference,
+            bundle_format: body.bundle_format,
+            description: body.description,
+        };
+        self.registry_put(
+            RegistryKind::Skill,
+            &name,
+            &read,
+            Some(payload.source),
+            projection::registered_skill,
+        )
+        .await
     }
 
     async fn registry_tools_delete(
         &self,
         _cx: &WireContext,
-        _name: ResourceName,
+        name: ResourceName,
     ) -> WireResult<NoContent> {
-        Err(not_served(RouteId::RegistryToolsDelete))
+        self.registry_delete(RegistryKind::Tool, &name).await
     }
 
     async fn registry_tools_get(
         &self,
         _cx: &WireContext,
-        _name: ResourceName,
+        name: ResourceName,
     ) -> WireResult<WithETag<models::RegisteredTool>> {
-        Err(not_served(RouteId::RegistryToolsGet))
+        self.registry_get(RegistryKind::Tool, &name, projection::registered_tool)
+            .await
     }
 
     async fn registry_tools_list(
@@ -1552,16 +1639,33 @@ impl RegistryApi for Routes {
                 query.limit,
             )
             .await?;
-        projection::registered_tool_page(&page.pointers, next).map_err(WireError::from)
+        projection::registered_tool_page(&page.rows, next).map_err(WireError::from)
     }
 
     async fn registry_tools_put(
         &self,
         _cx: &WireContext,
-        _name: ResourceName,
-        _body: models::RegisteredToolValue,
+        name: ResourceName,
+        body: models::RegisteredToolValue,
     ) -> WireResult<WithETag<models::RegisteredTool>> {
-        Err(not_served(RouteId::RegistryToolsPut))
+        let payload = self
+            .admit_payload(RegistryKind::Tool, &name, &body.bundle)
+            .await?;
+        let read = models::RegisteredToolRead {
+            bundle: payload.reference,
+            bundle_format: body.bundle_format,
+            description: body.description,
+            entry: body.entry,
+            input_schema: body.input_schema,
+        };
+        self.registry_put(
+            RegistryKind::Tool,
+            &name,
+            &read,
+            Some(payload.source),
+            projection::registered_tool,
+        )
+        .await
     }
 
     async fn registry_files_download_create(

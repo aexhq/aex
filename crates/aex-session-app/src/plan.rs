@@ -600,11 +600,11 @@ impl Write {
             }
             Self::PutPin(pin) | Self::DeletePin(pin) => ("PIN".to_owned(), format!("{pin:?}")),
             Self::PutRegistryPointer(pointer) => (
-                pointer.workspace.to_string(),
+                pointer.row.workspace.to_string(),
                 format!(
                     "REG#{}#{}",
-                    registry_kind_tag(pointer.kind),
-                    pointer.name.as_str()
+                    registry_kind_tag(pointer.row.kind),
+                    pointer.row.name.as_str()
                 ),
             ),
             Self::PutUpload(upload) => (upload.id.to_string(), "UPLOAD".to_owned()),

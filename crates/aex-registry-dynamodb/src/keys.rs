@@ -25,6 +25,7 @@ pub const ITEM_TYPES: &[&str] = &[
     "registry_upload",
     "registry_upload_parts",
     "idempotency_receipt",
+    "registry_count",
 ];
 
 /// Every upload state, as the domain spells them.
@@ -66,6 +67,19 @@ pub fn kind_partition(workspace: WorkspaceId, kind: RegistryKind) -> String {
 #[must_use]
 pub const fn name_prefix() -> &'static str {
     "NAME#"
+}
+
+/// The entry counter of one `(workspace, kind)`.
+///
+/// It shares the pointers' partition so a create's count fence and its pointer
+/// put land on one partition, and it sorts **outside** [`name_prefix`] so a
+/// listing can never return it as a row.
+#[must_use]
+pub fn count(workspace: WorkspaceId, kind: RegistryKind) -> Key {
+    Key {
+        pk: kind_partition(workspace, kind),
+        sk: "COUNT".to_owned(),
+    }
 }
 
 /// One staged upload.

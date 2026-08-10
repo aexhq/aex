@@ -3,7 +3,7 @@
 //! The effective-limit registry.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:b94020a15b341727fad0a80e6415d302880adba78c6cbed6291b43b46e6c6b16`.
+//! `sha256:079742a90257d87ada6a622050518c77f0fd98063e483130a4a334366b079850`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -61,6 +61,12 @@ pub enum LimitId {
     /// `content.bundle_expand` — Expanded bytes, entries and path length admitted from a bundle.
     #[serde(rename = "content.bundle_expand")]
     ContentBundleExpand,
+    /// `registry.entries` — Registered names one workspace may hold in one registry.
+    #[serde(rename = "registry.entries")]
+    RegistryEntries,
+    /// `registry.value_bytes` — Largest canonical value document a registered name may carry.
+    #[serde(rename = "registry.value_bytes")]
+    RegistryValueBytes,
     /// `tools.io_safety` — Per-tool byte, traversal and listing safety bounds.
     #[serde(rename = "tools.io_safety")]
     ToolsIoSafety,
@@ -87,6 +93,8 @@ impl LimitId {
         LimitId::StreamFrame,
         LimitId::MetricAggregate,
         LimitId::ContentBundleExpand,
+        LimitId::RegistryEntries,
+        LimitId::RegistryValueBytes,
         LimitId::ToolsIoSafety,
         LimitId::TelemetryExport,
     ];
@@ -106,6 +114,8 @@ impl LimitId {
             Self::StreamFrame => "stream.frame",
             Self::MetricAggregate => "metric.aggregate",
             Self::ContentBundleExpand => "content.bundle_expand",
+            Self::RegistryEntries => "registry.entries",
+            Self::RegistryValueBytes => "registry.value_bytes",
             Self::ToolsIoSafety => "tools.io_safety",
             Self::TelemetryExport => "telemetry.export",
         }
@@ -126,6 +136,8 @@ impl LimitId {
             Self::StreamFrame => LimitShape::Map,
             Self::MetricAggregate => LimitShape::Map,
             Self::ContentBundleExpand => LimitShape::Map,
+            Self::RegistryEntries => LimitShape::Scalar,
+            Self::RegistryValueBytes => LimitShape::Scalar,
             Self::ToolsIoSafety => LimitShape::Map,
             Self::TelemetryExport => LimitShape::Map,
         }
@@ -173,6 +185,8 @@ impl LimitId {
                 "rows",
             ],
             Self::ContentBundleExpand => &["expanded_bytes", "entries", "path_bytes"],
+            Self::RegistryEntries => &[],
+            Self::RegistryValueBytes => &[],
             Self::ToolsIoSafety => &[
                 "web_fetch_bytes",
                 "shell_output_bytes",

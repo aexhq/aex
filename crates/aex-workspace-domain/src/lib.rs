@@ -41,7 +41,7 @@ pub use persist::{
 };
 pub use registry::{
     DeleteCommit, ProposedValue, RegisteredValueRef, RegistryCommit, RegistryPointer,
-    RegistryRejection, SetOutcome, ValueError, delete, etag_of, set,
+    RegistryRejection, RegistryRow, SetOutcome, ValueDocument, ValueError, delete, etag_of, set,
 };
 pub use upload::{
     AmbiguityResolution, CompletionEvidence, ExpiryOutcome, HeadOracle, PART_GRANT_MAX_PER_CALL,

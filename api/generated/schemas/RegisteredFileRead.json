@@ -1,0 +1,36 @@
+{
+  "$id": "https://schemas.aex.dev/v1/RegisteredFileRead.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What a registered file is, as published. The payload bytes are referenced, never inlined; fetch them with a download grant.",
+  "properties": {
+    "content": {
+      "$ref": "aex:schema:ContentRef",
+      "description": "The stored bytes."
+    },
+    "mediaType": {
+      "description": "Declared media type.",
+      "maxLength": 255,
+      "minLength": 1,
+      "type": "string"
+    },
+    "mode": {
+      "$ref": "aex:schema:RegisteredFileMode",
+      "description": "POSIX mode."
+    },
+    "mountPath": {
+      "description": "Where it is mounted in the guest.",
+      "maxLength": 4096,
+      "type": "string",
+      "x-aex-path": "posix"
+    }
+  },
+  "required": [
+    "content",
+    "mediaType",
+    "mode",
+    "mountPath"
+  ],
+  "title": "RegisteredFileRead",
+  "type": "object"
+}

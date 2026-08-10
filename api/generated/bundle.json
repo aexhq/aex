@@ -5763,6 +5763,16 @@
           "shape": "map"
         },
         {
+          "description": "Registered names one workspace may hold in one registry.",
+          "id": "registry.entries",
+          "shape": "scalar"
+        },
+        {
+          "description": "Largest canonical value document a registered name may carry.",
+          "id": "registry.value_bytes",
+          "shape": "scalar"
+        },
+        {
           "description": "Per-tool byte, traversal and listing safety bounds.",
           "id": "tools.io_safety",
           "shape": "map"
@@ -6514,8 +6524,8 @@
       "additionalProperties": false,
       "properties": {
         "data": {
-          "description": "The encoded bytes.",
-          "maxLength": 1048576,
+          "description": "The encoded bytes. A larger payload goes through the upload surface.",
+          "maxLength": 32768,
           "minLength": 0,
           "type": "string"
         },
@@ -6635,6 +6645,26 @@
       "required": [
         "memoryMiB",
         "vcpus"
+      ],
+      "type": "object"
+    },
+    "ContentRef": {
+      "additionalProperties": false,
+      "properties": {
+        "sha256": {
+          "description": "Hash of the stored payload bytes.",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "sizeBytes": {
+          "description": "Size of the stored payload in bytes.",
+          "pattern": "^(0|[1-9]\\d*)$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sha256",
+        "sizeBytes"
       ],
       "type": "object"
     },
@@ -9654,12 +9684,12 @@
           "type": "integer"
         },
         "sha256": {
-          "description": "Hash of the stored value.",
+          "description": "Hash of the canonical value document, not of the payload. The payload's own hash is `value.content.sha256`.",
           "pattern": "^sha256:[0-9a-f]{64}$",
           "type": "string"
         },
         "sizeBytes": {
-          "description": "Size of the stored value.",
+          "description": "Size of the canonical value document in bytes, not of the payload.",
           "pattern": "^(0|[1-9]\\d*)$",
           "type": "string"
         },
@@ -9674,8 +9704,8 @@
           "x-aex-time": "rfc3339-ms"
         },
         "value": {
-          "$ref": "aex:schema:RegisteredFileValue",
-          "description": "Omitted in collection rows."
+          "$ref": "aex:schema:RegisteredFileRead",
+          "description": "The complete value."
         }
       },
       "required": [
@@ -9685,7 +9715,8 @@
         "sha256",
         "sizeBytes",
         "state",
-        "updatedAt"
+        "updatedAt",
+        "value"
       ],
       "type": "object"
     },
@@ -9702,7 +9733,7 @@
         "items": {
           "description": "The page.",
           "items": {
-            "$ref": "aex:schema:RegisteredFile"
+            "$ref": "aex:schema:RegisteredFileRow"
           },
           "maxItems": 1000,
           "type": "array"
@@ -9716,6 +9747,90 @@
       },
       "required": [
         "items"
+      ],
+      "type": "object"
+    },
+    "RegisteredFileRead": {
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "$ref": "aex:schema:ContentRef",
+          "description": "The stored bytes."
+        },
+        "mediaType": {
+          "description": "Declared media type.",
+          "maxLength": 255,
+          "minLength": 1,
+          "type": "string"
+        },
+        "mode": {
+          "$ref": "aex:schema:RegisteredFileMode",
+          "description": "POSIX mode."
+        },
+        "mountPath": {
+          "description": "Where it is mounted in the guest.",
+          "maxLength": 4096,
+          "type": "string",
+          "x-aex-path": "posix"
+        }
+      },
+      "required": [
+        "content",
+        "mediaType",
+        "mode",
+        "mountPath"
+      ],
+      "type": "object"
+    },
+    "RegisteredFileRow": {
+      "additionalProperties": false,
+      "properties": {
+        "createdAt": {
+          "description": "When first written.",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+          "type": "string",
+          "x-aex-time": "rfc3339-ms"
+        },
+        "name": {
+          "description": "The public identity.",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "type": "string"
+        },
+        "revision": {
+          "description": "Monotonic concurrency token.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sha256": {
+          "description": "Hash of the canonical value document.",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "sizeBytes": {
+          "description": "Size of the canonical value document in bytes.",
+          "pattern": "^(0|[1-9]\\d*)$",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "aex:schema:RegisteredState",
+          "description": "Always current."
+        },
+        "updatedAt": {
+          "description": "When last replaced.",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+          "type": "string",
+          "x-aex-time": "rfc3339-ms"
+        }
+      },
+      "required": [
+        "createdAt",
+        "name",
+        "revision",
+        "sha256",
+        "sizeBytes",
+        "state",
+        "updatedAt"
       ],
       "type": "object"
     },
@@ -9772,12 +9887,12 @@
           "type": "integer"
         },
         "sha256": {
-          "description": "Hash of the stored value.",
+          "description": "Hash of the canonical value document.",
           "pattern": "^sha256:[0-9a-f]{64}$",
           "type": "string"
         },
         "sizeBytes": {
-          "description": "Size of the stored value.",
+          "description": "Size of the canonical value document in bytes.",
           "pattern": "^(0|[1-9]\\d*)$",
           "type": "string"
         },
@@ -9792,8 +9907,8 @@
           "x-aex-time": "rfc3339-ms"
         },
         "value": {
-          "$ref": "aex:schema:RegisteredInstructionValue",
-          "description": "Omitted in collection rows."
+          "$ref": "aex:schema:RegisteredInstructionRead",
+          "description": "The complete value."
         }
       },
       "required": [
@@ -9803,7 +9918,8 @@
         "sha256",
         "sizeBytes",
         "state",
-        "updatedAt"
+        "updatedAt",
+        "value"
       ],
       "type": "object"
     },
@@ -9813,7 +9929,7 @@
         "items": {
           "description": "The page.",
           "items": {
-            "$ref": "aex:schema:RegisteredInstruction"
+            "$ref": "aex:schema:RegisteredInstructionRow"
           },
           "maxItems": 1000,
           "type": "array"
@@ -9830,12 +9946,79 @@
       ],
       "type": "object"
     },
+    "RegisteredInstructionRead": {
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "description": "The instruction text.",
+          "maxLength": 32768,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "type": "object"
+    },
+    "RegisteredInstructionRow": {
+      "additionalProperties": false,
+      "properties": {
+        "createdAt": {
+          "description": "When first written.",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+          "type": "string",
+          "x-aex-time": "rfc3339-ms"
+        },
+        "name": {
+          "description": "The public identity.",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "type": "string"
+        },
+        "revision": {
+          "description": "Monotonic concurrency token.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sha256": {
+          "description": "Hash of the canonical value document.",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "sizeBytes": {
+          "description": "Size of the canonical value document in bytes.",
+          "pattern": "^(0|[1-9]\\d*)$",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "aex:schema:RegisteredState",
+          "description": "Always current."
+        },
+        "updatedAt": {
+          "description": "When last replaced.",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+          "type": "string",
+          "x-aex-time": "rfc3339-ms"
+        }
+      },
+      "required": [
+        "createdAt",
+        "name",
+        "revision",
+        "sha256",
+        "sizeBytes",
+        "state",
+        "updatedAt"
+      ],
+      "type": "object"
+    },
     "RegisteredInstructionValue": {
       "additionalProperties": false,
       "properties": {
         "text": {
           "description": "The instruction text.",
-          "maxLength": 262144,
+          "maxLength": 32768,
           "minLength": 1,
           "type": "string"
         }
@@ -9866,12 +10049,12 @@
           "type": "integer"
         },
         "sha256": {
-          "description": "Hash of the stored value.",
+          "description": "Hash of the canonical value document.",
           "pattern": "^sha256:[0-9a-f]{64}$",
           "type": "string"
         },
         "sizeBytes": {
-          "description": "Size of the stored value.",
+          "description": "Size of the canonical value document in bytes.",
           "pattern": "^(0|[1-9]\\d*)$",
           "type": "string"
         },
@@ -9886,8 +10069,8 @@
           "x-aex-time": "rfc3339-ms"
         },
         "value": {
-          "$ref": "aex:schema:RegisteredMcpServerValue",
-          "description": "Omitted in collection rows."
+          "$ref": "aex:schema:RegisteredMcpServerRead",
+          "description": "The complete value."
         }
       },
       "required": [
@@ -9897,7 +10080,8 @@
         "sha256",
         "sizeBytes",
         "state",
-        "updatedAt"
+        "updatedAt",
+        "value"
       ],
       "type": "object"
     },
@@ -9907,7 +10091,7 @@
         "items": {
           "description": "The page.",
           "items": {
-            "$ref": "aex:schema:RegisteredMcpServer"
+            "$ref": "aex:schema:RegisteredMcpServerRow"
           },
           "maxItems": 1000,
           "type": "array"
@@ -9921,6 +10105,87 @@
       },
       "required": [
         "items"
+      ],
+      "type": "object"
+    },
+    "RegisteredMcpServerRead": {
+      "additionalProperties": false,
+      "properties": {
+        "headers": {
+          "description": "Secret-backed headers.",
+          "items": {
+            "$ref": "aex:schema:McpHeader"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        "transport": {
+          "$ref": "aex:schema:McpTransport",
+          "description": "The transport."
+        },
+        "url": {
+          "description": "The server endpoint.",
+          "format": "uri",
+          "maxLength": 2048,
+          "type": "string"
+        }
+      },
+      "required": [
+        "headers",
+        "transport",
+        "url"
+      ],
+      "type": "object"
+    },
+    "RegisteredMcpServerRow": {
+      "additionalProperties": false,
+      "properties": {
+        "createdAt": {
+          "description": "When first written.",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+          "type": "string",
+          "x-aex-time": "rfc3339-ms"
+        },
+        "name": {
+          "description": "The public identity.",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "type": "string"
+        },
+        "revision": {
+          "description": "Monotonic concurrency token.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sha256": {
+          "description": "Hash of the canonical value document.",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "sizeBytes": {
+          "description": "Size of the canonical value document in bytes.",
+          "pattern": "^(0|[1-9]\\d*)$",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "aex:schema:RegisteredState",
+          "description": "Always current."
+        },
+        "updatedAt": {
+          "description": "When last replaced.",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+          "type": "string",
+          "x-aex-time": "rfc3339-ms"
+        }
+      },
+      "required": [
+        "createdAt",
+        "name",
+        "revision",
+        "sha256",
+        "sizeBytes",
+        "state",
+        "updatedAt"
       ],
       "type": "object"
     },
@@ -9974,12 +10239,12 @@
           "type": "integer"
         },
         "sha256": {
-          "description": "Hash of the stored value.",
+          "description": "Hash of the canonical value document, not of the bundle. The bundle's own hash is `value.bundle.sha256`.",
           "pattern": "^sha256:[0-9a-f]{64}$",
           "type": "string"
         },
         "sizeBytes": {
-          "description": "Size of the stored value.",
+          "description": "Size of the canonical value document in bytes, not of the bundle.",
           "pattern": "^(0|[1-9]\\d*)$",
           "type": "string"
         },
@@ -9994,8 +10259,8 @@
           "x-aex-time": "rfc3339-ms"
         },
         "value": {
-          "$ref": "aex:schema:RegisteredSkillValue",
-          "description": "Omitted in collection rows."
+          "$ref": "aex:schema:RegisteredSkillRead",
+          "description": "The complete value."
         }
       },
       "required": [
@@ -10005,7 +10270,8 @@
         "sha256",
         "sizeBytes",
         "state",
-        "updatedAt"
+        "updatedAt",
+        "value"
       ],
       "type": "object"
     },
@@ -10015,7 +10281,7 @@
         "items": {
           "description": "The page.",
           "items": {
-            "$ref": "aex:schema:RegisteredSkill"
+            "$ref": "aex:schema:RegisteredSkillRow"
           },
           "maxItems": 1000,
           "type": "array"
@@ -10029,6 +10295,83 @@
       },
       "required": [
         "items"
+      ],
+      "type": "object"
+    },
+    "RegisteredSkillRead": {
+      "additionalProperties": false,
+      "properties": {
+        "bundle": {
+          "$ref": "aex:schema:ContentRef",
+          "description": "The stored bundle."
+        },
+        "bundleFormat": {
+          "$ref": "aex:schema:BundleFormat",
+          "description": "The bundle format."
+        },
+        "description": {
+          "description": "What the skill is for.",
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "bundle",
+        "bundleFormat",
+        "description"
+      ],
+      "type": "object"
+    },
+    "RegisteredSkillRow": {
+      "additionalProperties": false,
+      "properties": {
+        "createdAt": {
+          "description": "When first written.",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+          "type": "string",
+          "x-aex-time": "rfc3339-ms"
+        },
+        "name": {
+          "description": "The public identity.",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "type": "string"
+        },
+        "revision": {
+          "description": "Monotonic concurrency token.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sha256": {
+          "description": "Hash of the canonical value document.",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "sizeBytes": {
+          "description": "Size of the canonical value document in bytes.",
+          "pattern": "^(0|[1-9]\\d*)$",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "aex:schema:RegisteredState",
+          "description": "Always current."
+        },
+        "updatedAt": {
+          "description": "When last replaced.",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+          "type": "string",
+          "x-aex-time": "rfc3339-ms"
+        }
+      },
+      "required": [
+        "createdAt",
+        "name",
+        "revision",
+        "sha256",
+        "sizeBytes",
+        "state",
+        "updatedAt"
       ],
       "type": "object"
     },
@@ -10084,12 +10427,12 @@
           "type": "integer"
         },
         "sha256": {
-          "description": "Hash of the stored value.",
+          "description": "Hash of the canonical value document, not of the bundle. The bundle's own hash is `value.bundle.sha256`.",
           "pattern": "^sha256:[0-9a-f]{64}$",
           "type": "string"
         },
         "sizeBytes": {
-          "description": "Size of the stored value.",
+          "description": "Size of the canonical value document in bytes, not of the bundle.",
           "pattern": "^(0|[1-9]\\d*)$",
           "type": "string"
         },
@@ -10104,8 +10447,8 @@
           "x-aex-time": "rfc3339-ms"
         },
         "value": {
-          "$ref": "aex:schema:RegisteredToolValue",
-          "description": "Omitted in collection rows."
+          "$ref": "aex:schema:RegisteredToolRead",
+          "description": "The complete value."
         }
       },
       "required": [
@@ -10115,7 +10458,8 @@
         "sha256",
         "sizeBytes",
         "state",
-        "updatedAt"
+        "updatedAt",
+        "value"
       ],
       "type": "object"
     },
@@ -10125,7 +10469,7 @@
         "items": {
           "description": "The page.",
           "items": {
-            "$ref": "aex:schema:RegisteredTool"
+            "$ref": "aex:schema:RegisteredToolRow"
           },
           "maxItems": 1000,
           "type": "array"
@@ -10139,6 +10483,95 @@
       },
       "required": [
         "items"
+      ],
+      "type": "object"
+    },
+    "RegisteredToolRead": {
+      "additionalProperties": false,
+      "properties": {
+        "bundle": {
+          "$ref": "aex:schema:ContentRef",
+          "description": "The stored bundle."
+        },
+        "bundleFormat": {
+          "$ref": "aex:schema:BundleFormat",
+          "description": "The bundle format."
+        },
+        "description": {
+          "description": "What the tool does.",
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "entry": {
+          "description": "Relative entry path inside the bundle.",
+          "maxLength": 1024,
+          "minLength": 1,
+          "type": "string"
+        },
+        "inputSchema": {
+          "description": "JSON Schema 2020-12 for the arguments.",
+          "x-aex-canonical-json": true
+        }
+      },
+      "required": [
+        "bundle",
+        "bundleFormat",
+        "description",
+        "entry",
+        "inputSchema"
+      ],
+      "type": "object"
+    },
+    "RegisteredToolRow": {
+      "additionalProperties": false,
+      "properties": {
+        "createdAt": {
+          "description": "When first written.",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+          "type": "string",
+          "x-aex-time": "rfc3339-ms"
+        },
+        "name": {
+          "description": "The public identity.",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "type": "string"
+        },
+        "revision": {
+          "description": "Monotonic concurrency token.",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sha256": {
+          "description": "Hash of the canonical value document.",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "sizeBytes": {
+          "description": "Size of the canonical value document in bytes.",
+          "pattern": "^(0|[1-9]\\d*)$",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "aex:schema:RegisteredState",
+          "description": "Always current."
+        },
+        "updatedAt": {
+          "description": "When last replaced.",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+          "type": "string",
+          "x-aex-time": "rfc3339-ms"
+        }
+      },
+      "required": [
+        "createdAt",
+        "name",
+        "revision",
+        "sha256",
+        "sizeBytes",
+        "state",
+        "updatedAt"
       ],
       "type": "object"
     },

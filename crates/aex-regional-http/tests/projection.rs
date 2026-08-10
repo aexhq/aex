@@ -14,8 +14,9 @@ use aex_content_domain::identity::{RegistryKind, Revision};
 use aex_regional_http::cursor::{CursorError, SortTuple};
 use aex_regional_http::projection::{
     ProjectionError, entity_tag, position_tuple, provider_credential, provider_credential_page,
-    registered_file, registered_instruction, registered_mcp_server, registered_skill,
-    registered_skill_page, registered_tool, secret_metadata, secret_metadata_page,
+    registered_file, registered_file_row, registered_instruction, registered_instruction_row,
+    registered_mcp_server, registered_mcp_server_row, registered_skill, registered_skill_page,
+    registered_tool, secret_metadata, secret_metadata_page,
     secret_plaintext, secret_revocation, session_run, session_run_page, tuple_position,
 };
 use aex_secret_custody_dynamodb::codec::{
@@ -31,7 +32,9 @@ use aex_wire::ids::{
 };
 use aex_wire::models;
 use aex_wire::types::{ETag, Timestamp};
-use aex_workspace_domain::registry::{RegisteredValueRef, RegistryPointer};
+use aex_workspace_domain::registry::{
+    RegistryPointer, RegistryRow as StoredRegistryRow, ValueDocument,
+};
 
 // --- fixtures ---------------------------------------------------------------------
 
@@ -402,20 +405,51 @@ fn an_entity_tag_is_a_quoted_strong_validator() {
 
 // --- the registry ------------------------------------------------------------------
 
-fn registry_pointer(kind: RegistryKind, name: &str) -> RegistryPointer {
-    RegistryPointer {
+/// The value document each kind stores, so a point projection has something of
+/// the right shape to decode.
+fn value_document(kind: RegistryKind) -> ValueDocument {
+    let payload = ContentHash::of(b"body").to_wire();
+    let text = match kind {
+        RegistryKind::File => format!(
+            r#"{{"mountPath":"/etc/motd","mediaType":"text/plain","mode":"0644",
+                "content":{{"sha256":"{payload}","sizeBytes":"4"}}}}"#
+        ),
+        RegistryKind::Skill => format!(
+            r#"{{"description":"review","bundleFormat":"tar.gz",
+                "bundle":{{"sha256":"{payload}","sizeBytes":"4"}}}}"#
+        ),
+        RegistryKind::Tool => format!(
+            r#"{{"description":"search","inputSchema":{{"type":"object"}},"entry":"main.js",
+                "bundleFormat":"tar.gz",
+                "bundle":{{"sha256":"{payload}","sizeBytes":"4"}}}}"#
+        ),
+        RegistryKind::Instruction => r#"{"text":"be concise"}"#.to_owned(),
+        RegistryKind::McpServer => {
+            r#"{"url":"https://example.test/mcp","transport":"streamable_http","headers":[]}"#
+                .to_owned()
+        }
+    };
+    ValueDocument::new(aex_wire::CanonicalJson::parse(&text).expect("valid JSON"))
+}
+
+fn registry_row(kind: RegistryKind, name: &str) -> StoredRegistryRow {
+    StoredRegistryRow {
         workspace: workspace(),
         kind,
         name: ResourceName::parse(name).expect("a resource name"),
         revision: Revision(7),
         etag: ETag::parse("\"registry-7\"").expect("a strong validator"),
-        value: RegisteredValueRef::Content {
-            digest: ContentHash::of(b"body"),
-        },
         sha256: ContentHash::of(b"body"),
         size_bytes: 4_096,
         created_at: moment("2026-08-01T12:34:56.789Z"),
         updated_at: moment("2026-08-01T13:00:00.000Z"),
+    }
+}
+
+fn registry_pointer(kind: RegistryKind, name: &str) -> RegistryPointer {
+    RegistryPointer {
+        row: registry_row(kind, name),
+        value_doc: value_document(kind),
     }
 }
 
@@ -433,29 +467,41 @@ fn a_projected_registry_row_survives_the_wire_unchanged() {
 }
 
 #[test]
-fn a_collection_row_never_publishes_a_value_the_projection_cannot_read() {
-    // The value is a sealed body in content storage. A row that carried one
-    // would be publishing something this projection never read.
-    for pointer in [
-        registry_pointer(RegistryKind::File, "notes.md"),
-        registry_pointer(RegistryKind::Instruction, "house-style"),
-        registry_pointer(RegistryKind::McpServer, "docs"),
+fn a_collection_row_has_no_field_a_value_could_go_in() {
+    // After the D-6 split this is structural rather than a convention: the row
+    // types carry no `value` at all, so a listing cannot publish one even by
+    // mistake, and the point types have no `None` to publish.
+    for kind in [
+        RegistryKind::File,
+        RegistryKind::Instruction,
+        RegistryKind::McpServer,
     ] {
-        let encoded = match pointer.kind {
-            RegistryKind::File => {
-                serde_json::to_value(registered_file(&pointer).expect("it projects"))
-            }
-            RegistryKind::Instruction => {
-                serde_json::to_value(registered_instruction(&pointer).expect("it projects"))
-            }
-            _ => serde_json::to_value(registered_mcp_server(&pointer).expect("it projects")),
+        let row = registry_row(kind, "name");
+        let encoded = match kind {
+            RegistryKind::File => serde_json::to_value(
+                registered_file_row(&row).expect("it projects"),
+            ),
+            RegistryKind::Instruction => serde_json::to_value(
+                registered_instruction_row(&row).expect("it projects"),
+            ),
+            _ => serde_json::to_value(registered_mcp_server_row(&row).expect("it projects")),
         }
         .expect("it encodes");
         assert!(
             encoded.get("value").is_none(),
-            "a collection row omits the value"
+            "a collection row has no value field"
         );
     }
+
+    // And the point form always has one.
+    let complete = serde_json::to_value(
+        registered_file(&registry_pointer(RegistryKind::File, "notes.md")).expect("it projects"),
+    )
+    .expect("it encodes");
+    assert!(
+        complete.get("value").is_some(),
+        "a point response publishes the complete value"
+    );
 }
 
 #[test]
@@ -520,8 +566,8 @@ fn a_registry_page_fails_whole_rather_than_dropping_a_row_it_cannot_project() {
     // registry means the query and the key template disagreed. Skipping it would
     // publish a short page as a complete one.
     let mixed = [
-        registry_pointer(RegistryKind::Skill, "review"),
-        registry_pointer(RegistryKind::Tool, "search"),
+        registry_row(RegistryKind::Skill, "review"),
+        registry_row(RegistryKind::Tool, "search"),
     ];
     assert!(registered_skill_page(&mixed, None).is_err());
     assert_eq!(

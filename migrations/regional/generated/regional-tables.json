@@ -1,7 +1,7 @@
 {
   "schema": "aex.regional-tables.v1",
   "generation": 1,
-  "digest": "blake3:be8c91368cda351c775906c5d9d9a5179871f4024545b627d924e12f10b4cdb5",
+  "digest": "blake3:890e1d2c5761be3c1423d5b6ca631f1ecddb7643839ea81e401cd2df61b3e63e",
   "tables": [
     {
       "schema": "aex.regional-table.v1",
@@ -830,7 +830,7 @@
       "schema": "aex.regional-table.v1",
       "table": "regional-registry",
       "owner": "regional-stores",
-      "purpose": "The current (workspace, kind, name) registry pointer with its revision and ETag, multipart upload staging rows, and registry idempotency receipts.",
+      "purpose": "The current (workspace, kind, name) registry pointer with its revision, ETag and canonical value document, one entry counter per (workspace, kind), multipart upload staging rows, and registry idempotency receipts.",
       "billingMode": "PAY_PER_REQUEST",
       "deletionProtection": true,
       "pointInTimeRecovery": {
@@ -840,7 +840,7 @@
       "serverSideEncryption": {
         "type": "KMS",
         "keyAuthority": "regional-registry",
-        "rationale": "Per-authority customer managed key. The registry stores pointers and digests, never bodies."
+        "rationale": "Per-authority customer managed key. The registry stores pointers, digests and unsealed value documents, never payload bodies."
       },
       "attributes": [
         {
@@ -875,7 +875,8 @@
         "registry_pointer",
         "registry_upload",
         "registry_upload_parts",
-        "idempotency_receipt"
+        "idempotency_receipt",
+        "registry_count"
       ],
       "iam": [
         {

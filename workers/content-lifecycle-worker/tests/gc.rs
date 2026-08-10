@@ -7,7 +7,7 @@
 
 use std::sync::Mutex;
 
-use aex_content_dynamodb::codec::{ContentDescriptor, GcEpoch, TreePage};
+use aex_content_dynamodb::codec::{ContentDescriptor, ContentPin, GcEpoch, TreePage};
 use aex_content_dynamodb::store::{
     ContentMetadataStore, GcScanPage, GrantExpiry, GrantExpiryPage, Reachability, RedeemedGrant,
 };
@@ -89,6 +89,18 @@ impl ContentMetadataStore for Store {
 
     async fn put_descriptor(&self, _descriptor: &ContentDescriptor) -> Result<(), StoreError> {
         Ok(())
+    }
+
+    /// Admission is the registry write path, and the delete batch is the only
+    /// thing this suite drives. A silent `Ok` here would let a future change
+    /// call it and still pass, so it refuses loudly instead.
+    async fn admit_body(
+        &self,
+        _descriptor: &ContentDescriptor,
+        _pin: &ContentPin,
+        _now: Timestamp,
+    ) -> Result<(), StoreError> {
+        unreachable!("the garbage-collection suite never admits a body")
     }
 
     async fn read_inline_body(

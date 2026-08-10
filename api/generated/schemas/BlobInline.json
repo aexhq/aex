@@ -5,8 +5,8 @@
   "description": "A small value carried in the request.",
   "properties": {
     "data": {
-      "description": "The encoded bytes.",
-      "maxLength": 1048576,
+      "description": "The encoded bytes. A larger payload goes through the upload surface.",
+      "maxLength": 32768,
       "minLength": 0,
       "type": "string"
     },

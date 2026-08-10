@@ -101,6 +101,14 @@
         "active": 5,
         "window_days": 90
       }
+    },
+    {
+      "id": "registry.entries",
+      "value": 1000
+    },
+    {
+      "id": "registry.value_bytes",
+      "value": 65536
     }
   ]
 }

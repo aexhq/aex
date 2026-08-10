@@ -6,7 +6,11 @@
 use aex_content_domain::identity::{RegistryKind, Revision};
 use aex_wire::ids::{ContentHash, PrefixedId, ResourceName, UploadId, Uuid7, WorkspaceId};
 use aex_wire::types::Timestamp;
-use aex_workspace_domain::registry::{RegisteredValueRef, RegistryPointer, etag_of};
+use aex_registry_dynamodb::store::{SET_RESPONSE_KIND, SetReceipt};
+use aex_session_dynamodb::replay::Receipt;
+use aex_workspace_domain::registry::{
+    RegistryCommit, RegistryPointer, RegistryRow, SetOutcome, ValueDocument, etag_of,
+};
 use aex_workspace_domain::upload::{PartPlan, PlannedPart, Upload, UploadState};
 use aws_sdk_dynamodb::Client;
 use aws_sdk_dynamodb::config::{BehaviorVersion, Credentials, Region};
@@ -80,34 +84,56 @@ pub fn name(text: &str) -> ResourceName {
     ResourceName::parse(text).expect("an ASCII resource name")
 }
 
+/// One canonical tool value document, over a payload digest the caller chooses.
+#[must_use]
+pub fn value_doc(payload: ContentHash) -> ValueDocument {
+    ValueDocument::new(
+        aex_wire::CanonicalJson::parse(&format!(
+            r#"{{"description":"search","entry":"main.js","bundleFormat":"tar.gz",
+                "inputSchema":{{"type":"object"}},
+                "bundle":{{"sha256":"{}","sizeBytes":"2048"}}}}"#,
+            payload.to_wire()
+        ))
+        .expect("valid JSON"),
+    )
+}
+
 #[must_use]
 pub fn pointer() -> RegistryPointer {
-    let digest = ContentHash::from_bytes([0xab; 32]);
+    let document = value_doc(ContentHash::from_bytes([0xab; 32]));
+    let digest = document.digest();
     RegistryPointer {
-        workspace: workspace(),
-        kind: RegistryKind::Tool,
-        name: name("search"),
-        revision: Revision::FIRST,
-        etag: etag_of(RegistryKind::Tool, Revision::FIRST, &digest),
-        value: RegisteredValueRef::Content { digest },
-        sha256: digest,
-        size_bytes: 2_048,
-        created_at: now(),
-        updated_at: now(),
+        row: RegistryRow {
+            workspace: workspace(),
+            kind: RegistryKind::Tool,
+            name: name("search"),
+            revision: Revision::FIRST,
+            etag: etag_of(RegistryKind::Tool, Revision::FIRST, &digest),
+            sha256: digest,
+            size_bytes: document.size_bytes(),
+            created_at: now(),
+            updated_at: now(),
+        },
+        value_doc: document,
     }
 }
 
 #[must_use]
 pub fn next_pointer() -> RegistryPointer {
-    let digest = ContentHash::from_bytes([0xcd; 32]);
+    let document = value_doc(ContentHash::from_bytes([0xcd; 32]));
+    let digest = document.digest();
     let revision = Revision::FIRST.next();
+    let base = pointer();
     RegistryPointer {
-        revision,
-        etag: etag_of(RegistryKind::Tool, revision, &digest),
-        value: RegisteredValueRef::Content { digest },
-        sha256: digest,
-        updated_at: later(1_000),
-        ..pointer()
+        row: RegistryRow {
+            revision,
+            etag: etag_of(RegistryKind::Tool, revision, &digest),
+            sha256: digest,
+            size_bytes: document.size_bytes(),
+            updated_at: later(1_000),
+            ..base.row
+        },
+        value_doc: document,
     }
 }
 
@@ -140,6 +166,41 @@ pub fn upload() -> Upload {
         completion: None,
         consumed_by: None,
         created_at: now(),
+        expires_at: later(24 * 60 * 60 * 1_000),
+    }
+}
+
+/// The commit a create produces, over the fixture pointer.
+#[must_use]
+pub fn created_commit() -> RegistryCommit {
+    RegistryCommit {
+        pointer: pointer(),
+        consumed_upload: None,
+        wrote: true,
+    }
+}
+
+/// The commit a replace produces.
+#[must_use]
+pub fn replaced_commit() -> RegistryCommit {
+    RegistryCommit {
+        pointer: next_pointer(),
+        consumed_upload: None,
+        wrote: true,
+    }
+}
+
+/// The durable receipt one commit writes.
+#[must_use]
+pub fn receipt_for(commit: &RegistryCommit) -> Receipt {
+    let answer = SetReceipt::of(SetOutcome::Created, &commit.pointer);
+    Receipt {
+        scope: "registry.set:tool".to_owned(),
+        key_sha256: "a".repeat(64),
+        intent: aex_wire::idempotency::IntentDigest::from_bytes([7; 32]),
+        response_kind: SET_RESPONSE_KIND.to_owned(),
+        response: answer.to_body().expect("a serializable answer"),
+        committed_at: now(),
         expires_at: later(24 * 60 * 60 * 1_000),
     }
 }

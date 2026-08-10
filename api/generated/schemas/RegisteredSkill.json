@@ -2,7 +2,7 @@
   "$id": "https://schemas.aex.dev/v1/RegisteredSkill.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "A registered skill entry.",
+  "description": "A registered skill entry, complete.",
   "properties": {
     "createdAt": {
       "description": "When first written.",
@@ -22,12 +22,12 @@
       "type": "integer"
     },
     "sha256": {
-      "description": "Hash of the stored value.",
+      "description": "Hash of the canonical value document, not of the bundle. The bundle's own hash is `value.bundle.sha256`.",
       "pattern": "^sha256:[0-9a-f]{64}$",
       "type": "string"
     },
     "sizeBytes": {
-      "description": "Size of the stored value.",
+      "description": "Size of the canonical value document in bytes, not of the bundle.",
       "pattern": "^(0|[1-9]\\d*)$",
       "type": "string"
     },
@@ -42,8 +42,8 @@
       "x-aex-time": "rfc3339-ms"
     },
     "value": {
-      "$ref": "aex:schema:RegisteredSkillValue",
-      "description": "Omitted in collection rows."
+      "$ref": "aex:schema:RegisteredSkillRead",
+      "description": "The complete value."
     }
   },
   "required": [
@@ -53,7 +53,8 @@
     "sha256",
     "sizeBytes",
     "state",
-    "updatedAt"
+    "updatedAt",
+    "value"
   ],
   "title": "RegisteredSkill",
   "type": "object"

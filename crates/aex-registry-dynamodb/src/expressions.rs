@@ -12,7 +12,9 @@ use aex_session_dynamodb::attr::{n, s};
 use aex_session_dynamodb::component::Component;
 use aex_session_dynamodb::error::StoreError;
 use aex_session_dynamodb::plan::{IMMUTABLE, key};
+use aex_session_dynamodb::replay::{Receipt, encode_receipt_row};
 use aex_wire::ids::{UploadId, WorkspaceId};
+use aex_wire::types::ETag;
 use aex_workspace_domain::registry::RegistryPointer;
 use aex_workspace_domain::upload::{Upload, UploadState};
 use aws_sdk_dynamodb::types::builders::{DeleteBuilder, PutBuilder, UpdateBuilder};
@@ -52,7 +54,14 @@ pub fn replace_pointer(
         .expression_attribute_values(":fromRevision", n(from_revision.0)))
 }
 
-/// Removes a pointer under the revision the caller observed.
+/// Removes a pointer, honouring `If-Match` exactly and reading nothing first.
+///
+/// The tag is stored on the row, so `If-Match` is expressible as a condition and
+/// the happy path performs no read at all (D-9). The `attribute_exists` half is
+/// what makes the returned `ALL_OLD` item decisive: a condition failure with no
+/// observed item means the name was already absent, which is an idempotent
+/// success, and one *with* an observed item means the tag did not match, which
+/// is `412` carrying that row's current tag.
 ///
 /// # Errors
 ///
@@ -62,14 +71,94 @@ pub fn delete_pointer(
     workspace: WorkspaceId,
     kind: RegistryKind,
     name: &str,
-    from_revision: Revision,
+    if_match: Option<&ETag>,
 ) -> Result<DeleteBuilder, StoreError> {
     let pointer = keys::pointer(workspace, kind, name)?;
-    Ok(Delete::builder()
+    let builder = Delete::builder()
         .table_name(table)
-        .set_key(Some(key(&pointer.pk, &pointer.sk)))
-        .condition_expression("attribute_exists(pk) AND revision = :fromRevision")
-        .expression_attribute_values(":fromRevision", n(from_revision.0)))
+        .set_key(Some(key(&pointer.pk, &pointer.sk)));
+    Ok(match if_match {
+        None => builder.condition_expression("attribute_exists(pk)"),
+        Some(expected) => builder
+            .condition_expression("attribute_exists(pk) AND etag = :ifMatch")
+            .expression_attribute_values(":ifMatch", s(expected.as_str().to_owned())),
+    })
+}
+
+/// Writes the durable idempotency receipt of one registry mutation.
+///
+/// `IMMUTABLE` is what makes the receipt the fence: the winner writes it inside
+/// its own transaction, and a loser learns the winner's answer from the item
+/// this condition failure returns rather than from a second read (D-8).
+///
+/// # Errors
+///
+/// [`StoreError`] when the rendered scope or key digest could not enter a key.
+pub fn put_receipt(
+    table: &str,
+    workspace: WorkspaceId,
+    receipt: &Receipt,
+) -> Result<PutBuilder, StoreError> {
+    let item = encode_receipt_row(workspace, receipt).map_err(|error| StoreError::Invalid {
+        detail: error.to_string(),
+    })?;
+    Ok(Put::builder()
+        .table_name(table)
+        .set_item(Some(item))
+        .condition_expression(IMMUTABLE))
+}
+
+/// Claims one entry against the `registry.entries` cap.
+///
+/// Only a **create** claims: a replace occupies a name it already holds. The cap
+/// is the condition, not a preceding `Select=COUNT`, so two concurrent creates
+/// at the boundary cannot both win.
+#[must_use]
+pub fn claim_entry(table: &str, workspace: WorkspaceId, kind: RegistryKind, cap: u64) -> UpdateBuilder {
+    let target = keys::count(workspace, kind);
+    Update::builder()
+        .table_name(table)
+        .set_key(Some(key(&target.pk, &target.sk)))
+        .condition_expression("attribute_not_exists(#count) OR #count < :cap")
+        .update_expression(
+            "SET #count = if_not_exists(#count, :zero) + :one, itemType = :type, \
+             workspaceId = :workspace, kind = :kind",
+        )
+        .expression_attribute_names("#count", codec::COUNT)
+        .expression_attribute_values(":cap", n(cap))
+        .expression_attribute_values(":zero", n(0))
+        .expression_attribute_values(":one", n(1))
+        .expression_attribute_values(":type", s(codec::REGISTRY_COUNT))
+        .expression_attribute_values(":workspace", s(workspace.to_string()))
+        .expression_attribute_values(":kind", s(kind.as_str()))
+}
+
+/// Releases one entry when a name is removed.
+///
+/// D-13 specifies the claim and is silent on the release. A counter that only
+/// ever rose would make a workspace that created and deleted `cap` names
+/// permanently unable to create another, so the release rides the delete
+/// transaction and is exact whenever the counter exists. An **absent** counter
+/// resolves to zero rather than refusing: `registry_files_delete` declares no
+/// error a missing counter could be reported as, and a delete that cannot
+/// succeed is worse than a count that heals.
+#[must_use]
+pub fn release_entry(table: &str, workspace: WorkspaceId, kind: RegistryKind) -> UpdateBuilder {
+    let target = keys::count(workspace, kind);
+    Update::builder()
+        .table_name(table)
+        .set_key(Some(key(&target.pk, &target.sk)))
+        .condition_expression("attribute_not_exists(#count) OR #count > :zero")
+        .update_expression(
+            "SET #count = if_not_exists(#count, :one) - :one, itemType = :type, \
+             workspaceId = :workspace, kind = :kind",
+        )
+        .expression_attribute_names("#count", codec::COUNT)
+        .expression_attribute_values(":zero", n(0))
+        .expression_attribute_values(":one", n(1))
+        .expression_attribute_values(":type", s(codec::REGISTRY_COUNT))
+        .expression_attribute_values(":workspace", s(workspace.to_string()))
+        .expression_attribute_values(":kind", s(kind.as_str()))
 }
 
 /// Stages an upload's head row, which must not already exist.
@@ -373,13 +462,14 @@ fn invalid(error: &codec::EncodeError) -> StoreError {
 
 #[cfg(test)]
 mod tests {
-    use aex_content_domain::identity::{RegistryKind, Revision};
+    use aex_content_domain::identity::RegistryKind;
     use aex_wire::ids::{PrefixedId, UploadId, Uuid7, WorkspaceId};
+    use aex_wire::types::ETag;
     use aex_workspace_domain::upload::UploadState;
 
     use super::{
-        begin_completion, consume_upload, delete_pointer, delete_upload, finish_completion,
-        transition_upload, transition_upload_fenced,
+        begin_completion, claim_entry, consume_upload, delete_pointer, delete_upload,
+        finish_completion, release_entry, transition_upload, transition_upload_fenced,
     };
 
     const TABLE: &str = "dev-eu-west-1-regional-registry";
@@ -488,38 +578,61 @@ mod tests {
         assert!(expression.contains("attribute_not_exists(consumedByName)"));
     }
 
+    /// A delete honours `If-Match` as a condition and reads nothing first.
+    ///
+    /// The tag is stored on the row, so the precondition is expressible without
+    /// a pre-read, and the `attribute_exists` half is what makes the returned
+    /// `ALL_OLD` item decisive between "already absent" and "stale tag" (D-9).
     #[test]
-    fn every_pointer_write_is_fenced_on_the_revision_the_caller_observed() {
+    fn a_delete_conditions_on_the_stored_tag_without_reading_it_first() {
+        let tag = ETag::parse("registry-4").expect("a strong validator");
         let built = delete_pointer(
             TABLE,
             workspace(),
             RegistryKind::File,
             "notes.md",
-            Revision(4),
+            Some(&tag),
         )
         .expect("builds")
         .build()
         .expect("a complete delete");
-        assert!(
-            built
-                .condition_expression()
-                .expect("conditional")
-                .contains("revision = :fromRevision")
+        let condition = built.condition_expression().expect("conditional");
+        assert!(condition.contains("attribute_exists(pk)"));
+        assert!(condition.contains("etag = :ifMatch"));
+
+        let unconditional = delete_pointer(TABLE, workspace(), RegistryKind::File, "notes.md", None)
+            .expect("builds")
+            .build()
+            .expect("a complete delete");
+        assert_eq!(
+            unconditional.condition_expression(),
+            Some("attribute_exists(pk)"),
+            "without `If-Match` the only condition is existence"
+        );
+    }
+
+    /// The entry cap is the write's own condition, never a preceding count.
+    #[test]
+    fn the_entry_claim_is_fenced_by_the_cap_and_the_release_never_underflows() {
+        let claim = claim_entry(TABLE, workspace(), RegistryKind::File, 1_000)
+            .build()
+            .expect("a complete update");
+        assert_eq!(
+            claim.condition_expression(),
+            Some("attribute_not_exists(#count) OR #count < :cap")
+        );
+        let release = release_entry(TABLE, workspace(), RegistryKind::File)
+            .build()
+            .expect("a complete update");
+        assert_eq!(
+            release.condition_expression(),
+            Some("attribute_not_exists(#count) OR #count > :zero")
         );
     }
 
     #[test]
     fn a_name_that_could_forge_a_key_stops_the_builder() {
-        assert!(
-            delete_pointer(
-                TABLE,
-                workspace(),
-                RegistryKind::File,
-                "a#b",
-                Revision::FIRST
-            )
-            .is_err()
-        );
+        assert!(delete_pointer(TABLE, workspace(), RegistryKind::File, "a#b", None).is_err());
         assert!(consume_upload(TABLE, upload(), RegistryKind::Tool, "a#b").is_err());
     }
 }

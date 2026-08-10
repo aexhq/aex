@@ -10,12 +10,19 @@
 //! garbage-collect and no way to resurrect a deleted one.
 
 use aex_content_domain::{ContentDigest, RegisteredName, RegistryKind, Revision};
+use aex_wire::CanonicalJson;
 use aex_wire::ids::{UploadId, WorkspaceId};
 use aex_wire::types::{ETag, Timestamp};
 
 use crate::upload::UploadState;
 
-/// What a registry name points at.
+/// Where a registered value's payload bytes come from on the way **in**.
+///
+/// This is an input vocabulary only. A durable pointer never stores it: a set
+/// that consumes an upload resolves it to a content digest at admission time and
+/// stores that digest inside the value document (D-15). A pointer that named an
+/// upload would outlive its own referent, because `upload_complete` marks the
+/// upload `Consumed` and the row eventually ages out.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RegisteredValueRef {
     /// A body already in content storage.
@@ -30,9 +37,62 @@ pub enum RegisteredValueRef {
     },
 }
 
-/// A registry pointer.
+/// The complete non-payload value of a registered resource, canonicalized.
+///
+/// The document is the resource: `sha256` and `size_bytes` on a pointer are
+/// `SHA-256(JCS(valueDoc))` and `len(JCS(valueDoc))` for every kind, including
+/// the two kinds that have no payload at all (D-4). Digesting the payload
+/// instead would make a metadata-only edit — a changed `mountPath` over
+/// unchanged bytes — compare `Unchanged` and be silently discarded.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RegistryPointer {
+pub struct ValueDocument(CanonicalJson);
+
+impl ValueDocument {
+    /// Adopts an already-canonical document.
+    #[must_use]
+    pub const fn new(canonical: CanonicalJson) -> Self {
+        Self(canonical)
+    }
+
+    /// The canonical document.
+    #[must_use]
+    pub const fn canonical(&self) -> &CanonicalJson {
+        &self.0
+    }
+
+    /// The canonical text.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+
+    /// The canonical bytes.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+
+    /// `SHA-256(JCS(valueDoc))`.
+    #[must_use]
+    pub fn digest(&self) -> ContentDigest {
+        ContentDigest::of(self.as_bytes())
+    }
+
+    /// `len(JCS(valueDoc))`.
+    #[must_use]
+    pub fn size_bytes(&self) -> u64 {
+        self.as_bytes().len() as u64
+    }
+}
+
+/// Everything about a registry pointer except its value document.
+///
+/// A listing projects exactly these attributes and never reads `valueDoc`, so a
+/// thousand-row page cannot carry a thousand value documents. The split is the
+/// storage-side twin of the wire split at D-6: a collection row has no field a
+/// value could go in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegistryRow {
     /// The owning workspace.
     pub workspace: WorkspaceId,
     /// Which registry.
@@ -43,16 +103,23 @@ pub struct RegistryPointer {
     pub revision: Revision,
     /// The entity tag derived from it.
     pub etag: ETag,
-    /// What it points at.
-    pub value: RegisteredValueRef,
-    /// The canonical digest of the value.
+    /// `SHA-256(JCS(valueDoc))`.
     pub sha256: ContentDigest,
-    /// How large the value is.
+    /// `len(JCS(valueDoc))`.
     pub size_bytes: u64,
     /// When the pointer was created.
     pub created_at: Timestamp,
     /// When it last changed.
     pub updated_at: Timestamp,
+}
+
+/// A registry pointer, complete.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegistryPointer {
+    /// The collection columns.
+    pub row: RegistryRow,
+    /// The complete non-payload value.
+    pub value_doc: ValueDocument,
 }
 
 /// What a caller proposes to store.
@@ -64,14 +131,26 @@ pub struct ProposedValue {
     pub kind: RegistryKind,
     /// Which name.
     pub name: RegisteredName,
-    /// What it points at.
-    pub value: RegisteredValueRef,
-    /// The canonical digest of the value.
-    pub sha256: ContentDigest,
-    /// How large the value is.
-    pub size_bytes: u64,
+    /// The complete non-payload value.
+    pub value_doc: ValueDocument,
+    /// Where the payload came from, for the kinds that have one.
+    pub payload: Option<RegisteredValueRef>,
     /// The state of the upload being consumed, when one is.
     pub upload_state: Option<UploadState>,
+}
+
+impl ProposedValue {
+    /// `SHA-256(JCS(valueDoc))`.
+    #[must_use]
+    pub fn sha256(&self) -> ContentDigest {
+        self.value_doc.digest()
+    }
+
+    /// `len(JCS(valueDoc))`.
+    #[must_use]
+    pub fn size_bytes(&self) -> u64 {
+        self.value_doc.size_bytes()
+    }
 }
 
 /// The deterministic entity tag of a pointer.
@@ -169,9 +248,9 @@ fn precondition(
         return Ok(());
     };
     match current {
-        Some(pointer) if pointer.etag == *expected => Ok(()),
+        Some(pointer) if pointer.row.etag == *expected => Ok(()),
         Some(pointer) => Err(RegistryRejection::PreconditionFailed {
-            current: Some(pointer.etag.clone()),
+            current: Some(pointer.row.etag.clone()),
         }),
         None => Err(RegistryRejection::PreconditionFailed { current: None }),
     }
@@ -192,11 +271,11 @@ pub fn set(
     precondition(current, if_match)?;
 
     if let Some(existing) = current
-        && existing.workspace != proposed.workspace
+        && existing.row.workspace != proposed.workspace
     {
         return Err(RegistryRejection::InvalidValue(ValueError::WrongWorkspace));
     }
-    if let RegisteredValueRef::Upload { .. } = proposed.value {
+    if let Some(RegisteredValueRef::Upload { .. }) = proposed.payload {
         match proposed.upload_state {
             Some(UploadState::Ready) => {}
             Some(state) => return Err(RegistryRejection::UploadNotReady(state)),
@@ -204,10 +283,12 @@ pub fn set(
         }
     }
 
-    let consumed_upload = match &proposed.value {
-        RegisteredValueRef::Upload { upload } => Some(*upload),
-        RegisteredValueRef::Content { .. } => None,
+    let consumed_upload = match &proposed.payload {
+        Some(RegisteredValueRef::Upload { upload }) => Some(*upload),
+        Some(RegisteredValueRef::Content { .. }) | None => None,
     };
+    let sha256 = proposed.sha256();
+    let size_bytes = proposed.size_bytes();
 
     let Some(existing) = current else {
         let revision = Revision::FIRST;
@@ -215,16 +296,18 @@ pub fn set(
             SetOutcome::Created,
             RegistryCommit {
                 pointer: RegistryPointer {
-                    workspace: proposed.workspace,
-                    kind: proposed.kind,
-                    name: proposed.name.clone(),
-                    revision,
-                    etag: etag_of(proposed.kind, revision, &proposed.sha256),
-                    value: proposed.value.clone(),
-                    sha256: proposed.sha256,
-                    size_bytes: proposed.size_bytes,
-                    created_at: now,
-                    updated_at: now,
+                    row: RegistryRow {
+                        workspace: proposed.workspace,
+                        kind: proposed.kind,
+                        name: proposed.name.clone(),
+                        revision,
+                        etag: etag_of(proposed.kind, revision, &sha256),
+                        sha256,
+                        size_bytes,
+                        created_at: now,
+                        updated_at: now,
+                    },
+                    value_doc: proposed.value_doc.clone(),
                 },
                 consumed_upload,
                 wrote: true,
@@ -232,13 +315,15 @@ pub fn set(
         ));
     };
 
-    // `Unchanged` requires an identical canonical digest *and* identical
-    // non-content metadata. It writes nothing at all, so a concurrent editor's
-    // `If-Match` survives an idempotent retry.
-    if existing.sha256 == proposed.sha256
-        && existing.size_bytes == proposed.size_bytes
-        && existing.kind == proposed.kind
-        && existing.name == proposed.name
+    // `Unchanged` requires an identical canonical *value document*, which is
+    // what `sha256` digests since D-4. It writes nothing at all, so a concurrent
+    // editor's `If-Match` survives an idempotent retry — and a metadata-only
+    // edit over unchanged payload bytes correctly reports `Replaced` rather than
+    // being silently discarded.
+    if existing.row.sha256 == sha256
+        && existing.row.size_bytes == size_bytes
+        && existing.row.kind == proposed.kind
+        && existing.row.name == proposed.name
     {
         return Ok((
             SetOutcome::Unchanged,
@@ -250,18 +335,20 @@ pub fn set(
         ));
     }
 
-    let revision = existing.revision.next();
+    let revision = existing.row.revision.next();
     Ok((
         SetOutcome::Replaced,
         RegistryCommit {
             pointer: RegistryPointer {
-                revision,
-                etag: etag_of(proposed.kind, revision, &proposed.sha256),
-                value: proposed.value.clone(),
-                sha256: proposed.sha256,
-                size_bytes: proposed.size_bytes,
-                updated_at: now,
-                ..existing.clone()
+                row: RegistryRow {
+                    revision,
+                    etag: etag_of(proposed.kind, revision, &sha256),
+                    sha256,
+                    size_bytes,
+                    updated_at: now,
+                    ..existing.row.clone()
+                },
+                value_doc: proposed.value_doc.clone(),
             },
             consumed_upload,
             wrote: true,
@@ -294,7 +381,8 @@ mod tests {
     use aex_wire::types::Timestamp;
 
     use super::{
-        ProposedValue, RegisteredValueRef, RegistryRejection, SetOutcome, delete, etag_of, set,
+        ProposedValue, RegisteredValueRef, RegistryRejection, SetOutcome, ValueDocument, delete,
+        etag_of, set,
     };
 
     fn workspace() -> WorkspaceId {
@@ -305,16 +393,32 @@ mod tests {
         Timestamp::from_unix_millis(millis).expect("in range")
     }
 
+    fn document(mount_path: &str, body: &[u8]) -> ValueDocument {
+        let digest = ContentDigest::of(body);
+        ValueDocument::new(
+            aex_wire::CanonicalJson::parse(&format!(
+                r#"{{"mountPath":"{mount_path}","mediaType":"text/plain","mode":"0644",
+                    "content":{{"sha256":"{}","sizeBytes":"{}"}}}}"#,
+                digest.to_wire(),
+                body.len()
+            ))
+            .expect("valid JSON"),
+        )
+    }
+
     fn proposed(body: &[u8]) -> ProposedValue {
+        proposed_at("/readme", body)
+    }
+
+    fn proposed_at(mount_path: &str, body: &[u8]) -> ProposedValue {
         ProposedValue {
             workspace: workspace(),
             kind: RegistryKind::File,
             name: RegisteredName::parse("readme").expect("valid"),
-            value: RegisteredValueRef::Content {
+            value_doc: document(mount_path, body),
+            payload: Some(RegisteredValueRef::Content {
                 digest: ContentDigest::of(body),
-            },
-            sha256: ContentDigest::of(body),
-            size_bytes: body.len() as u64,
+            }),
             upload_state: None,
         }
     }
@@ -323,15 +427,57 @@ mod tests {
     fn an_identical_set_writes_nothing_at_all() {
         let (outcome, created) = set(None, &proposed(b"one"), None, moment(0)).expect("creates");
         assert_eq!(outcome, SetOutcome::Created);
-        assert_eq!(created.pointer.revision, Revision::FIRST);
+        assert_eq!(created.pointer.row.revision, Revision::FIRST);
 
         let (outcome, unchanged) =
             set(Some(&created.pointer), &proposed(b"one"), None, moment(10)).expect("unchanged");
         assert_eq!(outcome, SetOutcome::Unchanged);
         assert!(!unchanged.wrote);
-        assert_eq!(unchanged.pointer.revision, created.pointer.revision);
-        assert_eq!(unchanged.pointer.etag, created.pointer.etag);
-        assert_eq!(unchanged.pointer.updated_at, created.pointer.updated_at);
+        assert_eq!(unchanged.pointer.row.revision, created.pointer.row.revision);
+        assert_eq!(unchanged.pointer.row.etag, created.pointer.row.etag);
+        assert_eq!(
+            unchanged.pointer.row.updated_at,
+            created.pointer.row.updated_at
+        );
+    }
+
+    #[test]
+    fn a_metadata_only_edit_replaces_rather_than_being_silently_discarded() {
+        // The payload bytes are byte-identical; only `mountPath` moved. Digesting
+        // the payload instead of the value document would report `Unchanged` here
+        // and throw the customer's edit away (D-4).
+        let created = set(None, &proposed_at("/a", b"one"), None, moment(0))
+            .expect("creates")
+            .1
+            .pointer;
+        let (outcome, replaced) = set(
+            Some(&created),
+            &proposed_at("/b", b"one"),
+            None,
+            moment(10),
+        )
+        .expect("replaces");
+        assert_eq!(outcome, SetOutcome::Replaced);
+        assert!(replaced.wrote);
+        assert_eq!(replaced.pointer.row.revision, created.row.revision.next());
+        assert_ne!(replaced.pointer.value_doc, created.value_doc);
+    }
+
+    #[test]
+    fn the_digest_and_the_size_are_the_canonical_documents_own() {
+        let proposal = proposed(b"one");
+        let created = set(None, &proposal, None, moment(0))
+            .expect("creates")
+            .1
+            .pointer;
+        assert_eq!(created.row.sha256, created.value_doc.digest());
+        assert_eq!(created.row.size_bytes, created.value_doc.size_bytes());
+        assert_eq!(
+            created.row.size_bytes,
+            created.value_doc.as_str().len() as u64
+        );
+        // The payload's own digest is *inside* the document, never the row's.
+        assert_ne!(created.row.sha256, ContentDigest::of(b"one"));
     }
 
     #[test]
@@ -343,9 +489,9 @@ mod tests {
         let (outcome, replaced) =
             set(Some(&created), &proposed(b"two"), None, moment(10)).expect("replaces");
         assert_eq!(outcome, SetOutcome::Replaced);
-        assert_eq!(replaced.pointer.revision, created.revision.next());
-        assert_ne!(replaced.pointer.etag, created.etag);
-        assert_eq!(replaced.pointer.created_at, created.created_at);
+        assert_eq!(replaced.pointer.row.revision, created.row.revision.next());
+        assert_ne!(replaced.pointer.row.etag, created.row.etag);
+        assert_eq!(replaced.pointer.row.created_at, created.row.created_at);
     }
 
     #[test]
@@ -358,7 +504,7 @@ mod tests {
             set(
                 Some(&created),
                 &proposed(b"two"),
-                Some(&created.etag),
+                Some(&created.row.etag),
                 moment(1)
             )
             .is_ok()
@@ -368,7 +514,7 @@ mod tests {
         assert_eq!(
             set(Some(&created), &proposed(b"three"), Some(&stale), moment(2)),
             Err(RegistryRejection::PreconditionFailed {
-                current: Some(created.etag.clone())
+                current: Some(created.row.etag.clone())
             })
         );
         assert_eq!(

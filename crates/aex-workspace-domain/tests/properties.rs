@@ -14,11 +14,11 @@ use aex_wire::types::{ETag, Timestamp};
 use aex_workspace_domain::{
     ByteRange, CompletionEvidence, ContentObjectLocation, DownloadGrant, ExpiryOutcome,
     GrantPlacement, GrantRejection, GrantSubject, MAX_SIGNED_RANGE_BYTES, PART_MAX_BYTES,
-    PART_MAX_COUNT, PART_MIN_BYTES, PartGrantRequest, PartReceipt, PersistReceipt, PersistSelection,
-    ProposedValue, RegisteredValueRef, RegistryPointer, RegistryRejection, RegistrySelector,
-    SelectorError, SetOutcome, Upload, UploadError, UploadState, VerifiedObject, abort,
-    begin_complete, consume, delete, etag_of, expire, finish_complete, grant_parts, mint_grant,
-    plan_parts, plan_persist, replay_receipt, set,
+    PART_MAX_COUNT, PART_MIN_BYTES, PartGrantRequest, PartReceipt, PersistReceipt,
+    PersistSelection, ProposedValue, RegisteredValueRef, RegistryPointer, RegistryRejection,
+    RegistrySelector, SelectorError, SetOutcome, Upload, UploadError, UploadState, ValueDocument,
+    VerifiedObject, abort, begin_complete, consume, delete, etag_of, expire, finish_complete,
+    grant_parts, mint_grant, plan_parts, plan_persist, replay_receipt, set,
 };
 use proptest::prelude::*;
 
@@ -34,16 +34,28 @@ fn path(text: &str) -> NormalizedPath {
     NormalizedPath::parse(text).expect("valid")
 }
 
+fn value_document(body: &[u8]) -> ValueDocument {
+    let digest = ContentDigest::of(body);
+    ValueDocument::new(
+        aex_wire::CanonicalJson::parse(&format!(
+            r#"{{"mountPath":"/readme","mediaType":"text/plain","mode":"0644",
+                "content":{{"sha256":"{}","sizeBytes":"{}"}}}}"#,
+            digest.to_wire(),
+            body.len()
+        ))
+        .expect("valid JSON"),
+    )
+}
+
 fn proposed(body: &[u8]) -> ProposedValue {
     ProposedValue {
         workspace: workspace(),
         kind: RegistryKind::File,
         name: RegisteredName::parse("readme").expect("valid"),
-        value: RegisteredValueRef::Content {
+        value_doc: value_document(body),
+        payload: Some(RegisteredValueRef::Content {
             digest: ContentDigest::of(body),
-        },
-        sha256: ContentDigest::of(body),
-        size_bytes: body.len() as u64,
+        }),
         upload_state: None,
     }
 }
@@ -67,20 +79,20 @@ proptest! {
             let (outcome, commit) = set(current.as_ref(), &value, None, at).expect("sets");
             match outcome {
                 SetOutcome::Created => {
-                    prop_assert_eq!(commit.pointer.revision, Revision::FIRST);
+                    prop_assert_eq!(commit.pointer.row.revision, Revision::FIRST);
                     revision = 1;
                 }
                 SetOutcome::Replaced => {
-                    prop_assert_eq!(commit.pointer.revision.0, revision + 1);
+                    prop_assert_eq!(commit.pointer.row.revision.0, revision + 1);
                     revision += 1;
                 }
                 SetOutcome::Unchanged => {
                     // Nothing moves at all.
                     let before = current.as_ref().expect("unchanged needs a prior");
                     prop_assert!(!commit.wrote);
-                    prop_assert_eq!(commit.pointer.revision, before.revision);
-                    prop_assert_eq!(&commit.pointer.etag, &before.etag);
-                    prop_assert_eq!(commit.pointer.updated_at, before.updated_at);
+                    prop_assert_eq!(commit.pointer.row.revision, before.row.revision);
+                    prop_assert_eq!(&commit.pointer.row.etag, &before.row.etag);
+                    prop_assert_eq!(commit.pointer.row.updated_at, before.row.updated_at);
                 }
             }
             current = Some(commit.pointer);
@@ -129,7 +141,7 @@ proptest! {
             let outcome = set(
                 Some(&current),
                 &proposed(&body),
-                Some(&created.etag),
+                Some(&created.row.etag),
                 moment(i64::try_from(index).expect("bounded") + 1),
             );
             match outcome {
@@ -138,7 +150,7 @@ proptest! {
                     current = commit.pointer;
                 }
                 Err(RegistryRejection::PreconditionFailed { current: reported }) => {
-                    prop_assert_eq!(reported, Some(current.etag.clone()));
+                    prop_assert_eq!(reported, Some(current.row.etag.clone()));
                 }
                 Err(other) => prop_assert!(false, "unexpected {other:?}"),
             }
@@ -151,9 +163,9 @@ proptest! {
 fn an_upload_backed_set_requires_a_ready_upload() {
     // 56, upload half.
     let mut value = proposed(b"one");
-    value.value = RegisteredValueRef::Upload {
+    value.payload = Some(RegisteredValueRef::Upload {
         upload: UploadId::from_uuid7(Uuid7::compose(1, [4; 10])),
-    };
+    });
     for state in UploadState::ALL {
         value.upload_state = Some(state);
         let outcome = set(None, &value, None, moment(0));
@@ -175,7 +187,7 @@ fn a_stale_if_match_on_delete_is_refused() {
         .pointer;
     let stale: ETag = etag_of(RegistryKind::File, Revision(99), &ContentDigest::of(b"x"));
     assert!(delete(Some(&created), Some(&stale)).is_err());
-    assert!(delete(Some(&created), Some(&created.etag)).is_ok());
+    assert!(delete(Some(&created), Some(&created.row.etag)).is_ok());
 }
 
 // ---------------------------------------------------------------------------

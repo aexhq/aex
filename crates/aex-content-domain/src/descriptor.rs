@@ -6,7 +6,7 @@ use aex_wire::ids::WorkspaceId;
 use aex_wire::types::Timestamp;
 
 use crate::digest::ContentDigest;
-use crate::placement::{Placement, placement_for};
+use crate::placement::{Placement, PlacementClass, placement_for};
 
 /// A validated `type/subtype` media type.
 ///
@@ -142,11 +142,20 @@ pub struct ContentDescriptor {
 impl ContentDescriptor {
     /// Whether the placement class agrees with the plaintext length.
     ///
+    /// **Inline implies small**, not "small implies inline". Equality was the
+    /// rule until the registry needed the other direction: a registered payload
+    /// is always object-placed however short it is (D-11), because the API never
+    /// reads a registry payload and an inline copy would leave
+    /// `registry_files_download_create` with no object to sign. The invariant
+    /// that matters — an inline body is never larger than the inline ceiling —
+    /// is unchanged.
+    ///
     /// A descriptor that fails this predicate has been assembled incorrectly by
     /// an adapter; the domain never mints a disagreeing pair.
     #[must_use]
     pub fn placement_matches_size(&self) -> bool {
-        self.placement.class() == placement_for(self.size_bytes)
+        self.placement.class() != PlacementClass::Inline
+            || placement_for(self.size_bytes) == PlacementClass::Inline
     }
 }
 

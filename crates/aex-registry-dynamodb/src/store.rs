@@ -11,11 +11,16 @@ use aex_session_dynamodb::attr::{Item, s};
 use aex_session_dynamodb::error::{Idempotence, Resolution, StoreError, classify};
 use aex_session_dynamodb::paging::{PageBudget, PagePosition};
 use aex_session_dynamodb::plan::{Participant, TransactionPlan, key};
-use aex_session_dynamodb::replay::{IdempotencyScope, Receipt, ReceiptStore, key_digest};
+use aex_session_dynamodb::replay::{
+    DecodeReceipt, IdempotencyScope, Receipt, ReceiptBody, ReceiptStore, decode_receipt_row,
+    key_digest,
+};
 use aex_wire::idempotency::IdempotencyKey;
 use aex_wire::ids::{UploadId, WorkspaceId};
-use aex_wire::types::Timestamp;
-use aex_workspace_domain::registry::RegistryPointer;
+use aex_wire::types::{ETag, Timestamp};
+use aex_workspace_domain::registry::{
+    RegistryCommit, RegistryPointer, RegistryRow, SetOutcome, ValueDocument, etag_of,
+};
 use aex_workspace_domain::upload::{Upload, UploadState};
 use async_trait::async_trait;
 use aws_sdk_dynamodb::Client;
@@ -27,10 +32,203 @@ use crate::{codec, expressions, keys};
 /// One page of a registry listing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PointerPage {
-    /// The pointers this page names, in name order.
-    pub pointers: Vec<RegistryPointer>,
+    /// The collection rows this page names, in name order.
+    ///
+    /// Rows, not pointers: the query projects the collection columns and never
+    /// reads `valueDoc`, so a full page cannot carry a thousand value documents.
+    pub rows: Vec<RegistryRow>,
     /// Where a continuation resumes, when there is more.
     pub next: Option<PagePosition>,
+}
+
+/// The replayable answer of one registry `set`.
+///
+/// Only the facts that cannot be re-derived are stored. `sha256`, `sizeBytes`
+/// and the `ETag` are all functions of the value document, the kind and the
+/// revision, so storing them too would let a receipt disagree with itself. The
+/// workspace is not stored either: a receipt is only ever read under the key of
+/// the workspace that wrote it, so carrying it would be a second, forgeable
+/// copy of a fact the key already fixes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SetReceipt {
+    /// What the winning call did.
+    pub outcome: SetOutcome,
+    /// Which registry.
+    pub kind: RegistryKind,
+    /// Which name.
+    pub name: aex_wire::ids::ResourceName,
+    /// The revision the winner produced.
+    pub revision: Revision,
+    /// The value document the winner stored.
+    pub value_doc: ValueDocument,
+    /// When the pointer was first written.
+    pub created_at: Timestamp,
+    /// When the winner replaced it.
+    pub updated_at: Timestamp,
+}
+
+/// The `responseKind` a registry set receipt carries.
+pub const SET_RESPONSE_KIND: &str = "registry.set";
+
+const SET_OUTCOMES: [(SetOutcome, &str); 3] = [
+    (SetOutcome::Created, "created"),
+    (SetOutcome::Replaced, "replaced"),
+    (SetOutcome::Unchanged, "unchanged"),
+];
+
+impl SetReceipt {
+    /// The answer one commit will replay.
+    #[must_use]
+    pub fn of(outcome: SetOutcome, pointer: &RegistryPointer) -> Self {
+        Self {
+            outcome,
+            kind: pointer.row.kind,
+            name: pointer.row.name.clone(),
+            revision: pointer.row.revision,
+            value_doc: pointer.value_doc.clone(),
+            created_at: pointer.row.created_at,
+            updated_at: pointer.row.updated_at,
+        }
+    }
+
+    /// Rebuilds the pointer this answer describes, under the workspace whose
+    /// receipt partition it was read from.
+    #[must_use]
+    pub fn pointer(&self, workspace: WorkspaceId) -> RegistryPointer {
+        let sha256 = self.value_doc.digest();
+        RegistryPointer {
+            row: RegistryRow {
+                workspace,
+                kind: self.kind,
+                name: self.name.clone(),
+                revision: self.revision,
+                etag: etag_of(self.kind, self.revision, &sha256),
+                sha256,
+                size_bytes: self.value_doc.size_bytes(),
+                created_at: self.created_at,
+                updated_at: self.updated_at,
+            },
+            value_doc: self.value_doc.clone(),
+        }
+    }
+
+    /// The stored body of this answer.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Invalid`] when the answer could not be serialized.
+    pub fn to_body(&self) -> Result<ReceiptBody, StoreError> {
+        let outcome = SET_OUTCOMES
+            .into_iter()
+            .find_map(|(value, text)| (value == self.outcome).then_some(text))
+            .unwrap_or_else(|| unreachable!("every set outcome has a spelling"));
+        let body = serde_json::json!({
+            "outcome": outcome,
+            "kind": self.kind.as_str(),
+            "name": self.name.as_str(),
+            "revision": self.revision.0,
+            "valueDoc": self.value_doc.as_str(),
+            "createdAt": self.created_at.to_string(),
+            "updatedAt": self.updated_at.to_string(),
+        });
+        Ok(ReceiptBody::Inline(
+            serde_json::to_vec(&body).map_err(|error| StoreError::Invalid {
+                detail: error.to_string(),
+            })?,
+        ))
+    }
+}
+
+impl DecodeReceipt for SetReceipt {
+    fn decode_receipt(receipt: &Receipt) -> Result<Self, StoreError> {
+        if receipt.response_kind != SET_RESPONSE_KIND {
+            return Err(corrupt(
+                "responseKind",
+                &format!(
+                    "a `{}` receipt is not a registry set answer",
+                    receipt.response_kind
+                ),
+            ));
+        }
+        let ReceiptBody::Inline(bytes) = &receipt.response else {
+            return Err(corrupt("response", "a registry set answer is stored inline"));
+        };
+        let body: serde_json::Value = serde_json::from_slice(bytes)
+            .map_err(|error| corrupt("response", &error.to_string()))?;
+        let text = |field: &'static str| -> Result<String, StoreError> {
+            body.get(field)
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+                .ok_or_else(|| corrupt(field, "a registry set answer names it"))
+        };
+        let spelling = text("outcome")?;
+        let outcome = SET_OUTCOMES
+            .into_iter()
+            .find_map(|(value, name)| (name == spelling).then_some(value))
+            .ok_or_else(|| corrupt("outcome", &format!("`{spelling}` is not a set outcome")))?;
+        Ok(Self {
+            outcome,
+            kind: RegistryKind::parse(&text("kind")?)
+                .ok_or_else(|| corrupt("kind", "outside the registry kind vocabulary"))?,
+            name: aex_wire::ids::ResourceName::parse(&text("name")?)
+                .map_err(|error| corrupt("name", &error.to_string()))?,
+            revision: Revision(
+                body.get("revision")
+                    .and_then(serde_json::Value::as_u64)
+                    .ok_or_else(|| corrupt("revision", "a registry set answer names it"))?,
+            ),
+            value_doc: ValueDocument::new(
+                aex_wire::CanonicalJson::parse(&text("valueDoc")?)
+                    .map_err(|error| corrupt("valueDoc", &error.to_string()))?,
+            ),
+            created_at: Timestamp::parse(&text("createdAt")?)
+                .map_err(|error| corrupt("createdAt", &error.to_string()))?,
+            updated_at: Timestamp::parse(&text("updatedAt")?)
+                .map_err(|error| corrupt("updatedAt", &error.to_string()))?,
+        })
+    }
+}
+
+fn corrupt(attribute: &'static str, reason: &str) -> StoreError {
+    StoreError::Corrupt(aex_session_dynamodb::attr::CodecError::Malformed {
+        item_type: codec::IDEMPOTENCY_RECEIPT,
+        attribute,
+        reason: reason.to_owned(),
+    })
+}
+
+/// Everything one registry `set` commits, beyond the pointer itself.
+#[derive(Debug, Clone)]
+pub struct SetCommit<'a> {
+    /// What the domain decided.
+    pub commit: &'a RegistryCommit,
+    /// The revision the caller observed, when it observed one.
+    pub from_revision: Option<Revision>,
+    /// The `registry.entries` cap, claimed only on a create.
+    pub entries_cap: u64,
+    /// Whether this set creates the name.
+    pub creates: bool,
+    /// The durable receipt this set writes.
+    pub receipt: &'a Receipt,
+}
+
+/// What a `commit_set` did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SetCommitted {
+    /// This call committed.
+    Committed,
+    /// An earlier call with the same key and the same intent committed; this is
+    /// that answer.
+    Replayed(Box<SetReceipt>),
+}
+
+/// What a `commit_delete` did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeleteCommitted {
+    /// The pointer was removed.
+    Removed,
+    /// The name was already absent. Delete is idempotent.
+    Absent,
 }
 
 // TODO(cross-stream): `aex-workspace-domain` has no `ports` module and publishes no
@@ -65,18 +263,52 @@ pub trait RegistryStore: Send + Sync + 'static {
         from: Option<&PagePosition>,
     ) -> Result<PointerPage, StoreError>;
 
-    /// Writes one pointer, creating it or replacing it under the revision the
-    /// caller observed.
+    /// Commits one registry `set` as a single transaction over this table.
+    ///
+    /// Every participant lives here: the conditional pointer put, the upload
+    /// consume when one is consumed, the durable idempotency receipt and — on a
+    /// create only — the `registry.entries` claim. Nothing is read first: the
+    /// receipt's own `attribute_not_exists` condition is the replay fence, and
+    /// the row it returns on failure is what distinguishes a replay from a
+    /// conflict without a second round trip (D-8).
     ///
     /// # Errors
     ///
     /// [`StoreError::PreconditionFailed`] naming `registry.pointer` when another
-    /// writer moved the revision, which the caller surfaces as `412`.
-    async fn put_pointer(
+    /// writer moved the revision (surfaced as `412`) or `registry.count` when the
+    /// workspace is at its cap (surfaced as `limit_exceeded`);
+    /// [`StoreError::IdempotencyConflict`] when the key was reused with a
+    /// different intent.
+    async fn commit_set(
         &self,
-        pointer: &RegistryPointer,
-        from_revision: Option<Revision>,
-    ) -> Result<(), StoreError>;
+        workspace: WorkspaceId,
+        commit: SetCommit<'_>,
+    ) -> Result<SetCommitted, StoreError>;
+
+    /// Removes one pointer, honouring `If-Match`, and releases its entry.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::PreconditionFailed`] naming `registry.pointer` when an
+    /// `If-Match` did not match; the observed row carries the current tag.
+    async fn commit_delete(
+        &self,
+        workspace: WorkspaceId,
+        kind: RegistryKind,
+        name: &str,
+        if_match: Option<&ETag>,
+    ) -> Result<DeleteCommitted, StoreError>;
+
+    /// Reads one `(workspace, kind)` entry count.
+    ///
+    /// # Errors
+    ///
+    /// As [`RegistryStore::load_pointer`].
+    async fn load_count(
+        &self,
+        workspace: WorkspaceId,
+        kind: RegistryKind,
+    ) -> Result<u64, StoreError>;
 
     /// Reads one staged upload, including every spilled part block.
     ///
@@ -227,16 +459,40 @@ impl RegistryDynamoStore {
     }
 
     async fn get(&self, pk: &str, sk: &str) -> Result<Option<Item>, StoreError> {
+        self.read(pk, sk, true).await
+    }
+
+    /// Reads one item.
+    ///
+    /// Registry reads are eventually consistent everywhere (D-12): every
+    /// mutation is fenced by a conditional write, so a stale pre-read cannot
+    /// produce a wrong write — it produces a lost condition, which is a `412`.
+    /// Upload rows keep the strong read their own state machine was written
+    /// against.
+    async fn read(&self, pk: &str, sk: &str, strong: bool) -> Result<Option<Item>, StoreError> {
         let output = self
             .client
             .get_item()
             .table_name(&self.table)
             .set_key(Some(key(pk, sk)))
-            .consistent_read(true)
+            .consistent_read(strong)
             .send()
             .await
             .map_err(|error| classify(&error, Idempotence::Read))?;
         Ok(output.item)
+    }
+
+    async fn run(&self, plan: &TransactionPlan) -> Result<(), StoreError> {
+        let request = plan.compile(&self.client)?;
+        match request.send().await {
+            Ok(_) => Ok(()),
+            Err(error) => Err(match error.as_service_error() {
+                Some(service) => {
+                    aex_session_dynamodb::error::decode_cancellation(service, plan.participants())
+                }
+                None => classify(&error, Idempotence::Write(Resolution::IdempotencyReceipt)),
+            }),
+        }
     }
 
     async fn conditional_put(
@@ -400,7 +656,7 @@ impl RegistryStore for RegistryDynamoStore {
         name: &str,
     ) -> Result<Option<RegistryPointer>, StoreError> {
         let target = keys::pointer(workspace, kind, name)?;
-        match self.get(&target.pk, &target.sk).await? {
+        match self.read(&target.pk, &target.sk, false).await? {
             None => Ok(None),
             Some(item) => Ok(Some(codec::decode_pointer(&item, workspace)?)),
         }
@@ -420,17 +676,19 @@ impl RegistryStore for RegistryDynamoStore {
             .key_condition_expression("#pk = :pk AND begins_with(#sk, :prefix)")
             .expression_attribute_names("#pk", aex_session_dynamodb::attr::PK)
             .expression_attribute_names("#sk", aex_session_dynamodb::attr::SK)
+            .expression_attribute_names("#name", "name")
             .expression_attribute_values(":pk", s(keys::kind_partition(workspace, kind)))
             .expression_attribute_values(":prefix", s(keys::name_prefix()))
+            .projection_expression(codec::ROW_PROJECTION)
             .set_exclusive_start_key(from.map(|position| position.to_exclusive_start(None, None)))
             .limit(budget.limit())
             .send()
             .await
             .map_err(|error| classify(&error, Idempotence::Read))?;
 
-        let mut pointers = Vec::new();
+        let mut rows = Vec::new();
         for item in output.items.unwrap_or_default() {
-            pointers.push(codec::decode_pointer(&item, workspace)?);
+            rows.push(codec::decode_row(&item, workspace)?);
         }
         let next = match output.last_evaluated_key {
             None => None,
@@ -442,20 +700,125 @@ impl RegistryStore for RegistryDynamoStore {
                 })?,
             ),
         };
-        Ok(PointerPage { pointers, next })
+        Ok(PointerPage { rows, next })
     }
 
-    async fn put_pointer(
+    async fn commit_set(
         &self,
-        pointer: &RegistryPointer,
-        from_revision: Option<Revision>,
-    ) -> Result<(), StoreError> {
-        let builder = match from_revision {
+        workspace: WorkspaceId,
+        commit: SetCommit<'_>,
+    ) -> Result<SetCommitted, StoreError> {
+        let pointer = &commit.commit.pointer;
+        let mut plan = TransactionPlan::new(format!(
+            "rst-{}-{}",
+            pointer.row.kind.as_str(),
+            pointer.row.etag
+        ));
+        let pointer_put = match commit.from_revision {
             None => expressions::create_pointer(&self.table, pointer)?,
             Some(revision) => expressions::replace_pointer(&self.table, pointer, revision)?,
         };
-        self.conditional_put(builder, Participant::REGISTRY_POINTER)
-            .await
+        plan.put(Participant::REGISTRY_POINTER, pointer_put)?;
+        if let Some(upload) = commit.commit.consumed_upload {
+            plan.update(
+                Participant::REGISTRY_UPLOAD,
+                expressions::consume_upload(
+                    &self.table,
+                    upload,
+                    pointer.row.kind,
+                    pointer.row.name.as_str(),
+                )?,
+            )?;
+        }
+        if commit.creates {
+            plan.update(
+                Participant::REGISTRY_COUNT,
+                expressions::claim_entry(
+                    &self.table,
+                    workspace,
+                    pointer.row.kind,
+                    commit.entries_cap,
+                ),
+            )?;
+        }
+        plan.put(
+            Participant::REGISTRY_IDEMPOTENCY,
+            expressions::put_receipt(&self.table, workspace, commit.receipt)?,
+        )?;
+
+        match self.run(&plan).await {
+            Ok(()) => Ok(SetCommitted::Committed),
+            // The receipt lost its `attribute_not_exists`, so an earlier call
+            // with this key already committed. Its row came back with the
+            // failure, so the answer costs no extra read (D-8).
+            Err(StoreError::PreconditionFailed {
+                participant,
+                observed,
+            }) if participant == Participant::REGISTRY_IDEMPOTENCY => {
+                let Some(item) = observed else {
+                    // The only way this condition fails is that the item exists,
+                    // so an absent row here is the provider contradicting itself.
+                    return Err(StoreError::CommitAmbiguous {
+                        resolve_by: Resolution::IdempotencyReceipt,
+                    });
+                };
+                let stored = decode_receipt_row(&item)?;
+                if stored.intent != commit.receipt.intent {
+                    return Err(StoreError::IdempotencyConflict);
+                }
+                Ok(SetCommitted::Replayed(Box::new(SetReceipt::decode_receipt(
+                    &stored,
+                )?)))
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn commit_delete(
+        &self,
+        workspace: WorkspaceId,
+        kind: RegistryKind,
+        name: &str,
+        if_match: Option<&ETag>,
+    ) -> Result<DeleteCommitted, StoreError> {
+        let mut plan = TransactionPlan::new(format!("rdl-{workspace}-{}-{name}", kind.as_str()));
+        plan.delete(
+            Participant::REGISTRY_POINTER,
+            expressions::delete_pointer(&self.table, workspace, kind, name, if_match)?,
+        )?;
+        plan.update(
+            Participant::REGISTRY_COUNT,
+            expressions::release_entry(&self.table, workspace, kind),
+        )?;
+        match self.run(&plan).await {
+            Ok(()) => Ok(DeleteCommitted::Removed),
+            Err(StoreError::PreconditionFailed {
+                participant,
+                observed,
+            }) if participant == Participant::REGISTRY_POINTER => match observed {
+                // No row to observe: the name was already absent, and delete is
+                // idempotent (D-9). `204`, not `404` — the route declares none.
+                None => Ok(DeleteCommitted::Absent),
+                // A row that failed the condition failed the `If-Match`.
+                Some(item) => Err(StoreError::PreconditionFailed {
+                    participant,
+                    observed: Some(item),
+                }),
+            },
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn load_count(
+        &self,
+        workspace: WorkspaceId,
+        kind: RegistryKind,
+    ) -> Result<u64, StoreError> {
+        let target = keys::count(workspace, kind);
+        match self.read(&target.pk, &target.sk, false).await? {
+            None => Ok(0),
+            Some(item) => Ok(codec::decode_count(&item, workspace)?),
+        }
     }
 
     async fn load_upload(

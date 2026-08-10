@@ -2014,7 +2014,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "Registry mutation and content-lifecycle composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2040,6 +2039,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 204,
       "summary": "Delete one registered entry from files.",
@@ -2087,7 +2087,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "The registry pointer composition has no plaintext content hydration path.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2114,6 +2113,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Read one registered entry from files.",
@@ -2158,7 +2158,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "Registry mutation and sealed-content composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2189,6 +2188,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Replace one registered entry in files.",
@@ -2197,7 +2197,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "Registry mutation and content-lifecycle composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2223,6 +2222,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 204,
       "summary": "Delete one registered entry from instructions.",
@@ -2231,7 +2231,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "The registry pointer composition has no plaintext content hydration path.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2258,6 +2257,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Read one registered entry from instructions.",
@@ -2302,7 +2302,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "Registry mutation and sealed-content composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2333,6 +2332,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Replace one registered entry in instructions.",
@@ -2341,7 +2341,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "Registry mutation and content-lifecycle composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2367,6 +2366,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 204,
       "summary": "Delete one registered entry from MCP servers.",
@@ -2375,7 +2375,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "The registry pointer composition has no plaintext content hydration path.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2402,6 +2401,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Read one registered entry from MCP servers.",
@@ -2446,7 +2446,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "Registry mutation and sealed-content composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2477,6 +2476,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Replace one registered entry in MCP servers.",
@@ -2485,7 +2485,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "Registry mutation and content-lifecycle composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2511,6 +2510,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 204,
       "summary": "Delete one registered entry from skills.",
@@ -2519,7 +2519,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "The registry pointer composition has no plaintext content hydration path.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2546,6 +2545,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Read one registered entry from skills.",
@@ -2590,7 +2590,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "Registry mutation and sealed-content composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2621,6 +2620,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Replace one registered entry in skills.",
@@ -2629,7 +2629,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "Registry mutation and content-lifecycle composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2655,6 +2654,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 204,
       "summary": "Delete one registered entry from tools.",
@@ -2663,7 +2663,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferredReason": "The registry pointer composition has no plaintext content hydration path.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2690,6 +2689,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Read one registered entry from tools.",
@@ -2734,7 +2734,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
-      "deferredReason": "Registry mutation and sealed-content composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2765,6 +2764,7 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Replace one registered entry in tools.",

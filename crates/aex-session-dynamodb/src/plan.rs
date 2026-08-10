@@ -130,6 +130,10 @@ impl Participant {
     pub const REGISTRY_POINTER: Self = Self::new("registry.pointer");
     /// A staged registry upload.
     pub const REGISTRY_UPLOAD: Self = Self::new("registry.upload");
+    /// The registry's durable idempotency receipt.
+    pub const REGISTRY_IDEMPOTENCY: Self = Self::new("registry.idempotency");
+    /// One `(workspace, kind)` registry entry counter.
+    pub const REGISTRY_COUNT: Self = Self::new("registry.count");
     /// A workspace secret's metadata.
     pub const SECRET_METADATA: Self = Self::new("secret.metadata");
     /// A workspace secret's source generation.
