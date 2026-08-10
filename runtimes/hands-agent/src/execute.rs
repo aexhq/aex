@@ -356,7 +356,7 @@ impl Executor {
                 }
             }
             OperationRequest::StatPath { path } => match filesystem::stat_path(&self.fs, path) {
-                Ok(text) => Self::text_terminal(journal, meta, now, &text),
+                Ok(entry) => Self::text_terminal(journal, meta, now, &entry.render()),
                 Err(error) => Ok(Dispatch::Terminal(Box::new(failed(
                     meta,
                     now,
@@ -368,6 +368,7 @@ impl Executor {
                 path,
                 recursive,
                 limit,
+                after,
             } => match filesystem::list_dir(
                 &self.fs,
                 &self.root,
@@ -375,8 +376,14 @@ impl Executor {
                 *recursive,
                 LIST_DEPTH,
                 usize::try_from(*limit).unwrap_or(usize::MAX),
+                after.as_ref().map(GuestPath::as_str),
             ) {
-                Ok(outcome) => Self::text_terminal(journal, meta, now, &outcome.lines.join("\n")),
+                // One rendered entry per line, in the same field order a stat
+                // answer uses. Nothing here reads a file: a directory listing
+                // is answered from `lstat` and never from content.
+                Ok(outcome) => {
+                    Self::text_terminal(journal, meta, now, &outcome.lines().join("\n"))
+                }
                 Err(error) => Ok(Dispatch::Terminal(Box::new(failed(
                     meta,
                     now,

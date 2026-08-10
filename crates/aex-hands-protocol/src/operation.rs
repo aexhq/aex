@@ -690,6 +690,11 @@ pub enum OperationRequest {
         patch: Patch,
     },
     /// List a directory.
+    ///
+    /// An observation, answered from `lstat` alone. It reports mode, mtime and
+    /// size and deliberately carries **no content digest**: hashing every file
+    /// in a directory to answer "what is in it" is the persistence question, and
+    /// [`OperationRequest::Persist`] is where that question is asked.
     ListDir {
         /// Which directory.
         path: GuestPath,
@@ -697,6 +702,12 @@ pub enum OperationRequest {
         recursive: bool,
         /// How many entries at most.
         limit: u32,
+        /// Resume strictly after this path.
+        ///
+        /// Entries come back ascending by path, so the last path of a page is
+        /// the whole cursor a listing needs. Absent means start at the
+        /// beginning.
+        after: Option<GuestPath>,
     },
     /// Stat a path.
     StatPath {
