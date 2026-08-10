@@ -9,7 +9,7 @@ keywords:
   - site
   - user tests
 audience: implementation agents and maintainers
-last_verified: 2026-08-05
+last_verified: 2026-08-10
 related:
   - references/rewrite/contracts.md
   - references/rewrite/delivery.md
@@ -166,6 +166,18 @@ unearned and is recorded as such in the generated evidence registry:
 
 ## Decisions
 
+- Google ID tokens are accepted without local JWS signature verification only
+  on the authorization-code path where `central-identity-api` receives the token
+  directly from the compiled `https://oauth2.googleapis.com/token` endpoint.
+  OpenID Connect Core 1.0 §3.1.3.7 step 6 permits TLS server validation in
+  place of the signature for that exact direct-communication case, and Google's
+  server-side guidance makes the same distinction. The implementation still
+  checks the exact issuer, audience, expiry, issue time, stable subject and
+  verified address. This decision expires if the endpoint stops being compiled
+  and HTTPS-only, redirects or proxies are enabled, or the token can arrive via
+  a browser or another service; any such change must add local JWS verification.
+  Sources: [OpenID Connect Core 1.0](https://openid.net/specs/openid-connect-core-1_0.html#IDTokenValidation)
+  and [Google OpenID Connect guidance](https://developers.google.com/identity/openid-connect/openid-connect#obtainuserinfo).
 - Credential parsing validates the embedded UUID version and variant rather
   than only accepting UUID-shaped text.
 - Retry is governed only by `ROUTES[id].safeRetry`, reuses one operation
