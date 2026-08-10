@@ -23,9 +23,9 @@ release tag as the workflow ref. The workflow requires that tag ref and its
 resolved commit to match the supplied tag and exact public source SHA. The
 dispatch accepts the immutable composition manifest and release-tool URI,
 SHA-256 digest and byte size together with their main prerelease tag, semantic
-`releaseId`, and the exact `deployment_context_digest` of the private
-`VERIFYING` continuation this run must satisfy. It does not accept receipts or
-a test command.
+`releaseId`, the exact `dev` or `prd` plane, and the exact
+`deployment_context_digest` of the private `VERIFYING` continuation this run
+must satisfy. It does not accept receipts or a test command.
 
 The workflow downloads and verifies both public blobs, verifies their GitHub
 attestations against the reviewed main producers, validates the manifest, and
@@ -41,21 +41,27 @@ finalizer must compare it with the same continuation document. The deployed
 service proves its public release identity rather than echoing a digest it
 never received.
 
-## Protected dev inputs
+## Protected plane inputs
 
-The `aex-release-evidence-dev` GitHub Environment owns the remote test inputs:
+The selected `aex-release-evidence-<plane>` GitHub Environment owns the remote
+test inputs. Both `aex-release-evidence-dev` and
+`aex-release-evidence-prd` use the same names:
 
-- secrets `AEX_RELEASE_EVIDENCE_API_URL`
-  and `AEX_RELEASE_EVIDENCE_API_KEY`;
-- variable `AEX_RELEASE_EVIDENCE_API_HOST`; and
+- secret `AEX_RELEASE_EVIDENCE_API_KEY`;
+- variable `AEX_RELEASE_EVIDENCE_API_HOST`;
+- variable `AEX_RELEASE_EVIDENCE_PLANE`, set to exactly the Environment's
+  `dev` or `prd` suffix; and
 - variable `AEX_RELEASE_EVIDENCE_MAXIMUM_BUDGET_MICRO_USD`, set to exactly
   `0` for the current provider-free journeys.
 
-The workflow refuses a partial environment before contacting the plane. The
-selected E2E and user journeys use only the protected API URL and API key and
-incur no provider spend; do not configure placeholder synthetic-identity or
-provider-document secrets. Do not put secret values in workflow inputs,
-repository variables, fixtures, logs, JUnit, cleanup ledgers, or docs.
+The workflow selects the Environment from a strict `dev|prd` choice, serializes
+evidence per plane and release, and refuses an Environment whose configured
+plane identity differs from that choice before contacting the plane. The
+selected E2E and user journeys use only the protected API key and the API URL
+derived from the protected host variable, and incur no provider spend; do not
+configure placeholder synthetic-identity or provider-document secrets. Do not
+put secret values in workflow inputs, repository variables, fixtures, logs,
+JUnit, cleanup ledgers, or docs.
 
 The workflow derives the health URL as
 `https://<AEX_RELEASE_EVIDENCE_API_HOST>/api/release/health`; it is not a
@@ -72,6 +78,16 @@ Immediately before the suites and again after they finish, it must return HTTP
 Another release, another schema, an extra field, or a non-ready response fails
 the run. This replaces the former generic authenticated list-route preflight,
 which proved reachability but not the deployed release under test.
+
+Before handbook step 7 can run, the repository settings must contain the
+`aex-release-evidence-prd` Environment with `AEX_RELEASE_EVIDENCE_PLANE=prd`,
+the canonical PRD API host, a PRD-only evidence credential, and the reviewed
+zero-spend bound. Its deployment policy must permit only the immutable
+`main-<sha>-run-<id>-attempt-<n>` release tags accepted by the workflow. The
+same policy applies to dev, including
+`AEX_RELEASE_EVIDENCE_PLANE=dev`. Neither Environment may require a human
+reviewer: the accepted release handbook makes the evidence suites themselves
+the hard gate and forbids human gates in the orchestrated cascade.
 
 ## Evidence gates
 
@@ -102,13 +118,17 @@ denial plus authenticated access through the served workspace-registry route,
 emit closed JUnit/inventory output, and report zero-spend cleanup hygiene. The
 exact release-health router is mounted only by `session-stream-api`.
 
-The protected Environment has the reviewed dev API URL and API key, canonical
-host, zero-spend bound, exact-main deployment policy, and required-reviewer
-protection. These source and configuration changes are not a receipt by
-themselves: they must first land on public `main`, be certified into an
-immutable release, and be deployed at the private continuation's exact release
-identity. Until `dev-api.aex.dev` serves that release and its health contract,
-the workflow fails closed before producing evidence.
+The documented dev Environment already has a reviewed credential, canonical
+host, zero-spend bound, and immutable-main-release deployment policy. It still
+needs the explicit `AEX_RELEASE_EVIDENCE_PLANE=dev` identity and removal of any
+required-reviewer rule before this workflow revision can run without a human
+gate. The PRD Environment described above is also an external prerequisite;
+this source change does not create or populate it. These source and
+configuration changes are not a receipt by themselves: the source must first
+land on public `main`, be certified into an immutable release, and be deployed
+at the private continuation's exact release identity. A selected plane that
+does not serve that release and its health contract fails closed before
+producing evidence.
 
 All local and CI scratch stays under
 `.tmp/release-evidence/<run-id>-<attempt>/`. The ephemeral runner discards it;

@@ -255,7 +255,7 @@ describe("release-bound public evidence producer", () => {
     ).not.toMatch(/--out\b/);
   });
 
-  it("uses protected dev inputs, exact bytes, real suites, and attested immutable receipts", () => {
+  it("uses plane-qualified protected inputs, exact bytes, real suites, and attested immutable receipts", () => {
     const path = ".github/workflows/release-evidence.yml";
     const source = readRepoFile(path);
     const producerSource = readRepoFile("scripts/cicd/release-evidence.mjs");
@@ -271,6 +271,7 @@ describe("release-bound public evidence producer", () => {
       "manifest_digest",
       "manifest_size_bytes",
       "manifest_uri",
+      "plane",
       "public_source_sha",
       "release_id",
       "release_tag",
@@ -278,9 +279,22 @@ describe("release-bound public evidence producer", () => {
       "release_tool_size_bytes",
       "release_tool_uri"
     ]);
+    expect(inputs.plane).toMatchObject({
+      type: "choice",
+      required: true,
+      options: ["dev", "prd"]
+    });
     expect(source).not.toMatch(/(?:e2e|user)_receipt_(?:uri|digest|size)/);
     expect(job["runs-on"]).toBe("ubuntu-latest");
-    expect(job.environment).toBe("aex-release-evidence-dev");
+    expect(workflow.concurrency).toEqual({
+      group: "release-evidence-${{ inputs.plane }}-${{ inputs.release_id }}",
+      "cancel-in-progress": false
+    });
+    expect(job.environment).toBe("aex-release-evidence-${{ inputs.plane }}");
+    expect(job.env?.PLANE).toBe("${{ inputs.plane }}");
+    expect(job.env?.AEX_RELEASE_EVIDENCE_CONFIGURED_PLANE).toBe(
+      "${{ vars.AEX_RELEASE_EVIDENCE_PLANE }}"
+    );
     expect(job.permissions).toEqual({ contents: "read" });
     expect(publish["runs-on"]).toBe("ubuntu-latest");
     expect(publish.environment).toBeUndefined();
@@ -297,6 +311,12 @@ describe("release-bound public evidence producer", () => {
     expect(workflowStep(job, "Acquire and verify the exact public bytes").run).toContain(".github/workflows/_build-artifacts.yml");
     expect(workflowStep(job, "Bind the protected run and create its source archive").run).toContain(
       '[[ "$DISPATCH_REF" == "refs/tags/$RELEASE_TAG" ]]'
+    );
+    expect(workflowStep(job, "Bind the protected run and create its source archive").run).toContain(
+      '[[ "$PLANE" == "dev" || "$PLANE" == "prd" ]]'
+    );
+    expect(workflowStep(job, "Bind the protected run and create its source archive").run).toContain(
+      '[[ "$AEX_RELEASE_EVIDENCE_CONFIGURED_PLANE" == "$PLANE" ]]'
     );
     expect(workflowStep(job, "Require non-empty release scenario and user-journey inventories").run).toContain("graph verify --release");
     expect(workflowStep(job, "Require non-empty release scenario and user-journey inventories").run).toContain(

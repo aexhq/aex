@@ -1,7 +1,7 @@
 # Manual, release-bound public E2E and user evidence.
 #
 # This workflow never accepts receipts. It acquires the exact public manifest
-# and release tool, executes real suites against protected dev inputs, derives
+# and release tool, executes real suites against protected plane inputs, derives
 # receipts from closed JUnit and hygiene reports, and publishes new immutable
 # receipt bytes only after every fail-closed gate passes.
 
@@ -10,6 +10,13 @@ name: release-evidence
 on:
   workflow_dispatch:
     inputs:
+      plane:
+        description: Exact hosted plane whose VERIFYING continuation is under test.
+        type: choice
+        required: true
+        options:
+          - dev
+          - prd
       public_source_sha:
         description: Exact 40-character public main commit proved by the manifest.
         type: string
@@ -54,14 +61,14 @@ on:
 permissions: {}
 
 concurrency:
-  group: release-evidence-${{ inputs.release_id }}
+  group: release-evidence-${{ inputs.plane }}-${{ inputs.release_id }}
   cancel-in-progress: false
 
 jobs:
   evidence:
     name: Exact release E2E and user receipts
     runs-on: ubuntu-latest
-    environment: aex-release-evidence-dev
+    environment: aex-release-evidence-${{ inputs.plane }}
     permissions:
       contents: read
     defaults:
@@ -69,6 +76,8 @@ jobs:
         shell: bash
         working-directory: source
     env:
+      PLANE: ${{ inputs.plane }}
+      AEX_RELEASE_EVIDENCE_CONFIGURED_PLANE: ${{ vars.AEX_RELEASE_EVIDENCE_PLANE }}
       PUBLIC_SOURCE_SHA: ${{ inputs.public_source_sha }}
       RELEASE_TAG: ${{ inputs.release_tag }}
       RELEASE_ID: ${{ inputs.release_id }}
@@ -133,6 +142,8 @@ jobs:
           DISPATCH_REF: ${{ github.ref }}
         run: |
           set -euo pipefail
+          [[ "$PLANE" == "dev" || "$PLANE" == "prd" ]]
+          [[ "$AEX_RELEASE_EVIDENCE_CONFIGURED_PLANE" == "$PLANE" ]]
           [[ "$DISPATCH_REF" == "refs/tags/$RELEASE_TAG" ]]
           [[ "$DISPATCH_SHA" == "$PUBLIC_SOURCE_SHA" ]]
           [[ "$(git rev-parse HEAD)" == "$PUBLIC_SOURCE_SHA" ]]
