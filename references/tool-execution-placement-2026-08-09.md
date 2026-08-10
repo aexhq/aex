@@ -17,7 +17,7 @@ keywords:
   - network policy
   - rate limiting
 audience: owner, architect, implementation agents
-status: proposal
+status: proposal; §8 steps 1-3 implemented 2026-08-10
 date: 2026-08-09
 related:
   - references/sandbox-platform-identity-2026-08-09.md
@@ -788,15 +788,25 @@ Two points the billing record must own and this one must not duplicate:
 The ordering is the deliverable. Several of these are safe only after an earlier
 one.
 
-1. **Confirm §4.2 against the gating suite.** If a tool-bearing DeepSeek request
-   is reachable with `web_fetch` advertised, it fails at request build today.
-   Cheap to check, and it changes nothing else's priority if it is already
-   covered.
-2. **Split `parallel` from `parallel_safe`** (§4.3). Unblocks four provider
-   dialects, cuts turn count, adds no concurrency. Safe standalone because the
-   driver is sequential.
-3. **Give the network lane its own `PermitKind`** (§5). Prerequisite for anything
-   concurrent; a handful of lines.
+1. ~~**Confirm §4.2 against the gating suite.**~~ **Done 2026-08-10, and the
+   answer was the bad one.** A tool-bearing request is *not* reachable from the
+   gating suite: the one live test that mentions tools hardcodes an empty tool
+   list and `parallel_tools: false`, so DeepSeek returns through its no-tools
+   path and never reaches the refusal. The gate was green and the defect was
+   invisible to it. Production was not green by the same reasoning —
+   `brain-mux` composes `managed_web`, so `web_fetch` is advertised on every
+   deployed task and every tool-bearing turn on four dialects would have failed
+   at request build.
+2. ~~**Split `parallel` from `parallel_safe`** (§4.3).~~ **Done 2026-08-10.**
+   `ToolAdvertisement::allows_parallel_emission` is now the sole provider-facing
+   value and consults the model's declared capability alone. Note that
+   `parallel_safe` consequently has **zero production readers** until step 8 —
+   it is written, tested and documented, and nothing consumes it yet.
+3. ~~**Give the network lane its own `PermitKind`** (§5).~~ **Done 2026-08-10.**
+   `PermitKind::NetworkLane`, sized at 128 — the safety cap of 32 activations
+   times the heaviest declared tool weight of 4, i.e. one outstanding network
+   call per admitted activation, which is all a serial driver can reach. No
+   concurrency enabled.
 4. **Stand up the executor** as one crate with one handler, deployed as
    `rust-lambda` first (§2.3). Includes the `ToolExecRequest` type with no
    principal field and its closed-field test.
