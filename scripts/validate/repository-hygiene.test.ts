@@ -103,6 +103,24 @@ describe("repository hygiene", () => {
     ).toEqual([]);
   });
 
+  it("locks Terraform providers for both supported runner platforms", () => {
+    const incomplete: string[] = [];
+
+    for (const root of listTerraformRoots()) {
+      const lockfile = read(`${root}/.terraform.lock.hcl`);
+      for (const match of lockfile.matchAll(/^provider "([^"]+)" \{([\s\S]*?)^\}/gm)) {
+        const provider = match[1];
+        const body = match[2] ?? "";
+        // HCL records package hashes without their platform labels. Locking the
+        // two supported runners contributes one distinct h1 hash per provider.
+        const packageHashes = body.match(/^\s+"h1:[^"]+",$/gm) ?? [];
+        if (packageHashes.length < 2) incomplete.push(`${root}: ${provider}`);
+      }
+    }
+
+    expect(incomplete).toEqual([]);
+  });
+
   it("keeps every published JavaScript sourcemap reference resolvable", () => {
     const dangling: string[] = [];
 
