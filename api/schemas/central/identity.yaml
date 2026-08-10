@@ -309,7 +309,7 @@ schemas:
     doc: A minted browser session, returned exactly once.
     type: object
     fields:
-      session: { type: string, min: 16, max: 4096, doc: "The bearer credential; hold it in an HttpOnly cookie, never in script-readable storage." }
+      session: { type: string, min: 16, max: 4096, doc: "The bearer credential; hold it in a cookie the browser will not hand to script." }
       userId: { type: id, of: user, doc: "The person it authenticates." }
       expiresAt: { type: timestamp, doc: "When it stops verifying." }
 

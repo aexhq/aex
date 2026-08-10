@@ -256,6 +256,32 @@ impl AuthApi for Api {
         self.calls.fetch_add(1, Ordering::SeqCst);
         Err(WireError::new(ErrorCode::RateLimited))
     }
+
+    async fn device_decision_create(
+        &self,
+        _cx: &RequestContext,
+        _body: aex_wire::models::DeviceDecisionRequest,
+    ) -> WireResult<aex_wire::models::DeviceDecisionResult> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Err(WireError::new(ErrorCode::RateLimited))
+    }
+
+    async fn dashboard_session_create(
+        &self,
+        _cx: &RequestContext,
+        _body: aex_wire::models::DashboardSessionRequest,
+    ) -> WireResult<Created<aex_wire::models::DashboardSessionCredential>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Err(WireError::new(ErrorCode::RateLimited))
+    }
+
+    async fn dashboard_session_delete(
+        &self,
+        _cx: &RequestContext,
+    ) -> WireResult<aex_wire::server::NoContent> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Err(WireError::new(ErrorCode::RateLimited))
+    }
 }
 
 impl BillingApi for Api {
@@ -609,7 +635,7 @@ fn central_routes() -> Vec<RouteId> {
 #[tokio::test]
 async fn every_generated_central_route_is_mounted() {
     let declared = central_routes();
-    assert_eq!(declared.len(), 27, "the central plane declares 27 routes");
+    assert_eq!(declared.len(), 30, "the central plane declares 30 routes");
     for id in declared {
         let router = plane(
             Api::new(Answer::Declared),

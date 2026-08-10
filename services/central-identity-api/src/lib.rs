@@ -434,12 +434,8 @@ mod tests {
                 "https://aex.dev/device".to_owned(),
             ),
             (
-                keys::VERCEL_ISSUER,
-                "https://oidc.vercel.com/aexhq".to_owned(),
-            ),
-            (
-                keys::VERCEL_EXPECTED_SUBJECT,
-                "owner:aexhq:project:dashboard".to_owned(),
+                keys::SIGN_IN_EXCHANGE_SECRET_ID,
+                "aex/dev/sign-in-exchange/current".to_owned(),
             ),
             (keys::MAX_BODY_BYTES, "65536".to_owned()),
             (keys::REQUEST_DEADLINE_MS, "5000".to_owned()),
@@ -499,6 +495,29 @@ mod tests {
             _cx: &RequestContext,
             _body: aex_wire::models::DeviceTokenRequest,
         ) -> WireResult<aex_wire::models::DeviceToken> {
+            Err(WireError::new(ErrorCode::RateLimited))
+        }
+
+        async fn device_decision_create(
+            &self,
+            _cx: &RequestContext,
+            _body: aex_wire::models::DeviceDecisionRequest,
+        ) -> WireResult<aex_wire::models::DeviceDecisionResult> {
+            Err(WireError::new(ErrorCode::RateLimited))
+        }
+
+        async fn dashboard_session_create(
+            &self,
+            _cx: &RequestContext,
+            _body: aex_wire::models::DashboardSessionRequest,
+        ) -> WireResult<Created<aex_wire::models::DashboardSessionCredential>> {
+            Err(WireError::new(ErrorCode::RateLimited))
+        }
+
+        async fn dashboard_session_delete(
+            &self,
+            _cx: &RequestContext,
+        ) -> WireResult<aex_wire::server::NoContent> {
             Err(WireError::new(ErrorCode::RateLimited))
         }
     }
@@ -581,14 +600,47 @@ mod tests {
         }
     }
 
+    /// The authorizer context `central-authz` produces for a resolved browser
+    /// session, for the routes that need one to reach their handler at all.
+    fn admitted_session() -> aex_central_http::authorizer::CentralAuthorizerContext {
+        // The window is anchored to `FixedClock`, which the edge in this
+        // module's router reads. A context minted against the wall clock would
+        // be refused as not-yet-current, which is the correct behaviour and a
+        // confusing way to fail a mount assertion.
+        aex_central_http::authorizer::CentralAuthorizerContext {
+            request_id: aex_wire::types::RequestId::parse("req-mount").expect("a request id"),
+            kind: aex_central_http::authorizer::ContextPrincipalKind::UserSession,
+            principal_id: Uuid::now_v7(),
+            credential_id: Some(Uuid::now_v7()),
+            workspace_id: None,
+            organization_id: None,
+            region: None,
+            memberships: Vec::new(),
+            scopes: aex_control_domain::ScopeSet::from_strings(&["account:read", "account:write"])
+                .expect("known scopes"),
+            account_state: AccountState::Unavailable,
+            issued_at_ms: 0,
+            expires_at_ms: 30_000,
+        }
+    }
+
     #[tokio::test]
     async fn the_mounted_set_is_exactly_the_declared_one() {
-        assert_eq!(DEPLOYABLE.routes().len(), 2);
+        assert_eq!(DEPLOYABLE.routes().len(), 5);
         for id in DEPLOYABLE.routes() {
             let descriptor = route(id);
             let body = match id {
                 RouteId::DeviceAuthorizationCreate => "{\"clientId\":\"aex-cli\",\"scopes\":[]}",
-                _ => "{\"clientId\":\"aex-cli\",\"deviceCode\":\"dvc_fixture\"}",
+                RouteId::DeviceTokenCreate => {
+                    "{\"clientId\":\"aex-cli\",\"deviceCode\":\"dvc_fixture\"}"
+                }
+                RouteId::DeviceDecisionCreate => {
+                    "{\"userCode\":\"BCDFG-HJKLM\",\"decision\":\"approve\"}"
+                }
+                RouteId::DashboardSessionCreate => {
+                    "{\"exchangeSecret\":\"0000000000000000000000000000000000\",\"provider\":\"github\",\"providerAccountId\":\"gh-1\",\"email\":\"a@b.dev\",\"emailVerified\":true}"
+                }
+                _ => "",
             };
             let mut request = Request::builder()
                 .method(descriptor.method.as_str())
@@ -596,15 +648,29 @@ mod tests {
             if descriptor.idempotency == aex_wire::idempotency::IdempotencyKind::IdempotencyKey {
                 request = request.header("idempotency-key", "fixture");
             }
+            let mut request = request.body(Body::from(body)).expect("a valid request");
+            // A route whose alternative principal is a browser session is
+            // refused by the edge before any handler runs, so mounting can only
+            // be observed with a credential the edge admits.
+            if descriptor.alt_principal
+                == Some(aex_wire::idempotency::PrincipalKind::UserSession)
+            {
+                request.extensions_mut().insert(admitted_session());
+            }
             let response = router()
-                .oneshot(request.body(Body::from(body)).expect("a valid request"))
+                .oneshot(request)
                 .await
                 .expect("the router answers");
+            let status = response.status();
+            let bytes = axum::body::to_bytes(response.into_body(), 1 << 16)
+                .await
+                .expect("a bounded body");
             assert_eq!(
-                response.status(),
+                status,
                 StatusCode::TOO_MANY_REQUESTS,
-                "`{}` is not mounted",
-                descriptor.operation_id
+                "`{}` is not mounted: {}",
+                descriptor.operation_id,
+                String::from_utf8_lossy(&bytes)
             );
         }
     }

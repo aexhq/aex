@@ -4,22 +4,42 @@
 //! mounted, which capabilities admit, which variables are required. None of it
 //! proves the composition **serves** — a router mounted over a stub that
 //! answers `429` says nothing about whether the real service can mint a device
-//! code and redeem it.
+//! code, get it approved and redeem it.
 //!
 //! So this module runs the real [`crate::api::AuthService`] over the real
-//! [`crate::app`] router, with only the two substrate ports replaced: an
-//! in-memory identity store and a fixed pepper. Everything between the HTTP
-//! bytes and the store — route matching, the anonymous context, the body bound,
-//! the replay identity, the use cases, the credential grammar, the RFC 8628
-//! decision table and the response encoding — is the code that ships.
+//! [`crate::app`] router, with only the substrate replaced: an in-memory
+//! identity store and a fixed pepper. Everything between the HTTP bytes and the
+//! store — route matching, the anonymous context, the body bound, the replay
+//! identity, the use cases, the credential grammar, the RFC 8628 decision table
+//! and the response encoding — is the code that ships.
+//!
+//! # What this file used to assert, and why that was worse than a gap
+//!
+//! The previous version proved redemption by reaching past the router and
+//! calling a fixture-only `approve()` on the store, commented "as a person
+//! would" — while the *same* fixture answered
+//! `"is not reachable from the two routes this deployable mounts"` for the real
+//! `approve_device_authorization`, `deny_device_authorization` and all three
+//! dashboard-session methods. One file proved one half of the ceremony and
+//! asserted the other half was unreachable, and it was green. A suite that
+//! encodes a gap as an invariant stops anyone from noticing the gap.
+//!
+//! The fixture now implements every method the mounted routes reach, and each
+//! one mirrors the predicate of the statement it stands in for — most
+//! importantly `APPROVE_DEVICE_AUTHORIZATION`'s `EXISTS` over a live session
+//! belonging to an active person, which is the whole reason a browser session
+//! had to exist before a device could be approved. The methods that stay
+//! [`MemoryIdentity::unmounted`] are the ones no route in this deployable
+//! drives, which is a claim about the contract rather than about the ceremony.
 
 #![cfg(test)]
 
 use std::sync::{Arc, Mutex};
 
+use aex_central_http::authorizer::{CentralAuthorizerContext, ContextPrincipalKind};
 use aex_central_http::health::{HEALTH_PATH, READY_PATH};
 use aex_central_http::router::EdgeStack;
-use aex_control_domain::{CursorSecret, ScopeSet};
+use aex_control_domain::{AccountState, CursorSecret, Revision, ScopeSet};
 use aex_identity_app::ports::{
     ConsumeDeviceAuthorizationCommand, ConsumeEmailChallengeCommand, CreateDashboardSessionCommand,
     CreateDeviceAuthorizationCommand, DecideDeviceAuthorizationCommand, DeviceConsumeOutcome,
@@ -28,9 +48,12 @@ use aex_identity_app::ports::{
     RevokeDashboardSessionCommand, SetUserStatusCommand, StoreError, TxOutcome,
     UnlinkExternalIdentityCommand,
 };
+use aex_identity_domain::credential::parse as parse_credential;
+use aex_wire::ids::{PrefixedId as _, UserId};
 use aex_identity_domain::{
-    ACCOUNT_TOKEN_TTL, AccountToken, DashboardSession, DeviceAuthorization, DeviceState,
-    EmailChallenge, Pepper, PepperVersion, PresentedDigest, TokenOrigin, User, Verifier, verify,
+    ACCOUNT_TOKEN_TTL, AccountToken, CredentialKind, DashboardSession, DeviceAuthorization,
+    DeviceState, EmailChallenge, ExternalIdentity, Pepper, PepperVersion, PresentedDigest,
+    SessionState, TokenOrigin, User, UserStatus, Verifier, verify,
 };
 use async_trait::async_trait;
 use axum::body::Body;
@@ -39,12 +62,15 @@ use time::{Duration, OffsetDateTime};
 use tower::ServiceExt as _;
 use uuid::Uuid;
 
-use crate::api::{ALLOWED_CLIENT_ID, AuthService};
+use crate::api::{ALLOWED_CLIENT_ID, AuthService, ExchangeSecret};
 use crate::targets::NoOrganizationTargets;
 use crate::{Probes, app, readiness};
 
 /// The one pepper version this fixture mints and verifies under.
 const VERSION: u16 = 1;
+
+/// The configured first-party sign-in exchange secret.
+const EXCHANGE_SECRET: &str = "fixture-sign-in-exchange-secret-000000000";
 
 /// A pepper keystore holding one fixed version.
 #[derive(Debug)]
@@ -68,22 +94,18 @@ impl PepperKeystore for FixedPepper {
     }
 }
 
-/// One recorded device grant and the verifier it was minted under.
-#[derive(Clone)]
-struct Grant {
-    grant: DeviceAuthorization,
-    device_verifier: Verifier,
+/// The pepper every keyed digest in this fixture is computed under.
+fn pepper() -> Pepper {
+    Pepper::new([7_u8; 32])
 }
 
-/// The two device ceremonies, in memory.
-///
-/// Every other `IdentityStore` method answers [`StoreError::Fatal`]. That is
-/// not a shortcut: `CentralServiceId::IdentityApi` mounts exactly the two
-/// device-flow routes, so a fixture method that ever ran would mean this binary
-/// had grown a surface its own composition test denies.
-#[derive(Debug, Default)]
-struct MemoryIdentity {
-    grants: Mutex<Vec<Grant>>,
+/// One recorded device grant, the verifier it was minted under, and the keyed
+/// user-code digest a decision looks it up by.
+#[derive(Clone)]
+struct Grant {
+    record: DeviceAuthorization,
+    device_verifier: Verifier,
+    user_code_hash: [u8; 32],
 }
 
 impl std::fmt::Debug for Grant {
@@ -92,30 +114,82 @@ impl std::fmt::Debug for Grant {
     }
 }
 
+/// The identity rows the five mounted routes touch, in memory.
+///
+/// Every method a mounted route reaches is implemented, and each mirrors the
+/// predicate of the Aurora statement it stands in for. The methods that answer
+/// [`StoreError::Fatal`] are the ones no route drives — a fixture method that
+/// ever ran there would mean this binary had grown a surface its own
+/// composition test denies.
+#[derive(Debug, Default)]
+struct MemoryIdentity {
+    grants: Mutex<Vec<Grant>>,
+    users: Mutex<Vec<User>>,
+    links: Mutex<Vec<ExternalIdentity>>,
+    sessions: Mutex<Vec<DashboardSession>>,
+}
+
 impl MemoryIdentity {
     fn unmounted(method: &'static str) -> StoreError {
         StoreError::Fatal(format!(
-            "`{method}` is not reachable from the two routes this deployable mounts"
+            "`{method}` is not reachable from the five routes this deployable mounts"
         ))
-    }
-
-    /// Marks the one recorded grant approved, as a person would.
-    fn approve(&self) {
-        let mut grants = self.grants.lock().expect("not poisoned");
-        for recorded in grants.iter_mut() {
-            recorded.grant.state = DeviceState::Approved;
-            recorded.grant.approved_at = Some(OffsetDateTime::now_utc());
-            recorded.grant.approved_by = Some(Uuid::now_v7());
-            // Clear the poll bookkeeping so the next poll is not a slow-down.
-            recorded.grant.last_polled_at = None;
-        }
     }
 
     fn find(&self, device_id: Uuid, digest: &PresentedDigest) -> Option<DeviceAuthorization> {
         let grants = self.grants.lock().expect("not poisoned");
-        let recorded = grants.iter().find(|it| it.grant.id == device_id)?;
-        verify(&Pepper::new([7_u8; 32]), digest, &recorded.device_verifier)
-            .then(|| recorded.grant.clone())
+        let recorded = grants.iter().find(|it| it.record.id == device_id)?;
+        verify(&pepper(), digest, &recorded.device_verifier).then(|| recorded.record.clone())
+    }
+
+    /// `APPROVE_DEVICE_AUTHORIZATION`'s `EXISTS` clause, in Rust.
+    ///
+    /// A live session, belonging to the named person, who is active. Kept
+    /// separate so the one test that disables a person can name what it broke.
+    fn actor_is_current(&self, session_id: Uuid, user_id: Uuid, now: OffsetDateTime) -> bool {
+        let sessions = self.sessions.lock().expect("not poisoned");
+        let Some(session) = sessions
+            .iter()
+            .find(|it| it.id == session_id && it.user_id == user_id)
+        else {
+            return false;
+        };
+        if session.state_at(now) != SessionState::Active {
+            return false;
+        }
+        let users = self.users.lock().expect("not poisoned");
+        users
+            .iter()
+            .any(|it| it.id == user_id && it.status == UserStatus::Active)
+    }
+
+    /// Applies one decision under the state guard the statement carries.
+    fn decide(
+        &self,
+        command: &DecideDeviceAuthorizationCommand,
+        admitted: &[DeviceState],
+        next: DeviceState,
+    ) -> Result<TxOutcome<DeviceAuthorization>, StoreError> {
+        let mut grants = self.grants.lock().expect("not poisoned");
+        let Some(recorded) = grants
+            .iter_mut()
+            .find(|it| it.user_code_hash == command.user_code_hash)
+        else {
+            return Err(StoreError::NotFound);
+        };
+        if !admitted.contains(&recorded.record.state) || recorded.record.expires_at <= command.now {
+            return Err(StoreError::NotFound);
+        }
+        recorded.record.state = next;
+        if next == DeviceState::Approved {
+            recorded.record.approved_by = Some(command.actor_user_id);
+            recorded.record.approved_at = Some(command.now);
+            // The poll bookkeeping is cleared so the device's next poll is a
+            // redemption rather than a slow-down. The statement does not write
+            // this column; the row simply has not been polled since it changed.
+            recorded.record.last_polled_at = None;
+        }
+        Ok(TxOutcome::Committed(recorded.record.clone()))
     }
 }
 
@@ -140,8 +214,9 @@ impl IdentityStore for MemoryIdentity {
             last_polled_at: None,
         };
         self.grants.lock().expect("not poisoned").push(Grant {
-            grant: grant.clone(),
+            record: grant.clone(),
             device_verifier: command.device_verifier,
+            user_code_hash: command.user_code_hash,
         });
         Ok(TxOutcome::Committed(grant))
     }
@@ -165,25 +240,26 @@ impl IdentityStore for MemoryIdentity {
         // redemption then sees a consumed grant rather than an approved one.
         let mut grants = self.grants.lock().expect("not poisoned");
         let Some(recorded) = grants.iter_mut().find(|it| {
-            it.grant.id == command.device_id
-                && verify(
-                    &Pepper::new([7_u8; 32]),
-                    &command.digest,
-                    &it.device_verifier,
-                )
+            it.record.id == command.device_id
+                && verify(&pepper(), &command.digest, &it.device_verifier)
         }) else {
             return Err(StoreError::NotFound);
         };
-        if recorded.grant.state != DeviceState::Approved {
+        if recorded.record.state != DeviceState::Approved {
             return Err(StoreError::NotFound);
         }
-        recorded.grant.state = DeviceState::Consumed;
-        recorded.grant.consumed_at = Some(command.now);
-        recorded.grant.account_token_id = Some(command.preassigned_token_id);
-        let grant = recorded.grant.clone();
+        recorded.record.state = DeviceState::Consumed;
+        recorded.record.consumed_at = Some(command.now);
+        recorded.record.account_token_id = Some(command.preassigned_token_id);
+        let grant = recorded.record.clone();
         let token = AccountToken {
             id: command.preassigned_token_id,
-            user_id: grant.approved_by.unwrap_or_else(Uuid::now_v7),
+            // Never a fresh identifier: the token belongs to whoever approved
+            // the grant, and inventing one here is exactly the shortcut that
+            // let the old suite pass without an approver existing.
+            user_id: grant.approved_by.ok_or_else(|| {
+                StoreError::Fatal("an approved grant carries no approver".to_owned())
+            })?,
             name: command.token_name.clone(),
             scopes: grant.requested_scopes,
             origin: TokenOrigin::DeviceFlow,
@@ -195,11 +271,160 @@ impl IdentityStore for MemoryIdentity {
         Ok(TxOutcome::Committed(DeviceConsumeOutcome { grant, token }))
     }
 
+    async fn approve_device_authorization(
+        &self,
+        command: &DecideDeviceAuthorizationCommand,
+    ) -> Result<TxOutcome<DeviceAuthorization>, StoreError> {
+        if !self.actor_is_current(command.actor_session_id, command.actor_user_id, command.now) {
+            return Err(StoreError::NotFound);
+        }
+        self.decide(command, &[DeviceState::Pending], DeviceState::Approved)
+    }
+
+    async fn deny_device_authorization(
+        &self,
+        command: &DecideDeviceAuthorizationCommand,
+    ) -> Result<TxOutcome<DeviceAuthorization>, StoreError> {
+        // `DENY_DEVICE_AUTHORIZATION` carries no approver-currency `EXISTS`,
+        // unlike its approving twin, and this mirrors that faithfully rather
+        // than tidying it: refusing a device is the safe direction, and a
+        // fixture that were stricter than the statement would hide the day the
+        // statement needs to change.
+        self.decide(
+            command,
+            &[DeviceState::Pending, DeviceState::Approved],
+            DeviceState::Denied,
+        )
+    }
+
     async fn resolve_or_create_by_external_identity(
         &self,
-        _command: &ResolveExternalIdentity,
+        command: &ResolveExternalIdentity,
     ) -> Result<TxOutcome<ResolvedUser>, StoreError> {
-        Err(Self::unmounted("resolve_or_create_by_external_identity"))
+        let mut users = self.users.lock().expect("not poisoned");
+        let mut links = self.links.lock().expect("not poisoned");
+
+        // Link first, address second, create last — the order the ceremony's
+        // one transaction uses, and the reason a verified address is required
+        // at the edge: resolving by address is what makes two provider accounts
+        // able to reach one person at all.
+        let existing = links
+            .iter()
+            .find(|it| {
+                it.provider == command.provider
+                    && it.provider_account_id == command.provider_account_id
+            })
+            .map(|it| it.user_id)
+            .or_else(|| {
+                users
+                    .iter()
+                    .find(|it| it.email == command.email)
+                    .map(|it| it.id)
+            });
+
+        let (user_id, created) = if let Some(id) = existing {
+            (id, false)
+        } else {
+            users.push(User {
+                id: command.preassigned_user_id,
+                email: command.email.clone(),
+                email_verified_at: command.email_verified.then_some(command.now),
+                name: command.name.clone(),
+                image_url: command.image_url.clone(),
+                status: UserStatus::Active,
+                revision: Revision::INITIAL,
+                created_at: command.now,
+                updated_at: command.now,
+            });
+            (command.preassigned_user_id, true)
+        };
+        if !links.iter().any(|it| {
+            it.user_id == user_id
+                && it.provider == command.provider
+                && it.provider_account_id == command.provider_account_id
+        }) {
+            links.push(ExternalIdentity {
+                id: command.preassigned_link_id,
+                user_id,
+                provider: command.provider,
+                provider_account_id: command.provider_account_id.clone(),
+                linked_at: command.now,
+            });
+        }
+        let user = users
+            .iter()
+            .find(|it| it.id == user_id)
+            .cloned()
+            .ok_or(StoreError::NotFound)?;
+        let mine = links
+            .iter()
+            .filter(|it| it.user_id == user_id)
+            .cloned()
+            .collect();
+        Ok(TxOutcome::Committed(ResolvedUser {
+            user,
+            created,
+            links: mine,
+        }))
+    }
+
+    async fn create_dashboard_session(
+        &self,
+        command: &CreateDashboardSessionCommand,
+    ) -> Result<TxOutcome<DashboardSession>, StoreError> {
+        // `INSERT_DASHBOARD_SESSION` selects from `identity.user` with
+        // `status = 'active'`, so a disabled person yields zero inserted rows
+        // rather than a session nobody may use.
+        let active = self
+            .users
+            .lock()
+            .expect("not poisoned")
+            .iter()
+            .any(|it| it.id == command.user_id && it.status == UserStatus::Active);
+        if !active {
+            return Err(StoreError::NotFound);
+        }
+        let session = DashboardSession {
+            id: command.preassigned_id,
+            user_id: command.user_id,
+            pepper_version: command.pepper_version,
+            issued_at: command.issued_at,
+            expires_at: command.expires_at,
+            revoked_at: None,
+        };
+        self.sessions
+            .lock()
+            .expect("not poisoned")
+            .push(session.clone());
+        Ok(TxOutcome::Committed(session))
+    }
+
+    async fn revoke_dashboard_session(
+        &self,
+        command: &RevokeDashboardSessionCommand,
+    ) -> Result<TxOutcome<()>, StoreError> {
+        let mut sessions = self.sessions.lock().expect("not poisoned");
+        if let Some(session) = sessions
+            .iter_mut()
+            .find(|it| it.id == command.session_id && it.revoked_at.is_none())
+        {
+            session.revoked_at = Some(command.now);
+        }
+        // Closing an already-closed session is the outcome the caller asked
+        // for; the statement's `revoked_at IS NULL` guard means it affects zero
+        // rows and reports no failure.
+        Ok(TxOutcome::Committed(()))
+    }
+
+    async fn resolve_dashboard_session(
+        &self,
+        _query: &ResolveDashboardSessionQuery,
+    ) -> Result<Option<(DashboardSession, User)>, StoreError> {
+        // The credential read belongs to `central-authz`, which runs as a role
+        // with no write privilege at all. This deployable never resolves a
+        // presented session: it receives the already-verified authorizer
+        // context.
+        Err(Self::unmounted("resolve_dashboard_session"))
     }
 
     async fn issue_email_challenge(
@@ -216,27 +441,6 @@ impl IdentityStore for MemoryIdentity {
         Err(Self::unmounted("consume_email_challenge"))
     }
 
-    async fn create_dashboard_session(
-        &self,
-        _command: &CreateDashboardSessionCommand,
-    ) -> Result<TxOutcome<DashboardSession>, StoreError> {
-        Err(Self::unmounted("create_dashboard_session"))
-    }
-
-    async fn resolve_dashboard_session(
-        &self,
-        _query: &ResolveDashboardSessionQuery,
-    ) -> Result<Option<(DashboardSession, User)>, StoreError> {
-        Err(Self::unmounted("resolve_dashboard_session"))
-    }
-
-    async fn revoke_dashboard_session(
-        &self,
-        _command: &RevokeDashboardSessionCommand,
-    ) -> Result<TxOutcome<()>, StoreError> {
-        Err(Self::unmounted("revoke_dashboard_session"))
-    }
-
     async fn set_user_status(
         &self,
         _command: &SetUserStatusCommand,
@@ -249,20 +453,6 @@ impl IdentityStore for MemoryIdentity {
         _command: &UnlinkExternalIdentityCommand,
     ) -> Result<TxOutcome<()>, StoreError> {
         Err(Self::unmounted("unlink_external_identity"))
-    }
-
-    async fn approve_device_authorization(
-        &self,
-        _command: &DecideDeviceAuthorizationCommand,
-    ) -> Result<TxOutcome<DeviceAuthorization>, StoreError> {
-        Err(Self::unmounted("approve_device_authorization"))
-    }
-
-    async fn deny_device_authorization(
-        &self,
-        _command: &DecideDeviceAuthorizationCommand,
-    ) -> Result<TxOutcome<DeviceAuthorization>, StoreError> {
-        Err(Self::unmounted("deny_device_authorization"))
     }
 
     async fn revoke_account_token(
@@ -284,6 +474,7 @@ fn composed(probes: Probes) -> (axum::Router, Arc<MemoryIdentity>) {
         Arc::new(aex_central_aws::Uuid7Factory),
         Arc::new(aex_central_aws::OsSecretRng),
         aex_wire::types::HttpsUrl::parse("https://aex.dev/device").expect("a valid URL"),
+        ExchangeSecret::new(EXCHANGE_SECRET).expect("a long enough fixture secret"),
     );
     let config = crate::Config::from_lookup(|name| environment(name).map(str::to_owned))
         .expect("a complete environment");
@@ -309,11 +500,10 @@ fn environment(name: &str) -> Option<&'static str> {
             "arn:aws:secretsmanager:eu-west-1:000000000000:secret:aex-identity"
         }
         "AEX_CENTRAL_IDENTITY_PEPPER_SECRET_ID" => "aex/dev/identity-pepper",
+        "AEX_CENTRAL_IDENTITY_SIGN_IN_EXCHANGE_SECRET_ID" => "aex/dev/sign-in-exchange",
         "AEX_CENTRAL_IDENTITY_DATABASE" => "aex",
         "AEX_CENTRAL_IDENTITY_ROLE" => "aex_identity_api",
         "AEX_CENTRAL_IDENTITY_DEVICE_VERIFICATION_URI" => "https://aex.dev/device",
-        "AEX_CENTRAL_IDENTITY_VERCEL_ISSUER" => "https://oidc.vercel.com/aexhq",
-        "AEX_CENTRAL_IDENTITY_VERCEL_EXPECTED_SUBJECT" => "owner:aexhq:project:dashboard",
         "AEX_CENTRAL_IDENTITY_MAX_BODY_BYTES" => "65536",
         "AEX_CENTRAL_IDENTITY_REQUEST_DEADLINE_MS" => "5000",
         _ => return None,
@@ -358,6 +548,85 @@ fn token_request(device_code: &str) -> Request<Body> {
             r#"{{"clientId":"{ALLOWED_CLIENT_ID}","deviceCode":"{device_code}"}}"#
         )))
         .expect("a valid request")
+}
+
+/// A sign-in exchange body, with one field overridable per test.
+fn sign_in_request(secret: &str, provider_account_id: &str, email_verified: bool) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri("/api/auth/sessions")
+        .body(Body::from(format!(
+            r#"{{"exchangeSecret":"{secret}","provider":"github","providerAccountId":"{provider_account_id}","email":"person@example.com","emailVerified":{email_verified},"name":"A Person"}}"#
+        )))
+        .expect("a valid request")
+}
+
+/// The authorizer context `central-authz` would produce for a resolved browser
+/// session.
+///
+/// Building it from the credential the sign-in route actually minted is what
+/// makes the approval leg honest: the session id this approves under is the one
+/// the mint produced, so the fixture's `EXISTS` predicate is evaluated against
+/// a row the ceremony wrote rather than one the test invented.
+fn session_context(session_credential: &str, user_id: Uuid) -> CentralAuthorizerContext {
+    let parsed = parse_credential(CredentialKind::DashboardSession, session_credential)
+        .expect("the minted credential parses under its own grammar");
+    let now_ms = i64::try_from(
+        OffsetDateTime::now_utc()
+            .unix_timestamp_nanos()
+            .div_euclid(1_000_000),
+    )
+    .expect("a representable instant");
+    CentralAuthorizerContext {
+        request_id: aex_wire::types::RequestId::parse("req-ceremony").expect("a request id"),
+        kind: ContextPrincipalKind::UserSession,
+        principal_id: user_id,
+        credential_id: Some(parsed.id),
+        workspace_id: None,
+        organization_id: None,
+        region: None,
+        memberships: Vec::new(),
+        scopes: ScopeSet::from_strings(&["account:read", "account:write"]).expect("known scopes"),
+        account_state: AccountState::Unavailable,
+        issued_at_ms: now_ms - 1_000,
+        expires_at_ms: now_ms + 30_000,
+    }
+}
+
+/// A decision request carrying an already-resolved browser session.
+fn decision_request(
+    context: &CentralAuthorizerContext,
+    user_code: &str,
+    decision: &str,
+) -> Request<Body> {
+    let mut request = Request::builder()
+        .method("POST")
+        .uri("/api/auth/device/decisions")
+        .body(Body::from(format!(
+            r#"{{"userCode":"{user_code}","decision":"{decision}"}}"#
+        )))
+        .expect("a valid request");
+    request.extensions_mut().insert(context.clone());
+    request
+}
+
+/// Signs a person in through the real route and returns their credential, id
+/// and authorizer context.
+async fn sign_in(router: &axum::Router) -> (String, Uuid, CentralAuthorizerContext) {
+    let (status, body) = call(router, sign_in_request(EXCHANGE_SECRET, "gh-1", true)).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let credential = body["session"].as_str().expect("a session").to_owned();
+    let user_id = Uuid::from_bytes(
+        *body["userId"]
+            .as_str()
+            .expect("a user id")
+            .parse::<UserId>()
+            .expect("the response carries a platform user identifier")
+            .uuid7()
+            .as_bytes(),
+    );
+    let context = session_context(&credential, user_id);
+    (credential, user_id, context)
 }
 
 #[tokio::test]
@@ -405,16 +674,45 @@ async fn a_device_polling_an_unapproved_grant_is_told_to_keep_waiting() {
     );
 }
 
+/// The whole ceremony, over HTTP, with no fixture reach-around.
+///
+/// This is the test the old suite could not write. Every state change is made
+/// by a mounted route: the grant is minted by one, the browser session by
+/// another, the approval by a third, and the account token by a fourth. Nothing
+/// touches the store except through the router.
 #[tokio::test]
-async fn an_approved_grant_redeems_into_exactly_one_account_token() {
+async fn a_person_signs_in_approves_a_device_and_the_device_redeems_a_token() {
     let (router, store) = composed(Probes::READY);
+
     let (_, started) = call(&router, start_request()).await;
     let device_code = started["deviceCode"]
         .as_str()
         .expect("a device code")
         .to_owned();
+    let user_code = started["userCode"].as_str().expect("a user code").to_owned();
 
-    store.approve();
+    let (_credential, user_id, context) = sign_in(&router).await;
+    assert_eq!(
+        store.sessions.lock().expect("not poisoned").len(),
+        1,
+        "the sign-in exchange minted no browser session"
+    );
+
+    let (status, decided) = call(&router, decision_request(&context, &user_code, "approve")).await;
+    assert_eq!(status, StatusCode::OK, "{decided}");
+    assert_eq!(decided["decision"], "approve", "{decided}");
+    assert!(decided["decidedAt"].as_str().is_some(), "{decided}");
+    assert_eq!(
+        store.grants.lock().expect("not poisoned")[0].record.state,
+        DeviceState::Approved,
+        "the mounted route did not move the grant off `Pending`"
+    );
+    assert_eq!(
+        store.grants.lock().expect("not poisoned")[0].record.approved_by,
+        Some(user_id),
+        "the approval is attributed to whoever signed in"
+    );
+
     let (status, body) = call(&router, token_request(&device_code)).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let token = body["accountToken"].as_str().expect("an account token");
@@ -433,6 +731,197 @@ async fn an_approved_grant_redeems_into_exactly_one_account_token() {
         "the grant was redeemed twice: {second}"
     );
     assert!(second["accountToken"].is_null(), "{second}");
+}
+
+#[tokio::test]
+async fn a_denied_grant_can_never_be_redeemed() {
+    let (router, _store) = composed(Probes::READY);
+    let (_, started) = call(&router, start_request()).await;
+    let device_code = started["deviceCode"]
+        .as_str()
+        .expect("a device code")
+        .to_owned();
+    let user_code = started["userCode"].as_str().expect("a user code").to_owned();
+
+    let (_credential, _user, context) = sign_in(&router).await;
+    let (status, decided) = call(&router, decision_request(&context, &user_code, "deny")).await;
+    assert_eq!(status, StatusCode::OK, "{decided}");
+    assert_eq!(decided["decision"], "deny", "{decided}");
+
+    let (status, body) = call(&router, token_request(&device_code)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(
+        body["error"]["code"], "invalid_request",
+        "a denial and an unknown code are one answer to an anonymous poller: {body}"
+    );
+}
+
+#[tokio::test]
+async fn a_decision_without_a_browser_session_is_refused() {
+    let (router, store) = composed(Probes::READY);
+    let (_, started) = call(&router, start_request()).await;
+    let user_code = started["userCode"].as_str().expect("a user code").to_owned();
+
+    // No authorizer context at all: the edge answers before the handler runs.
+    let request = Request::builder()
+        .method("POST")
+        .uri("/api/auth/device/decisions")
+        .body(Body::from(format!(
+            r#"{{"userCode":"{user_code}","decision":"approve"}}"#
+        )))
+        .expect("a valid request");
+    let (status, body) = call(&router, request).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert_eq!(
+        store.grants.lock().expect("not poisoned")[0].record.state,
+        DeviceState::Pending,
+        "an unauthenticated request decided a grant"
+    );
+}
+
+/// An account token authenticates the same person as a browser session, and the
+/// authorizer treats them as one principal. The decision route must still
+/// refuse it, because `approve_device_authorization` records the session that
+/// proved the approver was current and an account token proves no such thing.
+#[tokio::test]
+async fn an_account_token_may_not_stand_in_for_the_session_that_proves_currency() {
+    let (router, store) = composed(Probes::READY);
+    let (_, started) = call(&router, start_request()).await;
+    let user_code = started["userCode"].as_str().expect("a user code").to_owned();
+
+    let (credential, user_id, session) = sign_in(&router).await;
+    let mut token_context = session_context(&credential, user_id);
+    token_context.kind = ContextPrincipalKind::Account;
+
+    let (status, body) = call(
+        &router,
+        decision_request(&token_context, &user_code, "approve"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert_eq!(
+        store.grants.lock().expect("not poisoned")[0].record.state,
+        DeviceState::Pending,
+        "an account token approved a device authorization"
+    );
+
+    // The same person, presenting the session, is admitted — so the refusal
+    // above is about the credential and not about the person.
+    let (status, _) = call(&router, decision_request(&session, &user_code, "approve")).await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_user_code_no_grant_is_waiting_on_is_not_found() {
+    let (router, _store) = composed(Probes::READY);
+    let (_credential, _user, context) = sign_in(&router).await;
+    let (status, body) = call(
+        &router,
+        decision_request(&context, "BCDFG-HJKLM", "approve"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(body["error"]["code"], "not_found", "{body}");
+}
+
+#[tokio::test]
+async fn a_user_code_outside_the_alphabet_never_reaches_the_store() {
+    let (router, store) = composed(Probes::READY);
+    let (_credential, _user, context) = sign_in(&router).await;
+    for forged in ["", "AEIOU-BCDFG", "BCDFG", "not-a-code"] {
+        let (status, body) = call(&router, decision_request(&context, forged, "approve")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{forged}: {body}");
+    }
+    assert!(
+        store.grants.lock().expect("not poisoned").is_empty(),
+        "a forged user code cost a store round trip"
+    );
+}
+
+#[tokio::test]
+async fn the_sign_in_exchange_refuses_a_caller_that_is_not_first_party() {
+    let (router, store) = composed(Probes::READY);
+    for wrong in [
+        "",
+        "short",
+        "fixture-sign-in-exchange-secret-000000001",
+    ] {
+        let (status, body) = call(&router, sign_in_request(wrong, "gh-1", true)).await;
+        assert!(
+            status == StatusCode::UNAUTHORIZED || status == StatusCode::BAD_REQUEST,
+            "{wrong}: {status} {body}"
+        );
+    }
+    assert!(
+        store.users.lock().expect("not poisoned").is_empty(),
+        "an unproven caller created a person"
+    );
+    assert!(
+        store.sessions.lock().expect("not poisoned").is_empty(),
+        "an unproven caller minted a session"
+    );
+}
+
+/// An unverified address must not resolve to an existing person.
+///
+/// The store resolves by normalized email when no provider link matches, so
+/// accepting an unverified assertion would let one provider account adopt
+/// another person's records. That is a cross-tenant read, which is a
+/// correctness defect rather than a matter of degree.
+#[tokio::test]
+async fn an_unverified_address_links_to_nobody() {
+    let (router, store) = composed(Probes::READY);
+    let (status, body) = call(&router, sign_in_request(EXCHANGE_SECRET, "gh-2", false)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["code"], "invalid_request", "{body}");
+    assert!(store.users.lock().expect("not poisoned").is_empty());
+}
+
+#[tokio::test]
+async fn signing_in_twice_resolves_one_person_and_two_sessions() {
+    let (router, store) = composed(Probes::READY);
+    let (first, _, _) = sign_in(&router).await;
+    let (second, _, _) = sign_in(&router).await;
+    assert_ne!(first, second, "the second sign-in replayed a credential");
+    assert_eq!(
+        store.users.lock().expect("not poisoned").len(),
+        1,
+        "one provider account resolved to two people"
+    );
+    assert_eq!(store.sessions.lock().expect("not poisoned").len(), 2);
+}
+
+#[tokio::test]
+async fn closing_a_session_stops_it_approving_anything() {
+    let (router, store) = composed(Probes::READY);
+    let (_, started) = call(&router, start_request()).await;
+    let user_code = started["userCode"].as_str().expect("a user code").to_owned();
+    let (_credential, _user, context) = sign_in(&router).await;
+
+    let mut close = Request::builder()
+        .method("DELETE")
+        .uri("/api/auth/sessions/current")
+        .body(Body::empty())
+        .expect("a valid request");
+    close.extensions_mut().insert(context.clone());
+    let (status, body) = call(&router, close).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    assert!(
+        store.sessions.lock().expect("not poisoned")[0]
+            .revoked_at
+            .is_some(),
+        "the mounted route did not revoke the session"
+    );
+
+    // The authorizer context is unchanged — a real one would stop resolving —
+    // so this proves the *store* predicate refuses, which is the guard that
+    // matters when a context is still inside its 30-second window.
+    let (status, body) = call(&router, decision_request(&context, &user_code, "approve")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(
+        store.grants.lock().expect("not poisoned")[0].record.state,
+        DeviceState::Pending
+    );
 }
 
 #[tokio::test]

@@ -87,6 +87,7 @@ fn context(id: RouteId) -> RequestContext {
             user: UserId::parse(&format!("usr_{SUFFIX}")).expect("user id"),
             organization: Some(organization_id()),
         },
+        actor_session_id: None,
         granted_scopes: ScopeSet::empty(),
         idempotency_key: None,
         operation_id: None,

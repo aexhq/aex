@@ -77,6 +77,7 @@ impl ScopeSet {
     /// The complement is the regional set, which no central route consults.
     pub const CENTRAL: Self = Self::of(&[
         Scope::AccountRead,
+        Scope::AccountWrite,
         Scope::OrganizationsRead,
         Scope::OrganizationsWrite,
         Scope::MembershipsRead,
@@ -137,6 +138,11 @@ impl ScopeSet {
     /// The read-mostly member role.
     pub const MEMBER: Self = Self::of(&[
         Scope::AccountRead,
+        // Deciding your own device login and closing your own browser session
+        // are personal acts, not organization ones. The weakest role holds them
+        // for the same reason it holds `account:read`: withholding them would
+        // mean a member could sign in and never finish signing in.
+        Scope::AccountWrite,
         Scope::OrganizationsRead,
         Scope::MembershipsRead,
         Scope::WorkspacesRead,
