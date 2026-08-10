@@ -36,7 +36,9 @@ pub const GRANDFATHERED: &[(&str, &[&str])] = &[
         &[
             "crates/aex-observation-app/src/use_cases.rs",
             "crates/aex-usage-domain/src/fact.rs",
-            "services/regional-secret-api/src/lib.rs",
+            // `services/regional-secret-api/src/lib.rs` declared this until
+            // b156e78e moved the `admit_plaintext` kernel out; the row is
+            // deleted rather than kept, which is the shrink this list allows.
             // Moved, not added: `regional-session-api` merged into
             // `session-stream-api` and its admission module became the session
             // half's. The grandfathered list still shrinks, it does not grow.
