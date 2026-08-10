@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use aex_finance_domain::billing_account::BillingAccountState;
+use aex_control_domain::{AccountProfile, AccountProjectionError, account_operational_state};
 use aex_finance_domain::money::Microusd;
 use aex_internal_contracts::SchemaVersion;
 use aex_payment_contracts::{
@@ -18,7 +18,7 @@ use aex_wire::error::{ErrorCode, WireError, WireResult};
 use aex_wire::ids::{MeasurementId, OrganizationId, PrefixedId as _, StatementId};
 use aex_wire::models::Currency;
 use aex_wire::models::{
-    AccountActiveState, AccountOperationalState, AccountPauseReason, AccountPausedState,
+    AccountOperationalState,
     AutoTopupPolicy, AutoTopupPolicyRequest, BillingBalance, BillingBalanceGetQuery,
     BillingStatementsListQuery, DownloadGrant, EmptyRequest, HostedSession, PortalSessionRequest,
     Statement, StatementLine, StatementSummary, StatementSummaryPage, TimeRange,
@@ -106,6 +106,111 @@ where
         }
     }
 
+    /// Wraps one admitted command in the envelope the edge executes.
+    fn envelope(
+        organization: OrganizationId,
+        kind: CommandKind,
+        effect: aex_payment_contracts::EffectId,
+        amount: Option<Microusd>,
+        command: PaymentCommand,
+        now_millis: i64,
+    ) -> WireResult<PaymentCommandEnvelope> {
+        Ok(PaymentCommandEnvelope {
+            schema_version: SchemaVersion::V1,
+            provider_idempotency_key: ProviderIdempotencyKey::derive(kind, organization, effect)
+                .as_header_value()
+                .as_str()
+                .to_owned(),
+            deadline: Timestamp::from_unix_millis(now_millis + HOSTED_COMMAND_DEADLINE_MS)
+                .map_err(|error| {
+                    WireError::new(ErrorCode::InternalError)
+                        .with_message(format!("the command deadline is unrepresentable: {error}"))
+                })?,
+            metadata: EffectMetadata {
+                effect,
+                organization,
+                kind,
+                credit: amount
+                    .and_then(|value| value.to_cents_exact().ok())
+                    .map_or(Cents::ZERO, |cents| {
+                        Cents::new(u64::try_from(cents.get()).unwrap_or(0))
+                    }),
+            },
+            command,
+        })
+    }
+
+    /// Resolves the organization's provider customer, creating it on first use.
+    ///
+    /// This is the forward path `CommandKind::EnsureCustomer` never had. Both
+    /// hosted commands act on a provider customer, and nothing created one, so
+    /// every top-up and every portal session refused with `400 invalid_request`
+    /// and no money could enter the system at all.
+    ///
+    /// Creation is at most once per organization by three independent fences: the
+    /// intent is the organization, so a replay resolves the original effect rather
+    /// than opening a second; the derived provider idempotency key makes a second
+    /// dispatch of that effect return the same customer; and the column is claimed
+    /// under `provider_customer_id IS NULL`, so a concurrent winner is adopted
+    /// rather than overwritten.
+    async fn customer(
+        &self,
+        organization: OrganizationId,
+        now_millis: i64,
+    ) -> WireResult<aex_payment_contracts::ProviderCustomerRef> {
+        if let Some(existing) = self
+            .authority
+            .provider_customer(organization)
+            .await
+            .map_err(authority_error)?
+        {
+            return Ok(existing);
+        }
+        let email = self
+            .authority
+            .billing_contact(organization)
+            .await
+            .map_err(authority_error)?;
+        let intent = format!("customer:{}", organization.encode().as_str());
+        let prepared = self
+            .authority
+            .prepare_effect(
+                organization,
+                CommandKind::EnsureCustomer,
+                intent.as_bytes(),
+                None,
+                now_millis + HOSTED_COMMAND_DEADLINE_MS,
+            )
+            .await
+            .map_err(authority_error)?;
+        let envelope = Self::envelope(
+            organization,
+            CommandKind::EnsureCustomer,
+            prepared.effect,
+            None,
+            PaymentCommand::EnsureCustomer {
+                effect: prepared.effect,
+                organization,
+                email,
+            },
+            now_millis,
+        )?;
+        self.authority
+            .bind_effect_command(prepared.effect, prepared.intent_hash, &envelope)
+            .await
+            .map_err(authority_error)?;
+        let result = self
+            .gateway
+            .execute(&envelope)
+            .await
+            .map_err(gateway_error)?;
+        self.authority
+            .settle_customer(prepared.effect, organization, &result)
+            .await
+            .map_err(authority_error)?
+            .ok_or_else(|| WireError::new(ErrorCode::UpstreamError))
+    }
+
     /// Executes one hosted-page command through prepare, execute and finalize.
     ///
     /// The effect is durable before the provider is contacted and the answer is
@@ -125,6 +230,7 @@ where
         + Send,
         now_millis: i64,
     ) -> WireResult<HostedSession> {
+        let customer = self.customer(organization, now_millis).await?;
         let prepared = self
             .authority
             .prepare_effect(
@@ -136,34 +242,14 @@ where
             )
             .await
             .map_err(authority_error)?;
-        let command = build(prepared.effect, prepared.customer.clone());
-        let envelope = PaymentCommandEnvelope {
-            schema_version: SchemaVersion::V1,
-            provider_idempotency_key: ProviderIdempotencyKey::derive(
-                kind,
-                organization,
-                prepared.effect,
-            )
-            .as_header_value()
-            .as_str()
-            .to_owned(),
-            deadline: Timestamp::from_unix_millis(now_millis + HOSTED_COMMAND_DEADLINE_MS)
-                .map_err(|error| {
-                    WireError::new(ErrorCode::InternalError)
-                        .with_message(format!("the command deadline is unrepresentable: {error}"))
-                })?,
-            metadata: EffectMetadata {
-                effect: prepared.effect,
-                organization,
-                kind,
-                credit: amount
-                    .and_then(|value| value.to_cents_exact().ok())
-                    .map_or(Cents::ZERO, |cents| {
-                        Cents::new(u64::try_from(cents.get()).unwrap_or(0))
-                    }),
-            },
-            command,
-        };
+        let envelope = Self::envelope(
+            organization,
+            kind,
+            prepared.effect,
+            amount,
+            build(prepared.effect, customer),
+            now_millis,
+        )?;
 
         if kind != CommandKind::CreatePortalSession {
             self.authority
@@ -261,35 +347,20 @@ fn instant(millis: i64) -> WireResult<Timestamp> {
     })
 }
 
-/// The public operational state of an account.
-fn operational_state(
-    state: BillingAccountState,
-    available: Microusd,
-    changed_at_ms: Timestamp,
-    revision: u64,
-) -> AccountOperationalState {
-    match state {
-        BillingAccountState::Active if available.get() > 0 => {
-            AccountOperationalState::Active(AccountActiveState {
-                changed_at: changed_at_ms,
-                revision,
-            })
-        }
-        BillingAccountState::Active
-        | BillingAccountState::PaymentHold
-        | BillingAccountState::DisputeHold
-        | BillingAccountState::Closed => AccountOperationalState::Paused(AccountPausedState {
-            changed_at: changed_at_ms,
-            // Deletion scheduling and retention funding are the regional
-            // content lifecycle's facts, not the money authority's; finance
-            // states the pause and never guesses the consequence.
-            deletion_scheduled_at: None,
-            minimum_restore_cents: None,
-            reason: AccountPauseReason::TopUpRequired,
-            retention_funded_until: None,
-            revision,
-        }),
-    }
+/// Projects an account through the one shared mapping and maps its refusals.
+///
+/// Finance publishes the projection's answer and derives nothing of its own. It
+/// used to read `state` beside a live balance and call a funded-but-held account
+/// paused for a reason it invented, which meant a customer under a dispute hold
+/// was told to make a payment that would not restore service.
+fn operational_state(profile: &AccountProfile) -> WireResult<AccountOperationalState> {
+    account_operational_state(profile).map_err(|error| match error {
+        AccountProjectionError::Unavailable => WireError::new(ErrorCode::AccountStateUnavailable),
+        AccountProjectionError::MissingPauseCause
+        | AccountProjectionError::UnknownPauseCause(_)
+        | AccountProjectionError::UnrepresentableInstant => WireError::new(ErrorCode::InternalError)
+            .with_message("the account state projection is off-contract"),
+    })
 }
 
 /// The entity tag of a policy revision.
@@ -451,20 +522,18 @@ where
         query: BillingBalanceGetQuery,
     ) -> WireResult<BillingBalance> {
         let organization = Self::selected(cx, &query)?;
-        let record = self
-            .authority
-            .balance(organization)
-            .await
-            .map_err(authority_error)?;
+        // Two point reads of one connection, concurrently: the money and the
+        // state are separate authorities and neither is derived from the other,
+        // so serialising them would buy nothing but latency.
+        let (record, profile) = futures::try_join!(
+            self.authority.balance(organization),
+            self.authority.account_profile(organization),
+        )
+        .map_err(authority_error)?;
         Ok(BillingBalance {
             available_cents: cents(record.available)?,
             currency: Currency::USD,
-            operational_state: operational_state(
-                record.state,
-                record.available,
-                instant(record.updated_at_millis)?,
-                record.revision,
-            ),
+            operational_state: operational_state(&profile)?,
             organization_id: organization,
             pending_cents: cents(record.pending)?,
             reserved_cents: cents(record.reserved)?,
@@ -682,12 +751,21 @@ fn now_millis() -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use aex_finance_domain::billing_account::BillingAccountState;
+    use aex_control_domain::{AccountPauseCause, AccountProfile, AccountState};
     use aex_finance_domain::money::Microusd;
     use aex_wire::models::AccountOperationalState;
-    use aex_wire::types::Timestamp;
+    use time::OffsetDateTime;
 
     use super::{category, cents, operational_state, period_range};
+
+    fn profile(state: AccountState, reason: Option<&str>) -> AccountProfile {
+        AccountProfile {
+            state,
+            reason: reason.map(str::to_owned),
+            revision: 3,
+            changed_at: OffsetDateTime::from_unix_timestamp(1_800_000_000).expect("an instant"),
+        }
+    }
 
     #[test]
     fn a_sub_cent_balance_is_refused_rather_than_rounded() {
@@ -700,23 +778,37 @@ mod tests {
         );
     }
 
+    /// The projection is the only producer, so the balance beside it never
+    /// moves the state — in either direction.
+    ///
+    /// Both directions matter. An account the projection calls active reads
+    /// active at a zero balance, because the pause is the trigger's fact and
+    /// finance must not front-run it; an account the projection calls paused
+    /// reads paused while fully funded, because a dispute hold is not a
+    /// shortage and a top-up would not clear it.
     #[test]
-    fn an_exhausted_or_held_account_is_paused() {
-        let zero = Microusd::ZERO;
-        let funded = Microusd::new(1_000_000).expect("a dollar");
-        let at = Timestamp::from_unix_millis(1_800_000_000_000).expect("an instant");
+    fn the_published_state_is_the_projections_and_never_the_balances() {
         assert!(matches!(
-            operational_state(BillingAccountState::Active, funded, at, 3),
+            operational_state(&profile(AccountState::Active, None)).expect("active projects"),
             AccountOperationalState::Active(_)
         ));
-        assert!(matches!(
-            operational_state(BillingAccountState::Active, zero, at, 3),
-            AccountOperationalState::Paused(_)
-        ));
-        assert!(matches!(
-            operational_state(BillingAccountState::DisputeHold, funded, at, 3),
-            AccountOperationalState::Paused(_)
-        ));
+        for cause in AccountPauseCause::ALL {
+            assert!(
+                matches!(
+                    operational_state(&profile(
+                        AccountState::PausedTopUpRequired,
+                        Some(cause.as_str())
+                    ))
+                    .expect("a declared cause projects"),
+                    AccountOperationalState::Paused(_)
+                ),
+                "{cause:?}"
+            );
+        }
+        assert!(
+            operational_state(&profile(AccountState::Unavailable, None)).is_err(),
+            "an unestablished state is refused, never answered as active"
+        );
     }
 
     #[test]
@@ -726,6 +818,271 @@ mod tests {
         let january = period_range("2027-01").expect("January 2027");
         assert_eq!(range.lt.unix_millis(), january.gte.unix_millis());
         assert!(period_range("2026-13").is_err());
+    }
+
+    /// The forward path `CommandKind::EnsureCustomer` never had.
+    ///
+    /// Every hosted command acts on a provider customer and nothing created one,
+    /// so both routes refused every input. These two cases pin the shape that
+    /// fixes it: the first hosted command of an organization's life creates the
+    /// customer, and no later one creates a second.
+    mod ensure_customer {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use aex_control_domain::AccountProfile;
+        use aex_finance_domain::money::Microusd;
+        use aex_payment_contracts::{
+            CommandKind, EffectId, EffectState, PaymentCommandEnvelope, PaymentResult,
+            ProviderCustomerRef, ProviderObjectRef, RedactedEmail,
+        };
+        use aex_wire::ids::{OrganizationId, PrefixedId as _, Uuid7};
+        use aex_wire::types::{Cents, HttpsUrl, Timestamp};
+
+        use crate::authority::{
+            AuthorityError, BalanceRecord, BillingAuthority, EffectPreparation, GatewayError,
+            PaymentGateway, PolicyChange, PolicyRecord, StatementHeader, StatementLineRecord,
+            StatementPage,
+        };
+        use crate::billing::BillingService;
+        use crate::download::{DownloadError, PresignedObject, StatementDownloads};
+
+        const CREATED: &str = "cus_created_by_the_forward_path";
+
+        #[derive(Debug, Default)]
+        struct FakeAuthority {
+            customer: parking_lot::Mutex<Option<String>>,
+            settled: AtomicUsize,
+        }
+
+        #[async_trait::async_trait]
+        impl BillingAuthority for FakeAuthority {
+            async fn provider_customer(
+                &self,
+                _organization: OrganizationId,
+            ) -> Result<Option<ProviderCustomerRef>, AuthorityError> {
+                Ok(self.customer.lock().clone().map(ProviderCustomerRef))
+            }
+
+            async fn billing_contact(
+                &self,
+                _organization: OrganizationId,
+            ) -> Result<RedactedEmail, AuthorityError> {
+                Ok(RedactedEmail::new("owner@example.test"))
+            }
+
+            async fn prepare_effect(
+                &self,
+                organization: OrganizationId,
+                _kind: CommandKind,
+                _intent: &[u8],
+                _amount: Option<Microusd>,
+                _deadline_millis: i64,
+            ) -> Result<EffectPreparation, AuthorityError> {
+                Ok(EffectPreparation {
+                    effect: EffectId(effect_id()),
+                    organization,
+                    intent_hash: [7; 32],
+                })
+            }
+
+            async fn bind_effect_command(
+                &self,
+                _effect: EffectId,
+                _intent_hash: [u8; 32],
+                _envelope: &PaymentCommandEnvelope,
+            ) -> Result<(), AuthorityError> {
+                Ok(())
+            }
+
+            async fn settle_customer(
+                &self,
+                _effect: EffectId,
+                _organization: OrganizationId,
+                result: &PaymentResult,
+            ) -> Result<Option<ProviderCustomerRef>, AuthorityError> {
+                self.settled.fetch_add(1, Ordering::SeqCst);
+                if result.state() != EffectState::Succeeded {
+                    return Ok(None);
+                }
+                let mut held = self.customer.lock();
+                let effective = held.get_or_insert_with(|| CREATED.to_owned()).clone();
+                Ok(Some(ProviderCustomerRef(effective)))
+            }
+
+            async fn probe_role(&self) -> Result<(), AuthorityError> {
+                unimplemented!("not on the ensure-customer path")
+            }
+            async fn balance(
+                &self,
+                _organization: OrganizationId,
+            ) -> Result<BalanceRecord, AuthorityError> {
+                unimplemented!("not on the ensure-customer path")
+            }
+            async fn account_profile(
+                &self,
+                _organization: OrganizationId,
+            ) -> Result<AccountProfile, AuthorityError> {
+                unimplemented!("not on the ensure-customer path")
+            }
+            async fn policy(
+                &self,
+                _organization: OrganizationId,
+            ) -> Result<PolicyRecord, AuthorityError> {
+                unimplemented!("not on the ensure-customer path")
+            }
+            async fn replace_policy(
+                &self,
+                _organization: OrganizationId,
+                _change: PolicyChange,
+                _expect_revision: u64,
+            ) -> Result<PolicyRecord, AuthorityError> {
+                unimplemented!("not on the ensure-customer path")
+            }
+            async fn statements(
+                &self,
+                _organization: OrganizationId,
+                _before_period: Option<&str>,
+                _limit: u32,
+            ) -> Result<StatementPage, AuthorityError> {
+                unimplemented!("not on the ensure-customer path")
+            }
+            async fn statement(
+                &self,
+                _organization: OrganizationId,
+                _statement_id: uuid::Uuid,
+            ) -> Result<StatementHeader, AuthorityError> {
+                unimplemented!("not on the ensure-customer path")
+            }
+            async fn statement_lines(
+                &self,
+                _organization: OrganizationId,
+                _period: &str,
+            ) -> Result<Vec<StatementLineRecord>, AuthorityError> {
+                unimplemented!("not on the ensure-customer path")
+            }
+            async fn finalize_effect(
+                &self,
+                _effect: EffectId,
+                _result: &PaymentResult,
+            ) -> Result<(), AuthorityError> {
+                unimplemented!("not on the ensure-customer path")
+            }
+        }
+
+        /// A gateway that counts what it was asked to execute.
+        #[derive(Debug, Default)]
+        struct CountingGateway {
+            calls: AtomicUsize,
+        }
+
+        #[async_trait::async_trait]
+        impl PaymentGateway for CountingGateway {
+            async fn execute(
+                &self,
+                envelope: &PaymentCommandEnvelope,
+            ) -> Result<PaymentResult, GatewayError> {
+                assert_eq!(
+                    envelope.command.kind(),
+                    CommandKind::EnsureCustomer,
+                    "no other command reaches this suite"
+                );
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Ok(PaymentResult::Succeeded {
+                    effect: envelope.command.effect(),
+                    provider_ref: ProviderObjectRef(CREATED.to_owned()),
+                    provider_created_at: Timestamp::from_unix_millis(1_800_000_000_000)
+                        .expect("an instant"),
+                    hosted: None,
+                    charged: Cents::ZERO,
+                    tax: None,
+                })
+            }
+        }
+
+        #[derive(Debug)]
+        struct UnreachableDownloads;
+
+        #[async_trait::async_trait]
+        impl StatementDownloads for UnreachableDownloads {
+            async fn presign(
+                &self,
+                _object_key: &str,
+                _ttl_millis: i64,
+            ) -> Result<PresignedObject, DownloadError> {
+                unimplemented!("not on the ensure-customer path")
+            }
+        }
+
+        fn effect_id() -> Uuid7 {
+            Uuid7::from_bytes(*uuid::Uuid::now_v7().as_bytes()).expect("a UUIDv7")
+        }
+
+        fn organization() -> OrganizationId {
+            OrganizationId::from_uuid7(
+                Uuid7::from_bytes([
+                    0x01, 0x92, 0x3f, 0x2a, 0x7c, 0x00, 0x70, 0x00, 0x80, 0x00, 0, 0, 0, 0, 0, 2,
+                ])
+                .expect("a UUIDv7"),
+            )
+        }
+
+        fn service(
+            authority: Arc<FakeAuthority>,
+            gateway: Arc<CountingGateway>,
+        ) -> BillingService<FakeAuthority, CountingGateway, UnreachableDownloads> {
+            BillingService::new(
+                authority,
+                gateway,
+                Arc::new(UnreachableDownloads),
+                25,
+                60_000,
+                HttpsUrl::parse("https://aex.test/billing").expect("a return URL"),
+            )
+        }
+
+        #[tokio::test]
+        async fn the_first_hosted_command_creates_the_provider_customer() {
+            let authority = Arc::new(FakeAuthority::default());
+            let gateway = Arc::new(CountingGateway::default());
+            let service = service(Arc::clone(&authority), Arc::clone(&gateway));
+
+            let customer = service
+                .customer(organization(), 1_800_000_000_000)
+                .await
+                .expect("the customer is created on first use");
+
+            assert_eq!(customer.0, CREATED);
+            assert_eq!(gateway.calls.load(Ordering::SeqCst), 1);
+            assert_eq!(
+                authority.settled.load(Ordering::SeqCst),
+                1,
+                "the effect is closed and the column written in one settle"
+            );
+            assert_eq!(authority.customer.lock().as_deref(), Some(CREATED));
+        }
+
+        #[tokio::test]
+        async fn an_organization_that_has_a_customer_never_creates_a_second() {
+            let authority = Arc::new(FakeAuthority {
+                customer: parking_lot::Mutex::new(Some("cus_existing".to_owned())),
+                settled: AtomicUsize::new(0),
+            });
+            let gateway = Arc::new(CountingGateway::default());
+            let service = service(Arc::clone(&authority), Arc::clone(&gateway));
+
+            let customer = service
+                .customer(organization(), 1_800_000_000_000)
+                .await
+                .expect("the existing customer resolves");
+
+            assert_eq!(customer.0, "cus_existing");
+            assert_eq!(
+                gateway.calls.load(Ordering::SeqCst),
+                0,
+                "a second customer would orphan the first and every method saved on it"
+            );
+        }
     }
 
     #[test]

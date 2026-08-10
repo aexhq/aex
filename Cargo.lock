@@ -4110,6 +4110,7 @@ checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
 name = "finance-api"
 version = "0.1.0"
 dependencies = [
+ "aex-control-domain",
  "aex-finance-domain",
  "aex-internal-contracts",
  "aex-payment-contracts",
@@ -4125,6 +4126,7 @@ dependencies = [
  "axum",
  "base64 0.23.0",
  "blake3",
+ "futures",
  "http 1.5.0",
  "lambda_http",
  "parking_lot",

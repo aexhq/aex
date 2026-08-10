@@ -100,6 +100,13 @@ never_granted = true
 name = "finance.ensure_account(uuid)"
 revoke_public = true
 
+# The one identity fact finance reads, and the only way it can: `aex_finance_api`
+# holds no privilege in `identity` at all, so the address `EnsureCustomer` needs
+# arrives through this wrapper rather than through a grant on `identity.user`.
+[[function]]
+name = "finance.billing_contact_email(uuid)"
+revoke_public = true
+
 # central-identity-api ---------------------------------------------------------
 # Exactly one control privilege: advancing the `user` epoch when a person is
 # disabled or loses their last live token.
@@ -216,8 +223,12 @@ tables = [
   "finance.provider_effect:SELECT,INSERT,UPDATE",
   "finance.statement:SELECT",
   "control.organization:SELECT",
+  # The published account state. `billing_balance_get` reports the projection
+  # rather than re-deriving one from `billing_account.state` and the live
+  # balance, so that one account has exactly one published operational state.
+  "finance.account_state_v1:SELECT",
 ]
-functions = []
+functions = ["finance.billing_contact_email(uuid)"]
 
 [[role]]
 name = "aex_finance_ingest"

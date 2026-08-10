@@ -5,12 +5,12 @@
 //! zone or `DateStyle`.
 
 use aex_control_app::ports::{
-    AccountActorState, AccountProfile, CentralActorState, SigningKeyRecord, WorkspaceKeyMaterial,
+    AccountActorState, AccountProjection, CentralActorState, SigningKeyRecord, WorkspaceKeyMaterial,
     WorkspaceKeyState,
 };
 use aex_control_domain::{
-    AccountState, ApiKey, Epoch, Fence, IntentHash, Invitation, InvitationStatus, Lease,
-    LeaseOwner, Membership, MembershipStatus, Operation, OperationKind, OperationStatus,
+    AccountProfile, AccountState, ApiKey, Epoch, Fence, IntentHash, Invitation, InvitationStatus,
+    Lease, LeaseOwner, Membership, MembershipStatus, Operation, OperationKind, OperationStatus,
     OperationVisibility, OrgMembership, OrgRole, Organization, OrganizationStatus, OutboxMessage,
     Revision, ScopeSet, Slug, Topic, Workspace, WorkspaceStatus,
 };
@@ -314,11 +314,11 @@ impl Row for AccountStateRow {
     }
 }
 
-/// The full public account profile used in control response projections.
+/// The full public account projection used in control response projections.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AccountProfileRow(pub AccountProfile);
+pub struct AccountProjectionRow(pub AccountProjection);
 
-impl Row for AccountProfileRow {
+impl Row for AccountProjectionRow {
     fn from_record(record: &Record<'_>) -> Result<Self, DecodeError> {
         record.expect_arity(5)?;
         let state = AccountState::parse(record.text(0)?).ok_or(DecodeError::TypeMismatch {
@@ -331,12 +331,14 @@ impl Row for AccountProfileRow {
                 expected: "a durable active or paused account profile",
             });
         }
-        Ok(Self(AccountProfile {
-            state,
-            reason: record.opt(1, |row, index| Ok(row.text(index)?.to_owned()))?,
-            revision: u64::try_from(record.i64(2)?)
-                .map_err(|_| DecodeError::Overflow { index: 2 })?,
-            changed_at: instant(record, 3)?,
+        Ok(Self(AccountProjection {
+            profile: AccountProfile {
+                state,
+                reason: record.opt(1, |row, index| Ok(row.text(index)?.to_owned()))?,
+                revision: u64::try_from(record.i64(2)?)
+                    .map_err(|_| DecodeError::Overflow { index: 2 })?,
+                changed_at: instant(record, 3)?,
+            },
             epoch: u64::try_from(record.i64(4)?).map_err(|_| DecodeError::Overflow { index: 4 })?,
         }))
     }

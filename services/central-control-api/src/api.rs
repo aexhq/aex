@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use aex_central_http::cursor::{PageBinding, next_cursor, page_request};
 use aex_control_app::ports::{
-    AccountProfile, BeginWorkspaceDeletionTx, BeginWorkspaceProvisionTx, ControlStore,
+    AccountProjection, BeginWorkspaceDeletionTx, BeginWorkspaceProvisionTx, ControlStore,
     ControlViewStore, CreateApiKeyTx, CreateInvitationTx, CreateOrganizationTx,
     IdempotencyRecordKey, ListApiKeys, ListOperations, ListOrganizations, ListWorkspaces,
     PageRequest, RegionalControlPort, RevokeApiKeyTx, StoreError,
@@ -15,7 +15,8 @@ use aex_control_app::{
     CreateWorkspace, DeleteWorkspace, RevokeApiKey,
 };
 use aex_control_domain::{
-    AccountState, ActorKind, ApiKey as DomainApiKey, AuditEvent, AuditOutcome, CursorSecret,
+    AccountProjectionError, AccountState, ActorKind, ApiKey as DomainApiKey, AuditEvent,
+    AuditOutcome, CursorSecret, account_operational_state,
     IdempotencyKeyKind, IntentHash, Invitation as DomainInvitation,
     InvitationStatus as DomainInvitationStatus, MembershipStatus as DomainMembershipStatus,
     OperationStatus as DomainOperationStatus, OrgRole, Organization as DomainOrganization,
@@ -34,7 +35,7 @@ use aex_wire::ids::{
     WorkspaceId,
 };
 use aex_wire::models::{
-    AccountActiveState, AccountOperationalState, AccountPauseReason, AccountPausedState, ApiKey,
+    AccountOperationalState, ApiKey,
     ApiKeyCreateRequest, ApiKeyPage, ApiKeysListQuery, CentralOperationsListQuery,
     DashboardBootstrap, EmptyRequest, Invitation, InvitationCreateRequest, InvitationRole,
     InvitationStatus, Membership, MembershipPage, MembershipStatus, MembershipsListQuery,
@@ -160,20 +161,15 @@ impl ControlService {
                 .account_profile(organization_id)
                 .await
                 .map_err(store_error)?
+                .map(|projection| projection.state())
             {
-                Some(AccountProfile {
-                    state: AccountState::Active,
-                    ..
-                }) => {}
-                Some(AccountProfile {
-                    state: AccountState::PausedTopUpRequired,
-                    ..
-                }) => return Err(WireError::new(ErrorCode::AccountPaused)),
-                Some(AccountProfile {
-                    state: AccountState::Unavailable,
-                    ..
-                })
-                | None => return Err(WireError::new(ErrorCode::AccountStateUnavailable)),
+                Some(AccountState::Active) => {}
+                Some(AccountState::PausedTopUpRequired) => {
+                    return Err(WireError::new(ErrorCode::AccountPaused));
+                }
+                Some(AccountState::Unavailable) | None => {
+                    return Err(WireError::new(ErrorCode::AccountStateUnavailable));
+                }
             }
         }
         Ok(view.caller_role)
@@ -1125,32 +1121,20 @@ fn workspace_wire(
     })
 }
 
-fn account_wire(profile: &AccountProfile) -> WireResult<AccountOperationalState> {
-    let changed_at = timestamp(profile.changed_at)?;
-    match profile.state {
-        AccountState::Active => Ok(AccountOperationalState::Active(AccountActiveState {
-            changed_at,
-            revision: profile.revision,
-        })),
-        AccountState::PausedTopUpRequired => {
-            if profile
-                .reason
-                .as_deref()
-                .is_some_and(|reason| reason != "top_up_required")
-            {
-                return Err(WireError::new(ErrorCode::InternalError));
-            }
-            Ok(AccountOperationalState::Paused(AccountPausedState {
-                changed_at,
-                deletion_scheduled_at: None,
-                minimum_restore_cents: None,
-                reason: AccountPauseReason::TopUpRequired,
-                retention_funded_until: None,
-                revision: profile.revision,
-            }))
+/// Projects an account through the one shared mapping and maps its refusals.
+///
+/// There is no second derivation here and there must never be one: the mapping
+/// lives in `aex-control-domain` precisely so this plane and the region cannot
+/// answer the same question two ways.
+fn account_wire(projection: &AccountProjection) -> WireResult<AccountOperationalState> {
+    account_operational_state(&projection.profile).map_err(|error| match error {
+        AccountProjectionError::Unavailable => WireError::new(ErrorCode::AccountStateUnavailable),
+        AccountProjectionError::MissingPauseCause
+        | AccountProjectionError::UnknownPauseCause(_)
+        | AccountProjectionError::UnrepresentableInstant => {
+            WireError::new(ErrorCode::InternalError)
         }
-        AccountState::Unavailable => Err(WireError::new(ErrorCode::AccountStateUnavailable)),
-    }
+    })
 }
 
 fn operation_wire(view: &aex_control_app::ports::OperationView) -> WireResult<Operation> {

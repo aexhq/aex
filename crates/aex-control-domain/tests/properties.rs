@@ -13,9 +13,11 @@ use aex_control_domain::intent::{
 use aex_control_domain::membership::{Membership, MembershipStatus};
 use aex_control_domain::operation::{Fence, LeaseOwner, Operation, OperationKind, OperationStatus};
 use aex_control_domain::{
-    IntentHash, OrgRole, PrincipalKindTag, Revision, Scope, ScopeSet, Slug, Workspace,
-    WorkspaceStatus,
+    AccountPauseCause, AccountProfile, AccountState, IntentHash, OrgRole, PrincipalKindTag,
+    Revision, Scope, ScopeSet, Slug, Workspace, WorkspaceStatus, account_operational_state,
 };
+use aex_wire::ids::{OrganizationId, PrefixedId as _, Uuid7};
+use aex_wire::models::{OperationalStateSource, OrganizationAccount, WorkspaceOperationalState};
 use aex_wire::scopes::ScopeId;
 use aex_wire::types::{HttpMethod, Region};
 use proptest::prelude::*;
@@ -336,4 +338,114 @@ proptest! {
         let body = serde_json::json!({ "nested": [{ "amount": value }] });
         prop_assert!(canonical_intent_hash(&identity(), &body).is_err());
     }
+}
+
+// The cross-plane account-state contract.
+//
+// One `AccountProfile` is projected two ways — the way the central plane reads
+// it out of `finance.account_state_v1`, and the way a region reads it back out
+// of the placement status `central-control-worker` writes — and the two must
+// produce byte-identical JSON. They may differ in staleness. They may never
+// differ in vocabulary, discriminator or derivation.
+//
+// The failure this catches is real and is one spelling apart: the view answers
+// `paused_top_up_required` and the worker writes `paused`, so a projection that
+// went through either string without the shared parse would answer a different
+// discriminator on each plane for the same account.
+
+/// The status `finance.account_state_v1`'s `CASE` publishes for one durable
+/// `finance.billing_account.state`. Every non-`active` state is paused; the
+/// `ELSE` arm exists so a state added later is restrictive, not permissive.
+fn central_view_status(durable_state: &str) -> &'static str {
+    if durable_state == "active" {
+        "active"
+    } else {
+        "paused_top_up_required"
+    }
+}
+
+/// The placement status `central-control-worker::project_view` writes for an
+/// active workspace whose account is in `state`.
+fn regional_placement_status(state: AccountState) -> &'static str {
+    match state {
+        AccountState::PausedTopUpRequired => "paused",
+        AccountState::Active | AccountState::Unavailable => "active",
+    }
+}
+
+/// A profile as one plane's read produces it.
+fn projected(status: &str, reason: Option<&str>) -> AccountProfile {
+    AccountProfile {
+        state: AccountState::parse(status).expect("both planes spell a state the domain knows"),
+        reason: reason.map(str::to_owned),
+        revision: 11,
+        changed_at: OffsetDateTime::from_unix_timestamp(1_800_000_000).expect("an instant"),
+    }
+}
+
+#[test]
+fn one_account_profile_projects_byte_identically_on_both_planes() {
+    let organization = OrganizationId::from_uuid7(
+        Uuid7::from_bytes([
+            0x01, 0x92, 0x3f, 0x2a, 0x7c, 0x00, 0x70, 0x00, 0x80, 0x00, 0, 0, 0, 0, 0, 1,
+        ])
+        .expect("a UUIDv7"),
+    );
+
+    // Every durable finance state, with the remedy each one publishes. `active`
+    // carries no reason: the durable `CHECK` makes the two agree by construction.
+    let durable: [(&str, Option<&str>); 4] = [
+        ("active", None),
+        ("payment_hold", Some(AccountPauseCause::TopUpRequired.as_str())),
+        ("dispute_hold", Some(AccountPauseCause::DisputeHold.as_str())),
+        ("closed", Some(AccountPauseCause::AccountClosed.as_str())),
+    ];
+
+    for (durable_state, reason) in durable {
+        let central = projected(central_view_status(durable_state), reason);
+        let regional = projected(regional_placement_status(central.state), reason);
+        assert_eq!(
+            central, regional,
+            "`{durable_state}` reaches the two planes as two different facts"
+        );
+
+        let central_state =
+            account_operational_state(&central).expect("the central read projects");
+        let regional_state =
+            account_operational_state(&regional).expect("the regional read projects");
+
+        // The published wrappers, not just the shared value: a second derivation
+        // would most plausibly appear in one renderer rather than in the mapping.
+        let central_wire = serde_json::to_vec(&OrganizationAccount {
+            organization_id: organization,
+            state: central_state,
+        })
+        .expect("the central wrapper serializes");
+        let regional_wire = serde_json::to_vec(&WorkspaceOperationalState {
+            inherited_from: OperationalStateSource::Account,
+            organization_id: organization,
+            state: regional_state,
+        })
+        .expect("the regional wrapper serializes");
+
+        let member = |bytes: &[u8]| -> serde_json::Value {
+            let document: serde_json::Value =
+                serde_json::from_slice(bytes).expect("the wrapper is an object");
+            document["state"].clone()
+        };
+        assert_eq!(
+            serde_json::to_vec(&member(&central_wire)).expect("canonical"),
+            serde_json::to_vec(&member(&regional_wire)).expect("canonical"),
+            "`{durable_state}` publishes two different operational states"
+        );
+    }
+}
+
+#[test]
+fn an_unavailable_account_is_refused_on_both_planes_rather_than_projected() {
+    // The regional side has no `unavailable` placement status at all — an
+    // undecodable row is a transport failure there, not a state — so this pins
+    // the central arm and the vocabulary that makes the regional absence honest.
+    assert!(account_operational_state(&projected("unavailable", None)).is_err());
+    assert_eq!(AccountState::parse("deleting"), None);
 }

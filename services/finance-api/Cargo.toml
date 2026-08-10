@@ -37,6 +37,7 @@ name = "finance-api"
 path = "src/main.rs"
 
 [dependencies]
+aex-control-domain = { path = "../../crates/aex-control-domain" }
 aex-finance-domain = { path = "../../crates/aex-finance-domain" }
 aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }
 aex-payment-contracts = { path = "../../crates/aex-payment-contracts" }
@@ -52,6 +53,7 @@ aws-sdk-s3.workspace = true
 axum.workspace = true
 base64.workspace = true
 blake3.workspace = true
+futures.workspace = true
 http.workspace = true
 lambda_http.workspace = true
 parking_lot.workspace = true
