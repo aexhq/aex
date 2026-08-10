@@ -30,7 +30,7 @@ Plan of record: `references/rust-native-rewrite-2026-07-31/plans/09-tools-mcp-we
 - Argument schemas are compiled and validated. Provider/model dependent fields
   and `run_command`'s argument-selected effect variant are tested. The built-in
   digest is
-  `sha256:b3cae3e3b5cb64b3ca274f22f67c3ba1e305ac4ca14084967348f06d0ba0fdec`.
+  `sha256:6d54069dd0c66c7ec2dc7b5f80399b19bb1514bcb4673589bad2631e578c3dd2`.
 - The five control descriptors are present. `todo_read`/`todo_write`, `wait`,
   and `submit_result` have pure bodies. Waits above the remaining budget are
   rejected rather than clamped, and retained results are never truncated.
@@ -39,7 +39,9 @@ Plan of record: `references/rust-native-rewrite-2026-07-31/plans/09-tools-mcp-we
 - Readiness is fail-closed: duplicate names, zero/multiple executor claims,
   unknown exact selections, missing exact capabilities/credentials, and
   approval-policy names outside the advertised set are typed failures. Default
-  composition honestly omits optional `web_search` and browser authority.
+  composition honestly omits unqualified browser authority. It no longer omits
+  `web_search`: platform tools are platform-paid, so no built-in carries a
+  workspace-secret credential and none is withheld for want of a tenant key.
 - `CompositeToolRouter` implements the peer `aex_brain_app::ToolPort`.
   Routes are resolved only from an exact immutable `CatalogPin`; duplicate
   executors/catalogs/tools fail at construction. Detached query and cancel take

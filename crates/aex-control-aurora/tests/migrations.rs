@@ -1031,6 +1031,20 @@ async fn organization_with_workspace(
 /// negative stored balance. Writing through the projection column is exactly what
 /// `finance-ingest`'s `APPLY_PROJECTION` does when a top-up settles.
 async fn set_available(connection: &mut PgConnection, organization: uuid::Uuid, microusd: i64) {
+    try_set_available(connection, organization, microusd)
+        .await
+        .expect("the balance projection applies");
+}
+
+/// The same write, with the refusal returned rather than panicked on.
+///
+/// `customer_balance_never_overdrawn` makes a negative spendable amount a
+/// transaction failure, and a case that proves the fence needs the error.
+async fn try_set_available(
+    connection: &mut PgConnection,
+    organization: uuid::Uuid,
+    microusd: i64,
+) -> Result<(), sqlx::Error> {
     sqlx::query(
         "UPDATE finance.account_balance b \
             SET balance_microusd = $2, updated_at = now() \
@@ -1042,7 +1056,7 @@ async fn set_available(connection: &mut PgConnection, organization: uuid::Uuid, 
     .bind(-microusd)
     .execute(&mut *connection)
     .await
-    .expect("the balance projection applies");
+    .map(|_| ())
 }
 
 async fn account_state(
@@ -1136,6 +1150,109 @@ async fn credit_exhaustion_pauses_the_account_and_funding_resumes_it() {
     .await
     .expect("the projection messages count");
     assert_eq!(messages, 2, "the resume is projected as well as the pause");
+}
+
+/// The floor is zero **or below**, not exactly zero.
+///
+/// `finance.apply_credit_exhaustion` pauses on `spendable <= 0`. Every other case
+/// hands it exactly zero, so the `<` half was written and never exercised: a
+/// reader who narrowed the condition to `= 0` would leave the whole suite green
+/// and an overdrawn account running forever.
+///
+/// The reason nothing exercised it is `customer_balance_never_overdrawn`, which
+/// refuses a debit-positive customer balance and so refuses the input the `<` arm
+/// exists for. The two rules claim the same boundary and the fence gets there
+/// first — which is why the pause, as deployed, can only ever fire at exactly
+/// zero, and why an overspend aborts the posting instead of stopping the account.
+/// This case pins both halves of that: the fence is asserted against the
+/// production schema, and then dropped in this case's own database — the only
+/// way to hand the trigger a negative balance — to prove the condition is `<=`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_negative_balance_pauses_and_not_only_an_exactly_zero_one() {
+    let fixture = Fixture::start().await;
+    let mut connection = fixture.superuser().await;
+    let (organization, workspace) = organization_with_workspace(
+        &mut connection,
+        0x0192_3f2a_1c00_7000_8000_0000_0000_00a0,
+        "overdrawn",
+        "overdrawn@b.test",
+    )
+    .await;
+
+    set_available(&mut connection, organization, 5_000_000).await;
+    assert_eq!(
+        account_state(&mut connection, organization).await,
+        ("active".to_owned(), None),
+        "a funded account is not paused"
+    );
+
+    // The production schema refuses to record the overspend at all. This is the
+    // fence, not the pause, and it is asserted here so the drop below cannot
+    // quietly become a test against a schema production does not run.
+    let refused = try_set_available(&mut connection, organization, -13_000)
+        .await
+        .expect_err("the prepaid fence refuses a debit-positive customer balance");
+    assert!(
+        refused.to_string().contains("customer_balance_never_overdrawn"),
+        "the refusal is the prepaid fence and not some other failure: {refused}"
+    );
+    assert_eq!(
+        account_state(&mut connection, organization).await,
+        ("active".to_owned(), None),
+        "a refused posting leaves the account running, which is the defect the floor exists to close"
+    );
+
+    // Remove the fence in this case's own database so the trigger receives the
+    // input its `<` arm is written for. Nothing else in this case is altered.
+    connection
+        .execute(
+            "ALTER TABLE finance.account_balance \
+              DROP CONSTRAINT customer_balance_never_overdrawn",
+        )
+        .await
+        .expect("the fixture database drops its own constraint");
+
+    // The overspend bound is small and non-zero, so the balance a real
+    // settlement would land on is below zero rather than on it.
+    set_available(&mut connection, organization, -13_000).await;
+    assert_eq!(
+        account_state(&mut connection, organization).await,
+        ("payment_hold".to_owned(), Some("top_up_required".to_owned())),
+        "an overdrawn account must stop; `= 0` would never have fired here"
+    );
+
+    // Going further below zero is not a second transition, and it must not
+    // enqueue a second projection for a region that already refuses the account.
+    set_available(&mut connection, organization, -26_000).await;
+    assert_eq!(
+        account_state(&mut connection, organization).await,
+        ("payment_hold".to_owned(), Some("top_up_required".to_owned())),
+        "a deeper overdraw stays paused"
+    );
+    let messages: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM control.outbox_message \
+          WHERE topic = 'account.state.changed' AND payload->>'workspaceId' = $1",
+    )
+    .bind(workspace.to_string())
+    .fetch_one(&mut connection)
+    .await
+    .expect("the projection messages count");
+    assert_eq!(messages, 1, "one transition, one projection");
+
+    // Payment before pause holds from below zero too: the remedy is a balance
+    // that is positive again, not merely back at the floor.
+    set_available(&mut connection, organization, 0).await;
+    assert_eq!(
+        account_state(&mut connection, organization).await,
+        ("payment_hold".to_owned(), Some("top_up_required".to_owned())),
+        "returning to exactly zero is not a restoration of service"
+    );
+    set_available(&mut connection, organization, 2_000_000).await;
+    assert_eq!(
+        account_state(&mut connection, organization).await,
+        ("active".to_owned(), None),
+        "a top-up restores service from below zero"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
