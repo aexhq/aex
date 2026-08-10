@@ -193,11 +193,18 @@ pub fn replaced_commit() -> RegistryCommit {
 /// The durable receipt one commit writes.
 #[must_use]
 pub fn receipt_for(commit: &RegistryCommit) -> Receipt {
-    let answer = SetReceipt::of(SetOutcome::Created, &commit.pointer);
+    receipt_for_attempt(commit, SetOutcome::Created, 7)
+}
+
+/// One receipt with the exact result and request identity for an engine-backed
+/// set attempt.
+#[must_use]
+pub fn receipt_for_attempt(commit: &RegistryCommit, outcome: SetOutcome, identity: u8) -> Receipt {
+    let answer = SetReceipt::of(outcome, &commit.pointer);
     Receipt {
-        scope: "registry.set:tool".to_owned(),
-        key_sha256: "a".repeat(64),
-        intent: aex_wire::idempotency::IntentDigest::from_bytes([7; 32]),
+        scope: format!("registry.set:{}", commit.pointer.row.kind.as_str()),
+        key_sha256: hex::encode([identity; 32]),
+        intent: aex_wire::idempotency::IntentDigest::from_bytes([identity; 32]),
         response_kind: SET_RESPONSE_KIND.to_owned(),
         response: answer.to_body().expect("a serializable answer"),
         committed_at: now(),
