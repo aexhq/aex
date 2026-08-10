@@ -1060,7 +1060,9 @@ fn parse_message_state(text: &str) -> Result<MessageState, CodecError> {
     }
 }
 
-const fn run_status(status: aex_session_domain::RunStatus) -> &'static str {
+/// The one stable spelling of a run status, shared by the run row and the outbox
+/// row so a relay and a reader cannot disagree about a terminal state.
+pub(crate) const fn run_status(status: aex_session_domain::RunStatus) -> &'static str {
     use aex_session_domain::RunStatus;
     match status {
         RunStatus::Queued => "queued",

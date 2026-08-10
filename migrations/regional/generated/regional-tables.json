@@ -1,7 +1,7 @@
 {
   "schema": "aex.regional-tables.v1",
   "generation": 1,
-  "digest": "blake3:96c82c30edc5ab531eb500bf49b567e0948ce4437421dba9c94d7c5494c90cb3",
+  "digest": "blake3:cab174142325c6f600c56b0d1bc1b8b46f25800740600daf7ac50b76c05d9f83",
   "tables": [
     {
       "schema": "aex.regional-table.v1",
@@ -1556,6 +1556,7 @@
         "spend_reservation",
         "operation",
         "idempotency_receipt",
+        "outbox_event",
         "regional_workspace_control"
       ],
       "iam": [
