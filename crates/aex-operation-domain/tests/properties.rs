@@ -84,6 +84,7 @@ fn request(kind: OperationKind, intent: u8) -> AdmitRequest {
         intent: IntentDigest::from_bytes([intent; 32]),
         scope: OperationScope::Session(session()),
         inline_result: None,
+        execution: None,
     }
 }
 

@@ -36,8 +36,8 @@ pub mod testing;
 pub use agent::{
     AgentClaim, AgentCommit, AgentControl, AgentError, AgentKind, AgentStatus, AgentTerminal,
     CancelCause, CancelSessionWorkCommit, JoinEdge, MaterializedState, OpenEffectSet,
-    PublicAgentStatus, QueueReason, cancel_session_work, complete_agent, create_root, spawn,
-    start_agent,
+    PublicAgentStatus, QueueReason, SessionFence, cancel_session_fence, cancel_session_work,
+    complete_agent, create_root, spawn, start_agent,
 };
 pub use approval::{
     Approval, ApprovalBinding, ApprovalCancelCause, ApprovalCommit, ApprovalDecision,

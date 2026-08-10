@@ -11,7 +11,7 @@ use aex_wire::types::Timestamp;
 
 use crate::deletion::{DeletionGuard, DeletionState};
 use crate::operation::{
-    Operation, OperationKind, OperationResult, OperationScope, OperationStatus,
+    Execution, Operation, OperationKind, OperationResult, OperationScope, OperationStatus,
 };
 
 /// What an admission asks for.
@@ -31,6 +31,15 @@ pub struct AdmitRequest {
     pub scope: OperationScope,
     /// The result an inline operation is created already carrying (D-07).
     pub inline_result: Option<OperationResult>,
+    /// The execution this **request** resolved to, when the caller classified
+    /// it per request rather than per kind (D-2).
+    ///
+    /// `None` means "the kind's default", which is what every fixed-shape
+    /// command uses. `SessionStop` and `SessionPersist` are the two kinds whose
+    /// shape depends on what the request found — a stop over more agents than
+    /// one bounded batch can settle, and a persist above the inline budget —
+    /// and both may only escalate `Inline` to `Continued`, never the reverse.
+    pub execution: Option<Execution>,
 }
 
 /// Which conflict a mismatched replay is.
@@ -122,7 +131,16 @@ pub fn admit(
         }
     }
 
-    let inline = request.kind.execution() == crate::operation::Execution::Inline;
+    // A per-request classification may only escalate. `min` over the
+    // `Inline < Continued` ordering makes that structural rather than reviewed:
+    // a caller that hands back `Inline` for a kind whose default is `Continued`
+    // still gets `Continued`.
+    let resolved = request
+        .execution
+        .map_or(request.kind.execution(), |declared| {
+            declared.max(request.kind.execution())
+        });
+    let inline = resolved == Execution::Inline;
     let status = if inline {
         OperationStatus::Succeeded
     } else {
@@ -183,6 +201,7 @@ mod tests {
             intent: IntentDigest::from_bytes([1; 32]),
             scope: OperationScope::Session(session),
             inline_result: None,
+            execution: None,
         }
     }
 
@@ -207,6 +226,28 @@ mod tests {
         assert_eq!(created.status, OperationStatus::Succeeded);
         assert_eq!(created.committed_at, Some(moment(1)));
         assert!(created.result.is_some());
+    }
+
+    #[test]
+    fn a_per_request_escalation_makes_an_inline_kind_continued() {
+        let mut escalated = request(OperationKind::SessionStop);
+        escalated.execution = Some(crate::operation::Execution::Continued);
+        let AdmissionOutcome::Inserted(created) = admit(None, None, &escalated, moment(1)) else {
+            panic!("expected an insert");
+        };
+        assert_eq!(created.status, OperationStatus::Queued);
+        assert_eq!(created.committed_at, None, "a continued stop is not latched by admission alone");
+        assert!(created.result.is_none());
+    }
+
+    #[test]
+    fn a_per_request_classification_can_never_de_escalate_a_continued_kind() {
+        let mut reduced = request(OperationKind::SessionPurge);
+        reduced.execution = Some(crate::operation::Execution::Inline);
+        let AdmissionOutcome::Inserted(created) = admit(None, None, &reduced, moment(1)) else {
+            panic!("expected an insert");
+        };
+        assert_eq!(created.status, OperationStatus::Queued);
     }
 
     #[test]

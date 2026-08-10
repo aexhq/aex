@@ -28,10 +28,10 @@ use aex_wire::types::Timestamp;
 use aex_workspace_domain::{RegistryPointer, RegistrySelector, Upload};
 
 use crate::ports::{
-    AccountStateReader, AgentPage, AppContext, Clock, ContentReader, ContinuityReader, IdFactory,
-    LimitsReader, LiveWorkspaceReader, PageBudget, PortError, RegistryReader, ReservationAuthority,
-    ReservationGrant, ReservationRequest, SecretCustodyReader, SessionReader, SessionSnapshot,
-    WorkspaceContinuity,
+    AccountStateReader, AgentCancelPage, AgentCancelTarget, AgentPage, AppContext, Clock,
+    ContentReader, ContinuityReader, IdFactory, LimitsReader, LiveWorkspaceReader, PageBudget,
+    PortError, RegistryReader, ReservationAuthority, ReservationGrant, ReservationRequest,
+    SecretCustodyReader, SessionReader, SessionSnapshot, WorkspaceContinuity,
 };
 
 /// One recorded port interaction.
@@ -138,6 +138,7 @@ pub struct ScriptedPorts {
     true_idle: TrueIdle,
     account: AccountProjection,
     limits: EffectiveLimits,
+    cancel_targets: Vec<AgentCancelTarget>,
 }
 
 impl ScriptedPorts {
@@ -174,7 +175,42 @@ impl ScriptedPorts {
             limits: [(LimitId::SessionMaterializedAgents, 8)]
                 .into_iter()
                 .collect(),
+            cancel_targets: Vec::new(),
         }
+    }
+
+    /// Scripts `count` active agents, in canonical order.
+    ///
+    /// Ordered by identity so a page boundary is deterministic: the paged-stop
+    /// property depends on the same page being re-read after a failed step.
+    #[must_use]
+    pub fn with_active_agents(mut self, count: u16) -> Self {
+        self.cancel_targets = (0..count)
+            .map(|index| AgentCancelTarget {
+                agent: AgentId::from_uuid7(Uuid7::compose(
+                    1_700_000_000_000 + u64::from(index),
+                    [7; 10],
+                )),
+                revision: aex_session_domain::AgentRevision(1),
+                active: true,
+            })
+            .collect();
+        self
+    }
+
+    /// Marks every scripted agent from `settled` onwards as already terminal.
+    #[must_use]
+    pub fn with_settled_prefix(mut self, settled: usize) -> Self {
+        for target in self.cancel_targets.iter_mut().take(settled) {
+            target.active = false;
+        }
+        self
+    }
+
+    /// The scripted cancellation targets, in canonical order.
+    #[must_use]
+    pub fn cancel_targets(&self) -> &[AgentCancelTarget] {
+        &self.cancel_targets
     }
 
     /// The same fixture with a paused account.
@@ -318,6 +354,27 @@ impl SessionReader for ScriptedPorts {
         Ok(AgentPage {
             agents: self.snapshot.materialized.clone(),
             more: false,
+        })
+    }
+
+    async fn list_agent_cancel_targets(
+        &self,
+        _session: SessionId,
+        from: Option<AgentId>,
+        budget: PageBudget,
+    ) -> Result<AgentCancelPage, PortError> {
+        self.log.record(PortCall::Read("list_agent_cancel_targets"));
+        let start = from.map_or(0, |first| {
+            self.cancel_targets
+                .iter()
+                .position(|target| target.agent >= first)
+                .unwrap_or(self.cancel_targets.len())
+        });
+        let limit = usize::from(budget.limit);
+        let end = start.saturating_add(limit).min(self.cancel_targets.len());
+        Ok(AgentCancelPage {
+            targets: self.cancel_targets[start..end].to_vec(),
+            next: self.cancel_targets.get(end).map(|target| target.agent),
         })
     }
 

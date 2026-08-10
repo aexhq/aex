@@ -31,13 +31,14 @@ pub use plan::{
     SessionTransaction, TableFamily, TransactionIntent, Write,
 };
 pub use ports::{
-    AccountStateReader, AgentPage, AppContext, AuthorityCommitter, Clock, CommitError,
-    CommitOutcome, ContentReader, ContinuityReader, IdFactory, LimitsReader, LiveWorkspaceReader,
-    PageBudget, PortError, RegistryReader, ReservationAuthority, ReservationGrant,
-    ReservationRequest, SecretCustodyReader, SessionReader, SessionSnapshot, WorkspaceContinuity,
+    AccountStateReader, AgentCancelPage, AgentCancelTarget, AgentPage, AppContext,
+    AuthorityCommitter, Clock, CommitError, CommitOutcome, ContentReader, ContinuityReader,
+    IdFactory, LimitsReader, LiveWorkspaceReader, PageBudget, PortError, RegistryReader,
+    ReservationAuthority, ReservationGrant, ReservationRequest, SecretCustodyReader, SessionReader,
+    SessionSnapshot, WorkspaceContinuity,
 };
 pub use use_cases::{
-    CommitTerminal, Purge, RECOVERY_WINDOW, Rebind, SendMessage, SessionCommand, StartRun,
-    admit_message, commit_terminal, purge_session, rebind_credentials, restore_session, start_run,
-    stop_session, trash_session,
+    CommitTerminal, Purge, RECOVERY_WINDOW, Rebind, STOP_BATCH_AGENTS, SendMessage, SessionCommand,
+    StartRun, admit_message, commit_terminal, continue_stop, purge_session, rebind_credentials,
+    restore_session, start_run, stop_session, trash_session,
 };
