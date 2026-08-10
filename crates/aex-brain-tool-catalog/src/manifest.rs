@@ -557,8 +557,10 @@ const fn route_matches(boundary: ToolBoundary, route: ExecutorRoute) -> bool {
         ) | (
             ToolBoundary::Subagent,
             ExecutorRoute::SubagentScheduler | ExecutorRoute::Park
-        ) | (ToolBoundary::ManagedWeb, ExecutorRoute::ManagedWeb)
-            | (ToolBoundary::Mcp, ExecutorRoute::Mcp)
+        ) | (
+            ToolBoundary::ManagedWeb,
+            ExecutorRoute::ManagedWeb | ExecutorRoute::ToolExec
+        ) | (ToolBoundary::Mcp, ExecutorRoute::Mcp)
             | (
                 ToolBoundary::HandsFilesystem,
                 ExecutorRoute::HandsFilesystem

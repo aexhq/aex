@@ -116,7 +116,7 @@ fn context_accepts_the_complete_release_bound_brain_catalog_recipe() {
         collection_sha256:
             "sha256:7777777777777777777777777777777777777777777777777777777777777777".to_owned(),
         tool_catalog_sha256:
-            "sha256:b3cae3e3b5cb64b3ca274f22f67c3ba1e305ac4ca14084967348f06d0ba0fdec".to_owned(),
+            "sha256:51e0b52e74bfd7883bf6dd5ac915d745cb54a7360ecb447cbeec59955ae61fdb".to_owned(),
     };
     let plan = artifact::plan_with_model_catalog(&unit, Some(&inputs)).expect("release plan");
     let binary = temp.path().join("brain-mux");

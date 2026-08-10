@@ -691,6 +691,11 @@ async fn the_drain_sequence_walks_every_stage_in_order() {
             },
             pricing_version: "synthetic-zero-v1".to_owned(),
             budget: 4,
+            tool_executor_endpoint: "http://tool-executor.aex-dev.internal:8080/internal/tool-exec"
+                .to_owned(),
+            tool_exec_signing_secret_id: "aex/dev/tool-exec/signing".to_owned(),
+            tool_exec_signing_key_id: uuid::Uuid::from_u128(1),
+            tool_exec_signing_public_key: [7; 32],
         })
         .expect("the candidate shape composes"),
     );

@@ -150,7 +150,7 @@ pub enum ManagedWebCallError {
 /// Concrete executor for `web_fetch` and `web_search`.
 pub struct ManagedWebExecutor {
     client: Arc<dyn ManagedWebClient>,
-    credentials: Arc<dyn WebSearchCredentialSource>,
+    credentials: Option<Arc<dyn WebSearchCredentialSource>>,
 }
 
 impl ManagedWebExecutor {
@@ -158,6 +158,15 @@ impl ManagedWebExecutor {
     #[must_use]
     pub fn production(credentials: Arc<dyn WebSearchCredentialSource>) -> Self {
         Self::new(Arc::new(ProductionManagedWebClient::new()), credentials)
+    }
+
+    /// Binds only `web_fetch`; platform-paid search belongs to `tool-executor`.
+    #[must_use]
+    pub fn production_fetch_only() -> Self {
+        Self {
+            client: Arc::new(ProductionManagedWebClient::new()),
+            credentials: None,
+        }
     }
 
     /// Binds explicit peers.
@@ -168,7 +177,7 @@ impl ManagedWebExecutor {
     ) -> Self {
         Self {
             client,
-            credentials,
+            credentials: Some(credentials),
         }
     }
 }
@@ -183,7 +192,8 @@ impl core::fmt::Debug for ManagedWebExecutor {
 
 impl ToolExecutor for ManagedWebExecutor {
     fn supports(&self, tool: &aex_brain_domain::ids::ToolName) -> bool {
-        matches!(tool.as_str(), "web_fetch" | "web_search")
+        tool.as_str() == "web_fetch"
+            || (tool.as_str() == "web_search" && self.credentials.is_some())
     }
 
     fn invoke<'a>(
@@ -207,6 +217,15 @@ impl ToolExecutor for ManagedWebExecutor {
                 "web_search" => {
                     let credential = self
                         .credentials
+                        .as_ref()
+                        .ok_or_else(|| {
+                            dispatch_error(
+                                DispatchStage::PreDispatch,
+                                DispatchProof::NotSent,
+                                ProviderFailureKind::InvalidRequest,
+                                "platform-paid search is not served by managed web",
+                            )
+                        })?
                         .resolve(ticket)
                         .await
                         .map_err(|error| credential_error(&error))?;
@@ -539,6 +558,18 @@ mod tests {
 
     fn executor() -> ManagedWebExecutor {
         ManagedWebExecutor::new(Arc::new(FixtureClient), Arc::new(FixtureCredentials))
+    }
+
+    #[test]
+    fn production_fetch_only_never_claims_workspace_paid_search() {
+        let executor = ManagedWebExecutor::production_fetch_only();
+        assert!(
+            executor.supports(&aex_brain_domain::ids::ToolName::parse("web_fetch").expect("name"))
+        );
+        assert!(
+            !executor
+                .supports(&aex_brain_domain::ids::ToolName::parse("web_search").expect("name"))
+        );
     }
 
     #[tokio::test]

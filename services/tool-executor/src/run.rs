@@ -8,7 +8,7 @@
 
 use aex_brain_managed_web::egress::DnsResolver;
 use aex_brain_managed_web::search::{
-    SearchRejection, WebSearchCredential, WebSearchRequest, search,
+    SearchFreshness, SearchRejection, WebSearchCredential, WebSearchRequest, search,
 };
 use aex_internal_contracts::tool_exec::{ArgumentsJcs, ToolResultPart};
 use aex_wire::ids::ResourceName;
@@ -108,6 +108,8 @@ struct SearchArguments {
     count: Option<u8>,
     #[serde(default)]
     country: Option<String>,
+    #[serde(default)]
+    freshness: Option<SearchFreshness>,
 }
 
 #[async_trait]
@@ -134,7 +136,7 @@ impl ToolRunner for ManagedWebRunner {
             query: parsed.query.as_str(),
             count: parsed.count.unwrap_or(10),
             country: parsed.country.as_deref(),
-            freshness: None,
+            freshness: parsed.freshness,
         };
         match search(request, &self.credential, self.resolver.as_ref()).await {
             Ok(result) => {
@@ -162,5 +164,25 @@ impl ToolRunner for ManagedWebRunner {
                 is_error: true,
             }),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use aex_brain_managed_web::search::SearchFreshness;
+
+    use super::SearchArguments;
+
+    #[test]
+    fn every_advertised_search_argument_reaches_the_runner() {
+        let parsed: SearchArguments = serde_json::from_slice(
+            br#"{"query":"strict v1","count":7,"country":"GB","freshness":"month"}"#,
+        )
+        .expect("the catalog's complete optional argument set");
+
+        assert_eq!(parsed.query, "strict v1");
+        assert_eq!(parsed.count, Some(7));
+        assert_eq!(parsed.country.as_deref(), Some("GB"));
+        assert_eq!(parsed.freshness, Some(SearchFreshness::Month));
     }
 }

@@ -195,4 +195,14 @@ variable "tool_executor" {
     condition     = lookup(var.tool_executor.env, "AEX_TOOL_EXECUTOR_CEILING_TABLE", "") != ""
     error_message = "The executor must be given the organization ceiling table. Without it there is no bound on platform-paid spend that survives a Brain bug, which is the one thing the separate process was bought for."
   }
+
+  validation {
+    condition     = can(regex("^sha256:[0-9a-f]{64}$", lookup(var.tool_executor.env, "AEX_TOOL_EXECUTOR_MANIFEST", "")))
+    error_message = "The executor must be bound to the exact built-in tool catalog manifest; accepting an absent or mutable manifest lets Brain and executor disagree about the schema they ran."
+  }
+
+  validation {
+    condition     = lookup(var.tool_executor.env, "AEX_TOOL_EXECUTOR_CREDENTIAL_SECRET_ID", "") != ""
+    error_message = "The executor must name the platform search credential it unwraps once at startup."
+  }
 }

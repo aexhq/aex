@@ -2889,7 +2889,9 @@ dependencies = [
  "aex-brain-store-dynamodb",
  "aex-brain-tool-catalog",
  "aex-content-aws",
+ "aex-control-domain",
  "aex-hands-control-aws",
+ "aex-identity-domain",
  "aex-internal-contracts",
  "aex-model-catalog",
  "aex-platform-telemetry",
@@ -2909,10 +2911,13 @@ dependencies = [
  "aws-sdk-kms",
  "aws-sdk-lambdamicrovms",
  "aws-sdk-s3",
+ "aws-sdk-secretsmanager",
  "aws-sdk-sqs",
+ "base64 0.23.0",
  "futures",
  "hex",
  "p256 0.14.0",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -2921,6 +2926,7 @@ dependencies = [
  "tokio",
  "toml",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]

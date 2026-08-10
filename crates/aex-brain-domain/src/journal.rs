@@ -152,6 +152,8 @@ pub enum ExecutorRoute {
     BrainInline,
     /// Ran through the managed web adapter.
     ManagedWeb,
+    /// Ran through the private platform-paid tool executor.
+    ToolExec,
     /// Ran through an MCP server.
     Mcp,
     /// Ran inside the session's Hands `MicroVM`.

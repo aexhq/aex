@@ -132,7 +132,7 @@ fn the_brain_release_recipe_records_the_exact_catalog_build_bindings() {
         collection_file: "release-inputs/model-catalog-collection.json".to_owned(),
         collection_sha256: digest(7),
         tool_catalog_sha256:
-            "sha256:b3cae3e3b5cb64b3ca274f22f67c3ba1e305ac4ca14084967348f06d0ba0fdec".to_owned(),
+            "sha256:51e0b52e74bfd7883bf6dd5ac915d745cb54a7360ecb447cbeec59955ae61fdb".to_owned(),
     };
     let unstamped = plan(brain).expect("ordinary plan");
     let stamped = plan_with_model_catalog(brain, Some(&inputs)).expect("release plan");

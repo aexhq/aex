@@ -662,7 +662,7 @@ mod tests {
                 ("model".to_owned(), digest(2)),
                 (
                     "tool".to_owned(),
-                    "sha256:b3cae3e3b5cb64b3ca274f22f67c3ba1e305ac4ca14084967348f06d0ba0fdec"
+                    "sha256:51e0b52e74bfd7883bf6dd5ac915d745cb54a7360ecb447cbeec59955ae61fdb"
                         .to_owned(),
                 ),
             ]),

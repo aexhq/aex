@@ -29,6 +29,8 @@ pub enum ExecutorRoute {
     SubagentScheduler,
     /// Brain-managed web egress.
     ManagedWeb,
+    /// The private platform-paid tool executor.
+    ToolExec,
     /// A pinned remote MCP server.
     Mcp,
     /// Hands filesystem operations.

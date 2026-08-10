@@ -14,7 +14,7 @@ use crate::wire_pending::{EffectClass, ExecutorRoute};
 
 /// Snapshot-bound SHA-256 identity of [`builtin_catalog_bytes`].
 pub const BUILTIN_CATALOG_DIGEST: &str =
-    "sha256:6d54069dd0c66c7ec2dc7b5f80399b19bb1514bcb4673589bad2631e578c3dd2";
+    "sha256:51e0b52e74bfd7883bf6dd5ac915d745cb54a7360ecb447cbeec59955ae61fdb";
 
 /// Builds and validates the immutable built-in rows in canonical name order.
 ///
@@ -467,7 +467,7 @@ const SPECS: &[Spec] = &[
     spec!(
         "web_search",
         ManagedWeb,
-        ManagedWeb,
+        ToolExec,
         NonReplayable,
         InterruptOnAmbiguity,
         WhenPolicyRequires,

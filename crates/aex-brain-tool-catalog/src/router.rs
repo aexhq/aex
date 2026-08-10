@@ -68,7 +68,7 @@ struct InstalledCatalog {
 /// Runtime dispatch never discovers or re-routes a tool.
 pub struct CompositeToolRouter {
     catalogs: BTreeMap<CatalogPin, InstalledCatalog>,
-    executors: [Option<Arc<dyn ToolExecutor>>; 4],
+    executors: [Option<Arc<dyn ToolExecutor>>; 5],
 }
 
 impl Default for CompositeToolRouter {
@@ -320,8 +320,9 @@ const fn executor_slot(route: DomainExecutorRoute) -> usize {
     match route {
         DomainExecutorRoute::BrainInline => 0,
         DomainExecutorRoute::ManagedWeb => 1,
-        DomainExecutorRoute::Mcp => 2,
-        DomainExecutorRoute::Hands => 3,
+        DomainExecutorRoute::ToolExec => 2,
+        DomainExecutorRoute::Mcp => 3,
+        DomainExecutorRoute::Hands => 4,
     }
 }
 
@@ -346,6 +347,7 @@ const fn coarse_route(route: ExecutorRoute) -> DomainExecutorRoute {
             DomainExecutorRoute::BrainInline
         }
         ExecutorRoute::ManagedWeb => DomainExecutorRoute::ManagedWeb,
+        ExecutorRoute::ToolExec => DomainExecutorRoute::ToolExec,
         ExecutorRoute::Mcp => DomainExecutorRoute::Mcp,
         ExecutorRoute::HandsFilesystem
         | ExecutorRoute::HandsDevelopment
@@ -522,6 +524,7 @@ mod tests {
         for route in [
             ExecutorRoute::BrainInline,
             ExecutorRoute::ManagedWeb,
+            ExecutorRoute::ToolExec,
             ExecutorRoute::Mcp,
             ExecutorRoute::Hands,
         ] {
@@ -588,6 +591,7 @@ mod tests {
             .expect("inline executor");
         for route in [
             ExecutorRoute::ManagedWeb,
+            ExecutorRoute::ToolExec,
             ExecutorRoute::Mcp,
             ExecutorRoute::Hands,
         ] {

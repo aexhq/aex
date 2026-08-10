@@ -27,6 +27,7 @@ use crate::spend::{CeilingRefusal, OrganizationCeiling};
 /// Everything one request needs, assembled once at start-up.
 pub struct Executor {
     admitter: Admitter,
+    manifest: ContentHash,
     ceiling: Arc<dyn OrganizationCeiling>,
     runner: Arc<dyn ToolRunner>,
     /// The backstop, not the bound. Sized at every call the deployed Brain fleet
@@ -41,11 +42,13 @@ impl Executor {
     #[must_use]
     pub fn new(
         admitter: Admitter,
+        manifest: ContentHash,
         ceiling: Arc<dyn OrganizationCeiling>,
         runner: Arc<dyn ToolRunner>,
     ) -> Self {
         Self {
             admitter,
+            manifest,
             ceiling,
             runner,
             in_flight: tokio::sync::Semaphore::new(MAX_IN_FLIGHT),
@@ -83,6 +86,13 @@ impl Executor {
         let Ok(call) = self.admitter.admit(request, now_ms) else {
             return refused(ToolExecRefusal::NotAuthorized);
         };
+
+        // The assertion authenticates the caller, not the schema it validated.
+        // Refuse a different catalog before the spend ceiling or credential is
+        // touched so two release revisions cannot silently disagree.
+        if request.manifest != self.manifest {
+            return refused(ToolExecRefusal::Unsupported);
+        }
 
         // Step 8, before the credential is touched, and independent of whatever
         // the Brain checked on its own side. This is the only bound in the

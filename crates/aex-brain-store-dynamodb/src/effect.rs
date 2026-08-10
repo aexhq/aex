@@ -144,6 +144,7 @@ fn parse_executor(text: &str) -> Result<ExecutorRoute, CodecError> {
     Ok(match text {
         "BrainInline" => ExecutorRoute::BrainInline,
         "ManagedWeb" => ExecutorRoute::ManagedWeb,
+        "ToolExec" => ExecutorRoute::ToolExec,
         "Mcp" => ExecutorRoute::Mcp,
         "Hands" => ExecutorRoute::Hands,
         other => {

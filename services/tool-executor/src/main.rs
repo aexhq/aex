@@ -75,6 +75,7 @@ async fn run() -> Result<(), RunError> {
 
     let executor = Executor::new(
         Admitter::new(config.verification_keys, config.plane, config.region),
+        config.manifest,
         Arc::new(DynamoOrganizationCeiling::new(
             aws_sdk_dynamodb::Client::new(&aws),
             config.ceiling_table,

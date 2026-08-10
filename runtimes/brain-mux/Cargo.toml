@@ -38,8 +38,10 @@ aex-brain-domain = { path = "../../crates/aex-brain-domain" }
 aex-brain-hands = { path = "../../crates/aex-brain-hands" }
 aex-brain-managed-web = { path = "../../crates/aex-brain-managed-web" }
 aex-content-aws = { path = "../../crates/aex-content-aws" }
+aex-control-domain = { path = "../../crates/aex-control-domain" }
 aex-hands-control-aws = { path = "../../crates/aex-hands-control-aws" }
 aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }
+aex-identity-domain = { path = "../../crates/aex-identity-domain" }
 aex-brain-provider-custody = { path = "../../crates/aex-brain-provider-custody" }
 aex-brain-provider-gateway = { path = "../../crates/aex-brain-provider-gateway" }
 aex-brain-store-dynamodb = { path = "../../crates/aex-brain-store-dynamodb" }
@@ -61,8 +63,11 @@ aws-sdk-kms.workspace = true
 aws-sdk-lambdamicrovms.workspace = true
 aws-sdk-s3.workspace = true
 aws-sdk-sqs.workspace = true
+aws-sdk-secretsmanager.workspace = true
+base64.workspace = true
 futures.workspace = true
 serde_json.workspace = true
+reqwest.workspace = true
 aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
 aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
 # The METER-02 probe library. A11-MUX imports `ActivationMeter`, `MemoryBudget`,
@@ -75,6 +80,7 @@ aex-wire = { path = "../../crates/aex-wire" }
 thiserror.workspace = true
 time.workspace = true
 uuid.workspace = true
+zeroize.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "signal", "sync", "time", "net", "io-util"] }
 
 [dev-dependencies]

@@ -186,9 +186,30 @@ fn executor(
 ) -> Executor {
     Executor::new(
         Admitter::new(keys(signer), Plane::Prd, Region::EuWest1),
+        ContentHash::from_bytes([9; 32]),
         ceiling,
         runner,
     )
+}
+
+#[tokio::test]
+async fn a_different_manifest_is_refused_before_the_spend_ceiling() {
+    let signer = signer();
+    let ceiling = RecordingCeiling::admitting();
+    let runner = RecordingRunner::new();
+    let executor = executor(&signer, Arc::clone(&ceiling), Arc::clone(&runner));
+    let mut request = request_from(&signer, &claims(), 0);
+    request.manifest = ContentHash::from_bytes([8; 32]);
+
+    assert_eq!(
+        executor.execute(&request, at()).await,
+        ToolExecResponse::Refused {
+            schema_version: SchemaVersion::V1,
+            reason: ToolExecRefusal::Unsupported,
+        }
+    );
+    assert_eq!(ceiling.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(runner.calls.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
@@ -368,6 +389,7 @@ async fn a_process_with_no_verification_key_is_not_ready() {
             Plane::Prd,
             Region::EuWest1,
         ),
+        ContentHash::from_bytes([9; 32]),
         RecordingCeiling::admitting(),
         RecordingRunner::new(),
     );

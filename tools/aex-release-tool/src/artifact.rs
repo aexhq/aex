@@ -2039,7 +2039,7 @@ alarm_spec = "regional-session-api"
         std::fs::write(
             catalog_source,
             "pub const BUILTIN_CATALOG_DIGEST: &str = \
-             \"sha256:b3cae3e3b5cb64b3ca274f22f67c3ba1e305ac4ca14084967348f06d0ba0fdec\";",
+             \"sha256:51e0b52e74bfd7883bf6dd5ac915d745cb54a7360ecb447cbeec59955ae61fdb\";",
         )
         .unwrap();
         let roots = trust_roots();
@@ -2049,7 +2049,7 @@ alarm_spec = "regional-session-api"
             Some(relative.to_owned()),
             Some(canon::digest_bytes(b"signed collection")),
             Some(
-                "sha256:b3cae3e3b5cb64b3ca274f22f67c3ba1e305ac4ca14084967348f06d0ba0fdec"
+                "sha256:51e0b52e74bfd7883bf6dd5ac915d745cb54a7360ecb447cbeec59955ae61fdb"
                     .to_owned(),
             ),
         ]
@@ -2139,7 +2139,7 @@ alarm_spec = "regional-session-api"
                 None,
                 None,
                 Some(
-                    "sha256:b3cae3e3b5cb64b3ca274f22f67c3ba1e305ac4ca14084967348f06d0ba0fdec"
+                    "sha256:51e0b52e74bfd7883bf6dd5ac915d745cb54a7360ecb447cbeec59955ae61fdb"
                         .to_owned(),
                 ),
             ],
@@ -2194,7 +2194,7 @@ alarm_spec = "regional-session-api"
             collection_file: "release-inputs/catalog.json".to_owned(),
             collection_sha256: canon::digest_bytes(b"signed collection"),
             tool_catalog_sha256:
-                "sha256:b3cae3e3b5cb64b3ca274f22f67c3ba1e305ac4ca14084967348f06d0ba0fdec".to_owned(),
+                "sha256:51e0b52e74bfd7883bf6dd5ac915d745cb54a7360ecb447cbeec59955ae61fdb".to_owned(),
         };
         let error = plan_with_model_catalog(&brain_unit(), Some(&inputs))
             .expect_err("unsorted roots must fail");
@@ -2206,7 +2206,7 @@ alarm_spec = "regional-session-api"
             collection_file: "release-inputs/catalog.json".to_owned(),
             collection_sha256: canon::digest_bytes(b"signed collection"),
             tool_catalog_sha256:
-                "sha256:b3cae3e3b5cb64b3ca274f22f67c3ba1e305ac4ca14084967348f06d0ba0fdec".to_owned(),
+                "sha256:51e0b52e74bfd7883bf6dd5ac915d745cb54a7360ecb447cbeec59955ae61fdb".to_owned(),
         };
         let error = plan_with_model_catalog(&brain_unit(), Some(&noncanonical))
             .expect_err("trailing bytes must fail");

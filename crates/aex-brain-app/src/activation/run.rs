@@ -1607,7 +1607,9 @@ impl Session<'_> {
 
         let dispatch_lane = match route.executor {
             ExecutorRoute::Hands => Some(DispatchLane::Hands),
-            ExecutorRoute::ManagedWeb | ExecutorRoute::Mcp => Some(DispatchLane::Network),
+            ExecutorRoute::ManagedWeb | ExecutorRoute::ToolExec | ExecutorRoute::Mcp => {
+                Some(DispatchLane::Network)
+            }
             ExecutorRoute::BrainInline => None,
         };
         let _dispatch_permits = if let Some(lane) = dispatch_lane {

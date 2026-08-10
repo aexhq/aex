@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use aex_identity_domain::assertion::{
     KeyId, MAX_VERIFICATION_KEYS, Plane, VerificationKey, VerificationKeySet,
 };
+use aex_wire::ids::ContentHash;
 use aex_wire::types::Region;
 
 use crate::spend::Ceilings;
@@ -67,6 +68,8 @@ pub struct Config {
     pub ceiling_table: String,
     /// The Secrets Manager id of the platform's own search credential.
     pub credential_secret_id: String,
+    /// The exact catalog manifest this artifact was built to execute.
+    pub manifest: ContentHash,
     /// The keys whose signatures this process accepts.
     pub verification_keys: VerificationKeySet,
     /// The ceilings this deployment enforces.
@@ -119,6 +122,8 @@ impl Config {
             port,
             ceiling_table: read("CEILING_TABLE")?,
             credential_secret_id: read("CREDENTIAL_SECRET_ID")?,
+            manifest: ContentHash::parse(&read("MANIFEST")?)
+                .map_err(|_| invalid("MANIFEST", "expected `sha256:<64 lowercase hex>`"))?,
             verification_keys: parse_key_set(&read("VERIFICATION_KEYS")?)?,
             ceilings: Ceilings::DEFAULT,
         })

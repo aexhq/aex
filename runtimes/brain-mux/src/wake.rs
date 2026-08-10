@@ -118,6 +118,9 @@ pub const BRAIN_INLINE_EXECUTOR_ABSENT: &str =
 pub const MANAGED_WEB_EXECUTOR_ABSENT: &str = "managed web search cannot bind a session-scoped, \
                                                revocation-aware credential authority";
 
+/// Missing private platform-paid tool executor.
+pub const TOOL_EXECUTOR_ABSENT: &str = "the private platform tool executor is not bound";
+
 /// Missing qualified MCP transport, task-recovery, and registry authority.
 pub const MCP_EXECUTOR_ABSENT: &str = "MCP has no production ToolExecutor with qualified \
                                       transport, task recovery, and exact registry authority";
@@ -709,6 +712,8 @@ pub struct ProductionToolExecutors {
     pub brain_inline: Option<Arc<dyn ToolExecutor>>,
     /// Managed web search.
     pub managed_web: Option<Arc<dyn ToolExecutor>>,
+    /// Platform-paid tools served by the private executor.
+    pub tool_exec: Option<Arc<dyn ToolExecutor>>,
     /// Qualified MCP calls and task recovery.
     pub mcp: Option<Arc<dyn ToolExecutor>>,
     /// Exact-generation Hands tools.
@@ -731,6 +736,7 @@ impl ProductionToolExecutors {
         [
             (BRAIN_INLINE_EXECUTOR_ABSENT, self.brain_inline.is_none()),
             (MANAGED_WEB_EXECUTOR_ABSENT, self.managed_web.is_none()),
+            (TOOL_EXECUTOR_ABSENT, self.tool_exec.is_none()),
             (MCP_EXECUTOR_ABSENT, self.mcp.is_none()),
             (HANDS_TOOL_EXECUTOR_ABSENT, self.hands.is_none()),
         ]
@@ -753,6 +759,7 @@ impl ProductionToolExecutors {
         let linked = [
             (ExecutorRoute::BrainInline, self.brain_inline),
             (ExecutorRoute::ManagedWeb, self.managed_web),
+            (ExecutorRoute::ToolExec, self.tool_exec),
             (ExecutorRoute::Mcp, self.mcp),
             (ExecutorRoute::Hands, self.hands),
         ]
@@ -847,6 +854,7 @@ const fn coarse_tool_route(route: CatalogExecutorRoute) -> ExecutorRoute {
         | CatalogExecutorRoute::Park
         | CatalogExecutorRoute::SubagentScheduler => ExecutorRoute::BrainInline,
         CatalogExecutorRoute::ManagedWeb => ExecutorRoute::ManagedWeb,
+        CatalogExecutorRoute::ToolExec => ExecutorRoute::ToolExec,
         CatalogExecutorRoute::Mcp => ExecutorRoute::Mcp,
         CatalogExecutorRoute::HandsFilesystem
         | CatalogExecutorRoute::HandsDevelopment
@@ -1111,14 +1119,8 @@ pub fn credential_bindings(
         provider_authority,
         store,
     );
-    let search_authority: Arc<dyn aex_brain_managed_web::executor::WebSearchCredentialSource> =
-        Arc::new(
-            aex_brain_managed_web::credential::SessionCredentialAuthority::new(
-                custody, crypto, plane, region,
-            ),
-        );
     let managed_web: Arc<dyn ToolExecutor> =
-        Arc::new(aex_brain_managed_web::executor::ManagedWebExecutor::production(search_authority));
+        Arc::new(aex_brain_managed_web::executor::ManagedWebExecutor::production_fetch_only());
     CredentialBindings {
         provider: Arc::new(router),
         managed_web,
@@ -1406,6 +1408,7 @@ mod tests {
         let tools = ProductionToolExecutors {
             brain_inline: Some(Arc::new(crate::inline_tools::BrainControlExecutor)),
             managed_web: None,
+            tool_exec: None,
             mcp: None,
             hands: None,
         }
@@ -1440,6 +1443,7 @@ mod tests {
         let tools = ProductionToolExecutors {
             brain_inline: Some(Arc::new(crate::inline_tools::BrainControlExecutor)),
             managed_web: Some(Arc::new(NeverExecutor)),
+            tool_exec: Some(Arc::new(NeverExecutor)),
             mcp: None,
             hands: None,
         }
@@ -1452,11 +1456,8 @@ mod tests {
             .map(|tool| tool.name.as_str())
             .collect::<Vec<_>>();
         assert!(names.contains(&"web_fetch"));
-        // `web_search` is platform-paid. `compose` resolves no workspace secret
-        // — `ResolvedSecretNames::default()` is the production input — so while
-        // the entry demanded one it was dropped from every deployed surface, and
-        // the one tool the managed-web executor exists to run was advertised to
-        // nobody. Platform tools carry no customer credential, so it survives.
+        // `web_search` is platform-paid and has its own executor route. It does
+        // not share the workspace-managed `web_fetch` custody path.
         assert!(names.contains(&"web_search"), "platform-paid, not BYOK");
         assert!(!names.iter().any(|name| name.starts_with("mcp__")));
         assert!(!names.contains(&"read_file"), "Hands claims no typed tool");

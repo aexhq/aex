@@ -769,6 +769,7 @@ fn ready_executors() -> ExecutorRegistry {
         ExecutorRoute::Park,
         ExecutorRoute::SubagentScheduler,
         ExecutorRoute::ManagedWeb,
+        ExecutorRoute::ToolExec,
         ExecutorRoute::Mcp,
         ExecutorRoute::HandsFilesystem,
         ExecutorRoute::HandsDevelopment,

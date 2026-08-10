@@ -400,6 +400,7 @@ pub const DEFAULT_ORDER: &[(&str, &[&str])] = &[
         "runtime",
         &[
             "brain-mux",
+            "tool-executor",
             "hands-image-512mb",
             "hands-image-1gb",
             "hands-image-2gb",
