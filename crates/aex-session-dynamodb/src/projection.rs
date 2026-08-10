@@ -899,6 +899,35 @@ mod tests {
         assert!(none.scopes.is_empty());
     }
 
+    /// The account fields on the profile row are required, not optional.
+    ///
+    /// A row written before they existed must refuse rather than decode into a
+    /// partial account state, because the route that publishes it would then be
+    /// choosing what an absent revision or change instant means — and the only
+    /// answers available are a guess and `Active`. Refusing produces
+    /// `account_state_unavailable`, which is the true statement.
+    #[test]
+    fn a_profile_row_without_the_account_fields_refuses_rather_than_half_decoding() {
+        for attribute in ["accountRevision", "accountChangedAt"] {
+            let mut item = ItemBuilder::new(WORKSPACE_PROFILE)
+                .set("workspaceId", s(workspace(1).to_string()))
+                .set("name", s("Production"))
+                .set("slug", s("production"))
+                .set("createdAt", s("2026-08-01T00:00:00.000Z"))
+                .set("accountRevision", n(9))
+                .set("accountChangedAt", s("2026-08-02T00:00:00.000Z"))
+                .build();
+            item.remove(attribute);
+            assert!(
+                matches!(
+                    decode_profile(&item, workspace(1)),
+                    Err(CodecError::Missing { .. })
+                ),
+                "an absent `{attribute}` must refuse the row"
+            );
+        }
+    }
+
     #[test]
     fn every_authentication_attribute_is_required() {
         let api_key = ApiKeyId::from_uuid7(Uuid7::compose(1, [3; 10]));
@@ -922,9 +951,16 @@ mod tests {
             .set("name", s("Production"))
             .set("slug", s("production"))
             .set("createdAt", s("2026-08-01T00:00:00.000Z"))
+            .set("accountRevision", n(9))
+            .set("accountChangedAt", s("2026-08-02T00:00:00.000Z"))
             .build();
         let decoded = decode_profile(&profile, workspace(1)).expect("profile");
         assert_eq!(decoded.name, "Production");
+        assert_eq!(decoded.account_revision, 9);
+        assert_eq!(
+            decoded.account_pause_reason, None,
+            "finance publishes a reason exactly when the account is paused, so an              absent one is an active account rather than a missing field"
+        );
 
         let value = LimitValue::Map(LimitMapValue {
             values: std::collections::BTreeMap::from([
