@@ -196,6 +196,13 @@ impl Config {
                 reason: format!("expected a launch region, got `{region_raw}`"),
             }
         })?;
+        let account_id = required(&lookup, keys::ACCOUNT_ID)?;
+        if account_id.len() != 12 || !account_id.bytes().all(|byte| byte.is_ascii_digit()) {
+            return Err(CentralControlWorkerConfigError::Invalid {
+                name: keys::ACCOUNT_ID,
+                reason: "expected a 12-digit AWS account id".to_owned(),
+            });
+        }
         let role = required(&lookup, keys::ROLE)?;
         if role != REQUIRED_ROLE {
             return Err(CentralControlWorkerConfigError::Invalid {
@@ -268,13 +275,15 @@ impl Config {
         Ok(Self {
             plane,
             region,
-            account_id: required(&lookup, keys::ACCOUNT_ID)?,
+            account_id: account_id.clone(),
             aurora_cluster_arn: required(&lookup, keys::AURORA_CLUSTER_ARN)?,
             aurora_secret_arn: required(&lookup, keys::AURORA_SECRET_ARN)?,
             function_arn: lambda_alias_arn(
                 keys::FUNCTION_ARN,
                 &required(&lookup, keys::FUNCTION_ARN)?,
+                plane,
                 &region,
+                &account_id,
             )?,
             ses_identity_arn: required(&lookup, keys::SES_IDENTITY_ARN)?,
             mail_from: mail_from(&required(&lookup, keys::MAIL_FROM)?)?,
@@ -468,16 +477,31 @@ fn mail_from(raw: &str) -> Result<String, CentralControlWorkerConfigError> {
 fn lambda_alias_arn(
     name: &'static str,
     raw: &str,
+    plane: DeploymentPlane,
     region: &Region,
+    account_id: &str,
 ) -> Result<String, CentralControlWorkerConfigError> {
-    let expected = format!("arn:aws:lambda:{}:", region.as_str());
-    let suffix = raw.split(":function:").nth(1).unwrap_or_default();
-    if raw.starts_with(&expected) && suffix.split(':').count() == 2 {
+    let fields = raw.split(':').collect::<Vec<_>>();
+    let expected_function = format!("aex-{}-central-control-worker", plane.as_str());
+    if fields.len() == 8
+        && fields[0] == "arn"
+        && matches!(
+            fields[1],
+            "aws" | "aws-cn" | "aws-us-gov" | "aws-iso" | "aws-iso-b"
+        )
+        && fields[2] == "lambda"
+        && fields[3] == region.as_str()
+        && fields[4] == account_id
+        && fields[5] == "function"
+        && fields[6] == expected_function
+        && fields[7] == "live"
+    {
         Ok(raw.to_owned())
     } else {
         Err(CentralControlWorkerConfigError::Invalid {
             name,
-            reason: "expected a qualified Lambda alias ARN in the worker region".to_owned(),
+            reason: "expected this plane's exact central-control-worker `live` alias ARN"
+                .to_owned(),
         })
     }
 }
@@ -815,6 +839,7 @@ pub async fn run(
             aws_sdk_lambda::Client::new(&aws),
             config.function_arn.clone(),
         )),
+        std::sync::Arc::new(runtime::TokioWakeDelay),
         regional,
         capacity,
         projections,
@@ -975,6 +1000,26 @@ mod tests {
             "a region this worker projects into but cannot bootstrap is the outage"
         );
         assert_eq!(config.regional_projections.len(), Region::ALL.len());
+    }
+
+    #[test]
+    fn the_wake_target_is_this_planes_exact_live_alias() {
+        for arn in [
+            "arn:aws:lambda:eu-west-1:111111111111:function:aex-prd-central-control-worker:live",
+            "arn:aws:lambda:eu-west-1:000000000000:function:aex-prd-some-other-worker:live",
+            "arn:aws:lambda:eu-west-1:000000000000:function:aex-prd-central-control-worker:canary",
+        ] {
+            let mut vars = complete();
+            vars.insert(keys::FUNCTION_ARN, arn.to_owned());
+            assert!(
+                matches!(
+                    read(&vars),
+                    Err(CentralControlWorkerConfigError::Invalid { name, .. })
+                        if name == keys::FUNCTION_ARN
+                ),
+                "accepted foreign wake target {arn}"
+            );
+        }
     }
 
     #[test]

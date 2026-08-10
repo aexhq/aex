@@ -18,8 +18,9 @@
 //! and one such journal — a second harness recording a second order would let
 //! the two disagree about which order production takes.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
+use std::time::Duration as StdDuration;
 
 use aex_control_app::ports::{
     AcceptInvitationsTx, AccountProjection, BeginWorkspaceDeletionTx, BeginWorkspaceProvisionTx,
@@ -41,7 +42,8 @@ use aex_wire::ids::PrefixedId as _;
 use aex_wire::types::Region;
 use async_trait::async_trait;
 use central_control_worker::runtime::{
-    Mail, OutboxWake, RegionalCapacity, RegionalProjection, SigningAdmin, WakeInvoker, Worker,
+    Mail, OutboxWake, RegionalCapacity, RegionalProjection, SigningAdmin, WakeDelay, WakeInvoker,
+    Worker,
 };
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
@@ -258,7 +260,7 @@ struct FakeStore {
     workspace_status: WorkspaceStatus,
     operation_status: OperationStatus,
     key_material: Option<WorkspaceKeyMaterial>,
-    wake_transaction: aex_control_aurora::OutboxWakeTransactionStatus,
+    wake_transactions: Mutex<VecDeque<aex_control_aurora::OutboxWakeTransactionStatus>>,
 }
 
 impl FakeStore {
@@ -277,7 +279,9 @@ impl FakeStore {
                 pepper_version: 1,
                 scopes: ScopeSet::EMPTY,
             }),
-            wake_transaction: aex_control_aurora::OutboxWakeTransactionStatus::Committed,
+            wake_transactions: Mutex::new(VecDeque::from([
+                aex_control_aurora::OutboxWakeTransactionStatus::Committed,
+            ])),
         }
     }
 }
@@ -525,7 +529,19 @@ impl central_control_worker::runtime::Store for FakeStore {
         _transaction_id: &str,
     ) -> Result<aex_control_aurora::OutboxWakeState, StoreError> {
         Ok(aex_control_aurora::OutboxWakeState {
-            transaction: self.wake_transaction,
+            transaction: {
+                let mut transactions = self
+                    .wake_transactions
+                    .lock()
+                    .expect("the transaction-status lock is never poisoned");
+                if transactions.len() > 1 {
+                    transactions
+                        .pop_front()
+                        .expect("a non-empty status sequence")
+                } else {
+                    *transactions.front().expect("a non-empty status sequence")
+                }
+            },
             anchor_exists: true,
             anchor_dispatched: self
                 .journal
@@ -542,6 +558,15 @@ impl WakeInvoker for FakeWakeInvoker {
     async fn invoke(&self, wake: &OutboxWake) -> Result<(), String> {
         self.0.record(format!("continue:{}", wake.anchor_id));
         Ok(())
+    }
+}
+
+struct FakeWakeDelay(Arc<Journal>);
+
+#[async_trait]
+impl WakeDelay for FakeWakeDelay {
+    async fn pause(&self, delay: StdDuration) {
+        self.0.record(format!("wake_wait:{}", delay.as_millis()));
     }
 }
 
@@ -709,10 +734,30 @@ impl Harness {
         down: &[Authority],
         wake_transaction: aex_control_aurora::OutboxWakeTransactionStatus,
     ) -> Self {
+        Self::build_with_transactions(outbox, down, [wake_transaction])
+    }
+
+    fn build_with_transactions(
+        outbox: Vec<OutboxMessage>,
+        down: &[Authority],
+        wake_transactions: impl IntoIterator<Item = aex_control_aurora::OutboxWakeTransactionStatus>,
+    ) -> Self {
         let answers = |authority: Authority| !down.contains(&authority);
         let journal = Arc::new(Journal::default());
-        let mut store = FakeStore::new(Arc::clone(&journal), outbox, answers(Authority::Store));
-        store.wake_transaction = wake_transaction;
+        let store = FakeStore::new(Arc::clone(&journal), outbox, answers(Authority::Store));
+        *store
+            .wake_transactions
+            .lock()
+            .expect("the transaction-status lock is never poisoned") =
+            wake_transactions.into_iter().collect();
+        assert!(
+            !store
+                .wake_transactions
+                .lock()
+                .expect("the transaction-status lock is never poisoned")
+                .is_empty(),
+            "a wake needs at least one transaction status"
+        );
         let store = Arc::new(store);
         let projections: BTreeMap<Region, Arc<dyn RegionalProjection>> = BTreeMap::from([(
             REGION,
@@ -723,6 +768,7 @@ impl Harness {
         let worker = Worker::new(
             store as Arc<dyn central_control_worker::runtime::Store>,
             Arc::new(FakeWakeInvoker(Arc::clone(&journal))),
+            Arc::new(FakeWakeDelay(Arc::clone(&journal))),
             Arc::new(FakeRegional {
                 journal: Arc::clone(&journal),
                 available: answers(Authority::Regional),
@@ -899,6 +945,31 @@ async fn an_aborted_transaction_wake_is_a_safe_no_op() {
 }
 
 #[tokio::test]
+async fn a_normal_precommit_race_drains_during_the_bounded_wait() {
+    let harness = Harness::build_with_transactions(
+        the_three_routes_outbox(),
+        &[],
+        [
+            aex_control_aurora::OutboxWakeTransactionStatus::InProgress,
+            aex_control_aurora::OutboxWakeTransactionStatus::InProgress,
+            aex_control_aurora::OutboxWakeTransactionStatus::Committed,
+        ],
+    );
+    central_control_worker::handle_event(
+        &harness.worker,
+        serde_json::json!({
+            "schema": OutboxWake::SCHEMA,
+            "anchorId": api_key_created().id,
+            "transactionId": "45"
+        }),
+    )
+    .await
+    .expect("the producer committed inside the bounded wait");
+    assert_eq!(harness.journal.count("wake_wait:"), 2);
+    assert_eq!(harness.journal.count("dispatched:"), 3);
+}
+
+#[tokio::test]
 async fn a_precommit_race_returns_an_error_for_lambda_retry() {
     let harness = Harness::build_with_transaction(
         the_three_routes_outbox(),
@@ -916,6 +987,20 @@ async fn a_precommit_race_returns_an_error_for_lambda_retry() {
     .await
     .expect_err("the accepted event must be retried after commit");
     assert_eq!(error, "outbox_wake_transaction_in_progress");
+    assert_eq!(
+        harness
+            .journal
+            .entries()
+            .into_iter()
+            .filter(|entry| entry.starts_with("wake_wait:"))
+            .collect::<Vec<_>>(),
+        [
+            "wake_wait:25",
+            "wake_wait:50",
+            "wake_wait:100",
+            "wake_wait:200"
+        ]
+    );
     assert_eq!(harness.journal.count("dispatched:"), 0);
 }
 

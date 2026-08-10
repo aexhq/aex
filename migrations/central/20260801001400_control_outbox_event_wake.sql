@@ -24,7 +24,11 @@ DECLARE
     wake_payload json;
     acceptance_status integer;
 BEGIN
-    SELECT min(inserted.id) INTO anchor_id FROM inserted_outbox AS inserted;
+    SELECT inserted.id
+      INTO anchor_id
+      FROM inserted_outbox AS inserted
+     ORDER BY inserted.id
+     LIMIT 1;
     IF anchor_id IS NULL THEN
         RETURN NULL;
     END IF;

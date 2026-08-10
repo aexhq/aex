@@ -1465,6 +1465,9 @@ async fn localhost_installs_the_statement_wake_without_requiring_aws_lambda() {
     assert!(trigger.0.contains("FOR EACH STATEMENT"));
     assert!(trigger.1.contains("pg_current_xact_id()"));
     assert!(trigger.1.contains("'Event'"));
+    assert!(trigger.1.contains("ORDER BY inserted.id"));
+    assert!(trigger.1.contains("LIMIT 1"));
+    assert!(!trigger.1.contains("min(inserted.id)"));
 
     // The extension owns this schema on Aurora. Creating only the namespace is
     // enough to exercise the hosted branch without installing an AWS-only

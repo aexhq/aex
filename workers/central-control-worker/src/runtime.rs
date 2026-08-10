@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::Duration as StdDuration;
 
 use aex_control_app::ports::{
     ClaimDueOperations, ClaimOutbox, ControlStore, ControlViewStore, FinishWorkspaceProvisionTx,
@@ -84,6 +85,32 @@ pub trait WakeInvoker: Send + Sync {
     /// Asynchronously invokes this worker with the same durable anchor.
     async fn invoke(&self, wake: &OutboxWake) -> Result<(), String>;
 }
+
+/// Delay between bounded transaction-status probes.
+#[async_trait]
+pub trait WakeDelay: Send + Sync {
+    /// Waits without blocking the Lambda runtime thread.
+    async fn pause(&self, delay: StdDuration);
+}
+
+/// Production asynchronous delay.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TokioWakeDelay;
+
+#[async_trait]
+impl WakeDelay for TokioWakeDelay {
+    async fn pause(&self, delay: StdDuration) {
+        tokio::time::sleep(delay).await;
+    }
+}
+
+/// Total pre-commit wait is bounded at 375 ms before Lambda owns the retry.
+const PRECOMMIT_RETRY_DELAYS: [StdDuration; 4] = [
+    StdDuration::from_millis(25),
+    StdDuration::from_millis(50),
+    StdDuration::from_millis(100),
+    StdDuration::from_millis(200),
+];
 
 /// Production continuation adapter, bound to the worker's live alias ARN.
 #[derive(Debug, Clone)]
@@ -333,6 +360,7 @@ impl SigningAdmin for SecretsSigningAdmin {
 pub struct Worker {
     store: Arc<dyn Store>,
     wake_invoker: Arc<dyn WakeInvoker>,
+    wake_delay: Arc<dyn WakeDelay>,
     regional: Arc<dyn RegionalControlPort>,
     capacity: Arc<dyn RegionalCapacity>,
     projections: BTreeMap<Region, Arc<dyn RegionalProjection>>,
@@ -383,6 +411,7 @@ impl Worker {
     pub fn new(
         store: Arc<dyn Store>,
         wake_invoker: Arc<dyn WakeInvoker>,
+        wake_delay: Arc<dyn WakeDelay>,
         regional: Arc<dyn RegionalControlPort>,
         capacity: Arc<dyn RegionalCapacity>,
         projections: BTreeMap<Region, Arc<dyn RegionalProjection>>,
@@ -396,6 +425,7 @@ impl Worker {
         Self {
             store,
             wake_invoker,
+            wake_delay,
             regional,
             capacity,
             projections,
@@ -486,12 +516,23 @@ impl Worker {
     /// Identical to [`Worker::tick`], plus the sweep's own store failure.
     pub async fn wake(&self, wake: &OutboxWake) -> Result<(), String> {
         wake.validate()?;
-        let before = self
+        use aex_control_aurora::OutboxWakeTransactionStatus as Transaction;
+        let mut before = self
             .store
             .outbox_wake_state(wake.anchor_id, &wake.transaction_id)
             .await
             .map_err(redacted_store)?;
-        use aex_control_aurora::OutboxWakeTransactionStatus as Transaction;
+        for delay in PRECOMMIT_RETRY_DELAYS {
+            if before.transaction != Transaction::InProgress {
+                break;
+            }
+            self.wake_delay.pause(delay).await;
+            before = self
+                .store
+                .outbox_wake_state(wake.anchor_id, &wake.transaction_id)
+                .await
+                .map_err(redacted_store)?;
+        }
         match before.transaction {
             Transaction::Aborted => return Ok(()),
             Transaction::InProgress => return Err("outbox_wake_transaction_in_progress".to_owned()),
