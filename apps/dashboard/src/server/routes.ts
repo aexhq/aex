@@ -18,6 +18,10 @@ export const DASHBOARD_ROUTES = [
   "account_get",
   "organization_create",
   "workspace_create",
+  // The human end of the CLI device flow. This is the one operation a browser
+  // must reach for `aex auth login` to complete at all: nothing else in the
+  // product moves a device authorization off `pending`.
+  "device_decision_create",
   // API keys.
   "api_keys_list",
   "api_key_create",

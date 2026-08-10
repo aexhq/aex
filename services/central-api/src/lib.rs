@@ -116,6 +116,7 @@ pub fn manifest() -> CompositionManifest {
             CapabilityBinding::arn(config::AURORA_SECRET_ARN, FinanceRead::ID),
             CapabilityBinding::resource(config::API_KEY_PEPPER_SECRET_ID, ControlWrite::ID),
             CapabilityBinding::resource(config::IDENTITY_PEPPER_SECRET_ID, IdentityWrite::ID),
+            CapabilityBinding::resource(config::SIGN_IN_EXCHANGE_SECRET_ID, IdentityWrite::ID),
             CapabilityBinding::resource(config::REGIONAL_FUNCTION_ARNS, RegionalControlInvoke::ID),
             CapabilityBinding::arn(config::STRIPE_COMMAND_EDGE_ARN, PaymentCommandInvoke::ID),
             CapabilityBinding::resource(config::STATEMENT_BUCKET, StatementRead::ID),
@@ -283,7 +284,7 @@ mod tests {
     fn the_merged_deployable_declares_every_group_it_must_serve() {
         assert_eq!(DEPLOYABLE, CentralServiceId::CentralApi);
         assert_eq!(DEPLOYABLE.groups().len(), 7);
-        assert_eq!(DEPLOYABLE.routes().len(), 26);
+        assert_eq!(DEPLOYABLE.routes().len(), 29);
     }
 
     #[test]

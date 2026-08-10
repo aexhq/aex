@@ -346,6 +346,29 @@ impl AuthApi for Api {
     ) -> WireResult<aex_wire::models::DeviceToken> {
         Err(WireError::new(ErrorCode::RateLimited))
     }
+
+    async fn device_decision_create(
+        &self,
+        _cx: &RequestContext,
+        _body: aex_wire::models::DeviceDecisionRequest,
+    ) -> WireResult<aex_wire::models::DeviceDecisionResult> {
+        Err(WireError::new(ErrorCode::RateLimited))
+    }
+
+    async fn dashboard_session_create(
+        &self,
+        _cx: &RequestContext,
+        _body: aex_wire::models::DashboardSessionRequest,
+    ) -> WireResult<Created<aex_wire::models::DashboardSessionCredential>> {
+        Err(WireError::new(ErrorCode::RateLimited))
+    }
+
+    async fn dashboard_session_delete(
+        &self,
+        _cx: &RequestContext,
+    ) -> WireResult<aex_wire::server::NoContent> {
+        Err(WireError::new(ErrorCode::RateLimited))
+    }
 }
 
 impl BillingApi for Api {
@@ -558,7 +581,7 @@ async fn status_of(router: axum::Router, request: Request<Body>) -> StatusCode {
 #[tokio::test]
 async fn the_mounted_set_is_exactly_the_declared_one() {
     let declared = CentralServiceId::CentralApi.routes();
-    assert_eq!(declared.len(), 26, "the merged deployable serves 26 routes");
+    assert_eq!(declared.len(), 29, "the merged deployable serves 29 routes");
     for id in declared {
         let descriptor = route(id);
         let credential = if descriptor.plane == aex_wire::routes::Plane::Central {

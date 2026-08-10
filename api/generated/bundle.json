@@ -527,6 +527,62 @@
           "altPrincipal": "anonymous",
           "bodyClass": "aex_json",
           "errors": [
+            "unauthenticated",
+            "forbidden",
+            "invalid_request",
+            "rate_limited",
+            "internal_error"
+          ],
+          "etag": "none",
+          "fragment": "auth",
+          "idempotency": "none",
+          "method": "POST",
+          "operationId": "dashboard_session_create",
+          "path": "/api/auth/sessions",
+          "pathParams": [],
+          "pauseExempt": true,
+          "plane": "central",
+          "queryParams": [],
+          "requestSchema": "DashboardSessionRequest",
+          "requiredScope": null,
+          "responseSchema": "DashboardSessionCredential",
+          "safeRetry": false,
+          "successStatus": 201,
+          "summary": "Exchange a completed first-party provider sign-in for a browser session.",
+          "transport": "unary"
+        },
+        {
+          "altPrincipal": "user_session",
+          "bodyClass": "none",
+          "errors": [
+            "unauthenticated",
+            "forbidden",
+            "insufficient_scope",
+            "rate_limited",
+            "internal_error"
+          ],
+          "etag": "none",
+          "fragment": "auth",
+          "idempotency": "none",
+          "method": "DELETE",
+          "operationId": "dashboard_session_delete",
+          "path": "/api/auth/sessions/current",
+          "pathParams": [],
+          "pauseExempt": true,
+          "plane": "central",
+          "queryParams": [],
+          "requestSchema": null,
+          "requiredScope": "account:write",
+          "responseSchema": null,
+          "safeRetry": false,
+          "successStatus": 204,
+          "summary": "Close the browser session the caller presented.",
+          "transport": "unary"
+        },
+        {
+          "altPrincipal": "anonymous",
+          "bodyClass": "aex_json",
+          "errors": [
             "invalid_request",
             "rate_limited",
             "internal_error"
@@ -547,6 +603,37 @@
           "safeRetry": false,
           "successStatus": 201,
           "summary": "Begin the CLI device-authorization flow.",
+          "transport": "unary"
+        },
+        {
+          "altPrincipal": "user_session",
+          "bodyClass": "aex_json",
+          "errors": [
+            "unauthenticated",
+            "forbidden",
+            "insufficient_scope",
+            "token_expired",
+            "not_found",
+            "invalid_request",
+            "rate_limited",
+            "internal_error"
+          ],
+          "etag": "none",
+          "fragment": "auth",
+          "idempotency": "none",
+          "method": "POST",
+          "operationId": "device_decision_create",
+          "path": "/api/auth/device/decisions",
+          "pathParams": [],
+          "pauseExempt": true,
+          "plane": "central",
+          "queryParams": [],
+          "requestSchema": "DeviceDecisionRequest",
+          "requiredScope": "account:write",
+          "responseSchema": "DeviceDecisionResult",
+          "safeRetry": false,
+          "successStatus": 200,
+          "summary": "Approve or deny a pending device authorization.",
           "transport": "unary"
         },
         {
@@ -5649,6 +5736,10 @@
           "scope": "account:read"
         },
         {
+          "description": "Decide the caller's own device authorizations and close their own browser session.",
+          "scope": "account:write"
+        },
+        {
           "description": "List and read organizations the caller belongs to.",
           "scope": "organizations:read"
         },
@@ -6591,6 +6682,86 @@
       ],
       "type": "object"
     },
+    "DashboardSessionCredential": {
+      "additionalProperties": false,
+      "properties": {
+        "expiresAt": {
+          "description": "When it stops verifying.",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+          "type": "string",
+          "x-aex-time": "rfc3339-ms"
+        },
+        "session": {
+          "description": "The bearer credential; hold it in a cookie the browser will not hand to script.",
+          "maxLength": 4096,
+          "minLength": 16,
+          "type": "string"
+        },
+        "userId": {
+          "description": "The person it authenticates.",
+          "pattern": "^usr_[0-9a-hjkmnp-tv-z]{26}$",
+          "type": "string",
+          "x-aex-id": "user"
+        }
+      },
+      "required": [
+        "expiresAt",
+        "session",
+        "userId"
+      ],
+      "type": "object"
+    },
+    "DashboardSessionRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "email": {
+          "description": "The address the provider asserts.",
+          "maxLength": 254,
+          "minLength": 3,
+          "type": "string"
+        },
+        "emailVerified": {
+          "description": "Whether the provider asserts the address is verified.",
+          "type": "boolean"
+        },
+        "exchangeSecret": {
+          "description": "The first-party exchange secret; proves the caller is an AEX front end.",
+          "maxLength": 256,
+          "minLength": 32,
+          "type": "string"
+        },
+        "imageUrl": {
+          "description": "An avatar, when the provider supplied one.",
+          "format": "uri",
+          "maxLength": 2048,
+          "type": "string"
+        },
+        "name": {
+          "description": "A display name, when the provider supplied one.",
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        "provider": {
+          "$ref": "aex:schema:IdentityProvider",
+          "description": "Which provider completed the sign-in."
+        },
+        "providerAccountId": {
+          "description": "The provider's own stable identifier for the person.",
+          "maxLength": 255,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "email",
+        "emailVerified",
+        "exchangeSecret",
+        "provider",
+        "providerAccountId"
+      ],
+      "type": "object"
+    },
     "DeletingSession": {
       "additionalProperties": false,
       "properties": {
@@ -6698,6 +6869,63 @@
       },
       "required": [
         "clientId",
+        "scopes"
+      ],
+      "type": "object"
+    },
+    "DeviceDecision": {
+      "enum": [
+        "approve",
+        "deny"
+      ],
+      "type": "string"
+    },
+    "DeviceDecisionRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "decision": {
+          "$ref": "aex:schema:DeviceDecision",
+          "description": "What the person chose."
+        },
+        "userCode": {
+          "description": "The short code the device displayed.",
+          "maxLength": 16,
+          "minLength": 6,
+          "type": "string"
+        }
+      },
+      "required": [
+        "decision",
+        "userCode"
+      ],
+      "type": "object"
+    },
+    "DeviceDecisionResult": {
+      "additionalProperties": false,
+      "properties": {
+        "decidedAt": {
+          "description": "When the decision was written.",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+          "type": "string",
+          "x-aex-time": "rfc3339-ms"
+        },
+        "decision": {
+          "$ref": "aex:schema:DeviceDecision",
+          "description": "What was recorded; never differs from the request."
+        },
+        "scopes": {
+          "description": "The scopes the device asked for, so the page can name what it granted.",
+          "items": {
+            "type": "string",
+            "x-aex-registry": "scopes"
+          },
+          "maxItems": 64,
+          "type": "array"
+        }
+      },
+      "required": [
+        "decidedAt",
+        "decision",
         "scopes"
       ],
       "type": "object"
@@ -7298,6 +7526,13 @@
         "url"
       ],
       "type": "object"
+    },
+    "IdentityProvider": {
+      "enum": [
+        "github",
+        "google"
+      ],
+      "type": "string"
     },
     "Invitation": {
       "additionalProperties": false,

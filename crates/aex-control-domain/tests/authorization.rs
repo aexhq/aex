@@ -364,7 +364,7 @@ fn a_key_is_capped_at_the_mintable_ceiling_even_if_its_row_says_otherwise() {
 }
 
 #[test]
-fn an_anonymous_principal_reaches_exactly_the_two_device_routes() {
+fn an_anonymous_principal_reaches_exactly_the_three_ceremony_entry_routes() {
     for action in Action::all() {
         let outcome = decide(&Principal::Anonymous, action, &Resource::None);
         if requirement(action)
@@ -390,9 +390,15 @@ fn an_anonymous_principal_reaches_exactly_the_two_device_routes() {
         })
         .map(|action| format!("{:?}", action.route()))
         .collect();
+    // Three, not two. `DashboardSessionCreate` is the ceremony's other entry
+    // point: nobody holds an AEX credential before it answers, so it cannot
+    // require one. It proves its caller with the first-party exchange secret in
+    // its body — the same shape as `DeviceTokenCreate`, whose device code is
+    // also a credential the edge never sees.
     assert_eq!(
         anonymous,
         vec![
+            "DashboardSessionCreate".to_owned(),
             "DeviceAuthorizationCreate".to_owned(),
             "DeviceTokenCreate".to_owned()
         ]

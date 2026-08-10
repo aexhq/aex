@@ -112,7 +112,7 @@ pub struct OrgMembership {
 /// The authenticated principal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Principal {
-    /// No credential at all. Only the two device-flow routes admit this.
+    /// No credential at all. Only the three anonymous ceremony routes admit this.
     Anonymous,
     /// A person, through either credential.
     AccountActor {
@@ -393,6 +393,26 @@ const RULES: &[Rule] = &[
     },
     Rule {
         route: RouteId::DeviceTokenCreate,
+        class: ResourceClass::None,
+        min_role: None,
+    },
+    // The three credential-ceremony routes are account-shaped, not
+    // organization-shaped: a person decides their own device authorization and
+    // closes their own browser session before any organization has been
+    // selected, so there is no resource to classify and no membership role a
+    // floor could require.
+    Rule {
+        route: RouteId::DeviceDecisionCreate,
+        class: ResourceClass::None,
+        min_role: None,
+    },
+    Rule {
+        route: RouteId::DashboardSessionCreate,
+        class: ResourceClass::None,
+        min_role: None,
+    },
+    Rule {
+        route: RouteId::DashboardSessionDelete,
         class: ResourceClass::None,
         min_role: None,
     },

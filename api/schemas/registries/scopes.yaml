@@ -4,6 +4,7 @@
 # is a route change, not a registry change.
 scopes:
   - { scope: "account:read", doc: "Read the caller's account and operational state." }
+  - { scope: "account:write", doc: "Decide the caller's own device authorizations and close their own browser session." }
   - { scope: "organizations:read", doc: "List and read organizations the caller belongs to." }
   - { scope: "organizations:write", doc: "Create organizations." }
   - { scope: "memberships:read", doc: "List memberships of an organization." }

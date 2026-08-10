@@ -211,7 +211,7 @@ fn admits_anonymous(id: RouteId) -> bool {
     })
 }
 
-/// The credential-free context the two device-flow routes run under.
+/// The credential-free context the three anonymous ceremony routes run under.
 ///
 /// The window is one millisecond wide because there is nothing to cache: no
 /// credential was resolved, so nothing about it can go stale. `[now, now+1)`
@@ -344,6 +344,10 @@ async fn admit_edge(
         Ok(scope) => scope,
         Err(error) => return Err((request_id, error)),
     };
+    let session = match actor_session_id(&context) {
+        Ok(session) => session,
+        Err(error) => return Err((request_id, error)),
+    };
     Ok((
         id,
         Admitted {
@@ -351,6 +355,7 @@ async fn admit_edge(
                 request_id,
                 route: id,
                 principal: scope,
+                actor_session_id: session,
                 granted_scopes: granted.effective_scopes.to_wire(),
                 idempotency_key: declared.idempotency_key,
                 operation_id: declared.operation_id,
@@ -397,6 +402,29 @@ fn request_authorizer_context(
         return Ok(None);
     }
     CentralAuthorizerContext::parse_values(&authorizer.fields).map(Some)
+}
+
+/// The browser session the actor presented, when they presented one.
+///
+/// Deliberately narrow: only a `DashboardSession` credential yields an id here.
+/// An account token also authenticates a person, but it is not a session and
+/// naming it as one would let `approve_device_authorization` record an approver
+/// currency it never proved.
+fn actor_session_id(
+    context: &CentralAuthorizerContext,
+) -> Result<Option<aex_wire::ids::Uuid7>, EdgeError> {
+    match context.kind {
+        ContextPrincipalKind::UserSession => context
+            .credential_id
+            .map(|id| {
+                aex_wire::ids::Uuid7::from_bytes(*id.as_bytes())
+                    .map_err(|_| EdgeError::Internal("a stored identifier is not a UUIDv7"))
+            })
+            .transpose(),
+        ContextPrincipalKind::Account
+        | ContextPrincipalKind::WorkspaceKey
+        | ContextPrincipalKind::Anonymous => Ok(None),
+    }
 }
 
 /// The replay identity's view of the principal.
@@ -613,7 +641,7 @@ mount_group!(
     AuthApi,
     dispatch_auth,
     RouteGroup::Auth,
-    "Mounts `central:auth`: the two public device-flow routes."
+    "Mounts `central:auth`: the public credential ceremony."
 );
 mount_group!(
     mount_billing_api,

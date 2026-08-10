@@ -1,0 +1,11 @@
+{
+  "$id": "https://schemas.aex.dev/v1/DeviceDecision.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What a person chose about a device authorization.",
+  "enum": [
+    "approve",
+    "deny"
+  ],
+  "title": "DeviceDecision",
+  "type": "string"
+}

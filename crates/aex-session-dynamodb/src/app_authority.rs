@@ -85,29 +85,27 @@ struct AgentSettlement {
 /// `compile_owned` in [`crate::application_plan`] handles the session head, the
 /// message and the run. Everything else a B1 command writes — the durable
 /// operation row and one settled agent — arrives here.
+///
+/// The tenant arrives with each action rather than being bound at
+/// construction: [`ExternalActionCompiler`] hands over the binding the regional
+/// edge asserted, and holding a second copy here would be two sources for one
+/// fact that could disagree.
 #[derive(Debug, Clone, Copy)]
-pub struct SessionAuthorityExternal {
-    binding: SessionBinding,
-}
+pub struct SessionAuthorityExternal;
 
 impl SessionAuthorityExternal {
-    /// Binds the compiler to the tenant the regional edge already authenticated.
-    #[must_use]
-    pub const fn new(binding: SessionBinding) -> Self {
-        Self { binding }
-    }
-
     fn operation_write(
         &self,
         tables: &RegionalTables,
+        binding: SessionBinding,
         action: &LogicalAction<'_>,
         operation: &Operation,
         output: &mut TransactionPlan,
     ) -> Result<(), StoreError> {
-        if operation.workspace != self.binding.workspace
+        if operation.workspace != binding.workspace
             || operation
                 .session
-                .is_some_and(|session| session != self.binding.session)
+                .is_some_and(|session| session != binding.session)
         {
             return Err(cross_tenant());
         }
@@ -170,6 +168,7 @@ impl SessionAuthorityExternal {
     fn agent_cancel(
         &self,
         tables: &RegionalTables,
+        binding: SessionBinding,
         action: &LogicalAction<'_>,
         settlement: AgentSettlement,
         output: &mut TransactionPlan,
@@ -181,7 +180,7 @@ impl SessionAuthorityExternal {
             to,
             at,
         } = settlement;
-        if session != self.binding.session {
+        if session != binding.session {
             return Err(cross_tenant());
         }
         let mut expression = Expression::default();
@@ -401,13 +400,14 @@ impl ExternalActionCompiler for SessionAuthorityExternal {
     fn compile_action(
         &self,
         tables: &RegionalTables,
+        binding: SessionBinding,
         action: &LogicalAction<'_>,
         output: &mut TransactionPlan,
     ) -> Result<(), StoreError> {
         match action.write {
             None => Self::read_only(tables, action, output),
             Some(Write::PutOperation(operation)) => {
-                self.operation_write(tables, action, operation, output)
+                self.operation_write(tables, binding, action, operation, output)
             }
             Some(Write::CancelAgent {
                 session,
@@ -417,6 +417,7 @@ impl ExternalActionCompiler for SessionAuthorityExternal {
                 at,
             }) => self.agent_cancel(
                 tables,
+                binding,
                 action,
                 AgentSettlement {
                     session: *session,
@@ -527,7 +528,7 @@ impl<S: HintSink> AuthorityCommitter for DynamoAuthorityCommitter<S> {
             &self.tables,
             plan,
             self.binding,
-            &SessionAuthorityExternal::new(self.binding),
+            &SessionAuthorityExternal,
         )
         .map_err(|error| store_to_commit(&error, plan))?;
 
@@ -995,7 +996,7 @@ mod tests {
             &tables(),
             &plan,
             binding,
-            &SessionAuthorityExternal::new(binding),
+            &SessionAuthorityExternal,
         )
         .expect("compiles");
         assert_eq!(compiled.transaction.len(), 2);
@@ -1050,7 +1051,7 @@ mod tests {
             &tables(),
             &plan,
             binding,
-            &SessionAuthorityExternal::new(binding),
+            &SessionAuthorityExternal,
         )
         .expect_err("tenant drift");
         assert!(
@@ -1088,7 +1089,7 @@ mod tests {
             &tables(),
             &plan,
             binding,
-            &SessionAuthorityExternal::new(binding),
+            &SessionAuthorityExternal,
         )
         .expect("compiles");
         assert_eq!(compiled.transaction.len(), 1);
@@ -1138,7 +1139,7 @@ mod tests {
             &tables(),
             &plan,
             binding,
-            &SessionAuthorityExternal::new(binding),
+            &SessionAuthorityExternal,
         )
         .expect_err("an unknown write must never be silently dropped");
         assert!(
