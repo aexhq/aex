@@ -202,6 +202,43 @@ impl Source {
         self.line(&format!("{:indent$}}}", "", indent = indent));
     }
 
+    /// Appends a unary-call match arm the way `rustfmt` lays it out.
+    ///
+    /// When the call fits on the block's indented line, `rustfmt` wraps the
+    /// whole arm in a block. A longer call stays in the arm and wraps its
+    /// argument instead. Keeping both shapes separate from [`Self::arm`]
+    /// prevents a long generated string literal from breaking the fixed point.
+    pub fn unary_call_arm(&mut self, indent: usize, variant: &str, callee: &str, argument: &str) {
+        let single = format!(
+            "{:indent$}Self::{variant} => {callee}({argument}),",
+            "",
+            indent = indent
+        );
+        if single.len() <= MAX_WIDTH {
+            self.line(&single);
+            return;
+        }
+        let inner = indent + 4;
+        let call = format!("{callee}({argument})");
+        if inner + call.len() <= MAX_WIDTH {
+            self.line(&format!(
+                "{:indent$}Self::{variant} => {{",
+                "",
+                indent = indent
+            ));
+            self.line(&format!("{:inner$}{call}", "", inner = inner));
+            self.line(&format!("{:indent$}}}", "", indent = indent));
+            return;
+        }
+        self.line(&format!(
+            "{:indent$}Self::{variant} => {callee}(",
+            "",
+            indent = indent
+        ));
+        self.line(&format!("{:inner$}{argument},", "", inner = inner));
+        self.line(&format!("{:indent$}),", "", indent = indent));
+    }
+
     /// Appends an array-valued `const` item the way `rustfmt` lays it out.
     pub fn const_slice(&mut self, indent: usize, declaration: &str, items: &[String]) {
         let contents = items.join(", ");
@@ -289,4 +326,47 @@ pub fn quote(text: &str) -> String {
     }
     out.push('"');
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Source;
+
+    #[test]
+    fn long_unary_call_arm_is_a_rustfmt_fixed_point() {
+        let mut source = Source::bare();
+        source.unary_call_arm(
+            12,
+            "NotImplemented",
+            "Some",
+            "\"do not retry; the published specification marks this operation not yet available\"",
+        );
+        assert_eq!(
+            source.finish(),
+            concat!(
+                "            Self::NotImplemented => Some(\n",
+                "                \"do not retry; the published specification marks this operation not yet available\",\n",
+                "            ),\n",
+            )
+        );
+    }
+
+    #[test]
+    fn short_unary_call_in_a_long_arm_uses_a_block() {
+        let mut source = Source::bare();
+        source.unary_call_arm(
+            12,
+            "ApiKeySecretUnavailable",
+            "Some",
+            "\"use the originally returned secret or mint a replacement key\"",
+        );
+        assert_eq!(
+            source.finish(),
+            concat!(
+                "            Self::ApiKeySecretUnavailable => {\n",
+                "                Some(\"use the originally returned secret or mint a replacement key\")\n",
+                "            }\n",
+            )
+        );
+    }
 }

@@ -879,9 +879,9 @@ impl ErrorCode {
             Self::CommitOutcomeUnknown => {
                 Some("retry the identical request with the same replay identity")
             }
-            Self::NotImplemented => {
-                Some("do not retry; the published specification marks this operation not yet available")
-            }
+            Self::NotImplemented => Some(
+                "do not retry; the published specification marks this operation not yet available",
+            ),
             Self::InternalError => None,
         }
     }

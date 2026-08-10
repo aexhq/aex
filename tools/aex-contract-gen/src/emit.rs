@@ -887,11 +887,11 @@ fn rust_errors(ir: &ContractIr, digest: &str) -> String {
     source.line("    pub const fn remedy(self) -> Option<&'static str> {");
     source.line("        match self {");
     for row in &ir.errors {
-        let value = row.remedy.as_ref().map_or_else(
-            || "None".to_owned(),
-            |text| format!("Some({})", quote(text)),
-        );
-        source.arm(12, &row.variant, &value);
+        if let Some(text) = &row.remedy {
+            source.unary_call_arm(12, &row.variant, "Some", &quote(text));
+        } else {
+            source.arm(12, &row.variant, "None");
+        }
     }
     source.line("        }");
     source.line("    }");
