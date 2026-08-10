@@ -653,6 +653,7 @@
           "conformance": "unit",
           "faults": "unit",
           "integration": "integration",
+          "multipart": "unit",
           "properties": "unit",
           "security": "unit"
         },
@@ -4620,6 +4621,7 @@
         ],
         "scenarios": [],
         "targets": {
+          "composition": "unit",
           "faults": "unit",
           "resource_envelope": "e2e",
           "security": "unit"
@@ -4704,6 +4706,7 @@
         "targets": {
           "composition": "unit",
           "expiry": "unit",
+          "gc": "unit",
           "lifecycle": "unit",
           "performance_contract": "e2e"
         },
