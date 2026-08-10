@@ -56,6 +56,16 @@
       "shape": "map"
     },
     {
+      "description": "Registered names one workspace may hold in one registry.",
+      "id": "registry.entries",
+      "shape": "scalar"
+    },
+    {
+      "description": "Largest canonical value document a registered name may carry.",
+      "id": "registry.value_bytes",
+      "shape": "scalar"
+    },
+    {
       "description": "Per-tool byte, traversal and listing safety bounds.",
       "id": "tools.io_safety",
       "shape": "map"

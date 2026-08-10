@@ -36,7 +36,7 @@ use aex_wire::cursor::Cursor;
 use aex_wire::error::{ErrorCode, WireError};
 use aex_wire::models;
 use aex_wire::types::{DecimalU128, ETag};
-use aex_workspace_domain::registry::RegistryPointer;
+use aex_workspace_domain::registry::{RegistryPointer, RegistryRow as StoredRegistryRow};
 use serde::Serialize;
 
 use crate::cursor::{CursorError, SortTuple};
@@ -84,6 +84,18 @@ pub enum ProjectionError {
     /// module rather than a customer condition.
     #[error("a projected representation is not canonicalizable")]
     NotCanonicalizable,
+    /// A stored value document does not decode as its own kind's read model.
+    ///
+    /// The document is written by this process from a validated request body and
+    /// its digest is re-verified on the way out of the codec, so a document that
+    /// no longer matches its kind is corruption, never a customer condition.
+    #[error("the stored `{kind}` value document is not a `{kind}` value: {reason}")]
+    MalformedValueDocument {
+        /// Which registry the document was read from.
+        kind: &'static str,
+        /// What the decoder objected to.
+        reason: String,
+    },
 }
 
 impl ProjectionError {
@@ -100,9 +112,10 @@ impl ProjectionError {
             // registry are all invariant failures of this process. The last one
             // in particular means the key template and the query disagreed,
             // which a caller can neither cause nor fix.
-            Self::NotRevoked { .. } | Self::NotCanonicalizable | Self::WrongRegistryKind { .. } => {
-                ErrorCode::InternalError
-            }
+            Self::NotRevoked { .. }
+            | Self::NotCanonicalizable
+            | Self::WrongRegistryKind { .. }
+            | Self::MalformedValueDocument { .. } => ErrorCode::InternalError,
             Self::Plaintext(_) => ErrorCode::InvalidRequest,
             Self::Cursor(_) => ErrorCode::InvalidCursor,
         }
@@ -305,51 +318,41 @@ pub fn provider_credential_page(
 
 // --- registry ---------------------------------------------------------------------
 
-/// Projects one registry pointer onto its **collection row**.
+/// The shared collection columns of every registry row.
 ///
-/// The five registry models carry an identical field set and differ only in the
-/// type of the `value` they may carry, so this produces the shared part once and
-/// the five wrappers below place it. Writing five copies of the same seven
-/// assignments is how two of them eventually disagree.
-///
-/// # Why the row never carries a value
-///
-/// A registry pointer stores a `sha256` and a size; the value itself lives in
-/// content storage as a **sealed** body. Reading it needs the content data key,
-/// which the deployable that serves these listings deliberately does not hold.
-/// The wire model marks `value` "omitted in collection rows", which is exactly
-/// what a listing publishes — so a listing is complete, and an item read that
-/// must carry the value is not servable from this projection alone.
+/// The five registry models carry an identical field set, so this produces the
+/// shared part once and the ten wrappers below place it. Writing ten copies of
+/// the same seven assignments is how two of them eventually disagree.
 ///
 /// # Errors
 ///
-/// [`ProjectionError::WrongRegistryKind`] when the pointer belongs to another
+/// [`ProjectionError::WrongRegistryKind`] when the row belongs to another
 /// registry. A pointer is keyed by `(workspace, kind, name)` and the kind is the
 /// only thing distinguishing two identically named rows, so projecting one into
 /// the wrong model would publish a skill as a tool.
-fn registry_row(
-    pointer: &RegistryPointer,
+fn registry_columns(
+    row: &StoredRegistryRow,
     expected: RegistryKind,
-) -> Result<RegistryRow, ProjectionError> {
-    if pointer.kind != expected {
+) -> Result<RegistryColumns, ProjectionError> {
+    if row.kind != expected {
         return Err(ProjectionError::WrongRegistryKind {
             expected: kind_name(expected),
-            found: kind_name(pointer.kind),
+            found: kind_name(row.kind),
         });
     }
-    Ok(RegistryRow {
-        created_at: pointer.created_at,
-        name: pointer.name.clone(),
-        revision: pointer.revision.0,
-        sha256: pointer.sha256,
-        size_bytes: DecimalU128::new(u128::from(pointer.size_bytes)),
+    Ok(RegistryColumns {
+        created_at: row.created_at,
+        name: row.name.clone(),
+        revision: row.revision.0,
+        sha256: row.sha256,
+        size_bytes: DecimalU128::new(u128::from(row.size_bytes)),
         state: models::RegisteredState::Current,
-        updated_at: pointer.updated_at,
+        updated_at: row.updated_at,
     })
 }
 
 /// The field set every registry collection row shares.
-struct RegistryRow {
+struct RegistryColumns {
     created_at: aex_wire::types::Timestamp,
     name: aex_wire::ids::ResourceName,
     revision: u64,
@@ -370,49 +373,84 @@ const fn kind_name(kind: RegistryKind) -> &'static str {
     }
 }
 
-/// Emits the five per-kind projections and their page forms.
+/// Emits the five per-kind point projections, the five row projections and the
+/// five page forms.
 ///
-/// A macro rather than five hand-written pairs: the five wire types are distinct
-/// structs with identical fields, so the only thing that varies is the type
-/// name, and hand-writing the variation is hand-writing the drift.
+/// A macro rather than fifteen hand-written functions: the wire types are
+/// distinct structs over identical field sets, so the only thing that varies is
+/// the type name, and hand-writing the variation is hand-writing the drift.
 macro_rules! registry_projections {
-    ($($item:ident, $page:ident, $kind:ident, $row:ident, $rows:ident;)+) => {
+    ($($item:ident, $read:ident, $rowty:ident, $page:ident, $kind:ident,
+        $point:ident, $row:ident, $rows:ident;)+) => {
         $(
-            #[doc = concat!("Projects one stored `", stringify!($kind), "` pointer onto its collection row.")]
+            #[doc = concat!("Projects one stored `", stringify!($kind), "` pointer, value and all.")]
+            ///
+            /// The response type has no `None` to publish: after the D-6 split a
+            /// point read that could not produce a value is not representable,
+            /// so a collection projection can never be published as if it were a
+            /// complete resource.
             ///
             /// # Errors
             ///
             /// [`ProjectionError::WrongRegistryKind`] for a pointer from another
-            /// registry.
-            pub fn $row(pointer: &RegistryPointer) -> Result<models::$item, ProjectionError> {
-                let row = registry_row(pointer, RegistryKind::$kind)?;
+            /// registry, and [`ProjectionError::MalformedValueDocument`] when the
+            /// stored document is not this kind's value.
+            pub fn $point(pointer: &RegistryPointer) -> Result<models::$item, ProjectionError> {
+                let columns = registry_columns(&pointer.row, RegistryKind::$kind)?;
+                let value: models::$read =
+                    serde_json::from_str(pointer.value_doc.as_str()).map_err(|error| {
+                        ProjectionError::MalformedValueDocument {
+                            kind: kind_name(RegistryKind::$kind),
+                            reason: error.to_string(),
+                        }
+                    })?;
                 Ok(models::$item {
-                    created_at: row.created_at,
-                    name: row.name,
-                    revision: row.revision,
-                    sha256: row.sha256,
-                    size_bytes: row.size_bytes,
-                    state: row.state,
-                    updated_at: row.updated_at,
-                    // Omitted in a collection row, and this projection produces
-                    // only collection rows.
-                    value: None,
+                    created_at: columns.created_at,
+                    name: columns.name,
+                    revision: columns.revision,
+                    sha256: columns.sha256,
+                    size_bytes: columns.size_bytes,
+                    state: columns.state,
+                    updated_at: columns.updated_at,
+                    value,
                 })
             }
 
-            #[doc = concat!("Projects one page of stored `", stringify!($kind), "` pointers.")]
+            #[doc = concat!("Projects one stored `", stringify!($kind), "` row onto its collection form.")]
+            ///
+            /// The row type has no `value` field at all, so a listing cannot
+            /// carry one even by accident.
+            ///
+            /// # Errors
+            ///
+            /// [`ProjectionError::WrongRegistryKind`] for a row from another
+            /// registry.
+            pub fn $row(row: &StoredRegistryRow) -> Result<models::$rowty, ProjectionError> {
+                let columns = registry_columns(row, RegistryKind::$kind)?;
+                Ok(models::$rowty {
+                    created_at: columns.created_at,
+                    name: columns.name,
+                    revision: columns.revision,
+                    sha256: columns.sha256,
+                    size_bytes: columns.size_bytes,
+                    state: columns.state,
+                    updated_at: columns.updated_at,
+                })
+            }
+
+            #[doc = concat!("Projects one page of stored `", stringify!($kind), "` rows.")]
             ///
             /// # Errors
             ///
             /// As the row projection. A page fails whole rather than skipping a
-            /// row: unlike a tombstone, a pointer from the wrong registry is a
+            /// row: unlike a tombstone, a row from the wrong registry is a
             /// corrupt read, not an absent resource.
             pub fn $rows(
-                pointers: &[RegistryPointer],
+                rows: &[StoredRegistryRow],
                 next_cursor: Option<Cursor>,
             ) -> Result<models::$page, ProjectionError> {
                 Ok(models::$page {
-                    items: pointers.iter().map($row).collect::<Result<Vec<_>, _>>()?,
+                    items: rows.iter().map($row).collect::<Result<Vec<_>, _>>()?,
                     next_cursor,
                 })
             }
@@ -421,13 +459,18 @@ macro_rules! registry_projections {
 }
 
 registry_projections! {
-    RegisteredFile, RegisteredFilePage, File, registered_file, registered_file_page;
-    RegisteredSkill, RegisteredSkillPage, Skill, registered_skill, registered_skill_page;
-    RegisteredTool, RegisteredToolPage, Tool, registered_tool, registered_tool_page;
-    RegisteredInstruction, RegisteredInstructionPage, Instruction,
-        registered_instruction, registered_instruction_page;
-    RegisteredMcpServer, RegisteredMcpServerPage, McpServer,
-        registered_mcp_server, registered_mcp_server_page;
+    RegisteredFile, RegisteredFileRead, RegisteredFileRow, RegisteredFilePage, File,
+        registered_file, registered_file_row, registered_file_page;
+    RegisteredSkill, RegisteredSkillRead, RegisteredSkillRow, RegisteredSkillPage, Skill,
+        registered_skill, registered_skill_row, registered_skill_page;
+    RegisteredTool, RegisteredToolRead, RegisteredToolRow, RegisteredToolPage, Tool,
+        registered_tool, registered_tool_row, registered_tool_page;
+    RegisteredInstruction, RegisteredInstructionRead, RegisteredInstructionRow,
+        RegisteredInstructionPage, Instruction,
+        registered_instruction, registered_instruction_row, registered_instruction_page;
+    RegisteredMcpServer, RegisteredMcpServerRead, RegisteredMcpServerRow,
+        RegisteredMcpServerPage, McpServer,
+        registered_mcp_server, registered_mcp_server_row, registered_mcp_server_page;
 }
 
 // --- sessions ---------------------------------------------------------------------

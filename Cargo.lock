@@ -7232,6 +7232,8 @@ dependencies = [
 name = "session-stream-api"
 version = "0.1.0"
 dependencies = [
+ "aex-capacity-dynamodb",
+ "aex-content-aws",
  "aex-content-domain",
  "aex-content-dynamodb",
  "aex-identity-domain",
@@ -7263,6 +7265,7 @@ dependencies = [
  "aws-smithy-http-client",
  "aws-smithy-types",
  "axum",
+ "base64 0.23.0",
  "bytes",
  "futures",
  "hex",

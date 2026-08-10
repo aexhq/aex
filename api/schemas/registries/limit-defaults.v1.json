@@ -94,6 +94,14 @@
         "list_entries": 2000,
         "list_depth": 10
       }
+    },
+    {
+      "id": "registry.entries",
+      "value": 1000
+    },
+    {
+      "id": "registry.value_bytes",
+      "value": 65536
     }
   ]
 }

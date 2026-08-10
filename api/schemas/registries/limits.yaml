@@ -14,4 +14,6 @@ limits:
   - { id: "stream.frame", shape: map, dimensions: [records, encoded_bytes], doc: "Largest NDJSON records frame in observations and encoded bytes." }
   - { id: "metric.aggregate", shape: map, dimensions: [interval_min_seconds, interval_max_seconds, group_fields, calculations, buckets_per_series, rows], doc: "Interval, grouping, calculation, bucket and row aggregation bounds." }
   - { id: "content.bundle_expand", shape: map, dimensions: [expanded_bytes, entries, path_bytes], doc: "Expanded bytes, entries and path length admitted from a bundle." }
+  - { id: "registry.entries", shape: scalar, doc: "Registered names one workspace may hold in one registry." }
+  - { id: "registry.value_bytes", shape: scalar, doc: "Largest canonical value document a registered name may carry." }
   - { id: "tools.io_safety", shape: map, dimensions: [web_fetch_bytes, shell_output_bytes, grep_input_bytes, head_tail_input_bytes, walk_files, list_entries, list_depth], doc: "Per-tool byte, traversal and listing safety bounds." }

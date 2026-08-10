@@ -9,9 +9,10 @@
 use aex_content_domain::identity::{RegistryKind, Revision};
 use aex_session_dynamodb::attr::{CodecError, Item, ItemBuilder, PK, Row, SK, n, n_i64, s, stamp};
 use aex_session_dynamodb::component::KeyError;
+use aex_wire::CanonicalJson;
 use aex_wire::ids::{ContentHash, UploadId, WorkspaceId};
 use aex_wire::types::{ETag, Timestamp};
-use aex_workspace_domain::registry::{RegisteredValueRef, RegistryPointer, etag_of};
+use aex_workspace_domain::registry::{RegistryPointer, RegistryRow, ValueDocument, etag_of};
 use aex_workspace_domain::upload::{PartPlan, PlannedPart, RegistrySelector, Upload, UploadState};
 
 use crate::keys;
@@ -22,6 +23,23 @@ pub const REGISTRY_POINTER: &str = "registry_pointer";
 pub const REGISTRY_UPLOAD: &str = "registry_upload";
 /// The `itemType` of an idempotency receipt.
 pub const IDEMPOTENCY_RECEIPT: &str = "idempotency_receipt";
+/// The `itemType` of one `(workspace, kind)` entry counter.
+pub const REGISTRY_COUNT: &str = "registry_count";
+
+/// The attribute a pointer's canonical value document is stored under.
+pub const VALUE_DOC: &str = "valueDoc";
+
+/// The attribute holding one `(workspace, kind)` entry count.
+pub const COUNT: &str = "entryCount";
+
+/// The collection columns, as a `ProjectionExpression`.
+///
+/// A listing reads exactly these and never `valueDoc`: a thousand-row page that
+/// carried a thousand value documents would be the cost D-3 exists to avoid.
+/// `name` is a `DynamoDB` reserved word, so it is aliased.
+pub const ROW_PROJECTION: &str =
+    "itemType, workspaceId, kind, #name, revision, etag, contentDigest, sizeBytes, createdAt, \
+     updatedAt";
 
 /// Why a row could not be encoded.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -59,36 +77,35 @@ pub fn upload_state_of(text: &str) -> Option<UploadState> {
 ///
 /// [`EncodeError`] when the name could not enter a key.
 pub fn encode_pointer(pointer: &RegistryPointer) -> Result<Item, EncodeError> {
-    let key = keys::pointer(pointer.workspace, pointer.kind, pointer.name.as_str())?;
-    let (value_kind, value_id) = match &pointer.value {
-        RegisteredValueRef::Content { digest } => ("content", digest.to_wire()),
-        RegisteredValueRef::Upload { upload } => ("upload", upload.to_string()),
-    };
+    let row = &pointer.row;
+    let key = keys::pointer(row.workspace, row.kind, row.name.as_str())?;
     Ok(ItemBuilder::new(REGISTRY_POINTER)
         .set(PK, s(key.pk))
         .set(SK, s(key.sk))
-        .set("workspaceId", s(pointer.workspace.to_string()))
-        .set("kind", s(pointer.kind.as_str()))
-        .set("name", s(pointer.name.as_str().to_owned()))
-        .set("revision", n(pointer.revision.0))
-        .set("etag", s(pointer.etag.as_str().to_owned()))
-        .set("valueKind", s(value_kind))
-        .set("valueId", s(value_id))
-        .set("contentDigest", s(pointer.sha256.to_wire()))
-        .set("sizeBytes", n(pointer.size_bytes))
-        .set("createdAt", stamp(pointer.created_at))
-        .set("updatedAt", stamp(pointer.updated_at))
+        .set("workspaceId", s(row.workspace.to_string()))
+        .set("kind", s(row.kind.as_str()))
+        .set("name", s(row.name.as_str().to_owned()))
+        .set("revision", n(row.revision.0))
+        .set("etag", s(row.etag.as_str().to_owned()))
+        .set(VALUE_DOC, s(pointer.value_doc.as_str().to_owned()))
+        .set("contentDigest", s(row.sha256.to_wire()))
+        .set("sizeBytes", n(row.size_bytes))
+        .set("createdAt", stamp(row.created_at))
+        .set("updatedAt", stamp(row.updated_at))
         .build())
 }
 
-/// Decodes one current pointer and re-checks its ownership and its `ETag`.
+/// Decodes the collection columns of one pointer.
+///
+/// This is what a listing reads. It never touches `valueDoc`, so it works
+/// against a projected item as well as a complete one.
 ///
 /// # Errors
 ///
 /// [`CodecError`] for any missing, mistyped or out-of-vocabulary attribute, a
 /// row from another tenant, or a stored `ETag` that the row's own
 /// `(kind, revision, digest)` does not produce.
-pub fn decode_pointer(item: &Item, asserted: WorkspaceId) -> Result<RegistryPointer, CodecError> {
+pub fn decode_row(item: &Item, asserted: WorkspaceId) -> Result<RegistryRow, CodecError> {
     let row = Row::bind(item, REGISTRY_POINTER)?;
     row.owned_by("workspaceId", &asserted.to_string())?;
     let kind_text = row.enumerated("kind", keys::KINDS)?;
@@ -106,14 +123,6 @@ pub fn decode_pointer(item: &Item, asserted: WorkspaceId) -> Result<RegistryPoin
     })?;
     let revision = Revision(row.u64("revision")?);
     let sha256 = content_hash(&row, "contentDigest")?;
-    let value = match row.enumerated("valueKind", &["content", "upload"])? {
-        "content" => RegisteredValueRef::Content {
-            digest: content_hash(&row, "valueId")?,
-        },
-        _ => RegisteredValueRef::Upload {
-            upload: parse_id::<UploadId>(&row, "valueId")?,
-        },
-    };
     let stored = ETag::parse(row.string("etag")?).map_err(|error| CodecError::Malformed {
         item_type: REGISTRY_POINTER,
         attribute: "etag",
@@ -129,18 +138,63 @@ pub fn decode_pointer(item: &Item, asserted: WorkspaceId) -> Result<RegistryPoin
                 .to_owned(),
         });
     }
-    Ok(RegistryPointer {
+    Ok(RegistryRow {
         workspace: asserted,
         kind,
         name,
         revision,
         etag: stored,
-        value,
         sha256,
         size_bytes: row.u64("sizeBytes")?,
         created_at: row.timestamp("createdAt")?,
         updated_at: row.timestamp("updatedAt")?,
     })
+}
+
+/// Decodes one complete pointer, re-checking its ownership, its `ETag` **and**
+/// the digest of its own value document.
+///
+/// The digest check is the same fence as the `ETag` check one step earlier: the
+/// row states `sha256`, and since D-4 that field means `SHA-256(JCS(valueDoc))`.
+/// A row whose two halves disagree is corruption, and a reader that trusted the
+/// stored digest would publish a value document under a tag that does not
+/// describe it.
+///
+/// # Errors
+///
+/// As [`decode_row`], plus a malformed or mis-digested `valueDoc`.
+pub fn decode_pointer(item: &Item, asserted: WorkspaceId) -> Result<RegistryPointer, CodecError> {
+    let collection = decode_row(item, asserted)?;
+    let bound = Row::bind(item, REGISTRY_POINTER)?;
+    let value_doc = ValueDocument::new(CanonicalJson::parse(bound.string(VALUE_DOC)?).map_err(
+        |error| CodecError::Malformed {
+            item_type: REGISTRY_POINTER,
+            attribute: VALUE_DOC,
+            reason: error.to_string(),
+        },
+    )?);
+    if value_doc.digest() != collection.sha256 || value_doc.size_bytes() != collection.size_bytes {
+        return Err(CodecError::Malformed {
+            item_type: REGISTRY_POINTER,
+            attribute: VALUE_DOC,
+            reason: "the stored digest and size are not this value document's own".to_owned(),
+        });
+    }
+    Ok(RegistryPointer {
+        row: collection,
+        value_doc,
+    })
+}
+
+/// Decodes one `(workspace, kind)` entry count.
+///
+/// # Errors
+///
+/// [`CodecError`] for a missing or mistyped count, or a row from another tenant.
+pub fn decode_count(item: &Item, asserted: WorkspaceId) -> Result<u64, CodecError> {
+    let row = Row::bind(item, REGISTRY_COUNT)?;
+    row.owned_by("workspaceId", &asserted.to_string())?;
+    row.u64(COUNT)
 }
 
 /// Encodes one staged upload.
@@ -304,10 +358,12 @@ mod tests {
     use aex_session_dynamodb::attr::CodecError;
     use aex_wire::ids::{ContentHash, PrefixedId, ResourceName, UploadId, Uuid7, WorkspaceId};
     use aex_wire::types::Timestamp;
-    use aex_workspace_domain::registry::{RegisteredValueRef, RegistryPointer, etag_of};
+    use aex_workspace_domain::registry::{
+        RegistryPointer, RegistryRow, ValueDocument, etag_of,
+    };
     use aex_workspace_domain::upload::{PartPlan, PlannedPart, Upload, UploadState};
 
-    use super::{decode_pointer, decode_upload, encode_pointer, encode_upload};
+    use super::{VALUE_DOC, decode_pointer, decode_row, decode_upload, encode_pointer, encode_upload};
 
     fn workspace(byte: u8) -> WorkspaceId {
         WorkspaceId::from_uuid7(Uuid7::compose(1_754_051_696_789, [byte; 10]))
@@ -317,19 +373,34 @@ mod tests {
         Timestamp::parse("2026-08-01T12:34:56.789Z").expect("the pinned spelling")
     }
 
+    fn value_doc() -> ValueDocument {
+        ValueDocument::new(
+            aex_wire::CanonicalJson::parse(
+                r#"{"description":"search the web","entry":"main.js","bundleFormat":"tar.gz",
+                    "inputSchema":{"type":"object"},
+                    "bundle":{"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "sizeBytes":"2048"}}"#,
+            )
+            .expect("valid JSON"),
+        )
+    }
+
     fn pointer() -> RegistryPointer {
-        let digest = ContentHash::from_bytes([0xab; 32]);
+        let document = value_doc();
+        let digest = document.digest();
         RegistryPointer {
-            workspace: workspace(1),
-            kind: RegistryKind::Tool,
-            name: ResourceName::parse("search").expect("a name"),
-            revision: Revision::FIRST,
-            etag: etag_of(RegistryKind::Tool, Revision::FIRST, &digest),
-            value: RegisteredValueRef::Content { digest },
-            sha256: digest,
-            size_bytes: 2_048,
-            created_at: now(),
-            updated_at: now(),
+            row: RegistryRow {
+                workspace: workspace(1),
+                kind: RegistryKind::Tool,
+                name: ResourceName::parse("search").expect("a name"),
+                revision: Revision::FIRST,
+                etag: etag_of(RegistryKind::Tool, Revision::FIRST, &digest),
+                sha256: digest,
+                size_bytes: document.size_bytes(),
+                created_at: now(),
+                updated_at: now(),
+            },
+            value_doc: document,
         }
     }
 
@@ -364,7 +435,7 @@ mod tests {
         let original = pointer();
         let encoded = encode_pointer(&original).expect("encodes");
         assert_eq!(
-            decode_pointer(&encoded, original.workspace).expect("decodes"),
+            decode_pointer(&encoded, original.row.workspace).expect("decodes"),
             original
         );
     }
@@ -384,9 +455,39 @@ mod tests {
     fn a_revision_bump_changes_the_tag_so_a_client_can_never_reuse_a_stale_one() {
         let first = pointer();
         let mut second = first.clone();
-        second.revision = first.revision.next();
-        second.etag = etag_of(second.kind, second.revision, &second.sha256);
-        assert_ne!(first.etag, second.etag);
+        second.row.revision = first.row.revision.next();
+        second.row.etag = etag_of(second.row.kind, second.row.revision, &second.row.sha256);
+        assert_ne!(first.row.etag, second.row.etag);
+    }
+
+    #[test]
+    fn a_pointer_row_stores_no_upload_and_no_value_reference() {
+        let encoded = encode_pointer(&pointer()).expect("encodes");
+        assert!(
+            !encoded.contains_key("valueKind") && !encoded.contains_key("valueId"),
+            "a durable pointer names a digest and nothing else (D-15)"
+        );
+        assert!(encoded.contains_key(VALUE_DOC));
+    }
+
+    #[test]
+    fn a_value_document_the_stored_digest_does_not_describe_is_corruption() {
+        let mut encoded = encode_pointer(&pointer()).expect("encodes");
+        encoded.insert(
+            VALUE_DOC.to_owned(),
+            aex_session_dynamodb::attr::s(r#"{"description":"edited behind the digest"}"#),
+        );
+        let error = decode_pointer(&encoded, workspace(1)).expect_err("a forged document");
+        assert!(matches!(error, CodecError::Malformed { .. }), "{error}");
+    }
+
+    #[test]
+    fn a_collection_row_decodes_without_the_value_document_at_all() {
+        let mut encoded = encode_pointer(&pointer()).expect("encodes");
+        encoded.remove(VALUE_DOC);
+        let row = decode_row(&encoded, workspace(1)).expect("decodes a projected row");
+        assert_eq!(row, pointer().row);
+        assert!(decode_pointer(&encoded, workspace(1)).is_err());
     }
 
     #[test]

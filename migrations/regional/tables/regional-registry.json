@@ -2,14 +2,14 @@
   "schema": "aex.regional-table.v1",
   "table": "regional-registry",
   "owner": "regional-stores",
-  "purpose": "The current (workspace, kind, name) registry pointer with its revision and ETag, multipart upload staging rows, and registry idempotency receipts.",
+  "purpose": "The current (workspace, kind, name) registry pointer with its revision, ETag and canonical value document, one entry counter per (workspace, kind), multipart upload staging rows, and registry idempotency receipts.",
   "billingMode": "PAY_PER_REQUEST",
   "deletionProtection": true,
   "pointInTimeRecovery": { "enabled": true, "retentionDays": 35 },
   "serverSideEncryption": {
     "type": "KMS",
     "keyAuthority": "regional-registry",
-    "rationale": "Per-authority customer managed key. The registry stores pointers and digests, never bodies."
+    "rationale": "Per-authority customer managed key. The registry stores pointers, digests and unsealed value documents, never payload bodies."
   },
   "attributes": [
     { "name": "pk", "type": "S" },
@@ -29,7 +29,7 @@
     "appliesTo": ["idempotency_receipt"],
     "rationale": "Receipts only (OD-16, 24 hours). Upload rows deliberately have no TTL: a TTL deletion would orphan the live S3 multipart upload, and the 24-hour sweeper must abort the upload before removing the row."
   },
-  "itemTypes": ["registry_pointer", "registry_upload", "idempotency_receipt"],
+  "itemTypes": ["registry_pointer", "registry_upload", "idempotency_receipt", "registry_count"],
   "iam": [
     {
       "role": "regional-session-api",

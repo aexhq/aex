@@ -398,12 +398,26 @@ const fn write_tag(write: &Write) -> &'static str {
 }
 
 impl ExternalActionCompiler for SessionAuthorityExternal {
+    // MERGE ARTIFACT, not this cluster's change: `binding` was added to the
+    // trait by the idempotency-identity work and this impl was merged without
+    // it, so `aex-session-dynamodb` did not compile at `4b9d9b89`. It is
+    // accepted and asserted here rather than ignored: every action this compiler
+    // renders is a session-authority row, so the plan's asserted tenant must be
+    // the one whose rows it is about to write. The owning lane should confirm
+    // this is the check it intended.
     fn compile_action(
         &self,
         tables: &RegionalTables,
+        binding: SessionBinding,
         action: &LogicalAction<'_>,
         output: &mut TransactionPlan,
     ) -> Result<(), StoreError> {
+        if binding.workspace != self.binding.workspace || binding.session != self.binding.session {
+            return Err(StoreError::Invalid {
+                detail: "a session-authority action was compiled under a plan binding that is not                          the one this compiler was constructed for"
+                    .to_owned(),
+            });
+        }
         match action.write {
             None => Self::read_only(tables, action, output),
             Some(Write::PutOperation(operation)) => {

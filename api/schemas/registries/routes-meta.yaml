@@ -107,22 +107,7 @@ operationOwners:
 deferredOperations:
   account_get: "The central identity composition does not yet mount an authoritative account operational-state read."
   provider_credential_register: "First-seal custody and the atomic credential-binding replay transaction are incomplete."
-  registry_files_delete: "Registry mutation and content-lifecycle composition is incomplete."
   registry_files_download_create: "No composed content grant and presigning authority exists yet."
-  registry_files_get: "The registry pointer composition has no plaintext content hydration path."
-  registry_files_put: "Registry mutation and sealed-content composition is incomplete."
-  registry_instructions_delete: "Registry mutation and content-lifecycle composition is incomplete."
-  registry_instructions_get: "The registry pointer composition has no plaintext content hydration path."
-  registry_instructions_put: "Registry mutation and sealed-content composition is incomplete."
-  registry_mcp_servers_delete: "Registry mutation and content-lifecycle composition is incomplete."
-  registry_mcp_servers_get: "The registry pointer composition has no plaintext content hydration path."
-  registry_mcp_servers_put: "Registry mutation and sealed-content composition is incomplete."
-  registry_skills_delete: "Registry mutation and content-lifecycle composition is incomplete."
-  registry_skills_get: "The registry pointer composition has no plaintext content hydration path."
-  registry_skills_put: "Registry mutation and sealed-content composition is incomplete."
-  registry_tools_delete: "Registry mutation and content-lifecycle composition is incomplete."
-  registry_tools_get: "The registry pointer composition has no plaintext content hydration path."
-  registry_tools_put: "Registry mutation and sealed-content composition is incomplete."
   secret_put: "First-seal custody and durable idempotent replay are incomplete."
   session_approval_respond: "The atomic bound-call approval writer is not composed into the regional service."
   session_clone: "The complete session authority and command transaction are not implemented."
@@ -240,11 +225,26 @@ servedOperations:
     - regional_operation_cancel
     - regional_operation_get
     - regional_operations_list
+    - registry_files_delete
+    - registry_files_get
     - registry_files_list
+    - registry_files_put
+    - registry_instructions_delete
+    - registry_instructions_get
     - registry_instructions_list
+    - registry_instructions_put
+    - registry_mcp_servers_delete
+    - registry_mcp_servers_get
     - registry_mcp_servers_list
+    - registry_mcp_servers_put
+    - registry_skills_delete
+    - registry_skills_get
     - registry_skills_list
+    - registry_skills_put
+    - registry_tools_delete
+    - registry_tools_get
     - registry_tools_list
+    - registry_tools_put
     - secret_get
     - secrets_list
     - session_approval_get

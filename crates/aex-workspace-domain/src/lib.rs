@@ -37,7 +37,7 @@ pub use persist::{
 };
 pub use registry::{
     DeleteCommit, ProposedValue, RegisteredValueRef, RegistryCommit, RegistryPointer,
-    RegistryRejection, SetOutcome, ValueError, delete, etag_of, set,
+    RegistryRejection, RegistryRow, SetOutcome, ValueDocument, ValueError, delete, etag_of, set,
 };
 pub use upload::{
     PART_GRANT_TTL, PART_MAX_BYTES, PART_MAX_COUNT, PART_MIN_BYTES, PartPlan, PartReceipt,

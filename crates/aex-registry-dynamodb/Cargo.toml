@@ -43,6 +43,7 @@ integration-engines = ["dep:tokio", "aex-test-harness/containers"]
 async-trait.workspace = true
 aws-sdk-dynamodb.workspace = true
 aws-smithy-types.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 aex-content-domain = { path = "../aex-content-domain" }
 aex-wire = { path = "../aex-wire" }

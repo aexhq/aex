@@ -1,0 +1,24 @@
+{
+  "$id": "https://schemas.aex.dev/v1/ContentRef.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A reference to a stored payload. The bytes are never published in a registry response; they are reached through a download grant.",
+  "properties": {
+    "sha256": {
+      "description": "Hash of the stored payload bytes.",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "sizeBytes": {
+      "description": "Size of the stored payload in bytes.",
+      "pattern": "^(0|[1-9]\\d*)$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "sha256",
+    "sizeBytes"
+  ],
+  "title": "ContentRef",
+  "type": "object"
+}

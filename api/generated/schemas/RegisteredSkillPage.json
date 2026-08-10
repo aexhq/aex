@@ -7,7 +7,7 @@
     "items": {
       "description": "The page.",
       "items": {
-        "$ref": "aex:schema:RegisteredSkill"
+        "$ref": "aex:schema:RegisteredSkillRow"
       },
       "maxItems": 1000,
       "type": "array"

@@ -170,6 +170,27 @@ pub trait ContentMetadataStore: Send + Sync + 'static {
     /// content-addressed and therefore identical by construction.
     async fn put_tree_pages(&self, pages: &[TreePage]) -> Result<(), StoreError>;
 
+    /// Admits one body: stage the descriptor, commit it, then pin it.
+    ///
+    /// The three steps are separate writes rather than one transaction, and each
+    /// is individually idempotent, because a body is content-addressed: a second
+    /// admission of the same bytes under a second name must succeed, not
+    /// collide. The order is what makes a crash safe — a pin can outlive the
+    /// caller that took it and is reclaimed by garbage collection, while a name
+    /// referencing an unpinned body could not be.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::PreconditionFailed`] naming `content.commit` when a
+    /// descriptor exists under this digest that the commit condition rejects;
+    /// otherwise any transport failure.
+    async fn admit_body(
+        &self,
+        descriptor: &crate::codec::ContentDescriptor,
+        pin: &crate::codec::ContentPin,
+        now: Timestamp,
+    ) -> Result<(), StoreError>;
+
     /// Reads the workspace's garbage-collection epoch.
     ///
     /// # Errors
@@ -325,6 +346,89 @@ impl ContentStore {
         &self.table
     }
 
+    /// Issues a conditional put whose lost condition is an idempotent success.
+    ///
+    /// Only for content-addressed rows: an existing row under a digest-derived
+    /// key holds the bytes that digest names, so the write it would have made is
+    /// the write already there.
+    async fn admitting_put(
+        &self,
+        builder: aws_sdk_dynamodb::types::builders::PutBuilder,
+        participant: Participant,
+    ) -> Result<(), StoreError> {
+        let built = builder.build().map_err(|error| StoreError::Invalid {
+            detail: error.to_string(),
+        })?;
+        let outcome = self
+            .client
+            .put_item()
+            .table_name(&self.table)
+            .set_item(Some(built.item().clone()))
+            .set_condition_expression(built.condition_expression().map(str::to_owned))
+            .set_expression_attribute_names(built.expression_attribute_names().cloned())
+            .set_expression_attribute_values(built.expression_attribute_values().cloned())
+            .send()
+            .await;
+        match outcome {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                if matches!(
+                    error.as_service_error(),
+                    Some(
+                        aws_sdk_dynamodb::operation::put_item::PutItemError::ConditionalCheckFailedException(
+                            _
+                        )
+                    )
+                ) {
+                    return Ok(());
+                }
+                let _ = participant;
+                Err(classify(&error, Idempotence::Write(Resolution::TargetItem)))
+            }
+        }
+    }
+
+    /// Issues a conditional update, reporting a lost condition as a typed
+    /// precondition failure carrying the row the condition saw.
+    async fn conditional_update(
+        &self,
+        builder: aws_sdk_dynamodb::types::builders::UpdateBuilder,
+        participant: Participant,
+    ) -> Result<(), StoreError> {
+        let built = builder.build().map_err(|error| StoreError::Invalid {
+            detail: error.to_string(),
+        })?;
+        let outcome = self
+            .client
+            .update_item()
+            .table_name(&self.table)
+            .set_key(Some(built.key().clone()))
+            .set_condition_expression(built.condition_expression().map(str::to_owned))
+            .update_expression(built.update_expression())
+            .set_expression_attribute_names(built.expression_attribute_names().cloned())
+            .set_expression_attribute_values(built.expression_attribute_values().cloned())
+            .return_values_on_condition_check_failure(
+                aws_sdk_dynamodb::types::ReturnValuesOnConditionCheckFailure::AllOld,
+            )
+            .send()
+            .await;
+        match outcome {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                if let Some(
+                    aws_sdk_dynamodb::operation::update_item::UpdateItemError::ConditionalCheckFailedException(failed),
+                ) = error.as_service_error()
+                {
+                    return Err(StoreError::PreconditionFailed {
+                        participant,
+                        observed: failed.item.clone().map(Box::new),
+                    });
+                }
+                Err(classify(&error, Idempotence::Write(Resolution::TargetItem)))
+            }
+        }
+    }
+
     async fn get(
         &self,
         pk: &str,
@@ -440,6 +544,35 @@ impl ContentMetadataStore for ContentStore {
             outcome?;
         }
         Ok(())
+    }
+
+    async fn admit_body(
+        &self,
+        descriptor: &crate::codec::ContentDescriptor,
+        pin: &crate::codec::ContentPin,
+        now: Timestamp,
+    ) -> Result<(), StoreError> {
+        // An existing descriptor under this digest already describes these exact
+        // bytes, so a lost `IMMUTABLE` is the second admission of one body and is
+        // a success. `commit_staged` still runs, because the descriptor that
+        // exists may be `staged` from an interrupted admission.
+        self.admitting_put(
+            expressions::stage_descriptor(&self.table, descriptor)?,
+            Participant::CONTENT_DESCRIPTOR,
+        )
+        .await?;
+        self.conditional_update(
+            expressions::commit_staged(&self.table, descriptor.workspace, &descriptor.digest, now)?,
+            Participant::CONTENT_COMMIT,
+        )
+        .await?;
+        // A pin is keyed by `(workspace, digest, owner)`, so an existing pin is
+        // this same pin and taking it again is a success.
+        self.admitting_put(
+            expressions::pin_body(&self.table, &descriptor.digest, pin)?,
+            Participant::CONTENT_DESCRIPTOR,
+        )
+        .await
     }
 
     async fn load_gc_epoch(&self, workspace: WorkspaceId) -> Result<Option<GcEpoch>, StoreError> {
