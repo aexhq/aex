@@ -13,8 +13,8 @@ use aws_smithy_types::Blob;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use aex_control_app::ports::AuthorizationReader;
-use aex_control_aurora::{AuroraAuthorizationReader, sql};
+use aex_control_app::ports::{AuthorizationReader, ControlViewStore};
+use aex_control_aurora::{AuroraAuthorizationReader, AuroraControlStore, sql};
 use aex_rds_data::client::ExecuteResponse;
 use aex_rds_data::{
     DataApiClient, DataApiConfig, DatabaseName, ResourceArn, SecretArn, TransactionId, Transport,
@@ -279,6 +279,32 @@ async fn an_absent_active_signing_key_is_not_found_rather_than_an_empty_set() {
         .await
         .expect_err("a missing key is a readiness failure");
     assert_eq!(error, aex_control_app::ports::StoreError::NotFound);
+}
+
+#[tokio::test]
+async fn the_public_operation_read_never_returns_an_internal_operation() {
+    // `central_operation_get` projects a public `Operation` and has no arm for
+    // `workspace_provision`, which is `internal`. Reading the row anyway and
+    // refusing it in the wire mapper turned a valid operation id into a `500`.
+    // The read is narrowed instead, so an internal id is simply absent — and
+    // `not_found`, which the route declares.
+    let transport = Counting::with(Vec::new());
+    let store = AuroraControlStore::new(client(&transport));
+    let found = store
+        .get_operation_view(Uuid::from_u128(1))
+        .await
+        .expect("the read succeeds");
+    assert!(found.is_none());
+    assert_eq!(transport.statements(), 1, "an absent row costs one read");
+    let Some(Call::Execute { sql, parameters }) = transport.calls().first().cloned() else {
+        panic!("the public operation read issued no statement");
+    };
+    assert_eq!(sql, sql::GET_PUBLIC_OPERATION);
+    assert!(
+        sql.contains("o.visibility = 'public'"),
+        "the public read must filter on visibility, as the listing already does"
+    );
+    assert_eq!(parameters, ["operation_id"]);
 }
 
 // --- source discipline -------------------------------------------------------
