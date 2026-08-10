@@ -326,6 +326,136 @@ fn validate_set(
     Ok(())
 }
 
+/// The participants a provider-credential registration names, in plan order,
+/// before the quota guard appends.
+pub const REGISTER_ORDER: [Participant; 5] = [
+    Participant::SECRET_GENERATION,
+    Participant::SECRET_METADATA,
+    Participant::SECRET_LINEAGE,
+    Participant::CUSTODY_PROVIDER_CREDENTIAL,
+    Participant::SECRET_IDEMPOTENCY,
+];
+
+/// Compiles the atomic credential-binding transaction (D-9).
+///
+/// One `TransactWriteItems`, five participants plus the quota guard, all in one
+/// table. A registration is a **backing secret plus a directory entry**, and the
+/// order matters in both directions:
+///
+/// * writing the secret first and the `pcr_` row second would leave, on a crash,
+///   an orphan secret the customer can neither see (D-10 hides it) nor delete;
+/// * writing the `pcr_` row first would leave a `ready` binding pointing at a
+///   generation that does not exist, which `authorize_managed_call` fails on
+///   with no diagnosis.
+///
+/// So neither is written first: they are one transaction. A saga with a
+/// compensating delete was rejected — two failure modes and a repair worker
+/// where one transaction and a condition suffice.
+///
+/// The metadata participant conditions on `attribute_not_exists(pk)`: a
+/// registration **always** creates, because the name it mints is the credential
+/// id and no earlier row can hold it.
+///
+/// The row shapes are reused rather than re-encoded (`encode_generation`,
+/// `encode_lineage`, `encode_provider_credential`), so there is one shape per
+/// row and a registration's secret is byte-identical to a `secret_put`'s.
+///
+/// # Errors
+///
+/// [`StoreError`] when a row could not be encoded, when the identities do not
+/// agree, or when an action could not be built.
+pub fn register_provider_credential(
+    table: &str,
+    generation: &StoredGeneration,
+    metadata: &SecretMetadata,
+    credential: &ProviderCredential,
+    receipt: &Receipt,
+    quota: Quota,
+) -> Result<TransactionPlan, StoreError> {
+    validate_set(generation, metadata, None)?;
+    if credential.secret_name != metadata.name
+        || credential.workspace != metadata.workspace
+        || credential.source_generation != metadata.generation
+    {
+        return Err(StoreError::Invalid {
+            detail: "the credential binding does not name the secret this registration sealed"
+                .to_owned(),
+        });
+    }
+    if credential.state != CredentialState::Ready {
+        return Err(StoreError::Invalid {
+            detail: "a registration produces a ready binding".to_owned(),
+        });
+    }
+    // The transport token is the replay identity, not the minted id: the
+    // provider's `ClientRequestToken` and the durable receipt must agree about
+    // what a retry is, and the minted id is precisely the thing a retry has to
+    // reproduce rather than re-derive.
+    let mut plan = TransactionPlan::new(token("pcr", &[&receipt.scope, &receipt.key_sha256]));
+    plan.put(
+        Participant::SECRET_GENERATION,
+        Put::builder()
+            .table_name(table)
+            .set_item(Some(codec::encode_generation(generation).map_err(
+                |error| StoreError::Invalid {
+                    detail: error.to_string(),
+                },
+            )?))
+            .condition_expression(IMMUTABLE),
+    )?;
+    plan.put(
+        Participant::SECRET_METADATA,
+        Put::builder()
+            .table_name(table)
+            .set_item(Some(codec::encode_secret(metadata).map_err(|error| {
+                StoreError::Invalid {
+                    detail: error.to_string(),
+                }
+            })?))
+            .condition_expression(IMMUTABLE),
+    )?;
+    plan.put(
+        Participant::SECRET_LINEAGE,
+        Put::builder()
+            .table_name(table)
+            .set_item(Some(
+                codec::encode_lineage(
+                    metadata.workspace,
+                    &metadata.name,
+                    metadata.generation,
+                    metadata.created_at,
+                )
+                .map_err(|error| StoreError::Invalid {
+                    detail: error.to_string(),
+                })?,
+            ))
+            .condition_expression(IMMUTABLE),
+    )?;
+    plan.put(
+        Participant::CUSTODY_PROVIDER_CREDENTIAL,
+        Put::builder()
+            .table_name(table)
+            .set_item(Some(
+                codec::encode_provider_credential(credential).map_err(|error| {
+                    StoreError::Invalid {
+                        detail: error.to_string(),
+                    }
+                })?,
+            ))
+            .condition_expression(IMMUTABLE),
+    )?;
+    push_receipt(&mut plan, table, metadata.workspace, receipt)?;
+    push_quota(
+        &mut plan,
+        table,
+        &keys::provider_credential_counter(metadata.workspace),
+        metadata.workspace,
+        quota,
+        metadata.updated_at,
+    )?;
+    Ok(plan)
+}
+
 /// Builds the emergency revoke: one atomic fence, O(1) in the generation count.
 ///
 /// # Errors

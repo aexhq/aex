@@ -13,10 +13,13 @@ use std::sync::Arc;
 use aex_regional_http::context::RequestContext;
 use aex_regional_http::idempotency::IdempotencyIdentity;
 use aex_regional_http::mount::{UnaryDispatch, not_served};
-use aex_regional_http::projection::{self, authority_failure, entity_tag};
+use aex_regional_http::projection::{self, ProjectionError, authority_failure, entity_tag};
 use aex_regional_http::router::RouteOwner;
 use aex_secret_aws::crypto::SecretCrypto;
-use aex_secret_custody_dynamodb::codec::{SecretMetadata as StoredSecret, StoredGeneration};
+use aex_secret_custody_dynamodb::codec::{
+    CredentialState, ProviderCredential as StoredCredential, SecretMetadata as StoredSecret,
+    StoredGeneration,
+};
 use aex_secret_custody_dynamodb::expressions::{self, Quota};
 use aex_secret_custody_dynamodb::store::SecretCustodyStore;
 use aex_secret_domain::context::{EncryptionContext, Plane};
@@ -33,7 +36,7 @@ use aex_session_dynamodb::replay::{
 use aex_wire::dispatch::{RawRequest, RawResponse, RequestLimits};
 use aex_wire::error::{ErrorCode, WireError, WireResult};
 use aex_wire::idempotency::{IdempotencyKey, IntentDigest};
-use aex_wire::ids::{PrefixedId as _, ProviderCredentialId, ResourceName, WorkspaceId};
+use aex_wire::ids::{PrefixedId as _, ProviderCredentialId, ResourceName, Uuid7, WorkspaceId};
 use aex_wire::models;
 use aex_wire::routes::{RouteId, route};
 use aex_wire::server::{
@@ -201,6 +204,42 @@ impl DecodeReceipt for SealedMetadata {
     }
 }
 
+/// One committed registration response.
+///
+/// `ProviderCredential` publishes only the one-way `fingerprint`, so no key
+/// material can enter a receipt through it either. What the receipt must carry
+/// is the **minted `pcr_` id**: a retry inside the retention window has to
+/// reproduce the original binding rather than mint a second one.
+#[derive(Debug, Clone, PartialEq)]
+struct RegisteredCredential(models::ProviderCredential);
+
+impl RegisteredCredential {
+    const KIND: &'static str = "ProviderCredential";
+}
+
+impl DecodeReceipt for RegisteredCredential {
+    fn decode_receipt(receipt: &Receipt) -> Result<Self, StoreError> {
+        if receipt.response_kind != Self::KIND {
+            return Err(StoreError::Invalid {
+                detail: format!(
+                    "a `{}` receipt cannot answer a credential registration",
+                    receipt.response_kind
+                ),
+            });
+        }
+        let ReceiptBody::Inline(bytes) = &receipt.response else {
+            return Err(StoreError::Invalid {
+                detail: "a credential receipt stores its response inline".to_owned(),
+            });
+        };
+        serde_json::from_slice::<models::ProviderCredential>(bytes)
+            .map(Self)
+            .map_err(|error| StoreError::Invalid {
+                detail: format!("a stored credential receipt did not decode: {error}"),
+            })
+    }
+}
+
 /// One request's view of the deployable.
 pub struct Routes {
     shared: Arc<Shared>,
@@ -209,6 +248,7 @@ pub struct Routes {
 
 /// The routes this deployable can answer completely today.
 const SERVED: &[RouteId] = &[
+    RouteId::ProviderCredentialRegister,
     RouteId::SecretDelete,
     RouteId::SecretPut,
     RouteId::SecretRevoke,
@@ -372,6 +412,60 @@ impl Routes {
                 )?;
                 custody.commit(&plan).await?;
                 Ok(SealedMetadata(value.clone()))
+            },
+        )
+        .await
+        .map_err(|error| write_failure(&error))?;
+        Ok(outcome.into_inner().0)
+    }
+
+    /// Commits one credential registration under the request's replay identity.
+    async fn commit_registration(
+        &self,
+        metadata: &StoredSecret,
+        generation: &StoredGeneration,
+        binding: &StoredCredential,
+        value: &models::ProviderCredential,
+        now: Timestamp,
+    ) -> WireResult<models::ProviderCredential> {
+        let identity = self.cx.idempotency.as_ref().ok_or_else(|| {
+            WireError::new(ErrorCode::InternalError)
+                .with_message("this route requires a replay identity".to_owned())
+        })?;
+        // The scope subject is the **provider**, not the minted id: a retry has
+        // to find the winner's receipt, and it cannot know the id the winner
+        // minted.
+        let scope = IdempotencyScope::new("secret:credential", Some(binding.provider.as_str()))
+            .map_err(|error| {
+                WireError::new(ErrorCode::InvalidRequest).with_message(error.to_string())
+            })?;
+        let receipt = receipt_for(&scope, identity, RegisteredCredential::KIND, value, now)?;
+
+        let custody = self.shared.custody.as_ref();
+        let receipts = CustodyReceipts(custody);
+        let outcome = commit_or_replay::<RegisteredCredential, _, _>(
+            &receipts,
+            &SleepBackoff,
+            ReplayRequest {
+                workspace: metadata.workspace,
+                scope,
+                key: &identity.key,
+                intent: IntentDigest::from_bytes(identity.intent),
+                receipt_participant: Participant::SECRET_IDEMPOTENCY,
+                policy: RetryPolicy::PINNED,
+                now,
+            },
+            || async {
+                let plan = expressions::register_provider_credential(
+                    &self.shared.custody_table,
+                    generation,
+                    metadata,
+                    binding,
+                    &receipt,
+                    Quota::provider_credentials(self.shared.limits.max_provider_credentials),
+                )?;
+                custody.commit(&plan).await?;
+                Ok(RegisteredCredential(value.clone()))
             },
         )
         .await
@@ -698,12 +792,91 @@ impl ProviderCredentialsApi for Routes {
     ) -> WireResult<WithETag<models::ProviderCredential>> {
         Err(not_served(RouteId::ProviderCredentialGet))
     }
+
+    /// `POST /api/secrets/provider-credentials` — register a BYOK key.
+    ///
+    /// The seal is the whole operation (D-12). **The key is not validated
+    /// against the provider**: a probe call would put third-party latency and
+    /// third-party availability inside a write path, would need an egress path
+    /// from the one process that is otherwise network-isolated from providers,
+    /// and the route declares **no error code** for "the provider rejected this
+    /// key" — so the failure could only be reported as `invalid_request`, which
+    /// would be a lie. A typo'd key is discovered at first use, as a provider
+    /// authentication failure on a session, and that must be loud there.
+    ///
+    /// The minted secret name **is** the credential id's own string (D-10). It
+    /// is not derived from the human label, because labels are not unique
+    /// (D-11) and two registrations would collide on a name the route declares
+    /// no error for; and it is not caller-supplied, because the generated
+    /// request carries only `{provider, name, apiKey}` and a fourth field would
+    /// make the customer responsible for a namespace they cannot see.
     async fn provider_credential_register(
         &self,
         _cx: &WireContext,
-        _body: models::ProviderCredentialRegisterRequest,
+        body: models::ProviderCredentialRegisterRequest,
     ) -> WireResult<Created<models::ProviderCredential>> {
-        Err(not_served(RouteId::ProviderCredentialRegister))
+        let workspace = self.cx.auth.workspace_id;
+        let now = self.now()?;
+        let plaintext = SecretPlaintext::new(body.api_key.into_bytes())
+            .map_err(|error| WireError::from(ProjectionError::from(error)))?;
+
+        // Minted before the seal, because the credential id is the secret name
+        // the encryption context has to name.
+        let credential = ProviderCredentialId::from_uuid7(
+            Uuid7::from_bytes(*uuid::Uuid::now_v7().as_bytes()).map_err(|error| {
+                WireError::new(ErrorCode::InternalError).with_message(error.to_string())
+            })?,
+        );
+        let secret_name = ResourceName::parse(&credential.to_string()).map_err(|error| {
+            WireError::new(ErrorCode::InternalError).with_message(error.to_string())
+        })?;
+        // Derived **before** the plaintext is dropped: this is the only moment
+        // in the system's life when the value can be computed, because no read
+        // path may ever hold the plaintext again.
+        let fingerprint = plaintext.credential_fingerprint(workspace, credential);
+
+        let generation = self
+            .seal(
+                workspace,
+                &secret_name,
+                SourceGeneration::FIRST,
+                &plaintext,
+                now,
+            )
+            .await?;
+        drop(plaintext);
+
+        let metadata = StoredSecret {
+            workspace,
+            name: secret_name.clone(),
+            generation: SourceGeneration::FIRST,
+            revision: SecretRevision::FIRST,
+            state: SecretState::Ready,
+            revocation_epoch: RevocationEpoch::INITIAL,
+            revoked_through_revision: SecretRevision(0),
+            created_at: now,
+            updated_at: now,
+            revoked_at: None,
+        };
+        let binding = StoredCredential {
+            credential,
+            workspace,
+            name: body.name,
+            provider: body.provider,
+            secret_name,
+            source_generation: SourceGeneration::FIRST,
+            fingerprint,
+            revision: 1,
+            state: CredentialState::Ready,
+            created_at: now,
+            updated_at: now,
+            revoked_at: None,
+        };
+        let value = projection::provider_credential(&binding);
+        let committed = self
+            .commit_registration(&metadata, &generation, &binding, &value, now)
+            .await?;
+        Ok(Created(committed))
     }
 
     async fn provider_credential_revoke(

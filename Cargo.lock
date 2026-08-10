@@ -6625,6 +6625,7 @@ dependencies = [
  "time",
  "tokio",
  "tower",
+ "uuid",
 ]
 
 [[package]]

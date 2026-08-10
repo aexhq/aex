@@ -189,7 +189,7 @@ observes = ["artifact:session-stream-api"]
 [[scenario]]
 id = "SC-SECRET-CUSTODY"
 owner = "regional-stores"
-deferred = "The BYOK half of the custody lifecycle has no first seal yet: provider_credential_register is unbuilt, so no credential binding can exist for a live target to observe. The secrets half is reachable end to end as of secret_put."
+deferred = "The custody lifecycle is now reachable end to end — every route of it is served — but no executable live target exists yet: aex-live-regional-secret-api claims no scenario and needs a deployed plane and a customer-supplied test key to run against."
 observes = [
   "artifact:regional-secret-api",
   "artifact:regional-secret-key-admin",

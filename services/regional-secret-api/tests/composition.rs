@@ -184,20 +184,20 @@ fn the_mounted_router_answers_exactly_the_served_set() {
     assert_eq!(
         served,
         vec![
+            RouteId::ProviderCredentialRegister,
             RouteId::SecretDelete,
             RouteId::SecretPut,
             RouteId::SecretRevoke
         ],
-        "the two routes that need no ciphertext, plus the first seal"
+        "every plaintext-bearing route this deployable owns is built"
     );
     for id in &served {
         assert_eq!(route_owner(*id), Some(RouteOwner::SecretApi), "`{id}`");
     }
-    let owned = RouteOwner::SecretApi.routes();
-    for id in owned.iter().filter(|id| !served.contains(id)) {
-        assert!(
-            !served.contains(id),
-            "`{id}` is owned and unserved, so it must be absent from the router"
-        );
-    }
+    assert_eq!(
+        served,
+        RouteOwner::SecretApi.routes(),
+        "the served set and the owned set have converged, so the mount decision \
+         is total and no owned route can answer a runtime 404"
+    );
 }

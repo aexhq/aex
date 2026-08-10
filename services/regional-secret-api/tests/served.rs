@@ -522,11 +522,12 @@ fn the_served_set_matches_the_generated_actual_mount_authority() {
     assert_eq!(
         generated,
         vec![
+            RouteId::ProviderCredentialRegister,
             RouteId::SecretDelete,
             RouteId::SecretPut,
             RouteId::SecretRevoke
         ],
-        "`provider_credential_register` is the one owned route still unbuilt"
+        "this deployable now serves every route it owns"
     );
 }
 
@@ -540,6 +541,9 @@ fn the_metadata_half_of_each_split_fragment_is_unreachable_here() {
     }
 }
 
+/// Every owned route is now served, so this holds vacuously — which is the
+/// point, and is why it is kept rather than deleted: if a fifth plaintext-bearing
+/// route is ever authored under this owner, it starts life failing here.
 #[tokio::test]
 async fn an_owned_but_unserved_route_is_absent_from_the_router() {
     let custody = Arc::new(FakeCustody::default());
@@ -549,10 +553,9 @@ async fn an_owned_but_unserved_route_is_absent_from_the_router() {
         .into_iter()
         .filter(|id| !Routes::served().contains(id))
         .collect();
-    assert_eq!(
-        unserved,
-        vec![RouteId::ProviderCredentialRegister],
-        "the first-seal primitive has landed; the registration transaction has not"
+    assert!(
+        unserved.is_empty(),
+        "`regional-secret-api` has unbuilt routes again: {unserved:?}"
     );
     for id in unserved {
         let descriptor = route(id);
@@ -571,6 +574,164 @@ async fn an_owned_but_unserved_route_is_absent_from_the_router() {
             "`{id}` answered {status} instead of being absent"
         );
     }
+}
+
+// --- register: the credential binding transaction -----------------------------------
+
+/// The whole shape of a registration: one transaction carrying the backing
+/// secret, the directory entry, the receipt and the credential quota guard,
+/// with the minted name equal to the credential id.
+#[tokio::test]
+async fn a_registration_commits_the_backing_secret_and_the_binding_together() {
+    let custody = Arc::new(FakeCustody::default());
+    let crypto = Arc::new(FakeCrypto::default());
+    let router = sealing_router(Arc::clone(&custody), Arc::clone(&crypto), None);
+    let (status, body) = send(
+        &router,
+        "POST",
+        "/api/secrets/provider-credentials",
+        r#"{"apiKey":"sk-live-abcdefgh","name":"prod-key","provider":"openai"}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+
+    let credential: models::ProviderCredential =
+        serde_json::from_value(body.clone()).expect("the published schema");
+    assert_eq!(credential.name.as_str(), "prod-key");
+    assert_eq!(credential.provider, models::ProviderId::Openai);
+    assert_eq!(credential.state, models::ProviderCredentialState::Ready);
+    assert_eq!(credential.revision, 1);
+    assert!(
+        !body.to_string().contains("sk-live-abcdefgh"),
+        "the response echoed the key"
+    );
+
+    let sealed = crypto.sealed();
+    assert_eq!(sealed.len(), 1);
+    assert_eq!(
+        sealed[0].0.name.as_str(),
+        credential.id.to_string(),
+        "the minted secret name is the credential id's own string"
+    );
+    assert_eq!(sealed[0].0.generation, SourceGeneration::FIRST);
+
+    let transactions = custody.transactions();
+    assert_eq!(transactions.len(), 1, "a registration is one transaction");
+    assert_eq!(
+        transactions[0].participants,
+        [
+            "secret.generation",
+            "secret.metadata",
+            "secret.lineage",
+            "custody.provider_credential",
+            "secret.idempotency",
+            "custody.credential_count",
+        ]
+    );
+    for condition in &transactions[0].conditions[..5] {
+        assert_eq!(
+            condition, "attribute_not_exists(pk)",
+            "a registration always creates, and a crash must leave neither half"
+        );
+    }
+    assert_eq!(
+        transactions[0].conditions[5], "attribute_not_exists(#count) OR #count < :max",
+        "the quota guard is the one participant that is not a create"
+    );
+    assert!(
+        !format!("{transactions:?}").contains("sk-live-abcdefgh"),
+        "a durable row carried the key material"
+    );
+}
+
+/// D-11. Labels are not unique: registering one twice produces two bindings with
+/// different ids and different fingerprints, and there is no collision to
+/// report — which is consistent with the route declaring no collision error.
+#[tokio::test]
+async fn two_registrations_under_one_label_are_two_bindings() {
+    let custody = Arc::new(FakeCustody::default());
+    let router = router(Arc::clone(&custody), None);
+    let mut ids = Vec::new();
+    for _ in 0..2 {
+        let (status, body) = send(
+            &router,
+            "POST",
+            "/api/secrets/provider-credentials",
+            r#"{"apiKey":"sk-live-abcdefgh","name":"prod-key","provider":"openai"}"#,
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        let credential: models::ProviderCredential =
+            serde_json::from_value(body).expect("the published schema");
+        ids.push(credential.id);
+    }
+    assert_ne!(ids[0], ids[1], "the identity of a binding is its `pcr_` id");
+    assert_eq!(custody.transactions().len(), 2);
+}
+
+/// A retry inside the retention window must reproduce the **original** id rather
+/// than mint a second binding.
+#[tokio::test]
+async fn a_replayed_registration_answers_the_original_minted_identity() {
+    let original = models::ProviderCredential {
+        created_at: moment("2026-08-01T12:00:00.000Z"),
+        fingerprint: aex_wire::ids::ContentHash::from_bytes([3; 32]),
+        id: ProviderCredentialId::from_uuid7(Uuid7::compose(1_754_051_696_789, [7; 10])),
+        name: ResourceName::parse("prod-key").expect("a resource name"),
+        provider: models::ProviderId::Openai,
+        revision: 1,
+        revoked_at: None,
+        state: models::ProviderCredentialState::Ready,
+        updated_at: moment("2026-08-01T12:00:00.000Z"),
+    };
+    let stored = Receipt {
+        scope: "secret:credential:openai".to_owned(),
+        key_sha256: "0".repeat(64),
+        intent: aex_wire::idempotency::IntentDigest::from_bytes(identity("{}").intent),
+        response_kind: "ProviderCredential".to_owned(),
+        response: aex_session_dynamodb::replay::ReceiptBody::Inline(
+            aex_wire::canonical::to_jcs_bytes(&original).expect("canonical bytes"),
+        ),
+        committed_at: moment("2026-08-01T12:00:00.000Z"),
+        expires_at: moment("2036-08-01T12:00:00.000Z"),
+    };
+    let custody = Arc::new(FakeCustody::replaying(stored));
+    let router = router(Arc::clone(&custody), None);
+    let (status, body) = send(
+        &router,
+        "POST",
+        "/api/secrets/provider-credentials",
+        r#"{"apiKey":"sk-live-abcdefgh","name":"prod-key","provider":"openai"}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let answered: models::ProviderCredential =
+        serde_json::from_value(body).expect("the published schema");
+    assert_eq!(
+        answered.id, original.id,
+        "a retry must reproduce the binding, not mint a second one"
+    );
+    assert!(custody.transactions().is_empty());
+}
+
+/// D-13, on the credential side. The declared `limit_exceeded` has a counter
+/// behind it and the create commits nothing.
+#[tokio::test]
+async fn a_registration_past_the_credential_bound_answers_limit_exceeded() {
+    let custody = Arc::new(FakeCustody::losing(Participant::CUSTODY_CREDENTIAL_COUNT));
+    let router = router(Arc::clone(&custody), None);
+    let (status, body) = send(
+        &router,
+        "POST",
+        "/api/secrets/provider-credentials",
+        r#"{"apiKey":"sk-live-abcdefgh","name":"prod-key","provider":"openai"}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(
+        body["error"]["code"].as_str(),
+        Some(ErrorCode::LimitExceeded.as_str())
+    );
 }
 
 // --- put: the first seal ------------------------------------------------------------

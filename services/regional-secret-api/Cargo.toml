@@ -67,7 +67,9 @@ thiserror.workspace = true
 # never disagree about what the response was.
 serde = { workspace = true }
 serde_json.workspace = true
-
+# Minting one `pcr_` identity per registration. `aex-wire` reads no clock and no
+# random source by construction, so the payload is composed here.
+uuid.workspace = true
 
 [dev-dependencies]
 axum.workspace = true

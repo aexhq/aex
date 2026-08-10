@@ -2,7 +2,7 @@
 
 mod support;
 
-use aex_secret_custody_dynamodb::expressions::{self, AUTHORIZE_ORDER, SET_ORDER};
+use aex_secret_custody_dynamodb::expressions::{self, AUTHORIZE_ORDER, REGISTER_ORDER, SET_ORDER};
 use aex_secret_custody_dynamodb::keys;
 use aex_secret_custody_dynamodb::store::{CustodyStore, SecretCustodyStore};
 use aex_secret_domain::revocation::RevocationEpoch;
@@ -459,6 +459,133 @@ fn a_delete_of_an_unadvanceable_revision_is_refused_rather_than_wrapped() {
             now(),
         )
         .is_err()
+    );
+}
+
+// --- D-9: the atomic credential-binding transaction ---------------------------------
+
+/// Registration is a backing secret **and** a directory entry, and neither is
+/// written first: a crash between them would leave either an orphan secret the
+/// customer can neither see nor delete, or a `ready` binding pointing at a
+/// generation that does not exist.
+#[tokio::test]
+async fn a_registration_commits_the_secret_and_the_binding_as_one_transaction() {
+    let (client, receiver) = capturing_client();
+    let store = CustodyStore::new(client, TABLE);
+    let plan = expressions::register_provider_credential(
+        TABLE,
+        &generation(),
+        &metadata(),
+        &provider_credential(),
+        &receipt(),
+        expressions::Quota::provider_credentials(100),
+    )
+    .expect("compiles");
+    assert_eq!(&plan.participants()[..5], REGISTER_ORDER);
+    assert_eq!(
+        plan.participants().last(),
+        Some(&Participant::CUSTODY_CREDENTIAL_COUNT)
+    );
+    let _ignored = store.commit(&plan).await;
+
+    let body = captured_body(receiver);
+    let actions = body["TransactItems"].as_array().expect("six actions");
+    assert_eq!(actions.len(), 6);
+    for (index, item_type) in [
+        "secret_source_generation",
+        "workspace_secret",
+        "secret_lineage",
+        "provider_credential",
+        "idempotency_receipt",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert_eq!(
+            actions[index]["Put"]["Item"]["itemType"]["S"].as_str(),
+            Some(item_type),
+            "action {index}"
+        );
+        assert_eq!(
+            actions[index]["Put"]["ConditionExpression"].as_str(),
+            Some("attribute_not_exists(pk)"),
+            "a registration always creates: action {index}"
+        );
+    }
+    assert_eq!(
+        actions[5]["Update"]["Key"]["pk"]["S"].as_str(),
+        Some(keys::provider_credential_partition(workspace()).as_str())
+    );
+}
+
+/// The binding is a **reference** to the workspace secret this transaction
+/// sealed. A binding naming another secret, another workspace or another
+/// generation would publish `ready` for something no decrypt could open.
+#[test]
+fn a_registration_cannot_bind_a_credential_to_a_secret_it_did_not_seal() {
+    for broken in [
+        aex_secret_custody_dynamodb::codec::ProviderCredential {
+            secret_name: aex_wire::ids::ResourceName::parse("elsewhere").expect("a name"),
+            ..provider_credential()
+        },
+        aex_secret_custody_dynamodb::codec::ProviderCredential {
+            source_generation: aex_secret_domain::secret::SourceGeneration(9),
+            ..provider_credential()
+        },
+    ] {
+        assert!(
+            expressions::register_provider_credential(
+                TABLE,
+                &generation(),
+                &metadata(),
+                &broken,
+                &receipt(),
+                expressions::Quota::provider_credentials(100),
+            )
+            .is_err(),
+            "a mismatched binding compiled"
+        );
+    }
+}
+
+/// The transport token is the replay identity, not the minted id: the provider's
+/// deduplication and the durable receipt must agree about what a retry is, and
+/// the minted id is precisely what a retry has to reproduce rather than
+/// re-derive.
+#[tokio::test]
+async fn a_registration_deduplicates_on_the_replay_identity_and_never_on_the_minted_id() {
+    use aex_wire::ids::PrefixedId as _;
+
+    let mut other_id = provider_credential();
+    other_id.credential = aex_wire::ids::ProviderCredentialId::from_uuid7(
+        aex_wire::ids::Uuid7::compose(1_754_051_696_789, [8; 10]),
+    );
+
+    let mut tokens = Vec::new();
+    for credential in [provider_credential(), other_id] {
+        let (client, receiver) = capturing_client();
+        let store = CustodyStore::new(client, TABLE);
+        let plan = expressions::register_provider_credential(
+            TABLE,
+            &generation(),
+            &metadata(),
+            &credential,
+            &receipt(),
+            expressions::Quota::provider_credentials(100),
+        )
+        .expect("compiles");
+        let _ignored = store.commit(&plan).await;
+        tokens.push(
+            captured_body(receiver)["ClientRequestToken"]
+                .as_str()
+                .expect("a deduplication token")
+                .to_owned(),
+        );
+    }
+    assert_eq!(
+        tokens[0], tokens[1],
+        "two attempts under one replay identity are one transaction to the provider, \
+         whatever id each attempt happened to mint"
     );
 }
 

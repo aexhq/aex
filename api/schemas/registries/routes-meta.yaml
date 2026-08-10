@@ -106,7 +106,6 @@ operationOwners:
 # Deferral is not mount evidence and is emitted only into the delivery registry.
 deferredOperations:
   account_get: "The central identity composition does not yet mount an authoritative account operational-state read."
-  provider_credential_register: "First-seal custody and the atomic credential-binding replay transaction are incomplete."
   registry_files_delete: "Registry mutation and content-lifecycle composition is incomplete."
   registry_files_download_create: "No composed content grant and presigning authority exists yet."
   registry_files_get: "The registry pointer composition has no plaintext content hydration path."
@@ -221,6 +220,7 @@ servedOperations:
     - otlp_metrics_ingest
     - otlp_traces_ingest
   regional-secret-api:
+    - provider_credential_register
     - secret_delete
     - secret_put
     - secret_revoke
