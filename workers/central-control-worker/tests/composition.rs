@@ -29,7 +29,7 @@ use aex_control_app::ports::{
     KeyMaterialReader, ListApiKeys, ListOperations, ListOrganizations, ListWorkspaces,
     MembershipView, OperationView, OrganizationView, Page, PageRequest, ProvisionWorkspaceRequest,
     ProvisionWorkspaceResponse, RegionalControlPort, RevokeApiKeyTx, StoreError, TxOutcome,
-    WorkspaceKeyMaterial, WorkspaceView,
+    UserIdentity, WorkspaceKeyMaterial, WorkspaceView,
 };
 use aex_control_domain::{
     AccountProfile, AccountState, ApiKey, Fence, IntentHash, Invitation, Membership, Operation,
@@ -488,7 +488,7 @@ impl ControlViewStore for FakeStore {
     ) -> Result<Page<OperationView>, StoreError> {
         unreachable!("view listings belong to the public boundary")
     }
-    async fn user_email(&self, _user_id: Uuid) -> Result<Option<String>, StoreError> {
+    async fn user_identity(&self, _user_id: Uuid) -> Result<Option<UserIdentity>, StoreError> {
         unreachable!("the invitation payload carries the address")
     }
     async fn account_profile(
