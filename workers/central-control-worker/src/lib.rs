@@ -1107,8 +1107,8 @@ mod tests {
         assert!(
             matches!(
                 error,
-                CentralControlWorkerConfigError::Invalid { ref name, .. }
-                    if *name == keys::REGIONAL_CAPACITY_FUNCTIONS
+                CentralControlWorkerConfigError::Invalid { name, .. }
+                    if name == keys::REGIONAL_CAPACITY_FUNCTIONS
             ),
             "{error:?}"
         );
