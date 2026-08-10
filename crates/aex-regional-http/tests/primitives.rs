@@ -372,6 +372,38 @@ fn idempotency_uses_canonical_bytes_and_separates_scope() {
 }
 
 #[test]
+fn the_intent_is_salted_by_the_scope_rather_than_a_bare_body_digest() {
+    let canonical = aex_wire::canonical::to_jcs_bytes(&json!({"value": "hunter2"})).expect("jcs");
+    let first = IdentityContext {
+        principal: "key_1",
+        organization: "org_1",
+        workspace: workspace(1),
+        route: RouteId::SecretPut,
+        method: HttpMethod::Put,
+    };
+    let second = IdentityContext {
+        workspace: workspace(2),
+        ..first
+    };
+    let key = aex_wire::idempotency::IdempotencyKey::parse("request-1").expect("key");
+    // One precomputed table over canonical bodies must not cover the fleet: the
+    // same body under two scopes stores two different `intentHash` values.
+    assert_ne!(
+        identity(&first, &key, &canonical).intent,
+        identity(&second, &key, &canonical).intent
+    );
+    let bare: [u8; 32] = {
+        use sha2::Digest as _;
+        sha2::Sha256::digest(&canonical).into()
+    };
+    assert_ne!(
+        identity(&first, &key, &canonical).intent,
+        bare,
+        "the stored intent is never an unsalted digest of the request body"
+    );
+}
+
+#[test]
 fn operation_header_is_the_only_operation_identity_carrier() {
     let expected = OperationId::from_uuid7(Uuid7::compose(3, [4; 10]));
     let mut headers = HeaderMap::new();

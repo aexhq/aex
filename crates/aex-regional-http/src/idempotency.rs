@@ -29,11 +29,19 @@ pub struct IdempotencyIdentity {
     pub scope: [u8; 32],
     /// Caller-provided replay key.
     pub key: IdempotencyKey,
-    /// Digest of the already-canonicalized request bytes.
+    /// Digest of the scope and the already-canonicalized request bytes.
     pub intent: [u8; 32],
 }
 
 /// Constructs a replay identity. `canonical` must come from `aex_wire::canonical`.
+///
+/// The intent is `sha256(scope_digest ‖ canonical_bytes)`, not a bare digest of
+/// the body, and it is derived that way for **every** route rather than for the
+/// ones whose bodies happen to be sensitive. An unsalted body digest stored in a
+/// durable receipt is a rainbow-table target that one precomputed table covers
+/// fleet-wide — `secret_put`'s canonical body is `{"value":"<the secret>"}` — and
+/// the salt costs nothing, because the scope is already a fixed-width digest and
+/// the result is still a perfect equality test.
 #[must_use]
 pub fn identity(
     context: &IdentityContext<'_>,
@@ -47,7 +55,11 @@ pub fn identity(
         context.method.as_str().as_bytes(),
         context.route.as_str().as_bytes(),
     ]);
-    let intent = sha2::Sha256::digest(canonical).into();
+    let intent = sha2::Sha256::new()
+        .chain_update(scope)
+        .chain_update(canonical)
+        .finalize()
+        .into();
     IdempotencyIdentity {
         scope,
         key: key.clone(),

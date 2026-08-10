@@ -493,9 +493,16 @@ impl Write {
                 approval.binding.session.to_string(),
                 format!("APPROVAL#{}", approval.id),
             ),
-            Self::PutIdempotencyReceipt(receipt) => {
-                (receipt.intent.to_string(), "RECEIPT".to_owned())
-            }
+            // `(scope, key_sha256)` and never the intent digest. Keyed by the
+            // intent, two callers who asked for the same thing under different
+            // keys would collide on one item, and a replay could not find its
+            // own receipt without already knowing the value the receipt exists
+            // to compare against — which is what made `idempotency_conflict`
+            // unreachable.
+            Self::PutIdempotencyReceipt(receipt) => (
+                receipt.key.scope().to_owned(),
+                receipt.key.key_sha256().to_owned(),
+            ),
             Self::PutOperation(operation) => (operation.id.to_string(), "OPERATION".to_owned()),
             Self::RedactOperationResult(id) => (id.to_string(), "OPERATION".to_owned()),
             Self::PutWorkItem(item) => (item.operation.to_string(), format!("WORK#{}", item.id.0)),
@@ -546,6 +553,18 @@ impl Write {
                 })
                 .sum(),
             Self::PutMessage(message) => 256 + message.parts.len() * 256,
+            // A receipt carries the canonical response inline up to
+            // `ResponseBody::MAX_INLINE_BYTES`, so a flat estimate would let a
+            // transaction carrying several of them pass the 4 MiB envelope check
+            // and fail at the provider instead.
+            Self::PutIdempotencyReceipt(receipt) => {
+                512 + match &receipt.outcome {
+                    aex_session_domain::ReceiptOutcome::Resource { response, .. } => {
+                        response.inline().map_or(0, <[u8]>::len)
+                    }
+                    aex_session_domain::ReceiptOutcome::Operation(_) => 0,
+                }
+            }
             _ => 512,
         }
     }

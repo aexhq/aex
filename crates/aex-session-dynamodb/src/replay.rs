@@ -128,15 +128,13 @@ pub enum ScopeError {
 
 /// The `sha256` of a caller-chosen replay key, lowercase hex.
 ///
-/// The raw key is never placed in a partition key: it is caller-chosen text of
-/// up to 256 bytes, and hashing it bounds the key width and removes any chance
-/// that a crafted key changes the key's shape.
+/// Delegates to `aex_wire::idempotency::key_digest`, which the session domain
+/// also derives a receipt's `key_sha256` through: the physical row and the
+/// planned item must agree about what "the hashed key" is, and one function is
+/// the only way to guarantee that.
 #[must_use]
 pub fn key_digest(key: &IdempotencyKey) -> String {
-    use sha2::Digest as _;
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(key.as_str().as_bytes());
-    hex::encode(hasher.finalize())
+    aex_wire::idempotency::key_digest(key.as_str())
 }
 
 /// A stored response body.

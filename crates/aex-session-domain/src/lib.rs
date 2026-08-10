@@ -50,8 +50,8 @@ pub use deletion::{
     RestoreCommit, SessionTombstone, TrashCommit, purge, purge_complete, restore, trash,
 };
 pub use idempotency::{
-    IdempotencyIdentity, IdempotencyReceipt, ReceiptOutcome, ReplayDecision, ResourceId,
-    ResourceKind, replay,
+    IdempotencyIdentity, IdempotencyReceipt, ReceiptKey, ReceiptKeyError, ReceiptOutcome,
+    ReplayDecision, ResourceId, ResourceKind, ResponseBody, replay,
 };
 pub use ids::{
     AccountRevision, AgentFence, AgentRevision, AuthorizationEpoch, CancellationEpoch, EffectId,
