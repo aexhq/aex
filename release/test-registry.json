@@ -1919,6 +1919,7 @@
         "scenarios": [],
         "targets": {
           "continuations": "unit",
+          "create": "unit",
           "faults": "unit",
           "live_files": "unit",
           "properties": "unit"
@@ -1995,7 +1996,8 @@
           "integration": "integration",
           "limit_projection": "unit",
           "properties": "unit",
-          "security": "unit"
+          "security": "unit",
+          "session_listing": "unit"
         },
         "not_applicable": {}
       },
