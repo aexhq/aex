@@ -55,7 +55,7 @@ pub use idempotency::{
 };
 pub use ids::{
     AccountRevision, AgentFence, AgentRevision, AuthorizationEpoch, CancellationEpoch, EffectId,
-    EntryIdentity, JournalSeq, PersistRevision, ReservationId, SessionRevision, UsageClosureId,
+    EntryIdentity, JournalSeq, PersistRevision, SessionRevision, UsageClosureId,
 };
 pub use journal::{
     AuthorityFact, INLINE_BODY_MAX_BYTES, JournalBody, JournalEntry, JournalError, JournalPage,
@@ -82,5 +82,6 @@ pub use session::{
     release_mutation_guard,
 };
 pub use terminal::{
-    OutboxEvent, TerminalAttempt, TerminalCommit, TerminalRejection, claim_terminal, sealed_ids,
+    MAX_OPEN_MESSAGES_PER_RUN, OutboxEvent, TerminalAttempt, TerminalCommit, TerminalRejection,
+    claim_terminal, sealed_ids,
 };

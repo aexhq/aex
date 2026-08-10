@@ -399,7 +399,6 @@ const fn condition_tag(condition: &Condition) -> &'static str {
         Condition::AuthorizationEpochAtLeast { .. } => "AuthorizationEpochAtLeast",
         Condition::RegistryEtag { .. } => "RegistryEtag",
         Condition::UploadState { .. } => "UploadState",
-        Condition::ReservationOpen { .. } => "ReservationOpen",
         Condition::ContentOwned { .. } => "ContentOwned",
         Condition::RootPinPresent { .. } => "RootPinPresent",
         Condition::GrantUnexpired { .. } => "GrantUnexpired",
@@ -418,6 +417,7 @@ const fn write_tag(write: &Write) -> &'static str {
     match write {
         Write::PutSessionHead(_) => "PutSessionHead",
         Write::PutMessage(_) => "PutMessage",
+        Write::PutSealedMessage(_) => "PutSealedMessage",
         Write::PutRun(_) => "PutRun",
         Write::PutAgentControl(_) => "PutAgentControl",
         Write::CancelAgent { .. } => "CancelAgent",

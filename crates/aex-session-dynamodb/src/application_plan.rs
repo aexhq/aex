@@ -326,6 +326,10 @@ fn compile_owned(
             compile_message_write(tables, intent, action, message, binding, output)?;
             Ok(true)
         }
+        Write::PutSealedMessage(message) => {
+            compile_sealed_message_write(tables, intent, action, message, binding, output)?;
+            Ok(true)
+        }
         Write::PutRun(run) => {
             compile_run_write(tables, intent, action, run, binding, output)?;
             Ok(true)
@@ -398,6 +402,41 @@ fn compile_message_write(
     }
     output.put(
         Participant::SESSION_MESSAGE,
+        conditional_put(&tables.session_authority, item, expression)?,
+    )?;
+    Ok(())
+}
+
+fn compile_sealed_message_write(
+    tables: &RegionalTables,
+    intent: TransactionIntent,
+    action: &LogicalAction<'_>,
+    message: &aex_session_domain::Message,
+    binding: SessionBinding,
+    output: &mut TransactionPlan,
+) -> Result<(), StoreError> {
+    if message.session != binding.session {
+        return Err(cross_tenant());
+    }
+    if !matches!(
+        intent,
+        TransactionIntent::AdmitMessage | TransactionIntent::CommitTerminal
+    ) {
+        return Err(StoreError::Invalid {
+            detail:
+                "a sealed-message projection is written only at admission or the terminal barrier"
+                    .to_owned(),
+        });
+    }
+    let item = crate::authority_codec::encode_sealed_message(
+        message,
+        binding.workspace,
+        binding.organization,
+    )?;
+    let mut expression = compile_conditions(&action.conditions)?;
+    expression.and_literal(IMMUTABLE);
+    output.put(
+        Participant::SESSION_SEALED_MESSAGE,
         conditional_put(&tables.session_authority, item, expression)?,
     )?;
     Ok(())

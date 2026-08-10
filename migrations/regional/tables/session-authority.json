@@ -29,7 +29,7 @@
       "sort": "wsIndexSk",
       "sparse": true,
       "projectsRecordBody": false,
-      "rationale": "Only session heads and operation states carry the index attributes, so a list query can never surface a prompt, a journal entry or an idempotency receipt. KEYS_ONLY keeps this shared sparse index a cheap ordered locator: callers hydrate selected authority rows before filtering or returning them, which also prevents an eventually consistent index projection from becoming session or operation truth. lifecycle sits inside the index partition key so trash moves the item and purge removes it entirely, which makes ordinary list filter-free.",
+      "rationale": "Only session heads and operation states carry the index attributes, so a list query can never surface a prompt, a journal entry or an idempotency receipt. KEYS_ONLY keeps this shared sparse index a cheap ordered locator: callers hydrate selected authority rows before filtering or returning them, which also prevents an eventually consistent index projection from becoming session or operation truth. Every live, trashed and purging session head uses one lifecycle-neutral workspace partition ordered by createdAt and sessionId; this gives the public collection one total order and lets strong hydration apply exact status filtering. Purge completion removes the sparse keys entirely.",
       "projection": { "type": "KEYS_ONLY", "attributes": [] }
     },
     {
@@ -96,6 +96,7 @@
   "itemTypes": [
     "session_head",
     "message",
+    "sealed_message",
     "run",
     "session_event",
     "approval",
@@ -106,7 +107,6 @@
     "fanout_page",
     "join_shard",
     "budget_return",
-    "spend_reservation",
     "operation",
     "idempotency_receipt",
     "outbox_event",

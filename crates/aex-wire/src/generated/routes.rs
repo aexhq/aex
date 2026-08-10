@@ -3,7 +3,7 @@
 //! The route registry: one row per public operation.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:1d6d54b62df61c8244b5cb84c52fcbfab1a8f47680c90a71f6b1c04faef12f6e`.
+//! `sha256:b35ee328612c409fd77678e0b7c74f4756f57d4190fc724df00a4cef727f7e75`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -238,7 +238,8 @@ pub enum RouteId {
     SessionGet,
     /// `POST /api/sessions/{sessionId}/messages` — Admit a message and queue or start its run.
     SessionMessageSend,
-    /// `GET /api/sessions/{sessionId}/messages` — List the messages of a session.
+    /// `GET /api/sessions/{sessionId}/messages` — List complete sealed messages in immutable
+    /// seal-visibility order.
     SessionMessagesList,
     /// `POST /api/streams/{sessionId}/events/listen` — Listen for new session events observations.
     SessionObservationsEventsListen,
@@ -3676,7 +3677,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         plane: Plane::Regional,
         fragment: "sessions",
         serving_artifact: "session-stream-api",
-        deferred: true,
+        deferred: false,
         method: HttpMethod::Get,
         template: "/api/sessions/{sessionId}",
         path_params: &["sessionId"],
@@ -3695,7 +3696,6 @@ pub static ROUTES: &[RouteDescriptor] = &[
             ErrorCode::SessionDeleted,
             ErrorCode::AccountPaused,
             ErrorCode::WrongWorkspaceRegion,
-            ErrorCode::NotImplemented,
         ],
         request_schema: None,
         response_schema: Some("Session"),
@@ -3746,7 +3746,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         plane: Plane::Regional,
         fragment: "sessions",
         serving_artifact: "session-stream-api",
-        deferred: true,
+        deferred: false,
         method: HttpMethod::Get,
         template: "/api/sessions/{sessionId}/messages",
         path_params: &["sessionId"],
@@ -3766,7 +3766,6 @@ pub static ROUTES: &[RouteDescriptor] = &[
             ErrorCode::SessionDeleted,
             ErrorCode::AccountPaused,
             ErrorCode::WrongWorkspaceRegion,
-            ErrorCode::NotImplemented,
         ],
         request_schema: None,
         response_schema: Some("MessagePage"),
@@ -4946,7 +4945,7 @@ pub static ROUTES: &[RouteDescriptor] = &[
         plane: Plane::Regional,
         fragment: "sessions",
         serving_artifact: "session-stream-api",
-        deferred: true,
+        deferred: false,
         method: HttpMethod::Get,
         template: "/api/sessions",
         path_params: &[],
@@ -4964,7 +4963,6 @@ pub static ROUTES: &[RouteDescriptor] = &[
             ErrorCode::InvalidCursor,
             ErrorCode::AccountPaused,
             ErrorCode::WrongWorkspaceRegion,
-            ErrorCode::NotImplemented,
         ],
         request_schema: None,
         response_schema: Some("SessionListPage"),

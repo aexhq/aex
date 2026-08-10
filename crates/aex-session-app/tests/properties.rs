@@ -17,12 +17,15 @@ use aex_session_app::plan::{Condition, TransactionIntent, Write};
 use aex_session_app::testing::{CountingIds, FixedClock, PortCall, ScriptedPorts, fixture_spend};
 use aex_session_app::use_cases::STOP_BATCH_AGENTS;
 use aex_session_app::{
-    AppError, MAX_ACTIONS, Planned, Rebind, SendMessage, SessionCommand, SessionTransaction,
-    StartRun, admit_message, purge_session, rebind_credentials, restore_session, start_run,
-    stop_session, trash_session,
+    AppError, CommitTerminal, MAX_ACTIONS, Planned, Rebind, SendMessage, SessionCommand,
+    SessionTransaction, StartRun, admit_message, commit_terminal, purge_session,
+    rebind_credentials, restore_session, start_run, stop_session, trash_session,
 };
-use aex_session_domain::testing::{id, moment, session_fixture};
-use aex_session_domain::{MessagePart, PurgeCascade, SessionStatus, WorkAdmission};
+use aex_session_domain::testing::{id, moment, running_session, session_fixture, terminal_attempt};
+use aex_session_domain::{
+    MAX_OPEN_MESSAGES_PER_RUN, Message, MessagePart, MessageRole, MessageState, PurgeCascade,
+    SessionStatus, WorkAdmission,
+};
 use aex_wire::error::ErrorCode;
 use aex_wire::idempotency::IntentDigest;
 use aex_wire::ids::{MessageId, OperationId, RunId, Uuid7};
@@ -222,7 +225,6 @@ fn required_conditions(intent: TransactionIntent) -> Vec<&'static str> {
             "WorkAdmission",
             "MutationGuardFree",
             "CancellationEpoch",
-            "ReservationOpen",
         ],
         TransactionIntent::StopSession => vec!["SessionRevision", "CancellationEpoch"],
         TransactionIntent::TrashSession
@@ -273,7 +275,6 @@ fn condition_tag(condition: &Condition) -> &'static str {
         Condition::AuthorizationEpochAtLeast { .. } => "AuthorizationEpochAtLeast",
         Condition::RegistryEtag { .. } => "RegistryEtag",
         Condition::UploadState { .. } => "UploadState",
-        Condition::ReservationOpen { .. } => "ReservationOpen",
         Condition::ContentOwned { .. } => "ContentOwned",
         Condition::RootPinPresent { .. } => "RootPinPresent",
         Condition::GrantUnexpired { .. } => "GrantUnexpired",
@@ -335,11 +336,13 @@ async fn admission_is_atomic() {
     let plan = &planned.plan;
 
     let mut has_message = false;
+    let mut has_sealed_projection = false;
     let mut has_run = false;
     let mut has_head = false;
     for write in &plan.writes {
         match write {
             Write::PutMessage(_) => has_message = true,
+            Write::PutSealedMessage(_) => has_sealed_projection = true,
             Write::PutRun(_) => has_run = true,
             Write::PutSessionHead(head) => {
                 has_head = true;
@@ -349,13 +352,71 @@ async fn admission_is_atomic() {
             _ => {}
         }
     }
-    assert!(has_message && has_run && has_head);
+    assert!(has_message && has_sealed_projection && has_run && has_head);
 
     // No history yields a durable message without a wake: the two are in the
     // same plan, so either both land or neither does.
     assert!(
         !plan.after_commit.is_empty(),
         "a message always wakes the root"
+    );
+}
+
+#[tokio::test]
+async fn the_maximum_open_message_set_fits_one_terminal_transaction() {
+    let (session, run, _agent, _) = running_session();
+    let ports = ScriptedPorts::idle()
+        .with_session(session.clone())
+        .with_run(run.clone());
+    let agent = ports.root_agent().id;
+    let open_messages = (0..MAX_OPEN_MESSAGES_PER_RUN)
+        .map(|index| Message {
+            id: id::<MessageId>(u8::try_from(index + 40).expect("fixture tag")),
+            session: session.id,
+            run: Some(run.id),
+            agent,
+            role: if index % 2 == 0 {
+                MessageRole::Assistant
+            } else {
+                MessageRole::Tool
+            },
+            state: MessageState::Open,
+            parts: Vec::new(),
+            created_at: moment(i64::try_from(index).expect("fixture instant")),
+            sealed_at: None,
+        })
+        .collect();
+    let command = CommitTerminal {
+        workspace: session.workspace,
+        session: session.id,
+        attempt: terminal_attempt(&session, &run),
+        agent,
+        open_messages,
+    };
+    let clock = clock();
+    let ids = CountingIds::default();
+    let planned = commit_terminal(&ports.context(&clock, &ids), &command)
+        .await
+        .expect("the invariant ceiling settles");
+
+    assert_eq!(planned.plan.validate().expect("valid").actions, MAX_ACTIONS);
+    assert_eq!(
+        planned
+            .plan
+            .writes
+            .iter()
+            .filter(|write| matches!(write, Write::PutMessage(_)))
+            .count(),
+        MAX_OPEN_MESSAGES_PER_RUN
+    );
+    assert_eq!(
+        planned
+            .plan
+            .writes
+            .iter()
+            .filter(|write| matches!(write, Write::PutSealedMessage(_)))
+            .count(),
+        MAX_OPEN_MESSAGES_PER_RUN
     );
 }
 

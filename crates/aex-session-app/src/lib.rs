@@ -41,11 +41,12 @@ pub use ports::{
     ContinuityReader, CredentialState, DeploymentFacts, IdFactory, LimitsBundle, LimitsReader,
     LiveEntry, LiveEntryKind, LiveListQuery, LiveListing, LiveWorkspaceReader, ModelQualifier,
     PageBudget, PortError, ProviderCredentialBinding, QualificationRefusal, QualifiedModel,
-    RegistryReader, ReservationAuthority, ReservationGrant, ReservationRequest,
-    SealedRegistryEntry, SecretCustodyReader, SessionReader, SessionSnapshot, VersionedOperation,
-    WorkspaceContinuity,
+    RegistryReader, SealedRegistryEntry, SecretCustodyReader, SessionReader, SessionSnapshot,
+    VersionedOperation, WorkspaceContinuity,
 };
-pub use projection::{canonical_session_bytes, public_session, public_status};
+pub use projection::{
+    canonical_session_bytes, public_session, public_session_list_item, public_status,
+};
 pub use use_cases::{
     CommitTerminal, LiveRead, Purge, RECOVERY_WINDOW, Rebind, Resume, STOP_BATCH_AGENTS,
     SendMessage, SessionCommand, StartRun, admit_message, commit_terminal, continue_operation,

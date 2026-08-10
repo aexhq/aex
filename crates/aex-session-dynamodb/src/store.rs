@@ -10,7 +10,7 @@
 use std::future::Future;
 
 use aex_operation_domain::operation::{CancelRejection, OperationKind, OperationStatus, cancel};
-use aex_session_domain::{DeletionEpoch, Message, Run, Session};
+use aex_session_domain::{DeletionEpoch, DeletionState, Message, Run, Session, SessionStatus};
 use aex_wire::idempotency::IdempotencyKey;
 use aex_wire::ids::{AgentId, ApprovalId, OperationId, SessionId, WorkspaceId};
 use aex_wire::types::Timestamp;
@@ -37,7 +37,7 @@ use crate::wire_pending::{
     AgentControl, AgentDecisionPlan, Approval, FanoutPagePlan, JournalEntry, StoredOperation,
 };
 
-const OPERATION_HYDRATION_CONCURRENCY: usize = 16;
+const INDEX_HYDRATION_CONCURRENCY: usize = 16;
 
 /// One page of decoded rows plus its continuation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -122,6 +122,145 @@ pub struct PositionPage<T> {
     /// serving edge can log it; a bare skip would hide an index-integrity
     /// signal.
     pub isolated: u32,
+}
+
+/// The four public session-status filters understood by the collection.
+///
+/// Domain deletion has two visible phases, but both are one `deleting` wire
+/// status. Keeping that collapse in the authority filter prevents a handler
+/// from accidentally listing only half of deletion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionListStatus {
+    /// No run is in flight.
+    Idle,
+    /// A run is executing.
+    Running,
+    /// A run is blocked on an approval.
+    AwaitingApproval,
+    /// Either the recovery window or irreversible purge is in progress.
+    Deleting,
+}
+
+impl SessionListStatus {
+    const fn matches(self, status: SessionStatus) -> bool {
+        match self {
+            Self::Idle => matches!(status, SessionStatus::Idle),
+            Self::Running => matches!(status, SessionStatus::Running),
+            Self::AwaitingApproval => matches!(status, SessionStatus::AwaitingApproval),
+            Self::Deleting => matches!(status, SessionStatus::Trashed | SessionStatus::Purging),
+        }
+    }
+}
+
+/// Exact filters on the customer-visible workspace session collection.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SessionListFilter {
+    /// Restrict to one public session status.
+    pub status: Option<SessionListStatus>,
+}
+
+impl SessionListFilter {
+    fn matches(self, session: &Session) -> bool {
+        self.status
+            .is_none_or(|status| status.matches(session.status))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SessionLocator {
+    session: SessionId,
+    created_at: Timestamp,
+}
+
+fn session_locator(
+    pk: &str,
+    sk: &str,
+    index_pk: &str,
+    index_sk: &str,
+    workspace: WorkspaceId,
+    snapshot: Timestamp,
+) -> Result<SessionLocator, &'static str> {
+    let session = pk
+        .strip_prefix("SESSION#")
+        .and_then(|value| value.parse::<SessionId>().ok())
+        .ok_or("the base partition key carries no valid session identity")?;
+    if pk != keys::head(session).pk || sk != keys::head(session).sk {
+        return Err("the base key is not the located session head");
+    }
+    if index_pk != keys::workspace_index::session_partition(workspace) {
+        return Err("the index partition does not match the asserted workspace");
+    }
+    let (created_at, indexed_session) = index_sk
+        .rsplit_once('#')
+        .ok_or("the index sort key is not a creation instant and session identity")?;
+    let created_at = Timestamp::parse(created_at)
+        .map_err(|_| "the index sort key has an invalid creation instant")?;
+    if indexed_session != session.to_string()
+        || index_sk != keys::workspace_index::session_sort(created_at, session)
+    {
+        return Err("the index sort key disagrees with the located session");
+    }
+    if index_sk > keys::workspace_index::session_snapshot_sort(snapshot).as_str() {
+        return Err("the continuation is beyond the pinned session snapshot");
+    }
+    Ok(SessionLocator {
+        session,
+        created_at,
+    })
+}
+
+fn malformed_session(reason: &str) -> StoreError {
+    StoreError::Corrupt(CodecError::Malformed {
+        item_type: codec::SESSION_HEAD,
+        attribute: keys::workspace_index::SK,
+        reason: reason.to_owned(),
+    })
+}
+
+fn projected_session_locator(
+    item: &Item,
+    workspace: WorkspaceId,
+    snapshot: Timestamp,
+) -> Result<SessionLocator, StoreError> {
+    let row = Row::bind_projected(item, codec::SESSION_HEAD);
+    session_locator(
+        row.string(crate::attr::PK)?,
+        row.string(crate::attr::SK)?,
+        row.string(keys::workspace_index::PK)?,
+        row.string(keys::workspace_index::SK)?,
+        workspace,
+        snapshot,
+    )
+    .map_err(malformed_session)
+}
+
+fn validate_session_list_position(
+    position: &PagePosition,
+    workspace: WorkspaceId,
+    snapshot: Timestamp,
+) -> Result<(), StoreError> {
+    let Some(index_pk) = position.index_pk.as_deref() else {
+        return Err(StoreError::Invalid {
+            detail: "a session continuation carries no workspace-index partition".to_owned(),
+        });
+    };
+    let Some(index_sk) = position.index_sk.as_deref() else {
+        return Err(StoreError::Invalid {
+            detail: "a session continuation carries no workspace-index sort key".to_owned(),
+        });
+    };
+    session_locator(
+        &position.pk,
+        &position.sk,
+        index_pk,
+        index_sk,
+        workspace,
+        snapshot,
+    )
+    .map(|_| ())
+    .map_err(|reason| StoreError::Invalid {
+        detail: format!("the session continuation is invalid: {reason}"),
+    })
 }
 
 /// One session collection page and the deletion generation under which it was read.
@@ -389,7 +528,7 @@ where
     Fut: Future<Output = Result<T, E>>,
 {
     stream::iter(items.into_iter().map(hydrate))
-        .buffered(OPERATION_HYDRATION_CONCURRENCY)
+        .buffered(INDEX_HYDRATION_CONCURRENCY)
         .collect::<Vec<_>>()
         .await
         .into_iter()
@@ -756,7 +895,7 @@ mod operation_store_tests {
     use aex_wire::ids::{OperationId, Uuid7, WorkspaceId};
 
     use super::{
-        OPERATION_HYDRATION_CONCURRENCY, OperationCancelIo, OperationCancelOutcome,
+        INDEX_HYDRATION_CONCURRENCY, OperationCancelIo, OperationCancelOutcome,
         OperationCancelRequest, Resolution, StoreError, StoredOperation, Timestamp, async_trait,
         request_cancel_with, settle_bounded_ordered,
     };
@@ -781,7 +920,7 @@ mod operation_store_tests {
         .expect("the full page hydrates");
 
         assert_eq!(hydrated, page);
-        assert_eq!(peak.load(Ordering::SeqCst), OPERATION_HYDRATION_CONCURRENCY);
+        assert_eq!(peak.load(Ordering::SeqCst), INDEX_HYDRATION_CONCURRENCY);
         assert_eq!(current.load(Ordering::SeqCst), 0);
     }
 
@@ -933,6 +1072,21 @@ mod operation_store_tests {
 /// only this port cannot write the session table however it is wired.
 #[async_trait]
 pub trait SessionQueries: Send + Sync + 'static {
+    /// Lists canonical session heads in the workspace-wide creation order.
+    ///
+    /// `snapshot` is the first-page instant the regional edge binds into its
+    /// signed cursor. The index query never crosses it. `after` is the exact
+    /// four-part provider position from the prior page; this authority does
+    /// not mint a second cursor vocabulary.
+    async fn page_sessions(
+        &self,
+        workspace: WorkspaceId,
+        filter: &SessionListFilter,
+        snapshot: Timestamp,
+        budget: PageBudget,
+        after: Option<&PagePosition>,
+    ) -> Result<PositionPage<Session>, StoreError>;
+
     /// Reads one complete canonical session authority document.
     async fn load_session(
         &self,
@@ -1106,6 +1260,52 @@ impl SessionReads {
         }
     }
 
+    /// Strongly hydrates every session locator in provider order.
+    ///
+    /// A missing row, or a retained head that has completed purge and removed
+    /// its sparse index attributes, is an ordinary eventual-index race. It is
+    /// skipped and counted. Every other contradiction is corruption.
+    async fn hydrate_sessions(
+        &self,
+        workspace: WorkspaceId,
+        snapshot: Timestamp,
+        projected: &[Item],
+    ) -> Result<HydratedSessions, StoreError> {
+        let locators = projected
+            .iter()
+            .map(|item| projected_session_locator(item, workspace, snapshot))
+            .collect::<Result<Vec<_>, _>>()?;
+        let hydrated = settle_bounded_ordered(locators, |locator| async move {
+            let head = keys::head(locator.session);
+            let Some(item) = self.get(&head.pk, &head.sk).await? else {
+                return Ok(None);
+            };
+            let session = crate::authority_codec::decode_session(&item, workspace)?;
+            if session.id != locator.session || session.created_at != locator.created_at {
+                return Err(malformed_session(
+                    "the strongly hydrated head disagrees with its index locator",
+                ));
+            }
+            if session.deletion.state == DeletionState::Purged {
+                return Ok(None);
+            }
+            Ok(Some(session))
+        })
+        .await?;
+
+        let mut sessions = HydratedSessions {
+            items: Vec::with_capacity(hydrated.len()),
+            isolated: 0,
+        };
+        for entry in hydrated {
+            match entry {
+                Some(session) => sessions.items.push(session),
+                None => sessions.isolated = sessions.isolated.saturating_add(1),
+            }
+        }
+        Ok(sessions)
+    }
+
     async fn query_session_range(
         &self,
         session: SessionId,
@@ -1167,6 +1367,11 @@ impl SessionReads {
             }),
         }
     }
+}
+
+struct HydratedSessions {
+    items: Vec<Session>,
+    isolated: u32,
 }
 
 fn validate_session_position(
@@ -1273,6 +1478,107 @@ fn approval_for_session(
 
 #[async_trait]
 impl SessionQueries for SessionReads {
+    async fn page_sessions(
+        &self,
+        workspace: WorkspaceId,
+        filter: &SessionListFilter,
+        snapshot: Timestamp,
+        budget: PageBudget,
+        after: Option<&PagePosition>,
+    ) -> Result<PositionPage<Session>, StoreError> {
+        if let Some(position) = after {
+            validate_session_list_position(position, workspace, snapshot)?;
+        }
+        let mut remaining = budget.items();
+        let mut start = after.cloned();
+        let mut items = Vec::new();
+        let mut isolated = 0_u32;
+        let next = loop {
+            let output = self
+                .client
+                .query()
+                .table_name(&self.table)
+                .index_name(keys::workspace_index::NAME)
+                .key_condition_expression("#workspace = :workspace AND #order <= :snapshot")
+                .expression_attribute_names("#workspace", keys::workspace_index::PK)
+                .expression_attribute_names("#order", keys::workspace_index::SK)
+                .expression_attribute_values(
+                    ":workspace",
+                    crate::attr::s(keys::workspace_index::session_partition(workspace)),
+                )
+                .expression_attribute_values(
+                    ":snapshot",
+                    crate::attr::s(keys::workspace_index::session_snapshot_sort(snapshot)),
+                )
+                .consistent_read(false)
+                .scan_index_forward(true)
+                .limit(
+                    i32::try_from(remaining).map_err(|error| StoreError::Invalid {
+                        detail: format!("the session page budget does not fit DynamoDB: {error}"),
+                    })?,
+                )
+                .set_exclusive_start_key(start.as_ref().map(|position| {
+                    position.to_exclusive_start(
+                        Some(keys::workspace_index::PK),
+                        Some(keys::workspace_index::SK),
+                    )
+                }))
+                .send()
+                .await
+                .map_err(|error| classify(&error, Idempotence::Read))?;
+
+            let projected = output.items.unwrap_or_default();
+            let physical = u32::try_from(projected.len()).map_err(|error| StoreError::Invalid {
+                detail: format!("the session index page length does not fit u32: {error}"),
+            })?;
+            if physical > remaining {
+                return Err(malformed_session(
+                    "DynamoDB returned more session locators than the explicit read budget",
+                ));
+            }
+            let continuation = output
+                .last_evaluated_key
+                .as_ref()
+                .map(|last| {
+                    PagePosition::from_last_evaluated(
+                        last,
+                        Some(keys::workspace_index::PK),
+                        Some(keys::workspace_index::SK),
+                    )
+                })
+                .transpose()
+                .map_err(|error| cursor_error(&error))?;
+            if let Some(position) = continuation.as_ref() {
+                validate_session_list_position(position, workspace, snapshot)?;
+            }
+
+            if projected.is_empty() {
+                break continuation;
+            }
+            remaining -= physical;
+            let hydrated = self
+                .hydrate_sessions(workspace, snapshot, &projected)
+                .await?;
+            isolated = isolated.saturating_add(hydrated.isolated);
+            items.extend(
+                hydrated
+                    .items
+                    .into_iter()
+                    .filter(|session| filter.matches(session)),
+            );
+            if remaining == 0 || continuation.is_none() {
+                break continuation;
+            }
+            start = continuation;
+        };
+
+        Ok(PositionPage {
+            items,
+            next,
+            isolated,
+        })
+    }
+
     async fn load_session(
         &self,
         workspace: WorkspaceId,
@@ -1298,11 +1604,11 @@ impl SessionQueries for SessionReads {
             },
         };
         let (rows, next) = self
-            .query_session_range(session, keys::message_prefix(), budget, after)
+            .query_session_range(session, keys::sealed_message_prefix(), budget, after)
             .await?;
         let items = rows
             .iter()
-            .map(|item| crate::authority_codec::decode_domain_message(item, workspace))
+            .map(|item| crate::authority_codec::decode_sealed_message(item, workspace))
             .collect::<Result<Vec<_>, _>>()?;
         self.finish_scoped(
             workspace,

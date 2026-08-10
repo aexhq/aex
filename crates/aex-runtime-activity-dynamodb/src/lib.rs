@@ -24,10 +24,12 @@
 
 pub mod app_continuity;
 pub mod codec;
+pub mod derive;
 pub mod expressions;
 pub mod keys;
 pub mod store;
 
 pub use app_continuity::RuntimeContinuity;
 pub use codec::{CurrentGeneration, GenerationRow, IdleProbe, LifecycleIntent, LifecycleReceipt};
+pub use derive::{DeriveError, derive_generation_rows, derived_generation};
 pub use store::{DueGeneration, RuntimeActivityDynamoStore};

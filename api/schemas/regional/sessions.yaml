@@ -286,7 +286,7 @@ schemas:
       - { value: tool_result, payload: MessagePartToolResult, doc: "A canonical tool result." }
 
   Message:
-    doc: One message in a session.
+    doc: One complete, sealed message in a session. `createdAt` is display metadata; collection order is the immutable seal-visibility order and is not derived from this field.
     type: object
     fields:
       id: { type: id, of: message, doc: "Identity." }
@@ -297,7 +297,7 @@ schemas:
       createdAt: { type: timestamp, doc: "When it was recorded." }
 
   MessagePage:
-    doc: One page of messages.
+    doc: One page of complete sealed messages, ordered by the immutable seal-visibility tuple `(sealedAt, messageId)`. Open partial messages are never visible.
     type: object
     fields:
       items: { type: array, max: 100, items: { type: ref, to: Message }, doc: "The page." }

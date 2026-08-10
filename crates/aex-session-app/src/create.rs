@@ -95,7 +95,7 @@ pub async fn create_session(
     let now = context.clock.now();
 
     let pinned = pinned_runtime(
-        context,
+        prepared.deployment,
         command,
         session_id,
         generation,
@@ -190,7 +190,8 @@ pub async fn create_session(
     })
 }
 
-struct PreparedCreate {
+struct PreparedCreate<'a> {
+    deployment: &'a crate::ports::DeploymentFacts,
     qualified: crate::ports::QualifiedModel,
     size: ComputeSize,
     network: aex_runtime_control::generation::NetworkPolicy,
@@ -199,17 +200,28 @@ struct PreparedCreate {
     initial_root: ContentRoot,
 }
 
-async fn prepare_create(
-    context: &AppContext<'_>,
+async fn prepare_create<'a>(
+    context: &AppContext<'a>,
     command: &CreateSession,
-) -> Result<PreparedCreate, AppError> {
+) -> Result<PreparedCreate<'a>, AppError> {
+    let catalog = context
+        .catalog
+        .ok_or(AppError::Port(crate::ports::PortError::Unowned {
+            kind: "model catalog",
+            seam: "the serving process did not bind a verified model catalog",
+        }))?;
+    let deployment = context.deployment.ok_or(AppError::Port(
+        crate::ports::PortError::Unowned {
+            kind: "deployment facts",
+            seam: "the serving process did not bind a validated Hands image and capability catalog",
+        },
+    ))?;
     let projection = context.accounts.projection(command.organization).await?;
     pause_gate(CommandClass::PausableMutation, &projection)?;
 
     // Pure, in-process, no `.await`: an unknown provider, an unknown model and
     // an unqualified pair are all decided before a single byte is read (D-11).
-    let qualified = context
-        .catalog
+    let qualified = catalog
         .admit(command.request.provider, &command.request.model)
         .map_err(|refusal| AppError::Conflict(refusal.code()))?;
 
@@ -219,8 +231,8 @@ async fn prepare_create(
         .as_ref()
         .and_then(|compute| compute.size)
         .unwrap_or(ComputeSize::DEFAULT);
-    let network = network_policy(context, command)?;
-    check_package_ecosystems(context, command)?;
+    let network = network_policy(deployment, command)?;
+    check_package_ecosystems(deployment, command)?;
 
     // One read, one revision. The values decide `limit_exceeded`; the revision
     // is pinned into the generation, so the definition names the exact policy
@@ -261,6 +273,7 @@ async fn prepare_create(
     let initial_root = seal(context, command, &selectors).await?;
 
     Ok(PreparedCreate {
+        deployment,
         qualified,
         size,
         network,
@@ -357,9 +370,7 @@ fn root_agent_record(session: &Session, now: aex_wire::types::Timestamp) -> Agen
         last_entry: None,
         claim: None,
         join: None,
-        // A root at rest has no run, so no reservation has been opened for
-        // it. Inventing a placeholder would put an identifier that reserves
-        // nothing on the row every settlement reads.
+        // A root at rest has no run, so it has no run-local spend ceiling yet.
         budget: None,
         open_effects: OpenEffectSet::default(),
         pending_approval: None,
@@ -376,7 +387,7 @@ fn root_agent_record(session: &Session, now: aex_wire::types::Timestamp) -> Agen
 
 /// The guest network policy, refused when this plane cannot supply it.
 fn network_policy(
-    context: &AppContext<'_>,
+    deployment: &crate::ports::DeploymentFacts,
     command: &CreateSession,
 ) -> Result<aex_runtime_control::generation::NetworkPolicy, AppError> {
     use aex_runtime_control::generation::NetworkPolicy;
@@ -389,7 +400,7 @@ fn network_policy(
     match mode {
         models::NetworkMode::None => Ok(NetworkPolicy::None),
         models::NetworkMode::PublicInternet => {
-            if context.deployment.public_internet_egress {
+            if deployment.public_internet_egress {
                 Ok(NetworkPolicy::PublicInternet)
             } else {
                 // Accepting this and quietly giving the guest no egress is the
@@ -402,18 +413,14 @@ fn network_policy(
 
 /// Refuses a package whose ecosystem no published image carries.
 fn check_package_ecosystems(
-    context: &AppContext<'_>,
+    deployment: &crate::ports::DeploymentFacts,
     command: &CreateSession,
 ) -> Result<(), AppError> {
     let Some(packages) = command.request.packages.as_ref() else {
         return Ok(());
     };
     for package in packages {
-        if !context
-            .deployment
-            .package_ecosystems
-            .contains(&package.ecosystem)
-        {
+        if !deployment.package_ecosystems.contains(&package.ecosystem) {
             return Err(AppError::Conflict(ErrorCode::UnsupportedPackageEcosystem));
         }
     }
@@ -625,7 +632,7 @@ fn resolved_config(
               only move the same list one line up"
 )]
 fn pinned_runtime(
-    context: &AppContext<'_>,
+    deployment: &crate::ports::DeploymentFacts,
     command: &CreateSession,
     session: SessionId,
     generation: GenerationId,
@@ -634,8 +641,7 @@ fn pinned_runtime(
     limits_revision: u64,
     _root: &ContentRoot,
 ) -> Result<PinnedRuntime, AppError> {
-    let image = context
-        .deployment
+    let image = deployment
         .images
         // No capability is required today: the browser layer has no request
         // field, so asking for it here would be inventing a selector the

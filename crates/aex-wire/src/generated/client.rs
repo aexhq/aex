@@ -3,7 +3,7 @@
 //! The low-level client: one request builder and one method per public operation.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:1d6d54b62df61c8244b5cb84c52fcbfab1a8f47680c90a71f6b1c04faef12f6e`.
+//! `sha256:b35ee328612c409fd77678e0b7c74f4756f57d4190fc724df00a4cef727f7e75`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -2577,7 +2577,7 @@ pub fn session_message_send_request(
 }
 
 /// `GET /api/sessions/{sessionId}/messages`
-/// List the messages of a session.
+/// List complete sealed messages in immutable seal-visibility order.
 ///
 /// Built without executing it, so a caller that needs its own transport — a frame stream, a proxy,
 /// a recorded fixture — can take the request and run it.
@@ -5529,7 +5529,7 @@ impl<T: Transport> WireClient<T> {
     }
 
     /// `GET /api/sessions/{sessionId}/messages`
-    /// List the messages of a session.
+    /// List complete sealed messages in immutable seal-visibility order.
     ///
     /// # Errors
     /// Returns [`ClientError::Api`] for the published error envelope, [`ClientError::Transport`]

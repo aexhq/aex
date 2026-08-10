@@ -17,7 +17,7 @@ use aex_regional_http::projection::{
     registered_file, registered_file_row, registered_instruction, registered_instruction_row,
     registered_mcp_server, registered_mcp_server_row, registered_skill, registered_skill_page,
     registered_tool, secret_metadata, secret_metadata_page, secret_plaintext, secret_revocation,
-    session_run, session_run_page, tuple_position,
+    session_message, session_message_page, session_run, session_run_page, tuple_position,
 };
 use aex_secret_custody_dynamodb::codec::{
     CredentialState, ProviderCredential as StoredCredential, SecretMetadata as StoredSecret,
@@ -97,6 +97,39 @@ where
 }
 
 // --- sessions ---------------------------------------------------------------------
+
+#[test]
+fn a_complete_sealed_message_survives_every_public_part_variant() {
+    let (session, _run, _agent, open) = aex_session_domain::testing::running_session();
+    let mut sealed =
+        aex_session_domain::seal(&open, aex_session_domain::testing::moment(10)).message;
+    sealed.parts = vec![
+        aex_session_domain::MessagePart::Text {
+            text: "hello".to_owned(),
+        },
+        aex_session_domain::MessagePart::File {
+            path: aex_wire::ids::FilePath::parse("/report.json").expect("path"),
+            media_type: Some("application/json".to_owned()),
+        },
+        aex_session_domain::MessagePart::ToolCall {
+            id: aex_session_domain::testing::id(21),
+            arguments: ContentHash::of(b"arguments"),
+        },
+        aex_session_domain::MessagePart::ToolResult {
+            id: aex_session_domain::testing::id(21),
+            result: ContentHash::of(b"result"),
+        },
+    ];
+    let page = session_message_page(&[sealed.clone()], None).expect("sealed page");
+    assert_eq!(round_trip(&page), page);
+    assert_eq!(page.items[0].session_id, session.id);
+    assert_eq!(page.items[0].content.len(), 4);
+
+    assert!(matches!(
+        session_message(&open),
+        Err(ProjectionError::UnsealedMessage { .. })
+    ));
+}
 
 #[test]
 fn a_failed_canonical_run_survives_the_public_wire() {

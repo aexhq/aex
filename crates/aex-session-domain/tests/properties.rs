@@ -195,7 +195,6 @@ proptest! {
                     prop_assert_eq!(commit.session.revision, session.revision.next());
                     prop_assert_eq!(commit.outbox.run, run.id);
                     prop_assert_eq!(commit.usage_closure, attempt.usage_closure);
-                    prop_assert_eq!(commit.release_reservation, run.reservation);
                     winning_outcome = commit.run.outcome.clone();
                     current = commit.run;
                 }

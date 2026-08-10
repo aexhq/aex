@@ -22,8 +22,8 @@ use aex_secret_domain::{
 };
 use aex_session_domain::{
     AccountRevision, AgentControl, AgentFence, AgentRevision, Approval, AuthorizationEpoch,
-    CancellationEpoch, IdempotencyReceipt, JournalPage, JournalSeq, Message, OutboxEvent,
-    ReservationId, Run, Session, SessionRevision, SessionTombstone, WorkAdmission,
+    CancellationEpoch, IdempotencyReceipt, JournalPage, JournalSeq, Message, OutboxEvent, Run,
+    Session, SessionRevision, SessionTombstone, WorkAdmission,
 };
 use aex_wire::ids::{
     AgentId, OperationId, OrganizationId, RunId, SessionId, UploadId, WorkspaceId,
@@ -234,11 +234,6 @@ pub enum Condition {
         /// The expected state.
         expected: UploadState,
     },
-    /// The reservation is still open.
-    ReservationOpen {
-        /// Which reservation.
-        reservation: ReservationId,
-    },
     /// The workspace owns this body.
     ContentOwned {
         /// Which workspace.
@@ -347,8 +342,7 @@ impl Condition {
             | Self::AuthorizationEpochAtLeast { .. }
             | Self::PersistRoot { .. } => TableFamily::SessionAuthority,
             Self::RegistryEtag { .. } | Self::UploadState { .. } => TableFamily::Registry,
-            Self::ReservationOpen { .. }
-            | Self::OperationFence { .. }
+            Self::OperationFence { .. }
             | Self::OperationCursorAt { .. }
             | Self::OperationVersion { .. } => TableFamily::WorkAuthority,
             Self::ContentOwned { .. }
@@ -400,9 +394,6 @@ impl Condition {
                 ),
             ),
             Self::UploadState { upload, .. } => (upload.to_string(), "UPLOAD".to_owned()),
-            Self::ReservationOpen { reservation } => {
-                (reservation.0.to_string(), "RESERVATION".to_owned())
-            }
             Self::ContentOwned { workspace, digest } => {
                 (workspace.to_string(), format!("CONTENT#{digest}"))
             }
@@ -437,6 +428,13 @@ pub enum Write {
     PutSessionHead(Box<Session>),
     /// Replace a complete message authority row.
     PutMessage(Box<Message>),
+    /// Append the immutable, seal-ordered public projection of a message.
+    ///
+    /// This is a distinct row from [`Write::PutMessage`]. The base row may be
+    /// open and mutable; this projection is written only when the message is
+    /// sealed, in the same transaction as that transition. Readers therefore
+    /// never advance a cursor past an open row that might become visible later.
+    PutSealedMessage(Box<Message>),
     /// Replace a run record.
     PutRun(Box<Run>),
     /// Replace an agent control record.
@@ -528,6 +526,7 @@ impl Write {
         match self {
             Self::PutSessionHead(_)
             | Self::PutMessage(_)
+            | Self::PutSealedMessage(_)
             | Self::PutRun(_)
             | Self::PutAgentControl(_)
             | Self::AppendJournalPage { .. }
@@ -562,6 +561,16 @@ impl Write {
             Self::PutMessage(message) => (
                 message.session.to_string(),
                 format!("MESSAGE#{}", message.id),
+            ),
+            Self::PutSealedMessage(message) => (
+                message.session.to_string(),
+                format!(
+                    "SEALED_MESSAGE#{}#{}",
+                    message
+                        .sealed_at
+                        .map_or_else(|| "UNSEALED".to_owned(), |at| at.to_wire()),
+                    message.id
+                ),
             ),
             Self::PutRun(run) => (run.session.to_string(), format!("RUN#{}", run.id)),
             Self::PutAgentControl(agent) => (
@@ -645,7 +654,9 @@ impl Write {
                         + 128
                 })
                 .sum(),
-            Self::PutMessage(message) => 256 + message.parts.len() * 256,
+            Self::PutMessage(message) | Self::PutSealedMessage(message) => {
+                256 + message.parts.len() * 256
+            }
             // A receipt carries the canonical response inline up to
             // `ResponseBody::MAX_INLINE_BYTES`, so a flat estimate would let a
             // transaction carrying several of them pass the 4 MiB envelope check
@@ -844,6 +855,7 @@ impl SessionTransaction {
                 Write::PutOwnerEdge(_) => edges += 1,
                 Write::PutCustody(_) => custody += 1,
                 Write::PutMessage(_)
+                | Write::PutSealedMessage(_)
                 | Write::PutRun(_)
                 | Write::CancelAgent { .. }
                 | Write::AppendJournalPage { .. }

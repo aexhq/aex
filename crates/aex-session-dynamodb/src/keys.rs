@@ -67,6 +67,26 @@ pub fn message_prefix() -> &'static str {
     "MSG#"
 }
 
+/// One immutable sealed-message projection, ordered by seal instant and then
+/// by message identity.
+///
+pub fn sealed_message(
+    session: SessionId,
+    sealed_at: aex_wire::types::Timestamp,
+    message: MessageId,
+) -> Key {
+    Key::new(
+        session_partition(session),
+        format!("SEALEDMSG#{}#{message}", sealed_at.to_wire()),
+    )
+}
+
+/// The strongly consistent, seal-ordered public message range.
+#[must_use]
+pub const fn sealed_message_prefix() -> &'static str {
+    "SEALEDMSG#"
+}
+
 /// One run.
 #[must_use]
 pub fn run(session: SessionId, run: RunId) -> Key {
@@ -136,19 +156,6 @@ pub fn clone_edge(session: SessionId, child: SessionId) -> Key {
 #[must_use]
 pub fn operation_edge(session: SessionId, operation: OperationId) -> Key {
     Key::new(session_partition(session), format!("OP#{operation}"))
-}
-
-/// One spend reservation.
-///
-/// # Errors
-///
-/// [`KeyError`] when the reservation identity could not enter a key.
-pub fn reservation(session: SessionId, reservation: &str) -> Result<Key, KeyError> {
-    let reservation = Component::parse(reservation)?;
-    Ok(Key::new(
-        session_partition(session),
-        format!("RSV#{reservation}"),
-    ))
 }
 
 /// The agent's control item.
@@ -271,15 +278,15 @@ pub mod workspace_index {
     /// The index sort key attribute.
     pub const SK: &str = "wsIndexSk";
 
-    /// The index partition for session heads at one lifecycle.
+    /// The lifecycle-neutral index partition for every visible session head.
     ///
-    /// `lifecycle` lives inside the partition key, so trashing moves the item to
-    /// a different index partition and purging removes the attributes entirely.
-    /// Ordinary list therefore needs no filter expression, and a purged session
-    /// is physically absent from the index rather than filtered out of it.
+    /// Live, trashed and purging heads stay in this one partition. That gives
+    /// the public collection one total `(createdAt, sessionId)` order and lets
+    /// the strong base-row hydration apply the exact public status filter.
+    /// Purge completion removes the sparse attributes entirely.
     #[must_use]
-    pub fn session_partition(workspace: WorkspaceId, lifecycle: &str) -> String {
-        format!("WS#{workspace}#SESSION#{lifecycle}")
+    pub fn session_partition(workspace: WorkspaceId) -> String {
+        format!("WS#{workspace}#SESSION")
     }
 
     /// The index partition for durable operations.
@@ -292,6 +299,15 @@ pub mod workspace_index {
     #[must_use]
     pub fn session_sort(created_at: Timestamp, session: SessionId) -> String {
         format!("{}#{session}", created_at.to_wire())
+    }
+
+    /// The inclusive upper sort-key bound for one pinned listing snapshot.
+    ///
+    /// Session identities contain only lower ASCII than `~`, so every session
+    /// created at this exact millisecond sorts at or below the bound.
+    #[must_use]
+    pub fn session_snapshot_sort(snapshot: Timestamp) -> String {
+        format!("{}#~", snapshot.to_wire())
     }
 
     /// The index sort key for an operation.
@@ -343,6 +359,7 @@ pub const OUTBOX_STATES: &[&str] = &["pending", "delivered"];
 pub const ITEM_TYPES: &[&str] = &[
     "session_head",
     "message",
+    "sealed_message",
     "run",
     "session_event",
     "approval",
@@ -353,7 +370,6 @@ pub const ITEM_TYPES: &[&str] = &[
     "fanout_page",
     "join_shard",
     "budget_return",
-    "spend_reservation",
     "operation",
     "idempotency_receipt",
     "outbox_event",
@@ -363,10 +379,11 @@ pub const ITEM_TYPES: &[&str] = &[
 #[cfg(test)]
 mod tests {
     use aex_wire::ids::{AgentId, MessageId, PrefixedId, SessionId, Uuid7, WorkspaceId};
+    use aex_wire::types::Timestamp;
 
     use super::{
         BRAIN_PREFIX, agent_control, event, head, journal, journal_sort_key, message, receipt,
-        workspace_index,
+        sealed_message, sealed_message_prefix, workspace_index,
     };
 
     fn session() -> SessionId {
@@ -408,6 +425,21 @@ mod tests {
     }
 
     #[test]
+    fn sealed_messages_order_by_seal_instant_then_identity() {
+        let early = Timestamp::from_unix_millis(9).expect("timestamp");
+        let late = Timestamp::from_unix_millis(10).expect("timestamp");
+        let first = MessageId::from_uuid7(Uuid7::compose(1, [3; 10]));
+        let second = MessageId::from_uuid7(Uuid7::compose(1, [4; 10]));
+        assert_eq!(sealed_message_prefix(), "SEALEDMSG#");
+        assert!(
+            sealed_message(session(), early, second).sk < sealed_message(session(), late, first).sk
+        );
+        assert!(
+            sealed_message(session(), late, first).sk < sealed_message(session(), late, second).sk
+        );
+    }
+
+    #[test]
     fn a_receipt_key_refuses_a_scope_carrying_the_separator() {
         let workspace = WorkspaceId::from_uuid7(Uuid7::compose(1, [4; 10]));
         assert!(receipt(workspace, "session.message:ses#evil", &"0".repeat(64)).is_err());
@@ -415,11 +447,12 @@ mod tests {
     }
 
     #[test]
-    fn the_index_partition_carries_the_lifecycle_so_list_needs_no_filter() {
+    fn the_session_index_partition_is_lifecycle_neutral() {
         let workspace = WorkspaceId::from_uuid7(Uuid7::compose(1, [5; 10]));
-        let active = workspace_index::session_partition(workspace, "active");
-        let trashed = workspace_index::session_partition(workspace, "trashed");
-        assert_ne!(active, trashed);
-        assert!(active.ends_with("#SESSION#active"));
+        let partition = workspace_index::session_partition(workspace);
+        assert!(partition.ends_with("#SESSION"));
+        for _lifecycle in ["active", "trashed", "purging"] {
+            assert_eq!(workspace_index::session_partition(workspace), partition);
+        }
     }
 }

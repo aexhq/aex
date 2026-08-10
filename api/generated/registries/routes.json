@@ -3423,16 +3423,13 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferred": true,
-      "deferredReason": "The stored session head cannot yet produce the complete public session resource.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
         "not_found",
         "session_deleted",
         "account_paused",
-        "wrong_workspace_region",
-        "not_implemented"
+        "wrong_workspace_region"
       ],
       "etag": "returns",
       "fragment": "sessions",
@@ -3454,6 +3451,7 @@
         "SC-SESSION-ADMIT",
         "SC-SESSION-TERMINAL"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Read one session, its deleting resource, or its tombstone.",
@@ -3507,8 +3505,6 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferred": true,
-      "deferredReason": "The wire and domain message vocabularies and exact paged read authority are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -3516,8 +3512,7 @@
         "invalid_cursor",
         "session_deleted",
         "account_paused",
-        "wrong_workspace_region",
-        "not_implemented"
+        "wrong_workspace_region"
       ],
       "etag": "none",
       "fragment": "sessions",
@@ -3542,9 +3537,10 @@
         "SC-SESSION-ADMIT",
         "SC-SESSION-TERMINAL"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 200,
-      "summary": "List the messages of a session.",
+      "summary": "List complete sealed messages in immutable seal-visibility order.",
       "transport": "unary"
     },
     {
@@ -4914,15 +4910,12 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
-      "deferred": true,
-      "deferredReason": "The sparse session head cannot yet produce the complete public collection item.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
         "invalid_cursor",
         "account_paused",
-        "wrong_workspace_region",
-        "not_implemented"
+        "wrong_workspace_region"
       ],
       "etag": "none",
       "fragment": "sessions",
@@ -4946,6 +4939,7 @@
         "SC-SESSION-ADMIT",
         "SC-SESSION-TERMINAL"
       ],
+      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "List sessions in the workspace.",

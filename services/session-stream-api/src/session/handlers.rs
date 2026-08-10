@@ -21,7 +21,9 @@ use aex_content_domain::identity::RegistryKind;
 use aex_content_dynamodb::store::ContentMetadataStore;
 use aex_operation_domain::operation::{OperationKind, OperationStatus};
 use aex_regional_http::context::RequestContext;
-use aex_regional_http::cursor::{CursorBinding, CursorKeyRing, Order, SnapshotToken, SortTuple};
+use aex_regional_http::cursor::{
+    CursorBinding, CursorKeyRing, CursorRequestBinding, Order, SnapshotToken, SortTuple,
+};
 use aex_regional_http::mount::{UnaryDispatch, not_served};
 use aex_regional_http::projection::{
     self, ProjectionError, authority_failure, entity_tag, position_tuple, tuple_position,
@@ -47,7 +49,8 @@ use aex_session_dynamodb::paging::{PageBudget, PagePosition};
 use aex_session_dynamodb::plan::{Participant, RegionalTables, TransactionPlan};
 use aex_session_dynamodb::projection::{AuthorizationProjection, WorkspaceProjection};
 use aex_session_dynamodb::store::{
-    OperationApiStore, OperationCancelOutcome, OperationFilter, SessionQueries, SessionScoped,
+    OperationApiStore, OperationCancelOutcome, OperationFilter, SessionListFilter,
+    SessionListStatus, SessionQueries, SessionScoped,
 };
 use aex_session_dynamodb::wire_pending::{Approval, ApprovalStatus, StoredOperation};
 use aex_usage_query_dynamodb::store::UsageProjectionReads;
@@ -540,8 +543,10 @@ impl CommandBindings {
             // inventing an answer; see `crate::session::app_ports`.
             registry: &self.unowned,
             content: &self.unowned,
+            content_writer: &self.unowned,
+            catalog: None,
+            deployment: None,
             limits: &self.unowned,
-            reservations: &self.unowned,
             live: &self.unowned,
             // Owned, not refused: `aex-runtime-activity-dynamodb` is the
             // authority for both continuity and true idle, and
@@ -640,6 +645,24 @@ fn operation_query_hash(query: &models::RegionalOperationsListQuery) -> WireResu
     digest.update(b"aex.regional.operations.list.filters.v1\0");
     digest.update(bytes);
     Ok(digest.finalize().into())
+}
+
+fn sessions_query_hash(status: Option<models::SessionStatus>) -> [u8; 32] {
+    use sha2::Digest as _;
+
+    let mut digest = sha2::Sha256::new();
+    digest.update(b"aex.sessions.list.filters.v1\0");
+    digest.update(status.map_or("*", models::SessionStatus::as_str).as_bytes());
+    digest.finalize().into()
+}
+
+const fn session_list_status(status: models::SessionStatus) -> SessionListStatus {
+    match status {
+        models::SessionStatus::Idle => SessionListStatus::Idle,
+        models::SessionStatus::Running => SessionListStatus::Running,
+        models::SessionStatus::AwaitingApproval => SessionListStatus::AwaitingApproval,
+        models::SessionStatus::Deleting => SessionListStatus::Deleting,
+    }
 }
 
 impl RegionalOperationsApi for Routes {
@@ -874,9 +897,23 @@ impl SessionsApi for Routes {
     async fn session_get(
         &self,
         _cx: &WireContext,
-        _session_id: SessionId,
+        session_id: SessionId,
     ) -> WireResult<WithETag<models::Session>> {
-        Err(not_served(RouteId::SessionGet))
+        let stored = match self
+            .shared
+            .sessions
+            .load_session(self.cx.auth.workspace_id, session_id)
+            .await
+            .map_err(|error| authority_failure(&error))?
+        {
+            SessionScoped::Missing => return Err(WireError::new(ErrorCode::NotFound)),
+            SessionScoped::Deleted => return Err(WireError::new(ErrorCode::SessionDeleted)),
+            SessionScoped::Active(stored) => stored,
+        };
+        let value = aex_session_app::public_session(&stored)
+            .map_err(|_| WireError::new(ErrorCode::InternalError))?;
+        let etag = entity_tag("Session", &value).map_err(WireError::from)?;
+        Ok(WithETag { value, etag })
     }
 
     async fn session_message_send(
@@ -891,10 +928,46 @@ impl SessionsApi for Routes {
     async fn session_messages_list(
         &self,
         _cx: &WireContext,
-        _session_id: SessionId,
-        _query: models::SessionMessagesListQuery,
+        session_id: SessionId,
+        query: models::SessionMessagesListQuery,
     ) -> WireResult<models::MessagePage> {
-        Err(not_served(RouteId::SessionMessagesList))
+        let budget = budget(query.limit)?;
+        let (after, expected_deletion_epoch) = self
+            .resume_session_collection(
+                RouteId::SessionMessagesList,
+                "session.sealed-messages",
+                session_id,
+                query.cursor.as_ref(),
+            )
+            .await?;
+        let page = match self
+            .shared
+            .sessions
+            .page_messages(
+                self.cx.auth.workspace_id,
+                session_id,
+                expected_deletion_epoch,
+                budget,
+                after.as_ref(),
+            )
+            .await
+            .map_err(|error| authority_failure(&error))?
+        {
+            SessionScoped::Missing => return Err(WireError::new(ErrorCode::NotFound)),
+            SessionScoped::Deleted => return Err(WireError::new(ErrorCode::SessionDeleted)),
+            SessionScoped::Active(page) => page,
+        };
+        let binding = self.cursor_binding_for_session_epoch(
+            RouteId::SessionMessagesList,
+            "session.sealed-messages",
+            session_id,
+            page.deletion_epoch,
+        )?;
+        if query.cursor.is_some() {
+            self.resume(query.cursor.as_ref(), &binding)?;
+        }
+        let next = self.continuation(page.next.as_ref(), &binding)?;
+        projection::session_message_page(&page.items, next).map_err(WireError::from)
     }
 
     async fn session_persist(
@@ -1035,9 +1108,68 @@ impl SessionsApi for Routes {
     async fn sessions_list(
         &self,
         _cx: &WireContext,
-        _query: models::SessionsListQuery,
+        query: models::SessionsListQuery,
     ) -> WireResult<models::SessionListPage> {
-        Err(not_served(RouteId::SessionsList))
+        let query_hash = sessions_query_hash(query.status);
+        let request_binding = CursorRequestBinding {
+            route: RouteId::SessionsList,
+            principal_scope: self.cx.auth.credential_binding,
+            region: self.cx.auth.placement,
+            workspace_id: self.cx.auth.workspace_id,
+            session_id: None,
+            query_hash,
+            order: Order::Ascending,
+        };
+        let (snapshot, after) = if let Some(cursor) = query.cursor.as_ref() {
+            let resumed = aex_regional_http::cursor::decode_resume(
+                &self.shared.cursor_keys,
+                cursor,
+                &request_binding,
+                self.now()?,
+            )
+            .map_err(|error| WireError::from(ProjectionError::Cursor(error)))?;
+            let snapshot = Timestamp::parse(resumed.snapshot.as_str())
+                .map_err(|_| WireError::new(ErrorCode::InvalidCursor))?;
+            let after = tuple_position(&resumed.tuple).map_err(WireError::from)?;
+            (snapshot, Some(after))
+        } else {
+            (self.now()?, None)
+        };
+        let binding = self.cursor_binding_for_query(
+            RouteId::SessionsList,
+            &snapshot.to_wire(),
+            None,
+            query_hash,
+        )?;
+        let filter = SessionListFilter {
+            status: query.status.map(session_list_status),
+        };
+        let page = self
+            .shared
+            .sessions
+            .page_sessions(
+                self.cx.auth.workspace_id,
+                &filter,
+                snapshot,
+                budget(query.limit)?,
+                after.as_ref(),
+            )
+            .await
+            .map_err(|error| authority_failure(&error))?;
+        if page.isolated > 0 {
+            eprintln!(
+                "regional-session-api: a session listing isolated {} stale locator(s) for workspace {}",
+                page.isolated, self.cx.auth.workspace_id
+            );
+        }
+        Ok(models::SessionListPage {
+            items: page
+                .items
+                .iter()
+                .map(aex_session_app::public_session_list_item)
+                .collect(),
+            next_cursor: self.continuation(page.next.as_ref(), &binding)?,
+        })
     }
 }
 

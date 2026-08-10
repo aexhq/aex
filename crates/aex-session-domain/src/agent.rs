@@ -277,12 +277,8 @@ pub struct AgentControl {
     pub claim: Option<AgentClaim>,
     /// Where its result goes, when it is a child.
     pub join: Option<JoinEdge>,
-    /// Its spend grant, when it has one.
-    ///
-    /// A spend grant is per-run: it names a reservation the finance plane
-    /// opened. A session's root agent is born at rest with no run and therefore
-    /// no reservation, and inventing a placeholder reservation for it would put
-    /// an identifier that reserves nothing on the row every settlement reads.
+    /// Its run-local spend ceiling, when it has one. The root agent is born at
+    /// rest with no run and receives the ceiling of the run it executes.
     pub budget: Option<BudgetGrant>,
     /// Its unsettled effects.
     pub open_effects: OpenEffectSet,

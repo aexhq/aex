@@ -10,8 +10,6 @@ use std::num::NonZeroU64;
 
 use aex_wire::limits::LimitId;
 
-use crate::ids::ReservationId;
-
 /// The limits in force for one workspace.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EffectiveLimits(BTreeMap<LimitId, u64>);
@@ -78,8 +76,6 @@ pub struct LimitUnresolved {
 /// The spend a run is allowed to consume.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BudgetGrant {
-    /// The reservation backing the grant.
-    pub reservation: ReservationId,
     /// The ceiling, in cents.
     pub max_spend_cents: NonZeroU64,
 }

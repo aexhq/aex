@@ -117,14 +117,11 @@ deferredOperations:
   session_files_persisted_download_create: "The persisted root, content decryption, and presigning composition is incomplete."
   session_files_persisted_list: "The persisted root and plaintext content projection are incomplete."
   session_files_persisted_stat: "The persisted root and plaintext content projection are incomplete."
-  session_get: "The stored session head cannot yet produce the complete public session resource."
   session_message_send: "The wire and domain message vocabularies and durable command path are not reconciled."
-  session_messages_list: "The wire and domain message vocabularies and exact paged read authority are incomplete."
   session_persist: "The paged persist operation and commit latch are incomplete."
   session_purge: "The paged purge operation and commit latch are incomplete."
   session_telemetry_export_create: "The durable session export-admission composition is incomplete."
   session_workspace_discard: "The workspace-discard operation and commit latch are incomplete."
-  sessions_list: "The sparse session head cannot yet produce the complete public collection item."
   telemetry_export_create: "The durable workspace export-admission composition is incomplete."
 
 # Actual public mount authority. `scenarioOwners` and `operationOwners` plan
@@ -256,11 +253,14 @@ servedOperations:
     - session_observations_telemetry_stream
     - session_observations_traces_listen
     - session_observations_traces_stream
+    - session_get
+    - session_messages_list
     - session_restore
     - session_run_get
     - session_runs_list
     - session_stop
     - session_trash
+    - sessions_list
     - upload_abort
     - upload_complete
     - upload_create

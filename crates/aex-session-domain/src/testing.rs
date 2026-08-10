@@ -22,8 +22,8 @@ use crate::agent::{AgentControl, AgentKind, AgentStatus, MaterializedState, Open
 use crate::approval::{ApprovalBinding, BindingField};
 use crate::budget::BudgetGrant;
 use crate::ids::{
-    AgentRevision, CancellationEpoch, EntryIdentity, JournalSeq, PersistRevision, ReservationId,
-    SessionRevision, UsageClosureId,
+    AgentRevision, CancellationEpoch, EntryIdentity, JournalSeq, PersistRevision, SessionRevision,
+    UsageClosureId,
 };
 use crate::journal::{AuthorityFact, JournalBody, JournalEntry};
 use crate::lineage::Lineage;
@@ -69,7 +69,6 @@ pub fn root(tag: u8) -> ContentRoot {
 #[must_use]
 pub fn budget() -> BudgetGrant {
     BudgetGrant {
-        reservation: ReservationId(Uuid7::compose(1, [5; 10])),
         max_spend_cents: NonZeroU64::new(1_000).expect("non-zero"),
     }
 }
@@ -268,7 +267,6 @@ pub fn running_session() -> (Session, Run, AgentControl, Message) {
         message: id::<MessageId>(7),
         status: RunStatus::Running,
         max_spend_cents: NonZeroU64::new(1_000).expect("non-zero"),
-        reservation: ReservationId(Uuid7::compose(1, [5; 10])),
         deadline: moment(60_000),
         cancellation_at_admission: session.cancellation,
         queued_at: moment(0),

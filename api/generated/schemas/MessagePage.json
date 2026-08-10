@@ -2,7 +2,7 @@
   "$id": "https://schemas.aex.dev/v1/MessagePage.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "One page of messages.",
+  "description": "One page of complete sealed messages, ordered by the immutable seal-visibility tuple `(sealedAt, messageId)`. Open partial messages are never visible.",
   "properties": {
     "items": {
       "description": "The page.",

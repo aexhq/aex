@@ -369,15 +369,14 @@ async fn the_workspace_index_is_sparse_so_no_other_item_family_can_reach_a_list(
     let head = aex_session_domain::testing::session_fixture();
     let encoded = aex_session_dynamodb::authority_codec::encode_session(&head)
         .expect("the canonical head encodes");
-    let partition = keys::workspace_index::session_partition(head.workspace, "active");
+    let partition = keys::workspace_index::session_partition(head.workspace);
     assert_eq!(
         encoded
             .get(keys::workspace_index::PK)
             .and_then(|value| value.as_s().ok())
             .map(String::as_str),
         Some(partition.as_str()),
-        "the fixture head must be the live one; lifecycle lives inside the index \
-         partition key, so a trashed fixture would be listed somewhere else"
+        "every visible lifecycle must share the one globally ordered session partition"
     );
     put(&client, encoded).await;
     // Three other families in the same table, none of which may ever be listed.

@@ -119,10 +119,6 @@ impl fmt::Debug for EntryIdentity {
 // owned by the contract crate and re-exported here.
 pub use aex_internal_contracts::outbox::UsageClosureId;
 
-/// The identity of one spend reservation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ReservationId(pub Uuid7);
-
 /// The identity of one open effect an agent has prepared but not settled.
 ///
 /// `aex-session-domain` owns only the identity and the balance rule; the

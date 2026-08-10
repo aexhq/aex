@@ -3125,15 +3125,13 @@
         {
           "altPrincipal": null,
           "bodyClass": "none",
-          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
             "not_found",
             "session_deleted",
             "account_paused",
-            "wrong_workspace_region",
-            "not_implemented"
+            "wrong_workspace_region"
           ],
           "etag": "returns",
           "fragment": "sessions",
@@ -3197,7 +3195,6 @@
         {
           "altPrincipal": null,
           "bodyClass": "none",
-          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
@@ -3205,8 +3202,7 @@
             "invalid_cursor",
             "session_deleted",
             "account_paused",
-            "wrong_workspace_region",
-            "not_implemented"
+            "wrong_workspace_region"
           ],
           "etag": "none",
           "fragment": "sessions",
@@ -3228,7 +3224,7 @@
           "responseSchema": "MessagePage",
           "safeRetry": true,
           "successStatus": 200,
-          "summary": "List the messages of a session.",
+          "summary": "List complete sealed messages in immutable seal-visibility order.",
           "transport": "unary"
         },
         {
@@ -4414,14 +4410,12 @@
         {
           "altPrincipal": null,
           "bodyClass": "none",
-          "deferred": true,
           "errors": [
             "unauthenticated",
             "insufficient_scope",
             "invalid_cursor",
             "account_paused",
-            "wrong_workspace_region",
-            "not_implemented"
+            "wrong_workspace_region"
           ],
           "etag": "none",
           "fragment": "sessions",

@@ -11,7 +11,7 @@ use aex_operation_domain::{DeletionEpoch, DeletionGuard, DeletionState, Operatio
 use aex_secret_domain::CustodyRevision;
 use aex_session_domain::{
     CancellationEpoch, CloneFiles, DomainError, EffectId, InterruptReason, Lineage, Message,
-    MessagePart, MessageRole, MessageState, MutationGuard, Origin, PersistRevision, ReservationId,
+    MessagePart, MessageRole, MessageState, MutationGuard, Origin, PersistRevision,
     ResolvedConfigAuthority, ResolvedConfigDigest, Run, RunOutcome, Session, SessionRevision,
     SessionStatus, WorkAdmission,
 };
@@ -443,7 +443,7 @@ enum InterruptV1 {
     AccountPaused,
     AuthorizationRevoked,
     ContinuityLost { generation: Option<GenerationId> },
-    SpendExhausted,
+    SpendCapExhausted,
     AmbiguousEffect { effect: Uuid7 },
 }
 
@@ -454,7 +454,7 @@ impl From<InterruptReason> for InterruptV1 {
             InterruptReason::AccountPaused => Self::AccountPaused,
             InterruptReason::AuthorizationRevoked => Self::AuthorizationRevoked,
             InterruptReason::ContinuityLost { generation } => Self::ContinuityLost { generation },
-            InterruptReason::SpendExhausted => Self::SpendExhausted,
+            InterruptReason::SpendCapExhausted => Self::SpendCapExhausted,
             InterruptReason::AmbiguousEffect { effect } => {
                 Self::AmbiguousEffect { effect: effect.0 }
             }
@@ -469,7 +469,7 @@ impl From<InterruptV1> for InterruptReason {
             InterruptV1::AccountPaused => Self::AccountPaused,
             InterruptV1::AuthorizationRevoked => Self::AuthorizationRevoked,
             InterruptV1::ContinuityLost { generation } => Self::ContinuityLost { generation },
-            InterruptV1::SpendExhausted => Self::SpendExhausted,
+            InterruptV1::SpendCapExhausted => Self::SpendCapExhausted,
             InterruptV1::AmbiguousEffect { effect } => Self::AmbiguousEffect {
                 effect: EffectId(effect),
             },
@@ -555,7 +555,6 @@ struct RunV1 {
     message: MessageId,
     status: aex_session_domain::RunStatus,
     max_spend_cents: u64,
-    reservation: Uuid7,
     deadline: Timestamp,
     cancellation_at_admission: u64,
     queued_at: Timestamp,
@@ -574,7 +573,6 @@ impl From<&Run> for RunV1 {
             message: run.message,
             status: run.status,
             max_spend_cents: run.max_spend_cents.get(),
-            reservation: run.reservation.0,
             deadline: run.deadline,
             cancellation_at_admission: run.cancellation_at_admission.0,
             queued_at: run.queued_at,
@@ -630,7 +628,6 @@ impl RunV1 {
             message: self.message,
             status: self.status,
             max_spend_cents,
-            reservation: ReservationId(self.reservation),
             deadline: self.deadline,
             cancellation_at_admission: CancellationEpoch(self.cancellation_at_admission),
             queued_at: self.queued_at,
@@ -696,10 +693,7 @@ pub fn encode_session(session: &Session) -> Result<Item, CodecError> {
         builder
             .set(
                 keys::workspace_index::PK,
-                s(keys::workspace_index::session_partition(
-                    session.workspace,
-                    lifecycle,
-                )),
+                s(keys::workspace_index::session_partition(session.workspace)),
             )
             .set(
                 keys::workspace_index::SK,
@@ -725,11 +719,10 @@ pub fn decode_session(item: &Item, asserted: WorkspaceId) -> Result<Session, Cod
     decode_session_row(row, asserted)
 }
 
-/// Decodes the complete authority document projected into the workspace GSI.
+/// Decodes a complete authority document after a workspace-index locator was
+/// strongly hydrated from the base table.
 ///
-/// The index includes the versioned document plus every duplicated field this
-/// decoder checks. This is intentionally a single-row decode: list
-/// implementations must not issue one base-table read per item.
+/// The workspace index is `KEYS_ONLY`; it never acts as session truth.
 ///
 /// # Errors
 ///
@@ -787,8 +780,7 @@ fn decode_session_row(row: Row<'_>, asserted: WorkspaceId) -> Result<Session, Co
             "session document disagrees with its resolved configuration digest projection",
         ));
     }
-    let lifecycle = deletion_state(session.deletion.state);
-    let expected_index_partition = keys::workspace_index::session_partition(asserted, lifecycle);
+    let expected_index_partition = keys::workspace_index::session_partition(asserted);
     let expected_index_sort = keys::workspace_index::session_sort(session.created_at, session.id);
     let indexed = session.deletion.state != DeletionState::Purged;
     if row.opt_string(keys::workspace_index::PK)?
@@ -864,6 +856,99 @@ pub fn decode_domain_message(item: &Item, asserted: WorkspaceId) -> Result<Messa
         return Err(malformed(
             AUTHORITY_DOCUMENT,
             "message document disagrees with its checked projection",
+        ));
+    }
+    Ok(message)
+}
+
+/// Encodes the immutable public projection of one sealed message.
+///
+/// # Errors
+///
+/// Refuses an open message or a sealed message without its seal instant. The
+/// row is complete rather than a locator so listing is one strong range read.
+pub fn encode_sealed_message(
+    message: &Message,
+    workspace: WorkspaceId,
+    organization: OrganizationId,
+) -> Result<Item, CodecError> {
+    if message.state != MessageState::Sealed {
+        return Err(malformed(
+            AUTHORITY_DOCUMENT,
+            "an open message cannot enter the sealed-message projection",
+        ));
+    }
+    let sealed_at = message.sealed_at.ok_or_else(|| {
+        malformed(
+            AUTHORITY_DOCUMENT,
+            "a sealed-message projection requires a seal instant",
+        )
+    })?;
+    let key = keys::sealed_message(message.session, sealed_at, message.id);
+    Ok(ItemBuilder::new(codec::SEALED_MESSAGE)
+        .set(crate::attr::PK, s(key.pk))
+        .set(crate::attr::SK, s(key.sk))
+        .set(AUTHORITY_SCHEMA, n(AUTHORITY_SCHEMA_VERSION))
+        .set(
+            AUTHORITY_DOCUMENT,
+            s(encode_document(&MessageV1::from(message))?),
+        )
+        .set("messageId", s(message.id.to_string()))
+        .set("sessionId", s(message.session.to_string()))
+        .set("workspaceId", s(workspace.to_string()))
+        .set("organizationId", s(organization.to_string()))
+        .set("agentId", s(message.agent.to_string()))
+        .set_opt("runId", message.run.map(|run| s(run.to_string())))
+        .set("createdAt", crate::attr::stamp(message.created_at))
+        .set("sealedAt", crate::attr::stamp(sealed_at))
+        .build())
+}
+
+/// Decodes and verifies one immutable sealed-message projection.
+///
+/// # Errors
+///
+/// Returns [`CodecError`] for an incomplete, cross-tenant, open, or
+/// key/document-inconsistent row.
+pub fn decode_sealed_message(item: &Item, asserted: WorkspaceId) -> Result<Message, CodecError> {
+    let row = Row::bind(item, codec::SEALED_MESSAGE)?;
+    row.owned_by("workspaceId", &asserted.to_string())?;
+    require_schema(&row)?;
+    let expected_id = row.id::<MessageId>("messageId")?;
+    let expected_session = row.id::<SessionId>("sessionId")?;
+    let stored: MessageV1 = decode_document(row.string(AUTHORITY_DOCUMENT)?)?;
+    if stored.id != expected_id || stored.session != expected_session {
+        return Err(malformed(
+            AUTHORITY_DOCUMENT,
+            "sealed-message document disagrees with its indexed identity",
+        ));
+    }
+    let message = stored.decode()?;
+    if message.state != MessageState::Sealed {
+        return Err(malformed(
+            AUTHORITY_DOCUMENT,
+            "a sealed-message projection contains an open message",
+        ));
+    }
+    let sealed_at = message.sealed_at.ok_or_else(|| {
+        malformed(
+            AUTHORITY_DOCUMENT,
+            "a sealed-message projection has no seal instant",
+        )
+    })?;
+    expect_key(
+        &row,
+        &keys::sealed_message(message.session, sealed_at, message.id),
+    )?;
+    let _organization = row.id::<OrganizationId>("organizationId")?;
+    if row.id::<AgentId>("agentId")? != message.agent
+        || row.opt_id::<RunId>("runId")? != message.run
+        || row.timestamp("createdAt")? != message.created_at
+        || row.timestamp("sealedAt")? != sealed_at
+    {
+        return Err(malformed(
+            AUTHORITY_DOCUMENT,
+            "sealed-message document disagrees with its checked projection",
         ));
     }
     Ok(message)
@@ -1098,14 +1183,14 @@ pub(crate) const fn run_status(status: aex_session_domain::RunStatus) -> &'stati
 mod tests {
     use aex_content_domain::ContentDigest;
     use aex_session_domain::testing::{id, moment, running_session, session_fixture};
-    use aex_session_domain::{MessagePart, RunOutcome};
+    use aex_session_domain::{MessagePart, RunOutcome, seal};
     use aex_wire::ids::{FilePath, OperationId, TelemetryGapId, ToolCallId};
     use aws_sdk_dynamodb::types::AttributeValue;
 
     use super::{
         AUTHORITY_DOCUMENT, AUTHORITY_SCHEMA, decode_domain_message, decode_domain_run,
-        decode_session, decode_session_projection, encode_domain_message, encode_domain_run,
-        encode_session,
+        decode_sealed_message, decode_session, decode_session_projection, encode_domain_message,
+        encode_domain_run, encode_sealed_message, encode_session,
     };
 
     #[test]
@@ -1186,6 +1271,26 @@ mod tests {
         let item = encode_domain_message(&message, session.workspace, session.organization)
             .expect("encode");
         assert_eq!(decode_domain_message(&item, session.workspace), Ok(message));
+    }
+
+    #[test]
+    fn only_a_complete_sealed_message_enters_the_public_projection() {
+        let (session, _run, _agent, open) = running_session();
+        assert!(
+            encode_sealed_message(&open, session.workspace, session.organization).is_err(),
+            "an open partial message must remain invisible"
+        );
+
+        let sealed = seal(&open, moment(10)).message;
+        let item = encode_sealed_message(&sealed, session.workspace, session.organization)
+            .expect("sealed projection");
+        let expected_sort = format!("SEALEDMSG#{}#{}", moment(10).to_wire(), sealed.id);
+        assert_eq!(
+            item.get(crate::attr::SK)
+                .and_then(|value| value.as_s().ok()),
+            Some(&expected_sort)
+        );
+        assert_eq!(decode_sealed_message(&item, session.workspace), Ok(sealed));
     }
 
     #[test]

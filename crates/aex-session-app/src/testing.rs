@@ -16,8 +16,7 @@ use aex_secret_domain::{SecretName, SessionCustody, TrueIdle, WorkspaceSecret};
 use aex_session_domain::testing::{materialized_state, moment, session_fixture};
 use aex_session_domain::{
     AccountProjection, AccountRevision, AccountState, AgentControl, EffectiveLimits,
-    IdempotencyIdentity, IdempotencyReceipt, JournalPage, JournalSeq, ReservationId, Run, Session,
-    create_root,
+    IdempotencyIdentity, IdempotencyReceipt, JournalPage, JournalSeq, Run, Session, create_root,
 };
 use aex_wire::ids::{
     AgentId, GenerationId, OperationId, OrganizationId, PrefixedId as _, RunId, SessionId,
@@ -30,9 +29,8 @@ use aex_workspace_domain::{RegistryPointer, RegistrySelector, Upload};
 use crate::ports::{
     AccountStateReader, AgentCancelPage, AgentCancelTarget, AgentPage, AppContext, Clock,
     ContentReader, ContinuityReader, IdFactory, LimitsReader, LiveEntry, LiveListQuery,
-    LiveListing, LiveWorkspaceReader, PageBudget, PortError, RegistryReader, ReservationAuthority,
-    ReservationGrant, ReservationRequest, SecretCustodyReader, SessionReader, SessionSnapshot,
-    VersionedOperation, WorkspaceContinuity,
+    LiveListing, LiveWorkspaceReader, PageBudget, PortError, RegistryReader, SecretCustodyReader,
+    SessionReader, SessionSnapshot, VersionedOperation, WorkspaceContinuity,
 };
 
 /// One recorded port interaction.
@@ -444,11 +442,10 @@ impl ScriptedPorts {
             content: self,
             content_writer: self,
             secrets: self,
-            catalog: self,
-            deployment: &self.deployment,
+            catalog: Some(self),
+            deployment: Some(&self.deployment),
             limits: self,
             accounts: self,
-            reservations: self,
             continuity: self,
             live: self,
         }
@@ -662,19 +659,6 @@ impl AccountStateReader for ScriptedPorts {
     ) -> Result<AccountProjection, PortError> {
         self.log.record(PortCall::Read("projection"));
         Ok(self.account)
-    }
-}
-
-#[async_trait::async_trait]
-impl ReservationAuthority for ScriptedPorts {
-    async fn prepare(&self, request: ReservationRequest) -> Result<ReservationGrant, PortError> {
-        // A reservation is a read of the finance authority from this crate's
-        // point of view: it never writes the session's own tables.
-        self.log.record(PortCall::Read("prepare_reservation"));
-        Ok(ReservationGrant {
-            reservation: ReservationId(Uuid7::compose(1, [5; 10])),
-            granted_cents: request.max_spend_cents,
-        })
     }
 }
 

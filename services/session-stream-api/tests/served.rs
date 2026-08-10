@@ -44,7 +44,9 @@ use aex_session_dynamodb::projection::{
 };
 use aex_session_dynamodb::replay::Receipt;
 use aex_session_dynamodb::store::{OperationApiStore, OperationCancelOutcome, OperationFilter};
-use aex_session_dynamodb::store::{PositionPage, SessionPage, SessionQueries, SessionScoped};
+use aex_session_dynamodb::store::{
+    PositionPage, SessionListFilter, SessionListStatus, SessionPage, SessionQueries, SessionScoped,
+};
 use aex_session_dynamodb::transactions::operation_cancel_owned;
 use aex_session_dynamodb::wire_pending::{
     Approval, ApprovalBinding, ApprovalStatus, ProjectedLimitBundle as StoredBundle,
@@ -331,6 +333,9 @@ impl OperationApiStore for FakeOperations {
 #[derive(Debug, Default)]
 struct FakeSessions {
     approvals: Vec<Approval>,
+    sessions: Vec<Session>,
+    session_page_calls: std::sync::Mutex<Vec<(SessionListFilter, Timestamp, Option<PagePosition>)>>,
+    messages: Vec<Message>,
     runs: Vec<Run>,
     next: Option<PagePosition>,
     deleted: bool,
@@ -339,6 +344,74 @@ struct FakeSessions {
 
 #[async_trait::async_trait]
 impl SessionQueries for FakeSessions {
+    async fn page_sessions(
+        &self,
+        workspace: WorkspaceId,
+        filter: &SessionListFilter,
+        snapshot: Timestamp,
+        budget: PageBudget,
+        after: Option<&PagePosition>,
+    ) -> Result<PositionPage<Session>, StoreError> {
+        self.session_page_calls
+            .lock()
+            .expect("an uncontended fixture")
+            .push((*filter, snapshot, after.cloned()));
+        let filtered = self
+            .sessions
+            .iter()
+            .filter(|session| {
+                filter.status.is_none_or(|status| match status {
+                    SessionListStatus::Idle => {
+                        session.status == aex_session_domain::SessionStatus::Idle
+                    }
+                    SessionListStatus::Running => {
+                        session.status == aex_session_domain::SessionStatus::Running
+                    }
+                    SessionListStatus::AwaitingApproval => {
+                        session.status == aex_session_domain::SessionStatus::AwaitingApproval
+                    }
+                    SessionListStatus::Deleting => matches!(
+                        session.status,
+                        aex_session_domain::SessionStatus::Trashed
+                            | aex_session_domain::SessionStatus::Purging
+                    ),
+                })
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let start = after
+            .and_then(|position| {
+                filtered.iter().position(|session| {
+                    position.pk == aex_session_dynamodb::keys::head(session.id).pk
+                })
+            })
+            .map_or(0, |index| index + 1);
+        let end = filtered
+            .len()
+            .min(start.saturating_add(usize::try_from(budget.items()).unwrap_or(usize::MAX)));
+        let items = filtered[start..end].to_vec();
+        let next = (end < filtered.len()).then(|| {
+            let session = &filtered[end - 1];
+            let head = aex_session_dynamodb::keys::head(session.id);
+            PagePosition {
+                pk: head.pk,
+                sk: head.sk,
+                index_pk: Some(
+                    aex_session_dynamodb::keys::workspace_index::session_partition(workspace),
+                ),
+                index_sk: Some(aex_session_dynamodb::keys::workspace_index::session_sort(
+                    session.created_at,
+                    session.id,
+                )),
+            }
+        });
+        Ok(PositionPage {
+            items,
+            next,
+            isolated: 0,
+        })
+    }
+
     async fn load_session(
         &self,
         workspace: WorkspaceId,
@@ -358,12 +431,24 @@ impl SessionQueries for FakeSessions {
     async fn page_messages(
         &self,
         _workspace: WorkspaceId,
-        _session: SessionId,
+        session: SessionId,
         _expected_deletion_epoch: Option<aex_session_domain::DeletionEpoch>,
         _budget: PageBudget,
         _after: Option<&PagePosition>,
     ) -> Result<SessionScoped<SessionPage<Message>>, StoreError> {
-        Ok(SessionScoped::Missing)
+        if self.deleted {
+            return Ok(SessionScoped::Deleted);
+        }
+        Ok(SessionScoped::Active(SessionPage {
+            items: self
+                .messages
+                .iter()
+                .filter(|stored| stored.session == session)
+                .cloned()
+                .collect(),
+            next: self.next.clone(),
+            deletion_epoch: aex_session_domain::DeletionEpoch(self.deletion_epoch),
+        }))
     }
 
     async fn load_run(
@@ -1586,33 +1671,6 @@ async fn a_wrong_method_on_a_deferred_path_is_a_method_refusal() {
     assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
 }
 
-/// A session read is not a slim head projection. The published point resource
-/// requires continuity, lineage and the complete resolved configuration, while
-/// the collection requires provider and model. None can be recovered from the
-/// current head or its sparse index projection, so exposing either route would
-/// turn missing authority into a successful partial resource.
-#[tokio::test]
-async fn session_point_and_list_reads_are_absent_until_the_head_is_complete() {
-    let (router, mounted) = router(FakeCustody::default());
-    assert!(!mounted.contains(&RouteId::SessionGet));
-    assert!(!mounted.contains(&RouteId::SessionsList));
-
-    let session = sample::<SessionId>(31);
-    for path in [
-        "/api/sessions".to_owned(),
-        format!("/api/sessions/{session}"),
-    ] {
-        let (status, etag, body) = get(&router, &path).await;
-        assert_eq!(
-            status,
-            StatusCode::NOT_IMPLEMENTED,
-            "an incomplete session projection became reachable: {status} {body}"
-        );
-        assert_eq!(etag, None, "a refusal must not mint an entity tag");
-        assert_eq!(body["error"]["code"], ErrorCode::NotImplemented.as_str());
-    }
-}
-
 /// A create response is not earned by an immutable head alone. The same
 /// provider transaction must also establish the root agent, sealed registry
 /// selection and root pin, first custody authority, exact logical Hands
@@ -1935,6 +1993,9 @@ async fn approval_reads_are_deferred_and_the_router_answers_the_refusal() {
         Arc::new(FakeRegistry::default()),
         Arc::new(FakeSessions {
             approvals: vec![row],
+            sessions: Vec::new(),
+            session_page_calls: std::sync::Mutex::default(),
+            messages: Vec::new(),
             runs: Vec::new(),
             next: None,
             deleted: false,
@@ -1966,6 +2027,9 @@ async fn approval_get_projects_the_complete_bound_call_and_decision() {
             Arc::new(FakeRegistry::default()),
             Arc::new(FakeSessions {
                 approvals: vec![row],
+                sessions: Vec::new(),
+                session_page_calls: std::sync::Mutex::default(),
+                messages: Vec::new(),
                 runs: Vec::new(),
                 next: None,
                 deleted: false,
@@ -2008,6 +2072,9 @@ async fn approval_list_publishes_expired_and_binds_continuation_to_the_session()
             Arc::new(FakeRegistry::default()),
             Arc::new(FakeSessions {
                 approvals: vec![row],
+                sessions: Vec::new(),
+                session_page_calls: std::sync::Mutex::default(),
+                messages: Vec::new(),
                 runs: Vec::new(),
                 next: Some(next),
                 deleted: false,
@@ -2033,6 +2100,9 @@ async fn approval_list_publishes_expired_and_binds_continuation_to_the_session()
             Arc::new(FakeRegistry::default()),
             Arc::new(FakeSessions {
                 approvals: vec![stored_approval(ApprovalStatus::Expired)],
+                sessions: Vec::new(),
+                session_page_calls: std::sync::Mutex::default(),
+                messages: Vec::new(),
                 runs: Vec::new(),
                 next: None,
                 deleted: false,
@@ -2072,6 +2142,9 @@ async fn approval_reads_refuse_a_session_that_crossed_its_deletion_fence() {
         Arc::new(FakeRegistry::default()),
         Arc::new(FakeSessions {
             approvals: vec![row],
+            sessions: Vec::new(),
+            session_page_calls: std::sync::Mutex::default(),
+            messages: Vec::new(),
             runs: Vec::new(),
             next: None,
             deleted: true,
@@ -2111,6 +2184,9 @@ async fn approval_response_is_absent_without_one_atomic_handoff_authority() {
         Arc::new(FakeRegistry::default()),
         Arc::new(FakeSessions {
             approvals: vec![row],
+            sessions: Vec::new(),
+            session_page_calls: std::sync::Mutex::default(),
+            messages: Vec::new(),
             runs: Vec::new(),
             next: None,
             deleted: false,
@@ -2622,6 +2698,143 @@ const REGISTRY_POINTS: &[(RouteId, &str)] = &[
 ];
 
 #[tokio::test]
+async fn canonical_session_point_read_is_complete_tagged_and_reachable() {
+    let mut session = aex_session_domain::testing::session_fixture();
+    session.workspace = workspace();
+    let expected = aex_session_app::public_session(&session).expect("a complete public session");
+    let expected_tag = entity_tag("Session", &expected).expect("a session entity tag");
+    let ((router, mounted), _) = build_with_sessions(
+        Arc::new(FakeCustody::default()),
+        Arc::new(FakeRegistry::default()),
+        Arc::new(FakeSessions::default()),
+    );
+    assert!(mounted.contains(&RouteId::SessionGet));
+
+    let (status, etag, body) = get(&router, &format!("/api/sessions/{}", session.id)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(etag.as_deref(), Some(expected_tag.as_str()));
+    let projected: models::Session = serde_json::from_value(body).expect("strict wire session");
+    assert_eq!(projected, expected);
+
+    let ((deleted_router, _), _) = build_with_sessions(
+        Arc::new(FakeCustody::default()),
+        Arc::new(FakeRegistry::default()),
+        Arc::new(FakeSessions {
+            deleted: true,
+            ..FakeSessions::default()
+        }),
+    );
+    let (status, _, body) = get(&deleted_router, &format!("/api/sessions/{}", session.id)).await;
+    assert_eq!(status, StatusCode::GONE, "{body}");
+    assert_eq!(body["error"]["code"], ErrorCode::SessionDeleted.as_str());
+}
+
+#[tokio::test]
+async fn session_listing_keeps_one_authenticated_snapshot_across_filtered_pages() {
+    let mut trashed = aex_session_domain::testing::session_fixture();
+    trashed.id = sample(81);
+    trashed.workspace = workspace();
+    trashed.deletion.session = trashed.id;
+    trashed.status = aex_session_domain::SessionStatus::Trashed;
+    trashed.created_at = moment("2026-08-01T12:00:00.000Z");
+
+    let mut purging = trashed.clone();
+    purging.id = sample(82);
+    purging.deletion.session = purging.id;
+    purging.status = aex_session_domain::SessionStatus::Purging;
+    purging.created_at = moment("2026-08-01T12:01:00.000Z");
+
+    let mut idle = trashed.clone();
+    idle.id = sample(83);
+    idle.deletion.session = idle.id;
+    idle.status = aex_session_domain::SessionStatus::Idle;
+    idle.created_at = moment("2026-08-01T12:02:00.000Z");
+
+    let sessions = Arc::new(FakeSessions {
+        sessions: vec![trashed.clone(), purging.clone(), idle],
+        ..FakeSessions::default()
+    });
+    let ((router, mounted), _) = build_with_sessions(
+        Arc::new(FakeCustody::default()),
+        Arc::new(FakeRegistry::default()),
+        Arc::clone(&sessions),
+    );
+    assert!(mounted.contains(&RouteId::SessionsList));
+
+    let (status, _, first_body) = get(&router, "/api/sessions?status=deleting&limit=1").await;
+    assert_eq!(status, StatusCode::OK, "{first_body}");
+    let first: models::SessionListPage =
+        serde_json::from_value(first_body).expect("a strict first session page");
+    assert_eq!(
+        first.items,
+        vec![aex_session_app::public_session_list_item(&trashed)]
+    );
+    let cursor = first
+        .next_cursor
+        .expect("the second deleting session remains");
+
+    let (status, _, second_body) = get(
+        &router,
+        &format!("/api/sessions?status=deleting&limit=1&cursor={cursor}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{second_body}");
+    let second: models::SessionListPage =
+        serde_json::from_value(second_body).expect("a strict second session page");
+    assert_eq!(
+        second.items,
+        vec![aex_session_app::public_session_list_item(&purging)]
+    );
+    assert!(second.next_cursor.is_none());
+
+    let calls = sessions
+        .session_page_calls
+        .lock()
+        .expect("an uncontended fixture");
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0].0.status, Some(SessionListStatus::Deleting));
+    assert_eq!(calls[1].0.status, Some(SessionListStatus::Deleting));
+    assert_eq!(
+        calls[0].1, calls[1].1,
+        "resume must reuse the first snapshot"
+    );
+    assert!(calls[0].2.is_none());
+    assert!(calls[1].2.is_some());
+}
+
+#[tokio::test]
+async fn message_listing_publishes_only_complete_sealed_messages() {
+    let (session, _run, _agent, open) = aex_session_domain::testing::running_session();
+    let mut sealed = aex_session_domain::seal(&open, moment("2026-08-01T12:02:00.000Z")).message;
+    sealed.parts = vec![aex_session_domain::MessagePart::Text {
+        text: "complete".to_owned(),
+    }];
+    let ((router, mounted), _) = build_with_sessions(
+        Arc::new(FakeCustody::default()),
+        Arc::new(FakeRegistry::default()),
+        Arc::new(FakeSessions {
+            messages: vec![sealed.clone()],
+            ..FakeSessions::default()
+        }),
+    );
+    assert!(mounted.contains(&RouteId::SessionMessagesList));
+
+    let (status, etag, body) =
+        get(&router, &format!("/api/sessions/{}/messages", session.id)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(etag.is_none());
+    let page: models::MessagePage = serde_json::from_value(body).expect("strict message page");
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(page.items[0].id, sealed.id);
+    assert_eq!(
+        page.items[0].content,
+        vec![models::MessagePart::Text(models::MessagePartText {
+            text: "complete".to_owned(),
+        })]
+    );
+}
+
+#[tokio::test]
 async fn canonical_run_point_and_list_reads_are_complete_and_reachable() {
     let (session, run, _agent, _message) = aex_session_domain::testing::running_session();
     let next = PagePosition {
@@ -2635,6 +2848,9 @@ async fn canonical_run_point_and_list_reads_are_complete_and_reachable() {
         Arc::new(FakeRegistry::default()),
         Arc::new(FakeSessions {
             approvals: Vec::new(),
+            sessions: Vec::new(),
+            session_page_calls: std::sync::Mutex::default(),
+            messages: Vec::new(),
             runs: vec![run.clone()],
             next: Some(next),
             deleted: false,
@@ -2674,6 +2890,9 @@ async fn canonical_run_point_and_list_reads_are_complete_and_reachable() {
         Arc::new(FakeRegistry::default()),
         Arc::new(FakeSessions {
             approvals: Vec::new(),
+            sessions: Vec::new(),
+            session_page_calls: std::sync::Mutex::default(),
+            messages: Vec::new(),
             runs: vec![run.clone()],
             next: None,
             deleted: false,
@@ -2697,6 +2916,9 @@ async fn canonical_run_point_and_list_reads_are_complete_and_reachable() {
         Arc::new(FakeRegistry::default()),
         Arc::new(FakeSessions {
             approvals: Vec::new(),
+            sessions: Vec::new(),
+            session_page_calls: std::sync::Mutex::default(),
+            messages: Vec::new(),
             runs: vec![run.clone()],
             next: None,
             deleted: true,

@@ -38,9 +38,8 @@ use aex_content_domain::{
     ContentDigest, ContentOutcome, ContentRoot, PageDigest, TreeNode, TreeView,
 };
 use aex_session_app::ports::{
-    ContentReader, IdFactory, LimitsReader, LiveEntry, LiveListQuery, LiveListing,
-    LiveWorkspaceReader, PortError, RegistryReader, ReservationAuthority, ReservationGrant,
-    ReservationRequest,
+    ContentReader, ContentWriter, IdFactory, LimitsBundle, LimitsReader, LiveEntry, LiveListQuery,
+    LiveListing, LiveWorkspaceReader, PortError, RegistryReader, SealedRegistryEntry,
 };
 use aex_session_domain::EffectiveLimits;
 use aex_wire::ids::{GenerationId, SessionId, UploadId, Uuid7, WorkspaceId};
@@ -76,8 +75,6 @@ const REGISTRY_SEAM: &str = "the named-registry adapter publishes `RegistryStore
 const CONTENT_SEAM: &str = "content descriptors and Merkle pages are `aex-content-dynamodb`'s";
 const LIMITS_SEAM: &str = "no authoritative regional capacity default and override producer \
                            exists yet";
-const RESERVATION_SEAM: &str = "`ReservationAuthority` is deliberately unowned: the grant and \
-                                release protocol belongs to the finance and usage streams";
 const LIVE_SEAM: &str = "the persist survey manifest and the live workspace scan are Hands': \
                          nothing in the tree produces a live `TreeView`, and the guest refuses \
                          `PersistPhase::Survey` for want of a TLS client";
@@ -149,6 +146,20 @@ impl ContentReader for UnownedPorts {
 }
 
 #[async_trait::async_trait]
+impl ContentWriter for UnownedPorts {
+    async fn seal_registry_manifest(
+        &self,
+        _workspace: WorkspaceId,
+        _entries: &[SealedRegistryEntry],
+    ) -> Result<ContentRoot, PortError> {
+        Err(PortError::Unowned {
+            kind: "registry manifest seal",
+            seam: CONTENT_SEAM,
+        })
+    }
+}
+
+#[async_trait::async_trait]
 impl LimitsReader for UnownedPorts {
     async fn effective(
         &self,
@@ -160,14 +171,11 @@ impl LimitsReader for UnownedPorts {
             seam: LIMITS_SEAM,
         })
     }
-}
 
-#[async_trait::async_trait]
-impl ReservationAuthority for UnownedPorts {
-    async fn prepare(&self, _request: ReservationRequest) -> Result<ReservationGrant, PortError> {
+    async fn bundle(&self, _workspace: WorkspaceId) -> Result<LimitsBundle, PortError> {
         Err(PortError::Unowned {
-            kind: "spend reservation",
-            seam: RESERVATION_SEAM,
+            kind: "effective limit bundle",
+            seam: LIMITS_SEAM,
         })
     }
 }

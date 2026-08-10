@@ -10665,7 +10665,6 @@
     },
     "/api/sessions": {
       "get": {
-        "description": "Not yet available. This operation is published in the contract and is not served yet; calls answer 501 not_implemented.",
         "operationId": "sessions_list",
         "parameters": [
           {
@@ -10761,16 +10760,6 @@
               }
             },
             "description": "Error."
-          },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
           }
         },
         "summary": "List sessions in the workspace.",
@@ -10779,14 +10768,12 @@
         ],
         "x-aex-alt-principal": null,
         "x-aex-body-class": "none",
-        "x-aex-deferred": true,
         "x-aex-errors": [
           "unauthenticated",
           "insufficient_scope",
           "invalid_cursor",
           "account_paused",
-          "wrong_workspace_region",
-          "not_implemented"
+          "wrong_workspace_region"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "none",
@@ -10947,7 +10934,6 @@
     },
     "/api/sessions/{sessionId}": {
       "get": {
-        "description": "Not yet available. This operation is published in the contract and is not served yet; calls answer 501 not_implemented.",
         "operationId": "session_get",
         "parameters": [
           {
@@ -11033,16 +11019,6 @@
               }
             },
             "description": "Error."
-          },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
           }
         },
         "summary": "Read one session, its deleting resource, or its tombstone.",
@@ -11051,15 +11027,13 @@
         ],
         "x-aex-alt-principal": null,
         "x-aex-body-class": "none",
-        "x-aex-deferred": true,
         "x-aex-errors": [
           "unauthenticated",
           "insufficient_scope",
           "not_found",
           "session_deleted",
           "account_paused",
-          "wrong_workspace_region",
-          "not_implemented"
+          "wrong_workspace_region"
         ],
         "x-aex-etag": "returns",
         "x-aex-idempotency": "none",
@@ -12584,7 +12558,6 @@
     },
     "/api/sessions/{sessionId}/messages": {
       "get": {
-        "description": "Not yet available. This operation is published in the contract and is not served yet; calls answer 501 not_implemented.",
         "operationId": "session_messages_list",
         "parameters": [
           {
@@ -12702,25 +12675,14 @@
               }
             },
             "description": "Error."
-          },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "aex:schema:ApiError"
-                }
-              }
-            },
-            "description": "Error."
           }
         },
-        "summary": "List the messages of a session.",
+        "summary": "List complete sealed messages in immutable seal-visibility order.",
         "tags": [
           "sessions"
         ],
         "x-aex-alt-principal": null,
         "x-aex-body-class": "none",
-        "x-aex-deferred": true,
         "x-aex-errors": [
           "unauthenticated",
           "insufficient_scope",
@@ -12728,8 +12690,7 @@
           "invalid_cursor",
           "session_deleted",
           "account_paused",
-          "wrong_workspace_region",
-          "not_implemented"
+          "wrong_workspace_region"
         ],
         "x-aex-etag": "none",
         "x-aex-idempotency": "none",

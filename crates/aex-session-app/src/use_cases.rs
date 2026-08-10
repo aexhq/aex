@@ -33,7 +33,7 @@ use time::Duration;
 
 use crate::error::AppError;
 use crate::plan::{Condition, Hint, Planned, SessionTransaction, TransactionIntent, Write};
-use crate::ports::{AppContext, PortError, ReservationRequest};
+use crate::ports::{AppContext, PortError};
 
 /// How long a trashed session may be restored.
 pub const RECOVERY_WINDOW: Duration = Duration::days(7);
@@ -174,22 +174,12 @@ pub async fn admit_message(
     )
     .await?;
 
-    let grant = context
-        .reservations
-        .prepare(ReservationRequest {
-            organization: materialized.session.organization,
-            workspace: command.workspace,
-            max_spend_cents: command.max_spend_cents.get(),
-        })
-        .await?;
-
     let now = context.clock.now();
     let commit = queue(
         command.run,
         &QueueRun {
             message: command.message,
             max_spend_cents: command.max_spend_cents,
-            reservation: grant.reservation,
             deadline: command.deadline,
         },
         &materialized.session,
@@ -230,15 +220,12 @@ pub async fn admit_message(
         session: command.session,
         expected: materialized.session.cancellation,
     });
-    conditions.push(Condition::ReservationOpen {
-        reservation: grant.reservation,
-    });
-
     let plan = SessionTransaction {
         intent: TransactionIntent::AdmitMessage,
         conditions,
         writes: vec![
             Write::PutMessage(Box::new(message.clone())),
+            Write::PutSealedMessage(Box::new(message.clone())),
             Write::PutRun(Box::new(commit.run.clone())),
             Write::PutSessionHead(Box::new(head)),
         ],
@@ -352,12 +339,12 @@ pub async fn commit_terminal(
         Write::PutSessionHead(Box::new(commit.session.clone())),
         Write::PutOutboxEvent(Box::new(commit.outbox.clone())),
     ];
-    writes.extend(
-        commit
-            .sealed_messages
-            .iter()
-            .map(|message| Write::PutMessage(Box::new(message.clone()))),
-    );
+    writes.extend(commit.sealed_messages.iter().flat_map(|message| {
+        [
+            Write::PutMessage(Box::new(message.clone())),
+            Write::PutSealedMessage(Box::new(message.clone())),
+        ]
+    }));
 
     let plan = SessionTransaction {
         intent: TransactionIntent::CommitTerminal,

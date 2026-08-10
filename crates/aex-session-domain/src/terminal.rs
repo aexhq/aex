@@ -4,7 +4,7 @@
 //! contains — the terminal run status and outcome, the seal of every open
 //! message of that run, the final agent control and journal tail, the session
 //! advance with `active_run` cleared, the terminal outbox event, the immutable
-//! usage-closure identity and the reservation-release intent.
+//! usage-closure identity.
 //!
 //! A loser returns [`TerminalRejection::AlreadyTerminal`] carrying the winning
 //! outcome and produces **no writes at all** — not even a lifecycle fact.
@@ -15,10 +15,18 @@ use aex_operation_domain::DeletionState;
 use aex_wire::ids::{AgentId, MessageId, RunId};
 use aex_wire::types::Timestamp;
 
-use crate::ids::{AgentFence, CancellationEpoch, ReservationId, SessionRevision, UsageClosureId};
+use crate::ids::{AgentFence, CancellationEpoch, SessionRevision, UsageClosureId};
 use crate::message::{Message, MessageDelta, seal};
 use crate::run::{Run, RunOutcome};
 use crate::session::{Session, SessionStatus};
+
+/// Largest number of open messages one run may carry into its terminal
+/// barrier.
+///
+/// The application commits four fixed rows plus both the mutable base row and
+/// immutable sealed projection for each message. Forty-eight therefore fills,
+/// but never exceeds, DynamoDB's 100-action transaction envelope.
+pub const MAX_OPEN_MESSAGES_PER_RUN: usize = 48;
 
 /// One attempt to settle a run.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,13 +68,19 @@ pub struct TerminalCommit {
     pub outbox: OutboxEvent,
     /// The immutable usage-closure identity.
     pub usage_closure: UsageClosureId,
-    /// The reservation to release.
-    pub release_reservation: ReservationId,
 }
 
 /// Why a terminal attempt lost.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TerminalRejection {
+    /// The producer violated the bounded open-message invariant.
+    #[error("run has {seen} open messages, above the maximum of {max}")]
+    TooManyOpenMessages {
+        /// What the terminal reader observed.
+        seen: usize,
+        /// The invariant ceiling.
+        max: usize,
+    },
     /// Someone else settled the run first.
     #[error("run is already terminal")]
     AlreadyTerminal {
@@ -122,6 +136,12 @@ pub fn claim_terminal(
     open_messages: &[Message],
     attempt: &TerminalAttempt,
 ) -> Result<TerminalCommit, TerminalRejection> {
+    if open_messages.len() > MAX_OPEN_MESSAGES_PER_RUN {
+        return Err(TerminalRejection::TooManyOpenMessages {
+            seen: open_messages.len(),
+            max: MAX_OPEN_MESSAGES_PER_RUN,
+        });
+    }
     if run.status.is_terminal() {
         return Err(TerminalRejection::AlreadyTerminal {
             winner: run
@@ -194,7 +214,6 @@ pub fn claim_terminal(
         },
         session: head,
         usage_closure: attempt.usage_closure,
-        release_reservation: run.reservation,
     })
 }
 
@@ -213,7 +232,7 @@ pub fn sealed_ids(commit: &TerminalCommit) -> Vec<MessageId> {
 mod tests {
     use aex_wire::ids::{PrefixedId as _, RunId, Uuid7};
 
-    use super::{TerminalRejection, claim_terminal};
+    use super::{MAX_OPEN_MESSAGES_PER_RUN, TerminalRejection, claim_terminal};
     use crate::ids::{AgentFence, CancellationEpoch, SessionRevision};
     use crate::run::RunStatus;
     use crate::session::SessionStatus;
@@ -241,7 +260,26 @@ mod tests {
         assert_eq!(commit.session.revision, session.revision.next());
         assert_eq!(commit.outbox.run, run.id);
         assert_eq!(commit.usage_closure, attempt.usage_closure);
-        assert_eq!(commit.release_reservation, run.reservation);
+    }
+
+    #[test]
+    fn the_terminal_barrier_refuses_an_unbounded_open_message_set() {
+        let (session, run, agent, message) = running_session();
+        let messages = vec![message; MAX_OPEN_MESSAGES_PER_RUN + 1];
+        assert_eq!(
+            claim_terminal(
+                &run,
+                &session,
+                agent.id,
+                AgentFence::INITIAL,
+                &messages,
+                &terminal_attempt(&session, &run),
+            ),
+            Err(TerminalRejection::TooManyOpenMessages {
+                seen: MAX_OPEN_MESSAGES_PER_RUN + 1,
+                max: MAX_OPEN_MESSAGES_PER_RUN,
+            })
+        );
     }
 
     #[test]

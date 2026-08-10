@@ -43,9 +43,9 @@ fn replay_identity() -> aex_regional_http::idempotency::IdempotencyIdentity {
 }
 
 #[test]
-fn admission_is_exactly_eight_actions_across_three_authorities() {
+fn admission_is_exactly_seven_actions_and_never_reserves_account_finance() {
     let plan = compile_message_admission(&replay_identity(), &input()).expect("plan");
-    assert_eq!(plan.actions.len(), 8);
+    assert_eq!(plan.actions.len(), 7);
     assert_eq!(plan.client_request_token.as_str().len(), 36);
     assert_eq!(
         plan.actions
@@ -54,7 +54,6 @@ fn admission_is_exactly_eight_actions_across_three_authorities() {
             .collect::<Vec<_>>(),
         vec![
             Table::AuthzProjection,
-            Table::SessionAuthority,
             Table::SessionAuthority,
             Table::SessionAuthority,
             Table::SessionAuthority,
@@ -67,7 +66,6 @@ fn admission_is_exactly_eight_actions_across_three_authorities() {
         plan.actions,
         vec![
             TransactionAction::ConditionCheck(Condition::ProjectedEpochsAndAccountState),
-            TransactionAction::Update(Condition::SufficientRegionalAllocation { cents: 250 }),
             TransactionAction::PutMessage(Condition::AttributeNotExists),
             TransactionAction::PutRun(Condition::AttributeNotExists),
             TransactionAction::UpdateSessionHead(Condition::SessionHead {

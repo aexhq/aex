@@ -72,10 +72,10 @@ impl Participant {
     pub const SESSION_HEAD_GUARD: Self = Self::new("session.head_guard");
     /// The admitted message.
     pub const SESSION_MESSAGE: Self = Self::new("session.message");
+    /// An immutable, seal-ordered public message projection.
+    pub const SESSION_SEALED_MESSAGE: Self = Self::new("session.sealed_message");
     /// The admitted run.
     pub const SESSION_RUN: Self = Self::new("session.run");
-    /// The run's spend reservation.
-    pub const SESSION_RESERVATION: Self = Self::new("session.reservation");
     /// The root agent's control item.
     pub const AGENT_ROOT_CONTROL: Self = Self::new("agent.root_control");
     /// An agent's control item.

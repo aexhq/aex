@@ -28,6 +28,8 @@ use crate::wire_pending::{
 pub const SESSION_HEAD: &str = "session_head";
 /// The `itemType` of a message.
 pub const MESSAGE: &str = "message";
+/// The `itemType` of an immutable, seal-ordered public message projection.
+pub const SEALED_MESSAGE: &str = "sealed_message";
 /// The `itemType` of a run.
 pub const RUN: &str = "run";
 pub use crate::event::{BODY_DIGEST, BODY_INLINE, SESSION_EVENT};
@@ -45,8 +47,6 @@ pub const IDEMPOTENCY_RECEIPT: &str = "idempotency_receipt";
 pub const OUTBOX_EVENT: &str = "outbox_event";
 /// The `itemType` of an agent registry entry.
 pub const AGENT_INDEX: &str = "agent_index";
-/// The `itemType` of a spend reservation.
-pub const SPEND_RESERVATION: &str = "spend_reservation";
 /// The `itemType` of a fanout page.
 pub const FANOUT_PAGE: &str = "fanout_page";
 /// The `itemType` of an agent effect.

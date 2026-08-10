@@ -2,7 +2,7 @@
   "$id": "https://schemas.aex.dev/v1/Message.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "One message in a session.",
+  "description": "One complete, sealed message in a session. `createdAt` is display metadata; collection order is the immutable seal-visibility order and is not derived from this field.",
   "properties": {
     "content": {
       "description": "The parts.",

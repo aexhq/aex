@@ -13,7 +13,7 @@ use aex_operation_domain::operation::OperationVersion;
 use aex_secret_domain::{SecretName, SessionCustody, TrueIdle, WorkspaceSecret};
 use aex_session_domain::{
     AccountProjection, AgentControl, EffectiveLimits, IdempotencyIdentity, IdempotencyReceipt,
-    JournalPage, JournalSeq, ReservationId, Run, Session,
+    JournalPage, JournalSeq, Run, Session,
 };
 use aex_wire::ids::{
     AgentId, GenerationId, OperationId, OrganizationId, RunId, SessionId, UploadId, Uuid7,
@@ -409,37 +409,6 @@ pub trait AccountStateReader: Send + Sync {
     ) -> Result<AccountProjection, PortError>;
 }
 
-/// What a run asks the finance plane to reserve.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ReservationRequest {
-    /// Which organization pays.
-    pub organization: OrganizationId,
-    /// Which workspace spends.
-    pub workspace: WorkspaceId,
-    /// The ceiling, in cents.
-    pub max_spend_cents: u64,
-}
-
-/// A granted reservation.
-///
-/// The domain models only "a finite reservation exists and is bound to this run
-/// or operation"; the grant and release protocol belongs to the finance and
-/// usage streams.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ReservationGrant {
-    /// The reservation's identity.
-    pub reservation: ReservationId,
-    /// What it actually reserved.
-    pub granted_cents: u64,
-}
-
-/// Prepares a spend reservation.
-#[async_trait::async_trait]
-pub trait ReservationAuthority: Send + Sync {
-    /// Reserves spend for a run.
-    async fn prepare(&self, request: ReservationRequest) -> Result<ReservationGrant, PortError>;
-}
-
 /// What `aex-runtime-control` says about a session's workspace generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WorkspaceContinuity {
@@ -741,16 +710,17 @@ pub struct AppContext<'a> {
     pub content_writer: &'a dyn ContentWriter,
     /// Secret custody.
     pub secrets: &'a dyn SecretCustodyReader,
-    /// The signed model catalog, behind a synchronous seam.
-    pub catalog: &'a dyn ModelQualifier,
-    /// The plane's own deployment facts.
-    pub deployment: &'a DeploymentFacts,
+    /// The signed model catalog, behind a synchronous seam. A command-only
+    /// composition may omit it; session creation refuses that composition
+    /// before reading any request-selected authority.
+    pub catalog: Option<&'a dyn ModelQualifier>,
+    /// The plane's own deployment facts. As with the catalog, absence is an
+    /// explicit unowned create seam rather than a fabricated default.
+    pub deployment: Option<&'a DeploymentFacts>,
     /// Effective limits.
     pub limits: &'a dyn LimitsReader,
     /// The account projection.
     pub accounts: &'a dyn AccountStateReader,
-    /// The reservation authority.
-    pub reservations: &'a dyn ReservationAuthority,
     /// Runtime continuity.
     pub continuity: &'a dyn ContinuityReader,
     /// The live workspace.

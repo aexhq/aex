@@ -13,7 +13,7 @@ use aex_wire::CanonicalJson;
 use aex_wire::ids::{GenerationId, MessageId, OperationId, RunId, SessionId, TelemetryGapId};
 use aex_wire::types::Timestamp;
 
-use crate::ids::{CancellationEpoch, EffectId, ReservationId};
+use crate::ids::{CancellationEpoch, EffectId};
 use crate::session::{Session, WorkAdmission};
 
 // Where a run is. The terminal outbox event carries it across a process
@@ -38,8 +38,8 @@ pub enum InterruptReason {
         /// The generation that vanished, when one was named.
         generation: Option<GenerationId>,
     },
-    /// The spend reservation ran out.
-    SpendExhausted,
+    /// The run-local spend ceiling was exhausted.
+    SpendCapExhausted,
     /// An effect's outcome could not be determined.
     AmbiguousEffect {
         /// Which effect.
@@ -120,8 +120,6 @@ pub struct Run {
     pub status: RunStatus,
     /// Its spend ceiling.
     pub max_spend_cents: NonZeroU64,
-    /// The reservation backing that ceiling.
-    pub reservation: ReservationId,
     /// When it must stop.
     pub deadline: Timestamp,
     /// The cancellation epoch it was admitted at.
@@ -160,8 +158,6 @@ pub struct QueueRun {
     pub message: MessageId,
     /// Its spend ceiling.
     pub max_spend_cents: NonZeroU64,
-    /// The reservation backing it.
-    pub reservation: ReservationId,
     /// When it must stop.
     pub deadline: Timestamp,
 }
@@ -234,7 +230,6 @@ pub fn queue(
             message: command.message,
             status: RunStatus::Queued,
             max_spend_cents: command.max_spend_cents,
-            reservation: command.reservation,
             deadline: command.deadline,
             cancellation_at_admission: session.cancellation,
             queued_at: now,
@@ -297,7 +292,6 @@ mod tests {
     use aex_wire::types::Timestamp;
 
     use super::{QueueRun, RunStatus, SessionDomainRunError, queue, start};
-    use crate::ids::ReservationId;
     use crate::session::WorkAdmission;
     use crate::testing::session_fixture;
 
@@ -309,7 +303,6 @@ mod tests {
         QueueRun {
             message: MessageId::from_uuid7(Uuid7::compose(1, [4; 10])),
             max_spend_cents: NonZeroU64::new(500).expect("non-zero"),
-            reservation: ReservationId(Uuid7::compose(1, [5; 10])),
             deadline: moment(60_000),
         }
     }

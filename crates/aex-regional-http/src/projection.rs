@@ -30,7 +30,7 @@ use aex_secret_custody_dynamodb::codec::{
 };
 use aex_secret_domain::plaintext::{PlaintextError, SecretPlaintext};
 use aex_secret_domain::secret::{SecretName, SecretState};
-use aex_session_domain::{Run, RunOutcome};
+use aex_session_domain::{Message, MessagePart, MessageRole, MessageState, Run, RunOutcome};
 use aex_session_dynamodb::paging::PagePosition;
 use aex_wire::cursor::Cursor;
 use aex_wire::error::{ErrorCode, WireError};
@@ -96,6 +96,12 @@ pub enum ProjectionError {
         /// What the decoder objected to.
         reason: String,
     },
+    /// An open partial message reached a public projection call.
+    #[error("message `{message}` is still open and has no public representation")]
+    UnsealedMessage {
+        /// Which message violated the sealed-only boundary.
+        message: aex_wire::ids::MessageId,
+    },
 }
 
 impl ProjectionError {
@@ -115,7 +121,8 @@ impl ProjectionError {
             Self::NotRevoked { .. }
             | Self::NotCanonicalizable
             | Self::WrongRegistryKind { .. }
-            | Self::MalformedValueDocument { .. } => ErrorCode::InternalError,
+            | Self::MalformedValueDocument { .. }
+            | Self::UnsealedMessage { .. } => ErrorCode::InternalError,
             Self::Plaintext(_) => ErrorCode::InvalidRequest,
             Self::Cursor(_) => ErrorCode::InvalidCursor,
         }
@@ -474,6 +481,76 @@ registry_projections! {
 }
 
 // --- sessions ---------------------------------------------------------------------
+
+/// Projects one complete sealed message onto its public resource.
+///
+/// # Errors
+///
+/// [`ProjectionError::UnsealedMessage`] when a caller bypasses the immutable
+/// sealed-message range and supplies a mutable base row.
+pub fn session_message(stored: &Message) -> Result<models::Message, ProjectionError> {
+    if stored.state != MessageState::Sealed || stored.sealed_at.is_none() {
+        return Err(ProjectionError::UnsealedMessage { message: stored.id });
+    }
+    let content = stored
+        .parts
+        .iter()
+        .map(|part| match part {
+            MessagePart::Text { text } => {
+                models::MessagePart::Text(models::MessagePartText { text: text.clone() })
+            }
+            MessagePart::File { path, media_type } => {
+                models::MessagePart::File(models::MessagePartFile {
+                    media_type: media_type.clone(),
+                    path: path.clone(),
+                    source: models::FileSource::Persisted,
+                })
+            }
+            MessagePart::ToolCall { id, arguments } => {
+                models::MessagePart::ToolCall(models::MessagePartToolCall {
+                    arguments_digest: *arguments,
+                    id: *id,
+                })
+            }
+            MessagePart::ToolResult { id, result } => {
+                models::MessagePart::ToolResult(models::MessagePartToolResult {
+                    id: *id,
+                    result_digest: *result,
+                })
+            }
+        })
+        .collect();
+    Ok(models::Message {
+        content,
+        created_at: stored.created_at,
+        id: stored.id,
+        role: match stored.role {
+            MessageRole::User => models::MessageRole::User,
+            MessageRole::Assistant => models::MessageRole::Assistant,
+            MessageRole::Tool => models::MessageRole::Tool,
+        },
+        run_id: stored.run,
+        session_id: stored.session,
+    })
+}
+
+/// Projects one seal-ordered page after its signed continuation is minted.
+///
+/// # Errors
+///
+/// As for [`session_message`]. The page fails whole rather than hiding a row.
+pub fn session_message_page(
+    stored: &[Message],
+    next_cursor: Option<Cursor>,
+) -> Result<models::MessagePage, ProjectionError> {
+    Ok(models::MessagePage {
+        items: stored
+            .iter()
+            .map(session_message)
+            .collect::<Result<Vec<_>, _>>()?,
+        next_cursor,
+    })
+}
 
 /// Projects one canonical run authority document onto its public resource.
 ///

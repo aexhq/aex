@@ -196,6 +196,38 @@ async fn a_session_page_uses_two_parent_reads_only_and_reuses_a_resumed_epoch() 
 }
 
 #[tokio::test]
+async fn a_message_page_reads_only_the_immutable_sealed_visibility_range() {
+    let session = aex_session_domain::testing::session_fixture();
+    let (client, replay) = scripted_client(vec![
+        session_head_response(&session),
+        serde_json::json!({"Items": []}).to_string(),
+        session_head_response(&session),
+    ]);
+    let reads = SessionReads::new(client, &tables().session_authority);
+    let page = reads
+        .page_messages(
+            session.workspace,
+            session.id,
+            None,
+            PageBudget::new(10).expect("a page"),
+            None,
+        )
+        .await
+        .expect("sealed-message page");
+    assert!(matches!(page, SessionScoped::Active(_)));
+
+    let requests = request_bodies(&replay);
+    assert_eq!(requests.len(), 3, "parent, query, parent");
+    let query = &requests[1];
+    assert_eq!(query["ConsistentRead"], true);
+    assert!(query["FilterExpression"].is_null());
+    assert_eq!(
+        query["ExpressionAttributeValues"][":prefix"]["S"],
+        "SEALEDMSG#"
+    );
+}
+
+#[tokio::test]
 async fn a_scoped_point_read_hides_foreign_tenants_and_refuses_deleted_parents() {
     let (session, run, _agent, _message) = aex_session_domain::testing::running_session();
 

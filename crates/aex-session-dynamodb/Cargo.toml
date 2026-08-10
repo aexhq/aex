@@ -34,6 +34,7 @@ faults = "unit"
 security = "unit"
 limit_projection = "unit"
 integration = "integration"
+session_listing = "unit"
 
 [features]
 default = ["session-authority", "authz-projection"]
@@ -126,3 +127,8 @@ required-features = ["capacity-limit-projection-write"]
 name = "integration"
 path = "tests/integration.rs"
 required-features = ["integration-engines", "session-authority"]
+
+[[test]]
+name = "session_listing"
+path = "tests/session_listing.rs"
+required-features = ["session-authority"]

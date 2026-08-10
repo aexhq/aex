@@ -11,7 +11,7 @@ use crate::session::wire_pending::TransactionPlan;
 pub enum Table {
     /// Monotonic authorization projection.
     AuthzProjection,
-    /// Session, reservation, receipt and event authority.
+    /// Session, receipt and event authority.
     SessionAuthority,
     /// Durable regional continuation authority.
     RegionalWork,
@@ -22,11 +22,6 @@ pub enum Table {
 pub enum Condition {
     /// Projected epochs are no newer and account state admits paid work.
     ProjectedEpochsAndAccountState,
-    /// Reservation has this many whole cents available.
-    SufficientRegionalAllocation {
-        /// Requested reservation.
-        cents: u64,
-    },
     /// Item key does not already exist.
     AttributeNotExists,
     /// Session head has not raced with a mutation or deletion.
@@ -46,18 +41,16 @@ pub enum TransactionAction {
     /// T1.
     ConditionCheck(Condition),
     /// T2.
-    Update(Condition),
-    /// T3.
     PutMessage(Condition),
-    /// T4.
+    /// T3.
     PutRun(Condition),
-    /// T5.
+    /// T4.
     UpdateSessionHead(Condition),
-    /// T6.
+    /// T5.
     PutRootContinuation(Condition),
-    /// T7.
+    /// T6.
     PutIdempotencyReceipt(Condition),
-    /// T8.
+    /// T7.
     PutRunAdmittedEvent(Condition),
 }
 
@@ -68,8 +61,7 @@ impl TransactionAction {
         match self {
             Self::ConditionCheck(_) => Table::AuthzProjection,
             Self::PutRootContinuation(_) => Table::RegionalWork,
-            Self::Update(_)
-            | Self::PutMessage(_)
+            Self::PutMessage(_)
             | Self::PutRun(_)
             | Self::UpdateSessionHead(_)
             | Self::PutIdempotencyReceipt(_)
@@ -95,36 +87,33 @@ pub struct AdmissionInput {
     pub deletion_epoch: u64,
     /// Cancellation race fence.
     pub cancellation_epoch: u64,
-    /// Finite spend reservation in whole cents.
+    /// The run-local spend ceiling in whole cents.
     pub max_spend_cents: u64,
 }
 
 /// Why transaction compilation refused an input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum AdmissionError {
-    /// A paid run cannot reserve zero cents.
+    /// A run-local spend ceiling must be positive.
     #[error("max spend must be positive")]
-    ZeroReservation,
+    ZeroSpendCap,
 }
 
-/// Compiles exactly one atomic eight-action plan and performs no I/O.
+/// Compiles exactly one atomic seven-action plan and performs no I/O.
 ///
 /// # Errors
 ///
-/// Returns [`AdmissionError::ZeroReservation`] for a zero reservation.
+/// Returns [`AdmissionError::ZeroSpendCap`] for a zero run-local ceiling.
 pub fn compile_message_admission(
     identity: &IdempotencyIdentity,
     input: &AdmissionInput,
 ) -> Result<TransactionPlan<TransactionAction>, AdmissionError> {
     if input.max_spend_cents == 0 {
-        return Err(AdmissionError::ZeroReservation);
+        return Err(AdmissionError::ZeroSpendCap);
     }
     let client_request_token = client_request_token(identity, input);
     let actions = vec![
         TransactionAction::ConditionCheck(Condition::ProjectedEpochsAndAccountState),
-        TransactionAction::Update(Condition::SufficientRegionalAllocation {
-            cents: input.max_spend_cents,
-        }),
         TransactionAction::PutMessage(Condition::AttributeNotExists),
         TransactionAction::PutRun(Condition::AttributeNotExists),
         TransactionAction::UpdateSessionHead(Condition::SessionHead {

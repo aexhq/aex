@@ -3,7 +3,7 @@
 //! The public request, response and query models.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:1d6d54b62df61c8244b5cb84c52fcbfab1a8f47680c90a71f6b1c04faef12f6e`.
+//! `sha256:b35ee328612c409fd77678e0b7c74f4756f57d4190fc724df00a4cef727f7e75`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -2918,7 +2918,8 @@ impl McpTransport {
     }
 }
 
-/// One message in a session.
+/// One complete, sealed message in a session. `createdAt` is display metadata; collection order is
+/// the immutable seal-visibility order and is not derived from this field.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct Message {
@@ -2937,7 +2938,8 @@ pub struct Message {
     pub session_id: SessionId,
 }
 
-/// One page of messages.
+/// One page of complete sealed messages, ordered by the immutable seal-visibility tuple `(sealedAt,
+/// messageId)`. Open partial messages are never visible.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MessagePage {

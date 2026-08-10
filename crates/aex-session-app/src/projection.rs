@@ -30,6 +30,24 @@ pub const fn public_status(status: SessionStatus) -> models::SessionStatus {
     }
 }
 
+/// Renders the exact collection projection of one canonical session head.
+///
+/// Provider and model come from the sealed resolved-config authority, never
+/// from the eventually consistent workspace index locator.
+#[must_use]
+pub fn public_session_list_item(session: &Session) -> models::SessionListItem {
+    models::SessionListItem {
+        id: session.id,
+        workspace_id: session.workspace,
+        status: public_status(session.status),
+        revision: session.revision.0,
+        provider: session.resolved.provider(),
+        model: session.resolved.model().to_owned(),
+        created_at: session.created_at,
+        updated_at: session.updated_at,
+    }
+}
+
 /// Renders one session head onto the published resource.
 ///
 /// # Errors
@@ -99,4 +117,25 @@ pub fn public_session(session: &Session) -> Result<models::Session, CanonicalErr
 /// resource cannot be canonicalized.
 pub fn canonical_session_bytes(session: &Session) -> Result<Vec<u8>, CanonicalError> {
     to_jcs_bytes(&public_session(session)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use aex_session_domain::SessionStatus;
+
+    #[test]
+    fn the_list_projection_is_complete_without_resolved_config() {
+        let mut session = aex_session_domain::testing::session_fixture();
+        session.status = SessionStatus::Purging;
+        let item = super::public_session_list_item(&session);
+
+        assert_eq!(item.id, session.id);
+        assert_eq!(item.workspace_id, session.workspace);
+        assert_eq!(item.status, aex_wire::models::SessionStatus::Deleting);
+        assert_eq!(item.revision, session.revision.0);
+        assert_eq!(item.provider, session.resolved.provider());
+        assert_eq!(item.model, session.resolved.model());
+        assert_eq!(item.created_at, session.created_at);
+        assert_eq!(item.updated_at, session.updated_at);
+    }
 }
