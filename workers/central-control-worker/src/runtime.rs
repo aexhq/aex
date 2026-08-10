@@ -9,6 +9,7 @@ use aex_control_app::ports::{
     GcExpired, KeyMaterialReader, ProvisionWorkspaceRequest, RegionalControlPort, RequestId,
     StoreError, TxOutcome,
 };
+use aex_control_aurora::OutboxWakeTransactionStatus as Transaction;
 use aex_control_domain::{
     ActorKind, AuditEvent, AuditOutcome, Operation, OperationKind, OperationStatus, OutboxMessage,
     ResourceKind, ScopeSet, Topic, WorkspaceStatus,
@@ -516,7 +517,6 @@ impl Worker {
     /// Identical to [`Worker::tick`], plus the sweep's own store failure.
     pub async fn wake(&self, wake: &OutboxWake) -> Result<(), String> {
         wake.validate()?;
-        use aex_control_aurora::OutboxWakeTransactionStatus as Transaction;
         let mut before = self
             .store
             .outbox_wake_state(wake.anchor_id, &wake.transaction_id)

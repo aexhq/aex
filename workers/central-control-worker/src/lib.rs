@@ -221,57 +221,11 @@ impl Config {
             &required(&lookup, keys::REGIONAL_CAPACITY_FUNCTIONS)?,
         )?;
         let regional_projections = projections(&required(&lookup, keys::REGIONAL_PROJECTIONS)?)?;
-        if let Some(region) = regional_functions
-            .keys()
-            .find(|region| !regional_projections.contains_key(region))
-        {
-            return Err(CentralControlWorkerConfigError::Invalid {
-                name: keys::REGIONAL_PROJECTIONS,
-                reason: format!(
-                    "no projection table for configured region `{}`",
-                    region.as_str()
-                ),
-            });
-        }
-        if let Some(region) = regional_projections
-            .keys()
-            .find(|region| !regional_functions.contains_key(region))
-        {
-            return Err(CentralControlWorkerConfigError::Invalid {
-                name: keys::REGIONAL_FUNCTIONS,
-                reason: format!(
-                    "no function ARN for configured region `{}`",
-                    region.as_str()
-                ),
-            });
-        }
-        // A region this worker can project into but cannot bootstrap is exactly
-        // the outage the trigger exists to prevent: the placement would land and
-        // every request behind it would answer `401`. Refuse at start-up.
-        if let Some(region) = regional_projections
-            .keys()
-            .find(|region| !regional_capacity_functions.contains_key(region))
-        {
-            return Err(CentralControlWorkerConfigError::Invalid {
-                name: keys::REGIONAL_CAPACITY_FUNCTIONS,
-                reason: format!(
-                    "no capacity controller for configured region `{}`",
-                    region.as_str()
-                ),
-            });
-        }
-        if let Some(region) = regional_capacity_functions
-            .keys()
-            .find(|region| !regional_projections.contains_key(region))
-        {
-            return Err(CentralControlWorkerConfigError::Invalid {
-                name: keys::REGIONAL_PROJECTIONS,
-                reason: format!(
-                    "no projection table for configured region `{}`",
-                    region.as_str()
-                ),
-            });
-        }
+        validate_region_maps(
+            &regional_functions,
+            &regional_capacity_functions,
+            &regional_projections,
+        )?;
         Ok(Self {
             plane,
             region,
@@ -282,7 +236,7 @@ impl Config {
                 keys::FUNCTION_ARN,
                 &required(&lookup, keys::FUNCTION_ARN)?,
                 plane,
-                &region,
+                region,
                 &account_id,
             )?,
             ses_identity_arn: required(&lookup, keys::SES_IDENTITY_ARN)?,
@@ -347,6 +301,65 @@ impl Config {
             ]),
         }
     }
+}
+
+fn validate_region_maps(
+    regional_functions: &BTreeMap<Region, String>,
+    regional_capacity_functions: &BTreeMap<Region, String>,
+    regional_projections: &BTreeMap<Region, String>,
+) -> Result<(), CentralControlWorkerConfigError> {
+    if let Some(region) = regional_functions
+        .keys()
+        .find(|region| !regional_projections.contains_key(region))
+    {
+        return Err(CentralControlWorkerConfigError::Invalid {
+            name: keys::REGIONAL_PROJECTIONS,
+            reason: format!(
+                "no projection table for configured region `{}`",
+                region.as_str()
+            ),
+        });
+    }
+    if let Some(region) = regional_projections
+        .keys()
+        .find(|region| !regional_functions.contains_key(region))
+    {
+        return Err(CentralControlWorkerConfigError::Invalid {
+            name: keys::REGIONAL_FUNCTIONS,
+            reason: format!(
+                "no function ARN for configured region `{}`",
+                region.as_str()
+            ),
+        });
+    }
+    // A region this worker can project into but cannot bootstrap is exactly
+    // the outage the trigger exists to prevent: the placement would land and
+    // every request behind it would answer `401`. Refuse at start-up.
+    if let Some(region) = regional_projections
+        .keys()
+        .find(|region| !regional_capacity_functions.contains_key(region))
+    {
+        return Err(CentralControlWorkerConfigError::Invalid {
+            name: keys::REGIONAL_CAPACITY_FUNCTIONS,
+            reason: format!(
+                "no capacity controller for configured region `{}`",
+                region.as_str()
+            ),
+        });
+    }
+    if let Some(region) = regional_capacity_functions
+        .keys()
+        .find(|region| !regional_projections.contains_key(region))
+    {
+        return Err(CentralControlWorkerConfigError::Invalid {
+            name: keys::REGIONAL_PROJECTIONS,
+            reason: format!(
+                "no projection table for configured region `{}`",
+                region.as_str()
+            ),
+        });
+    }
+    Ok(())
 }
 
 fn required<F>(lookup: &F, name: &'static str) -> Result<String, CentralControlWorkerConfigError>
@@ -478,7 +491,7 @@ fn lambda_alias_arn(
     name: &'static str,
     raw: &str,
     plane: DeploymentPlane,
-    region: &Region,
+    region: Region,
     account_id: &str,
 ) -> Result<String, CentralControlWorkerConfigError> {
     let fields = raw.split(':').collect::<Vec<_>>();
