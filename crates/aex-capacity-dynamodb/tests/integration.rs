@@ -271,13 +271,14 @@ async fn a_bootstrap_materialises_the_authority_the_audit_and_the_whole_projecti
 }
 
 #[tokio::test]
-async fn a_second_bootstrap_is_refused_by_the_authority_before_it_reaches_the_engine() {
+async fn an_exact_bootstrap_retry_is_an_idempotent_no_op_before_it_reaches_the_engine() {
     let (_engine, client, store) = engine().await;
-    bootstrap(&store).await;
-    let before = rows_by_item_type(&client, PROJECTION).await;
+    let first = bootstrap(&store).await;
+    let authority_before = rows_by_item_type(&client, AUTHORITY).await;
+    let projection_before = rows_by_item_type(&client, PROJECTION).await;
 
     let defaults = canonical_defaults().expect("the embedded defaults parse");
-    let error = store
+    let applied = store
         .apply(
             &defaults,
             &CapacityCommand::Bootstrap {
@@ -286,18 +287,18 @@ async fn a_second_bootstrap_is_refused_by_the_authority_before_it_reaches_the_en
             at(2),
         )
         .await
-        .expect_err("a workspace is bootstrapped once");
-    assert!(
-        matches!(
-            error,
-            CapacityStoreError::Capacity(CapacityError::AlreadyExists)
-        ),
-        "{error}"
+        .expect("an exact bootstrap retry resolves to the durable answer");
+    assert!(!applied.changed);
+    assert_eq!(applied.state.revision, first);
+    assert_eq!(
+        rows_by_item_type(&client, AUTHORITY).await,
+        authority_before,
+        "an idempotent retry must not append another audit decision"
     );
     assert_eq!(
         rows_by_item_type(&client, PROJECTION).await,
-        before,
-        "a refused command must not touch the serving projection"
+        projection_before,
+        "an idempotent retry must not republish the serving projection"
     );
 }
 

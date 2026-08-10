@@ -405,10 +405,19 @@ fn workspace_pk(workspace: WorkspaceId) -> String {
 
 #[cfg(test)]
 mod tests {
+    use aex_session_dynamodb::error::{
+        Resolution, StoreError, decode_cancellation_with_resolution,
+    };
     use aex_wire::ids::{PrefixedId as _, Uuid7, WorkspaceId};
     use aex_wire::types::Timestamp;
+    use aws_sdk_dynamodb::operation::transact_write_items::TransactWriteItemsError;
+    use aws_sdk_dynamodb::types::CancellationReason;
+    use aws_sdk_dynamodb::types::error::TransactionCanceledException;
 
-    use super::{AUTHORITY_PARTICIPANT, PROJECTION_EDGE_PARTICIPANT, build_plan, decode_state};
+    use super::{
+        AUDIT_PARTICIPANT, AUTHORITY_PARTICIPANT, PROJECTION_EDGE_PARTICIPANT, build_plan,
+        decode_state,
+    };
     use crate::defaults::canonical_defaults;
     use crate::model::{CapacityCommand, plan_capacity_change};
 
@@ -446,6 +455,60 @@ mod tests {
             plan.participants().contains(&PROJECTION_EDGE_PARTICIPANT),
             "the edge-limit row must be published by the same transaction"
         );
+    }
+
+    #[test]
+    fn an_audit_collision_decodes_to_the_audit_participant_without_moving_the_check() {
+        let state = plan_capacity_change(
+            None,
+            &canonical_defaults().expect("defaults"),
+            &CapacityCommand::Bootstrap {
+                workspace_id: workspace(),
+            },
+            Timestamp::from_unix_millis(1).expect("timestamp"),
+        )
+        .expect("plan")
+        .state;
+        let plan = build_plan(
+            "authority-table",
+            "projection-table",
+            None,
+            &crate::model::PlannedCapacity {
+                state,
+                changed: true,
+            },
+        )
+        .expect("transaction");
+        let reasons = plan
+            .participants()
+            .iter()
+            .map(|participant| {
+                CancellationReason::builder()
+                    .code(if *participant == AUDIT_PARTICIPANT {
+                        "ConditionalCheckFailed"
+                    } else {
+                        "None"
+                    })
+                    .build()
+            })
+            .collect::<Vec<_>>();
+        let cancellation = TransactWriteItemsError::TransactionCanceledException(
+            TransactionCanceledException::builder()
+                .set_cancellation_reasons(Some(reasons))
+                .build(),
+        );
+
+        assert!(matches!(
+            decode_cancellation_with_resolution(
+                &cancellation,
+                plan.participants(),
+                Resolution::TargetItem,
+            ),
+            StoreError::PreconditionFailed {
+                participant: AUDIT_PARTICIPANT,
+                ..
+            }
+        ));
     }
 
     #[test]
