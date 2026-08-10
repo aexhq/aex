@@ -51,12 +51,14 @@ proptest! {
                 .map(|index| PlannedPart {
                     number: u32::try_from(index + 1).expect("a small count"),
                     bytes: 5 * 1024 * 1024,
+                    sha256: None,
                 })
                 .collect(),
         };
-        let encoded = encode_upload(&original);
+        let rows = encode_upload(&original);
+        prop_assert!(rows.part_blocks.is_empty());
         prop_assert_eq!(
-            decode_upload(&encoded, original.workspace).expect("decodes"),
+            decode_upload(&rows.head, original.workspace).expect("decodes"),
             original
         );
     }

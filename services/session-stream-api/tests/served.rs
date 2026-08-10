@@ -770,6 +770,28 @@ impl RegistryStore for FakeRegistry {
         Err(StoreError::Contended)
     }
 
+    async fn transition_upload_fenced(
+        &self,
+        _upload: UploadId,
+        _from: UploadState,
+        _to: UploadState,
+        _provider_upload_id: &str,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Contended)
+    }
+
+    async fn record_part_declarations(&self, _upload: &StoredUpload) -> Result<(), StoreError> {
+        Err(StoreError::Contended)
+    }
+
+    async fn settle_ready(&self, _upload: &StoredUpload) -> Result<(), StoreError> {
+        Err(StoreError::Contended)
+    }
+
+    async fn delete_upload(&self, _upload: &StoredUpload) -> Result<(), StoreError> {
+        Err(StoreError::Contended)
+    }
+
     async fn begin_completion(
         &self,
         _upload: UploadId,

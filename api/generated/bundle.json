@@ -7527,6 +7527,28 @@
       ],
       "type": "object"
     },
+    "HttpHeader": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "The header name.",
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        "value": {
+          "description": "The exact value to send.",
+          "maxLength": 8192,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "type": "object"
+    },
     "IdentityProvider": {
       "enum": [
         "github",
@@ -11925,6 +11947,14 @@
           "type": "string",
           "x-aex-time": "rfc3339-ms"
         },
+        "headers": {
+          "description": "Headers the caller must replay verbatim.",
+          "items": {
+            "$ref": "aex:schema:HttpHeader"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
         "partNumber": {
           "description": "Which part.",
           "maximum": 10000,
@@ -11940,6 +11970,7 @@
       },
       "required": [
         "expiresAt",
+        "headers",
         "partNumber",
         "url"
       ],
@@ -11969,22 +12000,47 @@
       ],
       "type": "object"
     },
+    "UploadPartRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "partNumber": {
+          "description": "Which part.",
+          "maximum": 10000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "sha256": {
+          "description": "The part's own SHA-256.",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "sizeBytes": {
+          "description": "The exact Content-Length to be signed.",
+          "pattern": "^(0|[1-9]\\d*)$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "partNumber",
+        "sha256",
+        "sizeBytes"
+      ],
+      "type": "object"
+    },
     "UploadPartsRequest": {
       "additionalProperties": false,
       "properties": {
-        "partNumbers": {
+        "parts": {
           "description": "The parts to grant.",
           "items": {
-            "maximum": 10000,
-            "minimum": 1,
-            "type": "integer"
+            "$ref": "aex:schema:UploadPartRequest"
           },
           "maxItems": 1000,
           "type": "array"
         }
       },
       "required": [
-        "partNumbers"
+        "parts"
       ],
       "type": "object"
     },

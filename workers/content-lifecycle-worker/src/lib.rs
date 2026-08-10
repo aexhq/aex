@@ -2,6 +2,8 @@
 
 pub mod config;
 pub mod expiry;
+pub mod gc;
+pub mod upload_expiry;
 
 pub use config::{Config, Mode as DeployedMode};
 
@@ -261,8 +263,10 @@ pub fn apply_delete_result(
 /// One deployed binary role.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
-    /// Upload/grant expiry.
+    /// Download-grant expiry.
     Expiry,
+    /// Pending-upload expiry and provider multipart abort.
+    UploadExpiry,
     /// Staged-orphan and inventory reconciliation.
     Reconcile,
     /// Reachability mark/sweep.
@@ -292,12 +296,19 @@ pub const fn admit_mode(
             may_delete_objects: true,
         }),
         (Mode::Delete, false) => Err(ModeError::DeleteCapabilityMissing),
-        (Mode::Expiry | Mode::Reconcile | Mode::MarkSweep, true) => {
+        // `uploadexpiry` reaches S3 — it aborts multipart uploads and heads the
+        // final key — but it is refused the delete capability like every other
+        // non-`delete` role. That is E's D-4 line: the worst outcome of any
+        // upload-path bug is an orphan object GC reclaims, because the capability
+        // is **absent**, not because the logic is careful.
+        (Mode::Expiry | Mode::UploadExpiry | Mode::Reconcile | Mode::MarkSweep, true) => {
             Err(ModeError::UnexpectedDeleteCapability)
         }
-        (Mode::Expiry | Mode::Reconcile | Mode::MarkSweep, false) => Ok(ModeAdmission {
-            may_delete_objects: false,
-        }),
+        (Mode::Expiry | Mode::UploadExpiry | Mode::Reconcile | Mode::MarkSweep, false) => {
+            Ok(ModeAdmission {
+                may_delete_objects: false,
+            })
+        }
     }
 }
 

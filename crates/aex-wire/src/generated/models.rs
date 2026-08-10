@@ -3,7 +3,7 @@
 //! The public request, response and query models.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:a63d54c832426f42a4a90632b1c3d5ceb3d662f90cd66efd24e42ff097efbb88`.
+//! `sha256:ac9f9d4da5543cd71acab49d7078ab631b8e776b8b9e3a2239fd64ce54f060ff`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -1026,6 +1026,16 @@ pub struct HostedSession {
     pub expires_at: Timestamp,
     /// The hosted page.
     pub url: HttpsUrl,
+}
+
+/// One request header a signed grant requires the caller to send verbatim.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct HttpHeader {
+    /// The header name.
+    pub name: String,
+    /// The exact value to send.
+    pub value: String,
 }
 
 /// A durable operation record.
@@ -4118,12 +4128,15 @@ pub struct UploadPart {
     pub part_number: u32,
 }
 
-/// One presigned PUT grant.
+/// One presigned PUT grant. The headers must be sent verbatim: they carry the part checksum and
+/// length the signature covers, and a PUT without them is rejected by the object store.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct UploadPartGrant {
     /// When the signature stops verifying.
     pub expires_at: Timestamp,
+    /// Headers the caller must replay verbatim.
+    pub headers: Vec<HttpHeader>,
     /// Which part.
     pub part_number: u32,
     /// The signed URL.
@@ -4140,12 +4153,27 @@ pub struct UploadPartGrants {
     pub upload_id: UploadId,
 }
 
-/// Mint presigned PUT grants for the named parts.
+/// One part to presign. The part's own SHA-256 is required because S3 verifies it on the way up and
+/// the completion manifest checks it again; the server never sees the bytes, so it cannot compute
+/// it.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct UploadPartRequest {
+    /// Which part.
+    pub part_number: u32,
+    /// The part's own SHA-256.
+    pub sha256: ContentHash,
+    /// The exact Content-Length to be signed.
+    pub size_bytes: DecimalU128,
+}
+
+/// Mint presigned PUT grants for the named parts. At most 1000 parts per call against the
+/// 10000-part ceiling, so a maximal upload needs at least ten calls.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct UploadPartsRequest {
     /// The parts to grant.
-    pub part_numbers: Vec<u32>,
+    pub parts: Vec<UploadPartRequest>,
 }
 
 /// Where a staged upload is in its lifecycle.

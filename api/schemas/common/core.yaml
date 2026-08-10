@@ -110,6 +110,13 @@ schemas:
       authorizedBytes: { type: decimal, doc: "Bytes this grant authorizes." }
       range: { type: ref, to: ByteRange, optional: true, doc: "The signed range, when the grant is partial." }
 
+  HttpHeader:
+    doc: One request header a signed grant requires the caller to send verbatim.
+    type: object
+    fields:
+      name: { type: string, min: 1, max: 128, doc: "The header name." }
+      value: { type: string, min: 1, max: 8192, doc: "The exact value to send." }
+
   WorkspaceAccess:
     doc: What a live read actually did to the session workspace.
     type: object

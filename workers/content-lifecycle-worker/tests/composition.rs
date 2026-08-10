@@ -47,6 +47,13 @@ fn expiry() -> BTreeMap<&'static str, String> {
     vars
 }
 
+fn upload_expiry() -> BTreeMap<&'static str, String> {
+    let mut vars = base("uploadexpiry");
+    vars.insert(config::EXPIRY_SCAN_SHARDS, "64".to_owned());
+    vars.insert(config::EXPIRY_PAGE_ITEMS, "25".to_owned());
+    vars
+}
+
 fn marksweep() -> BTreeMap<&'static str, String> {
     let mut vars = base("marksweep");
     vars.insert(config::MARK_PAGE_ITEMS, "500".to_owned());
@@ -78,6 +85,10 @@ fn read(vars: &BTreeMap<&'static str, String>) -> Result<Config, RegionalHttpCon
 #[test]
 fn each_mode_accepts_its_own_complete_environment() {
     assert_eq!(read(&expiry()).expect("expiry").mode, Mode::Expiry);
+    assert_eq!(
+        read(&upload_expiry()).expect("uploadexpiry").mode,
+        Mode::UploadExpiry
+    );
     assert_eq!(read(&marksweep()).expect("marksweep").mode, Mode::MarkSweep);
     let deleting = read(&delete()).expect("delete");
     assert_eq!(deleting.mode, Mode::Delete);
@@ -86,7 +97,7 @@ fn each_mode_accepts_its_own_complete_environment() {
 
 #[test]
 fn every_common_variable_is_required_in_every_mode() {
-    for vars in [expiry(), marksweep(), delete()] {
+    for vars in [expiry(), upload_expiry(), marksweep(), delete()] {
         for name in config::REQUIRED_COMMON {
             let mut missing = vars.clone();
             missing.remove(name);
@@ -117,8 +128,12 @@ fn delete_mode_cannot_start_without_the_object_delete_capability() {
 
 #[test]
 fn no_other_mode_may_hold_the_object_delete_capability() {
-    for mode in ["expiry", "reconcile", "marksweep"] {
+    for mode in ["expiry", "uploadexpiry", "reconcile", "marksweep"] {
         let mut vars = base(mode);
+        if mode == "expiry" || mode == "uploadexpiry" {
+            vars.insert(config::EXPIRY_SCAN_SHARDS, "64".to_owned());
+            vars.insert(config::EXPIRY_PAGE_ITEMS, "25".to_owned());
+        }
         if mode == "marksweep" {
             vars.insert(config::MARK_PAGE_ITEMS, "500".to_owned());
             vars.insert(config::SWEEP_PAGE_ITEMS, "500".to_owned());
@@ -182,4 +197,36 @@ fn an_unknown_mode_refuses_the_process() {
         read(&vars),
         Err(RegionalHttpConfigError::Invalid { name, .. }) if name == config::MODE
     ));
+}
+
+#[test]
+fn the_upload_expiry_role_reaches_s3_and_still_cannot_delete_an_object() {
+    // The fifth role is the only non-`delete` role that constructs an S3 client
+    // at all — it heads the final key and aborts multipart uploads. That makes it
+    // the one role where "it holds an object client" and "it may delete an
+    // object" have to be provably different answers.
+    let config = read(&upload_expiry()).expect("uploadexpiry");
+    assert!(config.mode.reaches_objects());
+    assert!(!config.mode.deletes_objects());
+    assert!(
+        !content_lifecycle_worker::admit_mode(content_lifecycle_worker::Mode::UploadExpiry, false)
+            .expect("admitted")
+            .may_delete_objects,
+        "upload cleanup that could delete an object would eventually delete a          committed body on ambiguous evidence"
+    );
+    assert!(
+        content_lifecycle_worker::admit_mode(
+            content_lifecycle_worker::Mode::UploadExpiry,
+            true
+        )
+        .is_err(),
+        "the delete capability is refused to this role, not merely unused"
+    );
+}
+
+#[test]
+fn the_upload_expiry_role_is_bound_to_the_registry_table_it_sweeps() {
+    let config = read(&upload_expiry()).expect("uploadexpiry");
+    assert_eq!(config.registry_table, "aex-dev-regional-registry");
+    assert_eq!(config.upload_grace_hours, 24);
 }

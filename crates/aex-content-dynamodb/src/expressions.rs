@@ -19,7 +19,7 @@ use crate::codec::{
     pin_attributes,
 };
 use crate::keys;
-use crate::wire_pending::{Blake3Digest, GcSweepPlan, PinOwner, SealedBytes, body_hex};
+use crate::wire_pending::{Blake3Digest, GcSweepPlan, InlineBody, PinOwner, body_hex};
 
 /// A transport deduplication identity that fits the provider's 36-character
 /// ceiling whatever the inputs are.
@@ -93,7 +93,7 @@ pub fn put_inline_body(
     table: &str,
     workspace: WorkspaceId,
     digest: &ContentHash,
-    sealed: &SealedBytes,
+    sealed: &InlineBody,
 ) -> Result<PutBuilder, StoreError> {
     let item =
         codec::encode_inline_body(workspace, digest, sealed).map_err(|error| invalid(&error))?;

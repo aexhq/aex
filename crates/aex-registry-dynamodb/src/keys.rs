@@ -20,7 +20,12 @@ pub struct Key {
 
 /// Every `itemType` this table may hold, as declared in
 /// `migrations/regional/tables/regional-registry.json`.
-pub const ITEM_TYPES: &[&str] = &["registry_pointer", "registry_upload", "idempotency_receipt"];
+pub const ITEM_TYPES: &[&str] = &[
+    "registry_pointer",
+    "registry_upload",
+    "registry_upload_parts",
+    "idempotency_receipt",
+];
 
 /// Every upload state, as the domain spells them.
 pub const UPLOAD_STATES: &[&str] = &[
@@ -70,6 +75,30 @@ pub fn upload(upload: UploadId) -> Key {
         pk: format!("UPLOAD#{upload}"),
         sk: "STATE".to_owned(),
     }
+}
+
+/// One spilled block of an upload's part arrays.
+///
+/// Blocks share the upload's partition, so the head and every block are one
+/// `Query` and one transaction (E D-1).
+#[must_use]
+pub fn upload_parts(upload: UploadId, block: usize) -> Key {
+    Key {
+        pk: format!("UPLOAD#{upload}"),
+        sk: upload_parts_sort(block),
+    }
+}
+
+/// The sort key of one part block: zero-padded so blocks sort in block order.
+#[must_use]
+pub fn upload_parts_sort(block: usize) -> String {
+    format!("PARTS#{block:04}")
+}
+
+/// The sort-key prefix an upload's part blocks share.
+#[must_use]
+pub const fn upload_parts_prefix() -> &'static str {
+    "PARTS#"
 }
 
 /// One idempotency receipt.

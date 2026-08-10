@@ -29,6 +29,7 @@ scenarios = []
 
 [package.metadata.aex.targets]
 conformance = "unit"
+multipart = "unit"
 properties = "unit"
 faults = "unit"
 security = "unit"
@@ -66,6 +67,10 @@ aex-test-harness = { path = "../../tests/support/aex-test-harness" }
 [[test]]
 name = "conformance"
 path = "tests/conformance.rs"
+
+[[test]]
+name = "multipart"
+path = "tests/multipart.rs"
 
 [[test]]
 name = "properties"

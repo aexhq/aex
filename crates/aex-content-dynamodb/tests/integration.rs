@@ -169,7 +169,7 @@ async fn the_scan_index_returns_the_projection_and_never_a_ciphertext() {
         page: aex_content_dynamodb::Blake3Digest::of(b"an indexed page"),
         level: 0,
         entry_count: 3,
-        sealed: sealed(1_024),
+        body: vec![7u8; 1_024],
         created_at: now(),
     };
     let item = codec::encode_tree_page(&page).expect("encodes");

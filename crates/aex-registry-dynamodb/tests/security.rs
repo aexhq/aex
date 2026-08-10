@@ -18,7 +18,7 @@ fn a_pointer_from_another_tenant_is_refused_after_read() {
 
 #[test]
 fn an_upload_from_another_tenant_is_refused_after_read() {
-    let encoded = encode_upload(&upload());
+    let encoded = encode_upload(&upload()).head;
     let error = decode_upload(&encoded, other_workspace()).expect_err("another tenant");
     assert!(matches!(error, CodecError::WrongTenant { .. }), "{error}");
 }
@@ -46,7 +46,7 @@ fn a_pointer_row_carries_a_digest_and_never_a_body() {
 
 #[test]
 fn an_upload_row_records_what_the_caller_declared_and_never_the_bytes() {
-    let encoded = encode_upload(&upload());
+    let encoded = encode_upload(&upload()).head;
     assert!(encoded.contains_key("declaredSha256"));
     assert!(encoded.contains_key("declaredSizeBytes"));
     for name in encoded.keys() {

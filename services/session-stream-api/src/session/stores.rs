@@ -10,6 +10,7 @@
 //! built by a caller holding a `Grant<WorkClaim>`, and the stream half's
 //! [`crate::stream::mount::AppState`] has no field that can name it.
 
+use aex_content_aws::object_store::{BucketBinding, S3ContentObjects};
 use aex_content_dynamodb::store::ContentStore;
 use aex_regional_http::capability::{Grant, WorkClaim};
 use aex_registry_dynamodb::store::RegistryDynamoStore;
@@ -36,6 +37,16 @@ pub struct Stores {
     pub runtime_activity: RuntimeActivityDynamoStore,
     /// The content bucket and the account that must own it.
     pub objects: ObjectBinding,
+    /// The one content object adapter, and therefore the one presigner.
+    ///
+    /// **This deployable owns exactly one `S3ContentObjects`.** Both the upload
+    /// cluster and the registry cluster need a presigner over the same bucket
+    /// under the same 300-second lifetime, and a second one would be a second
+    /// place for the expiry, the encryption context and the bucket-owner
+    /// assertion to drift. `registry_files_download_create`,
+    /// `session_files_*_download_create` and the four upload routes all reach S3
+    /// through this field and nothing else constructs one.
+    pub content_objects: S3ContentObjects,
     /// The physical `session-authority` table name.
     pub session_table: String,
     /// The physical `usage-query-projection` table name.
@@ -87,6 +98,14 @@ impl Stores {
                 bucket: config.content_bucket.clone(),
                 expected_owner: config.content_bucket_owner.clone(),
             },
+            content_objects: S3ContentObjects::new(
+                objects.clone(),
+                BucketBinding {
+                    bucket: config.content_bucket.clone(),
+                    expected_owner: config.content_bucket_owner.clone(),
+                    kms_key_id: config.content_kms_key.value.clone(),
+                },
+            ),
             session_table: config.session_table.clone(),
             usage_query_table: config.usage_query_table.clone(),
             authz_projection_table: config.authz_projection_table.clone(),
@@ -117,6 +136,10 @@ impl Stores {
                 !self.authz_projection_table.is_empty(),
             ),
             ("content-bucket", !self.objects.bucket.is_empty()),
+            (
+                "content-object-adapter",
+                !self.content_objects.binding().kms_key_id.is_empty(),
+            ),
         ] {
             if !bound {
                 unresolved.push(name.to_owned());

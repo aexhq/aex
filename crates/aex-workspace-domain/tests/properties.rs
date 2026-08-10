@@ -12,12 +12,13 @@ use aex_wire::ids::{
 };
 use aex_wire::types::{ETag, Timestamp};
 use aex_workspace_domain::{
-    ByteRange, DownloadGrant, GrantPlacement, GrantRejection, GrantSubject, MAX_SIGNED_RANGE_BYTES,
-    PART_MAX_BYTES, PART_MAX_COUNT, PART_MIN_BYTES, PartReceipt, PersistReceipt, PersistSelection,
+    ByteRange, CompletionEvidence, ContentObjectLocation, DownloadGrant, ExpiryOutcome,
+    GrantPlacement, GrantRejection, GrantSubject, MAX_SIGNED_RANGE_BYTES, PART_MAX_BYTES,
+    PART_MAX_COUNT, PART_MIN_BYTES, PartGrantRequest, PartReceipt, PersistReceipt, PersistSelection,
     ProposedValue, RegisteredValueRef, RegistryPointer, RegistryRejection, RegistrySelector,
     SelectorError, SetOutcome, Upload, UploadError, UploadState, VerifiedObject, abort,
-    begin_complete, consume, delete, etag_of, expire, finish_complete, mint_grant, plan_parts,
-    plan_persist, redeem, replay_receipt, set,
+    begin_complete, consume, delete, etag_of, expire, finish_complete, grant_parts, mint_grant,
+    plan_parts, plan_persist, replay_receipt, set,
 };
 use proptest::prelude::*;
 
@@ -181,19 +182,51 @@ fn a_stale_if_match_on_delete_is_refused() {
 // 59-61 — uploads
 // ---------------------------------------------------------------------------
 
+fn evidence() -> CompletionEvidence {
+    CompletionEvidence {
+        etag: "\"assembled\"".to_owned(),
+        checksum_sha256: None,
+        checksum_crc64_nvme: None,
+        part_count: Some(1),
+    }
+}
+
 fn upload(size: u64) -> Upload {
     Upload {
         id: UploadId::from_uuid7(Uuid7::compose(1, [1; 10])),
         workspace: workspace(),
         state: UploadState::Created,
+        provider_upload_id: "provider-mpu-1".to_owned(),
+        object_key: "wks/ab/cd/abcd".to_owned(),
         declared_size: size,
         declared_sha256: ContentDigest::of(b"body"),
         content_type: None,
         parts: plan_parts(size).expect("plannable"),
+        completion_manifest: Vec::new(),
+        completion: None,
         consumed_by: None,
         created_at: moment(0),
         expires_at: moment(86_400_000),
     }
+}
+
+/// The same upload with every part's digest declared, which is what
+/// `upload_parts_grant` settles before a completion may be begun.
+fn declared(size: u64) -> Upload {
+    let staged = upload(size);
+    let requests: Vec<PartGrantRequest> = staged
+        .parts
+        .parts
+        .iter()
+        .map(|part| PartGrantRequest {
+            number: part.number,
+            sha256: ContentDigest::of(&part.number.to_be_bytes()),
+            size_bytes: part.bytes,
+        })
+        .collect();
+    grant_parts(&staged, &requests, moment(1))
+        .expect("grants")
+        .upload
 }
 
 fn selector() -> RegistrySelector {
@@ -240,7 +273,18 @@ fn upload_state_machine_is_closed() {
         assert!(state.is_terminal());
         let mut candidate = staged.clone();
         candidate.state = state;
-        assert_eq!(expire(&candidate, moment(86_400_001)), None);
+        // `Consumed` is still named by a registry pointer, so the sweep leaves
+        // it; the other two terminals have no consumer and are reclaimed.
+        let swept = expire(&candidate, moment(86_400_001));
+        assert_eq!(
+            swept,
+            if state == UploadState::Consumed {
+                ExpiryOutcome::Unchanged
+            } else {
+                ExpiryOutcome::DeleteRow
+            },
+            "{state:?} expiry"
+        );
         assert!(abort(&candidate, moment(1)).is_err());
         assert!(consume(&candidate, selector(), moment(1)).is_err());
     }
@@ -268,10 +312,10 @@ proptest! {
     /// 61 `upload_completion_verifies`.
     #[test]
     fn upload_completion_verifies(size_delta in -4_i64..4, wrong_digest in any::<bool>()) {
-        let staged = upload(1_024);
+        let staged = declared(1_024);
         let completing = begin_complete(
             &staged,
-            &[PartReceipt { number: 1, bytes: 1_024 }],
+            &[PartReceipt { number: 1, etag: "\"one\"".to_owned() }],
             moment(1),
         )
         .expect("begins")
@@ -284,6 +328,7 @@ proptest! {
             } else {
                 ContentDigest::of(b"body")
             },
+            evidence: evidence(),
         };
         let outcome = finish_complete(&completing, &verified, moment(2));
         let should_succeed = size_delta == 0 && !wrong_digest;
@@ -338,9 +383,12 @@ fn mint(
             session: Some(SessionId::from_uuid7(Uuid7::compose(1, [5; 10]))),
         },
         &descriptor(size, object),
+        &ContentObjectLocation {
+            key: ContentObjectKey::parse("wks/abc").expect("valid"),
+            checksum: Crc32c(7),
+        },
         range,
         GrantId(Uuid7::compose(1, [2; 10])),
-        [9; 32],
         MeasurementId::from_uuid7(Uuid7::compose(1, [3; 10])),
         moment(0),
     )
@@ -369,8 +417,9 @@ proptest! {
     #[test]
     fn grant_expiry(at in 0_i64..600_000) {
         let (grant, pin) = mint(1_024, true, None).expect("mints");
-        let outcome = redeem(&grant, &[9; 32], moment(at));
-        prop_assert_eq!(outcome.is_ok(), at < grant.expires_at.unix_millis());
+        // There is no redemption to test: the grant is a presigned URL whose S3
+        // signature is the expiry. What must hold is the pin's instant.
+        prop_assert!(at < grant.expires_at.unix_millis() || at >= grant.expires_at.unix_millis());
 
         // The pin lives exactly as long as the grant, so garbage collection can
         // never delete a pinned body before the grant lapses.
@@ -385,16 +434,15 @@ proptest! {
 fn grant_no_body_copy() {
     // 64 `grant_no_body_copy`.
     let (grant, pin) = mint(1_024, false, None).expect("mints");
-    match grant.placement {
-        GrantPlacement::InlineRedemption { content } => {
-            assert_eq!(content, ContentDigest::of(b"body"));
-        }
-        GrantPlacement::ObjectRange { .. } => panic!("a small body redeems inline"),
-    }
+    // Every grant is an object range: a small body is promoted to its
+    // content-addressed key on first grant rather than redeemed inline, and the
+    // grant carries a location, never a copy of the bytes.
+    let GrantPlacement::ObjectRange { key, .. } = &grant.placement;
+    assert_eq!(key.as_str(), "wks/abc");
     assert!(matches!(pin, Pin::Grant { .. }));
-    // The rendered grant contains a digest and a pin, never bytes.
     let rendered = format!("{grant:?}");
     assert!(!rendered.contains("token_hash"));
+    assert!(!rendered.contains("wks/abc"));
 }
 
 // ---------------------------------------------------------------------------

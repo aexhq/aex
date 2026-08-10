@@ -12,7 +12,11 @@
 //!   never silently retried;
 //! - an upload is single-use: `Consumed` is reachable only from a registry set
 //!   that pins it in the same transaction;
-//! - a grant stores a token hash and a pin, never a token and never a body copy.
+//! - an upload names its provider multipart handle and its object key as
+//!   non-optional facts, so a row that cannot be aborted or swept is
+//!   unconstructible;
+//! - a grant is a presigned object range that always arrives with its pin — never
+//!   a redeemable token, because there is no redemption route.
 //!
 //! # Not this crate's job
 //!
@@ -28,8 +32,8 @@ pub mod upload;
 /// The registry name grammar, re-exported so a caller needs one import.
 pub use aex_content_domain::{RegisteredName, RegistryKind, Revision};
 pub use grant::{
-    ByteRange, DownloadGrant, GRANT_TTL, GrantPlacement, GrantRejection, GrantSubject,
-    MAX_SIGNED_RANGE_BYTES, Redemption, mint_grant, redeem,
+    ByteRange, ContentObjectLocation, DownloadGrant, GRANT_TTL, GrantPlacement, GrantRejection,
+    GrantSubject, MAX_SIGNED_RANGE_BYTES, mint_grant,
 };
 pub use persist::{
     PatternAtom, PersistError, PersistPlan, PersistReceipt, PersistSelection, PersistShape,
@@ -40,8 +44,9 @@ pub use registry::{
     RegistryRejection, SetOutcome, ValueError, delete, etag_of, set,
 };
 pub use upload::{
-    PART_GRANT_TTL, PART_MAX_BYTES, PART_MAX_COUNT, PART_MIN_BYTES, PartPlan, PartReceipt,
-    PlannedPart, RegistrySelector, UPLOAD_GRACE, Upload, UploadCommit, UploadError, UploadState,
-    VerifiedObject, abort, begin_complete, consume, expire, finish_complete, grant_parts,
-    plan_parts,
+    AmbiguityResolution, CompletionEvidence, ExpiryOutcome, HeadOracle, PART_GRANT_MAX_PER_CALL,
+    PART_GRANT_TTL, PART_MAX_BYTES, PART_MAX_COUNT, PART_MIN_BYTES, PartGrantRequest, PartPlan,
+    PartReceipt, PlannedPart, RegistrySelector, SubmittedPart, UPLOAD_GRACE, Upload, UploadCommit,
+    UploadError, UploadState, VerifiedObject, abort, begin_complete, consume, expire,
+    finish_complete, grant_parts, plan_parts, resolve_completing,
 };

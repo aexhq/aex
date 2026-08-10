@@ -1,19 +1,29 @@
 //! `content-lifecycle-worker` composition root (Rust Lambda ZIP).
 //!
-//! One binary, four deployed roles: `expiry`, `reconcile`, `marksweep` and
-//! `delete` (RS-10). Each role keeps its own IAM role, schedule, concurrency and
-//! alarm; only `delete` ever holds the object-delete capability, and the
-//! configuration refuses the two mismatches in both directions.
+//! One binary, five deployed roles: `expiry`, `uploadexpiry`, `reconcile`,
+//! `marksweep` and `delete` (RS-10, extended by E D-8). Each role keeps its own
+//! IAM role, schedule, concurrency and alarm; only `delete` ever holds the
+//! object-delete capability, and the configuration refuses the two mismatches in
+//! both directions.
+//!
+//! Every role now has a real body. `reconcile`, `marksweep` and `delete` used to
+//! fall through to a JSON echo, and `delete` reported every queue record as a
+//! batch-item failure without ever calling S3 — so the collector these other
+//! decisions depend on for their safety argument never reclaimed anything.
 
 use std::process::ExitCode;
 
 use aex_content_dynamodb::store::ContentStore;
 use aex_regional_http::config::RegionalHttpConfigError;
 use aex_session_dynamodb::paging::PageBudget;
+use aex_wire::ids::{OrganizationId, PrefixedId as _};
 use aex_wire::types::Timestamp;
 use aws_lambda_events::event::sqs::{BatchItemFailure, SqsBatchResponse, SqsEvent};
 use content_lifecycle_worker::config::{Config, Mode};
 use content_lifecycle_worker::expiry::expire_due_grants;
+use content_lifecycle_worker::gc::{self, DeletableObjects, SweepRequest};
+use content_lifecycle_worker::upload_expiry::{self, UploadObjects, UploadRows};
+use content_lifecycle_worker::{DeleteIntent, ObjectDeleteResult};
 use lambda_runtime::{Error as LambdaError, LambdaEvent, service_fn};
 
 /// Why `content-lifecycle-worker` stopped.
@@ -76,20 +86,31 @@ async fn run(
     let dynamodb = aws_sdk_dynamodb::Client::new(&aws);
     let content = ContentStore::new(dynamodb.clone(), config.content_table.clone());
 
-    // The object client exists only in the role that may use it. A `reconcile`
-    // process that never constructs an S3 client cannot delete an object even if
-    // its IAM policy were wrong.
-    let objects = if config.mode.deletes_objects() {
+    // The object client exists only in the roles that reach S3 at all. A
+    // `reconcile` process that never constructs an S3 client cannot delete an
+    // object even if its IAM policy were wrong. `uploadexpiry` holds one for
+    // `HeadObject` and `AbortMultipartUpload` and still cannot delete, because
+    // the delete capability is refused to it at start-up.
+    let objects = if config.mode.reaches_objects() {
         Some(aws_sdk_s3::Client::new(&aws))
     } else {
         None
     };
+    let registry = aex_registry_dynamodb::store::RegistryDynamoStore::new(
+        dynamodb.clone(),
+        config.registry_table.clone(),
+    );
     let role = Role {
         mode: config.mode,
         content,
+        registry,
         work_table: config.work_table.clone(),
+        content_bucket: config.content_bucket.clone(),
+        content_bucket_owner: config.content_bucket_owner.clone(),
         expiry_scan_shards: config.expiry_scan_shards,
         expiry_page_items: config.expiry_page_items,
+        mark_page_items: config.mark_page_items,
+        sweep_page_items: config.sweep_page_items,
         objects,
     };
 
@@ -106,9 +127,14 @@ async fn run(
 struct Role {
     mode: Mode,
     content: ContentStore,
+    registry: aex_registry_dynamodb::store::RegistryDynamoStore,
     work_table: String,
+    content_bucket: String,
+    content_bucket_owner: String,
     expiry_scan_shards: Option<u16>,
     expiry_page_items: Option<u32>,
+    mark_page_items: Option<u64>,
+    sweep_page_items: Option<u64>,
     objects: Option<aws_sdk_s3::Client>,
 }
 
@@ -125,20 +151,117 @@ impl Role {
                 )));
             }
             let event: SqsEvent = serde_json::from_value(payload)?;
-            return Ok(serde_json::to_value(Self::drain(&event))?);
+            return self.drain(&event).await;
         }
         if self.mode.deletes_objects() {
             return Err(LambdaError::from(
                 "`delete` mode is queue-triggered and answers no schedule",
             ));
         }
-        if self.mode == Mode::Expiry {
-            return self.expire_grants().await;
+        match self.mode {
+            Mode::Expiry => self.expire_grants().await,
+            Mode::UploadExpiry => self.expire_uploads(payload).await,
+            Mode::Reconcile => self.reconcile(payload).await,
+            Mode::MarkSweep => self.mark_sweep(payload).await,
+            Mode::Delete => unreachable!("the queue arm above answers every delete invocation"),
+        }
+    }
+
+    /// Walks the workspaces the schedule names, rechecking staged rows against
+    /// the exact grace boundary and their live reachability.
+    async fn reconcile(&self, payload: serde_json::Value) -> Result<serde_json::Value, LambdaError> {
+        let request = sweep_request(payload)?;
+        let budget = PageBudget::new(page_bound(self.mark_page_items))
+            .map_err(|error| LambdaError::from(error.to_string()))?;
+        let now = now().map_err(|error| LambdaError::from(error.to_string()))?;
+        let report = gc::reconcile(&self.content, &request, now, budget)
+            .await
+            .map_err(|error| LambdaError::from(error.to_string()))?;
+        Ok(serde_json::json!({
+            "mode": self.mode.as_str(),
+            "report": report,
+        }))
+    }
+
+    /// Walks reachability and stages what nothing points at.
+    async fn mark_sweep(
+        &self,
+        payload: serde_json::Value,
+    ) -> Result<serde_json::Value, LambdaError> {
+        let request = sweep_request(payload.clone())?;
+        let organization = payload
+            .get("organizationId")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                LambdaError::from(
+                    "a mark-sweep invocation must name the organization the descriptors are \
+                     re-checked against",
+                )
+            })
+            .and_then(|id| {
+                OrganizationId::parse(id).map_err(|error| LambdaError::from(error.to_string()))
+            })?;
+        let budget = PageBudget::new(page_bound(self.sweep_page_items))
+            .map_err(|error| LambdaError::from(error.to_string()))?;
+        let now = now().map_err(|error| LambdaError::from(error.to_string()))?;
+        let report = gc::mark_sweep(&self.content, &request, organization, now, budget)
+            .await
+            .map_err(|error| LambdaError::from(error.to_string()))?;
+        Ok(serde_json::json!({
+            "mode": self.mode.as_str(),
+            "report": report,
+        }))
+    }
+
+    /// Sweeps every due pending upload named by the invocation.
+    async fn expire_uploads(
+        &self,
+        payload: serde_json::Value,
+    ) -> Result<serde_json::Value, LambdaError> {
+        let due: Vec<DueUpload> = serde_json::from_value(
+            payload
+                .get("due")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+        )
+        .map_err(|error| {
+            LambdaError::from(format!(
+                "an upload-expiry invocation carries the due items read from the \
+                 `registry.upload_expiry` index: {error}"
+            ))
+        })?;
+        let now = now().map_err(|error| LambdaError::from(error.to_string()))?;
+        let objects = ObjectAdapter {
+            client: self
+                .objects
+                .clone()
+                .ok_or_else(|| LambdaError::from("upload expiry holds no object client"))?,
+            bucket: self.content_bucket.clone(),
+            expected_owner: self.content_bucket_owner.clone(),
+        };
+        let rows = RowAdapter {
+            registry: self.registry.clone(),
+        };
+
+        let mut settled = serde_json::Map::new();
+        let mut re_armed = Vec::new();
+        for item in due {
+            let workspace = aex_wire::ids::WorkspaceId::parse(&item.workspace_id)
+                .map_err(|error| LambdaError::from(error.to_string()))?;
+            let upload = aex_wire::ids::UploadId::parse(&item.upload_id)
+                .map_err(|error| LambdaError::from(error.to_string()))?;
+            let outcome = upload_expiry::sweep_one(&rows, &objects, workspace, upload, now)
+                .await
+                .map_err(|error| LambdaError::from(error.to_string()))?;
+            if outcome.re_arms() {
+                re_armed.push(item.upload_id.clone());
+            }
+            settled.insert(item.upload_id, serde_json::json!(format!("{outcome:?}")));
         }
         Ok(serde_json::json!({
             "mode": self.mode.as_str(),
-            "contentTable": self.content.table(),
-            "workTable": self.work_table,
+            "settled": settled,
+            "reArmed": re_armed,
         }))
     }
 
@@ -163,24 +286,248 @@ impl Role {
         }))
     }
 
-    /// Reports per-item failures instead of throwing, so an item that already
-    /// committed is never re-executed (RS-20).
-    fn drain(event: &SqsEvent) -> SqsBatchResponse {
-        let mut rendered = SqsBatchResponse::default();
-        rendered.batch_item_failures = event
+    /// Executes the batch, then reports per-item failures instead of throwing, so
+    /// an item that already committed is never re-executed (RS-20).
+    ///
+    /// Only records that genuinely have to be retried are reported. Reporting
+    /// every record unconditionally — which is what this did before — meant the
+    /// delete queue drained to its dead-letter queue and no object was ever
+    /// reclaimed, while the worker's own metrics looked like it was working.
+    async fn drain(&self, event: &SqsEvent) -> Result<serde_json::Value, LambdaError> {
+        let objects = ObjectAdapter {
+            client: self
+                .objects
+                .clone()
+                .ok_or_else(|| LambdaError::from("delete mode holds no object client"))?,
+            bucket: self.content_bucket.clone(),
+            expected_owner: self.content_bucket_owner.clone(),
+        };
+        let records: Vec<(String, String)> = event
             .records
             .iter()
             .map(|record| {
+                (
+                    record
+                        .message_id
+                        .clone()
+                        .unwrap_or_else(|| "unidentified".to_owned()),
+                    record.body.clone().unwrap_or_default(),
+                )
+            })
+            .collect();
+        let now = now().map_err(|error| LambdaError::from(error.to_string()))?;
+        let report = gc::run_delete_batch(
+            &self.content,
+            &objects,
+            &self.content_bucket_owner,
+            &records,
+            now,
+        )
+        .await;
+
+        let mut rendered = SqsBatchResponse::default();
+        rendered.batch_item_failures = report
+            .failed
+            .iter()
+            .map(|id| {
                 let mut failure = BatchItemFailure::default();
-                failure.item_identifier = record
-                    .message_id
-                    .clone()
-                    .unwrap_or_else(|| "unidentified".to_owned());
+                failure.item_identifier.clone_from(id);
                 failure
             })
             .collect();
-        rendered
+        let mut response = serde_json::to_value(&rendered)?;
+        if let Some(members) = response.as_object_mut() {
+            members.insert("report".to_owned(), serde_json::to_value(&report)?);
+        }
+        Ok(response)
     }
+}
+
+/// One due pending upload, as the `registry.upload_expiry` index projects it.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct DueUpload {
+    upload_id: String,
+    workspace_id: String,
+}
+
+/// The S3 half of both object-reaching roles.
+///
+/// It carries `delete_fenced`, `head` and `abort_multipart` and **nothing else**.
+/// `delete_fenced` always sends `If-Match`, which the bucket policy also requires:
+/// a blind delete fails closed at the service, not only in this code.
+#[derive(Clone)]
+struct ObjectAdapter {
+    client: aws_sdk_s3::Client,
+    bucket: String,
+    expected_owner: String,
+}
+
+#[async_trait::async_trait]
+impl DeletableObjects for ObjectAdapter {
+    async fn delete_fenced(&self, intent: &DeleteIntent) -> Result<ObjectDeleteResult, String> {
+        let outcome = self
+            .client
+            .delete_object()
+            .bucket(&self.bucket)
+            .key(&intent.key)
+            .if_match(&intent.if_match)
+            .expected_bucket_owner(&intent.expected_bucket_owner)
+            .send()
+            .await;
+        match outcome {
+            Ok(_) => Ok(ObjectDeleteResult::Deleted),
+            Err(error) => {
+                let code = error
+                    .as_service_error()
+                    .and_then(aws_sdk_s3::error::ProvideErrorMetadata::code)
+                    .map(str::to_owned)
+                    .or_else(|| {
+                        aws_sdk_s3::error::ProvideErrorMetadata::code(&error).map(str::to_owned)
+                    });
+                match code.as_deref() {
+                    // The object changed since it was marked: the candidate is
+                    // dropped and the body survives.
+                    Some("PreconditionFailed") => Ok(ObjectDeleteResult::PreconditionFailed),
+                    Some("NoSuchKey" | "NotFound") => Ok(ObjectDeleteResult::Missing),
+                    _ => Ok(ObjectDeleteResult::Retryable),
+                }
+            }
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl UploadObjects for ObjectAdapter {
+    async fn head(
+        &self,
+        upload: &aex_workspace_domain::upload::Upload,
+    ) -> aex_workspace_domain::upload::HeadOracle {
+        use aex_workspace_domain::upload::{CompletionEvidence, HeadOracle};
+        let outcome = self
+            .client
+            .head_object()
+            .bucket(&self.bucket)
+            .key(&upload.object_key)
+            .expected_bucket_owner(&self.expected_owner)
+            .send()
+            .await;
+        match outcome {
+            Ok(response) => HeadOracle::Present {
+                content_length: u64::try_from(response.content_length.unwrap_or_default())
+                    .unwrap_or_default(),
+                declared_digest: response
+                    .metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.get(aex_content_aws::object_key::METADATA_DIGEST))
+                    .and_then(|hex| aex_wire::ids::ContentHash::parse(&format!("sha256:{hex}")).ok()),
+                evidence: CompletionEvidence {
+                    etag: response.e_tag.unwrap_or_default(),
+                    checksum_sha256: response.checksum_sha256,
+                    checksum_crc64_nvme: response.checksum_crc64_nvme,
+                    part_count: response
+                        .parts_count
+                        .and_then(|count| u64::try_from(count).ok()),
+                },
+            },
+            Err(error) => {
+                let code = aws_sdk_s3::error::ProvideErrorMetadata::code(&error);
+                match code {
+                    // An absent object is evidence that the completion did not
+                    // land. Anything else is evidence of nothing at all.
+                    Some("NoSuchKey" | "NotFound") => HeadOracle::Absent,
+                    _ => HeadOracle::Unavailable,
+                }
+            }
+        }
+    }
+
+    async fn abort_multipart(
+        &self,
+        upload: &aex_workspace_domain::upload::Upload,
+    ) -> Result<(), String> {
+        let outcome = self
+            .client
+            .abort_multipart_upload()
+            .bucket(&self.bucket)
+            .key(&upload.object_key)
+            .upload_id(&upload.provider_upload_id)
+            .expected_bucket_owner(&self.expected_owner)
+            .send()
+            .await;
+        match outcome {
+            Ok(_) => Ok(()),
+            Err(error) => match aws_sdk_s3::error::ProvideErrorMetadata::code(&error) {
+                // An already-aborted upload is an idempotent success.
+                Some("NoSuchUpload") => Ok(()),
+                _ => Err(error.to_string()),
+            },
+        }
+    }
+}
+
+/// The `regional-registry` half of the upload-expiry role.
+#[derive(Clone)]
+struct RowAdapter {
+    registry: aex_registry_dynamodb::store::RegistryDynamoStore,
+}
+
+#[async_trait::async_trait]
+impl UploadRows for RowAdapter {
+    async fn load(
+        &self,
+        workspace: aex_wire::ids::WorkspaceId,
+        upload: aex_wire::ids::UploadId,
+    ) -> Result<Option<aex_workspace_domain::upload::Upload>, aex_session_dynamodb::error::StoreError>
+    {
+        aex_registry_dynamodb::store::RegistryStore::load_upload(&self.registry, workspace, upload)
+            .await
+    }
+
+    async fn transition_fenced(
+        &self,
+        upload: &aex_workspace_domain::upload::Upload,
+        from: aex_workspace_domain::upload::UploadState,
+        to: aex_workspace_domain::upload::UploadState,
+    ) -> Result<(), aex_session_dynamodb::error::StoreError> {
+        aex_registry_dynamodb::store::RegistryStore::transition_upload_fenced(
+            &self.registry,
+            upload.id,
+            from,
+            to,
+            &upload.provider_upload_id,
+        )
+        .await
+    }
+
+    async fn settle_ready(
+        &self,
+        upload: &aex_workspace_domain::upload::Upload,
+    ) -> Result<(), aex_session_dynamodb::error::StoreError> {
+        aex_registry_dynamodb::store::RegistryStore::settle_ready(&self.registry, upload).await
+    }
+
+    async fn delete_row(
+        &self,
+        upload: &aex_workspace_domain::upload::Upload,
+    ) -> Result<(), aex_session_dynamodb::error::StoreError> {
+        aex_registry_dynamodb::store::RegistryStore::delete_upload(&self.registry, upload).await
+    }
+}
+
+/// Reads the workspace and bucket set one scheduled sweep covers.
+fn sweep_request(payload: serde_json::Value) -> Result<SweepRequest, LambdaError> {
+    serde_json::from_value(payload).map_err(|error| {
+        LambdaError::from(format!(
+            "a scheduled sweep names the workspaces and buckets it covers: {error}"
+        ))
+    })
+}
+
+fn page_bound(configured: Option<u64>) -> u32 {
+    configured
+        .and_then(|value| u32::try_from(value).ok())
+        .unwrap_or(0)
 }
 
 /// The host clock, read once per scheduled invocation.
@@ -202,6 +549,7 @@ impl std::fmt::Debug for Role {
             .debug_struct("Role")
             .field("mode", &self.mode.as_str())
             .field("content_table", &self.content.table())
+            .field("work_table", &self.work_table)
             .field("holds_object_client", &self.objects.is_some())
             .finish_non_exhaustive()
     }

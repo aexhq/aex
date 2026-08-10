@@ -22,7 +22,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use aex_control_app::ports::{
-    AcceptInvitationsTx, AccountProfile, BeginWorkspaceDeletionTx, BeginWorkspaceProvisionTx,
+    AcceptInvitationsTx, AccountProjection, BeginWorkspaceDeletionTx, BeginWorkspaceProvisionTx,
     ClaimDueOperations, ClaimOutbox, CompleteWorkspaceDeletionTx, ControlStore, ControlViewStore,
     CreateApiKeyTx, CreateInvitationTx, CreateOrganizationTx, DeleteWorkspaceRequest,
     DeleteWorkspaceResponse, EffectError, FinishWorkspaceProvisionTx, GcExpired, GcReport,
@@ -140,11 +140,13 @@ fn operation(kind: OperationKind, status: OperationStatus) -> Operation {
 fn view(status: WorkspaceStatus) -> WorkspaceView {
     WorkspaceView {
         workspace: workspace(status),
-        account: AccountProfile {
-            state: AccountState::Active,
-            reason: None,
-            revision: 1,
-            changed_at: epoch(),
+        account: AccountProjection {
+            profile: AccountProfile {
+                state: AccountState::Active,
+                reason: None,
+                revision: 1,
+                changed_at: epoch(),
+            },
             epoch: 1,
         },
         workspace_epoch: 1,
@@ -493,7 +495,7 @@ impl ControlViewStore for FakeStore {
     async fn account_profile(
         &self,
         _organization_id: Uuid,
-    ) -> Result<Option<AccountProfile>, StoreError> {
+    ) -> Result<Option<AccountProjection>, StoreError> {
         unreachable!("the worker reads the profile through the workspace view")
     }
 }

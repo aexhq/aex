@@ -1,7 +1,7 @@
 {
   "schema": "aex.regional-tables.v1",
   "generation": 1,
-  "digest": "blake3:cab174142325c6f600c56b0d1bc1b8b46f25800740600daf7ac50b76c05d9f83",
+  "digest": "blake3:ef2a5c5ad5dfb0cdae52ea10d0784b473ad49e25d4e7ad23e2f65e8c73839cee",
   "tables": [
     {
       "schema": "aex.regional-table.v1",
@@ -874,9 +874,33 @@
       "itemTypes": [
         "registry_pointer",
         "registry_upload",
+        "registry_upload_parts",
         "idempotency_receipt"
       ],
       "iam": [
+        {
+          "role": "content-lifecycle-worker-uploadexpiry",
+          "actions": [
+            "dynamodb:GetItem",
+            "dynamodb:Query",
+            "dynamodb:UpdateItem",
+            "dynamodb:DeleteItem"
+          ],
+          "resources": [
+            "table"
+          ],
+          "itemTypes": [
+            "registry_upload",
+            "registry_upload_parts"
+          ],
+          "condition": {
+            "operator": "ForAllValues:StringLike",
+            "key": "dynamodb:LeadingKeys",
+            "values": [
+              "UPLOAD#*"
+            ]
+          }
+        },
         {
           "role": "regional-session-api",
           "actions": [

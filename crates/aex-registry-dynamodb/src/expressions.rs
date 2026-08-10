@@ -5,6 +5,8 @@
 //! is a pure function of `(kind, revision, digest)`, so conditioning on the
 //! revision *is* conditioning on the tag.
 
+use std::fmt::Write as _;
+
 use aex_content_domain::identity::{RegistryKind, Revision};
 use aex_session_dynamodb::attr::{n, s};
 use aex_session_dynamodb::component::Component;
@@ -70,13 +72,28 @@ pub fn delete_pointer(
         .expression_attribute_values(":fromRevision", n(from_revision.0)))
 }
 
-/// Stages an upload, which must not already exist.
+/// Stages an upload's head row, which must not already exist.
 #[must_use]
 pub fn create_upload(table: &str, upload: &Upload) -> PutBuilder {
     Put::builder()
         .table_name(table)
-        .set_item(Some(codec::encode_upload(upload)))
+        .set_item(Some(codec::encode_upload(upload).head))
         .condition_expression(IMMUTABLE)
+}
+
+/// Stages every spilled part block of an upload. Empty below the spill bound.
+#[must_use]
+pub fn create_upload_part_blocks(table: &str, upload: &Upload) -> Vec<PutBuilder> {
+    codec::encode_upload(upload)
+        .part_blocks
+        .into_iter()
+        .map(|item| {
+            Put::builder()
+                .table_name(table)
+                .set_item(Some(item))
+                .condition_expression(IMMUTABLE)
+        })
+        .collect()
 }
 
 /// Moves an upload from one state to another, and only from that one.
@@ -100,6 +117,148 @@ pub fn transition_upload(
         .expression_attribute_names("#state", "state")
         .expression_attribute_values(":from", s(upload_state_str(from)))
         .expression_attribute_values(":to", s(upload_state_str(to)))
+}
+
+/// Moves an upload after the provider effect that the transition records.
+///
+/// The irreversible provider effect goes first and this write is conditional on
+/// **the exact state the decision was made under and the exact handle it was made
+/// against** (E D-6). `providerUploadId = :handle` is load-bearing and must not be
+/// weakened: without it a stale worker could terminalise an upload that was
+/// re-created under the same identity.
+#[must_use]
+pub fn transition_upload_fenced(
+    table: &str,
+    upload: UploadId,
+    from: UploadState,
+    to: UploadState,
+    provider_upload_id: &str,
+) -> UpdateBuilder {
+    let target = keys::upload(upload);
+    Update::builder()
+        .table_name(table)
+        .set_key(Some(key(&target.pk, &target.sk)))
+        .condition_expression(
+            "attribute_exists(pk) AND #state = :from AND providerUploadId = :handle",
+        )
+        .update_expression("SET #state = :to")
+        .expression_attribute_names("#state", "state")
+        .expression_attribute_values(":from", s(upload_state_str(from)))
+        .expression_attribute_values(":to", s(upload_state_str(to)))
+        .expression_attribute_values(":handle", s(provider_upload_id.to_owned()))
+}
+
+/// Records the settled per-part digests a grant call declared.
+#[must_use]
+pub fn record_part_declarations(table: &str, upload: &Upload) -> UpdateBuilder {
+    let target = keys::upload(upload.id);
+    let rows = codec::encode_upload(upload);
+    let parts = rows
+        .head
+        .get("parts")
+        .cloned()
+        .unwrap_or_else(|| aex_session_dynamodb::attr::string_list(Vec::new()));
+    Update::builder()
+        .table_name(table)
+        .set_key(Some(key(&target.pk, &target.sk)))
+        .condition_expression(
+            "attribute_exists(pk) AND #state IN (:created, :granted) AND partBlockCount = :inline",
+        )
+        .update_expression("SET #state = :granted, parts = :parts")
+        .expression_attribute_names("#state", "state")
+        .expression_attribute_values(":created", s(upload_state_str(UploadState::Created)))
+        .expression_attribute_values(":granted", s(upload_state_str(UploadState::PartsGranted)))
+        .expression_attribute_values(":inline", aex_session_dynamodb::attr::n(0))
+        .expression_attribute_values(":parts", parts)
+}
+
+/// Settles an upload as `Ready`, writing the completion evidence that proves it.
+///
+/// Reachable from any pre-`Ready` state, because E's D-3 oracle is total: a
+/// `HeadObject` that finds the declared bytes at the content-addressed key
+/// establishes that they are committed regardless of which state the row was left
+/// in. Fenced on the handle, like every write that follows a provider effect.
+///
+/// # Errors
+///
+/// [`StoreError::Invalid`] when the upload carries no completion evidence, which
+/// would make `Ready` an assertion rather than a proof.
+pub fn settle_ready(table: &str, upload: &Upload) -> Result<UpdateBuilder, StoreError> {
+    let evidence = upload
+        .completion
+        .as_ref()
+        .ok_or_else(|| StoreError::Invalid {
+            detail: "a Ready upload must carry the evidence that proves its object exists"
+                .to_owned(),
+        })?;
+    let target = keys::upload(upload.id);
+    let mut assignments = vec!["#state = :ready".to_owned(), "objectEtag = :etag".to_owned()];
+    let mut builder = Update::builder()
+        .table_name(table)
+        .set_key(Some(key(&target.pk, &target.sk)))
+        .condition_expression(
+            "attribute_exists(pk) AND #state IN (:created, :granted, :completing) \
+             AND providerUploadId = :handle",
+        )
+        .expression_attribute_names("#state", "state")
+        .expression_attribute_values(":created", s(upload_state_str(UploadState::Created)))
+        .expression_attribute_values(":granted", s(upload_state_str(UploadState::PartsGranted)))
+        .expression_attribute_values(":completing", s(upload_state_str(UploadState::Completing)))
+        .expression_attribute_values(":ready", s(upload_state_str(UploadState::Ready)))
+        .expression_attribute_values(":handle", s(upload.provider_upload_id.clone()))
+        .expression_attribute_values(":etag", s(evidence.etag.clone()));
+    let mut removals = Vec::new();
+    match &evidence.checksum_sha256 {
+        Some(value) => {
+            assignments.push("objectChecksumSha256 = :sha".to_owned());
+            builder = builder.expression_attribute_values(":sha", s(value.clone()));
+        }
+        None => removals.push("objectChecksumSha256"),
+    }
+    match &evidence.checksum_crc64_nvme {
+        Some(value) => {
+            assignments.push("objectChecksumCrc64Nvme = :crc".to_owned());
+            builder = builder.expression_attribute_values(":crc", s(value.clone()));
+        }
+        None => removals.push("objectChecksumCrc64Nvme"),
+    }
+    match evidence.part_count {
+        Some(value) => {
+            assignments.push("objectPartCount = :parts".to_owned());
+            builder = builder.expression_attribute_values(":parts", n(value));
+        }
+        None => removals.push("objectPartCount"),
+    }
+    let mut expression = format!("SET {}", assignments.join(", "));
+    if !removals.is_empty() {
+        let _ = write!(expression, " REMOVE {}", removals.join(", "));
+    }
+    Ok(builder.update_expression(expression))
+}
+
+/// Removes an upload row that has no remaining consumer (E D-5).
+///
+/// Fenced on the terminal state the sweep observed, so a row that moved on since
+/// the decision survives. An already-absent row is an idempotent success at the
+/// caller, never a condition this expression relaxes.
+#[must_use]
+pub fn delete_upload(table: &str, upload: UploadId, from: UploadState) -> DeleteBuilder {
+    let target = keys::upload(upload);
+    Delete::builder()
+        .table_name(table)
+        .set_key(Some(key(&target.pk, &target.sk)))
+        .condition_expression("attribute_exists(pk) AND #state = :from")
+        .expression_attribute_names("#state", "state")
+        .expression_attribute_values(":from", s(upload_state_str(from)))
+}
+
+/// Removes one spilled part block of an upload that is being reclaimed.
+#[must_use]
+pub fn delete_upload_part_block(table: &str, upload: UploadId, block: usize) -> DeleteBuilder {
+    let target = keys::upload_parts(upload, block);
+    Delete::builder()
+        .table_name(table)
+        .set_key(Some(key(&target.pk, &target.sk)))
 }
 
 /// Begins a completion, pinning the manifest the caller asked for.
@@ -187,7 +346,8 @@ mod tests {
     use aex_workspace_domain::upload::UploadState;
 
     use super::{
-        begin_completion, consume_upload, delete_pointer, finish_completion, transition_upload,
+        begin_completion, consume_upload, delete_pointer, delete_upload, finish_completion,
+        transition_upload, transition_upload_fenced,
     };
 
     const TABLE: &str = "dev-eu-west-1-regional-registry";
@@ -218,6 +378,36 @@ mod tests {
             UploadState::Aborted,
         ));
         assert!(expression.contains("#state = :from"), "{expression}");
+    }
+
+    #[test]
+    fn an_abort_is_fenced_on_the_exact_provider_handle_it_was_decided_against() {
+        let expression = condition(transition_upload_fenced(
+            TABLE,
+            upload(),
+            UploadState::PartsGranted,
+            UploadState::Aborted,
+            "provider-mpu-1",
+        ));
+        assert!(expression.contains("#state = :from"), "{expression}");
+        assert!(
+            expression.contains("providerUploadId = :handle"),
+            "an abort that is not fenced on the handle could terminalise a \
+             re-created upload: {expression}"
+        );
+    }
+
+    #[test]
+    fn a_reclaimed_row_is_deleted_under_the_terminal_state_the_sweep_observed() {
+        let built = delete_upload(TABLE, upload(), UploadState::Ready)
+            .build()
+            .expect("a complete delete");
+        assert!(
+            built
+                .condition_expression()
+                .expect("conditional")
+                .contains("#state = :from")
+        );
     }
 
     #[test]
