@@ -93,6 +93,10 @@ pub fn rust_routes(ir: &ContractIr, digest: &str) -> String {
             quote(&operation.serving_artifact)
         ));
         source.line(&format!(
+            "        deferred: {},",
+            operation.deferred_reason.is_some()
+        ));
+        source.line(&format!(
             "        method: HttpMethod::{},",
             pascal_case(&operation.method.to_lowercase())
         ));

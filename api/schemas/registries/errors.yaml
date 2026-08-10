@@ -77,4 +77,5 @@ errors:
   - { code: upstream_error, status: 502, retryable: true, class: unavailable, stage: commit, message: "a dependency failed" }
   - { code: workspace_provision_pending, status: 503, retryable: true, class: unavailable, stage: commit, message: "workspace provisioning may still be completing", remedy: "retry the identical request with the same Idempotency-Key" }
   - { code: commit_outcome_unknown, status: 503, retryable: true, class: unavailable, stage: commit, message: "the commit outcome is unknown", remedy: "retry the identical request with the same replay identity" }
+  - { code: not_implemented, status: 501, retryable: false, class: state, stage: transport_envelope, message: "the operation is published in the contract but is not served yet", remedy: "do not retry; the published specification marks this operation not yet available" }
   - { code: internal_error, status: 500, retryable: false, class: internal, stage: commit, message: "an unexpected condition occurred" }

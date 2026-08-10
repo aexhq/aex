@@ -254,8 +254,13 @@ edges and the path map routes their directories to their real npm nodes.
    Freshness starts from authored OpenAPI/route metadata rather than optional
    generated sentinels. Deleting both `bundle.json` and `routes.json`, or
    deleting `routes-meta.yaml` while outputs remain, is therefore a failure.
-   Both planned and actual delivery metadata remain outside `bundle.json`, so
-   neither can mint a new public wire identity.
+   Both planned and actual **placement** metadata remain outside `bundle.json`,
+   so neither can mint a new public wire identity. *Whether* a route is served
+   does enter the bundle, as a boolean `deferred` flag: moving an operation
+   between deployables changes nothing a caller can observe, while an operation
+   that answers `501` instead of a resource is a materially different published
+   surface, and a digest identical across the two would identify a subset of the
+   contract rather than the contract. The ledger's prose reason stays out.
 4. **`migrations/central/*.sql`** with an `-- aex-migration: tx= destructive= phase=`
    header on every file, `grants.toml` for privileges, and `bundle.lock.json`
    produced by `aex-release-tool migration bundle`. A `GRANT` inside a

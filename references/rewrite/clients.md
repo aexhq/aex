@@ -70,8 +70,13 @@ Plan of record: `references/rust-native-rewrite-2026-07-31/plans/13-clients-dash
 
 The TypeScript package entry point is `packages/sdk/src/index.ts` and publishes:
 
-- `@aexhq/sdk::{Aex, SessionsClient, WorkspacesClient, AexOptions,
-  SessionCreateRequest}`.
+- `@aexhq/sdk::{Aex, AexOptions, ExecuteOptions, ResourceExecutor}`. The
+  resource clients themselves are generated — one class per authoring fragment,
+  one method per **served** operation — and are reached through `Aex` rather
+  than named at the root, because a root export list that moves whenever a route
+  lands is a list nobody can review. `SessionsClient`, `WorkspacesClient` and
+  `SessionCreateRequest` were hand-written and are gone with the hand-written
+  resource surface.
 - `@aexhq/sdk::{AccountToken, WorkspaceApiKey, parseCredential, regionalHost,
   ParsedCredential, RegionCode, resolveCentralBaseUrl,
   resolveRegionalBaseUrl, RegionalRoutingOptions}`.

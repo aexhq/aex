@@ -13,6 +13,14 @@ pub struct CommandRegistryEntry {
     pub path: &'static str,
     /// Generated wire operation id.
     pub route_id: &'static str,
+    /// Whether the contract declares the route and nothing serves it yet.
+    ///
+    /// Read from the generated table, never listed here. The command stays in
+    /// the closed tree and is marked: deleting it and re-adding it as routes
+    /// land would churn the tree and five shell completions once per landing,
+    /// and would hide from the surface a customer explores first that the
+    /// capability exists and is coming.
+    pub deferred: bool,
     /// Generated identity used by dispatch; omitted from the JSON view because
     /// `route_id` is its stable wire spelling.
     #[serde(skip)]
@@ -84,10 +92,65 @@ pub fn command_registry() -> Vec<CommandRegistryEntry> {
             CommandRegistryEntry {
                 path,
                 route_id,
+                deferred: descriptor.deferred,
                 route: descriptor.id,
             }
         })
         .collect()
+}
+
+/// What `--help` renders beside a command whose route is not built yet.
+pub const DEFERRED_MARKER: &str = "(not yet available)";
+
+/// The customer command tree, with every deferred-backed leaf marked.
+///
+/// The mark is applied here rather than authored on the clap declarations
+/// because the deferral is the contract's fact, not the CLI's: a command whose
+/// route lands loses its mark in the same regeneration that publishes the
+/// route, with no edit here. Invoking a marked command still performs the call
+/// and surfaces the `501` — the server is the only authority on what it serves,
+/// and an installed CLI pins one contract digest forever.
+///
+/// # Panics
+///
+/// Panics during startup when a registry path names no command in the tree.
+#[must_use]
+pub fn marked_command() -> clap::Command {
+    let mut command = Cli::command();
+    for entry in command_registry() {
+        if !entry.deferred {
+            continue;
+        }
+        let path: Vec<&str> = entry.path.split(' ').collect();
+        command = mark_deferred(command, &path, entry.path);
+    }
+    command
+}
+
+/// Applies [`DEFERRED_MARKER`] to the leaf `path` names.
+fn mark_deferred(command: clap::Command, path: &[&str], full: &str) -> clap::Command {
+    let Some((head, rest)) = path.split_first() else {
+        return command;
+    };
+    assert!(
+        command.find_subcommand(head).is_some(),
+        "command registry path `{full}` names no command in the tree"
+    );
+    command.mut_subcommand(*head, |subcommand| {
+        if rest.is_empty() {
+            let about = subcommand
+                .get_about()
+                .map(ToString::to_string)
+                .filter(|text| !text.is_empty())
+                .map_or_else(
+                    || DEFERRED_MARKER.to_owned(),
+                    |text| format!("{text} {DEFERRED_MARKER}"),
+                );
+            subcommand.about(about)
+        } else {
+            mark_deferred(subcommand, rest, full)
+        }
+    })
 }
 
 /// Render one of the five supported completion formats.
@@ -105,6 +168,6 @@ pub fn render_completions(shell: &str) -> Result<Vec<u8>, String> {
         other => return Err(format!("unsupported completion shell {other}")),
     };
     let mut output = Vec::new();
-    generate(shell, &mut Cli::command(), "aex", &mut output);
+    generate(shell, &mut marked_command(), "aex", &mut output);
     Ok(output)
 }

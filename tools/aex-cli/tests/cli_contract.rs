@@ -86,6 +86,50 @@ fn command_registry_is_deterministic_and_route_backed() {
     }
 }
 
+/// Help marks exactly the commands whose route the contract defers.
+///
+/// Both directions matter. A missing mark is the silent failure this exists to
+/// remove — `aex session create` would look like any other command and answer
+/// `501`. A mark on a command that works is the same defect wearing the other
+/// face, and it is what a hand-maintained list produces the week after a route
+/// lands.
+#[test]
+fn help_marks_exactly_the_deferred_backed_commands() {
+    let command = aex_cli::marked_command();
+    let expected: BTreeSet<&str> = command_registry()
+        .into_iter()
+        .filter(|entry| entry.deferred)
+        .map(|entry| entry.path)
+        .collect();
+    assert!(
+        !expected.is_empty(),
+        "the ledger is empty; this proves nothing"
+    );
+    for entry in command_registry() {
+        let mut current = &command;
+        let mut leaf = None;
+        for segment in entry.path.split(' ') {
+            let found = current
+                .find_subcommand(segment)
+                .unwrap_or_else(|| panic!("`{}` names no command", entry.path));
+            current = found;
+            leaf = Some(found);
+        }
+        let about = leaf
+            .expect("every registry path has at least one segment")
+            .get_about()
+            .map(ToString::to_string)
+            .unwrap_or_default();
+        assert_eq!(
+            about.contains(aex_cli::DEFERRED_MARKER),
+            entry.deferred,
+            "`aex {}` renders `{about}` for deferred={}",
+            entry.path,
+            entry.deferred
+        );
+    }
+}
+
 #[test]
 fn five_completion_formats_are_non_empty_and_stable() {
     for shell in ["bash", "zsh", "fish", "powershell", "elvish"] {

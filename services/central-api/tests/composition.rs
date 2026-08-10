@@ -615,9 +615,11 @@ async fn one_listener_answers_control_auth_and_billing() {
 }
 
 #[tokio::test]
-async fn a_route_no_central_deployable_owns_is_not_mounted() {
+async fn a_route_no_central_deployable_serves_answers_the_published_refusal() {
     // `account_get` is authored and deliberately unserved. A merge is the
-    // easiest place for it to be mounted by accident.
+    // easiest place for a real handler to be mounted by accident, so what must
+    // answer here is the generated refusal arm — before authentication, which
+    // is why the credential below buys nothing.
     assert_eq!(
         status_of(
             router(),
@@ -628,7 +630,12 @@ async fn a_route_no_central_deployable_owns_is_not_mounted() {
                 .expect("a valid request"),
         )
         .await,
-        StatusCode::NOT_FOUND
+        StatusCode::NOT_IMPLEMENTED
+    );
+    assert!(
+        aex_central_http::deferred_routes(aex_central_http::CentralServiceId::CentralApi)
+            .contains(&RouteId::AccountGet),
+        "the refusal is keyed on the ledger, not on a list here"
     );
 }
 

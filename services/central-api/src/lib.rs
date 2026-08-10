@@ -269,6 +269,7 @@ where
         .merge(mount_workspaces_api(control, edge.clone()))
         .merge(mount_auth_api(auth, edge.clone()))
         .merge(mount_billing_api(billing, edge))
+        .merge(aex_central_http::mount_deferred(DEPLOYABLE))
 }
 
 #[cfg(test)]

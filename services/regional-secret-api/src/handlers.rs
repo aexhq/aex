@@ -52,9 +52,6 @@ pub struct Routes {
     cx: RequestContext,
 }
 
-/// The routes this deployable can answer completely today.
-const SERVED: &[RouteId] = &[RouteId::SecretDelete, RouteId::SecretRevoke];
-
 impl Routes {
     /// Binds the shared adapters to one verified request.
     #[must_use]
@@ -63,12 +60,16 @@ impl Routes {
     }
 
     /// Every route whose handler is complete, in `RouteId` order.
+    ///
+    /// Derived from the deferral ledger, not listed here: what this deployable
+    /// owns and the contract does not defer. The rest is mounted as the
+    /// generated refusal arm.
     #[must_use]
     pub fn served() -> Vec<RouteId> {
         RouteOwner::SecretApi
             .routes()
             .into_iter()
-            .filter(|id| SERVED.contains(id))
+            .filter(|id| !route(*id).deferred)
             .collect()
     }
 

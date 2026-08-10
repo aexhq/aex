@@ -91,6 +91,10 @@ pub fn emit_all(ir: &ContractIr) -> GeneratedTree {
         crate::typescript_sdk::typescript_sdk_routes(ir, &digest),
     );
     tree.insert(
+        "packages/sdk/src/generated/resources.ts",
+        crate::typescript_sdk::typescript_sdk_resources(ir, &digest),
+    );
+    tree.insert(
         "packages/sdk/src/generated/errors.ts",
         crate::typescript_sdk::typescript_sdk_errors(ir, &digest),
     );
@@ -341,8 +345,13 @@ fn route_registry_document(operation: &OperationIr) -> Value {
 }
 
 /// One operation's registry row.
+///
+/// `deferred` is a boolean and never the ledger's prose. *Whether* an operation
+/// is served is the most caller-visible fact there is, so it belongs to the
+/// public wire identity; *why* it is not served is an internal engineering note
+/// and stays in the delivery registry.
 fn route_document(operation: &OperationIr) -> Value {
-    json!({
+    let mut document = json!({
         "operationId": operation.id,
         "plane": operation.plane,
         "fragment": operation.fragment,
@@ -363,7 +372,14 @@ fn route_document(operation: &OperationIr) -> Value {
         "pauseExempt": operation.pause_exempt,
         "pathParams": operation.path_params.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
         "queryParams": operation.query_params.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
-    })
+    });
+    if operation.deferred_reason.is_some() {
+        document
+            .as_object_mut()
+            .expect("route documents are objects")
+            .insert("deferred".to_owned(), json!(true));
+    }
+    document
 }
 
 /// The self-contained `OpenAPI` 3.1 document for one plane.
@@ -423,7 +439,17 @@ fn openapi_document(ir: &ContractIr, plane_id: &str) -> Value {
 }
 
 /// One `OpenAPI` operation object.
+///
+/// A deferred operation is published and marked, never omitted: omission would
+/// fix the document and leave the wire mute, because a caller who reads no
+/// `POST /api/sessions` and calls it anyway still needs an answer that says
+/// what happened. The marker is three things a reader cannot all miss — the
+/// `501` response every renderer shows, the `x-aex-deferred` extension a
+/// machine reads, and a description sentence. None of the three carries the
+/// ledger's reason: the reasons are engineering notes, and one that has gone
+/// stale is worse than no sentence at all.
 fn openapi_operation(ir: &ContractIr, operation: &OperationIr) -> Value {
+    let deferred = operation.deferred_reason.is_some();
     let mut parameters = Vec::new();
     for param in &operation.path_params {
         parameters.push(json!({
@@ -459,7 +485,7 @@ fn openapi_operation(ir: &ContractIr, operation: &OperationIr) -> Value {
             })
         });
     }
-    json!({
+    let mut document = json!({
         "operationId": operation.id,
         "summary": operation.summary,
         "tags": [operation.fragment],
@@ -478,7 +504,16 @@ fn openapi_operation(ir: &ContractIr, operation: &OperationIr) -> Value {
         "x-aex-safe-retry": operation.safe_retry,
         "x-aex-pause-exempt": operation.pause_exempt,
         "x-aex-errors": operation.errors,
-    })
+    });
+    if deferred {
+        let object = document.as_object_mut().expect("operations are objects");
+        object.insert("x-aex-deferred".to_owned(), json!(true));
+        object.insert(
+            "description".to_owned(),
+            json!("Not yet available. This operation is published in the contract and is not served yet; calls answer 501 not_implemented."),
+        );
+    }
+    document
 }
 
 /// Adds `id` and everything it transitively reaches to `into`.

@@ -103,42 +103,21 @@ impl Routes {
 
     /// Every route whose handler is complete, in `RouteId` order.
     ///
-    /// This is the narrowing RS-22 permits and RS-18 requires. It is derived from
-    /// the owned partition rather than written out, so a route that leaves this
-    /// list has to leave the owned set too.
+    /// This is the narrowing RS-22 permits and RS-18 requires, and it really is
+    /// derived: the owned unary partition minus whatever the deferral ledger
+    /// defers, with no list of route names anywhere in this crate. Landing a
+    /// route is two lines in `routes-meta.yaml` plus the handler itself.
+    /// Everything the ledger defers is mounted as the generated refusal arm and
+    /// answers `501 not_implemented`.
     #[must_use]
     pub fn served() -> Vec<RouteId> {
         RouteOwner::SessionApi
             .routes()
             .into_iter()
-            .filter(|id| SERVED.contains(id))
+            .filter(|id| !route(*id).deferred)
             .collect()
     }
 }
-
-/// The routes this deployable can answer completely today.
-///
-/// Everything else it owns is absent from the router. `references/rewrite/regional-services.md`
-/// records, per fragment, exactly what each remaining route is waiting for.
-const SERVED: &[RouteId] = &[
-    RouteId::ProviderCredentialGet,
-    RouteId::ProviderCredentialRevoke,
-    RouteId::ProviderCredentialsList,
-    RouteId::RegionalOperationCancel,
-    RouteId::RegionalOperationGet,
-    RouteId::RegionalOperationsList,
-    RouteId::RegistryFilesList,
-    RouteId::RegistryInstructionsList,
-    RouteId::RegistryMcpServersList,
-    RouteId::RegistrySkillsList,
-    RouteId::RegistryToolsList,
-    RouteId::SecretGet,
-    RouteId::SecretsList,
-    RouteId::SessionApprovalGet,
-    RouteId::SessionApprovalsList,
-    RouteId::SessionRunGet,
-    RouteId::SessionRunsList,
-];
 
 impl std::fmt::Debug for Routes {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

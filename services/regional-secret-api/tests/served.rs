@@ -346,30 +346,33 @@ fn the_metadata_half_of_each_split_fragment_is_unreachable_here() {
     }
 }
 
+/// An owned route the contract defers is mounted and refuses honestly.
+///
+/// It used to be absent, which left a caller unable to tell a published-but-
+/// unbuilt operation from a mistyped path.
 #[tokio::test]
-async fn an_owned_but_unserved_route_is_absent_from_the_router() {
+async fn an_owned_but_unserved_route_answers_the_published_refusal() {
     let custody = Arc::new(FakeCustody::default());
     let router = router(custody, None);
+    let mut refused = 0_usize;
     for id in RouteOwner::SecretApi.routes() {
         if Routes::served().contains(&id) {
             continue;
         }
         let descriptor = route(id);
-        let (status, _) = send(
+        assert!(descriptor.deferred, "`{id}` is unserved and not deferred");
+        let (status, body) = send(
             &router,
             descriptor.method.as_str(),
             &descriptor.template.replace("{name}", "fixture"),
             "{}",
         )
         .await;
-        assert!(
-            matches!(
-                status,
-                StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED
-            ),
-            "`{id}` answered {status} instead of being absent"
-        );
+        assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "`{id}`");
+        assert_eq!(body["error"]["code"], ErrorCode::NotImplemented.as_str());
+        refused += 1;
     }
+    assert!(refused > 0, "the deployable still owes routes");
 }
 
 // --- delete -------------------------------------------------------------------------

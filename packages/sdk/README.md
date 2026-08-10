@@ -10,20 +10,22 @@ npm i @aexhq/sdk
 import { Aex } from "@aexhq/sdk";
 
 const aex = new Aex(process.env.AEX_WORKSPACE_API_KEY!);
-const session = await aex.sessions.create({
-  provider: "anthropic",
-  model: "claude-haiku-4-5"
-});
-
-const { run } = await session.messages.send("Summarize this repository.");
-const result = await run.result();
-console.log(result.status);
+const runs = await aex.sessions.sessionRunsList({ sessionId: "ses_…" });
+console.log(runs);
 ```
 
 The SDK exposes explicit bootstrap resources (`account`, `organizations`,
 `workspaces`, `apiKeys`, and `billing`) and region-pinned workspace resources
 (`sessions`, operations, files, registries, secrets, approvals, telemetry, and
 usage). Long-running mutations return durable operation handles.
+
+Every resource method is generated from the published contract, one per
+operation the platform serves. An operation the contract declares and nothing
+serves yet has **no method**: a method that could only ever fail would put the
+platform's answer in the client, where it goes stale the day the route lands.
+`ROUTES` still carries all of them with a `deferred` flag, and
+`aex.execute(routeId, …)` stays total over every route id, so a deferred
+operation remains callable by anyone who wants to see the `501` for themselves.
 
 The SDK exposes only the strict v1 resource model. Registered inputs are
 overwrite-by-name resources whose PUT result reports `created`, `replaced`, or

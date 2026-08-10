@@ -107,6 +107,7 @@ operationOwners:
 deferredOperations:
   account_get: "The central identity composition does not yet mount an authoritative account operational-state read."
   provider_credential_register: "First-seal custody and the atomic credential-binding replay transaction are incomplete."
+  provider_credential_revoke: "No composed producer ever registers a provider-credential binding, so the revoke transaction has nothing it could revoke."
   registry_files_delete: "Registry mutation and content-lifecycle composition is incomplete."
   registry_files_download_create: "No composed content grant and presigning authority exists yet."
   registry_files_get: "The registry pointer composition has no plaintext content hydration path."
@@ -124,7 +125,9 @@ deferredOperations:
   registry_tools_get: "The registry pointer composition has no plaintext content hydration path."
   registry_tools_put: "Registry mutation and sealed-content composition is incomplete."
   secret_put: "First-seal custody and durable idempotent replay are incomplete."
+  session_approval_get: "Nothing composed into the platform raises an approval, so the point read can only report that no approval exists."
   session_approval_respond: "The atomic bound-call approval writer is not composed into the regional service."
+  session_approvals_list: "Nothing composed into the platform raises an approval, so the collection can only report an empty page."
   session_clone: "The complete session authority and command transaction are not implemented."
   session_create: "The complete session authority and create use case are not implemented."
   session_credential_rebind: "The credential-rebind authority and durable command transaction are not implemented."
@@ -238,7 +241,6 @@ servedOperations:
     - observations_traces_listen
     - observations_traces_stream
     - provider_credential_get
-    - provider_credential_revoke
     - provider_credentials_list
     - regional_operation_cancel
     - regional_operation_get
@@ -250,8 +252,6 @@ servedOperations:
     - registry_tools_list
     - secret_get
     - secrets_list
-    - session_approval_get
-    - session_approvals_list
     - session_observations_events_listen
     - session_observations_events_stream
     - session_observations_logs_listen

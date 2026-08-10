@@ -453,12 +453,32 @@ Two smaller consequences, both recorded rather than worked around:
 | # | Decision | Rationale |
 | --- | --- | --- |
 | RS-21 | Route ownership becomes `RouteOwner`, a projection of `ROUTES` with `routes()`, `routes_in(group)` and `groups()`, rather than a free function returning an owner | The mount loop, the composition tests and the peer assignment all need the *set*, not one lookup. Deriving the set makes an authored-but-unmounted route a red suite instead of a runtime `404`. |
-| RS-22 | `UnaryDispatch::served()` may narrow the owned set, and `mount_unary` validates the narrowing | RS-18 forbids mounting a route that cannot be fully served. Without a narrowing seam the only alternatives were a permanently failing mounted route or an unbuildable binary. |
+| RS-22 | `UnaryDispatch::served()` may narrow the owned set, and `mount_unary` validates the narrowing | RS-18 forbids mounting a route that cannot be fully served. Without a narrowing seam the only alternatives were a permanently failing mounted route or an unbuildable binary. **Amended:** the narrowing is now derived from the deferral ledger rather than written per deployable, and the remainder is mounted as the generated refusal arm — see the RS-18 amendment below. |
 | RS-23 | Every deployable declares a `FORBIDDEN` variable list and refuses to start when one is bound | The capability boundary was previously an IAM fact only. A start-up refusal is cheaper to test, is visible without an AWS account, and fails the same way in a local run as in production. |
 | RS-24 | An ARN or queue URL whose region differs from `AEX_REGION` refuses the process | A cross-region resource passes every type check and deploys cleanly; the only symptom is a tenant's data outside its declared residency. |
 | RS-25 | `content-lifecycle-worker` declares `AEX_DECLARED_CAPABILITIES=none` rather than an empty string when it holds nothing | "Declared nothing" and "forgot to declare" must not be the same value; only one of them is a deliberate statement. |
 | RS-26 | Readiness is derived from the composition (`Stores::unresolved`, `Readers::unresolved`) rather than declared as a constant | A readiness endpoint that reports `ready` from a literal cannot fail closed over a half-built process. |
 | RS-27 | The `regional-secret-key-admin` unit is a Fargate task shape with `port = 0` | It is a one-shot task, not a service; `graph verify` only requires a non-zero port for `rust-oci-service`. |
+
+#### RS-18, as amended
+
+A deployable never mounts a **handler** it cannot fully serve. A route that the
+published contract declares, this deployable owns, and the ledger defers is
+mounted as the **generated refusal arm** only: it answers `501 not_implemented`
+with the published envelope and no reason text, before `EdgeAdmission::admit`
+runs. The arm is derived from the deferral ledger, never written per route, and
+cannot be reached for a served route.
+
+The three harms RS-18 was protecting against are still closed. The arm has no
+handler, no port and no adapter, so it cannot produce the plausible-but-wrong
+partial answer; it is generated rather than authored, so no stub can drift or be
+copied; and "is it built?" gets a *stronger* answer than before, because
+`mount_unary` now refuses to build a router at all when an owned route is
+neither served nor deferred (`MountError::Unaccounted`).
+
+What the amendment does not change: everywhere below that says an owned,
+unserved route is **absent from the router** now means it is **mounted and
+refuses**. The prose is left as the record of the increment it describes.
 
 ### Environment variables per deployable
 

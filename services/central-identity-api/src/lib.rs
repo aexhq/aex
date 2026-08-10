@@ -324,9 +324,13 @@ pub enum CentralIdentityApiRunError {
 /// Builds the router this binary serves.
 ///
 /// The public surface is exactly `CentralServiceId::IdentityApi.groups()`, each
-/// mounted by iterating its generated route slice, plus the two internal probes.
+/// mounted by iterating its generated route slice, plus the generated refusal
+/// arm for every route this deployable is planned to own and the contract
+/// defers, plus the two internal probes.
 pub fn app<A: AuthApi>(api: Arc<A>, edge: EdgeStack, readiness: Readiness) -> axum::Router {
-    aex_central_http::health::router(readiness).merge(mount_auth_api(api, edge))
+    aex_central_http::health::router(readiness)
+        .merge(mount_auth_api(api, edge))
+        .merge(aex_central_http::mount_deferred(DEPLOYABLE))
 }
 
 /// Runs `central-identity-api` until it stops.

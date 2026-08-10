@@ -84,6 +84,15 @@ pub struct RouteDescriptor {
     /// generated delivery registry. This field is excluded from the public
     /// contract bundle and therefore cannot change wire identity.
     pub serving_artifact: &'static str,
+    /// Whether the contract declares this operation and nothing serves it yet.
+    ///
+    /// Unlike [`Self::serving_artifact`] this **is** part of the public
+    /// contract: where an operation is served is invisible to a caller, and
+    /// whether it is served is the most visible fact there is. A composition
+    /// mounts a generated refusal arm for every route it owns and this defers,
+    /// so the flag is what stands between a caller and a bare `404`. The
+    /// ledger's prose reason is delivery metadata and is not carried here.
+    pub deferred: bool,
     /// HTTP method.
     pub method: HttpMethod,
     /// Path template, rooted at `/api`.

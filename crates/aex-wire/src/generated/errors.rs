@@ -3,7 +3,7 @@
 //! The closed v1 public error vocabulary.
 //!
 //! Produced by `aex-contract-gen` from `api/`; contract digest
-//! `sha256:bd7052cb0fe98ca6622d42d82e3a3adfec7f8a2ef4d890f7f2c31fcc1e0df4a6`.
+//! `sha256:0e33b66699919088ff22081253c8d83e05e4708a091d80c1ab2f24093573b8ab`.
 //! Regenerate with `cargo run -p aex-contract-gen -- build`.
 
 #![allow(clippy::large_enum_variant, reason = "a wire union is never boxed")]
@@ -170,6 +170,8 @@ pub enum ErrorCode {
     WorkspaceProvisionPending,
     /// `commit_outcome_unknown` — the commit outcome is unknown
     CommitOutcomeUnknown,
+    /// `not_implemented` — the operation is published in the contract but is not served yet
+    NotImplemented,
     /// `internal_error` — an unexpected condition occurred
     InternalError,
 }
@@ -250,6 +252,7 @@ impl ErrorCode {
         ErrorCode::UpstreamError,
         ErrorCode::WorkspaceProvisionPending,
         ErrorCode::CommitOutcomeUnknown,
+        ErrorCode::NotImplemented,
         ErrorCode::InternalError,
     ];
 
@@ -330,6 +333,7 @@ impl ErrorCode {
             Self::UpstreamError => "upstream_error",
             Self::WorkspaceProvisionPending => "workspace_provision_pending",
             Self::CommitOutcomeUnknown => "commit_outcome_unknown",
+            Self::NotImplemented => "not_implemented",
             Self::InternalError => "internal_error",
         }
     }
@@ -411,6 +415,7 @@ impl ErrorCode {
             Self::UpstreamError => 502,
             Self::WorkspaceProvisionPending => 503,
             Self::CommitOutcomeUnknown => 503,
+            Self::NotImplemented => 501,
             Self::InternalError => 500,
         }
     }
@@ -492,6 +497,7 @@ impl ErrorCode {
             Self::UpstreamError => true,
             Self::WorkspaceProvisionPending => true,
             Self::CommitOutcomeUnknown => true,
+            Self::NotImplemented => false,
             Self::InternalError => false,
         }
     }
@@ -573,6 +579,7 @@ impl ErrorCode {
             Self::UpstreamError => ErrorClass::Unavailable,
             Self::WorkspaceProvisionPending => ErrorClass::Unavailable,
             Self::CommitOutcomeUnknown => ErrorClass::Unavailable,
+            Self::NotImplemented => ErrorClass::State,
             Self::InternalError => ErrorClass::Internal,
         }
     }
@@ -654,6 +661,7 @@ impl ErrorCode {
             Self::UpstreamError => PrecedenceStage::Commit,
             Self::WorkspaceProvisionPending => PrecedenceStage::Commit,
             Self::CommitOutcomeUnknown => PrecedenceStage::Commit,
+            Self::NotImplemented => PrecedenceStage::TransportEnvelope,
             Self::InternalError => PrecedenceStage::Commit,
         }
     }
@@ -763,6 +771,9 @@ impl ErrorCode {
             Self::UpstreamError => "a dependency failed",
             Self::WorkspaceProvisionPending => "workspace provisioning may still be completing",
             Self::CommitOutcomeUnknown => "the commit outcome is unknown",
+            Self::NotImplemented => {
+                "the operation is published in the contract but is not served yet"
+            }
             Self::InternalError => "an unexpected condition occurred",
         }
     }
@@ -857,6 +868,9 @@ impl ErrorCode {
             }
             Self::CommitOutcomeUnknown => {
                 Some("retry the identical request with the same replay identity")
+            }
+            Self::NotImplemented => {
+                Some("do not retry; the published specification marks this operation not yet available")
             }
             Self::InternalError => None,
         }

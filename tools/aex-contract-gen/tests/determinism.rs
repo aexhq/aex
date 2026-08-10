@@ -196,16 +196,21 @@ fn actual_mounts_are_explicit_and_do_not_pollute_the_wire_bundle() {
             .is_some_and(|reason| !reason.is_empty()),
         "an unmounted admission must carry its explicit architecture debt"
     );
+    // The unary half of the merged `session-stream-api`. The filter named
+    // `regional-session-api`, which no row has carried since the two regional
+    // deployables merged, so the assertion that would catch served/deferred
+    // drift on the largest deployable was comparing two empty sets.
     let regional_session: BTreeSet<_> = rows
         .iter()
-        .filter(|route| route["servedArtifact"] == "regional-session-api")
+        .filter(|route| {
+            route["servedArtifact"] == "session-stream-api" && route["transport"] != "ndjson"
+        })
         .map(|route| route["operationId"].as_str().expect("operation id"))
         .collect();
     assert_eq!(
         regional_session,
         BTreeSet::from([
             "provider_credential_get",
-            "provider_credential_revoke",
             "provider_credentials_list",
             "regional_operation_cancel",
             "regional_operation_get",
@@ -217,8 +222,6 @@ fn actual_mounts_are_explicit_and_do_not_pollute_the_wire_bundle() {
             "registry_tools_list",
             "secret_get",
             "secrets_list",
-            "session_approval_get",
-            "session_approvals_list",
             "session_run_get",
             "session_runs_list",
         ]),
@@ -236,6 +239,98 @@ fn actual_mounts_are_explicit_and_do_not_pollute_the_wire_bundle() {
             assert!(route.get("servedArtifact").is_none());
         }
     }
+}
+
+/// The five projections of one deferral agree, or the suite fails.
+///
+/// Derivation comes first — every marker below is computed from the same
+/// `deferred_reason` in one IR, in one pass — and this is the assertion that a
+/// future emitter change cannot quietly drop one of them. Note what is *not*
+/// asserted: no published artifact carries the ledger's prose. The reasons are
+/// engineering notes written for engineers, and a stale one published to a
+/// customer is worse than no sentence at all.
+#[test]
+fn deferred_operations_are_marked_in_every_published_artifact() {
+    let root = repo_root();
+    let tree = generate_to_memory(&root).expect("generation");
+    let bundle: serde_json::Value =
+        serde_json::from_slice(tree.bytes("api/generated/bundle.json").expect("bundle"))
+            .expect("bundle json");
+    let registry: serde_json::Value = serde_json::from_slice(
+        tree.bytes("api/generated/registries/routes.json")
+            .expect("route registry"),
+    )
+    .expect("route registry json");
+    let deferred_in_registry: BTreeSet<&str> = registry["routes"]
+        .as_array()
+        .expect("route rows")
+        .iter()
+        .filter(|route| route.get("deferredReason").is_some())
+        .map(|route| route["operationId"].as_str().expect("operation id"))
+        .collect();
+    assert!(
+        !deferred_in_registry.is_empty(),
+        "the ledger is empty; this test would prove nothing"
+    );
+
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    for plane in ["central", "regional"] {
+        let document: serde_json::Value = serde_json::from_slice(
+            tree.bytes(&format!("api/generated/openapi/aex-{plane}.json"))
+                .expect("plane document"),
+        )
+        .expect("plane json");
+        let bundle_rows: BTreeMap<&str, &serde_json::Value> = bundle["planes"][plane]["operations"]
+            .as_array()
+            .expect("bundle route rows")
+            .iter()
+            .map(|route| (route["operationId"].as_str().expect("operation id"), route))
+            .collect();
+        for (_, item) in document["paths"].as_object().expect("paths") {
+            for (_, operation) in item.as_object().expect("path item") {
+                let id = operation["operationId"].as_str().expect("operation id");
+                let marked = operation.get("x-aex-deferred").is_some();
+                let refuses = operation["responses"].get("501").is_some();
+                let row = bundle_rows[id];
+                let in_bundle = row.get("deferred").is_some();
+                let in_registry = deferred_in_registry.contains(id);
+                let declares = row["errors"]
+                    .as_array()
+                    .expect("declared errors")
+                    .iter()
+                    .any(|code| code == "not_implemented");
+                assert_eq!(
+                    [marked, refuses, in_bundle, in_registry, declares]
+                        .iter()
+                        .filter(|flag| **flag)
+                        .count(),
+                    if marked { 5 } else { 0 },
+                    "`{id}` is marked in some published artifacts and not others: \
+                     x-aex-deferred={marked} 501={refuses} bundle={in_bundle} \
+                     registry={in_registry} declares={declares}"
+                );
+                assert_eq!(
+                    operation.get("x-aex-deferred"),
+                    if marked {
+                        Some(&serde_json::Value::Bool(true))
+                    } else {
+                        None
+                    },
+                    "`{id}` publishes something other than a bare marker"
+                );
+                if marked {
+                    seen.insert(id.to_owned());
+                }
+            }
+        }
+    }
+    assert_eq!(
+        seen,
+        deferred_in_registry
+            .iter()
+            .map(|id| (*id).to_owned())
+            .collect::<BTreeSet<String>>()
+    );
 }
 
 #[test]
@@ -283,8 +378,8 @@ fn cross_plane_actual_owners_are_rejected() {
             "  central-control-api:\n",
         )
         .replace(
-            "  regional-session-api:\n",
-            "  regional-session-api:\n    - api_key_create\n",
+            "  session-stream-api:\n",
+            "  session-stream-api:\n    - api_key_create\n",
         );
     std::fs::write(path, text).expect("mutate fixture metadata");
     let error = load::load(temp.path()).expect_err("cross-plane actual owner must fail");
@@ -437,6 +532,66 @@ fn the_classifier_reports_each_row_of_the_evolution_table() {
             .any(|change| change.classification == Classification::Breaking),
         "removing an error code was not classified breaking"
     );
+
+    // A route landing is good news, and the paired disappearance of
+    // `not_implemented` is its expected consequence, not a second finding.
+    let (deferred_base, deferred_head) = deferral_pair(&base);
+    let changes = classify(&deferred_base, &deferred_head);
+    assert_eq!(
+        changes
+            .iter()
+            .map(|change| (change.classification, change.detail.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(
+            Classification::MateriallyCompatible,
+            "deferred operation is now served"
+        )],
+        "{changes:#?}"
+    );
+
+    // Withdrawing a served route into the ledger genuinely breaks callers.
+    let changes = classify(&deferred_head, &deferred_base);
+    assert_eq!(
+        changes
+            .iter()
+            .map(|change| (change.classification, change.detail.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(
+            Classification::Breaking,
+            "served operation is now deferred"
+        )],
+        "{changes:#?}"
+    );
+}
+
+/// One bundle whose first regional operation is deferred, and the same bundle
+/// with that operation landed.
+fn deferral_pair(base: &serde_json::Value) -> (serde_json::Value, serde_json::Value) {
+    let mut deferred = base.clone();
+    let mut served = base.clone();
+    for (document, mark) in [(&mut deferred, true), (&mut served, false)] {
+        let operation = document["planes"]["regional"]["operations"]
+            .as_array_mut()
+            .expect("operations")
+            .first_mut()
+            .expect("at least one regional operation");
+        let row = operation.as_object_mut().expect("an operation object");
+        let mut errors: Vec<serde_json::Value> = row["errors"]
+            .as_array()
+            .expect("declared errors")
+            .iter()
+            .filter(|code| *code != "not_implemented")
+            .cloned()
+            .collect();
+        if mark {
+            row.insert("deferred".to_owned(), serde_json::Value::Bool(true));
+            errors.push(serde_json::Value::from("not_implemented"));
+        } else {
+            row.remove("deferred");
+        }
+        row.insert("errors".to_owned(), serde_json::Value::Array(errors));
+    }
+    (deferred, served)
 }
 
 #[test]

@@ -43,6 +43,7 @@ use aex_session_dynamodb::wire_pending::{
     Approval, ApprovalBinding, ApprovalStatus, StoredOperation,
 };
 use aex_wire::CanonicalJson;
+use aex_wire::cursor::Cursor;
 use aex_wire::error::{ErrorCode, WireError};
 use aex_wire::idempotency::IntentDigest;
 use aex_wire::idempotency::PrincipalScope;
@@ -55,7 +56,7 @@ use aex_wire::ids::{ContentHash, UploadId};
 use aex_wire::models;
 use aex_wire::routes::{RouteId, route};
 use aex_wire::scopes::ScopeSet;
-use aex_wire::server::RouteGroup;
+use aex_wire::server::{ApprovalsApi as _, ProviderCredentialsApi as _, RouteGroup};
 use aex_wire::types::ETag;
 use aex_wire::types::{Region, RequestId, Timestamp};
 use aex_workspace_domain::registry::{RegisteredValueRef, RegistryPointer};
@@ -845,14 +846,7 @@ fn build_with_authorities(
     sessions: Arc<FakeSessions>,
     operations: Arc<FakeOperations>,
 ) -> ((axum::Router, Vec<RouteId>), Arc<FakeCustody>) {
-    let shared = Arc::new(Shared {
-        custody: Arc::clone(&custody) as Arc<dyn SecretCustodyStore>,
-        custody_table: CUSTODY_TABLE.to_owned(),
-        registry: registry as Arc<dyn RegistryStore>,
-        sessions: sessions as Arc<dyn SessionQueries>,
-        operations: operations as Arc<dyn OperationApiStore>,
-        cursor_keys: Arc::new(cursor_keys()),
-    });
+    let shared = shared_with(Arc::clone(&custody), registry, sessions, operations);
     let mounted = mount_unary(
         Arc::new(Dispatcher::new(shared)),
         Arc::new(Admit),
@@ -860,6 +854,50 @@ fn build_with_authorities(
     )
     .expect("the served set mounts");
     ((mounted.router, mounted.routes), custody)
+}
+
+fn shared_with(
+    custody: Arc<FakeCustody>,
+    registry: Arc<FakeRegistry>,
+    sessions: Arc<FakeSessions>,
+    operations: Arc<FakeOperations>,
+) -> Arc<Shared> {
+    Arc::new(Shared {
+        custody: custody as Arc<dyn SecretCustodyStore>,
+        custody_table: CUSTODY_TABLE.to_owned(),
+        registry: registry as Arc<dyn RegistryStore>,
+        sessions: sessions as Arc<dyn SessionQueries>,
+        operations: operations as Arc<dyn OperationApiStore>,
+        cursor_keys: Arc::new(cursor_keys()),
+    })
+}
+
+/// One handler bound to one request, for a route the router no longer mounts.
+///
+/// The three approval and provider-credential routes below moved from served to
+/// deferred: nothing composed into the platform raises an approval or registers
+/// a credential, so mounting a handler over them would turn missing authority
+/// into a confident customer answer. The handlers are complete and stay under
+/// test here rather than through the router, because the router now answers the
+/// published refusal for those templates and nothing else.
+fn handler(shared: Arc<Shared>, id: RouteId) -> Routes {
+    Routes::new(shared, context(handler_request_id(), id))
+}
+
+/// The wire half of the same request the handler was bound to.
+fn wire_context(id: RouteId) -> aex_wire::server::RequestContext {
+    context(handler_request_id(), id).to_wire(aex_wire::server::AcceptKind::Json)
+}
+
+fn handler_request_id() -> RequestId {
+    RequestId::parse("01jxt21q00e40r2081040g2081").expect("a request id")
+}
+
+fn approvals_query(cursor: Option<Cursor>) -> models::SessionApprovalsListQuery {
+    models::SessionApprovalsListQuery {
+        cursor,
+        limit: None,
+    }
 }
 
 /// A registry holding exactly one pointer in every collection.
@@ -1028,45 +1066,96 @@ async fn the_router_answers_exactly_the_served_set() {
     assert_eq!(mounted, Routes::served());
 }
 
-/// An owned route that is not served must be **absent**, not mounted and
-/// answering a permanent failure (RS-18).
+/// Every owned route the contract defers answers the published refusal.
+///
+/// This replaces an assertion that it was *absent*. A bare `404` cannot be told
+/// apart from a mistyped path, a wrong base URL or a wrong region, and that is
+/// the ambiguity a caller meets in the first ten minutes of an integration. The
+/// arm carries no reason text: the ledger's prose is an engineering note, and a
+/// stale one published to a customer is worse than none.
 #[tokio::test]
-async fn an_owned_but_unserved_route_is_absent_from_the_router() {
+async fn every_deferred_route_answers_the_published_refusal() {
     let (router, mounted) = router(FakeCustody::default());
-    let unserved = RouteOwner::SessionApi
+    let deferred: Vec<RouteId> = RouteOwner::SessionApi
         .routes()
         .into_iter()
-        .find(|id| !mounted.contains(id))
-        .expect("the deployable still owes routes");
-    let descriptor = route(unserved);
-    let path = descriptor
+        .filter(|id| !mounted.contains(id))
+        .collect();
+    assert!(!deferred.is_empty(), "the deployable still owes routes");
+    for id in deferred {
+        assert!(route(id).deferred, "`{id}` is unserved and not deferred");
+        let descriptor = route(id);
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(descriptor.method.as_str())
+                    .uri(deferred_path(id))
+                    .body(Body::empty())
+                    .expect("a request"),
+            )
+            .await
+            .expect("a response");
+        assert_eq!(
+            response.status(),
+            StatusCode::NOT_IMPLEMENTED,
+            "`{id}` answered {}",
+            response.status()
+        );
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("a body")
+            .to_bytes();
+        let envelope: serde_json::Value = serde_json::from_slice(&body).expect("an envelope");
+        assert_eq!(envelope["error"]["code"], ErrorCode::NotImplemented.as_str());
+        assert_eq!(envelope["error"]["retryable"], false);
+        assert!(
+            envelope["error"]["requestId"]
+                .as_str()
+                .is_some_and(|id| !id.is_empty()),
+            "`{id}` refused without a diagnostic identity"
+        );
+    }
+}
+
+/// A concrete path for a deferred template, bound positionally from the table.
+fn deferred_path(id: RouteId) -> String {
+    route(id)
         .template
-        .replace("{sessionId}", "01jxt21q00e40r2081040g2081")
-        .replace("{runId}", "01jxt21q00e40r2081040g2081")
-        .replace("{operationId}", "01jxt21q00e40r2081040g2081")
-        .replace("{approvalId}", "01jxt21q00e40r2081040g2081")
-        .replace("{uploadId}", "01jxt21q00e40r2081040g2081")
-        .replace("{limitId}", "session.subagent_concurrency")
-        .replace("{name}", "fixture")
-        .replace("{kind}", "files");
+        .split('/')
+        .map(|segment| {
+            match segment
+                .strip_prefix('{')
+                .and_then(|rest| rest.strip_suffix('}'))
+            {
+                Some("limitId") => "session.subagent_concurrency",
+                Some("name") => "fixture",
+                Some("kind") => "files",
+                Some(_) => "01jxt21q00e40r2081040g2081",
+                None => segment,
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// A wrong method on a deferred template is the router's `405`, never a `404`.
+#[tokio::test]
+async fn a_wrong_method_on_a_deferred_path_is_a_method_refusal() {
+    let (router, _) = router(FakeCustody::default());
     let response = router
         .oneshot(
             Request::builder()
-                .method(descriptor.method.as_str())
-                .uri(path)
+                .method("DELETE")
+                .uri(deferred_path(RouteId::SessionCreate))
                 .body(Body::empty())
                 .expect("a request"),
         )
         .await
         .expect("a response");
-    assert!(
-        matches!(
-            response.status(),
-            StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED
-        ),
-        "`{unserved}` answered {}",
-        response.status()
-    );
+    assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
 }
 
 /// A session read is not a slim head projection. The published point resource
@@ -1086,15 +1175,13 @@ async fn session_point_and_list_reads_are_absent_until_the_head_is_complete() {
         format!("/api/sessions/{session}"),
     ] {
         let (status, etag, body) = get(&router, &path).await;
-        assert!(
-            matches!(
-                status,
-                StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED
-            ),
+        assert_eq!(
+            status,
+            StatusCode::NOT_IMPLEMENTED,
             "an incomplete session projection became reachable: {status} {body}"
         );
-        assert_eq!(etag, None, "an absent route must not mint an entity tag");
-        assert_eq!(body, serde_json::Value::Null);
+        assert_eq!(etag, None, "a refusal must not mint an entity tag");
+        assert_eq!(body["error"]["code"], ErrorCode::NotImplemented.as_str());
     }
 }
 
@@ -1123,15 +1210,13 @@ async fn session_message_list_is_absent_until_every_body_has_an_exact_projection
 
     let session = sample::<SessionId>(32);
     let (status, etag, body) = get(&router, &format!("/api/sessions/{session}/messages")).await;
-    assert!(
-        matches!(
-            status,
-            StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED
-        ),
+    assert_eq!(
+        status,
+        StatusCode::NOT_IMPLEMENTED,
         "an incomplete message projection became reachable: {status} {body}"
     );
-    assert_eq!(etag, None, "an absent route must not mint an entity tag");
-    assert_eq!(body, serde_json::Value::Null);
+    assert_eq!(etag, None, "a refusal must not mint an entity tag");
+    assert_eq!(body["error"]["code"], ErrorCode::NotImplemented.as_str());
 }
 
 // --- durable operations ----------------------------------------------------------
@@ -1409,8 +1494,11 @@ async fn operation_cancel_is_idempotent_and_refuses_non_cancelable_or_internal_w
     );
 }
 
+/// The approval reads are owned, complete, and deferred: nothing composed into
+/// the platform raises an approval, so a `200` with an empty page would be a
+/// confident wrong answer about a capability that does not exist yet.
 #[tokio::test]
-async fn approval_get_projects_the_complete_bound_call_and_decision() {
+async fn approval_reads_are_deferred_and_the_router_answers_the_refusal() {
     let row = stored_approval(ApprovalStatus::Approved);
     let session = row.binding.session;
     let approval = row.approval;
@@ -1425,23 +1513,52 @@ async fn approval_get_projects_the_complete_bound_call_and_decision() {
             deletion_epoch: 0,
         }),
     );
-    assert!(mounted.contains(&RouteId::SessionApprovalGet));
+    for id in [RouteId::SessionApprovalGet, RouteId::SessionApprovalsList] {
+        assert!(!mounted.contains(&id), "`{id}` is deferred");
+        assert!(route(id).deferred, "`{id}` carries the ledger's deferral");
+    }
+    for path in [
+        format!("/api/sessions/{session}/approvals/{approval}"),
+        format!("/api/sessions/{session}/approvals"),
+    ] {
+        let (status, _, body) = get(&router, &path).await;
+        assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "{body}");
+        assert_eq!(body["error"]["code"], ErrorCode::NotImplemented.as_str());
+    }
+}
 
-    let (status, _, body) = get(
-        &router,
-        &format!("/api/sessions/{session}/approvals/{approval}"),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["status"], "approved");
-    assert_eq!(body["decision"], "approve");
-    assert_eq!(body["sessionId"], session.to_string());
-    assert_eq!(body["boundCall"]["expectedCustodyRevision"], 7);
-    assert_eq!(body["boundCall"]["expectedConfigRevision"], 8);
-    assert_eq!(
-        body["boundCall"]["configDigest"],
-        ContentHash::of(b"config").to_wire()
+#[tokio::test]
+async fn approval_get_projects_the_complete_bound_call_and_decision() {
+    let row = stored_approval(ApprovalStatus::Approved);
+    let session = row.binding.session;
+    let approval_id = row.approval;
+    let routes = handler(
+        shared_with(
+            Arc::new(FakeCustody::default()),
+            Arc::new(FakeRegistry::default()),
+            Arc::new(FakeSessions {
+                approvals: vec![row],
+                runs: Vec::new(),
+                next: None,
+                deleted: false,
+                deletion_epoch: 0,
+            }),
+            Arc::new(FakeOperations::default()),
+        ),
+        RouteId::SessionApprovalGet,
     );
+    let wire = wire_context(RouteId::SessionApprovalGet);
+
+    let approval = routes
+        .session_approval_get(&wire, session, approval_id)
+        .await
+        .expect("the stored approval projects");
+    assert_eq!(approval.status, models::ApprovalStatus::Approved);
+    assert_eq!(approval.decision, Some(models::ApprovalDecision::Approve));
+    assert_eq!(approval.session_id, session);
+    assert_eq!(approval.bound_call.expected_custody_revision, 7);
+    assert_eq!(approval.bound_call.expected_config_revision, 8);
+    assert_eq!(approval.bound_call.config_digest, ContentHash::of(b"config"));
 }
 
 #[tokio::test]
@@ -1454,60 +1571,68 @@ async fn approval_list_publishes_expired_and_binds_continuation_to_the_session()
         index_pk: None,
         index_sk: None,
     };
-    let ((router, mounted), _) = build_with_sessions(
-        Arc::new(FakeCustody::default()),
-        Arc::new(FakeRegistry::default()),
-        Arc::new(FakeSessions {
-            approvals: vec![row],
-            runs: Vec::new(),
-            next: Some(next),
-            deleted: false,
-            deletion_epoch: 0,
-        }),
+    let routes = handler(
+        shared_with(
+            Arc::new(FakeCustody::default()),
+            Arc::new(FakeRegistry::default()),
+            Arc::new(FakeSessions {
+                approvals: vec![row],
+                runs: Vec::new(),
+                next: Some(next),
+                deleted: false,
+                deletion_epoch: 0,
+            }),
+            Arc::new(FakeOperations::default()),
+        ),
+        RouteId::SessionApprovalsList,
     );
-    assert!(mounted.contains(&RouteId::SessionApprovalsList));
+    let wire = wire_context(RouteId::SessionApprovalsList);
 
-    let (status, _, body) = get(&router, &format!("/api/sessions/{session}/approvals")).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["items"][0]["status"], "expired");
-    assert!(body["items"][0].get("decision").is_none());
-    let cursor = body["nextCursor"].as_str().expect("a continuation");
+    let page = routes
+        .session_approvals_list(&wire, session, approvals_query(None))
+        .await
+        .expect("the collection projects");
+    assert_eq!(page.items[0].status, models::ApprovalStatus::Expired);
+    assert_eq!(page.items[0].decision, None);
+    let cursor = page.next_cursor.clone().expect("a continuation");
 
-    let ((restored_router, _), _) = build_with_sessions(
-        Arc::new(FakeCustody::default()),
-        Arc::new(FakeRegistry::default()),
-        Arc::new(FakeSessions {
-            approvals: vec![stored_approval(ApprovalStatus::Expired)],
-            runs: Vec::new(),
-            next: None,
-            deleted: false,
-            // Trash and restore each advance the canonical deletion epoch.
-            deletion_epoch: 2,
-        }),
+    let restored = handler(
+        shared_with(
+            Arc::new(FakeCustody::default()),
+            Arc::new(FakeRegistry::default()),
+            Arc::new(FakeSessions {
+                approvals: vec![stored_approval(ApprovalStatus::Expired)],
+                runs: Vec::new(),
+                next: None,
+                deleted: false,
+                // Trash and restore each advance the canonical deletion epoch.
+                deletion_epoch: 2,
+            }),
+            Arc::new(FakeOperations::default()),
+        ),
+        RouteId::SessionApprovalsList,
     );
-    let (status, _, body) = get(
-        &restored_router,
-        &format!("/api/sessions/{session}/approvals?cursor={cursor}"),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert_eq!(body["error"]["code"], "invalid_cursor");
+    let restored_wire = wire_context(RouteId::SessionApprovalsList);
+    let failure = restored
+        .session_approvals_list(&restored_wire, session, approvals_query(Some(cursor.clone())))
+        .await
+        .expect_err("a cursor cannot survive a deletion-epoch change");
+    assert_eq!(failure.code, ErrorCode::InvalidCursor);
 
     let other_session = sample::<SessionId>(30);
-    let (status, _, body) = get(
-        &router,
-        &format!("/api/sessions/{other_session}/approvals?cursor={cursor}"),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    let failure = routes
+        .session_approvals_list(&wire, other_session, approvals_query(Some(cursor)))
+        .await
+        .expect_err("a cursor is bound to its own session");
+    assert_eq!(failure.code, ErrorCode::InvalidCursor);
 }
 
 #[tokio::test]
 async fn approval_reads_refuse_a_session_that_crossed_its_deletion_fence() {
     let row = stored_approval(ApprovalStatus::Pending);
     let session = row.binding.session;
-    let approval = row.approval;
-    let ((router, _), _) = build_with_sessions(
+    let approval_id = row.approval;
+    let shared = shared_with(
         Arc::new(FakeCustody::default()),
         Arc::new(FakeRegistry::default()),
         Arc::new(FakeSessions {
@@ -1517,19 +1642,24 @@ async fn approval_reads_refuse_a_session_that_crossed_its_deletion_fence() {
             deleted: true,
             deletion_epoch: 1,
         }),
+        Arc::new(FakeOperations::default()),
     );
 
-    for path in [
-        format!("/api/sessions/{session}/approvals/{approval}"),
-        format!("/api/sessions/{session}/approvals"),
-    ] {
-        let (status, _, body) = get(&router, &path).await;
-        assert_eq!(status, StatusCode::GONE, "{body}");
-        assert_eq!(
-            body["error"]["code"].as_str(),
-            Some(ErrorCode::SessionDeleted.as_str())
-        );
-    }
+    let point = handler(Arc::clone(&shared), RouteId::SessionApprovalGet);
+    let wire = wire_context(RouteId::SessionApprovalGet);
+    let failure = point
+        .session_approval_get(&wire, session, approval_id)
+        .await
+        .expect_err("a deleted session answers gone");
+    assert_eq!(failure.code, ErrorCode::SessionDeleted);
+
+    let collection = handler(shared, RouteId::SessionApprovalsList);
+    let wire = wire_context(RouteId::SessionApprovalsList);
+    let failure = collection
+        .session_approvals_list(&wire, session, approvals_query(None))
+        .await
+        .expect_err("a deleted session answers gone");
+    assert_eq!(failure.code, ErrorCode::SessionDeleted);
 }
 
 /// Resolving only the approval row would acknowledge before the durable Brain
@@ -1560,13 +1690,12 @@ async fn approval_response_is_absent_without_one_atomic_handoff_authority() {
         r#"{"decision":"deny"}"#,
     )
     .await;
-    assert!(
-        matches!(
-            status,
-            StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED
-        ),
+    assert_eq!(
+        status,
+        StatusCode::NOT_IMPLEMENTED,
         "an incomplete approval authority became reachable: {status} {body}"
     );
+    assert_eq!(body["error"]["code"], ErrorCode::NotImplemented.as_str());
 }
 
 // --- secret reads ----------------------------------------------------------------
@@ -1777,21 +1906,49 @@ fn revocations_path(credential: ProviderCredentialId) -> String {
     format!("/api/workspace/provider-credentials/{credential}/revocations")
 }
 
+/// Revocation is owned, complete, and deferred: no composed producer ever
+/// registers a provider-credential binding, so there is nothing a caller could
+/// revoke and a `404 provider_credential_not_found` for every input would be a
+/// statement about a resource rather than about the platform.
 #[tokio::test]
-async fn a_revocation_fences_the_binding_and_publishes_the_committed_row() {
+async fn revocation_is_deferred_and_the_router_answers_the_refusal() {
     let stored = stored_credential();
-    let ((router, _), custody) = build(
+    let ((router, mounted), _) = build(
         Arc::new(FakeCustody {
             credentials: vec![stored.clone()],
             ..FakeCustody::default()
         }),
         Arc::new(FakeRegistry::default()),
     );
-
+    assert!(!mounted.contains(&RouteId::ProviderCredentialRevoke));
+    assert!(route(RouteId::ProviderCredentialRevoke).deferred);
     let (status, body) = post(&router, &revocations_path(stored.credential), "{}").await;
-    assert_eq!(status, StatusCode::OK);
-    let decoded: models::ProviderCredential =
-        serde_json::from_value(body).expect("the published schema");
+    assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "{body}");
+    assert_eq!(body["error"]["code"], ErrorCode::NotImplemented.as_str());
+}
+
+#[tokio::test]
+async fn a_revocation_fences_the_binding_and_publishes_the_committed_row() {
+    let stored = stored_credential();
+    let custody = Arc::new(FakeCustody {
+        credentials: vec![stored.clone()],
+        ..FakeCustody::default()
+    });
+    let routes = handler(
+        shared_with(
+            Arc::clone(&custody),
+            Arc::new(FakeRegistry::default()),
+            Arc::new(FakeSessions::default()),
+            Arc::new(FakeOperations::default()),
+        ),
+        RouteId::ProviderCredentialRevoke,
+    );
+    let wire = wire_context(RouteId::ProviderCredentialRevoke);
+
+    let decoded = routes
+        .provider_credential_revoke(&wire, stored.credential, models::EmptyRequest {})
+        .await
+        .expect("the binding revokes");
     assert_eq!(decoded.state, models::ProviderCredentialState::Revoked);
     assert_eq!(
         decoded.revision,
@@ -1832,18 +1989,25 @@ async fn a_replayed_revocation_answers_the_stored_row_and_writes_nothing() {
     let mut already = stored_credential();
     already.state = CredentialState::Revoked;
     already.revoked_at = Some(moment("2026-08-01T13:00:00.000Z"));
-    let ((router, _), custody) = build(
-        Arc::new(FakeCustody {
-            credentials: vec![already.clone()],
-            ..FakeCustody::default()
-        }),
-        Arc::new(FakeRegistry::default()),
+    let custody = Arc::new(FakeCustody {
+        credentials: vec![already.clone()],
+        ..FakeCustody::default()
+    });
+    let routes = handler(
+        shared_with(
+            Arc::clone(&custody),
+            Arc::new(FakeRegistry::default()),
+            Arc::new(FakeSessions::default()),
+            Arc::new(FakeOperations::default()),
+        ),
+        RouteId::ProviderCredentialRevoke,
     );
+    let wire = wire_context(RouteId::ProviderCredentialRevoke);
 
-    let (status, body) = post(&router, &revocations_path(already.credential), "{}").await;
-    assert_eq!(status, StatusCode::OK);
-    let decoded: models::ProviderCredential =
-        serde_json::from_value(body).expect("the published schema");
+    let decoded = routes
+        .provider_credential_revoke(&wire, already.credential, models::EmptyRequest {})
+        .await
+        .expect("a replay answers the stored row");
     assert_eq!(decoded.state, models::ProviderCredentialState::Revoked);
     assert_eq!(
         decoded.revision, already.revision,
@@ -1861,14 +2025,22 @@ async fn a_replayed_revocation_answers_the_stored_row_and_writes_nothing() {
 
 #[tokio::test]
 async fn revoking_an_absent_binding_answers_the_declared_code() {
-    let (router, _) = router(FakeCustody::default());
-    let absent: ProviderCredentialId = sample(9);
-    let (status, body) = post(&router, &revocations_path(absent), "{}").await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(
-        body["error"]["code"].as_str(),
-        Some(ErrorCode::ProviderCredentialNotFound.as_str())
+    let routes = handler(
+        shared_with(
+            Arc::new(FakeCustody::default()),
+            Arc::new(FakeRegistry::default()),
+            Arc::new(FakeSessions::default()),
+            Arc::new(FakeOperations::default()),
+        ),
+        RouteId::ProviderCredentialRevoke,
     );
+    let wire = wire_context(RouteId::ProviderCredentialRevoke);
+    let absent: ProviderCredentialId = sample(9);
+    let failure = routes
+        .provider_credential_revoke(&wire, absent, models::EmptyRequest {})
+        .await
+        .expect_err("an absent binding is refused");
+    assert_eq!(failure.code, ErrorCode::ProviderCredentialNotFound);
 }
 
 /// The deployable holds `TransactWriteItems` on `regional-secret-custody` and is
@@ -1878,15 +2050,24 @@ async fn revoking_an_absent_binding_answers_the_declared_code() {
 #[tokio::test]
 async fn the_revocation_reaches_the_authority_as_a_transaction() {
     let stored = stored_credential();
-    let ((router, _), custody) = build(
-        Arc::new(FakeCustody {
-            credentials: vec![stored.clone()],
-            ..FakeCustody::default()
-        }),
-        Arc::new(FakeRegistry::default()),
+    let custody = Arc::new(FakeCustody {
+        credentials: vec![stored.clone()],
+        ..FakeCustody::default()
+    });
+    let routes = handler(
+        shared_with(
+            Arc::clone(&custody),
+            Arc::new(FakeRegistry::default()),
+            Arc::new(FakeSessions::default()),
+            Arc::new(FakeOperations::default()),
+        ),
+        RouteId::ProviderCredentialRevoke,
     );
-    let (status, _) = post(&router, &revocations_path(stored.credential), "{}").await;
-    assert_eq!(status, StatusCode::OK);
+    let wire = wire_context(RouteId::ProviderCredentialRevoke);
+    routes
+        .provider_credential_revoke(&wire, stored.credential, models::EmptyRequest {})
+        .await
+        .expect("the binding revokes");
     assert_eq!(
         custody
             .committed
@@ -2094,12 +2275,16 @@ async fn every_registry_point_read_stays_absent_until_plaintext_hydration_exists
         );
 
         let (status, etag, body) = get(&router, path).await;
-        assert_eq!(status, StatusCode::NOT_FOUND, "{id}");
+        assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "{id}");
         assert!(
             etag.is_none(),
             "{id} must not mint a tag over a partial row"
         );
-        assert_eq!(body, serde_json::Value::Null, "{id}");
+        assert_eq!(
+            body["error"]["code"],
+            ErrorCode::NotImplemented.as_str(),
+            "{id}"
+        );
     }
 }
 

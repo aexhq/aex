@@ -3,12 +3,14 @@
     {
       "altPrincipal": "workspace_key",
       "bodyClass": "none",
+      "deferred": true,
       "deferredReason": "The central identity composition does not yet mount an authoritative account operational-state read.",
       "errors": [
         "unauthenticated",
         "forbidden",
         "insufficient_scope",
-        "account_state_unavailable"
+        "account_state_unavailable",
+        "not_implemented"
       ],
       "etag": "none",
       "fragment": "identity",
@@ -1662,6 +1664,7 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
+      "deferred": true,
       "deferredReason": "First-seal custody and the atomic credential-binding replay transaction are incomplete.",
       "errors": [
         "unauthenticated",
@@ -1671,7 +1674,8 @@
         "limit_exceeded",
         "unknown_provider",
         "account_paused",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "none",
       "fragment": "provider-credentials",
@@ -1698,12 +1702,15 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
+      "deferred": true,
+      "deferredReason": "No composed producer ever registers a provider-credential binding, so the revoke transaction has nothing it could revoke.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
         "idempotency_conflict",
         "provider_credential_not_found",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "none",
       "fragment": "provider-credentials",
@@ -1724,7 +1731,6 @@
       "scenarios": [
         "SC-SESSION-ADMIT"
       ],
-      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Revoke a provider-credential binding.",
@@ -1878,12 +1884,14 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
+      "deferred": true,
       "deferredReason": "Registry mutation and content-lifecycle composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
         "precondition_failed",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "optional_if_match",
       "fragment": "registry",
@@ -1912,6 +1920,7 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
+      "deferred": true,
       "deferredReason": "No composed content grant and presigning authority exists yet.",
       "errors": [
         "unauthenticated",
@@ -1922,7 +1931,8 @@
         "invalid_range",
         "content_missing",
         "account_paused",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "none",
       "fragment": "registry",
@@ -1951,13 +1961,15 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
+      "deferred": true,
       "deferredReason": "The registry pointer composition has no plaintext content hydration path.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
         "not_found",
         "account_paused",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "returns",
       "fragment": "registry",
@@ -2022,6 +2034,7 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
+      "deferred": true,
       "deferredReason": "Registry mutation and sealed-content composition is incomplete.",
       "errors": [
         "unauthenticated",
@@ -2032,7 +2045,8 @@
         "content_missing",
         "account_paused",
         "precondition_failed",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "optional_if_match",
       "fragment": "registry",
@@ -2061,12 +2075,14 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
+      "deferred": true,
       "deferredReason": "Registry mutation and content-lifecycle composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
         "precondition_failed",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "optional_if_match",
       "fragment": "registry",
@@ -2095,13 +2111,15 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
+      "deferred": true,
       "deferredReason": "The registry pointer composition has no plaintext content hydration path.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
         "not_found",
         "account_paused",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "returns",
       "fragment": "registry",
@@ -2166,6 +2184,7 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
+      "deferred": true,
       "deferredReason": "Registry mutation and sealed-content composition is incomplete.",
       "errors": [
         "unauthenticated",
@@ -2176,7 +2195,8 @@
         "content_missing",
         "account_paused",
         "precondition_failed",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "optional_if_match",
       "fragment": "registry",
@@ -2205,12 +2225,14 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
+      "deferred": true,
       "deferredReason": "Registry mutation and content-lifecycle composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
         "precondition_failed",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "optional_if_match",
       "fragment": "registry",
@@ -2239,13 +2261,15 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
+      "deferred": true,
       "deferredReason": "The registry pointer composition has no plaintext content hydration path.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
         "not_found",
         "account_paused",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "returns",
       "fragment": "registry",
@@ -2310,6 +2334,7 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
+      "deferred": true,
       "deferredReason": "Registry mutation and sealed-content composition is incomplete.",
       "errors": [
         "unauthenticated",
@@ -2320,7 +2345,8 @@
         "content_missing",
         "account_paused",
         "precondition_failed",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "optional_if_match",
       "fragment": "registry",
@@ -2349,12 +2375,14 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
+      "deferred": true,
       "deferredReason": "Registry mutation and content-lifecycle composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
         "precondition_failed",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "optional_if_match",
       "fragment": "registry",
@@ -2383,13 +2411,15 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
+      "deferred": true,
       "deferredReason": "The registry pointer composition has no plaintext content hydration path.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
         "not_found",
         "account_paused",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "returns",
       "fragment": "registry",
@@ -2454,6 +2484,7 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
+      "deferred": true,
       "deferredReason": "Registry mutation and sealed-content composition is incomplete.",
       "errors": [
         "unauthenticated",
@@ -2464,7 +2495,8 @@
         "content_missing",
         "account_paused",
         "precondition_failed",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "optional_if_match",
       "fragment": "registry",
@@ -2493,12 +2525,14 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
+      "deferred": true,
       "deferredReason": "Registry mutation and content-lifecycle composition is incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
         "precondition_failed",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "optional_if_match",
       "fragment": "registry",
@@ -2527,13 +2561,15 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
+      "deferred": true,
       "deferredReason": "The registry pointer composition has no plaintext content hydration path.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
         "not_found",
         "account_paused",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "returns",
       "fragment": "registry",
@@ -2598,6 +2634,7 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
+      "deferred": true,
       "deferredReason": "Registry mutation and sealed-content composition is incomplete.",
       "errors": [
         "unauthenticated",
@@ -2608,7 +2645,8 @@
         "content_missing",
         "account_paused",
         "precondition_failed",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "optional_if_match",
       "fragment": "registry",
@@ -2706,6 +2744,7 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
+      "deferred": true,
       "deferredReason": "First-seal custody and durable idempotent replay are incomplete.",
       "errors": [
         "unauthenticated",
@@ -2715,7 +2754,8 @@
         "limit_exceeded",
         "account_paused",
         "precondition_failed",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "optional_if_match",
       "fragment": "secrets",
@@ -2815,6 +2855,8 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
+      "deferred": true,
+      "deferredReason": "Nothing composed into the platform raises an approval, so the point read can only report that no approval exists.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2822,7 +2864,8 @@
         "session_deleted",
         "approval_not_found",
         "account_paused",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "none",
       "fragment": "approvals",
@@ -2844,7 +2887,6 @@
       "scenarios": [
         "SC-BRAIN-TURN"
       ],
-      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "Read one approval and its bound-call record.",
@@ -2853,6 +2895,7 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
+      "deferred": true,
       "deferredReason": "The atomic bound-call approval writer is not composed into the regional service.",
       "errors": [
         "unauthenticated",
@@ -2865,7 +2908,8 @@
         "approval_already_resolved",
         "approval_binding_changed",
         "account_paused",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "none",
       "fragment": "approvals",
@@ -2895,6 +2939,8 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
+      "deferred": true,
+      "deferredReason": "Nothing composed into the platform raises an approval, so the collection can only report an empty page.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
@@ -2902,7 +2948,8 @@
         "invalid_cursor",
         "session_deleted",
         "account_paused",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "none",
       "fragment": "approvals",
@@ -2926,7 +2973,6 @@
       "scenarios": [
         "SC-BRAIN-TURN"
       ],
-      "servedArtifact": "session-stream-api",
       "servingArtifact": "session-stream-api",
       "successStatus": 200,
       "summary": "List the approvals of a session.",
@@ -2935,6 +2981,7 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
+      "deferred": true,
       "deferredReason": "The complete session authority and command transaction are not implemented.",
       "errors": [
         "unauthenticated",
@@ -2948,7 +2995,8 @@
         "session_deleted",
         "account_paused",
         "precondition_failed",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "optional_if_match",
       "fragment": "sessions",
@@ -2978,6 +3026,7 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
+      "deferred": true,
       "deferredReason": "The complete session authority and create use case are not implemented.",
       "errors": [
         "unauthenticated",
@@ -2994,7 +3043,8 @@
         "provider_credential_not_found",
         "provider_credential_revoked",
         "account_paused",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "none",
       "fragment": "sessions",
@@ -3022,6 +3072,7 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
+      "deferred": true,
       "deferredReason": "The credential-rebind authority and durable command transaction are not implemented.",
       "errors": [
         "unauthenticated",
@@ -3032,7 +3083,8 @@
         "session_deleting",
         "session_deleted",
         "account_paused",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "none",
       "fragment": "sessions",
@@ -3062,6 +3114,7 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
+      "deferred": true,
       "deferredReason": "The session root, content decryption, and presigning composition is incomplete.",
       "errors": [
         "unauthenticated",
@@ -3077,7 +3130,8 @@
         "content_missing",
         "account_paused",
         "precondition_failed",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "none",
       "fragment": "files",
@@ -3106,6 +3160,7 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
+      "deferred": true,
       "deferredReason": "The session root and plaintext content projection are incomplete.",
       "errors": [
         "unauthenticated",
@@ -3118,7 +3173,8 @@
         "session_deleted",
         "account_paused",
         "precondition_failed",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "none",
       "fragment": "files",
@@ -3147,6 +3203,7 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
+      "deferred": true,
       "deferredReason": "The session root and plaintext content projection are incomplete.",
       "errors": [
         "unauthenticated",
@@ -3159,7 +3216,8 @@
         "file_not_found",
         "account_paused",
         "precondition_failed",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "none",
       "fragment": "files",
@@ -3188,6 +3246,7 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
+      "deferred": true,
       "deferredReason": "The persisted root, content decryption, and presigning composition is incomplete.",
       "errors": [
         "unauthenticated",
@@ -3200,7 +3259,8 @@
         "file_not_found",
         "content_missing",
         "account_paused",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "none",
       "fragment": "files",
@@ -3229,6 +3289,7 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
+      "deferred": true,
       "deferredReason": "The persisted root and plaintext content projection are incomplete.",
       "errors": [
         "unauthenticated",
@@ -3238,7 +3299,8 @@
         "invalid_cursor",
         "session_deleted",
         "account_paused",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "none",
       "fragment": "files",
@@ -3267,6 +3329,7 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
+      "deferred": true,
       "deferredReason": "The persisted root and plaintext content projection are incomplete.",
       "errors": [
         "unauthenticated",
@@ -3276,7 +3339,8 @@
         "session_deleted",
         "file_not_found",
         "account_paused",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "none",
       "fragment": "files",
@@ -3305,6 +3369,7 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
+      "deferred": true,
       "deferredReason": "The stored session head cannot yet produce the complete public session resource.",
       "errors": [
         "unauthenticated",
@@ -3312,7 +3377,8 @@
         "not_found",
         "session_deleted",
         "account_paused",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "returns",
       "fragment": "sessions",
@@ -3342,6 +3408,7 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
+      "deferred": true,
       "deferredReason": "The wire and domain message vocabularies and durable command path are not reconciled.",
       "errors": [
         "unauthenticated",
@@ -3355,7 +3422,8 @@
         "unqualified_provider_model",
         "provider_credential_revoked",
         "account_paused",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "none",
       "fragment": "sessions",
@@ -3385,6 +3453,7 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
+      "deferred": true,
       "deferredReason": "The wire and domain message vocabularies and exact paged read authority are incomplete.",
       "errors": [
         "unauthenticated",
@@ -3393,7 +3462,8 @@
         "invalid_cursor",
         "session_deleted",
         "account_paused",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "none",
       "fragment": "sessions",
@@ -4220,6 +4290,7 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
+      "deferred": true,
       "deferredReason": "The paged persist operation and commit latch are incomplete.",
       "errors": [
         "unauthenticated",
@@ -4233,7 +4304,8 @@
         "session_deleted",
         "account_paused",
         "precondition_failed",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "optional_if_match",
       "fragment": "sessions",
@@ -4263,6 +4335,7 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
+      "deferred": true,
       "deferredReason": "The paged purge operation and commit latch are incomplete.",
       "errors": [
         "unauthenticated",
@@ -4272,7 +4345,8 @@
         "invalid_request",
         "session_deleted",
         "deletion_in_progress",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "none",
       "fragment": "sessions",
@@ -4302,6 +4376,7 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
+      "deferred": true,
       "deferredReason": "The complete session restore authority and command transaction are not implemented.",
       "errors": [
         "unauthenticated",
@@ -4313,7 +4388,8 @@
         "deletion_in_progress",
         "account_paused",
         "precondition_failed",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "none",
       "fragment": "sessions",
@@ -4422,6 +4498,7 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
+      "deferred": true,
       "deferredReason": "The complete session stop authority and command transaction are not implemented.",
       "errors": [
         "unauthenticated",
@@ -4430,7 +4507,8 @@
         "operation_idempotency_conflict",
         "session_deleting",
         "session_deleted",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "none",
       "fragment": "sessions",
@@ -4460,6 +4538,7 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
+      "deferred": true,
       "deferredReason": "The durable session export-admission composition is incomplete.",
       "errors": [
         "unauthenticated",
@@ -4473,7 +4552,8 @@
         "unsupported_export_signal",
         "invalid_query",
         "account_paused",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "none",
       "fragment": "telemetry-lifecycle",
@@ -4702,6 +4782,7 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
+      "deferred": true,
       "deferredReason": "The complete session trash authority and command transaction are not implemented.",
       "errors": [
         "unauthenticated",
@@ -4712,7 +4793,8 @@
         "session_deleting",
         "session_deleted",
         "deletion_in_progress",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "none",
       "fragment": "sessions",
@@ -4742,6 +4824,7 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
+      "deferred": true,
       "deferredReason": "The workspace-discard operation and commit latch are incomplete.",
       "errors": [
         "unauthenticated",
@@ -4752,7 +4835,8 @@
         "session_deleting",
         "session_deleted",
         "precondition_failed",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "none",
       "fragment": "sessions",
@@ -4782,13 +4866,15 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
+      "deferred": true,
       "deferredReason": "The sparse session head cannot yet produce the complete public collection item.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
         "invalid_cursor",
         "account_paused",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "none",
       "fragment": "sessions",
@@ -4820,6 +4906,7 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
+      "deferred": true,
       "deferredReason": "The durable workspace export-admission composition is incomplete.",
       "errors": [
         "unauthenticated",
@@ -4831,7 +4918,8 @@
         "unsupported_export_signal",
         "invalid_query",
         "account_paused",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "none",
       "fragment": "telemetry-lifecycle",
@@ -5043,12 +5131,14 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
+      "deferred": true,
       "deferredReason": "The staged-upload authority and durable abort transaction are incomplete.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
         "not_found",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "none",
       "fragment": "uploads",
@@ -5077,6 +5167,7 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
+      "deferred": true,
       "deferredReason": "The staged-upload authority and durable completion transaction are incomplete.",
       "errors": [
         "unauthenticated",
@@ -5087,7 +5178,8 @@
         "invalid_request",
         "content_missing",
         "account_paused",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "none",
       "fragment": "uploads",
@@ -5116,6 +5208,7 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
+      "deferred": true,
       "deferredReason": "The staged-upload authority and multipart presigning composition are incomplete.",
       "errors": [
         "unauthenticated",
@@ -5124,7 +5217,8 @@
         "invalid_request",
         "limit_exceeded",
         "account_paused",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "none",
       "fragment": "uploads",
@@ -5151,6 +5245,7 @@
     {
       "altPrincipal": null,
       "bodyClass": "aex_json",
+      "deferred": true,
       "deferredReason": "The multipart grant and presigning composition is incomplete.",
       "errors": [
         "unauthenticated",
@@ -5160,7 +5255,8 @@
         "invalid_request",
         "limit_exceeded",
         "account_paused",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "none",
       "fragment": "uploads",
@@ -5189,6 +5285,7 @@
     {
       "altPrincipal": "account",
       "bodyClass": "aex_json",
+      "deferred": true,
       "deferredReason": "The store lacks the exact multi-category, arbitrary-range query planner and continuation contract.",
       "errors": [
         "unauthenticated",
@@ -5197,7 +5294,8 @@
         "invalid_request",
         "invalid_cursor",
         "invalid_query",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "none",
       "fragment": "usage",
@@ -5265,12 +5363,14 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
+      "deferred": true,
       "deferredReason": "The signed and projected facts do not supply the complete account operational state.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
         "workspace_not_live",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "none",
       "fragment": "workspace",
@@ -5373,12 +5473,14 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
+      "deferred": true,
       "deferredReason": "No authoritative regional capacity default and override producer exists yet.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
         "not_found",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "none",
       "fragment": "workspace",
@@ -5407,12 +5509,14 @@
     {
       "altPrincipal": null,
       "bodyClass": "none",
+      "deferred": true,
       "deferredReason": "No authoritative regional capacity default and override producer exists yet.",
       "errors": [
         "unauthenticated",
         "insufficient_scope",
         "invalid_cursor",
-        "wrong_workspace_region"
+        "wrong_workspace_region",
+        "not_implemented"
       ],
       "etag": "none",
       "fragment": "workspace",
