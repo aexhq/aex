@@ -102,6 +102,7 @@ variables {
       AEX_TOOL_EXECUTOR_PORT                 = "8080"
       AEX_TOOL_EXECUTOR_CEILING_TABLE        = "aex-dev-euw1-tool-executor-ceiling"
       AEX_TOOL_EXECUTOR_CREDENTIAL_SECRET_ID = "aex/dev/tool-executor/web-search"
+      AEX_TOOL_EXECUTOR_MANIFEST             = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
       AEX_TOOL_EXECUTOR_VERIFICATION_KEYS    = "00000000-0000-4000-8000-000000000000:0000000000000000000000000000000000000000000000000000000000000000:4102444800000"
     }
     client_security_group_ids = []
@@ -262,6 +263,7 @@ run "the_tool_executor_is_private_named_and_fixed_count" {
       "AEX_TOOL_EXECUTOR_PORT",
       "AEX_TOOL_EXECUTOR_CEILING_TABLE",
       "AEX_TOOL_EXECUTOR_CREDENTIAL_SECRET_ID",
+      "AEX_TOOL_EXECUTOR_MANIFEST",
       "AEX_TOOL_EXECUTOR_VERIFICATION_KEYS",
     ])
     error_message = "The example must supply exactly the required tool-executor startup environment; the binary has no defaults and refuses partial configuration."
