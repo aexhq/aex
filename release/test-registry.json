@@ -11,7 +11,7 @@
     "awaiting_owner": 45,
     "capacity_gates": 19,
     "live_targets": 36,
-    "packages": 148,
+    "packages": 147,
     "seams_claimed": 33,
     "seams_declared": 35,
     "workloads": 8
@@ -851,42 +851,6 @@
         "not_applicable": {
           "live_suite": "application crate; its ports are exercised through its deployable's companion"
         }
-      },
-      "unmapped_targets": [],
-      "awaiting_owner": false
-    },
-    "crates/aex-finance-aurora": {
-      "name": "aex-finance-aurora",
-      "kind": "cargo",
-      "meta": {
-        "owner": "central-finance",
-        "role": "adapter",
-        "artifact": "none",
-        "live_suite": "aex-live-finance-api",
-        "layers": [
-          "unit",
-          "integration"
-        ],
-        "concerns": [
-          "contract",
-          "property",
-          "fault",
-          "security"
-        ],
-        "seams": [
-          "aws.rds_data.transaction",
-          "aws.aurora.serverless_v2"
-        ],
-        "security_tier": "authority",
-        "risk": [
-          "money"
-        ],
-        "scenarios": [],
-        "targets": {
-          "conformance": "unit",
-          "integration": "integration"
-        },
-        "not_applicable": {}
       },
       "unmapped_targets": [],
       "awaiting_owner": false

@@ -55,7 +55,6 @@ pub const CRATES: &[&str] = &[
     "aex-control-aurora",
     "aex-control-domain",
     "aex-finance-app",
-    "aex-finance-aurora",
     "aex-finance-domain",
     "aex-hands-agent",
     "aex-hands-control-aws",
