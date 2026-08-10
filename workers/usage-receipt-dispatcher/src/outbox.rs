@@ -55,10 +55,14 @@ pub struct PendingReceipt {
 }
 
 impl PendingReceipt {
-    /// The producer deduplication identity for this receipt.
+    /// The fold identity for this receipt.
     ///
     /// Identical to the identity the settlement inbox folds on, so a replayed
-    /// receipt is the same message rather than a second one.
+    /// receipt is the same receipt rather than a second one. This is *not* an
+    /// SQS `MessageDeduplicationId`: the receipt queues are standard, which
+    /// rejects that parameter, so deduplication is the consumer's idempotent
+    /// fold rather than the transport's. Carried on the publish failure path so
+    /// a rejected receipt names itself.
     #[must_use]
     pub fn deduplication_id(&self) -> String {
         format!("{}:{}:{}", self.region, self.category, self.fact_id)
@@ -262,19 +266,34 @@ impl ReceiptPublisher for SqsReceiptPublisher {
                     receipt.category
                 ))
             })?;
+        // The three `usage-receipt-*` queues are standard, not FIFO, and SQS
+        // rejects `MessageDeduplicationId` and `MessageGroupId` on a standard
+        // queue with `InvalidParameterValue`. Setting them here made every
+        // publish fail on first contact with a real plane; no plane had ever run
+        // this unit, so nothing caught it.
+        //
+        // Standard is the right queue: the consumer's own contract is that
+        // receipts have no ordering guarantee and one failing message fails only
+        // itself. FIFO would also serialize the whole lane, because the group id
+        // was the region and a plane is one region.
+        //
+        // Exactly-once still holds, and not by SQS: the settlement fold is
+        // idempotent on the identity `deduplication_id()` renders, so a
+        // redelivered receipt folds to `AlreadySettled`. That is durable, unlike
+        // FIFO's five-minute dedup window.
         self.client
             .send_message()
             .queue_url(queue)
             .message_body(&receipt.payload)
-            .message_deduplication_id(receipt.deduplication_id())
-            .message_group_id(&receipt.region)
             .send()
             .await
             .map(|_| ())
             .map_err(|error| {
-                DispatchError::QueueUnavailable(
-                    aws_sdk_sqs::error::DisplayErrorContext(&error).to_string(),
-                )
+                DispatchError::QueueUnavailable(format!(
+                    "receipt `{}` could not be published: {}",
+                    receipt.deduplication_id(),
+                    aws_sdk_sqs::error::DisplayErrorContext(&error)
+                ))
             })
     }
 }
