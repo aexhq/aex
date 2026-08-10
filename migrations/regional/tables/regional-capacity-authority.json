@@ -5,18 +5,50 @@
   "purpose": "Durable per-workspace shared-safety capacity authority. One complete workspace_capacity row carries the current defaults revision/digest, monotonic authority revision and regional capacity fence; immutable capacity_audit rows retain every committed decision identity. The controller atomically writes this authority together with the complete public effective-limit projection.",
   "billingMode": "PAY_PER_REQUEST",
   "deletionProtection": true,
-  "pointInTimeRecovery": { "enabled": true, "retentionDays": 35 },
+  "pointInTimeRecovery": {
+    "enabled": true,
+    "retentionDays": 35
+  },
   "serverSideEncryption": {
     "type": "KMS",
     "keyAuthority": "regional-capacity",
     "rationale": "Capacity decisions are a regional authority with a distinct write role and recovery boundary; they must not share the session or authorization-projection key authority."
   },
   "attributes": [
-    { "name": "pk", "type": "S" },
-    { "name": "sk", "type": "S" }
+    {
+      "name": "pk",
+      "type": "S"
+    },
+    {
+      "name": "sk",
+      "type": "S"
+    },
+    {
+      "name": "gsiAllPk",
+      "type": "S"
+    },
+    {
+      "name": "gsiAllSk",
+      "type": "S"
+    }
   ],
-  "keySchema": { "partition": "pk", "sort": "sk" },
-  "globalSecondaryIndexes": [],
+  "keySchema": {
+    "partition": "pk",
+    "sort": "sk"
+  },
+  "globalSecondaryIndexes": [
+    {
+      "name": "gsi_all_workspaces",
+      "partition": "gsiAllPk",
+      "sort": "gsiAllSk",
+      "sparse": true,
+      "projectsRecordBody": false,
+      "rationale": "The enumeration a defaults-revision sweep walks. Only the `workspace_capacity` authority row carries `gsiAllPk`, so an immutable `capacity_audit` sibling can never appear in a sweep and be reconciled twice. Both attributes were already written on every commit and indexed by nothing, which left the ordered `Reconcile` sweep undeliverable: a limit id added after a workspace was bootstrapped reaches it only through that sweep, and nothing could enumerate the workspaces to run it over. The projection is KEYS_ONLY because a sweep needs an identity and then reads the authority row it is about to condition on strongly anyway.",
+      "projection": {
+        "type": "KEYS_ONLY"
+      }
+    }
+  ],
   "stream": {
     "enabled": false,
     "viewType": "NONE",
@@ -29,19 +61,42 @@
     "appliesTo": [],
     "rationale": "An expired authority or audit row would either fail every request or erase the evidence for an override, so neither family is TTL data."
   },
-  "itemTypes": ["workspace_capacity", "capacity_audit"],
+  "itemTypes": [
+    "workspace_capacity",
+    "capacity_audit"
+  ],
   "iam": [
     {
       "role": "regional-capacity-controller",
-      "actions": ["dynamodb:GetItem", "dynamodb:PutItem"],
-      "resources": ["table"],
-      "itemTypes": ["workspace_capacity", "capacity_audit"],
+      "actions": [
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:Query"
+      ],
+      "resources": [
+        "table",
+        "index/gsi_all_workspaces"
+      ],
+      "itemTypes": [
+        "workspace_capacity",
+        "capacity_audit"
+      ],
       "condition": {
         "operator": "ForAllValues:StringLike",
         "key": "dynamodb:LeadingKeys",
-        "values": ["WS#*"]
+        "values": [
+          "WS#*"
+        ],
+        "appliesTo": [
+          "table"
+        ],
+        "rationale": "The leading-key fence is the table's. The sweep index has one partition, `WORKSPACES`, and is KEYS_ONLY, so a query over it can enumerate workspace identities and nothing else; fencing it on `WS#*` would deny the enumeration outright while protecting a keyspace the index does not expose."
       }
     }
   ],
-  "tags": { "aex:plane": "regional", "aex:component": "capacity", "aex:data-class": "authority" }
+  "tags": {
+    "aex:plane": "regional",
+    "aex:component": "capacity",
+    "aex:data-class": "authority"
+  }
 }

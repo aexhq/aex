@@ -6493,6 +6493,7 @@ version = "0.1.0"
 dependencies = [
  "aex-capacity-dynamodb",
  "aex-internal-contracts",
+ "aex-session-dynamodb",
  "aex-wire",
  "async-trait",
  "aws-config",

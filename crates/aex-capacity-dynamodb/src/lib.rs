@@ -13,4 +13,7 @@ pub use defaults::{CapacityDefaults, DefaultsError, canonical_defaults};
 pub use model::{
     CapacityCommand, CapacityError, CapacityState, OverrideChange, plan_capacity_change,
 };
-pub use store::{AppliedCapacity, CapacityStore, CapacityStoreError};
+pub use store::{
+    ALL_WORKSPACES_INDEX, ALL_WORKSPACES_PARTITION, AppliedCapacity, CapacityStore,
+    CapacityStoreError,
+};
