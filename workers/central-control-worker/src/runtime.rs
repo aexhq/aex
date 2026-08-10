@@ -700,7 +700,8 @@ impl Worker {
             WorkspaceStatus::Provisioning => return Err("workspace_not_projectable_yet".to_owned()),
             WorkspaceStatus::Deleting | WorkspaceStatus::Deleted => "deleting",
             WorkspaceStatus::Active
-                if view.account.state() == aex_control_domain::AccountState::PausedTopUpRequired =>
+                if view.account.state()
+                    == aex_control_domain::AccountState::PausedTopUpRequired =>
             {
                 "paused"
             }

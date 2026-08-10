@@ -36,9 +36,7 @@ use aex_control_domain::{
     OperationStatus, OperationVisibility, Organization, OutboxMessage, Revision, ScopeSet, Slug,
     Topic, Workspace, WorkspaceStatus,
 };
-use aex_session_dynamodb::projection_write::{
-    KeyAuthorizationWrite, PlacementWrite, ProfileWrite,
-};
+use aex_session_dynamodb::projection_write::{KeyAuthorizationWrite, PlacementWrite, ProfileWrite};
 use aex_wire::types::Region;
 use async_trait::async_trait;
 use central_control_worker::runtime::{Mail, RegionalProjection, SigningAdmin, Worker};
@@ -85,13 +83,13 @@ fn intent() -> IntentHash {
 fn intent_hex() -> String {
     use std::fmt::Write as _;
 
-    intent().as_bytes().iter().fold(
-        String::with_capacity(64),
-        |mut rendered, byte| {
+    intent()
+        .as_bytes()
+        .iter()
+        .fold(String::with_capacity(64), |mut rendered, byte| {
             let _ = write!(rendered, "{byte:02x}");
             rendered
-        },
-    )
+        })
 }
 
 fn workspace(status: WorkspaceStatus) -> Workspace {
@@ -293,7 +291,8 @@ impl ControlStore for FakeStore {
     }
 
     async fn claim_outbox(&self, command: &ClaimOutbox) -> Result<Vec<OutboxMessage>, StoreError> {
-        self.journal.record(format!("claim_outbox:{}", command.batch));
+        self.journal
+            .record(format!("claim_outbox:{}", command.batch));
         Ok(std::mem::take(
             &mut *self
                 .outbox
@@ -704,7 +703,11 @@ async fn a_schedule_tick_drains_every_row_the_three_shipped_routes_commit() {
         );
     }
     // The three effects the routes promised and could not perform themselves.
-    assert!(journal.iter().any(|it| it.starts_with("put_key_authorization:")));
+    assert!(
+        journal
+            .iter()
+            .any(|it| it.starts_with("put_key_authorization:"))
+    );
     assert!(journal.iter().any(|it| it.starts_with("regional_delete:")));
     assert!(journal.contains(&"mail:invitee@example.test".to_owned()));
 }
