@@ -201,12 +201,13 @@ impl IdentityApi for AccountService {
             .map_err(|_| WireError::new(ErrorCode::AccountStateUnavailable))?
             .ok_or_else(|| WireError::new(ErrorCode::AccountStateUnavailable))?;
         account_operational_state(&profile).map_err(|error| match error {
-            AccountProjectionError::Unavailable => {
-                WireError::new(ErrorCode::AccountStateUnavailable)
-            }
             // A corrupt projected row is still not an answer, so it is still not
-            // `Active`. The route declares no other code that could carry it.
-            AccountProjectionError::MissingPauseCause
+            // `Active`, and it carries the same code as an unreadable one. The
+            // route declares no other code that could carry either. The match
+            // stays exhaustive so a new projection failure has to be classified
+            // here rather than silently inheriting this one.
+            AccountProjectionError::Unavailable
+            | AccountProjectionError::MissingPauseCause
             | AccountProjectionError::UnknownPauseCause(_)
             | AccountProjectionError::UnrepresentableInstant => {
                 WireError::new(ErrorCode::AccountStateUnavailable)

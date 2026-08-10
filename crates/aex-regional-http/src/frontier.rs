@@ -39,6 +39,14 @@ pub const TARGET_P99_MS: i64 = 30_000;
 /// retry longer than this.
 pub const CEILING_MS: i64 = 120_000;
 
+// A compile-time assertion rather than a test, as in `drain`: an inverted pair
+// of bounds would classify every measurement as `OverCeiling` and page
+// continuously, so it fails the build instead of a test run.
+const _: () = assert!(
+    TARGET_P99_MS < CEILING_MS,
+    "the intended bound must sit inside the ceiling that pages"
+);
+
 /// What one frontier measurement says about the plane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrontierHealth {
@@ -97,16 +105,16 @@ mod tests {
         Timestamp::from_unix_millis(millis).expect("a representable instant")
     }
 
-    /// The two bounds are ordered and both are stated in one place.
+    /// Both bounds are stated in one place; their ordering is a build failure.
     ///
     /// They are a cost decision, not an arbitrary pair: the ceiling is how long
     /// a paused account may keep consuming paid capacity, and the target is what
-    /// a change to the control queue's settings must be re-checked against.
+    /// a change to the control queue's settings must be re-checked against. The
+    /// ordering between them is asserted at compile time beside the constants.
     #[test]
     fn the_stated_bound_is_thirty_seconds_with_a_two_minute_ceiling() {
         assert_eq!(TARGET_P99_MS, 30_000);
         assert_eq!(CEILING_MS, 120_000);
-        assert!(TARGET_P99_MS < CEILING_MS);
     }
 
     #[test]

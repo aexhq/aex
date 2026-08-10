@@ -642,24 +642,13 @@ impl aex_identity_app::ports::Clock for FixedClock {
     }
 }
 
-/// Which of the worker's authorities answer. Everything answers by default.
-#[derive(Debug, Clone, Copy)]
-struct Availability {
-    store: bool,
-    mail: bool,
-    regional: bool,
-    capacity: bool,
-}
-
-impl Default for Availability {
-    fn default() -> Self {
-        Self {
-            store: true,
-            mail: true,
-            regional: true,
-            capacity: true,
-        }
-    }
+/// One of the authorities the worker depends on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Authority {
+    Store,
+    Mail,
+    Regional,
+    Capacity,
 }
 
 /// One composed worker and the journal of everything it did.
@@ -671,15 +660,17 @@ struct Harness {
 impl Harness {
     /// A worker whose every dependency answers.
     fn with(outbox: Vec<OutboxMessage>) -> Self {
-        Self::build(outbox, Availability::default())
+        Self::build(outbox, &[])
     }
 
-    fn build(outbox: Vec<OutboxMessage>, availability: Availability) -> Self {
+    /// A worker in which exactly the listed authorities refuse.
+    fn build(outbox: Vec<OutboxMessage>, down: &[Authority]) -> Self {
+        let answers = |authority: Authority| !down.contains(&authority);
         let journal = Arc::new(Journal::default());
         let store = Arc::new(FakeStore::new(
             Arc::clone(&journal),
             outbox,
-            availability.store,
+            answers(Authority::Store),
         ));
         let projections: BTreeMap<Region, Arc<dyn RegionalProjection>> = BTreeMap::from([(
             REGION,
@@ -691,16 +682,16 @@ impl Harness {
             store as Arc<dyn central_control_worker::runtime::Store>,
             Arc::new(FakeRegional {
                 journal: Arc::clone(&journal),
-                available: availability.regional,
+                available: answers(Authority::Regional),
             }),
             Arc::new(FakeCapacity {
                 journal: Arc::clone(&journal),
-                available: availability.capacity,
+                available: answers(Authority::Capacity),
             }),
             projections,
             Arc::new(FakeMail {
                 journal: Arc::clone(&journal),
-                available: availability.mail,
+                available: answers(Authority::Mail),
             }),
             Arc::new(FakeSigning {
                 journal: Arc::clone(&journal),
@@ -877,13 +868,7 @@ async fn a_placement_is_never_written_when_the_capacity_bootstrap_did_not_apply(
     // failed, followed by a placement written anyway, is byte-for-byte the same
     // outage as no bootstrap at all — so the refusal has to stop the sequence,
     // not merely precede it.
-    let harness = Harness::build(
-        provision_outbox(),
-        Availability {
-            capacity: false,
-            ..Availability::default()
-        },
-    );
+    let harness = Harness::build(provision_outbox(), &[Authority::Capacity]);
     harness
         .worker
         .tick()
@@ -911,13 +896,7 @@ async fn a_placement_is_never_written_when_the_capacity_bootstrap_did_not_apply(
 
 #[tokio::test]
 async fn a_duty_that_fails_is_released_with_a_backoff_and_never_marked_dispatched() {
-    let harness = Harness::build(
-        vec![invitation_email_requested()],
-        Availability {
-            mail: false,
-            ..Availability::default()
-        },
-    );
+    let harness = Harness::build(vec![invitation_email_requested()], &[Authority::Mail]);
     harness
         .worker
         .tick()
@@ -944,13 +923,7 @@ async fn a_scheduled_invocation_that_cannot_drain_fails_loudly_rather_than_answe
     // A schedule tick that answers `{}` is indistinguishable from one that
     // worked, so the retry and dead-letter path never sees it and the outbox
     // stops draining silently. The invocation has to fail.
-    let harness = Harness::build(
-        the_three_routes_outbox(),
-        Availability {
-            store: false,
-            ..Availability::default()
-        },
-    );
+    let harness = Harness::build(the_three_routes_outbox(), &[Authority::Store]);
     let error = central_control_worker::handle_event(
         &harness.worker,
         serde_json::json!({ "source": "aex.scheduler", "detail": {} }),

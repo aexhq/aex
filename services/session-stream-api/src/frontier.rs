@@ -47,6 +47,7 @@ pub struct FrontierResource {
 /// A frontier read that fails emits **nothing** rather than a zero. A gap in a
 /// series is visibly a gap; a zero is a claim that the projection is perfectly
 /// current, which is the one thing a broken reader must not be able to say.
+#[must_use]
 pub fn measure_once(
     now: Timestamp,
     resource: &FrontierResource,

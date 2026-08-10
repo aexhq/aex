@@ -325,19 +325,7 @@ pub fn plan_capacity_change(
     let revision = current_revision
         .checked_add(1)
         .ok_or(CapacityError::RevisionExhausted)?;
-    let effective = LimitId::ALL
-        .iter()
-        .copied()
-        .map(|id| {
-            (
-                id,
-                overrides
-                    .get(&id)
-                    .cloned()
-                    .unwrap_or_else(|| defaults.value(id).clone()),
-            )
-        })
-        .collect();
+    let effective = materialise_effective(&overrides, defaults);
     Ok(PlannedCapacity {
         state: CapacityState {
             workspace_id: workspace,
@@ -357,6 +345,26 @@ pub fn plan_capacity_change(
         },
         changed: true,
     })
+}
+
+/// Materialises one effective row per registered limit, override before default.
+fn materialise_effective(
+    overrides: &BTreeMap<LimitId, LimitValue>,
+    defaults: &CapacityDefaults,
+) -> BTreeMap<LimitId, LimitValue> {
+    LimitId::ALL
+        .iter()
+        .copied()
+        .map(|id| {
+            (
+                id,
+                overrides
+                    .get(&id)
+                    .cloned()
+                    .unwrap_or_else(|| defaults.value(id).clone()),
+            )
+        })
+        .collect()
 }
 
 enum PreparedCurrent {
