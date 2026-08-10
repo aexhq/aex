@@ -9,6 +9,7 @@ use aex_brain_domain::ids::{
 };
 use aex_brain_domain::journal::ExecutorRoute;
 use aex_model_catalog::canonical::{CanonicalToolDef, ToolResultPart};
+use aex_model_catalog::document::{Capability, CapabilitySet};
 use aex_wire::CanonicalJson;
 use aex_wire::ids::GenerationId;
 
@@ -94,8 +95,34 @@ pub struct ToolAdvertisement {
     /// Definitions in canonical tool-name order.
     pub definitions: Vec<CanonicalToolDef>,
     /// Whether every definition explicitly declares the pure, deterministic,
-    /// zero-external-weight contract required for provider parallel calls.
+    /// zero-external-weight contract required before *we* may run two calls
+    /// concurrently.
+    ///
+    /// This is not the provider-facing `parallel_tools` field. What the model
+    /// is told it may emit is [`ToolAdvertisement::allows_parallel_emission`],
+    /// which asks a different question and gets a different answer. This flag
+    /// gates our own execution, and the driver runs one call at a time in
+    /// emission order behind its own durable prepare/commit until a per-batch
+    /// execution policy consumes it.
     pub parallel_safe: bool,
+}
+
+impl ToolAdvertisement {
+    /// Whether the request may tell the model it can emit several tool calls in
+    /// one assistant message.
+    ///
+    /// A question about the model's wire surface, and only that. Four of the six
+    /// dialects have no field that expresses "one tool at a time" and refuse to
+    /// build a tool-bearing request rather than silently send something else, so
+    /// asking for `false` here is not a restriction — it is a request they
+    /// cannot encode. Whether *we* may then run two of those calls at once is
+    /// [`ToolAdvertisement::parallel_safe`], which this deliberately does not
+    /// consult: advertising one non-pure tool must not take four providers out
+    /// of service.
+    #[must_use]
+    pub fn allows_parallel_emission(&self, capabilities: CapabilitySet) -> bool {
+        !self.definitions.is_empty() && capabilities.has(Capability::ParallelTools)
+    }
 }
 
 /// Why a tool could not be routed.

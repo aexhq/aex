@@ -194,6 +194,7 @@ fn activation_resources(policy: &ActivationPolicy) -> ActivationResources {
         context_bytes: policy.restore_resident_bytes,
         stream_buffer_bytes: u64::try_from(policy.stream_buffer_bytes).unwrap_or(u64::MAX),
         provider_streams: 1,
+        network_lane: 1,
         hands_rpcs: 1,
     }
 }
