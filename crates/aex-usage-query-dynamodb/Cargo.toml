@@ -8,6 +8,9 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 publish = false
+# Every test target is declared explicitly, so an engine-backed target can carry
+# `required-features` without autodiscovery claiming the same name unconditionally.
+autotests = false
 
 [lints]
 workspace = true
@@ -25,11 +28,14 @@ risk = ["concurrency"]
 scenarios = []
 
 
-[package.metadata.aex.not_applicable]
-integration = "DEFERRED, not inapplicable: the DynamoDB Local suite (keyset paging under a scan budget, cursor expiry across a generation flip) is unwritten. The key grammar and the write-incapability proofs are covered at the unit layer."
-
 [package.metadata.aex.targets]
 write_incapability = "unit"
+integration = "integration"
+
+[features]
+# Engine-backed targets. The unit lane neither builds nor links any of it, so
+# the per-stream gate still runs on a machine with no container runtime.
+integration-engines = ["aex-test-harness/containers"]
 
 [dependencies]
 async-trait.workspace = true
@@ -43,3 +49,16 @@ thiserror.workspace = true
 time.workspace = true
 uuid.workspace = true
 aex-usage-domain = { path = "../aex-usage-domain" }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
+aex-test-harness = { path = "../../tests/support/aex-test-harness" }
+
+[[test]]
+name = "write_incapability"
+path = "tests/write_incapability.rs"
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+required-features = ["integration-engines"]

@@ -229,6 +229,7 @@ name = "aex-capacity-dynamodb"
 version = "0.1.0"
 dependencies = [
  "aex-session-dynamodb",
+ "aex-test-harness",
  "aex-wire",
  "aws-sdk-dynamodb",
  "aws-smithy-http-client",
@@ -240,6 +241,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.0",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -783,11 +785,13 @@ version = "0.1.0"
 name = "aex-live-session-stream-api"
 version = "0.1.0"
 dependencies = [
+ "aex-load-harness",
  "aex-test-harness",
  "reqwest",
  "serde_json",
  "sha2 0.11.0",
  "tokio",
+ "toml",
 ]
 
 [[package]]
@@ -1293,6 +1297,7 @@ dependencies = [
  "aex-secret-domain",
  "aex-session-app",
  "aex-session-domain",
+ "aex-test-harness",
  "aex-wire",
  "async-trait",
  "aws-config",
@@ -1411,6 +1416,7 @@ dependencies = [
 name = "aex-usage-query-dynamodb"
 version = "0.1.0"
 dependencies = [
+ "aex-test-harness",
  "aex-usage-domain",
  "async-trait",
  "aws-config",
@@ -1421,6 +1427,7 @@ dependencies = [
  "serde_json",
  "thiserror",
  "time",
+ "tokio",
  "uuid",
 ]
 
@@ -1510,6 +1517,7 @@ name = "aex-work-dynamodb"
 version = "0.1.0"
 dependencies = [
  "aex-session-dynamodb",
+ "aex-test-harness",
  "aex-wire",
  "async-trait",
  "aws-config",

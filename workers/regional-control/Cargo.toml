@@ -26,7 +26,7 @@ risk = ["iam", "concurrency"]
 scenarios = []
 
 [package.metadata.aex.not_applicable]
-targets = "regional-services keeps the direct-invoke configuration evidence in the composition-root unit target and the fencing evidence in the owning adapter unit target; there is no separate integration binary to map"
+inline_targets = "regional-services keeps the direct-invoke configuration evidence in the composition-root unit target and the fencing evidence in the owning adapter unit target; there is no separate integration binary to map"
 
 [[bin]]
 name = "regional-control"
