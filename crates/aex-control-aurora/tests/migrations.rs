@@ -1036,10 +1036,11 @@ async fn set_available(connection: &mut PgConnection, organization: uuid::Uuid, 
         .expect("the balance projection applies");
 }
 
-/// The same write, with the refusal returned rather than panicked on.
+/// The same write, with the outcome returned rather than panicked on.
 ///
-/// `customer_balance_never_overdrawn` makes a negative spendable amount a
-/// transaction failure, and a case that proves the fence needs the error.
+/// A negative spendable amount is an ordinary write since
+/// `20260801001300_finance_customer_overdraw`; the fallible form is what proves
+/// that, by letting a case assert the `Ok` instead of assuming it.
 async fn try_set_available(
     connection: &mut PgConnection,
     organization: uuid::Uuid,
@@ -1159,14 +1160,17 @@ async fn credit_exhaustion_pauses_the_account_and_funding_resumes_it() {
 /// reader who narrowed the condition to `= 0` would leave the whole suite green
 /// and an overdrawn account running forever.
 ///
-/// The reason nothing exercised it is `customer_balance_never_overdrawn`, which
-/// refuses a debit-positive customer balance and so refuses the input the `<` arm
-/// exists for. The two rules claim the same boundary and the fence gets there
-/// first — which is why the pause, as deployed, can only ever fire at exactly
-/// zero, and why an overspend aborts the posting instead of stopping the account.
-/// This case pins both halves of that: the fence is asserted against the
-/// production schema, and then dropped in this case's own database — the only
-/// way to hand the trigger a negative balance — to prove the condition is `<=`.
+/// The reason nothing exercised it was `customer_balance_never_overdrawn`, which
+/// refused a debit-positive customer balance and so refused the input the `<` arm
+/// exists for. The two rules claimed the same boundary and the fence got there
+/// first — so the pause could only ever fire at exactly zero, and an overspend
+/// aborted the posting instead of stopping the account, losing the usage *and*
+/// leaving the account running. `20260801001300_finance_customer_overdraw`
+/// removes the fence from `customer_available`, and this case is the proof of the
+/// whole chain against the **production** schema: the overdraw commits, the
+/// balance is negative afterwards, and the account is paused with the remedy
+/// reason. Nothing is dropped or stubbed here; the constraint this case used to
+/// delete is simply not in the schema any more.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_negative_balance_pauses_and_not_only_an_exactly_zero_one() {
     let fixture = Fixture::start().await;
@@ -1186,39 +1190,54 @@ async fn a_negative_balance_pauses_and_not_only_an_exactly_zero_one() {
         "a funded account is not paused"
     );
 
-    // The production schema refuses to record the overspend at all. This is the
-    // fence, not the pause, and it is asserted here so the drop below cannot
-    // quietly become a test against a schema production does not run.
-    let refused = try_set_available(&mut connection, organization, -13_000)
+    // (a) The deduction that overdraws commits. This is the write the fence used
+    // to abort, asserted through the fallible form so a future re-fencing of
+    // `customer_available` fails here rather than silently reviving the defect.
+    try_set_available(&mut connection, organization, -13_000)
         .await
-        .expect_err("the prepaid fence refuses a debit-positive customer balance");
-    assert!(
-        refused.to_string().contains("customer_balance_never_overdrawn"),
-        "the refusal is the prepaid fence and not some other failure: {refused}"
-    );
+        .expect("an overdrawing deduction commits; refusing it would lose the usage too");
+
+    // (b) It left the balance negative rather than clamped or rolled back.
+    // `customer_available` is credit-normal, so a negative spendable amount is a
+    // debit-positive stored balance.
+    let stored: i64 = sqlx::query_scalar(
+        "SELECT b.balance_microusd FROM finance.account_balance b \
+           JOIN finance.account a ON a.account_id = b.account_id \
+          WHERE a.org_id = $1 AND a.kind = 'customer_available'",
+    )
+    .bind(organization)
+    .fetch_one(&mut connection)
+    .await
+    .expect("the customer balance reads");
     assert_eq!(
-        account_state(&mut connection, organization).await,
-        ("active".to_owned(), None),
-        "a refused posting leaves the account running, which is the defect the floor exists to close"
+        stored, 13_000,
+        "the overdraw is durable and signed, not clamped at the old floor"
     );
 
-    // Remove the fence in this case's own database so the trigger receives the
-    // input its `<` arm is written for. Nothing else in this case is altered.
-    connection
-        .execute(
-            "ALTER TABLE finance.account_balance \
-              DROP CONSTRAINT customer_balance_never_overdrawn",
-        )
-        .await
-        .expect("the fixture database drops its own constraint");
-
-    // The overspend bound is small and non-zero, so the balance a real
-    // settlement would land on is below zero rather than on it.
-    set_available(&mut connection, organization, -13_000).await;
+    // (c) And it paused the account with the remedy reason, which is the whole
+    // point of letting the write land. `= 0` would never have fired here.
     assert_eq!(
         account_state(&mut connection, organization).await,
         ("payment_hold".to_owned(), Some("top_up_required".to_owned())),
         "an overdrawn account must stop; `= 0` would never have fired here"
+    );
+
+    // The escrow account keeps the fence the available account lost. A
+    // debit-positive `customer_reserved` is not an overspend, it is more settled
+    // or released out of escrow than was ever placed in it.
+    let escrow = sqlx::query(
+        "UPDATE finance.account_balance b SET balance_microusd = 1 \
+           FROM finance.account a \
+          WHERE a.account_id = b.account_id \
+            AND a.org_id = $1 AND a.kind = 'customer_reserved'",
+    )
+    .bind(organization)
+    .execute(&mut connection)
+    .await
+    .expect_err("the escrow fence still refuses a debit-positive reserved balance");
+    assert!(
+        escrow.to_string().contains("reserved_balance_never_overdrawn"),
+        "the refusal is the escrow fence and not some other failure: {escrow}"
     );
 
     // Going further below zero is not a second transition, and it must not
