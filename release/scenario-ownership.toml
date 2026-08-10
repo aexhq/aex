@@ -296,11 +296,24 @@ observes = ["artifact:observation-reconciler", "artifact:regional-observation-ap
 
 # --- runtime ---------------------------------------------------------------------
 
+# The tool executor folds in here rather than taking a scenario of its own.
+#
+# A deployable no scenario observes fails `graph verify`, so it needed one, and a
+# separate `SC-TOOL-EXEC` would have been a scenario that could only ever be
+# driven through a Brain turn: the executor's sole caller is `brain-mux`, and its
+# admission refuses anything a scenario could send directly. Folding it in keeps
+# the observation honest -- what is proved is a turn that reaches a
+# platform-destination tool, which is the only way the executor is reachable at
+# all.
 [[scenario]]
 id = "SC-BRAIN-TURN"
 owner = "brain-core"
-deferred = "No executable live target yet proves a complete Brain turn across mux and session authority."
-observes = ["artifact:brain-mux", "artifact:session-stream-api"]
+deferred = "No executable live target yet proves a complete Brain turn across mux, session authority and the platform tool executor."
+observes = [
+  "artifact:brain-mux",
+  "artifact:session-stream-api",
+  "artifact:tool-executor",
+]
 
 [[scenario]]
 id = "SC-HANDS-HOSTILE"

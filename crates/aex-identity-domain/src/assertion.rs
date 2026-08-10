@@ -127,6 +127,7 @@ pub const fn audience_code(audience: AssertionAudience) -> u8 {
         AssertionAudience::RegionalObservation => 3,
         AssertionAudience::RegionalOtlp => 4,
         AssertionAudience::RegionalStream => 5,
+        AssertionAudience::ToolExec => 6,
     }
 }
 
@@ -139,6 +140,7 @@ pub const fn audience_from_code(byte: u8) -> Option<AssertionAudience> {
         3 => Some(AssertionAudience::RegionalObservation),
         4 => Some(AssertionAudience::RegionalOtlp),
         5 => Some(AssertionAudience::RegionalStream),
+        6 => Some(AssertionAudience::ToolExec),
         _ => None,
     }
 }
@@ -157,11 +159,30 @@ pub enum PrincipalKind {
     AccountActor = 2,
     /// A person, through a browser session.
     UserSession = 3,
+    /// An agent session, through an activation the Brain already owns.
+    ///
+    /// The one kind with **no presented credential behind it**. The other three
+    /// name something a customer handed over and `central-authz` checked; this
+    /// one names a session `brain-mux` is already executing under a
+    /// `FenceGuard`, and its envelope is signed locally rather than minted
+    /// centrally.
+    ///
+    /// It exists as its own kind rather than reusing `WorkspaceKey` because the
+    /// alternative was to let the tool executor accept an envelope whose
+    /// principal slot could also have been filled by a credential a customer
+    /// presented. Two things that are verified differently must not be spelled
+    /// the same.
+    AgentSession = 4,
 }
 
 impl PrincipalKind {
     /// Every kind, in wire order.
-    pub const ALL: [Self; 3] = [Self::WorkspaceKey, Self::AccountActor, Self::UserSession];
+    pub const ALL: [Self; 4] = [
+        Self::WorkspaceKey,
+        Self::AccountActor,
+        Self::UserSession,
+        Self::AgentSession,
+    ];
 
     /// Resolves a wire discriminant.
     #[must_use]
@@ -170,6 +191,7 @@ impl PrincipalKind {
             1 => Some(Self::WorkspaceKey),
             2 => Some(Self::AccountActor),
             3 => Some(Self::UserSession),
+            4 => Some(Self::AgentSession),
             _ => None,
         }
     }
@@ -181,6 +203,20 @@ impl PrincipalKind {
             Self::WorkspaceKey => "workspace_key",
             Self::AccountActor => "account_actor",
             Self::UserSession => "user_session",
+            Self::AgentSession => "agent_session",
+        }
+    }
+
+    /// Whether a customer presents a credential to obtain this principal.
+    ///
+    /// The pairing rule the executor enforces: a presented-credential principal
+    /// never reaches [`AssertionAudience::ToolExec`], and
+    /// [`Self::AgentSession`] never reaches any other audience.
+    #[must_use]
+    pub const fn is_presented_credential(self) -> bool {
+        match self {
+            Self::WorkspaceKey | Self::AccountActor | Self::UserSession => true,
+            Self::AgentSession => false,
         }
     }
 }
@@ -474,6 +510,10 @@ pub enum IssueError {
     /// The workspace region does not equal the audience region.
     #[error("the workspace region must equal the audience region")]
     RegionMismatch,
+    /// A presented-credential principal was aimed at the tool executor, or an
+    /// agent session was aimed at a regional edge.
+    #[error("this principal kind cannot speak to this audience")]
+    PrincipalAudienceMismatch,
 }
 
 /// Why an assertion did not verify.
@@ -518,6 +558,15 @@ pub enum VerifyError {
     /// The workspace region does not equal the audience region.
     #[error("the workspace region does not match the audience region")]
     RegionMismatch,
+    /// The principal kind and the audience do not pair.
+    ///
+    /// The tool executor accepts [`PrincipalKind::AgentSession`] and nothing
+    /// else, and every other audience refuses it. Without this, a customer
+    /// credential admitted to `tool_exec` on a projected key row would be one
+    /// `central-authz` call away from an envelope the executor would resolve a
+    /// tenant from.
+    #[error("this principal kind cannot speak to this audience")]
+    PrincipalAudienceMismatch,
     /// An unknown discriminant in a fixed field.
     #[error("the envelope carries an unknown discriminant")]
     UnknownDiscriminant,
@@ -551,6 +600,22 @@ impl From<ScopeError> for VerifyError {
 #[must_use]
 const fn region_code(region: aex_wire::types::Region) -> u8 {
     aex_control_domain::cursor::region_code(region)
+}
+
+/// Whether a principal kind may speak to an audience.
+///
+/// One rule, stated once, checked at both ends: the tool executor's audience
+/// pairs with [`PrincipalKind::AgentSession`] and with nothing else, and that
+/// kind pairs with no other audience. Checked at issue so an issuer bug cannot
+/// mint the pair, and again at verify so a verifier does not have to trust that
+/// the issuer checked.
+#[must_use]
+pub const fn principal_pairs_with_audience(
+    principal_kind: PrincipalKind,
+    audience: AssertionAudience,
+) -> bool {
+    matches!(audience, AssertionAudience::ToolExec)
+        == matches!(principal_kind, PrincipalKind::AgentSession)
 }
 
 /// The 259 bytes a signature covers.
@@ -608,6 +673,9 @@ pub fn issue(
     }
     if claims.workspace_region != claims.audience.region {
         return Err(IssueError::RegionMismatch);
+    }
+    if !principal_pairs_with_audience(claims.principal_kind, claims.audience.service) {
+        return Err(IssueError::PrincipalAudienceMismatch);
     }
 
     let message = signing_bytes(signer.kid(), claims);
@@ -762,6 +830,9 @@ pub fn verify(
     if claims.workspace_region != claims.audience.region {
         return Err(VerifyError::RegionMismatch);
     }
+    if !principal_pairs_with_audience(claims.principal_kind, claims.audience.service) {
+        return Err(VerifyError::PrincipalAudienceMismatch);
+    }
     if claims.credential_binding != *inputs.credential_binding {
         return Err(VerifyError::CredentialBindingMismatch);
     }
@@ -870,4 +941,41 @@ pub fn account_token_binding(token_id: Uuid, digest: &PresentedDigest) -> [u8; 3
 #[must_use]
 pub fn user_session_binding(session_id: Uuid, digest: &PresentedDigest) -> [u8; 32] {
     crate::credential::credential_binding(PrincipalKind::UserSession as u8, session_id, digest)
+}
+
+/// The domain-separating prefix for an agent-session binding.
+const AGENT_SESSION_BINDING_DOMAIN: &[u8] = b"aex/authz/binding/agent-session/v1";
+
+/// The binding for an agent-session principal.
+///
+/// The other three bindings hash the digest of a credential the customer
+/// presented. There is no such credential here, so this one binds the envelope
+/// to the **one effect attempt it was minted for** instead. A verifier
+/// recomputes it from the request it is holding, which is what makes a captured
+/// envelope useless for any other call: within its thirty seconds it
+/// re-authorises exactly the attempt it already authorised, and the executor's
+/// own conditional update is what decides whether that attempt spends twice.
+///
+/// This is deliberately **not** a digest over the arguments. Binding the whole
+/// body would make the envelope's meaning depend on a canonicalisation both ends
+/// have to agree about byte for byte; binding the effect identity does not, and
+/// the effect identity is already the thing the journal, the receipt and the
+/// idempotency record all key on.
+///
+/// It is also deliberately **not** over the session. A verifier has to compute
+/// the expected binding *before* it has verified anything, so every input has to
+/// be one the unverified request already carries — and the request carries no
+/// tenant-shaped field, by construction. The effect id is
+/// `blake3(agent ‖ seq ‖ kind)[..16]`, so it already names one agent's one step;
+/// adding the session would add nothing a verifier could check anyway.
+#[must_use]
+pub fn agent_session_binding(effect_id: Uuid, attempt: u16) -> [u8; 32] {
+    use sha2::{Digest as _, Sha256};
+
+    let mut hasher = Sha256::new();
+    hasher.update(AGENT_SESSION_BINDING_DOMAIN);
+    hasher.update([PrincipalKind::AgentSession as u8]);
+    hasher.update(effect_id.as_bytes());
+    hasher.update(attempt.to_be_bytes());
+    hasher.finalize().into()
 }

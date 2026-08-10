@@ -144,3 +144,85 @@ module "session_stream_service" {
   tags = var.tags
 }
 
+# --- the platform tool executor ----------------------------------------------
+#
+# The first service in this root with no public edge, and the thing that had to
+# be built for it was an address rather than a load balancer.
+#
+# `ecs-service` already deploys a service with no target group -- the variable
+# defaults to null and the `load_balancer` block is conditional -- so the gap the
+# placement record recorded ("the module requires a target group") is not there
+# any more, and an internal-ALB module was not needed. What was missing is that a
+# Fargate task's address changes on every deployment, so `brain-mux` needs a name.
+# Cloud Map publishes one; a load balancer would have solved a name-resolution
+# problem with a listener, a target group, two more security-group edges and a
+# monthly bill.
+module "tool_executor_log_group" {
+  source = "../../modules/log-group"
+
+  name           = var.tool_executor.log_group_name
+  retention_days = var.tool_executor.log_retention_days
+  kms_key_arn    = var.kms_key_arn
+  tags           = var.tags
+}
+
+module "internal_names" {
+  source = "../../modules/service-discovery-private"
+
+  namespace = var.internal_namespace
+  vpc_id    = var.vpc_id
+  services  = ["tool-executor"]
+  tags      = var.tags
+}
+
+module "tool_executor_service" {
+  source = "../../modules/ecs-service"
+
+  name                   = var.tool_executor.name
+  task_definition_family = "aex-${var.plane}-${var.region}-${var.tool_executor.name}"
+  cluster_arn            = module.cluster.arn
+  cluster_name           = var.cluster_name
+
+  image          = var.tool_executor.image
+  cpu            = var.tool_executor.cpu
+  memory         = var.tool_executor.memory
+  desired_count  = var.tool_executor.desired_count
+  stop_timeout   = var.tool_executor.stop_timeout
+  container_port = var.tool_executor.container_port
+
+  # No target group, and therefore no grace period: ECS rejects one on a service
+  # with no load balancer, and `ecs-service` refuses the combination rather than
+  # passing it through to be rejected at apply.
+  service_discovery_arn = module.internal_names.service_arns["tool-executor"]
+
+  # The only source the tasks admit. Until `brain-mux` has Terraform of its own
+  # this list is empty, and an empty list is a service that admits nothing --
+  # which is the fail-closed direction and is stated here rather than worked
+  # around, because the alternative is a private service reachable by anything in
+  # the VPC.
+  client_security_group_ids = var.tool_executor.client_security_group_ids
+
+  # Fixed count, no scaling policy. The executor holds no state between calls, so
+  # scaling it is safe in principle; it is not scaled because nothing has measured
+  # what the right signal is, and a target-tracking policy on CPU alone would
+  # scale a socket-bound workload on the wrong number. `ecs-service` enforces the
+  # consequence: with no metrics, both bounds must equal `desired_count`.
+  autoscaling_metrics = []
+  autoscaling_bounds = {
+    min_capacity = var.tool_executor.desired_count
+    max_capacity = var.tool_executor.desired_count
+  }
+
+  env                = var.tool_executor.env
+  task_role_arn      = module.role["tool-executor"].role_arn
+  execution_role_arn = var.tool_executor.execution_role_arn
+  subnets            = var.private_subnet_ids
+  log_group_name     = module.tool_executor_log_group.name
+  region             = var.region
+
+  vpc_id                               = var.vpc_id
+  interface_endpoint_security_group_id = var.interface_endpoint_security_group_id
+  gateway_endpoint_prefix_list_ids     = var.gateway_endpoint_prefix_list_ids
+
+  tags = var.tags
+}

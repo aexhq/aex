@@ -556,7 +556,14 @@ impl Worker {
                 // audience asked and never consulted the key about it. The set is
                 // published per key so narrowing it later is a control-plane
                 // decision rather than a regional-code change.
-                audiences: AudienceSet::ALL,
+                //
+                // `CUSTOMER_PRESENTABLE` rather than `ALL`, and the one bit
+                // between them is the tool executor. A workspace key is a
+                // credential a customer presents; the executor's envelope is
+                // minted inside an activation and names no presented credential
+                // at all, so a key row admitting that audience would be claiming
+                // a principal kind a key can never be.
+                audiences: AudienceSet::CUSTOMER_PRESENTABLE,
                 // The mintable ceiling is applied at creation and again here, so
                 // a key whose stored row somehow exceeded it is projected without
                 // the excess rather than with it.
@@ -693,7 +700,8 @@ impl Worker {
             WorkspaceStatus::Provisioning => return Err("workspace_not_projectable_yet".to_owned()),
             WorkspaceStatus::Deleting | WorkspaceStatus::Deleted => "deleting",
             WorkspaceStatus::Active
-                if view.account.state() == aex_control_domain::AccountState::PausedTopUpRequired =>
+                if view.account.state()
+                    == aex_control_domain::AccountState::PausedTopUpRequired =>
             {
                 "paused"
             }

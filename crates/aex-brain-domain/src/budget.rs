@@ -206,6 +206,21 @@ pub enum BudgetError {
         /// The structural limit.
         max_depth: u16,
     },
+    /// A reconciliation reported spending more than the permit reserved.
+    ///
+    /// Not a clamp and not a top-up: the reservation is what authorised the call,
+    /// so a larger actual means the caller spent money it was never granted. The
+    /// reservation stays charged in full and this is returned, because the two
+    /// alternatives are worse — refunding would credit a session for money that
+    /// left, and charging the excess would let a caller spend past a bound by
+    /// reporting a bigger number afterwards.
+    #[error("a reconciliation reported {actual} against a {reserved} reservation")]
+    ReconcileOverspend {
+        /// What the permit reserved.
+        reserved: u64,
+        /// What the caller says was spent.
+        actual: u64,
+    },
     /// The fanout page asked to admit more children than one decision may.
     #[error("fanout of {requested} exceeds the {max_fanout} admitted per decision")]
     FanoutExceeded {
@@ -214,6 +229,27 @@ pub enum BudgetError {
         /// The structural limit.
         max_fanout: u32,
     },
+}
+
+/// Proof that a session reserved platform-paid spend before it was spent.
+///
+/// Unforgeable outside this module: the field is private and there is no public
+/// constructor, so the only way to obtain one is
+/// [`BudgetNode::reserve_spend`]. It is deliberately **not** `Clone` and **not**
+/// `Copy`, because a permit that could be duplicated would be a reservation that
+/// could be settled twice — once as a refund and once as a charge.
+#[derive(Debug, PartialEq, Eq)]
+#[must_use = "an unsettled reservation stays charged against the session for its whole life"]
+pub struct SessionSpendPermit {
+    reserved: u64,
+}
+
+impl SessionSpendPermit {
+    /// How much this permit reserved.
+    #[must_use]
+    pub const fn reserved(&self) -> u64 {
+        self.reserved
+    }
 }
 
 impl BudgetNode {
@@ -313,6 +349,65 @@ impl BudgetNode {
         }
         let used = self.used.get(dimension).saturating_add(quantity);
         self.used.set(dimension, used);
+        Ok(())
+    }
+
+    /// Reserves `estimate` micro-USD of platform-paid spend and proves it.
+    ///
+    /// **The permit is the mechanism.** [`BudgetNode::reconcile_spend`] requires
+    /// one *by value*, so a spend cannot be settled without a reservation and a
+    /// reservation cannot be settled twice. `SessionSpendPermit` has a private
+    /// field and no public constructor, so nothing outside this module can make
+    /// one — the same trick `DispatchTicket` plays with `FenceGuard` and
+    /// `Grant<C>` plays in the regional composition, and it is here for the same
+    /// reason: a check a caller can forget is a check that will be forgotten.
+    ///
+    /// Reserving *before* the call rather than charging after it is the other
+    /// half. A session that only charged on settlement could overshoot its whole
+    /// budget by its concurrency width, because every call in flight would see
+    /// the headroom the others had not yet spent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BudgetError::Exhausted`] when the session has no headroom left
+    /// in [`Dimension::CostMicroUsd`], which is what produces a clean
+    /// `FinishReason::Budget` rather than an opaque dispatch failure.
+    pub fn reserve_spend(&mut self, estimate: u64) -> Result<SessionSpendPermit, BudgetError> {
+        self.consume(Dimension::CostMicroUsd, estimate)?;
+        Ok(SessionSpendPermit { reserved: estimate })
+    }
+
+    /// Settles a reservation against what was actually spent.
+    ///
+    /// Takes the permit by value so one reservation settles exactly once.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BudgetError::ReconcileOverspend`] when `actual` exceeds what the
+    /// permit reserved. The reservation stays charged in full: the money left, and
+    /// a caller must not be able to raise its own ceiling by reporting a larger
+    /// number after the fact.
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "taking the permit by value is the mechanism: one reservation settles                   exactly once, and a borrowed permit could settle twice"
+    )]
+    pub fn reconcile_spend(
+        &mut self,
+        permit: SessionSpendPermit,
+        actual: u64,
+    ) -> Result<(), BudgetError> {
+        // Destructured rather than read through the binding, so the permit is
+        // consumed here and cannot settle a second time.
+        let SessionSpendPermit { reserved } = permit;
+        if actual > reserved {
+            return Err(BudgetError::ReconcileOverspend { reserved, actual });
+        }
+        let refund = reserved - actual;
+        let used = self
+            .used
+            .get(Dimension::CostMicroUsd)
+            .saturating_sub(refund);
+        self.used.set(Dimension::CostMicroUsd, used);
         Ok(())
     }
 

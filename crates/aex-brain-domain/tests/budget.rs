@@ -1,8 +1,8 @@
 //! Slice S-1.6 — the budget algebra: `I1`, `I2`, exact conservation, roll-up, structure.
 
 use aex_brain_domain::budget::{
-    BudgetError, BudgetNode, DIMENSIONS, Dimension, DimensionVector, Kind, StructuralLimits,
-    launch_session_grant,
+    BudgetError, BudgetGrant, BudgetNode, DIMENSIONS, Dimension, DimensionVector, Kind,
+    StructuralLimits, launch_session_grant,
 };
 use aex_brain_test_support::journal_gen::only;
 use proptest::prelude::*;
@@ -256,4 +256,118 @@ fn exhaustion_names_the_dimension_that_is_binding() {
             "{error:?}"
         );
     }
+}
+
+// --- platform-paid spend: reserve before, reconcile after ---------------------
+//
+// `CostMicroUsd` is the one money dimension in the tree and it has never been
+// consumed, because under BYOK a model call does not touch it. A platform-paid
+// tool call is the first thing that should, and these pin the shape it touches
+// it with.
+
+#[test]
+fn a_reservation_is_charged_before_the_call_and_refunded_by_what_was_not_spent() {
+    let mut grant = BudgetGrant::ZERO;
+    grant.set(Dimension::CostMicroUsd, 1_000);
+    let mut node = BudgetNode::root(grant);
+
+    let permit = node.reserve_spend(400).expect("the session has headroom");
+    assert_eq!(permit.reserved(), 400);
+    assert_eq!(
+        node.free(Dimension::CostMicroUsd),
+        600,
+        "the reservation is charged before the call, not after it: a session that \
+         only charged on settlement could overshoot by its whole concurrency width"
+    );
+
+    node.reconcile_spend(permit, 150).expect("settles");
+    assert_eq!(
+        node.free(Dimension::CostMicroUsd),
+        850,
+        "the unspent remainder returns to the session"
+    );
+}
+
+#[test]
+fn a_session_with_no_headroom_is_refused_before_anything_is_dispatched() {
+    let mut grant = BudgetGrant::ZERO;
+    grant.set(Dimension::CostMicroUsd, 100);
+    let mut node = BudgetNode::root(grant);
+
+    let held = node
+        .reserve_spend(100)
+        .expect("the first call fits exactly");
+    let refusal = node
+        .reserve_spend(1)
+        .expect_err("a session with nothing left must be refused");
+    assert!(
+        matches!(
+            refusal,
+            BudgetError::Exhausted {
+                dimension: Dimension::CostMicroUsd,
+                ..
+            }
+        ),
+        "{refusal:?}"
+    );
+    node.reconcile_spend(held, 100).expect("settles");
+}
+
+#[test]
+fn a_reconciliation_larger_than_its_reservation_is_refused_and_stays_charged() {
+    // The reservation is what authorised the call, so a larger actual means money
+    // left that was never granted. Refunding would credit the session for money it
+    // spent; charging the excess would let a caller raise its own ceiling by
+    // reporting a bigger number afterwards. Neither: the reservation stays charged
+    // in full and the caller is told.
+    let mut grant = BudgetGrant::ZERO;
+    grant.set(Dimension::CostMicroUsd, 1_000);
+    let mut node = BudgetNode::root(grant);
+
+    let permit = node.reserve_spend(200).expect("headroom");
+    let refusal = node
+        .reconcile_spend(permit, 500)
+        .expect_err("an overspend must be refused");
+    assert_eq!(
+        refusal,
+        BudgetError::ReconcileOverspend {
+            reserved: 200,
+            actual: 500,
+        }
+    );
+    assert_eq!(
+        node.free(Dimension::CostMicroUsd),
+        800,
+        "the reservation stays charged in full"
+    );
+}
+
+#[test]
+fn spend_is_conserved_up_the_tree_rather_than_copied_to_every_child() {
+    // 256 subagents share one session's money. The property is inherited from the
+    // dimension's own arithmetic rather than added here, which is the reason this
+    // extends the budget instead of building a second bound beside it.
+    let mut grant = BudgetGrant::ZERO;
+    grant.set(Dimension::CostMicroUsd, 1_000);
+    let mut root = BudgetNode::root(grant);
+
+    let mut child_grant = BudgetGrant::ZERO;
+    child_grant.set(Dimension::CostMicroUsd, 600);
+    let mut child = root
+        .spawn(child_grant, StructuralLimits::default())
+        .expect("the child fits");
+
+    assert_eq!(
+        root.free(Dimension::CostMicroUsd),
+        400,
+        "what the child holds is not also the parent's to spend"
+    );
+    let permit = child.reserve_spend(600).expect("the child's whole grant");
+    assert_eq!(child.free(Dimension::CostMicroUsd), 0);
+    assert_eq!(
+        root.free(Dimension::CostMicroUsd),
+        400,
+        "a child exhausting its grant does not exhaust its parent's"
+    );
+    child.reconcile_spend(permit, 600).expect("settles");
 }

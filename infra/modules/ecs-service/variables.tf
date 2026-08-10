@@ -474,3 +474,48 @@ variable "tags" {
   default     = {}
   description = "Tags applied to the service and the task definition."
 }
+
+# A private-only service has no load balancer, so it has no listener, no target
+# group and no DNS name a caller could resolve. The two variables below are what
+# make one reachable without inventing an internal ALB for a service whose only
+# client is one other service in the same VPC.
+#
+# The alternative was an internal-ALB module. It was rejected on cost and on
+# surface: a load balancer for a single-task service with exactly one caller adds
+# a listener, a target group, two more security-group edges and a monthly bill,
+# to solve a name-resolution problem Cloud Map already solves with a DNS record.
+variable "service_discovery_arn" {
+  type        = string
+  default     = null
+  description = "Cloud Map service to register tasks with, for a service reached by name rather than through a load balancer. Null for a service behind one."
+
+  validation {
+    condition     = var.service_discovery_arn == null || can(regex("^arn:aws[a-z-]*:servicediscovery:", coalesce(var.service_discovery_arn, "none")))
+    error_message = "When set, the service discovery entry must be a Cloud Map service ARN."
+  }
+
+  validation {
+    condition     = var.service_discovery_arn == null || var.target_group_arn == null
+    error_message = "A service is reached either through a load balancer or by name, not both. Registering with a target group and a Cloud Map service at once would give one service two addresses whose health checks can disagree."
+  }
+}
+
+# The same one-element-list trick `load_balancer_security_group_ids` uses, and
+# for the same reason: the caller's group is created in the same plan, so its id
+# is unknown until apply while the number of rules has to be known while
+# planning.
+variable "client_security_group_ids" {
+  type        = list(string)
+  default     = []
+  description = "Security groups of the services that may call this one directly, for a service reached by name. Each is admitted on the container port, and this module also opens the matching egress on it, because only the service knows which port to open."
+
+  validation {
+    condition     = alltrue([for id in var.client_security_group_ids : can(regex("^sg-[0-9a-f]{8,17}$", id))])
+    error_message = "Every client security group must be an EC2 security group id such as `sg-0123456789abcdef0`."
+  }
+
+  validation {
+    condition     = length(var.client_security_group_ids) == 0 || var.target_group_arn == null
+    error_message = "A service behind a load balancer admits the load balancer and nothing else. Naming a direct client as well would open a second path past the edge that carries its own admission."
+  }
+}

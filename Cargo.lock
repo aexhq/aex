@@ -794,6 +794,10 @@ name = "aex-live-stripe-webhook-edge"
 version = "0.1.0"
 
 [[package]]
+name = "aex-live-tool-executor"
+version = "0.1.0"
+
+[[package]]
 name = "aex-live-usage-compute-worker"
 version = "0.1.0"
 
@@ -8187,6 +8191,32 @@ dependencies = [
  "bytes",
  "prost",
  "tonic",
+]
+
+[[package]]
+name = "tool-executor"
+version = "0.1.0"
+dependencies = [
+ "aex-brain-managed-web",
+ "aex-control-domain",
+ "aex-identity-domain",
+ "aex-internal-contracts",
+ "aex-platform-telemetry",
+ "aex-telemetry-schema",
+ "aex-wire",
+ "async-trait",
+ "aws-config",
+ "aws-sdk-dynamodb",
+ "aws-sdk-secretsmanager",
+ "axum",
+ "base64 0.23.0",
+ "blake3",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "uuid",
+ "zeroize",
 ]
 
 [[package]]

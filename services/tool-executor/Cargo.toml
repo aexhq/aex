@@ -1,0 +1,86 @@
+[package]
+name = "tool-executor"
+version = "0.1.0"
+description = "`tool-executor` runs platform-destination tool work outside `brain-mux`."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+autotests = false
+
+[lints]
+workspace = true
+
+[package.metadata.aex]
+owner = "brain-core"
+role = "deployable"
+artifact = "oci_image"
+deployable = "tool-executor"
+live_suite = "aex-live-tool-executor"
+layers = ["unit", "smoke", "e2e"]
+concerns = ["contract", "fault", "security", "performance"]
+seams = ["aws.dynamodb.condition", "aws.dynamodb.transact_write", "aws.iam.denial"]
+security_tier = "secret"
+risk = ["iam", "untrusted_input"]
+scenarios = ["SC-BRAIN-TURN"]
+
+[package.metadata.aex.targets]
+admission = "unit"
+composition = "unit"
+spend = "unit"
+performance_contract = "e2e"
+
+[[bin]]
+name = "tool-executor"
+path = "src/main.rs"
+
+[dependencies]
+aws-config.workspace = true
+aws-sdk-dynamodb.workspace = true
+# The one secret this process holds: the platform's own search-provider key,
+# read once at cold start and never written anywhere. It is the whole reason
+# this deployable exists rather than the work staying inside `brain-mux`.
+aws-sdk-secretsmanager.workspace = true
+axum.workspace = true
+blake3.workspace = true
+async-trait.workspace = true
+tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros", "sync"] }
+# Default features off, deliberately. The `brain-adapter` half of that crate is
+# the tenant-BYOK credential source and the Brain's executor, and turning it on
+# here would link the session store and the secret custody store into the one
+# process that exists to hold the *platform's* credential away from them.
+# `tests/composition.rs` asserts the closure stays clean.
+aex-brain-managed-web = { path = "../../crates/aex-brain-managed-web", default-features = false }
+aex-control-domain = { path = "../../crates/aex-control-domain" }
+aex-identity-domain = { path = "../../crates/aex-identity-domain" }
+aex-internal-contracts = { path = "../../crates/aex-internal-contracts" }
+aex-platform-telemetry = { path = "../../crates/aex-platform-telemetry" }
+aex-telemetry-schema = { path = "../../crates/aex-telemetry-schema" }
+aex-wire = { path = "../../crates/aex-wire" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+base64.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "test-util"] }
+
+[[test]]
+name = "admission"
+path = "tests/admission.rs"
+
+[[test]]
+name = "composition"
+path = "tests/composition.rs"
+
+[[test]]
+name = "spend"
+path = "tests/spend.rs"
+
+[[test]]
+name = "performance_contract"
+path = "tests/load.rs"

@@ -972,3 +972,130 @@ run "rejects_an_additional_group_that_is_not_a_security_group" {
 
   expect_failures = [var.additional_security_group_ids]
 }
+
+# --- reached by name rather than through a load balancer ----------------------
+#
+# The shape the tool executor needs. The claim recorded against this module was
+# that it *requires* a target group and that a private-only service therefore
+# needed a new internal-ALB module. It does not, and these prove it: what a
+# private service was actually missing was a stable address and an admitted
+# caller, and both are declared rather than load balanced.
+
+run "a_named_service_registers_with_cloud_map_and_no_load_balancer" {
+  command = plan
+
+  variables {
+    name                      = "tool-executor"
+    task_definition_family    = "aex-dev-eu-west-1-tool-executor"
+    service_discovery_arn     = "arn:aws:servicediscovery:eu-west-1:000000000000:service/srv-0123456789abcdef"
+    client_security_group_ids = ["sg-0123456789abcdef3"]
+    autoscaling_metrics       = []
+    autoscaling_bounds = {
+      min_capacity = 1
+      max_capacity = 1
+    }
+  }
+
+  assert {
+    condition     = length(aws_ecs_service.static[0].service_registries) == 1
+    error_message = "A service with no load balancer has no address unless it registers a name."
+  }
+
+  assert {
+    condition     = length(aws_ecs_service.static[0].load_balancer) == 0
+    error_message = "A named service must not also be registered with a target group."
+  }
+}
+
+run "a_named_service_admits_its_declared_client_and_nothing_else" {
+  command = plan
+
+  variables {
+    name                      = "tool-executor"
+    task_definition_family    = "aex-dev-eu-west-1-tool-executor"
+    service_discovery_arn     = "arn:aws:servicediscovery:eu-west-1:000000000000:service/srv-0123456789abcdef"
+    client_security_group_ids = ["sg-0123456789abcdef3"]
+    autoscaling_metrics       = []
+    autoscaling_bounds = {
+      min_capacity = 1
+      max_capacity = 1
+    }
+  }
+
+  assert {
+    condition     = length(aws_vpc_security_group_ingress_rule.from_client) == 1
+    error_message = "The declared client is the one source a named service admits."
+  }
+
+  assert {
+    condition     = aws_vpc_security_group_ingress_rule.from_client[0].referenced_security_group_id == "sg-0123456789abcdef3"
+    error_message = "The admitted source must be the group the caller runs with, not a CIDR."
+  }
+
+  assert {
+    condition     = aws_vpc_security_group_egress_rule.client_to_task[0].security_group_id == "sg-0123456789abcdef3"
+    error_message = "The caller's own group needs the matching egress, or the caller reaches nothing and the service looks healthy."
+  }
+
+  assert {
+    condition     = length(aws_vpc_security_group_ingress_rule.from_load_balancer) == 0
+    error_message = "A named service admits no load balancer."
+  }
+}
+
+run "a_named_service_with_no_declared_client_admits_nothing" {
+  command = plan
+
+  variables {
+    name                      = "tool-executor"
+    task_definition_family    = "aex-dev-eu-west-1-tool-executor"
+    service_discovery_arn     = "arn:aws:servicediscovery:eu-west-1:000000000000:service/srv-0123456789abcdef"
+    client_security_group_ids = []
+    autoscaling_metrics       = []
+    autoscaling_bounds = {
+      min_capacity = 1
+      max_capacity = 1
+    }
+  }
+
+  assert {
+    condition     = length(aws_vpc_security_group_ingress_rule.from_client) == 0
+    error_message = "Naming no client must leave the tasks admitting nothing. Fail-closed is the only acceptable reading of an unspecified caller for a service that spends the platform's money."
+  }
+}
+
+run "rejects_a_service_that_is_both_named_and_load_balanced" {
+  command = plan
+
+  variables {
+    service_discovery_arn             = "arn:aws:servicediscovery:eu-west-1:000000000000:service/srv-0123456789abcdef"
+    target_group_arn                  = "arn:aws:elasticloadbalancing:eu-west-1:000000000000:targetgroup/aex-dev-euw1-stream-tg/73e2d6bc24d8a067"
+    load_balancer_security_group_ids  = ["sg-0123456789abcdef2"]
+    health_check_grace_period_seconds = 60
+  }
+
+  expect_failures = [var.service_discovery_arn]
+}
+
+run "rejects_a_direct_client_on_a_load_balanced_service" {
+  command = plan
+
+  variables {
+    client_security_group_ids         = ["sg-0123456789abcdef3"]
+    target_group_arn                  = "arn:aws:elasticloadbalancing:eu-west-1:000000000000:targetgroup/aex-dev-euw1-stream-tg/73e2d6bc24d8a067"
+    load_balancer_security_group_ids  = ["sg-0123456789abcdef2"]
+    health_check_grace_period_seconds = 60
+  }
+
+  expect_failures = [var.client_security_group_ids]
+}
+
+run "rejects_a_service_discovery_entry_that_is_not_cloud_map" {
+  command = plan
+
+  variables {
+    service_discovery_arn = "arn:aws:elasticloadbalancing:eu-west-1:000000000000:targetgroup/x/1"
+  }
+
+  expect_failures = [var.service_discovery_arn]
+}

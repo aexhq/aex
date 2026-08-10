@@ -11,8 +11,8 @@ use aex_identity_domain::assertion::{
     ASSERTION_SIGNED_LEN, AssertedAccountState, Assertion, AssertionClaims, AssertionSigner,
     Audience, EPOCH_SLOTS, EpochProjection, EpochSlot, EpochSlots, IssueError, KeyId, LocalSigner,
     MAX_VERIFICATION_KEYS, Plane, PrincipalKind, VerificationInputs, VerificationKey,
-    VerificationKeySet, VerifyError, audience_code, audience_from_code, issue, signing_bytes,
-    verify,
+    VerificationKeySet, VerifyError, agent_session_binding, audience_code, audience_from_code,
+    issue, signing_bytes, verify,
 };
 use aex_internal_contracts::assertion::AssertionAudience;
 use aex_wire::types::Region;
@@ -643,11 +643,24 @@ fn every_principal_kind_round_trips_through_the_envelope() {
     for kind in PrincipalKind::ALL {
         let mut claims = claims();
         claims.principal_kind = kind;
+        // The audience follows the principal, because the two are one decision:
+        // an agent session speaks only to the executor and nothing else speaks
+        // to the executor at all.
+        claims.audience.service = if kind.is_presented_credential() {
+            AssertionAudience::RegionalSession
+        } else {
+            AssertionAudience::ToolExec
+        };
         let assertion = issue(&signer, &claims).expect("signs");
         let decoded = verify(
             assertion.as_bytes(),
             &keys,
-            &inputs(&projection, &claims.credential_binding),
+            &VerificationInputs {
+                now_ms: NOW + 1,
+                audience: claims.audience,
+                credential_binding: &claims.credential_binding,
+                projection: &projection,
+            },
         )
         .expect("verifies");
         assert_eq!(decoded.principal_kind, kind);
@@ -660,7 +673,10 @@ fn every_regional_service_and_plane_round_trips() {
     let keys = key_set(&signer);
     let projection = fresh();
     for plane in [Plane::Dev, Plane::Prd] {
-        for service in AssertionAudience::ALL {
+        // The tool executor is excluded because it is not a regional service and
+        // its principal kind is not this fixture's. It has its own round trip in
+        // `an_agent_session_envelope_pairs_only_with_the_tool_executor`.
+        for service in AssertionAudience::CUSTOMER_PRESENTABLE {
             let mut claims = claims();
             claims.audience = Audience {
                 plane,
@@ -702,9 +718,103 @@ fn the_audience_codec_is_total_and_is_declaration_order() {
     // Nothing outside the vocabulary decodes, so a forged envelope cannot name
     // an audience the platform does not have.
     assert_eq!(audience_from_code(0), None);
-    for byte in 6..=u8::MAX {
+    for byte in 7..=u8::MAX {
         assert_eq!(audience_from_code(byte), None, "{byte}");
     }
+}
+
+#[test]
+fn an_agent_session_envelope_pairs_only_with_the_tool_executor() {
+    let signer = signer();
+    let keys = key_set(&signer);
+    let projection = fresh();
+
+    let session = Uuid::from_u128(0x0192_3f2a_1c00_7000_8000_0000_0000_00a1);
+    let effect = Uuid::from_u128(0x0192_3f2a_1c00_7000_8000_0000_0000_00a2);
+    let binding = agent_session_binding(effect, 1);
+
+    let mut claims = claims();
+    claims.principal_kind = PrincipalKind::AgentSession;
+    claims.principal_id = session;
+    claims.credential_binding = binding;
+    claims.audience = Audience {
+        plane: Plane::Prd,
+        region: Region::EuWest1,
+        service: AssertionAudience::ToolExec,
+    };
+
+    let assertion = issue(&signer, &claims).expect("the pair is admitted");
+    let decoded = verify(
+        assertion.as_bytes(),
+        &keys,
+        &VerificationInputs {
+            now_ms: NOW + 1,
+            audience: claims.audience,
+            // The verifier recomputes the binding from the request it holds
+            // rather than being told it, which is the whole point of binding to
+            // the effect attempt.
+            credential_binding: &agent_session_binding(effect, 1),
+            projection: &projection,
+        },
+    )
+    .expect("verifies");
+    assert_eq!(decoded.principal_kind, PrincipalKind::AgentSession);
+    assert_eq!(decoded.principal_id, session);
+
+    // A second attempt of the same effect is a different call, so the envelope
+    // minted for the first does not authorise it.
+    assert_eq!(
+        verify(
+            assertion.as_bytes(),
+            &keys,
+            &VerificationInputs {
+                now_ms: NOW + 1,
+                audience: claims.audience,
+                credential_binding: &agent_session_binding(effect, 2),
+                projection: &projection,
+            },
+        ),
+        Err(VerifyError::CredentialBindingMismatch)
+    );
+
+    // Neither half of the pair may be swapped out. An agent session aimed at a
+    // regional edge, and a workspace key aimed at the executor, are both refused
+    // at issue rather than left to a verifier to notice.
+    let mut wrong_audience = claims;
+    wrong_audience.audience.service = AssertionAudience::RegionalSession;
+    assert_eq!(
+        issue(&signer, &wrong_audience),
+        Err(IssueError::PrincipalAudienceMismatch)
+    );
+
+    let mut wrong_principal = claims;
+    wrong_principal.principal_kind = PrincipalKind::WorkspaceKey;
+    assert_eq!(
+        issue(&signer, &wrong_principal),
+        Err(IssueError::PrincipalAudienceMismatch)
+    );
+}
+
+#[test]
+fn the_agent_session_binding_separates_every_input() {
+    let effect = Uuid::from_u128(3);
+    let other_effect = Uuid::from_u128(4);
+
+    let base = agent_session_binding(effect, 1);
+    assert_ne!(base, agent_session_binding(other_effect, 1));
+    assert_ne!(base, agent_session_binding(effect, 2));
+    assert_eq!(base, agent_session_binding(effect, 1));
+
+    // Domain separation from the three presented-credential bindings: the
+    // agent-session binding hashes a different prefix, so no arrangement of a
+    // session id and an effect id can collide with a credential digest.
+    assert_ne!(
+        base,
+        aex_identity_domain::assertion::workspace_key_binding(
+            effect,
+            &aex_identity_domain::credential::PresentedDigest::of("aex_wk_x"),
+        )
+    );
 }
 
 #[test]
