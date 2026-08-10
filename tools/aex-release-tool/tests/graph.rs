@@ -998,6 +998,96 @@ fn control_workspace_metadata_separates_the_production_caller_from_live_evidence
     assert!(!deferred.contains("no production caller"), "{deferred}");
 }
 
+// --- portable web build output ----------------------------------------------
+
+const WEB_UNITS: &str = r#"
+schema = "aex.units.v1"
+
+[[unit]]
+id = "dashboard"
+kind = "build-output"
+plane = "web"
+package = "@fixture/dashboard"
+target = "none"
+profile = "release"
+form = "tar.gz"
+config_env_namespace = "AEX_"
+config_schema_version = 1
+required_receipts = ["unit", "lint"]
+live_suite = "aex-live-dashboard"
+"#;
+
+const WEB_SCENARIOS: &str = r#"
+schema = "aex.scenario-ownership.v1"
+
+[[scenario]]
+id = "SC-DASHBOARD"
+owner = "clients"
+deferred = "The portable build exists before a protected plane deployment can be observed."
+observes = ["artifact:dashboard"]
+"#;
+
+fn web_app_meta() -> serde_json::Value {
+    serde_json::json!({
+        "owner": "clients",
+        "role": "web_app",
+        "artifact": "vercel_build_output",
+        "deployable": "dashboard",
+        "live_suite": "aex-live-dashboard",
+        "layers": ["unit", "smoke"],
+        "concerns": ["security", "compatibility"],
+        "seams": ["vercel.build_output.deploy"],
+        "security_tier": "public_edge",
+        "risk": ["untrusted_input"],
+        "scenarios": [],
+        "targets": { "security": "unit" }
+    })
+}
+
+fn web_unit_fixture(units: &str, meta: serde_json::Value) -> std::path::PathBuf {
+    let path_map = common::FIXTURE_PATH_MAP.replace(
+        "prefix = \"packages/\"\nkind = \"derive-npm\"",
+        "prefix = \"apps/\"\nkind = \"derive-npm\"",
+    );
+    Fixture::new()
+        .add_npm(common::NpmPlan::new("@fixture/dashboard", "apps/dashboard").meta(meta))
+        .npm_workspaces(&["apps/*"])
+        .add_crate(
+            CratePlan::new("aex-live-dashboard", "tests/live/aex-live-dashboard")
+                .meta(live_meta("dashboard")),
+        )
+        .units(units)
+        .scenarios(WEB_SCENARIOS)
+        .path_map(&path_map)
+        .deferral_floor(&floor_admitting_scenario("SC-DASHBOARD"))
+        .build()
+}
+
+#[test]
+fn a_web_build_output_needs_no_fake_aws_alarm_or_compute_shape() {
+    verify_fixture(&web_unit_fixture(WEB_UNITS, web_app_meta()))
+        .expect("portable web output has a provider binding rather than an AWS shape");
+}
+
+#[test]
+fn a_web_build_output_rejects_aws_or_nonportable_artifact_fields() {
+    let with_alarm = format!("{WEB_UNITS}alarm_spec = \"dashboard\"\n");
+    let err = verify_fixture(&web_unit_fixture(&with_alarm, web_app_meta())).unwrap_err();
+    assert!(err.rules().contains(&"unit-web-aws-binding"));
+
+    let wrong_form = WEB_UNITS.replace("form = \"tar.gz\"", "form = \"zip\"");
+    let err = verify_fixture(&web_unit_fixture(&wrong_form, web_app_meta())).unwrap_err();
+    assert!(err.rules().contains(&"unit-web-artifact-shape"));
+}
+
+#[test]
+fn a_web_build_output_is_bound_to_the_matching_web_application_metadata() {
+    let mut meta = web_app_meta();
+    meta["artifact"] = serde_json::json!("static_site");
+    let err = verify_fixture(&web_unit_fixture(WEB_UNITS, meta)).unwrap_err();
+    assert!(err.rules().contains(&"unit-web-metadata"));
+}
+
 // --- published packages --------------------------------------------------------
 //
 // A registry unit trades three deployment bindings for three stronger claims.

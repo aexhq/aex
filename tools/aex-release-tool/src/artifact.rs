@@ -237,9 +237,13 @@ pub fn plan(unit: &Unit) -> Result<BuildPlan> {
                 format!("services/{}/dist/handler.js", unit.id),
             ),
             "build-output" => (
-                vec!["bun".to_owned(), "run".to_owned(), "build".to_owned()],
+                vec![
+                    "bun".to_owned(),
+                    "run".to_owned(),
+                    "build:dashboard-output".to_owned(),
+                ],
                 "build-output",
-                format!("services/{}/dist", unit.id),
+                ".vercel/output".to_owned(),
             ),
             // The registry publishes the packer's own tarball, so the packer is
             // the recipe: re-archiving those bytes deterministically here would
@@ -2076,6 +2080,22 @@ alarm_spec = "regional-session-api"
             ]
         );
         assert_eq!(first.env["CARGO_INCREMENTAL"], "0");
+    }
+
+    #[test]
+    fn the_dashboard_recipe_builds_a_portable_vercel_output_from_the_workspace_root() {
+        let mut dashboard = unit("build-output");
+        dashboard.id = "dashboard".to_owned();
+        dashboard.package = "@aexhq/dashboard".to_owned();
+        dashboard.bin = None;
+        dashboard.target = "none".to_owned();
+        dashboard.profile = "release".to_owned();
+        dashboard.form = "tar.gz".to_owned();
+
+        let planned = plan(&dashboard).unwrap();
+        assert_eq!(planned.argv, vec!["bun", "run", "build:dashboard-output"]);
+        assert_eq!(planned.input, ".vercel/output");
+        assert_eq!(planned.form, "build-output");
     }
 
     #[test]

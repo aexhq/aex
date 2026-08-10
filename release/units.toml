@@ -44,11 +44,8 @@
 # package registry and runs on nobody's plane, and the row is what gives its
 # tarball the immutable release identity a consumer pins.
 #
-# DESCOPED. Four artifacts have no row, each for its own reason:
+# DESCOPED. Three artifacts have no row, each for its own reason:
 #
-#   * `dashboard` — descoped for launch. It is an internal operator console, not
-#     a customer-installable artifact, and it is deployed by hand from the
-#     private plane rather than by this graph.
 #   * `site` — descoped for launch. The marketing site carries no API surface
 #     and no compatibility contract, so an immutable release identity for it
 #     would gate launch on something no consumer pins.
@@ -60,7 +57,7 @@
 #     no registry; its manifest declares no `npm.registry.publish` seam, and a
 #     row here would assert a distribution boundary that does not exist.
 #
-# Re-scoping any of the four means adding its row here — and, for `wire`,
+# Re-scoping any of the three means adding its row here — and, for `wire`,
 # dropping `private` from its manifest first — not relaxing this comment. The
 # model and tool catalogues and the three generated bundles remain carried by
 # the hosted units that embed them.
@@ -1336,6 +1333,24 @@ extra_inputs = ["cargo:hands-agent"]
 variant = "8gb"
 minimum_memory_mib = 8192
 browser = false
+
+# --- web plane: Vercel Build Output API --------------------------------------
+
+[[unit]]
+id = "dashboard"
+kind = "build-output"
+plane = "web"
+package = "@aexhq/dashboard"
+target = "none"
+profile = "release"
+form = "tar.gz"
+# Dashboard configuration is runtime-only and intentionally spans the shared
+# public AEX namespace rather than one AWS service namespace. Plane values are
+# private binding data and never shape these public build bytes.
+config_env_namespace = "AEX_"
+config_schema_version = 1
+required_receipts = ["unit", "lint"]
+live_suite = "aex-live-dashboard"
 
 # --- public plane: published packages -----------------------------------------
 

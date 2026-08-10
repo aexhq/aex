@@ -296,6 +296,12 @@ impl Fixture {
     }
 
     #[must_use]
+    pub fn npm_workspaces(mut self, workspaces: &[&str]) -> Self {
+        self.npm_workspaces = workspaces.iter().map(ToString::to_string).collect();
+        self
+    }
+
+    #[must_use]
     pub fn file(mut self, path: &str) -> Self {
         self.files.push(path.to_owned());
         self

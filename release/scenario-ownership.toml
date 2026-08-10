@@ -56,7 +56,7 @@ deferred = "The engine-backed body runs on the integration lane but has no `e2e`
 # replaces. Naming both is not double ownership: exactly one of them is
 # deployed, and dropping either would leave the one that *is* deployed
 # unobserved.
-observes = ["artifact:central-api", "artifact:central-identity-api"]
+observes = ["artifact:central-api", "artifact:central-identity-api", "artifact:dashboard"]
 
 [scenario.prd]
 rule = "deployable_write"

@@ -284,7 +284,7 @@ jobs:
         run: |
           set -euo pipefail
           kind=$(jq -r .kind "$RELEASE_DIR/recipe.json")
-          if [ "$kind" = "ts-lambda" ] || [ "$kind" = "npm-package" ]; then
+          if [ "$kind" = "ts-lambda" ] || [ "$kind" = "npm-package" ] || [ "$kind" = "build-output" ]; then
             bun install --frozen-lockfile
           fi
 

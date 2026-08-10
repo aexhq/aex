@@ -14,6 +14,7 @@
   ],
   "scripts": {
     "build": "bun run --filter @aexhq/wire build && bun run --filter @aexhq/sdk build && bun run --filter @aexhq/site build && bun run --filter @aexhq/dashboard build",
+    "build:dashboard-output": "bun scripts/cicd/build-dashboard-output.mjs",
     "lint": "bun run brand:check && bun run --workspaces --if-present --parallel lint && bun run lint:tests",
     "typecheck": "bun run --filter @aexhq/wire typecheck && bun run --filter @aexhq/sdk typecheck && bun run --filter @aexhq/dashboard typecheck && bun run --filter @aexhq/site typecheck && bun run --filter @aexhq/user-tests typecheck && tsc --noEmit -p tsconfig.scripts.json",
     "hooks:install": "git config core.hooksPath .githooks",
@@ -44,6 +45,7 @@
     "typescript": "5.8.3",
     "typescript-eslint": "8.66.0",
     "undici": "7.29.0",
+    "vercel": "58.9.1",
     "yaml": "2.9.0",
     "zod": "4.4.3"
   },

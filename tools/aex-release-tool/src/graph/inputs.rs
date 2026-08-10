@@ -160,9 +160,9 @@ pub struct Unit {
     pub required_receipts: Vec<String>,
     /// Declarative alarm specification id.
     ///
-    /// Absent only for a published package: there is no running resource to
-    /// alarm on, and an id no `[janitor]`/alarm root ever instantiates would be
-    /// a monitoring claim nobody could act on.
+    /// Absent for a published package and for provider-portable web build
+    /// output. Neither has an AWS alarm root, and an id no provider consumes
+    /// would be a monitoring claim nobody could act on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alarm_spec: Option<String>,
     /// Companion live-test package.

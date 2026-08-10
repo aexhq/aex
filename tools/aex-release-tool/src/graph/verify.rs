@@ -284,15 +284,19 @@ pub fn verify(inputs: &GraphInputs) -> Result<BuiltGraph> {
                     ),
                 ));
             }
-            for (field, value) in [
-                ("alarm_spec", unit.alarm_spec.as_deref()),
-                ("config_env_namespace", unit.config_env_namespace.as_deref()),
-            ] {
-                if value.is_none_or(str::is_empty) {
-                    violations.push(Violation::new(
-                        "unit-deployment-binding-missing",
-                        format!("unit `{}` is deployed and must declare `{field}`", unit.id),
-                    ));
+            if unit.kind == "build-output" {
+                violations.extend(verify_web_build_output(unit, inputs));
+            } else {
+                for (field, value) in [
+                    ("alarm_spec", unit.alarm_spec.as_deref()),
+                    ("config_env_namespace", unit.config_env_namespace.as_deref()),
+                ] {
+                    if value.is_none_or(str::is_empty) {
+                        violations.push(Violation::new(
+                            "unit-deployment-binding-missing",
+                            format!("unit `{}` is deployed and must declare `{field}`", unit.id),
+                        ));
+                    }
                 }
             }
         }
@@ -435,6 +439,89 @@ pub fn verify(inputs: &GraphInputs) -> Result<BuiltGraph> {
         violations.dedup();
         Err(ToolError::many(Exit::GraphVerification, violations))
     }
+}
+
+/// A Vercel Build Output API tree is deployed, but it is not an AWS resource.
+/// Its binding is the npm web application and the runtime configuration
+/// namespace; requiring an AWS alarm id or compute envelope would create
+/// declarations no provider consumes.
+fn verify_web_build_output(unit: &super::inputs::Unit, inputs: &GraphInputs) -> Vec<Violation> {
+    let mut violations = Vec::new();
+    if unit.plane != "web"
+        || unit.target != "none"
+        || unit.profile != "release"
+        || unit.form != "tar.gz"
+    {
+        violations.push(Violation::new(
+            "unit-web-artifact-shape",
+            format!(
+                "unit `{}` must be a release-profile `tar.gz` Build Output tree for no target in the `web` plane",
+                unit.id
+            ),
+        ));
+    }
+    if unit.config_env_namespace.as_deref() != Some("AEX_") {
+        violations.push(Violation::new(
+            "unit-web-configuration-binding",
+            format!(
+                "unit `{}` must bind the shared runtime-only `AEX_` configuration namespace",
+                unit.id
+            ),
+        ));
+    }
+    if unit.alarm_spec.is_some()
+        || unit.bin.is_some()
+        || unit.entrypoint.is_some()
+        || unit.base_image.is_some()
+        || unit.health_path.is_some()
+        || unit.ready_path.is_some()
+        || unit.lambda.is_some()
+        || unit.fargate.is_some()
+        || unit.microvm.is_some()
+    {
+        violations.push(Violation::new(
+            "unit-web-aws-binding",
+            format!(
+                "unit `{}` is provider-portable Build Output and cannot declare an AWS alarm, entrypoint, base image, health path or compute shape",
+                unit.id
+            ),
+        ));
+    }
+    let Some(member) = inputs.npm.iter().find(|member| member.name == unit.package) else {
+        violations.push(Violation::new(
+            "unit-web-package-unknown",
+            format!(
+                "unit `{}` names `{}`, which is not an npm workspace member",
+                unit.id, unit.package
+            ),
+        ));
+        return violations;
+    };
+    let expected_dir = format!("apps/{}", unit.id);
+    if member.dir != expected_dir {
+        violations.push(Violation::new(
+            "unit-web-directory",
+            format!(
+                "unit `{}` builds `{expected_dir}`, but `{}` lives in `{}`",
+                unit.id, unit.package, member.dir
+            ),
+        ));
+    }
+    match member.meta.as_ref() {
+        Some(meta)
+            if meta.role == "web_app"
+                && meta.artifact == "vercel_build_output"
+                && meta.deployable.as_deref() == Some(unit.id.as_str())
+                && meta.live_suite.as_deref() == unit.live_suite.as_deref() => {}
+        _ => violations.push(Violation::new(
+            "unit-web-metadata",
+            format!(
+                "`{}` must declare the matching `web_app`, `vercel_build_output`, deployable and live suite metadata for unit `{}`",
+                member.dir, unit.id
+            ),
+        )),
+    }
+    violations
 }
 
 /// Verify the graph is structurally sound and has executable cross-service

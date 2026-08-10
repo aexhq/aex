@@ -1,8 +1,11 @@
+import { fileURLToPath } from "node:url";
+
 /** @type {import("next").NextConfig} */
 const config = {
   reactStrictMode: true,
   poweredByHeader: false,
   turbopack: {
+    root: fileURLToPath(new URL("../..", import.meta.url)),
     resolveAlias: {
       "@aexhq/sdk": "../../packages/sdk/dist/index.js",
       "@aexhq/wire": "../../packages/wire/dist/index.js",
