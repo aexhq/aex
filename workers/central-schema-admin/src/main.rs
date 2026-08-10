@@ -585,21 +585,62 @@ mod tests {
         assert!(ddl.contains("sum(amount_microusd)"));
         assert!(ddl.contains("observed <> declared"));
         assert!(ddl.contains("BEFORE UPDATE OR DELETE"));
-        assert!(ddl.contains("balance_microusd <= 0"));
         assert!(!ddl.contains("current_setting"));
         assert!(!ddl.contains("double precision"));
         assert!(!ddl.contains("::float8"));
+        // The baseline's `customer_balance_never_overdrawn` is deliberately not
+        // asserted here. `20260801001300` drops it, so pinning its text would
+        // pin a constraint the deployed schema does not have — the effective
+        // rule is pinned by `the_overdraw_allowance_...` below instead.
+    }
+
+    /// The prepaid fence covers the escrow account and nothing else.
+    ///
+    /// `customer_available` must be allowed past zero or the credit-exhaustion
+    /// pause cannot fire at all: the deduction that exhausts an account is the
+    /// only input that reaches the trigger's `<` arm, and a CHECK that refuses
+    /// it aborts the settlement instead, which loses the usage *and* leaves the
+    /// account running. `customer_reserved` is a different fact — the negated
+    /// sum of open holds — where a debit-positive value is a conservation error
+    /// rather than an overspend, so it stays fenced.
+    ///
+    /// Pinned as text because the alternative is a container, and because the
+    /// tempting repair is to put a *bounded* floor back. Any bound reinstates
+    /// the identical defect at the bound: the settlement that crosses it aborts
+    /// and does not pause.
+    #[test]
+    fn the_overdraw_allowance_frees_available_and_keeps_the_escrow_fence() {
+        let baseline =
+            include_str!("../../../migrations/central/20260801000500_baseline_finance.sql");
+        let ddl =
+            include_str!("../../../migrations/central/20260801001300_finance_customer_overdraw.sql");
+        assert!(
+            baseline.contains("CONSTRAINT customer_balance_never_overdrawn"),
+            "the baseline is the migration whose fence this one relaxes"
+        );
+        assert!(
+            ddl.contains("DROP CONSTRAINT customer_balance_never_overdrawn"),
+            "the fence that outranked the pause is removed, not narrowed in place"
+        );
+        assert!(
+            ddl.contains("ADD CONSTRAINT reserved_balance_never_overdrawn CHECK (")
+                && ddl.contains("kind <> 'customer_reserved' OR balance_microusd <= 0"),
+            "the escrow account keeps its fence"
+        );
+        assert!(
+            !ddl.contains("'customer_available'"),
+            "no arm of the replacement constrains the account an overspend lands on"
+        );
     }
 
     /// The credit floor stops at zero **or below**, never only at zero.
     ///
-    /// The distinction is invisible to the engine-backed suite: the fence above,
-    /// `customer_balance_never_overdrawn`, refuses a debit-positive customer
-    /// balance, so the only input that separates `<= 0` from `= 0` cannot be
-    /// written through any production path, and narrowing the comparison would
-    /// leave every behavioural case green while an overdrawn account ran on. The
-    /// condition is therefore pinned as text, in the same shape as the
-    /// conservation defences above.
+    /// Narrowing the comparison to `= 0` would leave an overdrawn account
+    /// running forever, and until `20260801001300` no behavioural case could
+    /// catch it: `customer_balance_never_overdrawn` refused the only input that
+    /// separates `<= 0` from `= 0`, so the whole suite stayed green either way.
+    /// The engine-backed suite can write that input now, but the text pin stays
+    /// — it is the half of the proof that runs without a container.
     #[test]
     fn the_credit_floor_pauses_at_or_below_zero_and_never_only_at_zero() {
         let ddl = include_str!(
@@ -623,7 +664,7 @@ mod tests {
         let bundle = MigrationBundle::load(&path).expect("committed bundle is valid");
         let embedded =
             MigrationBundle::embedded().expect("the executable embeds the canonical lock");
-        assert_eq!(bundle.head(), 20_260_801_001_200);
+        assert_eq!(bundle.head(), 20_260_801_001_300);
         assert_eq!(
             bundle.versions(),
             vec![
@@ -640,6 +681,7 @@ mod tests {
                 20_260_801_001_000,
                 20_260_801_001_100,
                 20_260_801_001_200,
+                20_260_801_001_300,
             ]
         );
         assert_eq!(embedded.versions(), bundle.versions());

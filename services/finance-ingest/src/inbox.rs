@@ -58,7 +58,7 @@ INSERT INTO finance.account (account_id, org_id, kind, normal_side) \
 VALUES (:account_id, :org_id, :kind, :normal_side) \
 ON CONFLICT (account_id) DO NOTHING";
 
-    /// Creates the projection row that the prepaid fence is a CHECK on.
+    /// Creates the projection row the balance rules are attached to.
     pub const ENSURE_BALANCE: &str = "\
 INSERT INTO finance.account_balance (account_id, org_id, kind, currency) \
 SELECT a.account_id, a.org_id, a.kind, a.currency FROM finance.account a \
@@ -88,8 +88,12 @@ VALUES (:transaction_id, :posting_seq, :account_id, 'USD', :amount_microusd)";
 
     /// The projection, written in the same transaction as its postings.
     ///
-    /// The prepaid fence is a CHECK on this table, so an overdraw aborts the
-    /// whole transaction rather than posting a negative balance.
+    /// A deduction that takes `customer_available` past zero commits. Since
+    /// `20260801001300_finance_customer_overdraw` the prepaid CHECK covers only
+    /// `customer_reserved`, so the overdraw lands, and landing it is what fires
+    /// `account_balance_credit_exhaustion` and pauses the account. The earlier
+    /// behaviour — abort the whole transaction — discarded the usage and left
+    /// the account running, which is the opposite of stopping it.
     pub const APPLY_PROJECTION: &str = "\
 UPDATE finance.account_balance \
    SET balance_microusd = balance_microusd + :amount_microusd, \

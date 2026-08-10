@@ -58,10 +58,23 @@ SELECT a.status, a.reason, a.revision, \
     /// spendable amount is the negation of the stored balance. `pending` is the
     /// part of the escrow already consumed by rated usage whose reservation has
     /// not closed.
+    ///
+    /// The available amount is floored at zero. Since
+    /// `20260801001300_finance_customer_overdraw` an asynchronous deduction may
+    /// take `customer_available` past zero — that is the signal that pauses the
+    /// account, not a corruption — and `BillingBalance.availableCents` is an
+    /// unsigned published amount that `Microusd` refuses to hold a negative in.
+    /// `GREATEST` is the honest projection rather than a rounding: the field
+    /// means *spendable now*, and an overdrawn account can spend nothing. The
+    /// shortfall is reported as a fact of its own, by `operationalState` going
+    /// `paused` with `reason = top_up_required` and the flat
+    /// `minimumRestoreCents` remedy beside it. Without the floor the balance
+    /// endpoint would fail to decode for precisely the customers who need it to
+    /// tell them to top up.
     pub const READ_BALANCE: &str = "\
-SELECT coalesce((SELECT -sum(b.balance_microusd) FROM finance.account_balance b \
+SELECT GREATEST(coalesce((SELECT -sum(b.balance_microusd) FROM finance.account_balance b \
                   JOIN finance.account a ON a.account_id = b.account_id \
-                 WHERE a.org_id = ba.org_id AND a.kind = 'customer_available'), 0)::bigint, \
+                 WHERE a.org_id = ba.org_id AND a.kind = 'customer_available'), 0), 0)::bigint, \
        coalesce((SELECT -sum(b.balance_microusd) FROM finance.account_balance b \
                   JOIN finance.account a ON a.account_id = b.account_id \
                  WHERE a.org_id = ba.org_id AND a.kind = 'customer_reserved'), 0)::bigint, \
@@ -1075,6 +1088,32 @@ mod tests {
                 "a finance statement must never cast money to floating point"
             );
         }
+    }
+
+    /// The published available amount is floored, because the ledger is not.
+    ///
+    /// `20260801001300_finance_customer_overdraw` lets an asynchronous deduction
+    /// take `customer_available` past zero — that overdraw is the signal that
+    /// pauses the account. `BillingBalance.availableCents` is unsigned and
+    /// `Microusd::new` refuses a negative, so without this floor `balance()`
+    /// answers `AuthorityError::Decode` for exactly the organizations whose
+    /// balance is trying to tell them to top up. The floor is honest rather than
+    /// cosmetic: the field means *spendable now*, and an overdrawn account can
+    /// spend nothing.
+    #[test]
+    fn the_published_available_amount_is_floored_because_the_ledger_is_not() {
+        assert!(
+            sql::READ_BALANCE.contains("GREATEST(coalesce((SELECT -sum(b.balance_microusd)"),
+            "the available amount is floored at zero before it is decoded"
+        );
+        assert!(
+            super::money(-1, "available_microusd").is_err(),
+            "a negative would be a decode failure, which is what the floor prevents"
+        );
+        assert!(
+            super::money(0, "available_microusd").is_ok(),
+            "the floored value is representable"
+        );
     }
 
     #[test]

@@ -324,8 +324,15 @@ async fn journal_history_cannot_be_mutated_even_by_the_owner() {
     }
 }
 
+/// After the whole chain applies, the escrow account is the only fenced one.
+///
+/// The baseline fenced `customer_available` too, and that outranked the
+/// credit-exhaustion pause: the deduction that exhausts an account was refused,
+/// so the usage was discarded and the account went on running.
+/// `20260801001300` drops it. This asserts the *end state* of the chain rather
+/// than any one body, which is what a database actually gets.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_customer_balance_can_never_be_overdrawn() {
+async fn only_the_escrow_balance_is_fenced_after_the_chain_applies() {
     let fixture = Fixture::start().await;
     let migrator = native_migrator();
     let mut connection = fixture.connect().await;
@@ -334,18 +341,31 @@ async fn a_customer_balance_can_never_be_overdrawn() {
         .await
         .expect("the bundle applies");
 
-    // The prepaid fence is a CHECK on the projection: a credit-normal customer
-    // balance must stay at or below zero, so a debit past zero aborts.
-    let error = connection
+    let fences: Vec<String> = sqlx::query_scalar(
+        "SELECT conname::text FROM pg_constraint \
+          WHERE conrelid = 'finance.account_balance'::regclass AND contype = 'c' \
+          ORDER BY conname",
+    )
+    .fetch_all(&mut connection)
+    .await
+    .expect("the projection's check constraints read");
+    assert_eq!(
+        fences,
+        vec![
+            "balance_bound".to_owned(),
+            "reserved_balance_never_overdrawn".to_owned()
+        ],
+        "the available-balance fence is gone and the escrow fence remains"
+    );
+
+    // A platform ledger was never covered by the prepaid fence and still is not.
+    connection
         .execute(
             "UPDATE finance.account_balance SET balance_microusd = 1 \
               WHERE account_id = '00000000-0000-7000-8000-000000000003'",
         )
-        .await;
-    assert!(
-        error.is_ok(),
-        "a platform revenue account is not fenced by the prepaid CHECK"
-    );
+        .await
+        .expect("a platform revenue account is not fenced by the prepaid CHECK");
 }
 
 #[tokio::test(flavor = "multi_thread")]
