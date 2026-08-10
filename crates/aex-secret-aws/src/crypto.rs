@@ -170,13 +170,18 @@ impl EnvelopeCrypto {
         if let Some(cached) = self.cache.get(&branch_key_id, version, context_digest, now) {
             return Ok(cached);
         }
+        // The branch key is opened under the **branch key's** context, not the
+        // secret's: one wrapped key serves every name and generation in the
+        // workspace, so the wrap context must be reproducible from the workspace
+        // alone. The secret's full identity binds the value one layer down, as
+        // AEAD additional data, which is where it is actually enforced.
         let material = self
             .keys
             .material(
                 &branch_key_id,
                 version,
                 wrapped,
-                &context::kms_pairs(context),
+                &context::branch_key_pairs(context),
             )
             .await?;
         self.cache.put(material.clone(), context_digest, now);
@@ -219,12 +224,15 @@ impl SecretCrypto for EnvelopeCrypto {
         now: Timestamp,
     ) -> Result<SealedSecret, SecretCryptoError> {
         let (opened, source_material) = self.open_with_material(sealed, from, now).await?;
+        // `ReEncrypt` moves the wrapped branch key from one branch-key context
+        // to another, which is a no-op when both name the same workspace and a
+        // real re-wrap when a value crosses into another workspace's key.
         let wrapped = self
             .keys
             .rewrap(
                 &sealed.wrapped_branch_key,
-                &context::kms_pairs(from),
-                &context::kms_pairs(to),
+                &context::branch_key_pairs(from),
+                &context::branch_key_pairs(to),
             )
             .await?;
         let version = key_version(wrapped.as_bytes());

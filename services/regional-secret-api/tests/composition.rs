@@ -183,8 +183,12 @@ fn the_mounted_router_answers_exactly_the_served_set() {
     let served = Routes::served();
     assert_eq!(
         served,
-        vec![RouteId::SecretDelete, RouteId::SecretRevoke],
-        "the two routes whose handlers need no ciphertext"
+        vec![
+            RouteId::SecretDelete,
+            RouteId::SecretPut,
+            RouteId::SecretRevoke
+        ],
+        "the two routes that need no ciphertext, plus the first seal"
     );
     for id in &served {
         assert_eq!(route_owner(*id), Some(RouteOwner::SecretApi), "`{id}`");

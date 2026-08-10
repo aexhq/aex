@@ -75,8 +75,12 @@ impl KeyStoreBinding {
     }
 }
 
-/// One active branch key, as an administrator sees it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One active branch key, as an administrator **and** as the seal path sees it.
+///
+/// It used to be purely an administrator's view and dropped the one field a
+/// seal needs. It no longer does (D-4): `wrapped_material` is the record's `enc`
+/// attribute, and `SecretCrypto::seal` takes exactly those bytes.
+#[derive(Clone, PartialEq, Eq)]
 pub struct ActiveBranchKey {
     /// Which branch key.
     pub branch_key_id: BranchKeyId,
@@ -89,6 +93,36 @@ pub struct ActiveBranchKey {
     pub kms_arn: String,
     /// The hierarchy version.
     pub hierarchy_version: u64,
+    /// The branch key **as the store holds it**: wrapped under the root key and
+    /// never openable here.
+    ///
+    /// Renamed from the record's `enc` at this boundary so nothing downstream
+    /// can read it as plaintext. It is opened by `KMS` inside `aex-secret-aws`
+    /// and by nothing else, and it travels into the row it seals so a later
+    /// rotation cannot orphan it (D-5).
+    pub wrapped_material: Vec<u8>,
+}
+
+impl std::fmt::Debug for ActiveBranchKey {
+    /// Renders every identifier and no material.
+    ///
+    /// The bytes are wrapped rather than plaintext, so printing them would leak
+    /// nothing openable — but a wrapped key in a log is still key material in a
+    /// log, and the byte count is the only part of it that is ever diagnostic.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ActiveBranchKey")
+            .field("branch_key_id", &self.branch_key_id)
+            .field("version", &self.version)
+            .field("create_time", &self.create_time)
+            .field("kms_arn", &self.kms_arn)
+            .field("hierarchy_version", &self.hierarchy_version)
+            .field(
+                "wrapped_material",
+                &format_args!("<wrapped, {} bytes>", self.wrapped_material.len()),
+            )
+            .finish()
+    }
 }
 
 impl From<BranchKeyRecord> for ActiveBranchKey {
@@ -99,6 +133,7 @@ impl From<BranchKeyRecord> for ActiveBranchKey {
             create_time: record.create_time,
             kms_arn: record.kms_arn,
             hierarchy_version: record.hierarchy_version,
+            wrapped_material: record.enc,
         }
     }
 }

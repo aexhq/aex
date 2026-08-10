@@ -713,11 +713,23 @@ impl SecretsApi for Routes {
         Err(not_served(RouteId::SecretDelete))
     }
 
+    /// `GET /api/workspace/secrets/{name}` — one secret's metadata.
+    ///
+    /// A **reserved** name answers `404` before any read (D-10). A provider
+    /// credential's backing secret is invisible in this fragment: leaving it
+    /// visible would let a customer `secret_delete` it and leave a `ready`
+    /// binding pointing at a tombstone, so `provider_credential_get` would
+    /// publish `ready` for something that cannot work — a read path telling a
+    /// lie. Its lifecycle runs through `provider_credential_revoke`, which is
+    /// the only route that may fence it.
     async fn secret_get(
         &self,
         _cx: &WireContext,
         name: ResourceName,
     ) -> WireResult<WithETag<models::SecretMetadata>> {
+        if is_reserved_secret_name(&name) {
+            return Err(WireError::new(ErrorCode::NotFound));
+        }
         let stored = self
             .shared
             .custody
@@ -750,6 +762,15 @@ impl SecretsApi for Routes {
         Err(not_served(RouteId::SecretRevoke))
     }
 
+    /// `GET /api/workspace/secrets` — the workspace's secrets.
+    ///
+    /// Reserved names are **skipped** (D-10), which is why a page can come back
+    /// under-full while still reporting a correct `nextCursor`: the cursor is
+    /// minted from the authority's own position and never from the filtered item
+    /// count, and the wire already permits a short page. Filtering after the
+    /// read is what keeps the key template `authorize_managed_call` conditions
+    /// on unchanged — a hot-path change to solve a cold-path problem was the
+    /// alternative, and it was rejected.
     async fn secrets_list(
         &self,
         _cx: &WireContext,
@@ -768,8 +789,24 @@ impl SecretsApi for Routes {
             .await
             .map_err(|error| authority_failure(&error))?;
         let next = self.continuation(page.next.as_ref(), &binding)?;
-        projection::secret_metadata_page(&page.items, next).map_err(WireError::from)
+        let visible: Vec<_> = page
+            .items
+            .into_iter()
+            .filter(|row| !is_reserved_secret_name(&row.name))
+            .collect();
+        projection::secret_metadata_page(&visible, next).map_err(WireError::from)
     }
+}
+
+/// Whether a stored secret name belongs to the reserved credential namespace.
+///
+/// The reservation is **typed**, not a string-prefix convention: a name is
+/// reserved exactly when it parses as a `ProviderCredentialId`, which is the
+/// same rule `regional-secret-api` refuses a `secret_put` under. One rule, two
+/// deployables, and neither can drift into admitting what the other hides.
+fn is_reserved_secret_name(name: &ResourceName) -> bool {
+    use aex_wire::ids::PrefixedId as _;
+    ProviderCredentialId::parse(name.as_str()).is_ok()
 }
 
 impl ProviderCredentialsApi for Routes {

@@ -41,8 +41,14 @@ integration-engines = ["dep:tokio", "aex-test-harness/containers"]
 [dependencies]
 async-trait.workspace = true
 aws-sdk-dynamodb.workspace = true
+# The one `KMS` call this crate makes is `GenerateDataKeyWithoutPlaintext`, in
+# `provision`: it wraps fresh branch material that never enters this process in
+# the clear. Opening material is `aex-secret-aws`'s job and is not linked here.
+aws-sdk-kms.workspace = true
 aws-smithy-types.workspace = true
 thiserror.workspace = true
+# Only for the wall clock a lazily created record stamps itself with.
+time.workspace = true
 aex-secret-domain = { path = "../aex-secret-domain" }
 aex-wire = { path = "../aex-wire" }
 # The shared error vocabulary and page budget only.

@@ -20,6 +20,73 @@ pub const NAME_DIGEST_KEY: &str = "aex:name-digest";
 /// KMS.
 pub const NAME_KEY: &str = "aex:name";
 
+/// The context key naming the plane a branch key belongs to.
+pub const PLANE_KEY: &str = "aex:plane";
+
+/// The context key naming the region.
+pub const REGION_KEY: &str = "aex:region";
+
+/// The context key naming the workspace, which **is** the branch key identity.
+pub const WORKSPACE_KEY: &str = "aex:workspace";
+
+/// The **branch key's** own encryption context: plane, region and workspace.
+///
+/// This is what wraps and unwraps branch material at `KMS`, and it is
+/// deliberately narrower than [`kms_pairs`].
+///
+/// # Why it is not the secret's context
+///
+/// A branch key is per **workspace** (`BranchKeyId::of`), so it is wrapped once
+/// and opened by every secret that workspace ever holds. An encryption context
+/// is authenticated additional data: whatever wraps a value must be reproducible
+/// **exactly** by every future opener, from information the opener has. The
+/// secret's context carries `aex:organization`, `aex:name-digest`,
+/// `aex:generation` and sometimes `aex:custody_revision` — none of which the
+/// workspace's single branch key can be bound to, because the same key must open
+/// every name and every generation. Wrapping under the secret's context would
+/// require one wrapped key per `(name, generation)`, which is exactly the
+/// per-write `GenerateDataKey` the branch-key hierarchy exists to avoid: a `KMS`
+/// round trip on every write *and every open*, and a cache that can never hit.
+///
+/// # What still binds a value to its exact identity
+///
+/// Everything the narrower context drops is enforced one layer down, and more
+/// strongly: the **full** secret context is the AEAD additional data
+/// ([`crate::context::aad_bytes`]) and its digest is stored beside the
+/// ciphertext, so a frame moved between organizations, names, generations or
+/// custody revisions fails to open — and the digest comparison catches it
+/// **before** a `KMS` call is spent. Tenant isolation is unweakened and remains
+/// enforced at both layers: `aex:workspace` is in this context, so `KMS` itself
+/// refuses to open one tenant's branch key while another tenant is claimed.
+///
+/// The rotation attestation and the rotation-reason digest are deliberately
+/// **not** here. They are recorded on the branch-key row for audit, but they are
+/// not reproducible by an opener that only knows which workspace it is serving,
+/// and an encryption context nobody can rebuild is a key nobody can use.
+#[must_use]
+pub fn branch_key_pairs(context: &EncryptionContext) -> BTreeMap<String, String> {
+    branch_key_context(
+        context.plane.as_str(),
+        context.region.code(),
+        &context.workspace.to_string(),
+    )
+}
+
+/// The same context, built from the three identifiers directly.
+///
+/// The provisioning path has no [`EncryptionContext`] — it is creating the key a
+/// context will later be built against — so it composes the pairs from the plane,
+/// the region and the branch key id. One function, so a wrap and an unwrap
+/// cannot disagree about the spelling.
+#[must_use]
+pub fn branch_key_context(plane: &str, region: &str, workspace: &str) -> BTreeMap<String, String> {
+    BTreeMap::from([
+        (PLANE_KEY.to_owned(), plane.to_owned()),
+        (REGION_KEY.to_owned(), region.to_owned()),
+        (WORKSPACE_KEY.to_owned(), workspace.to_owned()),
+    ])
+}
+
 /// Renders the KMS-visible pairs, in canonical order.
 ///
 /// The pairs are a `BTreeMap`, so the order a decryptor rebuilds is the order an

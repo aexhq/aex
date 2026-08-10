@@ -15,6 +15,7 @@ use aex_secret_domain::secret::{SecretRevision, SecretState, SourceGeneration};
 use aex_session_dynamodb::attr::{Item, n, s, stamp};
 use aex_session_dynamodb::error::StoreError;
 use aex_session_dynamodb::plan::{IMMUTABLE, Participant, TransactionPlan, key};
+use aex_session_dynamodb::replay::{Receipt, encode_receipt_row};
 use aex_wire::ids::{SessionId, WorkspaceId};
 use aex_wire::types::Timestamp;
 use aws_sdk_dynamodb::types::builders::UpdateBuilder;
@@ -42,11 +43,52 @@ pub fn token(tag: &str, parts: &[&str]) -> String {
 }
 
 /// The participants a secret `set` names, in plan order.
+///
+/// This is the **minimum** set: the two optional participants a first-seal write
+/// adds — the durable receipt (D-6) and the quota guard (D-13) — append in the
+/// order [`set`] compiles them, so a plan's participant list is exactly what the
+/// caller asked for and never a superset.
 pub const SET_ORDER: [Participant; 3] = [
     Participant::SECRET_GENERATION,
     Participant::SECRET_METADATA,
     Participant::SECRET_LINEAGE,
 ];
+
+/// A per-workspace collection bound, enforced by a counter row (D-13).
+///
+/// The guard is a participant of the same transaction as the write it bounds,
+/// so a create that would exceed the maximum commits **nothing** — no
+/// generation, no metadata, no lineage and no receipt. Counting by listing was
+/// rejected: it is `O(n)` on a write path, and `list_secrets` typed-refuses a
+/// collection past its page budget, so it would start failing before the limit
+/// did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Quota {
+    /// Which counter is being consumed.
+    pub participant: Participant,
+    /// The largest count the workspace may reach.
+    pub max: u64,
+}
+
+impl Quota {
+    /// The secret-count bound of one workspace.
+    #[must_use]
+    pub const fn secrets(max: u64) -> Self {
+        Self {
+            participant: Participant::SECRET_COUNT,
+            max,
+        }
+    }
+
+    /// The provider-credential-count bound of one workspace.
+    #[must_use]
+    pub const fn provider_credentials(max: u64) -> Self {
+        Self {
+            participant: Participant::CUSTODY_CREDENTIAL_COUNT,
+            max,
+        }
+    }
+}
 
 /// Compiles the secret `set` transaction.
 ///
@@ -54,17 +96,32 @@ pub const SET_ORDER: [Participant; 3] = [
 /// transaction can never leave metadata pointing at a generation that does not
 /// exist.
 ///
+/// `receipt` is `Some` for every route that declares an `Idempotency-Key`, and
+/// the receipt `Put` is a participant of **this** transaction rather than a
+/// second one: a receipt written separately reintroduces exactly the ambiguous
+/// window it exists to close.
+///
+/// `quota` is `Some` only when the handler observed no existing record — a
+/// replace does not consume quota, because the collection does not grow.
+///
 /// # Errors
 ///
 /// [`StoreError`] when a row could not be encoded or an action could not be
-/// built.
+/// built, or when `quota` is supplied for a replace.
 pub fn set(
     table: &str,
     generation: &StoredGeneration,
     metadata: &SecretMetadata,
     expected_revision: Option<SecretRevision>,
+    receipt: Option<&Receipt>,
+    quota: Option<Quota>,
 ) -> Result<TransactionPlan, StoreError> {
     validate_set(generation, metadata, expected_revision)?;
+    if quota.is_some() && expected_revision.is_some() {
+        return Err(StoreError::Invalid {
+            detail: "a replace does not consume quota; the collection does not grow".to_owned(),
+        });
+    }
     let mut plan = TransactionPlan::new(token(
         "sec",
         &[
@@ -144,7 +201,85 @@ pub fn set(
             ))
             .condition_expression(IMMUTABLE),
     )?;
+
+    if let Some(receipt) = receipt {
+        push_receipt(&mut plan, table, metadata.workspace, receipt)?;
+    }
+    if let Some(quota) = quota {
+        push_quota(
+            &mut plan,
+            table,
+            &keys::secret_counter(metadata.workspace),
+            metadata.workspace,
+            quota,
+            metadata.updated_at,
+        )?;
+    }
     Ok(plan)
+}
+
+/// Appends the durable receipt as a participant of the caller's transaction.
+///
+/// `attribute_not_exists(pk)` **is** the replay election: the loser of a race
+/// writes nothing at all, because `TransactWriteItems` is all-or-nothing, and
+/// `commit_or_replay` resolves the loss by exactly one receipt re-read.
+fn push_receipt(
+    plan: &mut TransactionPlan,
+    table: &str,
+    workspace: WorkspaceId,
+    receipt: &Receipt,
+) -> Result<(), StoreError> {
+    plan.put(
+        Participant::SECRET_IDEMPOTENCY,
+        Put::builder()
+            .table_name(table)
+            .set_item(Some(encode_receipt_row(workspace, receipt).map_err(
+                |error| StoreError::Invalid {
+                    detail: error.to_string(),
+                },
+            )?))
+            .condition_expression(IMMUTABLE),
+    )?;
+    Ok(())
+}
+
+/// Appends the per-workspace counter guard (D-13).
+///
+/// `ADD count :one` on a row that does not exist yet starts it at one, so the
+/// first create needs no separate initialisation. The guard is
+/// `attribute_not_exists(#count) OR #count < :max`, which is what makes the
+/// bound refuse the `(max + 1)`-th create rather than the `max`-th.
+fn push_quota(
+    plan: &mut TransactionPlan,
+    table: &str,
+    counter: &keys::Key,
+    workspace: WorkspaceId,
+    quota: Quota,
+    now: Timestamp,
+) -> Result<(), StoreError> {
+    plan.update(
+        quota.participant,
+        Update::builder()
+            .table_name(table)
+            .set_key(Some(key(&counter.pk, &counter.sk)))
+            .condition_expression("attribute_not_exists(#count) OR #count < :max")
+            // An `Update` that creates a row writes exactly the attributes it
+            // names, so the discriminator has to be one of them or the row
+            // decodes as `Missing { attribute: "itemType" }` the first time
+            // anything reads the partition.
+            .update_expression(
+                "SET #itemType = :itemType, workspaceId = :workspace, updatedAt = :now \
+                 ADD #count :one",
+            )
+            .expression_attribute_names("#count", "count")
+            .expression_attribute_names("#itemType", "itemType")
+            .expression_attribute_values(":itemType", s(keys::CUSTODY_COUNTER))
+            .expression_attribute_values(":workspace", s(workspace.to_string()))
+            .expression_attribute_values(":max", n(quota.max))
+            .expression_attribute_values(":one", n(1))
+            .expression_attribute_values(":now", stamp(now)),
+    )?;
+    Ok(())
 }
 
 fn validate_set(

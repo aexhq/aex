@@ -12,8 +12,8 @@ use aex_session_dynamodb::plan::Participant;
 
 use support::{
     DEFINITION, TABLE, authorization, captured_body, capturing_client, credential_id, custody_head,
-    dynamo_json, generation, metadata, now, provider_credential, replaying_client, scripted_client,
-    secret_name, session, workspace,
+    dynamo_json, generation, metadata, now, provider_credential, receipt, replaying_client,
+    scripted_client, secret_name, session, workspace,
 };
 
 fn definition() -> serde_json::Value {
@@ -72,7 +72,8 @@ fn the_collector_holds_nothing_at_all_on_this_table() {
 async fn a_set_writes_the_generation_before_the_metadata_that_names_it() {
     let (client, receiver) = capturing_client();
     let store = CustodyStore::new(client, TABLE);
-    let plan = expressions::set(TABLE, &generation(), &metadata(), None).expect("compiles");
+    let plan =
+        expressions::set(TABLE, &generation(), &metadata(), None, None, None).expect("compiles");
     assert_eq!(plan.participants(), SET_ORDER);
     let _ignored = store.commit(&plan).await;
 
@@ -111,8 +112,15 @@ async fn a_replacement_set_conditions_on_the_revision_the_caller_read() {
     replacement.generation = aex_secret_domain::secret::SourceGeneration(2);
     let mut next = generation();
     next.generation = replacement.generation;
-    let plan = expressions::set(TABLE, &next, &replacement, Some(SecretRevision::FIRST))
-        .expect("compiles");
+    let plan = expressions::set(
+        TABLE,
+        &next,
+        &replacement,
+        Some(SecretRevision::FIRST),
+        None,
+        None,
+    )
+    .expect("compiles");
     let _ignored = store.commit(&plan).await;
 
     let body = captured_body(receiver);
@@ -173,6 +181,10 @@ async fn a_revoke_is_one_conditional_update_and_never_a_fan_out() {
     );
 }
 
+/// D-7 leaves exactly one point read on this table eventual — the idempotency
+/// receipt — and this list is what says so. Nothing a conditional write is
+/// compiled from may join the eventual side: a stale read there answers
+/// `precondition_failed` about a precondition nothing violated.
 #[tokio::test]
 async fn every_authority_point_read_is_strongly_consistent() {
     for read in ["secret", "generation", "custody"] {
@@ -199,6 +211,29 @@ async fn every_authority_point_read_is_strongly_consistent() {
         );
     }
     let _ = custody_head();
+}
+
+/// The receipt read is the one point read D-7 relaxes, and relaxing it is the
+/// larger half of the win because it is on **both** write paths.
+///
+/// A stale miss is self-healing rather than wrong: the receipt `Put` is
+/// conditional on `attribute_not_exists`, so a duplicate attempt loses on the
+/// receipt participant and `commit_or_replay` resolves it by exactly one
+/// re-read. The whole cost is one wasted transaction attempt on a fast retry.
+#[tokio::test]
+async fn the_idempotency_receipt_is_the_one_point_read_answered_from_a_replica() {
+    let (client, receiver) = capturing_client();
+    let store = CustodyStore::new(client, TABLE);
+    let _ignored = store
+        .load_receipt(workspace(), "secret:set", &"ab".repeat(32), now())
+        .await;
+
+    let body = captured_body(receiver);
+    assert_eq!(
+        body["ConsistentRead"].as_bool(),
+        Some(false),
+        "the receipt read pays for consistency it provably does not need"
+    );
 }
 
 #[tokio::test]
@@ -279,8 +314,54 @@ async fn a_list_walks_every_service_page_before_answering() {
         Some(24),
         "the resumed query spends only the remaining budget"
     );
+    // The consistency clause that stood here is gone, deliberately, and it is
+    // stated rather than silently dropped: D-7 takes every custody listing
+    // eventual, and this walk is a listing. What this test exists to prove — the
+    // continuation, the `Limit` arithmetic and the refusal below — is unchanged
+    // and is asserted above. The flip itself is pinned by
+    // `every_custody_listing_is_answered_from_a_replica`.
     for request in &requests {
-        assert_eq!(request["ConsistentRead"].as_bool(), Some(true));
+        assert_eq!(
+            request["ConsistentRead"].as_bool(),
+            Some(false),
+            "a listing is a projection, not an authority read"
+        );
+    }
+}
+
+/// D-7's listing flip, pinned in one place.
+///
+/// `query_prefix` sets no consistency of its own — it walks its service pages
+/// through the same private `query_page` the paged listings use — so all four
+/// listings flip together and none can drift from the other three.
+#[tokio::test]
+async fn every_custody_listing_is_answered_from_a_replica() {
+    let budget = PageBudget::new(25).expect("a page");
+    for listing in ["secrets", "credentials", "secret-page", "credential-page"] {
+        let (client, receiver) = capturing_client();
+        let store = CustodyStore::new(client, TABLE);
+        match listing {
+            "secrets" => {
+                let _ignored = store.list_secrets(workspace(), budget).await;
+            }
+            "credentials" => {
+                let _ignored = store.list_provider_credentials(workspace(), budget).await;
+            }
+            "secret-page" => {
+                let _ignored = store.page_secrets(workspace(), budget, None).await;
+            }
+            _ => {
+                let _ignored = store
+                    .page_provider_credentials(workspace(), budget, None)
+                    .await;
+            }
+        }
+        let body = captured_body(receiver);
+        assert_eq!(
+            body["ConsistentRead"].as_bool(),
+            Some(false),
+            "`{listing}` still pays for consistency a projection does not need"
+        );
     }
 }
 
@@ -497,7 +578,8 @@ async fn a_page_resumes_from_the_continuation_it_was_given() {
 async fn a_set_clears_the_revocation_instant_it_supersedes() {
     let (client, receiver) = capturing_client();
     let store = CustodyStore::new(client, TABLE);
-    let plan = expressions::set(TABLE, &generation(), &metadata(), None).expect("compiles");
+    let plan =
+        expressions::set(TABLE, &generation(), &metadata(), None, None, None).expect("compiles");
     let _ignored = store.commit(&plan).await;
 
     let body = captured_body(receiver);
@@ -508,4 +590,157 @@ async fn a_set_clears_the_revocation_instant_it_supersedes() {
         update.contains("REMOVE revokedAt"),
         "the expression must match the domain transition it commits: {update}"
     );
+}
+
+// --- D-6: the receipt is a participant of the write it protects ---------------------
+
+/// The receipt `Put` travels in the **same** transaction as the domain rows.
+///
+/// A receipt written in a second transaction reintroduces exactly the ambiguous
+/// window the receipt exists to close: a crash between the two leaves an effect
+/// with no record that it happened, and the retry commits it twice.
+#[tokio::test]
+async fn a_first_seal_writes_its_receipt_inside_the_transaction_it_protects() {
+    let (client, receiver) = capturing_client();
+    let store = CustodyStore::new(client, TABLE);
+    let plan = expressions::set(
+        TABLE,
+        &generation(),
+        &metadata(),
+        None,
+        Some(&receipt()),
+        None,
+    )
+    .expect("compiles");
+    assert_eq!(
+        plan.participants(),
+        [
+            Participant::SECRET_GENERATION,
+            Participant::SECRET_METADATA,
+            Participant::SECRET_LINEAGE,
+            Participant::SECRET_IDEMPOTENCY,
+        ]
+    );
+    let _ignored = store.commit(&plan).await;
+
+    let body = captured_body(receiver);
+    let actions = body["TransactItems"].as_array().expect("four actions");
+    assert_eq!(actions.len(), 4);
+    assert_eq!(
+        actions[3]["Put"]["Item"]["itemType"]["S"].as_str(),
+        Some("idempotency_receipt")
+    );
+    assert_eq!(
+        actions[3]["Put"]["ConditionExpression"].as_str(),
+        Some("attribute_not_exists(pk)"),
+        "the conditional put is the replay election; a loser must write nothing"
+    );
+}
+
+/// The receipt row is the shared shape, and no part of a secret may enter it.
+#[tokio::test]
+async fn no_ciphertext_or_wrapped_key_reaches_the_receipt_row() {
+    let (client, receiver) = capturing_client();
+    let store = CustodyStore::new(client, TABLE);
+    let plan = expressions::set(
+        TABLE,
+        &generation(),
+        &metadata(),
+        None,
+        Some(&receipt()),
+        None,
+    )
+    .expect("compiles");
+    let _ignored = store.commit(&plan).await;
+
+    let body = captured_body(receiver);
+    let stored = &body["TransactItems"][3]["Put"]["Item"];
+    for forbidden in ["ciphertext", "wrappedKey", "nonce", "encContextDigest"] {
+        assert!(
+            stored[forbidden].is_null(),
+            "`{forbidden}` reached a durable receipt"
+        );
+    }
+    assert_eq!(
+        stored["scope"]["S"].as_str(),
+        Some(receipt().scope.as_str())
+    );
+}
+
+// --- D-13: the declared `limit_exceeded` has something behind it --------------------
+
+/// The counter guard rides the transaction, so a create past the bound commits
+/// **nothing** — no generation, no metadata, no lineage and no receipt.
+#[tokio::test]
+async fn a_create_consumes_a_guarded_counter_in_the_same_transaction() {
+    let (client, receiver) = capturing_client();
+    let store = CustodyStore::new(client, TABLE);
+    let plan = expressions::set(
+        TABLE,
+        &generation(),
+        &metadata(),
+        None,
+        Some(&receipt()),
+        Some(expressions::Quota::secrets(500)),
+    )
+    .expect("compiles");
+    assert_eq!(plan.participants().last(), Some(&Participant::SECRET_COUNT));
+    let _ignored = store.commit(&plan).await;
+
+    let body = captured_body(receiver);
+    let counter = &body["TransactItems"][4]["Update"];
+    assert_eq!(
+        counter["Key"]["sk"]["S"].as_str(),
+        Some("COUNT"),
+        "the counter sorts outside every listing prefix"
+    );
+    assert_eq!(
+        counter["Key"]["pk"]["S"].as_str(),
+        Some(keys::secret_partition(workspace()).as_str()),
+        "the guard lives in the collection it bounds, so it is one participant \
+         rather than a second round trip"
+    );
+    assert_eq!(
+        counter["ConditionExpression"].as_str(),
+        Some("attribute_not_exists(#count) OR #count < :max"),
+        "the bound refuses the (max + 1)-th create, not the max-th"
+    );
+    assert!(
+        counter["UpdateExpression"]
+            .as_str()
+            .expect("an update")
+            .contains("ADD #count :one"),
+        "the authority increments; a caller-supplied total would be a race"
+    );
+    assert_eq!(
+        counter["ExpressionAttributeValues"][":max"]["N"].as_str(),
+        Some("500")
+    );
+    assert_eq!(
+        counter["ExpressionAttributeValues"][":itemType"]["S"].as_str(),
+        Some("custody_counter"),
+        "an Update that creates a row must write its own discriminator"
+    );
+}
+
+/// A replace does not consume quota, and asking it to is refused rather than
+/// silently ignored: the collection does not grow, so a rotation loop must not
+/// be able to exhaust a workspace's bound.
+#[test]
+fn a_replace_cannot_be_compiled_with_a_quota_guard() {
+    let mut replacement = metadata();
+    replacement.revision = SecretRevision(2);
+    replacement.generation = aex_secret_domain::secret::SourceGeneration(2);
+    let mut next = generation();
+    next.generation = replacement.generation;
+    let error = expressions::set(
+        TABLE,
+        &next,
+        &replacement,
+        Some(SecretRevision::FIRST),
+        Some(&receipt()),
+        Some(expressions::Quota::secrets(500)),
+    )
+    .expect_err("a replace consumes no quota");
+    assert!(format!("{error}").contains("does not grow"), "{error}");
 }

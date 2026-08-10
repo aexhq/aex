@@ -79,7 +79,8 @@ async fn engine() -> (DynamoDbLocalContainer, Client, CustodyStore) {
 }
 
 async fn seed_secret(store: &CustodyStore) {
-    let plan = expressions::set(TABLE, &generation(), &metadata(), None).expect("compiles");
+    let plan =
+        expressions::set(TABLE, &generation(), &metadata(), None, None, None).expect("compiles");
     store.commit(&plan).await.expect("the set commits");
 }
 
