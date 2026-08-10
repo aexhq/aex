@@ -182,15 +182,16 @@ variable "settlement_queue" {
 
 variable "database" {
   type = object({
-    cluster_identifier    = string
-    database_name         = string
-    master_username       = string
-    engine_version        = string
-    min_acu               = number
-    max_acu               = number
-    backup_retention_days = number
+    cluster_identifier        = string
+    database_name             = string
+    master_username           = string
+    engine_version            = string
+    min_acu                   = number
+    max_acu                   = number
+    backup_retention_days     = number
+    final_snapshot_identifier = string
   })
-  description = "The central finance cluster."
+  description = "The central finance cluster, including the final snapshot identity required by its recoverable delete path."
 }
 
 variable "schema_admin" {

@@ -118,13 +118,14 @@ variables {
   }
 
   database = {
-    cluster_identifier    = "aex-dev-central-finance"
-    database_name         = "aex_finance"
-    master_username       = "aex_admin"
-    engine_version        = "17.5"
-    min_acu               = 0.5
-    max_acu               = 8
-    backup_retention_days = 7
+    cluster_identifier        = "aex-dev-central-finance"
+    database_name             = "aex_finance"
+    master_username           = "aex_admin"
+    engine_version            = "17.5"
+    min_acu                   = 0.5
+    max_acu                   = 8
+    backup_retention_days     = 7
+    final_snapshot_identifier = "aex-dev-central-finance-final"
   }
 
   schema_admin = {
@@ -237,6 +238,11 @@ run "the_central_application_plans" {
   assert {
     condition     = jsondecode(module.role["finance-api"].inline_policy_json).Statement[1].Condition["ForAllValues:StringLike"]["dynamodb:LeadingKeys"] == ["EXPORT#*"]
     error_message = "The central wrapper must preserve reviewed set-qualified conditions."
+  }
+
+  assert {
+    condition     = var.database.final_snapshot_identifier == "${var.database.cluster_identifier}-final"
+    error_message = "The recoverable delete path must name the final snapshot explicitly; skipping it is a separate deliberate teardown mode."
   }
 }
 

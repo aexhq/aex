@@ -20,6 +20,11 @@ that release-pinned value directly into the one-shot task definition so ECS
 shutdown behavior is part of the deployed release identity rather than an
 implicit platform default.
 
+The database input names its final snapshot explicitly. The Aurora module keeps
+deletion protection enabled and does not skip the final snapshot, so the
+recoverable delete path is complete without turning a no-recovery teardown into
+the example's default.
+
 ## Sanitized values
 
 Every value is a variable with no default. No account id, ARN or domain appears
@@ -49,4 +54,6 @@ in any `.tf` file here.
 provider, with `mock_data "aws_s3_object"` supplying the artifact checksum the
 Lambda module checks. It asserts one role per deployable, a published function
 version, a dead-letter queue on the settlement queue, and that every schedule
-target is one this root created.
+target is one this root created. It also pins the database's recoverable final
+snapshot identity so a lifecycle-contract change cannot leave the fixture
+undeletable or make snapshot skipping implicit.

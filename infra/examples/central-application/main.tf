@@ -29,18 +29,19 @@ module "role" {
 module "database" {
   source = "../../modules/aurora-serverless-v2"
 
-  cluster_identifier     = var.database.cluster_identifier
-  database_name          = var.database.database_name
-  master_username        = var.database.master_username
-  engine_version         = var.database.engine_version
-  min_acu                = var.database.min_acu
-  max_acu                = var.database.max_acu
-  backup_retention_days  = var.database.backup_retention_days
-  region                 = var.region
-  kms_key_arn            = var.kms_key_arn
-  subnet_ids             = var.subnet_ids
-  vpc_security_group_ids = var.security_group_ids
-  tags                   = var.tags
+  cluster_identifier        = var.database.cluster_identifier
+  database_name             = var.database.database_name
+  master_username           = var.database.master_username
+  engine_version            = var.database.engine_version
+  min_acu                   = var.database.min_acu
+  max_acu                   = var.database.max_acu
+  backup_retention_days     = var.database.backup_retention_days
+  final_snapshot_identifier = var.database.final_snapshot_identifier
+  region                    = var.region
+  kms_key_arn               = var.kms_key_arn
+  subnet_ids                = var.subnet_ids
+  vpc_security_group_ids    = var.security_group_ids
+  tags                      = var.tags
 }
 
 module "settlement_queue" {
