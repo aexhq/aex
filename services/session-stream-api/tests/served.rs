@@ -2766,3 +2766,64 @@ async fn a_cold_read_of_an_unactivated_workspace_is_not_an_unknown_credential() 
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
     assert_eq!(body["error"]["code"], "account_state_unavailable", "{body}");
 }
+
+/// The region publishes exactly what the shared mapping produces — no regional
+/// post-processing, no second vocabulary.
+///
+/// This is one half of the cross-plane identity. The other half lives beside
+/// the central handler, and asserts the same equality there. Together they say
+/// that one `AccountProfile` yields one JSON document on either plane, which is
+/// the property that stops a workspace being told it is active by its region
+/// while the dashboard calls it paused.
+///
+/// The two answers may differ in *staleness* — the region reads a projection —
+/// but never in vocabulary, discriminator or derivation.
+#[tokio::test]
+async fn the_region_publishes_byte_identical_json_to_the_shared_mapping() {
+    for reason in [
+        None,
+        Some("top_up_required"),
+        Some("payment_hold"),
+        Some("dispute_hold"),
+        Some("account_closed"),
+    ] {
+        // The same facts the projected profile row carries, handed straight to
+        // the one mapping in `aex-control-domain`.
+        let expected = aex_control_domain::account_operational_state(
+            &aex_control_domain::AccountProfile {
+                state: if reason.is_some() {
+                    aex_control_domain::AccountState::PausedTopUpRequired
+                } else {
+                    aex_control_domain::AccountState::Active
+                },
+                reason: reason.map(str::to_owned),
+                revision: 7,
+                changed_at: moment("2026-08-02T00:00:00.000Z").to_datetime(),
+            },
+        )
+        .expect("the shared mapping projects every declared cause");
+        let expected = serde_json::to_string(&expected).expect("the mapping's own encoding");
+
+        let router = workspace_router(
+            FakeWorkspaceProjection {
+                profile: Some(stored_profile(reason)),
+                ..complete_projection()
+            },
+            FakePlacements {
+                placement: Some(stored_placement(if reason.is_some() {
+                    "paused"
+                } else {
+                    "active"
+                })),
+            },
+        );
+        let (status, _, body) = get(&router, "/api/workspace").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let published = serde_json::to_string(&body["operationalState"]["state"])
+            .expect("the published state re-encodes");
+        assert_eq!(
+            published, expected,
+            "the region derived its own answer for {reason:?}"
+        );
+    }
+}

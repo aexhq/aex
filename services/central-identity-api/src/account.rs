@@ -413,4 +413,59 @@ mod tests {
         .expect_err("an absent row is not a state");
         assert_eq!(error.code, ErrorCode::AccountStateUnavailable);
     }
+
+    /// The centre publishes exactly what the shared mapping produces.
+    ///
+    /// The other half of the cross-plane identity; its twin lives in
+    /// `session-stream-api`'s served suite and asserts the same equality for the
+    /// region. Together they say that one `AccountProfile` yields one JSON
+    /// document on either plane — which is what stops an account being reported
+    /// active by one route and paused by another in the same second.
+    #[test]
+    fn the_centre_publishes_byte_identical_json_to_the_shared_mapping() {
+        for reason in [
+            None,
+            Some("top_up_required"),
+            Some("payment_hold"),
+            Some("dispute_hold"),
+            Some("account_closed"),
+        ] {
+            let profile = AccountProfile {
+                state: if reason.is_some() {
+                    AccountState::PausedTopUpRequired
+                } else {
+                    AccountState::Active
+                },
+                reason: reason.map(str::to_owned),
+                revision: 7,
+                changed_at: time::OffsetDateTime::from_unix_timestamp(1_800_000_000)
+                    .expect("an instant"),
+            };
+            let expected = serde_json::to_string(
+                &aex_control_domain::account_operational_state(&profile)
+                    .expect("the shared mapping projects every declared cause"),
+            )
+            .expect("the mapping's own encoding");
+
+            let published = run(service(Fake {
+                member: true,
+                profile: Some(profile),
+                reachable: true,
+            })
+            .account_get(
+                &context(PrincipalScope::Account {
+                    user: user(),
+                    organization: Some(organization()),
+                }),
+                query(),
+            ))
+            .expect("a member reads its account");
+            assert_eq!(
+                serde_json::to_string(&published).expect("the published state encodes"),
+                expected,
+                "the centre derived its own answer for {reason:?}"
+            );
+        }
+    }
+
 }
