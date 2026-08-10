@@ -35,12 +35,14 @@ pub use plan::{
 pub use ports::{
     AccountStateReader, AgentCancelPage, AgentCancelTarget, AgentPage, AppContext,
     AuthorityCommitter, Clock, CommitError, CommitOutcome, ContentReader, ContinuityReader,
-    IdFactory, LimitsReader, LiveWorkspaceReader, PageBudget, PortError, RegistryReader,
-    ReservationAuthority, ReservationGrant, ReservationRequest, SecretCustodyReader, SessionReader,
-    SessionSnapshot, VersionedOperation, WorkspaceContinuity,
+    IdFactory, LimitsReader, LiveEntry, LiveEntryKind, LiveListQuery, LiveListing,
+    LiveWorkspaceReader, PageBudget, PortError, RegistryReader, ReservationAuthority,
+    ReservationGrant, ReservationRequest, SecretCustodyReader, SessionReader, SessionSnapshot,
+    VersionedOperation, WorkspaceContinuity,
 };
 pub use use_cases::{
-    CommitTerminal, Purge, RECOVERY_WINDOW, Rebind, Resume, STOP_BATCH_AGENTS, SendMessage,
-    SessionCommand, StartRun, admit_message, commit_terminal, continue_operation, continue_stop,
-    purge_session, rebind_credentials, restore_session, start_run, stop_session, trash_session,
+    CommitTerminal, LiveRead, Purge, RECOVERY_WINDOW, Rebind, Resume, STOP_BATCH_AGENTS,
+    SendMessage, SessionCommand, StartRun, admit_message, commit_terminal, continue_operation,
+    continue_stop, list_live_files, purge_session, rebind_credentials, restore_session, start_run,
+    stat_live_file, stop_session, trash_session,
 };

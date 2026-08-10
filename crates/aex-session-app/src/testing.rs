@@ -29,9 +29,10 @@ use aex_workspace_domain::{RegistryPointer, RegistrySelector, Upload};
 
 use crate::ports::{
     AccountStateReader, AgentCancelPage, AgentCancelTarget, AgentPage, AppContext, Clock,
-    ContentReader, ContinuityReader, IdFactory, LimitsReader, LiveWorkspaceReader, PageBudget,
-    PortError, RegistryReader, ReservationAuthority, ReservationGrant, ReservationRequest,
-    SecretCustodyReader, SessionReader, SessionSnapshot, VersionedOperation, WorkspaceContinuity,
+    ContentReader, ContinuityReader, IdFactory, LimitsReader, LiveEntry, LiveListQuery, LiveListing,
+    LiveWorkspaceReader, PageBudget, PortError, RegistryReader, ReservationAuthority,
+    ReservationGrant, ReservationRequest, SecretCustodyReader, SessionReader, SessionSnapshot,
+    VersionedOperation, WorkspaceContinuity,
 };
 
 /// One recorded port interaction.
@@ -139,6 +140,8 @@ pub struct ScriptedPorts {
     account: AccountProjection,
     limits: EffectiveLimits,
     cancel_targets: Vec<AgentCancelTarget>,
+    live_entries: Vec<LiveEntry>,
+    generation: Option<GenerationId>,
 }
 
 impl ScriptedPorts {
@@ -176,7 +179,27 @@ impl ScriptedPorts {
                 .into_iter()
                 .collect(),
             cancel_targets: Vec::new(),
+            live_entries: Vec::new(),
+            generation: None,
         }
+    }
+
+    /// Scripts the generation `ContinuityReader` reports as in force.
+    #[must_use]
+    pub const fn with_generation(mut self, generation: GenerationId) -> Self {
+        self.generation = Some(generation);
+        self
+    }
+
+    /// Scripts the live workspace entries a listing and a stat observe.
+    ///
+    /// Ordered by path on the way in, because the port contract is that a
+    /// listing arrives ascending and a cursor resumes strictly after a path.
+    #[must_use]
+    pub fn with_live_entries(mut self, entries: impl IntoIterator<Item = LiveEntry>) -> Self {
+        self.live_entries = entries.into_iter().collect();
+        self.live_entries.sort();
+        self
     }
 
     /// Scripts `count` active agents, in canonical order.
@@ -544,7 +567,7 @@ impl ContinuityReader for ScriptedPorts {
     async fn continuity(&self, _session: SessionId) -> Result<WorkspaceContinuity, PortError> {
         self.log.record(PortCall::Read("continuity"));
         Ok(WorkspaceContinuity {
-            generation: None,
+            generation: self.generation,
             intact: true,
         })
     }
@@ -578,6 +601,51 @@ impl LiveWorkspaceReader for ScriptedPorts {
         Ok(aex_content_domain::empty_root(
             self.snapshot.session.workspace,
         ))
+    }
+
+    async fn list(
+        &self,
+        _session: SessionId,
+        _generation: GenerationId,
+        query: &LiveListQuery,
+    ) -> Result<LiveListing, PortError> {
+        self.log.record(PortCall::Read("live_list"));
+        let prefix = query.path.clone().unwrap_or_else(|| "/workspace".to_owned());
+        let mut matching = self
+            .live_entries
+            .iter()
+            .filter(|entry| entry.path.starts_with(&format!("{}/", prefix.trim_end_matches('/'))))
+            .filter(|entry| {
+                query
+                    .after
+                    .as_ref()
+                    .is_none_or(|after| entry.path.as_str() > after.as_str())
+            });
+        let limit = usize::from(query.limit);
+        let entries: Vec<LiveEntry> = matching.by_ref().take(limit).cloned().collect();
+        let next_after = matching
+            .next()
+            .and_then(|_| entries.last().map(|entry| entry.path.clone()));
+        Ok(LiveListing {
+            entries,
+            next_after,
+        })
+    }
+
+    async fn stat(
+        &self,
+        _session: SessionId,
+        _generation: GenerationId,
+        path: &str,
+    ) -> Result<LiveEntry, PortError> {
+        self.log.record(PortCall::Read("live_stat"));
+        self.live_entries
+            .iter()
+            .find(|entry| entry.path == path)
+            .cloned()
+            .ok_or(PortError::NotFound {
+                kind: "live workspace entry",
+            })
     }
 }
 

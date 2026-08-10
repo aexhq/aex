@@ -38,8 +38,9 @@ use aex_content_domain::{
     ContentDigest, ContentOutcome, ContentRoot, PageDigest, TreeNode, TreeView,
 };
 use aex_session_app::ports::{
-    ContentReader, IdFactory, LimitsReader, LiveWorkspaceReader, PortError, RegistryReader,
-    ReservationAuthority, ReservationGrant, ReservationRequest,
+    ContentReader, IdFactory, LimitsReader, LiveEntry, LiveListQuery, LiveListing,
+    LiveWorkspaceReader, PortError, RegistryReader, ReservationAuthority, ReservationGrant,
+    ReservationRequest,
 };
 use aex_session_domain::EffectiveLimits;
 use aex_wire::ids::{GenerationId, SessionId, UploadId, Uuid7, WorkspaceId};
@@ -80,6 +81,23 @@ const RESERVATION_SEAM: &str = "`ReservationAuthority` is deliberately unowned: 
 const LIVE_SEAM: &str = "the persist survey manifest and the live workspace scan are Hands': \
                          nothing in the tree produces a live `TreeView`, and the guest refuses \
                          `PersistPhase::Survey` for want of a TLS client";
+
+/// Why the two **observation** methods are refused, which is a different reason
+/// from [`LIVE_SEAM`].
+///
+/// Not hashing, and not the guest. The guest already answers a listing and a
+/// stat from `lstat` alone — `aex_hands_tools::filesystem::list_dir` and
+/// `stat_path`, dispatched by `runtimes/hands-agent/src/execute.rs` — with no
+/// digest, no Merkle build and no TLS. What is missing is entirely on this
+/// side: reaching a running generation needs the authenticated guest transport
+/// (`aex_brain_hands::HttpGuestTransport`) over a provider endpoint and token
+/// minted by `MicrovmControlApi::auth_token`, and this deployable composes
+/// neither. Composing them here would also hand a `public_edge` service the
+/// same trait that carries `run`, `resume` and `terminate`, which is a
+/// lifecycle-authority decision and not a file-read one.
+const LIVE_OBSERVATION_SEAM: &str =
+    "the guest answers a listing from `lstat` with no digest; what is absent is the authenticated \
+     guest transport and the provider endpoint token, which this deployable does not compose";
 
 #[async_trait::async_trait]
 impl RegistryReader for UnownedPorts {
@@ -176,6 +194,30 @@ impl LiveWorkspaceReader for UnownedPorts {
         Err(PortError::Unowned {
             kind: "live workspace root",
             seam: LIVE_SEAM,
+        })
+    }
+
+    async fn list(
+        &self,
+        _session: SessionId,
+        _generation: GenerationId,
+        _query: &LiveListQuery,
+    ) -> Result<LiveListing, PortError> {
+        Err(PortError::Unowned {
+            kind: "live workspace listing",
+            seam: LIVE_OBSERVATION_SEAM,
+        })
+    }
+
+    async fn stat(
+        &self,
+        _session: SessionId,
+        _generation: GenerationId,
+        _path: &str,
+    ) -> Result<LiveEntry, PortError> {
+        Err(PortError::Unowned {
+            kind: "live workspace entry",
+            seam: LIVE_OBSERVATION_SEAM,
         })
     }
 }

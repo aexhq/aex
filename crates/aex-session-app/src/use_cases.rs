@@ -26,14 +26,16 @@ use aex_session_domain::{
 use aex_wire::canonical::{CanonicalJson, to_jcs_string};
 use aex_wire::error::ErrorCode;
 use aex_wire::idempotency::IntentDigest;
-use aex_wire::ids::{AgentId, MessageId, OperationId, RunId, SessionId, WorkspaceId};
+use aex_wire::ids::{
+    AgentId, GenerationId, MessageId, OperationId, RunId, SessionId, WorkspaceId,
+};
 use aex_wire::models::{CredentialRebindResult, SecretRef};
 use aex_wire::types::Timestamp;
 use time::Duration;
 
 use crate::error::AppError;
 use crate::plan::{Condition, Hint, Planned, SessionTransaction, TransactionIntent, Write};
-use crate::ports::{AppContext, ReservationRequest};
+use crate::ports::{AppContext, PortError, ReservationRequest};
 
 /// How long a trashed session may be restored.
 pub const RECOVERY_WINDOW: Duration = Duration::days(7);
@@ -1439,4 +1441,107 @@ pub fn live_statuses() -> BTreeSet<SessionStatus> {
 #[must_use]
 pub const fn rejection_code(error: &AppError) -> ErrorCode {
     error.code()
+}
+
+/// What a live workspace read observed, and what it cost the workspace.
+///
+/// The generation is carried back so the caller can report exactly which
+/// incarnation answered. Two pages of one listing that name different
+/// generations are two different filesystems, and a caller that cannot see that
+/// would stitch them together silently.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveRead<T> {
+    /// What was observed.
+    pub observed: T,
+    /// The generation that answered.
+    pub generation: GenerationId,
+    /// Whether the session's continuity was intact when it answered.
+    pub intact: bool,
+}
+
+/// Resolves the exact generation a live read must be answered by.
+///
+/// `pinned` is the caller's `ifGenerationId`: when it names a generation other
+/// than the one in force, the read fails rather than silently answering from a
+/// successor. A successor is a *different filesystem*, so answering from it
+/// would return a confident wrong answer to the question that was asked.
+async fn live_generation(
+    context: &AppContext<'_>,
+    session: &Session,
+    pinned: Option<GenerationId>,
+) -> Result<(GenerationId, bool), AppError> {
+    let continuity = context.continuity.continuity(session.id).await?;
+    let Some(generation) = continuity.generation else {
+        // No generation is in force, so there is no live filesystem to read.
+        // Reporting an empty listing here would be indistinguishable from an
+        // empty workspace, which is the one answer that must never be invented.
+        return Err(AppError::Port(PortError::NotFound {
+            kind: "live workspace generation",
+        }));
+    };
+    if pinned.is_some_and(|pinned| pinned != generation) {
+        return Err(AppError::Port(PortError::NotFound {
+            kind: "the pinned live workspace generation",
+        }));
+    }
+    Ok((generation, continuity.intact))
+}
+
+/// Lists one page of a live workspace directory.
+///
+/// A pass-through observation: the running `MicroVM` answers it from `lstat`,
+/// and nothing here hashes a file, builds a Merkle page, or consults the
+/// content authority. The persistence machinery — `TreeView`, `ContentDigest`
+/// and the page store — is correct for `session_persist` and is deliberately
+/// not on this path.
+///
+/// # Errors
+///
+/// [`AppError`] when the account is paused, when no generation is in force,
+/// when a pinned generation is no longer the one in force, or when the port
+/// refuses.
+pub async fn list_live_files(
+    context: &AppContext<'_>,
+    workspace: WorkspaceId,
+    session: SessionId,
+    pinned: Option<GenerationId>,
+    query: &crate::ports::LiveListQuery,
+) -> Result<LiveRead<crate::ports::LiveListing>, AppError> {
+    let session = context.sessions.load_session(workspace, session).await?;
+    gate(context, &session, CommandClass::PausableRead).await?;
+    let (generation, intact) = live_generation(context, &session, pinned).await?;
+    let observed = context.live.list(session.id, generation, query).await?;
+    Ok(LiveRead {
+        observed,
+        generation,
+        intact,
+    })
+}
+
+/// Stats one live workspace entry.
+///
+/// The symlink is reported, never followed, because the guest's own `lstat`
+/// answer is carried through unchanged.
+///
+/// # Errors
+///
+/// [`AppError`] when the account is paused, when no generation is in force,
+/// when a pinned generation is no longer the one in force, or when the entry
+/// does not exist.
+pub async fn stat_live_file(
+    context: &AppContext<'_>,
+    workspace: WorkspaceId,
+    session: SessionId,
+    pinned: Option<GenerationId>,
+    path: &str,
+) -> Result<LiveRead<crate::ports::LiveEntry>, AppError> {
+    let session = context.sessions.load_session(workspace, session).await?;
+    gate(context, &session, CommandClass::PausableRead).await?;
+    let (generation, intact) = live_generation(context, &session, pinned).await?;
+    let observed = context.live.stat(session.id, generation, path).await?;
+    Ok(LiveRead {
+        observed,
+        generation,
+        intact,
+    })
 }
