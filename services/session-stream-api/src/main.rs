@@ -372,6 +372,17 @@ async fn run(
             dynamodb.clone(),
             stores.session_table.clone(),
         )),
+        // The command path: an eventually consistent reader, the physical table
+        // names its one transaction compiles against, and the client that
+        // submits it. This is the whole of what composing `aex-session-app`
+        // into this deployable costs — the crate had no consumer at all before
+        // it, and its finished use cases were unreachable.
+        commands: aex_session_dynamodb::app_authority::SessionCommandReads::new(
+            dynamodb.clone(),
+            stores.session_table.clone(),
+        ),
+        tables: regional_tables(&stores),
+        authority: dynamodb.clone(),
         cursor_keys: Arc::clone(&cursor_keys),
     }));
     let mounted = mount_unary(Arc::new(dispatcher), Arc::new(session_edge), limits(config))?;
@@ -480,6 +491,32 @@ async fn run(
                 ))),
             }
         }
+    }
+}
+
+/// The physical regional table names, taken from configuration rather than
+/// composed.
+///
+/// `RegionalTables::composed` mirrors what the infrastructure stream
+/// instantiates, but a deployable that was given explicit names must use them:
+/// guessing a name that configuration already answered is how a process ends up
+/// writing to a table nobody deployed.
+fn regional_tables(
+    stores: &session_stream_api::session::Stores,
+) -> aex_session_dynamodb::plan::RegionalTables {
+    aex_session_dynamodb::plan::RegionalTables {
+        session_authority: stores.session_table.clone(),
+        regional_work: stores.work.table().to_owned(),
+        regional_content: stores.content.table().to_owned(),
+        regional_registry: stores.registry.table().to_owned(),
+        regional_secret_custody: stores.custody.table().to_owned(),
+        // This deployable holds no decrypt key and therefore has no keystore
+        // binding at all. The empty name is not a default: an action routed to
+        // it fails request construction rather than reaching a table nobody
+        // configured.
+        regional_secret_keystore: String::new(),
+        runtime_activity: stores.runtime_activity.table().to_owned(),
+        regional_authz_projection: stores.authz_projection_table.clone(),
     }
 }
 

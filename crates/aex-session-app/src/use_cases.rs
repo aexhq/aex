@@ -163,16 +163,21 @@ pub async fn admit_message(
     context: &AppContext<'_>,
     command: &SendMessage,
 ) -> Result<Planned<(Message, Run)>, AppError> {
-    let snapshot = context
+    let materialized = context
         .sessions
-        .load_session(command.workspace, command.session)
+        .load_snapshot(command.workspace, command.session)
         .await?;
-    gate(context, &snapshot.session, CommandClass::PausableMutation).await?;
+    gate(
+        context,
+        &materialized.session,
+        CommandClass::PausableMutation,
+    )
+    .await?;
 
     let grant = context
         .reservations
         .prepare(ReservationRequest {
-            organization: snapshot.session.organization,
+            organization: materialized.session.organization,
             workspace: command.workspace,
             max_spend_cents: command.max_spend_cents.get(),
         })
@@ -187,7 +192,7 @@ pub async fn admit_message(
             reservation: grant.reservation,
             deadline: command.deadline,
         },
-        &snapshot.session,
+        &materialized.session,
         now,
     )?;
 
@@ -195,7 +200,7 @@ pub async fn admit_message(
         id: command.message,
         session: command.session,
         run: Some(command.run),
-        agent: snapshot.root_agent.id,
+        agent: materialized.root_agent.id,
         role: MessageRole::User,
         // A user message is born sealed.
         state: MessageState::Sealed,
@@ -204,12 +209,12 @@ pub async fn admit_message(
         sealed_at: Some(now),
     };
 
-    let mut head = snapshot.session.clone();
+    let mut head = materialized.session.clone();
     head.status = SessionStatus::Running;
     head.active_run = Some(command.run);
-    head.revision = snapshot.session.revision.next();
+    head.revision = materialized.session.revision.next();
 
-    let mut conditions = live_conditions(&snapshot.session);
+    let mut conditions = live_conditions(&materialized.session);
     conditions.push(Condition::SessionActiveRun {
         session: command.session,
         expected: None,
@@ -223,7 +228,7 @@ pub async fn admit_message(
     });
     conditions.push(Condition::CancellationEpoch {
         session: command.session,
-        expected: snapshot.session.cancellation,
+        expected: materialized.session.cancellation,
     });
     conditions.push(Condition::ReservationOpen {
         reservation: grant.reservation,
@@ -238,7 +243,7 @@ pub async fn admit_message(
             Write::PutSessionHead(Box::new(head)),
         ],
         after_commit: vec![Hint::WakeAgent {
-            agent: snapshot.root_agent.id,
+            agent: materialized.root_agent.id,
             reason: aex_internal_contracts::wake::WakeHint::SessionWork {
                 session: command.session,
             },
@@ -266,21 +271,21 @@ pub async fn start_run(
         .sessions
         .load_session(command.workspace, command.session)
         .await?;
-    gate(context, &snapshot.session, CommandClass::PausableMutation).await?;
+    gate(context, &snapshot, CommandClass::PausableMutation).await?;
 
     let stored = context
         .sessions
         .load_run(command.session, command.run)
         .await?;
-    if snapshot.session.active_run != Some(command.run) {
+    if snapshot.active_run != Some(command.run) {
         return Err(AppError::Run(SessionDomainRunError::SessionBusy {
-            active: snapshot.session.active_run.unwrap_or(command.run),
+            active: snapshot.active_run.unwrap_or(command.run),
         }));
     }
 
-    let commit = start_run_domain(&stored, &snapshot.session, context.clock.now())?;
+    let commit = start_run_domain(&stored, &snapshot, context.clock.now())?;
 
-    let mut conditions = live_conditions(&snapshot.session);
+    let mut conditions = live_conditions(&snapshot);
     conditions.push(Condition::RunNonTerminal {
         session: command.session,
         run: command.run,
@@ -334,7 +339,7 @@ pub async fn commit_terminal(
 
     let commit = claim_terminal(
         &stored,
-        &snapshot.session,
+        &snapshot,
         agent.id,
         agent.fence(),
         &command.open_messages,
@@ -367,16 +372,16 @@ pub async fn commit_terminal(
             },
             Condition::SessionRevision {
                 session: command.session,
-                expected: snapshot.session.revision,
+                expected: snapshot.revision,
             },
             Condition::CancellationEpoch {
                 session: command.session,
-                expected: snapshot.session.cancellation,
+                expected: snapshot.cancellation,
             },
             Condition::DeletionState {
                 session: command.session,
-                expected: snapshot.session.deletion.state,
-                epoch: snapshot.session.deletion.epoch,
+                expected: snapshot.deletion.state,
+                epoch: snapshot.deletion.epoch,
             },
             Condition::AgentFence {
                 session: command.session,
@@ -402,7 +407,16 @@ pub async fn commit_terminal(
 /// exceed `MAX_ACTIONS - 2`. The landed use case read a flat 100 and could
 /// therefore build a 101-action plan that `validate` rejected as an internal
 /// fault.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "`MAX_ACTIONS` is `DynamoDB`'s hard ceiling of 100 and the static assertion below               refuses any value a `u16` could not hold"
+)]
 pub const STOP_BATCH_AGENTS: u16 = (crate::plan::MAX_ACTIONS as u16) - 2;
+
+const _: () = assert!(
+    crate::plan::MAX_ACTIONS > 2 && crate::plan::MAX_ACTIONS <= u16::MAX as usize,
+    "the stop batch is derived from the action budget and must fit a bounded page"
+);
 
 /// The customer-visible phase a paged stop reports while it settles agents.
 const STOP_PHASE: &str = "stopping";
@@ -435,7 +449,7 @@ pub async fn stop_session(
         .sessions
         .load_session(command.workspace, command.session)
         .await?;
-    gate(context, &snapshot.session, CommandClass::PauseExempt).await?;
+    gate(context, &snapshot, CommandClass::PauseExempt).await?;
 
     let now = context.clock.now();
     let existing = context
@@ -448,7 +462,7 @@ pub async fn stop_session(
         // admission already closed the fence.
         let operation = admitted(
             Some(stored),
-            Some(&snapshot.session.deletion),
+            Some(&snapshot.deletion),
             &stop_request(command, None, None),
             now,
         )?;
@@ -470,15 +484,14 @@ pub async fn stop_session(
             },
         )
         .await?;
-    let step = StopBatch::of(&snapshot.session, &page);
+    let step = StopBatch::of(&snapshot, &page);
 
     let admit_request = stop_request(
         command,
         Some(step.execution),
         step.inline_result(command.session)?,
     );
-    let admitted_operation =
-        admitted(None, Some(&snapshot.session.deletion), &admit_request, now)?;
+    let admitted_operation = admitted(None, Some(&snapshot.deletion), &admit_request, now)?;
     let operation = step.shape_operation(&admitted_operation, now)?;
 
     Ok(Planned {
@@ -542,7 +555,7 @@ pub async fn continue_stop(
             },
         )
         .await?;
-    let step = StopBatch::of(&snapshot.session, &page);
+    let step = StopBatch::of(&snapshot, &page);
     let operation = step.advance(&stored, command.session, now)?;
 
     Ok(Planned {
@@ -660,8 +673,8 @@ impl StopBatch {
             return Ok(admitted_operation.clone());
         }
         let started = aex_operation_domain::operation::start(admitted_operation, now)?.operation;
-        let mut latched = aex_operation_domain::operation::commit_point(&started, None, now)?
-            .operation;
+        let mut latched =
+            aex_operation_domain::operation::commit_point(&started, None, now)?.operation;
         self.park(&mut latched)?;
         Ok(latched)
     }
@@ -706,12 +719,12 @@ impl StopBatch {
         operation: &mut aex_operation_domain::Operation,
         carried: u64,
     ) -> Result<(), AppError> {
-        let next_agent = self.next.ok_or(AppError::Port(
-            crate::ports::PortError::Corrupt {
+        let next_agent = self
+            .next
+            .ok_or(AppError::Port(crate::ports::PortError::Corrupt {
                 kind: "agent page",
                 reason: "a continued stop step reported no resume position",
-            },
-        ))?;
+            }))?;
         let processed = carried.saturating_add(self.examined);
         operation.cursor = Some(ContinuationCursor::new(
             CursorPosition::Stop { next_agent },
@@ -782,6 +795,7 @@ impl StopBatch {
             agent: target.agent,
             from_revision: target.revision,
             to_revision: target.revision.next(),
+            at: operation.updated_at,
         }));
 
         let after_commit = if self.execution == Execution::Continued {
@@ -848,7 +862,7 @@ pub async fn rebind_credentials(
         .sessions
         .load_session(command.command.workspace, command.command.session)
         .await?;
-    gate(context, &snapshot.session, CommandClass::PausableMutation).await?;
+    gate(context, &snapshot, CommandClass::PausableMutation).await?;
 
     let now = context.clock.now();
     let existing = context
@@ -858,7 +872,7 @@ pub async fn rebind_credentials(
     if existing.is_some() {
         let operation = admitted(
             existing.as_ref(),
-            Some(&snapshot.session.deletion),
+            Some(&snapshot.deletion),
             &rebind_request(command, None),
             now,
         )?;
@@ -870,7 +884,7 @@ pub async fn rebind_credentials(
         });
     }
 
-    let prepared = prepare_rebind(context, command, &snapshot.session, now).await?;
+    let prepared = prepare_rebind(context, command, &snapshot, now).await?;
     let public_result = CredentialRebindResult {
         session_id: command.command.session,
         custody_revision: prepared.custody.revision.0,
@@ -886,7 +900,7 @@ pub async fn rebind_credentials(
     let result_json = CanonicalJson::parse(&to_jcs_string(&public_result)?)?;
     let operation = admitted(
         None,
-        Some(&snapshot.session.deletion),
+        Some(&snapshot.deletion),
         &rebind_request(
             command,
             Some(OperationResult {
@@ -897,7 +911,7 @@ pub async fn rebind_credentials(
         now,
     )?;
 
-    let plan = build_rebind_plan(&snapshot.session, command, operation.clone(), prepared);
+    let plan = build_rebind_plan(&snapshot, command, operation.clone(), prepared);
     plan.validate()?;
 
     Ok(Planned {
@@ -1057,22 +1071,17 @@ pub async fn trash_session(
         .sessions
         .load_session(command.workspace, command.session)
         .await?;
-    gate(context, &snapshot.session, CommandClass::PauseExempt).await?;
+    gate(context, &snapshot, CommandClass::PauseExempt).await?;
 
     let now = context.clock.now();
-    let commit = trash(
-        &snapshot.session.deletion,
-        command.operation,
-        now,
-        RECOVERY_WINDOW,
-    )?;
+    let commit = trash(&snapshot.deletion, command.operation, now, RECOVERY_WINDOW)?;
     let existing = context
         .sessions
         .load_operation(command.workspace, command.operation)
         .await?;
     let operation = admitted(
         existing.as_ref(),
-        Some(&snapshot.session.deletion),
+        Some(&snapshot.deletion),
         &AdmitRequest {
             id: command.operation,
             workspace: command.workspace,
@@ -1086,8 +1095,8 @@ pub async fn trash_session(
         now,
     )?;
 
-    let mut head = snapshot.session.clone();
-    head.revision = snapshot.session.revision.next();
+    let mut head = snapshot.clone();
+    head.revision = snapshot.revision.next();
     head.deletion = commit.guard;
     head.work_admission = commit.admission;
     head.status = SessionStatus::Trashed;
@@ -1097,12 +1106,12 @@ pub async fn trash_session(
         conditions: vec![
             Condition::SessionRevision {
                 session: command.session,
-                expected: snapshot.session.revision,
+                expected: snapshot.revision,
             },
             Condition::DeletionState {
                 session: command.session,
-                expected: snapshot.session.deletion.state,
-                epoch: snapshot.session.deletion.epoch,
+                expected: snapshot.deletion.state,
+                epoch: snapshot.deletion.epoch,
             },
         ],
         writes: vec![
@@ -1132,10 +1141,10 @@ pub async fn restore_session(
         .sessions
         .load_session(command.workspace, command.session)
         .await?;
-    gate(context, &snapshot.session, CommandClass::PausableMutation).await?;
+    gate(context, &snapshot, CommandClass::PausableMutation).await?;
 
     let now = context.clock.now();
-    let commit = restore(&snapshot.session.deletion, command.operation, now)?;
+    let commit = restore(&snapshot.deletion, command.operation, now)?;
     let existing = context
         .sessions
         .load_operation(command.workspace, command.operation)
@@ -1156,8 +1165,8 @@ pub async fn restore_session(
         now,
     )?;
 
-    let mut head = snapshot.session.clone();
-    head.revision = snapshot.session.revision.next();
+    let mut head = snapshot.clone();
+    head.revision = snapshot.revision.next();
     head.deletion = commit.guard;
     head.work_admission = commit.admission;
     head.status = SessionStatus::Idle;
@@ -1167,12 +1176,12 @@ pub async fn restore_session(
         conditions: vec![
             Condition::SessionRevision {
                 session: command.session,
-                expected: snapshot.session.revision,
+                expected: snapshot.revision,
             },
             Condition::DeletionState {
                 session: command.session,
                 expected: DeletionState::Trashed,
-                epoch: snapshot.session.deletion.epoch,
+                epoch: snapshot.deletion.epoch,
             },
         ],
         writes: vec![
@@ -1203,11 +1212,11 @@ pub async fn purge_session(
         .sessions
         .load_session(command.command.workspace, command.command.session)
         .await?;
-    gate(context, &snapshot.session, CommandClass::PauseExempt).await?;
+    gate(context, &snapshot, CommandClass::PauseExempt).await?;
 
     let now = context.clock.now();
     let commit = purge(
-        &snapshot.session.deletion,
+        &snapshot.deletion,
         command.command.operation,
         command.cascade,
         &command.closure,
@@ -1219,7 +1228,7 @@ pub async fn purge_session(
         .await?;
     let operation = admitted(
         existing.as_ref(),
-        Some(&snapshot.session.deletion),
+        Some(&snapshot.deletion),
         &AdmitRequest {
             id: command.command.operation,
             workspace: command.command.workspace,
@@ -1233,8 +1242,8 @@ pub async fn purge_session(
         now,
     )?;
 
-    let mut head = snapshot.session.clone();
-    head.revision = snapshot.session.revision.next();
+    let mut head = snapshot.clone();
+    head.revision = snapshot.revision.next();
     head.deletion = commit.guard;
     head.work_admission = commit.admission;
     head.status = SessionStatus::Purging;
@@ -1244,12 +1253,12 @@ pub async fn purge_session(
         conditions: vec![
             Condition::SessionRevision {
                 session: command.command.session,
-                expected: snapshot.session.revision,
+                expected: snapshot.revision,
             },
             Condition::DeletionState {
                 session: command.command.session,
-                expected: snapshot.session.deletion.state,
-                epoch: snapshot.session.deletion.epoch,
+                expected: snapshot.deletion.state,
+                epoch: snapshot.deletion.epoch,
             },
         ],
         writes: vec![

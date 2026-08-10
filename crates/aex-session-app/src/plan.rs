@@ -385,8 +385,7 @@ impl Condition {
             }
             Self::RootPinPresent { root } => (format!("{:x?}", root.digest), "ROOT_PIN".to_owned()),
             Self::GrantUnexpired { grant, .. } => (grant.0.to_string(), "GRANT".to_owned()),
-            Self::OperationFence { operation, .. }
-            | Self::OperationCursorAt { operation, .. } => {
+            Self::OperationFence { operation, .. } | Self::OperationCursorAt { operation, .. } => {
                 (operation.to_string(), "OPERATION".to_owned())
             }
             Self::SecretRevocationEpoch {
@@ -436,6 +435,8 @@ pub enum Write {
         from_revision: AgentRevision,
         /// The revision it moves to.
         to_revision: AgentRevision,
+        /// When the settlement happened.
+        at: Timestamp,
     },
     /// Append a journal page.
     AppendJournalPage {
@@ -519,9 +520,9 @@ impl Write {
                 format!("{}#{}", agent.session, agent.id),
                 "CONTROL".to_owned(),
             ),
-            Self::CancelAgent {
-                session, agent, ..
-            } => (format!("{session}#{agent}"), "CONTROL".to_owned()),
+            Self::CancelAgent { session, agent, .. } => {
+                (format!("{session}#{agent}"), "CONTROL".to_owned())
+            }
             Self::AppendJournalPage { session, page } => (
                 format!("{session}#{}", page.agent),
                 format!("JOURNAL#{}", page.first.0),

@@ -323,8 +323,17 @@ impl SessionReader for ScriptedPorts {
         &self,
         _workspace: WorkspaceId,
         _session: SessionId,
-    ) -> Result<SessionSnapshot, PortError> {
+    ) -> Result<Session, PortError> {
         self.log.record(PortCall::Read("load_session"));
+        Ok(self.snapshot.session.clone())
+    }
+
+    async fn load_snapshot(
+        &self,
+        _workspace: WorkspaceId,
+        _session: SessionId,
+    ) -> Result<SessionSnapshot, PortError> {
+        self.log.record(PortCall::Read("load_snapshot"));
         Ok(self.snapshot.clone())
     }
 

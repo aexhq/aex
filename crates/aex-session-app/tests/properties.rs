@@ -6,6 +6,8 @@
 
 use std::collections::BTreeSet;
 
+use aex_operation_domain::cursor::CursorPosition;
+use aex_operation_domain::operation::OperationStatus;
 use aex_secret_domain::context::Plane;
 use aex_secret_domain::{
     CiphertextRef, CustodyRevision, EncryptionContext, OwnerKeyEdgeId, SecretName,
@@ -13,8 +15,6 @@ use aex_secret_domain::{
 };
 use aex_session_app::plan::{Condition, TransactionIntent, Write};
 use aex_session_app::testing::{CountingIds, FixedClock, PortCall, ScriptedPorts, fixture_spend};
-use aex_operation_domain::cursor::CursorPosition;
-use aex_operation_domain::operation::OperationStatus;
 use aex_session_app::use_cases::STOP_BATCH_AGENTS;
 use aex_session_app::{
     AppError, MAX_ACTIONS, Planned, Rebind, SendMessage, SessionCommand, SessionTransaction,
@@ -661,7 +661,11 @@ async fn a_paged_stop_yields_a_continued_operation_and_idles_only_on_the_final_s
     );
     assert!(
         matches!(
-            first.projected.cursor.as_ref().map(|cursor| &cursor.position),
+            first
+                .projected
+                .cursor
+                .as_ref()
+                .map(|cursor| &cursor.position),
             Some(CursorPosition::Stop { .. })
         ),
         "a continued stop parks at a stop cursor, got {:?}",
@@ -781,7 +785,11 @@ async fn a_stop_step_names_the_cursor_it_advances_from() {
         .expect("a step commit guards the cursor it advances from");
     assert_eq!(
         guard.map(|cursor| cursor.position.clone()),
-        first.projected.cursor.as_ref().map(|cursor| cursor.position.clone()),
+        first
+            .projected
+            .cursor
+            .as_ref()
+            .map(|cursor| cursor.position.clone()),
         "the guard names the operation's stored cursor, not the one it writes"
     );
 }

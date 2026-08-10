@@ -139,10 +139,7 @@ deferredOperations:
   session_messages_list: "The wire and domain message vocabularies and exact paged read authority are incomplete."
   session_persist: "The paged persist operation and commit latch are incomplete."
   session_purge: "The paged purge operation and commit latch are incomplete."
-  session_restore: "The complete session restore authority and command transaction are not implemented."
-  session_stop: "The complete session stop authority and command transaction are not implemented."
   session_telemetry_export_create: "The durable session export-admission composition is incomplete."
-  session_trash: "The complete session trash authority and command transaction are not implemented."
   session_workspace_discard: "The workspace-discard operation and commit latch are incomplete."
   sessions_list: "The sparse session head cannot yet produce the complete public collection item."
   telemetry_export_create: "The durable workspace export-admission composition is incomplete."
@@ -264,5 +261,8 @@ servedOperations:
     - session_observations_telemetry_stream
     - session_observations_traces_listen
     - session_observations_traces_stream
+    - session_restore
     - session_run_get
     - session_runs_list
+    - session_stop
+    - session_trash

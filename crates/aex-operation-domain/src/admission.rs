@@ -131,7 +131,7 @@ pub fn admit(
         }
     }
 
-    // A per-request classification may only escalate. `min` over the
+    // A per-request classification may only escalate. `max` over the
     // `Inline < Continued` ordering makes that structural rather than reviewed:
     // a caller that hands back `Inline` for a kind whose default is `Continued`
     // still gets `Continued`.
@@ -236,7 +236,10 @@ mod tests {
             panic!("expected an insert");
         };
         assert_eq!(created.status, OperationStatus::Queued);
-        assert_eq!(created.committed_at, None, "a continued stop is not latched by admission alone");
+        assert_eq!(
+            created.committed_at, None,
+            "a continued stop is not latched by admission alone"
+        );
         assert!(created.result.is_none());
     }
 

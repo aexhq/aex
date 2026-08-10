@@ -120,13 +120,40 @@ pub enum PortError {
         /// Why.
         reason: &'static str,
     },
+    /// No adapter in the tree can answer this read faithfully.
+    ///
+    /// Distinct from every other arm because it is a **composition** gap, not a
+    /// runtime condition: a retry cannot help, and the operator has to be told
+    /// which seam is open rather than shown a corrupt-row diagnostic for a row
+    /// that is not corrupt. A deployable must never mount a route that can
+    /// reach this (RS-18); it exists so that wiring one by mistake fails loudly
+    /// instead of returning invented data.
+    #[error("{kind} cannot be read: {seam}")]
+    Unowned {
+        /// What was being read.
+        kind: &'static str,
+        /// Which seam owns it.
+        seam: &'static str,
+    },
 }
 
 /// Reads the session authority.
 #[async_trait::async_trait]
 pub trait SessionReader: Send + Sync {
-    /// One session and the agents a command needs.
+    /// One session head.
+    ///
+    /// Split from [`SessionReader::load_snapshot`] on purpose: stop, trash and
+    /// restore need the head and nothing else (D-14), and bundling the agents
+    /// into every head read made all three depend on a decode that no adapter
+    /// in the tree can perform.
     async fn load_session(
+        &self,
+        workspace: WorkspaceId,
+        session: SessionId,
+    ) -> Result<Session, PortError>;
+
+    /// One session together with the agents a command needs.
+    async fn load_snapshot(
         &self,
         workspace: WorkspaceId,
         session: SessionId,

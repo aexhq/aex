@@ -29,8 +29,15 @@ use aex_registry_dynamodb::store::{PointerPage, RegistryStore};
 use aex_secret_custody_dynamodb::codec::{CredentialState, ProviderCredential as StoredCredential};
 use aex_secret_custody_dynamodb::expressions;
 use aex_secret_custody_dynamodb::store::SecretCustodyStore;
+use aex_session_app::plan::Planned;
+use aex_session_app::ports::AuthorityCommitter as _;
+use aex_session_app::{SessionCommand, restore_session, stop_session, trash_session};
+use aex_session_dynamodb::app_authority::{
+    ApiHintSink, AuthorizedAccount, DynamoAuthorityCommitter, RequestClock, SessionCommandReads,
+};
+use aex_session_dynamodb::application_plan::SessionBinding;
 use aex_session_dynamodb::paging::{PageBudget, PagePosition};
-use aex_session_dynamodb::plan::{Participant, TransactionPlan};
+use aex_session_dynamodb::plan::{Participant, RegionalTables, TransactionPlan};
 use aex_session_dynamodb::store::{
     OperationApiStore, OperationCancelOutcome, OperationFilter, SessionQueries, SessionScoped,
 };
@@ -74,6 +81,16 @@ pub struct Shared {
     pub sessions: Arc<dyn SessionQueries>,
     /// The durable-operation point, list and conditional cancellation authority.
     pub operations: Arc<dyn OperationApiStore>,
+    /// The eventually consistent command-path view of the session authority.
+    ///
+    /// Separate from `sessions` on purpose: the read routes above are strongly
+    /// consistent, and a command re-asserts every value it read as a condition,
+    /// so it pays neither the capacity nor the latency of a strong read (D-11).
+    pub commands: SessionCommandReads,
+    /// The physical regional table names a command transaction compiles against.
+    pub tables: RegionalTables,
+    /// The client the committer submits its one transaction on.
+    pub authority: aws_sdk_dynamodb::Client,
     /// The signing ring every continuation is minted and verified under.
     pub cursor_keys: Arc<CursorKeyRing>,
 }
@@ -136,8 +153,11 @@ const SERVED: &[RouteId] = &[
     RouteId::SecretsList,
     RouteId::SessionApprovalGet,
     RouteId::SessionApprovalsList,
+    RouteId::SessionRestore,
     RouteId::SessionRunGet,
     RouteId::SessionRunsList,
+    RouteId::SessionStop,
+    RouteId::SessionTrash,
 ];
 
 impl std::fmt::Debug for Routes {
@@ -281,6 +301,159 @@ impl Routes {
         self.cx
             .now()
             .map_err(|_| WireError::new(ErrorCode::InternalError))
+    }
+
+    /// The command envelope for a whole-session mutation.
+    ///
+    /// These three routes are keyed by `Aex-Operation-Id` rather than by an
+    /// ordinary idempotency key, so the operation identity is caller-minted and
+    /// the edge has already parsed it. An absent one is an invalid request, not
+    /// a server-minted identity: a server-minted identity could never be
+    /// replayed, which is the whole point of the header.
+    fn session_command(&self, session_id: SessionId, route: RouteId) -> WireResult<SessionCommand> {
+        let operation = self.cx.operation_id.ok_or_else(|| {
+            WireError::new(ErrorCode::InvalidRequest).with_message("operation id")
+        })?;
+        Ok(SessionCommand {
+            workspace: self.cx.auth.workspace_id,
+            session: session_id,
+            operation,
+            intent: intent_of(route, self.cx.auth.workspace_id, session_id),
+        })
+    }
+
+    /// The four ports this deployable supplies, plus the seven it refuses.
+    fn bindings(&self) -> WireResult<CommandBindings> {
+        let now = self.now()?;
+        Ok(CommandBindings {
+            clock: RequestClock(now),
+            ids: crate::session::app_ports::RequestIds,
+            unowned: crate::session::app_ports::UnownedPorts,
+            reads: self.shared.commands.clone(),
+            accounts: AuthorizedAccount {
+                organization: self.cx.auth.organization_id,
+                revision: self.cx.auth.epochs.account,
+                paused: self.cx.auth.account_state
+                    == aex_regional_http::context::AccountState::Paused,
+                observed_at: now,
+            },
+        })
+    }
+
+    /// Submits one planned command and projects the operation it admitted.
+    async fn admit(
+        &self,
+        session_id: SessionId,
+        planned: Planned<aex_operation_domain::Operation>,
+    ) -> WireResult<Accepted> {
+        let committer = DynamoAuthorityCommitter::new(
+            self.shared.authority.clone(),
+            self.shared.tables.clone(),
+            SessionBinding {
+                workspace: self.cx.auth.workspace_id,
+                organization: self.cx.auth.organization_id,
+                session: session_id,
+            },
+            self.now()?,
+            ApiHintSink,
+        );
+        committer
+            .commit(&planned.plan)
+            .await
+            .map_err(|error| commit_failure(&error))?;
+        let operation = planned
+            .projected
+            .public()
+            .map_err(|_| WireError::new(ErrorCode::InternalError))?
+            .ok_or_else(|| WireError::new(ErrorCode::InternalError))?;
+        Ok(Accepted(operation))
+    }
+}
+
+/// Everything an `AppContext` borrows, owned for the length of one request.
+struct CommandBindings {
+    clock: RequestClock,
+    ids: crate::session::app_ports::RequestIds,
+    unowned: crate::session::app_ports::UnownedPorts,
+    reads: SessionCommandReads,
+    accounts: AuthorizedAccount,
+}
+
+impl CommandBindings {
+    fn context(&self) -> aex_session_app::AppContext<'_> {
+        aex_session_app::AppContext {
+            clock: &self.clock,
+            ids: &self.ids,
+            sessions: &self.reads,
+            accounts: &self.accounts,
+            // Seven ports another stream owns. Every one refuses rather than
+            // inventing an answer; see `crate::session::app_ports`.
+            registry: &self.unowned,
+            content: &self.unowned,
+            secrets: &self.unowned,
+            limits: &self.unowned,
+            reservations: &self.unowned,
+            continuity: &self.unowned,
+            live: &self.unowned,
+        }
+    }
+}
+
+/// What was asked for, for a whole-session command with an empty body.
+///
+/// Stop, trash and restore carry no request payload, so the complete statement
+/// of intent is the route and the resource it names. Admission compares this
+/// against the stored envelope, so the same operation id against the same route
+/// and session replays, and the same id against a different one conflicts.
+fn intent_of(
+    route: RouteId,
+    workspace: WorkspaceId,
+    session: SessionId,
+) -> aex_wire::idempotency::IntentDigest {
+    use sha2::Digest as _;
+
+    let mut digest = sha2::Sha256::new();
+    digest.update(b"aex.regional.session.command.v1");
+    digest.update([0_u8]);
+    digest.update(route.as_str().as_bytes());
+    digest.update([0_u8]);
+    digest.update(workspace.to_string().as_bytes());
+    digest.update([0_u8]);
+    digest.update(session.to_string().as_bytes());
+    aex_wire::idempotency::IntentDigest::from_bytes(digest.finalize().into())
+}
+
+/// Maps one application refusal onto the stable public code it declared.
+fn app_failure(error: &aex_session_app::AppError) -> WireError {
+    if let aex_session_app::AppError::Port(aex_session_app::PortError::Unowned { kind, seam }) =
+        error
+    {
+        // A mounted route reached a port no adapter owns. That is a composition
+        // defect rather than a customer condition, and it has to be loud in the
+        // log even though the customer sees only `internal_error`.
+        eprintln!("session-stream-api: a mounted route reached the unowned `{kind}` port: {seam}");
+    }
+    WireError::new(error.code())
+}
+
+/// Maps one commit refusal onto the stable public code.
+fn commit_failure(error: &aex_session_app::CommitError) -> WireError {
+    match error {
+        // A guard the command asserted did not hold: the request was built
+        // against a session that has since moved. Never a server fault.
+        aex_session_app::CommitError::ConditionFailed { .. } => {
+            WireError::new(ErrorCode::PreconditionFailed)
+        }
+        aex_session_app::CommitError::Throttled => WireError::new(ErrorCode::RateLimited),
+        aex_session_app::CommitError::Unavailable => WireError::new(ErrorCode::UpstreamError),
+        // Rows 6-8 of the unknown-outcome matrix. The operation identity is
+        // caller-minted and stable, so the caller resolves this by polling
+        // `regional_operation_get` or by re-submitting the *same* identity
+        // unchanged. It must never be reported as a definite failure.
+        aex_session_app::CommitError::Ambiguous { .. } => {
+            WireError::new(ErrorCode::CommitOutcomeUnknown)
+        }
+        aex_session_app::CommitError::PlanRejected(_) => WireError::new(ErrorCode::InternalError),
     }
 }
 
@@ -600,10 +773,15 @@ impl SessionsApi for Routes {
     async fn session_restore(
         &self,
         _cx: &WireContext,
-        _session_id: SessionId,
+        session_id: SessionId,
         _body: models::EmptyRequest,
     ) -> WireResult<Accepted> {
-        Err(not_served(RouteId::SessionRestore))
+        let command = self.session_command(session_id, RouteId::SessionRestore)?;
+        let bindings = self.bindings()?;
+        let planned = restore_session(&bindings.context(), &command)
+            .await
+            .map_err(|error| app_failure(&error))?;
+        self.admit(session_id, planned).await
     }
 
     async fn session_run_get(
@@ -675,19 +853,29 @@ impl SessionsApi for Routes {
     async fn session_stop(
         &self,
         _cx: &WireContext,
-        _session_id: SessionId,
+        session_id: SessionId,
         _body: models::EmptyRequest,
     ) -> WireResult<Accepted> {
-        Err(not_served(RouteId::SessionStop))
+        let command = self.session_command(session_id, RouteId::SessionStop)?;
+        let bindings = self.bindings()?;
+        let planned = stop_session(&bindings.context(), &command)
+            .await
+            .map_err(|error| app_failure(&error))?;
+        self.admit(session_id, planned).await
     }
 
     async fn session_trash(
         &self,
         _cx: &WireContext,
-        _session_id: SessionId,
+        session_id: SessionId,
         _body: models::EmptyRequest,
     ) -> WireResult<Accepted> {
-        Err(not_served(RouteId::SessionTrash))
+        let command = self.session_command(session_id, RouteId::SessionTrash)?;
+        let bindings = self.bindings()?;
+        let planned = trash_session(&bindings.context(), &command)
+            .await
+            .map_err(|error| app_failure(&error))?;
+        self.admit(session_id, planned).await
     }
 
     async fn session_workspace_discard(
