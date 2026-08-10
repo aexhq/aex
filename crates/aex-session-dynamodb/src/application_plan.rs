@@ -899,7 +899,7 @@ mod tests {
             &RefuseExternal,
         );
         assert!(
-            matches!(error, Err(StoreError::Invalid { ref detail }) if detail == "session creation authority is incomplete"),
+            matches!(error, Err(StoreError::Invalid { ref detail }) if detail == "session creation authority is wrong: a create writes exactly one root agent control record; a head whose root agent does not exist answers 404 to the reader the 201 just invited"),
             "{error:?}"
         );
     }
