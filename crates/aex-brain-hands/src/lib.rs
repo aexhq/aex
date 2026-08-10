@@ -16,6 +16,7 @@
 
 pub mod adapter;
 pub mod backend;
+pub mod encode;
 pub mod executor;
 pub mod guest;
 mod lease;
@@ -23,6 +24,10 @@ pub mod operation;
 pub mod port;
 
 pub use backend::ProductionHandsBackend;
+pub use encode::{
+    COMMAND_SHELL, DEFAULT_LIST_LIMIT, DEFAULT_OUTPUT_WINDOW_BYTES, DEFAULT_SEARCH_LIMIT,
+    EncodedOperation, HandsTool, ToolEncodingError,
+};
 pub use executor::HandsToolExecutor;
 pub use port::{HandsAdapter, HandsBackend};
 

@@ -351,6 +351,52 @@ are the regression guards, asserted by
 the contract promises, never wider, so no caller receives a match it should not
 have; a bounded engine is a later, auditable addition.
 
+### 6.1 How a catalogue name reaches that surface
+
+The table above is the **guest** vocabulary. The model sees the **catalogue**
+vocabulary in `aex_brain_tool_catalog::catalog`, and the two share no name. Until
+2026-08-10 nothing translated: `HandsToolExecutor::invoke` encoded every
+Hands-routed call as `RegisteredTool` whatever its name, and the guest refuses that
+arm, so `ls` answered `capability_unavailable`. `aex_brain_hands::encode` is the
+translation and the only place the two vocabularies meet.
+
+| catalogue row | operation | note |
+| --- | --- | --- |
+| `read_file` | `ReadFile` | `offsetBytes`/`maxBytes` become the inclusive wire range; a line window has no wire field and is refused |
+| `list_dir` | `ListDir` | no `path` means the guest root, which is what a bare `ls` is; `depth` and `includeHidden: false` are refused, having no wire field |
+| `glob` | `Search` / `SearchPattern::Glob` | |
+| `grep` | `Search` / `SearchPattern::Regex` | matched as a literal under HS-08; `glob` and `contextLines` are refused |
+| `edit_file` | `EditFile` | one exact-replacement hunk guarded by `expectedRevision`; `replaceAll` selects `occurrences: 0` |
+| `run_command` | `Exec` | `argv` verbatim; `command` is a shell line by its own schema and runs under `bash -lc` |
+| `git` | `Exec` via `operation::git` | |
+| `install_packages` | `Exec` via `operation::package_install` | `apt` selects the image's real manager, `dnf`; a version is pinned in each manager's own spelling |
+| `process_output` | `ProcessStatus` | the wire arm *is* the bounded output window |
+| `process_stop` | `ProcessStop` | |
+| `write_file` | none | the wire write carries content as a digest and the guest holds no credential to resolve one |
+| `apply_patch` | none | the wire edit is exact-replacement hunks and nothing Brain-side parses a unified diff into them |
+| `run_code` | none | `code_run` builds the argv for a body file under `<root>/.aex/code-exec`, and delivering that body needs the write above |
+| `process_status` | none | the guest arm returns an output window, not the lifecycle state the row advertises |
+| `browser_*` | none | the image carries no headless browser |
+
+A wall bound named in the arguments (`timeoutMs`) only ever **narrows** the route's
+pinned timeout, and the narrowed value is what the durable operation reference
+persists. A row with **no** operation is not advertised at all:
+`ToolExecutor::supports` reports it unimplemented, `advertise` leaves it out, and
+the model is never offered a tool that could only fail. Adding a Hands-routed
+catalogue row without deciding its arm fails
+`every_hands_routed_catalogue_row_has_an_arm`; adding a `HandsTool` variant without
+an arm does not compile.
+
+Two gaps this map exposes rather than closes. `StatPath` is implemented in the
+guest and **no catalogue row asks for it** — a missing catalogue row, not a missing
+capability. And every structured operation answers in **text** (a listing is lines,
+a stat is one CSV row, an exec is its captured output) while the catalogue's
+`result_schema` advertises structured JSON for the same rows. Nothing validates a
+result against that schema, and `incorporate_result` now carries a non-JSON body
+through as `ToolResultPart::Text` rather than refusing it, so the body reaches the
+model intact — but the advertised and delivered shapes still differ. Result shaping
+is its own seam.
+
 ## 7. What was kept and what was discarded from the interrupted predecessor
 
 Kept, ported onto the landed contract types: the shape capacity table and its

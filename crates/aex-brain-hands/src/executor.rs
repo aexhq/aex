@@ -18,19 +18,28 @@ use aex_brain_domain::ids::{ContentHash, DetachedOperationId, Fence, HandsOperat
 use aex_brain_domain::journal::ExecutorRoute;
 use aex_brain_tool_catalog::router::ToolExecutor;
 use aex_hands_protocol::operation::OperationRequest;
+use aex_model_catalog::BoundedString;
 use aex_model_catalog::canonical::ToolResultPart;
 use aex_wire::CanonicalJson;
 use aex_wire::ids::{GenerationId, PrefixedId as _, ResourceName, Uuid7};
 
+use crate::encode::{EncodedOperation, HandsTool, ToolEncodingError};
 use crate::{CONTEXT_TOOL_RESULT_BYTES, MAX_RESULT_BODY_BYTES};
 
 const DETACHED_PREFIX: &str = "hands.v1";
 
 /// Adapts the exact-generation Hands port to the coarse tool-router executor seam.
 ///
-/// Calls are encoded as protocol `registered_tool` operations after their arguments have
-/// already passed the pinned catalog schema. The guest image owns the corresponding
-/// registered implementation; this bridge never reinterprets model arguments as shell text.
+/// A call whose name is a Hands-routed catalogue row becomes the **guest operation
+/// that does the thing** — `ls` becomes `ListDir`, a command becomes `Exec` — via
+/// [`crate::encode::HandsTool`], which owns the whole map and is exhaustive over it.
+/// Anything outside that closed set is still encoded as a protocol `registered_tool`
+/// operation, which the guest refuses; [`ToolExecutor::supports`] therefore reports
+/// it as unimplemented so readiness never advertises it.
+///
+/// One reinterpretation happens and is deliberate: `run_command`'s `command` is a
+/// shell line by its own catalogue schema, so it is run by a shell
+/// ([`crate::encode::COMMAND_SHELL`]). Its `argv` form is passed through untouched.
 pub struct HandsToolExecutor {
     hands: Arc<dyn HandsPort>,
 }
@@ -74,12 +83,12 @@ impl core::fmt::Debug for HandsToolExecutor {
 }
 
 impl ToolExecutor for HandsToolExecutor {
-    fn supports(&self, _tool: &aex_brain_domain::ids::ToolName) -> bool {
-        // The current bridge encodes `RegisteredTool`, which the ARM64 guest
-        // deliberately refuses until its manifest resolver maps a catalog row
-        // to a typed guest operation. Claiming coverage here would advertise
-        // shell/filesystem tools that can only return capability_unavailable.
-        false
+    fn supports(&self, tool: &aex_brain_domain::ids::ToolName) -> bool {
+        // Exactly the rows this bridge encodes into an operation the guest runs.
+        // A row the guest cannot complete stays unsupported and is therefore
+        // never advertised: offering a tool that can only answer
+        // capability_unavailable is the silent failure the owner rules out.
+        HandsTool::parse(tool.as_str()).is_some_and(HandsTool::is_served)
     }
 
     fn invoke<'a>(
@@ -117,19 +126,23 @@ impl ToolExecutor for HandsToolExecutor {
                 ));
             }
             let operation = operation_for(ticket);
-            let request = OperationRequest::RegisteredTool {
-                name: ResourceName::parse(call.route.name.as_str()).map_err(|_| {
-                    dispatch_error(
-                        DispatchStage::PreDispatch,
-                        DispatchProof::NotSent,
-                        ProviderFailureKind::InvalidRequest,
-                        "Hands tool name is outside the registered-tool grammar",
-                    )
-                })?,
-                manifest: aex_wire::ids::ContentHash::from_bytes(call.route.manifest_digest.0),
-                args: call.input.clone(),
-            };
-            let request_value = serde_json::to_value(&request).map_err(|_| {
+            let encoded = encode_call(call)?;
+            // A wall bound the arguments named may only narrow the route's own.
+            let timeout_ms = encoded
+                .max_wall_ms
+                .and_then(|wall| u32::try_from(wall).ok())
+                .map_or(call.route.timeout_ms, |wall| {
+                    call.route.timeout_ms.min(wall)
+                });
+            if timeout_ms == 0 {
+                return Err(dispatch_error(
+                    DispatchStage::PreDispatch,
+                    DispatchProof::NotSent,
+                    ProviderFailureKind::InvalidRequest,
+                    "Hands call has a zero result or wall-clock bound",
+                ));
+            }
+            let request_value = serde_json::to_value(&encoded.request).map_err(|_| {
                 dispatch_error(
                     DispatchStage::PreDispatch,
                     DispatchProof::NotSent,
@@ -149,16 +162,14 @@ impl ToolExecutor for HandsToolExecutor {
                 max_bytes,
                 max_stream_bytes: max_bytes
                     .min(usize::try_from(CONTEXT_TOOL_RESULT_BYTES).unwrap_or(usize::MAX)),
-                timeout_ms: call.route.timeout_ms,
+                timeout_ms,
             };
             let start = HandsOperationStart {
                 operation: operation.clone(),
                 call_hash: ContentHash::of(request_canonical.as_bytes()),
                 request: request_value,
                 bounds,
-                deadline: ticket
-                    .issued_at()
-                    .plus_millis(i64::from(call.route.timeout_ms)),
+                deadline: ticket.issued_at().plus_millis(i64::from(timeout_ms)),
             };
             let accepted = self
                 .hands
@@ -169,7 +180,7 @@ impl ToolExecutor for HandsToolExecutor {
                 accepted.generation,
                 &accepted.operation,
                 max_bytes,
-                call.route.timeout_ms,
+                timeout_ms,
             );
             Ok(ToolOutcome::Detached {
                 operation: durable,
@@ -222,6 +233,50 @@ impl ToolExecutor for HandsToolExecutor {
     }
 }
 
+/// Turns one prepared model call into the operation the guest will actually run.
+///
+/// A Hands-routed catalogue row becomes its structured operation. A name outside
+/// that closed set keeps the previous behaviour — a `registered_tool` operation the
+/// guest refuses — which is reachable only for a custom registered executor, since
+/// [`ToolExecutor::supports`] keeps every unmapped built-in off the advertised
+/// surface.
+fn encode_call(call: &PreparedToolCall) -> Result<EncodedOperation, ToolDispatchError> {
+    let Some(tool) = HandsTool::parse(call.route.name.as_str()) else {
+        return Ok(EncodedOperation::instant(
+            OperationRequest::RegisteredTool {
+                name: ResourceName::parse(call.route.name.as_str()).map_err(|_| {
+                    dispatch_error(
+                        DispatchStage::PreDispatch,
+                        DispatchProof::NotSent,
+                        ProviderFailureKind::InvalidRequest,
+                        "Hands tool name is outside the registered-tool grammar",
+                    )
+                })?,
+                manifest: aex_wire::ids::ContentHash::from_bytes(call.route.manifest_digest.0),
+                args: call.input.clone(),
+            },
+        ));
+    };
+    tool.encode(
+        &aex_runtime_control::generation::guest_root(),
+        &call.input.to_value(),
+    )
+    .map_err(|error| encoding_error(&error))
+}
+
+/// Reports an encoding refusal as a pre-dispatch failure, with its own reason.
+///
+/// Nothing was sent, so the model can correct the call and try again; the reason
+/// names the exact argument rather than a generic rejection.
+fn encoding_error(error: &ToolEncodingError) -> ToolDispatchError {
+    dispatch_error(
+        DispatchStage::PreDispatch,
+        DispatchProof::NotSent,
+        ProviderFailureKind::InvalidRequest,
+        &error.to_string(),
+    )
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DetachedHands {
     generation: GenerationId,
@@ -242,7 +297,7 @@ fn incorporate_result(
             "Hands result was truncated and cannot be journalled as complete",
         ));
     }
-    let value = match (result.inline, result.placed) {
+    let (part, bytes) = match (result.inline, result.placed) {
         (Some(inline), None) => {
             if ContentHash::of(inline.as_bytes()) != result.checksum {
                 return Err(dispatch_error(
@@ -252,23 +307,27 @@ fn incorporate_result(
                     "Hands result disagrees with its verified body checksum",
                 ));
             }
-            serde_json::from_str(&inline).map_err(|_| {
+            // The structured guest operations answer in text: a listing is
+            // lines, a stat is one row, an exec is its captured output. A
+            // registered tool answers in JSON. Both are carried verbatim,
+            // because reshaping a body to fit the other kind would put words in
+            // the guest's mouth.
+            match serde_json::from_str::<serde_json::Value>(&inline) {
+                Ok(value) => json_part(&value)?,
+                Err(_) => text_part(inline)?,
+            }
+        }
+        (None, Some(placed)) => {
+            let value = serde_json::to_value(placed).map_err(|_| {
                 dispatch_error(
                     DispatchStage::Terminal,
                     DispatchProof::ResponseStarted,
                     ProviderFailureKind::ProtocolViolation,
-                    "Hands result is not the registered tool's JSON result",
+                    "Hands placed result reference could not be encoded",
                 )
-            })?
+            })?;
+            json_part(&value)?
         }
-        (None, Some(placed)) => serde_json::to_value(placed).map_err(|_| {
-            dispatch_error(
-                DispatchStage::Terminal,
-                DispatchProof::ResponseStarted,
-                ProviderFailureKind::ProtocolViolation,
-                "Hands placed result reference could not be encoded",
-            )
-        })?,
         _ => {
             return Err(dispatch_error(
                 DispatchStage::Terminal,
@@ -278,15 +337,7 @@ fn incorporate_result(
             ));
         }
     };
-    let canonical = CanonicalJson::from_value(&value).map_err(|_| {
-        dispatch_error(
-            DispatchStage::Terminal,
-            DispatchProof::ResponseStarted,
-            ProviderFailureKind::ProtocolViolation,
-            "Hands result could not be canonicalized",
-        )
-    })?;
-    if canonical.as_bytes().len() > max_bytes {
+    if bytes.len() > max_bytes {
         return Err(dispatch_error(
             DispatchStage::Terminal,
             DispatchProof::ResponseStarted,
@@ -294,14 +345,42 @@ fn incorporate_result(
             "Hands result exceeds its persisted result bound",
         ));
     }
-    let checksum = ContentHash::of(canonical.as_bytes());
+    let checksum = ContentHash::of(&bytes);
     Ok(DetachedStatus::Completed(Box::new(ToolResultBody {
-        content: vec![ToolResultPart::Json { value: canonical }],
+        content: vec![part],
         is_error: result.exit_code != 0,
         duration_ms: result.duration_ms,
         executed_on: ExecutorRoute::Hands,
         checksum,
     })))
+}
+
+/// A canonical-JSON result part and the bytes its checksum is over.
+fn json_part(value: &serde_json::Value) -> Result<(ToolResultPart, Vec<u8>), ToolDispatchError> {
+    let canonical = CanonicalJson::from_value(value).map_err(|_| {
+        dispatch_error(
+            DispatchStage::Terminal,
+            DispatchProof::ResponseStarted,
+            ProviderFailureKind::ProtocolViolation,
+            "Hands result could not be canonicalized",
+        )
+    })?;
+    let bytes = canonical.as_bytes().to_vec();
+    Ok((ToolResultPart::Json { value: canonical }, bytes))
+}
+
+/// A text result part and the bytes its checksum is over.
+fn text_part(text: String) -> Result<(ToolResultPart, Vec<u8>), ToolDispatchError> {
+    let bytes = text.as_bytes().to_vec();
+    let text = BoundedString::new(text).map_err(|_| {
+        dispatch_error(
+            DispatchStage::Terminal,
+            DispatchProof::ResponseStarted,
+            ProviderFailureKind::ProtocolViolation,
+            "Hands result exceeds the provider-neutral tool-result text bound",
+        )
+    })?;
+    Ok((ToolResultPart::Text { text }, bytes))
 }
 
 fn operation_for(ticket: &DispatchTicket) -> HandsOperationId {
@@ -456,6 +535,7 @@ mod tests {
         cancels: Mutex<Vec<(GenerationId, HandsOperationId, Fence)>>,
         result_checksum: Mutex<Option<ContentHash>>,
         result_truncated: Mutex<bool>,
+        result_body: Mutex<String>,
     }
 
     impl HandsPort for FixtureHands {
@@ -529,7 +609,7 @@ mod tests {
             _bounds: &'a ResultBounds,
         ) -> BoxFuture<'a, Result<HandsResult, HandsError>> {
             Box::pin(async move {
-                let inline = "{\"bytes\":3,\"path\":\"/workspace/a.txt\"}".to_owned();
+                let inline = self.result_body.lock().expect("body").clone();
                 Ok(HandsResult {
                     operation: operation.clone(),
                     generation,
@@ -559,6 +639,7 @@ mod tests {
             cancels: Mutex::new(Vec::new()),
             result_checksum: Mutex::new(None),
             result_truncated: Mutex::new(false),
+            result_body: Mutex::new("{\"bytes\":3,\"path\":\"/workspace/a.txt\"}".to_owned()),
         });
         (HandsToolExecutor::new(hands.clone()), hands)
     }
@@ -634,13 +715,167 @@ mod tests {
         assert_eq!(starts.len(), 1);
         assert_eq!(starts[0].0, generation());
         assert_eq!(starts[0].1.operation, detached.operation);
+        // This assertion used to pin the defect: it required `read_file` to
+        // arrive as a `RegisteredTool`, which is the one operation the guest
+        // refuses. The read now arrives as the read.
         let request: aex_hands_protocol::operation::OperationRequest =
             serde_json::from_value(starts[0].1.request.clone()).expect("protocol request");
-        assert!(matches!(
-            request,
-            aex_hands_protocol::operation::OperationRequest::RegisteredTool { name, .. }
-                if name.as_str() == "read_file"
-        ));
+        let aex_hands_protocol::operation::OperationRequest::ReadFile { path, range } = request
+        else {
+            panic!("a file read is a ReadFile operation");
+        };
+        assert_eq!(path.as_str(), "/workspace/a.txt");
+        assert_eq!(range, None);
+    }
+
+    #[tokio::test]
+    async fn the_owners_ls_reaches_the_guests_list_dir_operation() {
+        let (executor, hands) = fixture();
+        let mut listing = call();
+        listing.route.name = ToolName::parse("list_dir").expect("tool name");
+        listing.input =
+            aex_wire::CanonicalJson::from_value(&serde_json::json!({})).expect("canonical input");
+        executor
+            .invoke(&ticket(), &listing, &CancelToken::new())
+            .await
+            .expect("accepted");
+        let starts = hands.starts.lock().expect("starts");
+        let request: aex_hands_protocol::operation::OperationRequest =
+            serde_json::from_value(starts[0].1.request.clone()).expect("protocol request");
+        let aex_hands_protocol::operation::OperationRequest::ListDir { path, .. } = request else {
+            panic!("`ls` is a ListDir operation");
+        };
+        assert_eq!(path.as_str(), "/workspace");
+    }
+
+    #[tokio::test]
+    async fn a_command_reaches_the_one_guest_primitive_that_starts_a_process() {
+        let (executor, hands) = fixture();
+        let mut command = call();
+        command.route.name = ToolName::parse("run_command").expect("tool name");
+        command.route.timeout_ms = 600_000;
+        command.input =
+            aex_wire::CanonicalJson::from_value(&serde_json::json!({"command": "ls -la"}))
+                .expect("canonical input");
+        let ToolOutcome::Detached { operation, .. } = executor
+            .invoke(&ticket(), &command, &CancelToken::new())
+            .await
+            .expect("accepted")
+        else {
+            panic!("Hands is detached");
+        };
+        let starts = hands.starts.lock().expect("starts");
+        let request: aex_hands_protocol::operation::OperationRequest =
+            serde_json::from_value(starts[0].1.request.clone()).expect("protocol request");
+        let aex_hands_protocol::operation::OperationRequest::Exec { argv, cwd, .. } = request
+        else {
+            panic!("a command is an Exec operation");
+        };
+        assert_eq!(argv, vec!["bash", "-lc", "ls -la"]);
+        assert_eq!(cwd.as_str(), "/workspace");
+        assert_eq!(
+            decode_detached(&operation)
+                .expect("durable reference")
+                .timeout_ms,
+            600_000
+        );
+    }
+
+    #[tokio::test]
+    async fn a_named_timeout_narrows_the_persisted_bound_and_is_never_widened_by_it() {
+        let (executor, hands) = fixture();
+        let mut command = call();
+        command.route.name = ToolName::parse("run_command").expect("tool name");
+        command.route.timeout_ms = 600_000;
+        command.input = aex_wire::CanonicalJson::from_value(
+            &serde_json::json!({"command": "sleep 1", "timeoutMs": 5_000}),
+        )
+        .expect("canonical input");
+        let ToolOutcome::Detached { operation, .. } = executor
+            .invoke(&ticket(), &command, &CancelToken::new())
+            .await
+            .expect("accepted")
+        else {
+            panic!("Hands is detached");
+        };
+        assert_eq!(
+            decode_detached(&operation)
+                .expect("durable reference")
+                .timeout_ms,
+            5_000,
+            "a caller that asked for five seconds must not silently get ten minutes"
+        );
+        let starts = hands.starts.lock().expect("starts");
+        assert_eq!(starts[0].1.bounds.timeout_ms, 5_000);
+    }
+
+    #[tokio::test]
+    async fn an_argument_the_wire_cannot_carry_sends_nothing_and_says_why() {
+        let (executor, hands) = fixture();
+        let mut read = call();
+        read.input = aex_wire::CanonicalJson::from_value(
+            &serde_json::json!({"path": "/workspace/a.txt", "startLine": 4}),
+        )
+        .expect("canonical input");
+        let error = executor
+            .invoke(&ticket(), &read, &CancelToken::new())
+            .await
+            .expect_err("an unrepresentable argument is refused");
+        assert_eq!(
+            error.proof,
+            aex_brain_domain::effect::DispatchProof::NotSent
+        );
+        assert!(hands.starts.lock().expect("starts").is_empty());
+    }
+
+    #[test]
+    fn only_the_rows_the_guest_can_complete_are_reported_as_supported() {
+        let (executor, _) = fixture();
+        for served in [
+            "read_file",
+            "list_dir",
+            "glob",
+            "grep",
+            "run_command",
+            "git",
+        ] {
+            assert!(
+                executor.supports(&ToolName::parse(served).expect("tool name")),
+                "{served} is encoded into an operation the guest runs"
+            );
+        }
+        for unserved in ["write_file", "run_code", "browser_launch", "web_fetch"] {
+            assert!(
+                !executor.supports(&ToolName::parse(unserved).expect("tool name")),
+                "{unserved} must never be advertised: it could only fail"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_text_body_from_a_structured_operation_reaches_the_model_intact() {
+        let (executor, hands) = fixture();
+        let listing = "dir 4096 src/\nfile 12 a.txt";
+        *hands.result_body.lock().expect("body") = listing.to_owned();
+        let mut call = call();
+        call.route.name = ToolName::parse("list_dir").expect("tool name");
+        call.input =
+            aex_wire::CanonicalJson::from_value(&serde_json::json!({})).expect("canonical input");
+        let ToolOutcome::Detached { operation, .. } = executor
+            .invoke(&ticket(), &call, &CancelToken::new())
+            .await
+            .expect("accepted")
+        else {
+            panic!("Hands is detached");
+        };
+        let DetachedStatus::Completed(result) = executor.query(&operation).await.expect("result")
+        else {
+            panic!("terminal result");
+        };
+        let [ToolResultPart::Text { text }] = result.content.as_slice() else {
+            panic!("a guest listing is text, not JSON");
+        };
+        assert_eq!(text.as_str(), listing);
     }
 
     #[test]
