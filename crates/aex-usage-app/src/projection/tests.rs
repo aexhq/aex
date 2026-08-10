@@ -38,6 +38,8 @@ fn a_measured_fact_folds_into_two_rollups_one_detail_and_the_fence() {
             ProjectionRow::HourlyAggregate,
             ProjectionRow::DailyAggregate,
             ProjectionRow::Detail,
+            ProjectionRow::DailyTotal,
+            ProjectionRow::HourlyTotal,
             ProjectionRow::Coverage,
         ],
         "the coverage fence is always last, so a partial apply is impossible"
@@ -180,6 +182,8 @@ fn a_void_subtracts_its_target_and_deactivates_the_target_detail_row() {
             ProjectionRow::HourlyAggregate,
             ProjectionRow::DailyAggregate,
             ProjectionRow::DetailWithdrawal,
+            ProjectionRow::DailyTotal,
+            ProjectionRow::HourlyTotal,
             ProjectionRow::Coverage,
         ],
         "a void carries no quantity of its own; it only withdraws its target"
@@ -239,6 +243,11 @@ fn a_replace_adds_its_own_measurement_and_withdraws_the_target() {
             ProjectionRow::HourlyAggregate,
             ProjectionRow::DailyAggregate,
             ProjectionRow::DetailWithdrawal,
+            // One coarse row per grain, not two: the replacement and the
+            // withdrawal share a category and a bucket, and two operations on
+            // one item would be refused by `TransactWriteItems`.
+            ProjectionRow::DailyTotal,
+            ProjectionRow::HourlyTotal,
             ProjectionRow::Coverage,
         ]
     );
@@ -415,5 +424,169 @@ fn a_signed_delta_renders_exactly_as_an_add_clause_reads_it() {
     assert_eq!(
         signed(quantity, Sign::Subtract).render(),
         format!("-{quantity}")
+    );
+}
+
+#[test]
+fn the_coarse_face_carries_no_dimension_identity_and_one_row_per_bucket() {
+    let fact = fact(Category::Compute, 1);
+    let frontier = frontier_at(Category::Compute, 1, 0);
+    let transaction = fold_fact(&fact, context(&frontier, None)).expect("folds");
+
+    let coarse: Vec<&super::ProjectionWrite> = transaction
+        .writes
+        .iter()
+        .filter(|write| {
+            matches!(
+                write.row,
+                ProjectionRow::HourlyTotal | ProjectionRow::DailyTotal
+            )
+        })
+        .collect();
+    assert_eq!(coarse.len(), 2, "one coarse row per grain");
+
+    let quantity = fact.kind.measurement().expect("measured").quantity().get();
+    for write in &coarse {
+        assert_eq!(write.set.get("dimensions"), None, "no dimension identity");
+        assert_eq!(write.set.get("meter"), None, "no meter identity");
+        assert_eq!(
+            write.set["itemType"],
+            ItemValue::text("usage_total"),
+            "the coarse face declares its own item type, so a reader cannot \
+             mistake it for a per-tuple rollup"
+        );
+        assert_eq!(write.add["quantity"].magnitude, quantity);
+        assert_eq!(write.add["quantity"].sign, Sign::Add);
+        assert_eq!(write.add["factCount"].magnitude, 1);
+        assert_eq!(
+            write.set["highestSequence"],
+            ItemValue::number(fact.accepted_sequence.get())
+        );
+        assert_eq!(
+            write.condition,
+            ProjectionCondition::CategoryMatches {
+                category: fact.public_category().expect("a priced fact")
+            },
+            "the shared-table guard keeps a mis-keyed write from merging two \
+             categories' quantities"
+        );
+        // The sort key names the bucket and nothing else, so the number of rows
+        // a range read touches is arithmetic rather than data-dependent.
+        let sort = write.key.sk.as_deref().expect("a sort key");
+        assert!(sort.starts_with("T#"), "{sort}");
+        assert_eq!(sort.matches('#').count(), 2, "{sort}");
+    }
+}
+
+#[test]
+fn a_replace_merges_into_one_coarse_row_per_grain_rather_than_colliding() {
+    let target = fact(Category::Transfer, 1);
+    let replacement = replace_fact(Category::Transfer, 2, &target.fact_id, 7_777);
+    let frontier = frontier_at(Category::Transfer, 2, 1);
+    let transaction =
+        fold_fact(&replacement, context(&frontier, Some(&target))).expect("folds with its target");
+
+    let coarse: Vec<&super::ProjectionWrite> = transaction
+        .writes
+        .iter()
+        .filter(|write| {
+            matches!(
+                write.row,
+                ProjectionRow::HourlyTotal | ProjectionRow::DailyTotal
+            )
+        })
+        .collect();
+    assert_eq!(
+        coarse.len(),
+        2,
+        "`TransactWriteItems` refuses two operations on one item, so the add \
+         and the withdrawal must merge before the transaction is built"
+    );
+    let mut keys: Vec<&str> = coarse
+        .iter()
+        .map(|write| write.key.sk.as_deref().expect("a sort key"))
+        .collect();
+    let count = keys.len();
+    keys.sort_unstable();
+    keys.dedup();
+    assert_eq!(count, keys.len(), "no coarse key appears twice");
+
+    let withdrawn = i128::try_from(
+        target
+            .kind
+            .measurement()
+            .expect("measured")
+            .quantity()
+            .get(),
+    )
+    .expect("in range");
+    for write in &coarse {
+        let delta = write.add["quantity"];
+        let signed = match delta.sign {
+            Sign::Add => i128::try_from(delta.magnitude).expect("in range"),
+            Sign::Subtract => -i128::try_from(delta.magnitude).expect("in range"),
+        };
+        assert_eq!(
+            signed,
+            7_777_i128 - withdrawn,
+            "the coarse row moves by the difference, not by the restated value"
+        );
+        assert_eq!(
+            write.add["factCount"].magnitude, 0,
+            "one fact replaced one fact"
+        );
+        // The correction's sequence, not its target's: `highestSequence` on a
+        // money row must never move backwards.
+        assert_eq!(
+            write.set["highestSequence"],
+            ItemValue::number(replacement.accepted_sequence.get())
+        );
+    }
+}
+
+#[test]
+fn a_void_moves_the_coarse_row_back_under_the_correction_sequence() {
+    let target = fact(Category::Storage, 1);
+    let void = void_fact(Category::Storage, 2, &target.fact_id);
+    let frontier = frontier_at(Category::Storage, 2, 1);
+    let transaction =
+        fold_fact(&void, context(&frontier, Some(&target))).expect("folds with its target");
+
+    let quantity = target
+        .kind
+        .measurement()
+        .expect("measured")
+        .quantity()
+        .get();
+    for write in transaction.writes.iter().filter(|write| {
+        matches!(
+            write.row,
+            ProjectionRow::HourlyTotal | ProjectionRow::DailyTotal
+        )
+    }) {
+        assert_eq!(write.add["quantity"].sign, Sign::Subtract);
+        assert_eq!(write.add["quantity"].magnitude, quantity);
+        assert_eq!(write.add["factCount"].sign, Sign::Subtract);
+        assert_eq!(
+            write.set["highestSequence"],
+            ItemValue::number(void.accepted_sequence.get()),
+            "a withdrawal is folded at the correction's position, so an item \
+             cannot be marked settled before its correction has settled"
+        );
+    }
+}
+
+#[test]
+fn a_zero_dollar_observability_fact_writes_no_coarse_row_either() {
+    let fact = observability_fact(1);
+    let frontier = frontier_at(Category::Compute, 1, 0);
+    let transaction = fold_fact(&fact, context(&frontier, None)).expect("folds");
+    assert!(
+        transaction.writes.iter().all(|write| !matches!(
+            write.row,
+            ProjectionRow::HourlyTotal | ProjectionRow::DailyTotal
+        )),
+        "an observability fact has no public category, so there is no coarse \
+         row it could land in"
     );
 }

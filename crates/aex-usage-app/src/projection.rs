@@ -18,6 +18,26 @@
 //! - **A zero-dollar observability fact folds into no priced aggregate.** It has
 //!   no [`PublicCategory`], so there is no aggregate partition it could land in;
 //!   it advances the frontier and nothing else.
+//!
+//! # The two rollup faces
+//!
+//! Every priced contribution is folded twice, into the same partition:
+//!
+//! - the **per-tuple face** (`H#`/`D#`), grouped by a seven-member dimension
+//!   hash that includes the session, run and operation. It is the substrate for
+//!   corrections and the detail path, and it is not what the customer read
+//!   queries;
+//! - the **coarse face** (`T#H#`/`T#D#`), one row per `(public category,
+//!   bucket)` carrying no dimension identity at all. This is what `usage_query`
+//!   reads. Because it has exactly one row per bucket, the number of rows a
+//!   range query touches is arithmetic — known before the first read — so an
+//!   over-budget query is refused up front instead of truncated halfway through.
+//!
+//! Both faces land inside the one coverage-fenced transaction, so they can never
+//! disagree about which facts they have seen. Contributions to the same coarse
+//! row are **merged before the transaction is built**: `TransactWriteItems`
+//! refuses two operations on one item, and a `Replace` whose target sits in the
+//! same bucket and category produces exactly that collision.
 
 #[cfg(test)]
 mod tests;
@@ -31,7 +51,9 @@ use aex_usage_domain::intent::{CanonicalError, IntentHash};
 use aex_usage_domain::keys::ItemValue;
 use aex_usage_domain::measurement::Measurement;
 use aex_usage_domain::meter::PublicCategory;
-use aex_usage_domain::projection::{Generation, ProjectionKey, ProjectionKeyError, ProjectionKeys};
+use aex_usage_domain::projection::{
+    Generation, Grain, ProjectionKey, ProjectionKeyError, ProjectionKeys,
+};
 use aex_usage_domain::quantity::Quantity;
 use aex_usage_domain::wire_pending::TimestampError;
 use serde::Serialize;
@@ -108,6 +130,15 @@ pub enum FoldError {
         frontier: String,
         /// What the fact describes.
         fact: String,
+    },
+    /// A quantity did not fit the signed arithmetic the coarse face merges in.
+    ///
+    /// Refused rather than saturated: a clamped money quantity is a wrong
+    /// number that nothing downstream can detect.
+    #[error("quantity {quantity} is too large to fold into a signed coarse delta")]
+    QuantityUnrepresentable {
+        /// The quantity that was refused.
+        quantity: u128,
     },
     /// A key could not be built.
     #[error(transparent)]
@@ -312,10 +343,14 @@ impl ProjectionCondition {
 /// Which projection row a write addresses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ProjectionRow {
-    /// An hourly rollup.
+    /// An hourly rollup, grouped by the dimension tuple.
     HourlyAggregate,
-    /// A daily rollup.
+    /// A daily rollup, grouped by the dimension tuple.
     DailyAggregate,
+    /// The hourly coarse rollup: one row per category and hour, no dimensions.
+    HourlyTotal,
+    /// The daily coarse rollup: one row per category and day, no dimensions.
+    DailyTotal,
     /// One fact's detail row.
     Detail,
     /// One fact's detail row being withdrawn by a correction.
@@ -330,8 +365,18 @@ impl ProjectionRow {
     pub const fn item_type(self) -> &'static str {
         match self {
             Self::HourlyAggregate | Self::DailyAggregate => "usage_aggregate",
+            Self::HourlyTotal | Self::DailyTotal => "usage_total",
             Self::Detail | Self::DetailWithdrawal => "usage_detail",
             Self::Coverage => "usage_coverage",
+        }
+    }
+
+    /// The coarse row one grain writes.
+    #[must_use]
+    pub const fn total_for(grain: Grain) -> Self {
+        match grain {
+            Grain::Hourly => Self::HourlyTotal,
+            Grain::Daily => Self::DailyTotal,
         }
     }
 }
@@ -408,6 +453,7 @@ pub fn fold_fact(
     check_frontier(fact, context.frontier)?;
     let keys = ProjectionKeys;
     let mut writes = Vec::new();
+    let mut coarse: BTreeMap<ProjectionKey, CoarseContribution> = BTreeMap::new();
 
     // The fact's own contribution, when it has one. An observability fact has no
     // public category, so it contributes nothing but a frontier advance.
@@ -425,6 +471,16 @@ pub fn fold_fact(
             context.generation,
             keys,
         )?);
+        accumulate_coarse(
+            &mut coarse,
+            fact,
+            category,
+            measurement,
+            quantity_delta(measurement.quantity().get())?,
+            1,
+            context.generation,
+            keys,
+        )?;
         writes.push(detail_write(
             fact,
             category,
@@ -466,6 +522,21 @@ pub fn fold_fact(
             context.generation,
             keys,
         )?);
+        // The withdrawal is expressed in the target's bucket and category, but
+        // its position in the sequence is the *correction's*. Writing the
+        // target's older sequence onto the coarse row would move
+        // `highestSequence` backwards and could mark a bucket settled before its
+        // correction had settled.
+        accumulate_coarse(
+            &mut coarse,
+            fact,
+            category,
+            measurement,
+            -quantity_delta(measurement.quantity().get())?,
+            -1,
+            context.generation,
+            keys,
+        )?;
         writes.push(withdrawal_write(
             target,
             category,
@@ -476,6 +547,7 @@ pub fn fold_fact(
         )?);
     }
 
+    writes.extend(coarse.into_values().map(CoarseContribution::into_write));
     writes.push(coverage_write(fact, context, keys)?);
     Ok(ProjectionTransaction {
         generation: context.generation,
@@ -623,6 +695,139 @@ fn aggregate_writes(
         });
     }
     Ok(writes)
+}
+
+/// A quantity as the signed delta the coarse face merges in.
+///
+/// # Errors
+///
+/// Returns [`FoldError::QuantityUnrepresentable`] above `i128::MAX` rather than
+/// saturating: a clamped money quantity is a wrong number nothing can detect.
+fn quantity_delta(quantity: u128) -> Result<i128, FoldError> {
+    i128::try_from(quantity).map_err(|_| FoldError::QuantityUnrepresentable { quantity })
+}
+
+/// One contribution to the coarse face, before same-row contributions merge.
+///
+/// `TransactWriteItems` refuses two operations on one item, and a `Replace`
+/// whose target sits in the same category and bucket produces exactly that, so
+/// the merge is a correctness requirement rather than an optimisation.
+#[derive(Debug, Clone)]
+struct CoarseContribution {
+    /// Which coarse row this addresses.
+    row: ProjectionRow,
+    /// The composite key.
+    key: ProjectionKey,
+    /// The attributes that identify the row and pin its position.
+    set: BTreeMap<String, ItemValue>,
+    /// The guard.
+    condition: ProjectionCondition,
+    /// The net quantity this transaction moves the row by.
+    quantity: i128,
+    /// The net fact count this transaction moves the row by.
+    fact_count: i128,
+}
+
+impl CoarseContribution {
+    /// The merged contribution as one conditional write.
+    fn into_write(self) -> ProjectionWrite {
+        ProjectionWrite {
+            row: self.row,
+            key: self.key,
+            add: BTreeMap::from([
+                ("quantity".to_owned(), signed_i128(self.quantity)),
+                ("factCount".to_owned(), signed_i128(self.fact_count)),
+            ]),
+            set: self.set,
+            condition: self.condition,
+        }
+    }
+}
+
+/// A signed integer as the `ADD` clause reads it.
+fn signed_i128(value: i128) -> SignedDelta {
+    SignedDelta {
+        sign: if value < 0 { Sign::Subtract } else { Sign::Add },
+        magnitude: value.unsigned_abs(),
+    }
+}
+
+/// Adds one contribution to both coarse grains, merging into any already there.
+///
+/// `folding` is the fact whose sequence this transaction occupies — the
+/// correction, not its target — so `highestSequence` on a coarse row only ever
+/// moves forward. `measurement` supplies the bucket and category, which for a
+/// withdrawal are the target's.
+#[allow(clippy::too_many_arguments)]
+fn accumulate_coarse(
+    into: &mut BTreeMap<ProjectionKey, CoarseContribution>,
+    folding: &UsageFact,
+    category: PublicCategory,
+    measurement: &Measurement,
+    quantity: i128,
+    fact_count: i128,
+    generation: Generation,
+    keys: ProjectionKeys,
+) -> Result<(), FoldError> {
+    let start = measurement.service_time().start();
+    let month = start.month_bucket();
+    for (grain, bucket) in [
+        (Grain::Hourly, start.hour_bucket()),
+        (Grain::Daily, start.day_bucket()),
+    ] {
+        let key = keys.coarse(
+            generation,
+            &folding.workspace,
+            category,
+            &month,
+            grain,
+            &bucket,
+        )?;
+        let row = ProjectionRow::total_for(grain);
+        match into.get_mut(&key) {
+            Some(existing) => {
+                existing.quantity += quantity;
+                existing.fact_count += fact_count;
+            }
+            None => {
+                into.insert(
+                    key.clone(),
+                    CoarseContribution {
+                        row,
+                        key,
+                        set: BTreeMap::from([
+                            ("itemType".to_owned(), ItemValue::text(row.item_type())),
+                            ("generation".to_owned(), ItemValue::number(generation.get())),
+                            (
+                                "workspaceId".to_owned(),
+                                ItemValue::text(folding.workspace.to_string()),
+                            ),
+                            (
+                                "organizationId".to_owned(),
+                                ItemValue::text(folding.organization.to_string()),
+                            ),
+                            ("publicCategory".to_owned(), ItemValue::text(category.id())),
+                            ("grain".to_owned(), ItemValue::text(grain.code())),
+                            ("bucketStart".to_owned(), ItemValue::text(bucket.clone())),
+                            ("bucketEnd".to_owned(), ItemValue::text(bucket.clone())),
+                            (
+                                "highestSequence".to_owned(),
+                                ItemValue::number(folding.accepted_sequence.get()),
+                            ),
+                            (
+                                "updatedAt".to_owned(),
+                                ItemValue::instant(folding.accepted_at),
+                            ),
+                        ]),
+                        condition: ProjectionCondition::CategoryMatches { category },
+                        quantity,
+                        fact_count,
+                    },
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 /// One fact's detail row.
