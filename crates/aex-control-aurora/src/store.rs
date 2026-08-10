@@ -50,7 +50,7 @@ pub struct AuroraControlStore {
     client: DataApiClient,
 }
 
-/// PostgreSQL's durable answer for the transaction that emitted a wake.
+/// `PostgreSQL`'s durable answer for the transaction that emitted a wake.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutboxWakeTransactionStatus {
     /// The trigger ran before commit and the transaction is still open.
@@ -59,7 +59,7 @@ pub enum OutboxWakeTransactionStatus {
     Committed,
     /// The transaction rolled back, so the accepted wake has no work.
     Aborted,
-    /// PostgreSQL no longer retains commit-status metadata for this xid.
+    /// `PostgreSQL` no longer retains commit-status metadata for this xid.
     Unknown,
 }
 
