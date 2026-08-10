@@ -564,7 +564,7 @@ impl RegistryStore for RegistryDynamoStore {
         let mut plan = TransactionPlan::new(format!(
             "rst-{}-{}",
             pointer.row.kind.as_str(),
-            &pointer.row.etag
+            pointer.row.etag
         ));
         let pointer_put = match commit.from_revision {
             None => expressions::create_pointer(&self.table, pointer)?,

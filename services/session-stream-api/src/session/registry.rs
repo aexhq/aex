@@ -229,12 +229,25 @@ impl Routes {
         name: &ResourceName,
         input: &models::BlobInput,
     ) -> WireResult<AdmittedPayload> {
+        match input {
+            models::BlobInput::Inline(inline) => self.admit_inline(kind, name, inline).await,
+            models::BlobInput::Upload(staged) => self.admit_staged(kind, name, staged).await,
+        }
+    }
+
+    /// Admits a payload the request carried, as an object.
+    async fn admit_inline(
+        &self,
+        kind: RegistryKind,
+        name: &ResourceName,
+        inline: &models::BlobInline,
+    ) -> WireResult<AdmittedPayload> {
         let workspace = self.cx.auth.workspace_id;
         let now = self.cx.now().map_err(|error| {
             WireError::new(ErrorCode::InternalError).with_message(error.to_string())
         })?;
-        match input {
-            models::BlobInput::Inline(inline) => {
+        {
+            {
                 let bytes = decode_inline(inline)?;
                 let observed = ContentHash::of(&bytes);
                 if observed != inline.sha256 {
@@ -302,7 +315,22 @@ impl Routes {
                     },
                 })
             }
-            models::BlobInput::Upload(staged) => {
+        }
+    }
+
+    /// Adopts a payload the upload surface already committed.
+    async fn admit_staged(
+        &self,
+        kind: RegistryKind,
+        name: &ResourceName,
+        staged: &models::BlobUpload,
+    ) -> WireResult<AdmittedPayload> {
+        let workspace = self.cx.auth.workspace_id;
+        let now = self.cx.now().map_err(|error| {
+            WireError::new(ErrorCode::InternalError).with_message(error.to_string())
+        })?;
+        {
+            {
                 // The upload surface verified the bytes against
                 // `declaredSha256` when it completed; this never re-verifies
                 // them. What it does require is the evidence that completion
