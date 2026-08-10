@@ -1999,7 +1999,18 @@ impl ControlViewStore for AuroraControlStore {
     }
 
     async fn get_operation_view(&self, id: Uuid) -> Result<Option<OperationView>, StoreError> {
-        let Some(operation) = <Self as ControlStore>::get_operation(self, id).await? else {
+        // The public read reads only public rows. An `internal` operation has
+        // no public projection, so hydrating one here only defers the refusal
+        // to the wire mapper, which has no `404` to give and answers `500`.
+        let Some(operation) = self
+            .client
+            .query_opt::<OperationRow>(
+                Statement::new(sql::GET_PUBLIC_OPERATION).bind("operation_id", SqlValue::Uuid(id)),
+            )
+            .await
+            .map(|row| row.map(|row| row.0))
+            .map_err(map_store_error)?
+        else {
             return Ok(None);
         };
         let workspace_deleted_at = if let Some(workspace_id) = operation.workspace_id {

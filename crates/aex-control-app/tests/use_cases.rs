@@ -671,15 +671,25 @@ async fn cancelling_a_central_operation_always_reports_not_cancelable() {
 }
 
 #[tokio::test]
-async fn cancelling_a_finished_operation_returns_it_unchanged() {
-    let store = committed_store();
-    let mut done = operation(OperationStatus::Succeeded);
-    done.terminal_at = Some(at());
-    store.with_operation(done);
-    let returned = CancelOperation::run(&store, Uuid::from_u128(OPERATION), at())
-        .await
-        .expect("a finished operation is returned as-is");
-    assert_eq!(returned.status, OperationStatus::Succeeded);
+async fn cancelling_a_finished_operation_refuses_rather_than_reporting_success() {
+    // The route has no success path at all, so a `200` carrying the unchanged
+    // row is indistinguishable from a cancellation that worked. Every terminal
+    // status refuses with the one code the route declares.
+    for status in [
+        OperationStatus::Succeeded,
+        OperationStatus::Failed,
+        OperationStatus::Cancelled,
+    ] {
+        let store = committed_store();
+        let mut done = operation(status);
+        done.terminal_at = Some(at());
+        store.with_operation(done);
+        assert_eq!(
+            CancelOperation::run(&store, Uuid::from_u128(OPERATION), at()).await,
+            Err(ControlError::NotCancelable),
+            "{status:?}"
+        );
+    }
 }
 
 #[tokio::test]

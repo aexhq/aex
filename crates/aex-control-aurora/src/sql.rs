@@ -521,6 +521,25 @@ SELECT o.id, o.kind, o.visibility, o.organization_id, o.workspace_id, o.principa
        (EXTRACT(EPOCH FROM o.due_at)*1000)::bigint AS due_at_ms \
   FROM control.durable_operation o WHERE o.id = :operation_id";
 
+/// Reads one **public** durable operation.
+///
+/// The public read surface is narrower than the store's own: a
+/// `workspace_provision` operation is `internal`, has no public `Operation`
+/// projection at all, and [`LIST_OPERATIONS`] already hides it. Reading one
+/// through the unfiltered [`GET_OPERATION`] and only then failing to project it
+/// is how `central_operation_get` answered `500` for a valid operation id.
+pub const GET_PUBLIC_OPERATION: &str = "\
+SELECT o.id, o.kind, o.visibility, o.organization_id, o.workspace_id, o.principal_id, o.scopes, \
+       o.status, o.intent_hash, o.fence, o.attempt, o.lease_owner, \
+       (EXTRACT(EPOCH FROM o.lease_expires_at)*1000)::bigint AS lease_expires_at_ms, \
+       (EXTRACT(EPOCH FROM o.created_at)*1000)::bigint AS created_at_ms, \
+       (EXTRACT(EPOCH FROM o.started_at)*1000)::bigint AS started_at_ms, \
+       (EXTRACT(EPOCH FROM o.updated_at)*1000)::bigint AS updated_at_ms, \
+       (EXTRACT(EPOCH FROM o.terminal_at)*1000)::bigint AS terminal_at_ms, \
+       (EXTRACT(EPOCH FROM o.due_at)*1000)::bigint AS due_at_ms \
+  FROM control.durable_operation o \
+ WHERE o.id = :operation_id AND o.visibility = 'public'";
+
 /// Lists public operations in one organization.
 pub const LIST_OPERATIONS: &str = "\
 SELECT o.id, o.kind, o.visibility, o.organization_id, o.workspace_id, o.principal_id, o.scopes, \
@@ -664,6 +683,7 @@ pub const ALL: &[(&str, &str)] = &[
     ("LIST_API_KEYS", LIST_API_KEYS),
     ("REVOKE_API_KEY", REVOKE_API_KEY),
     ("GET_OPERATION", GET_OPERATION),
+    ("GET_PUBLIC_OPERATION", GET_PUBLIC_OPERATION),
     ("LIST_OPERATIONS", LIST_OPERATIONS),
     ("CLAIM_DUE_OPERATIONS", CLAIM_DUE_OPERATIONS),
     ("CLAIM_OUTBOX", CLAIM_OUTBOX),

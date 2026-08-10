@@ -1625,20 +1625,6 @@
   },
   {
     "reason_class": "requires_live_seam",
-    "subject": "crates/aex-finance-aurora",
-    "owner": "central-finance",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.aurora.serverless_v2` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
-    "subject": "crates/aex-finance-aurora",
-    "owner": "central-finance",
-    "blocking_rule": "aex-unearned-evidence",
-    "detail": "seam `aws.rds_data.transaction` cannot be satisfied by any local substitute"
-  },
-  {
-    "reason_class": "requires_live_seam",
     "subject": "crates/aex-hands-control-aws",
     "owner": "hands",
     "blocking_rule": "aex-unearned-evidence",

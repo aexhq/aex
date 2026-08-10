@@ -90,8 +90,12 @@ const FINANCE_DEPLOYABLES: [&str; 7] = [
 /// The adapters that carry identity and control DML.
 const IDENTITY_DML: [&str; 2] = ["aex-identity-aurora", "aex-control-aurora"];
 
-/// The adapters that carry the money authority.
-const FINANCE_AUTHORITY: [&str; 2] = ["aex-finance-aurora", "aex-finance-domain"];
+/// The libraries that carry the money authority.
+///
+/// There is no shared finance SQL adapter: each finance deployable owns its own
+/// statements, so the authority a central identity deployable must not link is
+/// the domain and its use cases.
+const FINANCE_AUTHORITY: [&str; 2] = ["aex-finance-domain", "aex-finance-app"];
 
 #[test]
 fn no_finance_deployable_can_link_identity_or_control_dml() {

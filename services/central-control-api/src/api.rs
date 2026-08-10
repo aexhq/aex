@@ -137,16 +137,48 @@ impl ControlService {
         }
     }
 
+    /// Whether this handler owns the account-state gate for `id`.
+    ///
+    /// The split is not a preference. `admit_request` runs the gate itself for
+    /// every route that is not `pause_exempt` **and resolves its organization
+    /// from the path**. A route whose organization arrives in a query parameter
+    /// or a body resolves [`ResourceClass::None`], which the edge treats as
+    /// exempt, so its handler owns the gate instead — `aex_control_domain`'s
+    /// `non_path_targets_defer_their_organization_gate_to_the_handler` pins
+    /// exactly that.
+    ///
+    /// Running the gate on the other side of the split is not a harmless second
+    /// read. `account_paused` and `account_state_unavailable` are the edge's
+    /// codes, and a route the edge already gates has no reason to declare them
+    /// — `memberships_list` does not — so the duplicate refusal reaches
+    /// [`aex_wire::dispatch::declared`] undeclared and is rendered
+    /// `500 internal_error` instead of the `402` the edge had already produced.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ErrorCode::InternalError`] when a regional route reached a
+    /// central handler, which means the router is composed wrong.
+    fn handler_owns_account_gate(id: aex_wire::routes::RouteId) -> WireResult<bool> {
+        let action = aex_control_domain::Action::central(id)
+            .map_err(|_| WireError::new(ErrorCode::InternalError))?;
+        Ok(aex_control_domain::requirement(action).resource_class
+            == aex_control_domain::ResourceClass::None)
+    }
+
     async fn require_admin(&self, cx: &RequestContext, organization_id: Uuid) -> WireResult<()> {
-        let role = self.organization_access(cx, organization_id, true).await?;
+        let role = self.organization_access(cx, organization_id).await?;
         Self::admit_admin_role(role)
     }
 
+    /// Resolves the caller's role, gating the account state where this handler
+    /// owns that gate.
+    ///
+    /// Whether it does is derived from the route rather than passed in, so a
+    /// call site cannot re-gate a route the edge already gated.
     async fn organization_access(
         &self,
         cx: &RequestContext,
         organization_id: Uuid,
-        gate_account: bool,
     ) -> WireResult<OrgRole> {
         let user_id = Self::user(cx)?;
         let view = self
@@ -155,7 +187,7 @@ impl ControlService {
             .await
             .map_err(store_error)?
             .ok_or_else(|| WireError::new(ErrorCode::Forbidden))?;
-        if gate_account {
+        if Self::handler_owns_account_gate(cx.route)? {
             match self
                 .store
                 .account_profile(organization_id)
@@ -420,7 +452,7 @@ impl OrganizationsApi for ControlService {
         query: MembershipsListQuery,
     ) -> WireResult<MembershipPage> {
         let organization_id = raw(organization_id);
-        self.organization_access(cx, organization_id, true).await?;
+        self.organization_access(cx, organization_id).await?;
         let user_id = Self::user(cx)?;
         let binding = self.page_binding(cx, user_id, organization_id, &[]);
         let page = self.page(&binding, query.cursor.as_ref(), query.limit)?;
@@ -446,7 +478,7 @@ impl OrganizationsApi for ControlService {
         body: InvitationCreateRequest,
     ) -> WireResult<Created<Invitation>> {
         let organization_id = raw(organization_id);
-        self.organization_access(cx, organization_id, true).await?;
+        self.organization_access(cx, organization_id).await?;
         let invitation_id = self.ids.next();
         let role = match body.role {
             InvitationRole::Admin => OrgRole::Admin,
@@ -515,7 +547,7 @@ impl WorkspacesApi for ControlService {
         let user_id = Self::user(cx)?;
         let organization_id = query.organization_id.map(raw);
         if let Some(organization_id) = organization_id {
-            self.organization_access(cx, organization_id, true).await?;
+            self.organization_access(cx, organization_id).await?;
         }
         let scope_id = organization_id.unwrap_or(user_id);
         let organization_filter = query
@@ -900,7 +932,7 @@ impl CentralOperationsApi for ControlService {
         query: CentralOperationsListQuery,
     ) -> WireResult<OperationPage> {
         let organization_id = raw(query.organization_id);
-        self.organization_access(cx, organization_id, true).await?;
+        self.organization_access(cx, organization_id).await?;
         let user_id = Self::user(cx)?;
         let kind = query.kind.map(|value| value.as_str().to_owned());
         let status = query.status.map(|value| value.as_str().to_owned());
@@ -1318,5 +1350,58 @@ mod tests {
         assert_eq!(denied.code, ErrorCode::Forbidden);
         assert!(ControlService::admit_admin_role(OrgRole::Admin).is_ok());
         assert!(ControlService::admit_admin_role(OrgRole::Owner).is_ok());
+    }
+
+    #[test]
+    fn a_handler_gates_the_account_state_only_where_the_edge_could_not() {
+        use aex_wire::routes::{RouteId, route};
+
+        // The edge resolves these routes' organization from the path and gates
+        // the account state there. `memberships_list` re-read it anyway, and
+        // since the route declares neither of the gate's two codes, the refusal
+        // the edge had already made came back as `500 internal_error`.
+        for id in [RouteId::MembershipsList, RouteId::InvitationCreate] {
+            assert!(
+                !ControlService::handler_owns_account_gate(id).expect("a central route"),
+                "`{}` is gated at the edge",
+                route(id).operation_id
+            );
+            assert!(
+                !route(id).pause_exempt,
+                "`{}` would not be gated at all otherwise",
+                route(id).operation_id
+            );
+            for code in [ErrorCode::AccountPaused, ErrorCode::AccountStateUnavailable] {
+                assert!(
+                    !route(id).declares(code),
+                    "`{}` declares `{}`, so the handler could gate after all",
+                    route(id).operation_id,
+                    code.as_str()
+                );
+            }
+        }
+
+        // These take their organization from a query parameter or a body, so
+        // the edge cannot resolve it and defers the gate here. Each publishes
+        // both outcomes, which is what makes gating in the handler legal.
+        for id in [
+            RouteId::CentralOperationsList,
+            RouteId::ApiKeysList,
+            RouteId::ApiKeyCreate,
+        ] {
+            assert!(
+                ControlService::handler_owns_account_gate(id).expect("a central route"),
+                "`{}` has no edge gate to inherit",
+                route(id).operation_id
+            );
+            for code in [ErrorCode::AccountPaused, ErrorCode::AccountStateUnavailable] {
+                assert!(
+                    route(id).declares(code),
+                    "`{}` gates in the handler without declaring `{}`",
+                    route(id).operation_id,
+                    code.as_str()
+                );
+            }
+        }
     }
 }

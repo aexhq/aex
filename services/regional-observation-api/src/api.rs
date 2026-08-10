@@ -1495,6 +1495,12 @@ fn read_error(error: &ReadError) -> WireError {
         ReadError::Provider { .. } => WireError::new(ErrorCode::ObservabilityUnavailable)
             .with_retry_after(Duration::from_secs(1)),
         ReadError::InvalidResume => WireError::new(ErrorCode::InvalidCursor),
+        // The one export-control write path that carries a condition targets a
+        // single `EXPORT#{workspace}#{export}` / `STATE` row and asserts it
+        // exists, so a failed condition names exactly one fact: no such export.
+        // Both revoke routes declare `export_not_found`, and it is terminal —
+        // never a `Retry-After`.
+        ReadError::ExportAbsent { .. } => WireError::new(ErrorCode::ExportNotFound),
         ReadError::Malformed { .. } | ReadError::InvalidWriteTarget { .. } => {
             WireError::new(ErrorCode::InternalError)
         }
@@ -1998,9 +2004,51 @@ mod tests {
 
     use super::{
         GRANT_LIFETIME, LISTEN_BUDGET, SocketLifetime, bind_metric_selection, export_status,
-        gap_to_wire, listen_window, unseen_gaps, window_for,
+        gap_to_wire, listen_window, read_error, unseen_gaps, window_for,
     };
     use crate::counters::{ReadCounter, ReadCounters};
+    use crate::reader::ReadError;
+
+    #[test]
+    fn an_absent_export_is_a_terminal_404_on_both_revoke_routes() {
+        // The defect this pins: `update_export_control` folded
+        // `ConditionalCheckFailedException` into a provider failure, so revoking
+        // an export that does not exist answered `503 observability_unavailable`
+        // with `Retry-After: 1`, telling the client the plane was down.
+        let failure = read_error(&ReadError::ExportAbsent {
+            operation: "UpdateItem",
+        });
+        assert_eq!(failure.code, aex_wire::error::ErrorCode::ExportNotFound);
+        assert_eq!(failure.code.http_status(), 404);
+        assert!(
+            failure.retry_after.is_none(),
+            "an export that does not exist never becomes one by retrying"
+        );
+        for id in [
+            aex_wire::routes::RouteId::TelemetryExportRevoke,
+            aex_wire::routes::RouteId::SessionTelemetryExportRevoke,
+        ] {
+            assert!(
+                aex_wire::routes::route(id).declares(failure.code),
+                "`{}` does not declare `{}`",
+                aex_wire::routes::route(id).operation_id,
+                failure.code.as_str()
+            );
+        }
+    }
+
+    #[test]
+    fn an_unreachable_authority_is_still_a_retryable_503() {
+        let failure = read_error(&ReadError::Provider {
+            operation: "UpdateItem",
+            reason: "fixture".to_owned(),
+        });
+        assert_eq!(
+            failure.code,
+            aex_wire::error::ErrorCode::ObservabilityUnavailable
+        );
+        assert!(failure.retry_after.is_some());
+    }
 
     #[test]
     fn a_producer_that_ends_for_any_reason_closes_exactly_one_socket() {

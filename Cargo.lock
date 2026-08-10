@@ -473,24 +473,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aex-finance-aurora"
-version = "0.1.0"
-dependencies = [
- "aex-finance-app",
- "aex-finance-domain",
- "aex-rds-data",
- "async-trait",
- "aws-sdk-rdsdata",
- "futures",
- "proptest",
- "serde",
- "serde_json",
- "thiserror",
- "time",
- "uuid",
-]
-
-[[package]]
 name = "aex-finance-domain"
 version = "0.1.0"
 dependencies = [
